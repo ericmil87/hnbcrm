@@ -7,7 +7,7 @@
  */
 import { v } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
-import { requireAuth, requirePermission } from "./lib/auth";
+import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
 import { getModules, isDemoOrg, modulesOf } from "./lib/orgModules";
 
 const modulesReturn = v.object({
@@ -17,6 +17,7 @@ const modulesReturn = v.object({
   central: v.boolean(),
   metaMessaging: v.boolean(),
   telegram: v.boolean(),
+  translation: v.boolean(),
   demoMode: v.boolean(),
 });
 
@@ -40,6 +41,7 @@ export const setOrgModules = mutation({
       central: v.optional(v.boolean()),
       metaMessaging: v.optional(v.boolean()),
       telegram: v.optional(v.boolean()),
+      translation: v.optional(v.boolean()),
     }),
   },
   returns: modulesReturn,
@@ -49,9 +51,14 @@ export const setOrgModules = mutation({
     if (!org) throw new Error("Organização não encontrada");
 
     const before = modulesOf(org);
+    // Tradução automática: o texto do cliente passa a ir a um provedor de
+    // tradução — porta crítica, como os toggles de IA (conta com e-mail).
+    if (args.modules.translation === true && !before.translation) {
+      await requireAccountWithEmail(ctx, member.userId);
+    }
     const current = org.settings.modules ?? {};
     const next = { ...current };
-    for (const key of ["units", "departments", "attribution", "central", "metaMessaging", "telegram"] as const) {
+    for (const key of ["units", "departments", "attribution", "central", "metaMessaging", "telegram", "translation"] as const) {
       const value = args.modules[key];
       if (value !== undefined) next[key] = value;
     }
@@ -104,6 +111,7 @@ export const setOrgModules = mutation({
           central: before.central,
           metaMessaging: before.metaMessaging,
           telegram: before.telegram,
+          translation: before.translation,
         },
         after: {
           units: after.units,
@@ -112,10 +120,11 @@ export const setOrgModules = mutation({
           central: after.central,
           metaMessaging: after.metaMessaging,
           telegram: after.telegram,
+          translation: after.translation,
         },
       },
       metadata: { modules: true },
-      description: "Alterou os módulos da organização (Central, Instagram e Messenger, Telegram)",
+      description: "Alterou os módulos da organização (Central, Instagram e Messenger, Telegram, Tradução automática)",
       severity: "medium",
       createdAt: now,
     });

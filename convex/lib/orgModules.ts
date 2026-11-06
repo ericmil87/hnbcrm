@@ -10,7 +10,7 @@ import { ConvexError } from "convex/values";
 import { QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 
-export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging" | "telegram";
+export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging" | "telegram" | "translation";
 
 export type OrgModules = {
   units: boolean;
@@ -21,6 +21,8 @@ export type OrgModules = {
   metaMessaging: boolean;
   /** Telegram da equipe (Copiloto no Telegram). NÃO é da Central: fora de `assertAnyModule`. */
   telegram: boolean;
+  /** Tradução automática no inbox. NÃO é da Central: fora de `assertAnyModule`. */
+  translation: boolean;
   demoMode: boolean;
 };
 
@@ -31,6 +33,7 @@ export const MODULE_LABELS: Record<OrgModuleKey, string> = {
   central: "Painel da Central",
   metaMessaging: "Instagram e Messenger",
   telegram: "Telegram para a equipe",
+  translation: "Tradução automática",
 };
 
 /** Leitura pura do doc (serve a quem já carregou a org). */
@@ -43,6 +46,7 @@ export function modulesOf(org: Pick<Doc<"organizations">, "settings"> | null | u
     central: m?.central === true,
     metaMessaging: m?.metaMessaging === true,
     telegram: m?.telegram === true,
+    translation: m?.translation === true,
     demoMode: org?.settings?.demoMode === true,
   };
 }

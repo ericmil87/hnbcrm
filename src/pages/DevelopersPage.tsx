@@ -593,8 +593,8 @@ npm run dev`}</CodeBlock>
                   </thead>
                   <tbody>
                     <ToolRow name="crm_list_conversations" description="Lista conversas de um lead" params="leadId?" />
-                    <ToolRow name="crm_get_messages" description="Retorna mensagens de uma conversa" params="conversationId" />
-                    <ToolRow name="crm_send_message" description="Envia mensagem em uma conversa" params="conversationId, content" />
+                    <ToolRow name="crm_get_messages" description="Retorna mensagens de uma conversa (com translatedText e metadata.translation quando há tradução)" params="conversationId" />
+                    <ToolRow name="crm_send_message" description="Envia mensagem em uma conversa (com tradução automática opcional)" params="conversationId, content, language?" />
                     <ToolRow name="crm_list_whatsapp_channels" description="Lista os números de WhatsApp ativos que podem iniciar conversa" params="—" />
                     <ToolRow name="crm_start_conversation" description="Inicia conversa 1 a 1 pelo WhatsApp (verifica o número no bridge; reaproveita ou cria o lead)" params="channelConfigId, phone | contactId, content?, optOutAck?" />
                   </tbody>
@@ -642,6 +642,53 @@ npm run dev`}</CodeBlock>
                   <code className="font-mono text-brand-400">messenger</code>;{" "}
                   <code className="font-mono text-brand-400">channel.session_lost</code> traz{" "}
                   <code className="font-mono text-brand-400">provider</code> com esses mesmos valores.
+                </li>
+              </ul>
+            </Card>
+
+            {/* Tradução automática */}
+            <Card className="p-4 space-y-3">
+              <h3 className="font-semibold text-text-primary flex items-center gap-2">
+                Tradução automática nas conversas
+                <Badge variant="brand">novo</Badge>
+              </h3>
+              <ul className="list-disc pl-5 space-y-1.5 text-sm text-text-secondary">
+                <li>
+                  O recurso é opcional e fica desligado por empresa. Com ele ligado, cada mensagem pode trazer{" "}
+                  <code className="font-mono text-brand-400">translatedText</code> (sempre a versão no idioma da equipe) e{" "}
+                  <code className="font-mono text-brand-400">metadata.translation</code> (
+                  <code className="font-mono text-brand-400">status</code>,{" "}
+                  <code className="font-mono text-brand-400">role</code>,{" "}
+                  <code className="font-mono text-brand-400">sourceLang</code>,{" "}
+                  <code className="font-mono text-brand-400">targetLang</code>,{" "}
+                  <code className="font-mono text-brand-400">engine</code>).
+                </li>
+                <li>
+                  <code className="font-mono text-brand-400">content</code> é sempre o texto que trafegou pelo canal, no idioma do cliente. A tradução nunca o substitui.
+                </li>
+                <li>
+                  <code className="font-mono text-brand-400">POST /api/v1/conversations/send</code> aceita{" "}
+                  <code className="font-mono text-brand-400">language</code> opcional:{" "}
+                  <code className="font-mono text-brand-400">"auto"</code>,{" "}
+                  <code className="font-mono text-brand-400">"off"</code> ou um código de idioma (por exemplo{" "}
+                  <code className="font-mono text-brand-400">es</code>). Sem ele, vale o comportamento da conversa. A mesma opção existe na ferramenta{" "}
+                  <code className="font-mono text-brand-400">crm_send_message</code>. O código por mensagem fica em{" "}
+                  <code className="font-mono text-brand-400">metadata.translationTarget</code>.
+                </li>
+                <li>
+                  Quem já traduziu o texto pode enviar{" "}
+                  <code className="font-mono text-brand-400">translation: {"{"} authoredText, sourceLang, targetLang, edited? {"}"}</code>
+                  : o <code className="font-mono text-brand-400">content</code> deve ser o texto já traduzido (formato inválido responde 400).
+                </li>
+                <li>
+                  Se a tradução de saída falhar, a mensagem fica com{" "}
+                  <code className="font-mono text-brand-400">deliveryStatus: "failed"</code> e{" "}
+                  <code className="font-mono text-brand-400">metadata.deliveryError</code> começando com "Tradução falhou: …"; nada é enviado.
+                </li>
+                <li>
+                  O idioma da conversa vem de contato, detecção automática ou ajuste manual. Os webhooks{" "}
+                  <code className="font-mono text-brand-400">message.received</code> e{" "}
+                  <code className="font-mono text-brand-400">message.sent</code> não carregam o texto, então não mudam.
                 </li>
               </ul>
             </Card>

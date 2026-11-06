@@ -27,6 +27,8 @@ export interface ContactForm {
   companyWebsite: string;
   preferredContactTime: string;
   deviceType: string;
+  /** Idioma preferido (tradução automática); "" = não definido. */
+  preferredLanguage: string;
   utmSource: string;
   acquisitionChannel: string;
   instagramFollowers: string;
@@ -65,6 +67,7 @@ export function contactToForm(c: ContactLike): ContactForm {
     companyWebsite: c.companyWebsite || "",
     preferredContactTime: c.preferredContactTime || "",
     deviceType: c.deviceType || "",
+    preferredLanguage: c.preferredLanguage || "",
     utmSource: c.utmSource || "",
     acquisitionChannel: c.acquisitionChannel || "",
     instagramFollowers: numberToText(c.instagramFollowers),
@@ -85,9 +88,16 @@ export function parseTags(raw: string): string[] {
 const text = (s: string): string | undefined => s.trim() || undefined;
 const count = (s: string): number | undefined => (s ? Number(s) : undefined);
 
-/** Argumentos de `updateContact` (sem o `contactId`): texto vazio vira `undefined`. */
-export function contactFormToUpdate(form: ContactForm) {
+/**
+ * Argumentos de `updateContact` (sem o `contactId`): texto vazio vira `undefined`.
+ * `preferredLanguage` só viaja quando mudou em relação a `original` (`""`
+ * limpa): reenviar o mesmo valor marcaria um idioma detectado como escolha
+ * manual no servidor.
+ */
+export function contactFormToUpdate(form: ContactForm, original?: ContactLike | null) {
+  const languageChanged = form.preferredLanguage !== (original?.preferredLanguage ?? "");
   return {
+    ...(languageChanged ? { preferredLanguage: form.preferredLanguage } : {}),
     firstName: text(form.firstName),
     lastName: text(form.lastName),
     email: text(form.email),

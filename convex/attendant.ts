@@ -127,6 +127,8 @@ import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { maybeScheduleAiReplyRelay, maybeScheduleHandoffCardsUpdate } from "./lib/telegramRelay";
+import { scheduleMessageTranslation } from "./lib/translationOps";
+import { languageName, normalizeLanguageCode } from "./lib/languages";
 
 export { isWithinSchedule };
 
@@ -322,6 +324,23 @@ export async function lastInboundIsStandby(
  * no Messenger. Chamada só DEPOIS do `detectLeakedModelMarkup`, no runtime e no
  * simulador (os dois pontos de saída). Nunca em texto humano nem na divulgação.
  */
+/**
+ * Linha de idioma do prompt. `"auto"` (tradução automática, D6): o atendente
+ * responde no idioma do cliente, com o idioma detectado da conversa como dica
+ * (mensagens curtas não bastam para detectar). Qualquer outro valor mantém o
+ * comportamento de sempre ("Responda sempre em pt-BR.").
+ */
+export function languageInstruction(language: string, conversationLang?: string | null): string {
+  if (language.trim().toLowerCase() !== "auto") return `Responda sempre em ${language}.`;
+  const hint = normalizeLanguageCode(conversationLang);
+  return [
+    "Responda no idioma em que o cliente escreve (siga o idioma da última mensagem dele; padrão pt-BR).",
+    hint ? `Idioma detectado desta conversa: ${languageName(hint)} (${hint}).` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
 export function formatReplyForTransport(text: string, transport: ChannelTransport | null): string {
   return transport === "instagram" || transport === "messenger" ? toPlainChatText(text) : toWhatsAppText(text);
 }
@@ -1553,6 +1572,8 @@ export const internalClaimForProcessing = internalMutation({
         // Persona + conhecimento: `agentProfileTexts` (ou o doc, se legado).
         ...(await readAgentTexts(ctx, agent!)),
         language: profile.language ?? "pt-BR",
+        // Tradução automática: idioma detectado da conversa (dica para `language:"auto"`).
+        conversationLang: conversation.translation?.lang ?? null,
         advanceRules: profile.pipelineConfig?.advanceRules ?? null,
         allowMoveStages: profile.pipelineConfig?.allowMoveStages !== false,
         captureFields: await resolveCaptureFields(
@@ -2819,6 +2840,9 @@ export const internalCommitAiReply = internalMutation({
     // Telegram (D20, 0.77.2): só a resposta de uma instrução/regeneração pedida pelo bot
     // volta ao Telegram, para quem pediu (nunca toda resposta da IA na conversa em foco).
     await maybeScheduleAiReplyRelay(ctx, conversation, messageId, queueItem);
+    // Tradução automática (D6): a resposta saiu no idioma do lead; a equipe a
+    // lê na língua dela por uma tradução de EXIBIÇÃO assíncrona (no-op sem o módulo).
+    await scheduleMessageTranslation(ctx, { messageId, role: "display", conversation });
     if (queueItem?.followUpId) {
       const followUp = await ctx.db.get(queueItem.followUpId);
       if (followUp) {
@@ -2966,6 +2990,9 @@ export const internalCommitAiSuggestion = internalMutation({
       createdAt: now,
     });
     await linkFilesToMessage(ctx, args.attachments, messageId, conversation.organizationId);
+    // Tradução (F3): rascunho no idioma do lead ganha a versão pt-BR para a
+    // equipe revisar (no-op barato sem módulo ou sem idioma estrangeiro).
+    await scheduleMessageTranslation(ctx, { messageId, role: "draft", conversation });
     if (inheritedFollowUpId) {
       await resolveFollowUpOutcome(ctx, inheritedFollowUpId, {
         kind: "drafted",
@@ -3213,6 +3240,8 @@ type RunContext = {
   systemPrompt: string | null;
   knowledge: string | null;
   language: string;
+  /** Idioma detectado da conversa (tradução automática); só entra no prompt com `language:"auto"`. */
+  conversationLang?: string | null;
   advanceRules: string | null;
   allowMoveStages: boolean;
   captureFields: CaptureFieldDef[];
@@ -3276,6 +3305,7 @@ type PromptContext = Pick<
   | "agentName"
   | "orgName"
   | "language"
+  | "conversationLang"
   | "systemPrompt"
   | "knowledge"
   | "advanceRules"
@@ -3335,7 +3365,7 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
   return [
     persona,
     channelLine ?? "",
-    `Responda sempre em ${context.language}.`,
+    languageInstruction(context.language, context.conversationLang),
     "REGRAS OBRIGATÓRIAS:",
     "1. Use a ferramenta replyToCustomer UMA única vez por turno, com a resposta ao cliente. Se também for usar outras ferramentas (mover lead, qualificar, agendar, salvar dados), chame TODAS JUNTAS no mesmo turno, com replyToCustomer por último — não espere o resultado de uma ferramenta para só então responder. EXCEÇÃO: ferramentas de CONSULTA (consultarAgenda) são chamadas SOZINHAS, primeiro, e o replyToCustomer vem na rodada seguinte, já com os dados que ela devolveu.",
     "2. Assuntos sensíveis (cancelamento, reclamação grave, jurídico, pagamento com problema) ou pedido explícito de humano → use requestHandoff.",
@@ -4326,6 +4356,8 @@ export async function acceptAiDraftCore(
     now,
     activityContent: `Sugestão da IA aprovada por ${member.name}${wasEdited ? " (editada)" : ""}`,
   });
+  // Tradução automática (D6): tradução de exibição da resposta aprovada.
+  await scheduleMessageTranslation(ctx, { messageId, role: "display", conversation });
 
   // Executa as ações aprovadas (best-effort por ação: falha vira relato no
   // metadata, nunca desfaz o envio). Só ações ESTRUTURADAS e aprováveis.

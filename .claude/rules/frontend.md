@@ -90,3 +90,8 @@ paths:
 - Build chunks (`vite.config.ts` `manualChunks`): `react-vendor`, `convex-vendor`, `utils-vendor`, `icons-vendor`, `xlsx-vendor` (xlsx only via dynamic `import()`). Keep heavy libs lazy; new origins (fonts, CDN, iframe) also need the CSP in `vercel.json`.
 
 Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.md`
+
+## Tradução automática (v0.80)
+- O chip de idioma é pílula + `Popover` (folha inferior no celular), com `Languages` e código curto ("ES · auto"); nunca bandeira emoji, porque idioma não é país.
+- `message.content` é o texto de fio. A versão da equipe vem de `translatedText` e o estado de `metadata.translation`; nunca exiba um no lugar do outro sem rótulo, e nunca grave texto em `metadata.translation`.
+- Nota interna nunca é traduzida (sem chip, sem botão "Traduzir"); falha de tradução de saída nunca envia sozinha, mostra "Tentar de novo" e "Enviar sem traduzir".

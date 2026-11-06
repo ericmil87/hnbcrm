@@ -426,6 +426,7 @@ export const OPENAPI_SPEC = `{
                   "companySize": { "type": "string", "description": "Tamanho da empresa" },
                   "cnpj": { "type": "string", "description": "CNPJ da empresa" },
                   "companyWebsite": { "type": "string", "format": "uri", "description": "Website da empresa" },
+                  "preferredLanguage": { "type": "string", "description": "Idioma do contato (módulo de tradução), ex.: es, en, pt-BR. Código inválido responde 400; string vazia limpa na atualização" },
                   "preferredContactTime": { "type": "string", "enum": ["morning", "afternoon", "evening"], "description": "Horário preferido para contato" },
                   "deviceType": { "type": "string", "enum": ["android", "iphone", "desktop", "unknown"], "description": "Tipo de dispositivo" },
                   "utmSource": { "type": "string", "description": "UTM source" },
@@ -528,6 +529,7 @@ export const OPENAPI_SPEC = `{
                   "companySize": { "type": "string", "description": "Tamanho da empresa" },
                   "cnpj": { "type": "string", "description": "CNPJ da empresa" },
                   "companyWebsite": { "type": "string", "format": "uri", "description": "Website da empresa" },
+                  "preferredLanguage": { "type": "string", "description": "Idioma do contato (módulo de tradução), ex.: es, en, pt-BR. Código inválido responde 400; string vazia limpa na atualização" },
                   "preferredContactTime": { "type": "string", "enum": ["morning", "afternoon", "evening"], "description": "Horário preferido para contato" },
                   "deviceType": { "type": "string", "enum": ["android", "iphone", "desktop", "unknown"], "description": "Tipo de dispositivo" },
                   "utmSource": { "type": "string", "description": "UTM source" },
@@ -804,7 +806,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Conversas"],
         "summary": "Listar mensagens",
-        "description": "Retorna todas as mensagens de uma conversa. Requer permissão inbox: view_own na chave de API.",
+        "description": "Retorna todas as mensagens de uma conversa. Com o módulo de tradução ligado, cada mensagem pode trazer translatedText (versão no idioma da equipe) e metadata.translation (status, role, sourceLang, targetLang, engine); content é sempre o texto que trafegou pelo canal. Requer permissão inbox: view_own na chave de API.",
         "operationId": "getMessages",
         "parameters": [
           { "name": "conversationId", "in": "query", "required": true, "schema": { "type": "string" }, "description": "ID da conversa" }
@@ -946,7 +948,9 @@ export const OPENAPI_SPEC = `{
                   "conversationId": { "type": "string", "description": "ID da conversa" },
                   "content": { "type": "string", "description": "Conteúdo da mensagem" },
                   "contentType": { "type": "string", "enum": ["text", "image", "file", "audio"], "default": "text", "description": "Tipo do conteúdo" },
-                  "isInternal": { "type": "boolean", "default": false, "description": "Nota interna (não visível ao contato)" }
+                  "isInternal": { "type": "boolean", "default": false, "description": "Nota interna (não visível ao contato)" },
+                  "language": { "type": "string", "description": "Tradução automática (módulo opcional por organização): auto traduz para o idioma da conversa, off envia como escrito, ou um código de idioma (ex.: es, en, pt-BR) força o idioma de saída. Sem o campo vale o comportamento da conversa. Ignorado em nota interna. O código por mensagem fica em metadata.translationTarget; se a tradução falhar, a mensagem fica com deliveryStatus failed e metadata.deliveryError iniciando com Tradução falhou." },
+                  "translation": { "type": "object", "description": "Para clientes que já traduziram: content deve ser o texto traduzido; authoredText é o que o autor digitou. Formato inválido responde 400.", "required": ["authoredText", "sourceLang", "targetLang"], "properties": { "authoredText": { "type": "string" }, "sourceLang": { "type": "string" }, "targetLang": { "type": "string" }, "edited": { "type": "boolean" } } }
                 }
               }
             }

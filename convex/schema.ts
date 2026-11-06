@@ -152,6 +152,8 @@ const providerConfigValidator = v.object({
       groupAgent: v.optional(productRoutingValidator),
       // Copiloto no Telegram (D16): rota e modelo próprios; ausente = padrão.
       telegramCopilot: v.optional(productRoutingValidator),
+      // Tradução automática (F1): rota e modelo próprios; ausente = padrão.
+      translation: v.optional(productRoutingValidator),
     })
   ),
 });
@@ -573,6 +575,31 @@ export const orgModulesValidator = v.object({
   metaMessaging: v.optional(v.boolean()),
   // Telegram da equipe (Copiloto no Telegram, F0). NÃO é da Central: fora de assertAnyModule.
   telegram: v.optional(v.boolean()),
+  // Tradução automática no inbox (F1). NÃO é da Central: fora de assertAnyModule.
+  translation: v.optional(v.boolean()),
+});
+
+// Tradução automática (F1): opções da org. Ausente = padrões (lib/translationGate.ts).
+export const orgTranslationSettingsValidator = v.object({
+  provider: v.optional(v.union(v.literal("auto"), v.literal("libretranslate"), v.literal("llm"))), // ausente = auto
+  teamLanguage: v.optional(v.string()), // ausente = "pt-BR"
+  inboundMode: v.optional(v.union(v.literal("auto"), v.literal("ask"))), // ausente = auto
+  outboundMode: v.optional(
+    v.union(v.literal("direct"), v.literal("quick_review"), v.literal("strict_review"))
+  ), // ausente = direct
+  skipWhenSameLanguage: v.optional(v.boolean()), // ausente = true
+  tone: v.optional(v.union(v.literal("neutral"), v.literal("formal"), v.literal("informal"))), // ausente = neutral
+  glossary: v.optional(v.array(v.string())), // ≤ 100 termos que NÃO se traduzem
+});
+
+// Idioma efetivo da conversa (tradução automática). Não é "quente": muda raramente.
+export const conversationTranslationValidator = v.object({
+  lang: v.optional(v.string()),
+  source: v.optional(v.union(v.literal("auto"), v.literal("manual"), v.literal("contact"))),
+  mode: v.optional(v.union(v.literal("auto"), v.literal("manual"), v.literal("off"))),
+  detectedAt: v.optional(v.number()),
+  divergentStreak: v.optional(v.number()),
+  candidateLang: v.optional(v.string()),
 });
 
 // Telegram da equipe (F0+): opções da org. Ausente = padrões (ver docs/architecture/telegram.md).
@@ -687,6 +714,8 @@ const applicationTables = {
       modules: v.optional(orgModulesValidator),
       // Telegram da equipe (F0): protect_content / discreto / automático.
       telegram: v.optional(orgTelegramSettingsValidator),
+      // Tradução automática (F1): só age com `modules.translation === true`.
+      translation: v.optional(orgTranslationSettingsValidator),
       // Org de demonstração: habilita `demoSim` e BLOQUEIA todo envio real
       // (o dispatch do WhatsApp marca `delivered` sem chamar rede).
       demoMode: v.optional(v.boolean()),
@@ -957,6 +986,10 @@ const applicationTables = {
     // Opt-out de IA (LGPD art. 18): 9ª condição de elegibilidade do atendente —
     // contato com aiOptOut nunca recebe resposta automática (escala p/ humano).
     aiOptOut: v.optional(v.boolean()),
+
+    // Tradução automática (F1): idioma preferido (BCP-47 curto, lib/languages.ts).
+    preferredLanguage: v.optional(v.string()),
+    languageSource: v.optional(v.union(v.literal("manual"), v.literal("auto"))),
 
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1416,6 +1449,8 @@ const applicationTables = {
     channelProvider: v.optional(
       v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger"))
     ),
+    // Tradução automática (F1): idioma efetivo + override manual da conversa.
+    translation: v.optional(conversationTranslationValidator),
     messageCount: v.number(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -1526,6 +1561,11 @@ const applicationTables = {
     // Idem para o passe de visão: cópia rasa de metadata.vision.text, para o
     // search index encontrar o que estava escrito na imagem (convex/vision.ts).
     imageDescription: v.optional(v.string()),
+    // Tradução automática (F1): SEMPRE a versão na língua da equipe (inbound:
+    // tradução; outbound: o que o humano digitou; display: a resposta da IA na
+    // língua da equipe). `content` continua sendo o texto que trafegou no canal.
+    // Estado/metadados em `metadata.translation` (nunca o texto).
+    translatedText: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
@@ -1875,6 +1915,18 @@ const applicationTables = {
     // "@fulano" escrito no compositor sobrevivia como texto mas não notificava
     // ninguém na entrega (achado menor do review de correção).
     mentions: v.optional(v.array(v.string())),
+    // Tradução automática (F3, D9): traduz AO AGENDAR. Com `translation`,
+    // `content` já é o texto traduzido (o que sai no canal) e a entrega insere
+    // a mensagem `done`, sem desvio. `language` = mesmo arg do sendMessage.
+    language: v.optional(v.string()),
+    translation: v.optional(
+      v.object({
+        authoredText: v.string(),
+        sourceLang: v.string(),
+        targetLang: v.string(),
+        edited: v.optional(v.boolean()),
+      })
+    ),
     status: v.union(
       v.literal("pending"),
       v.literal("sent"),
@@ -2713,7 +2765,9 @@ const applicationTables = {
   agentRuns: defineTable({
     organizationId: v.id("organizations"),
     // Atendente: o teamMember IA. Copiloto: o teamMember HUMANO que comandou.
-    memberId: v.id("teamMembers"),
+    // Opcional desde a tradução automática (D7): a run de `kind:"translation"`
+    // de uma inbound não tem dono (org sem atendente IA) — fica a conversa.
+    memberId: v.optional(v.id("teamMembers")),
     kind: v.union(
       v.literal("copilot"),
       // Copiloto no Telegram (F3): mesmo loop, superfície e produto próprios.
@@ -2731,7 +2785,9 @@ const applicationTables = {
       // F4 — resumo/digest de um grupo (sob demanda ou diário).
       v.literal("group_summary"),
       // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
-      v.literal("attendant_draft")
+      v.literal("attendant_draft"),
+      // Tradução automática (F1): 1 chamada ao LLM por mensagem traduzida.
+      v.literal("translation")
     ),
     status: v.union(
       v.literal("running"),

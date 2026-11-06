@@ -11,7 +11,8 @@ import { recordRunUsage } from "./aiSpend";
 export const internalStartRun = internalMutation({
   args: {
     organizationId: v.id("organizations"),
-    memberId: v.id("teamMembers"),
+    // Opcional (D7): tradução de inbound sem atendente IA não tem dono.
+    memberId: v.optional(v.id("teamMembers")),
     kind: v.union(
       v.literal("copilot"),
       // Copiloto no Telegram (F3): mesmo loop, superfície e produto próprios.
@@ -25,7 +26,9 @@ export const internalStartRun = internalMutation({
       v.literal("group_radar"),
       v.literal("group_summary"),
       // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
-      v.literal("attendant_draft")
+      v.literal("attendant_draft"),
+      // Tradução automática (F1).
+      v.literal("translation")
     ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),

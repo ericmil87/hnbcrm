@@ -49,6 +49,7 @@ A person or company associated with leads.
 | Field | Type | Description |
 |-------|------|-------------|
 | firstName, lastName | string | Name |
+| preferredLanguage | string? | Language the contact writes and reads (v0.80, translation module), e.g. `es`, `pt-BR` |
 | email | string | Email address |
 | phone | string | Phone number |
 | company | string | Company name |
@@ -127,6 +128,7 @@ A message thread on a lead, scoped by channel.
 | channelConfigId | Id\<channelConfigs\>? | Account/number the thread belongs to (strict for `instagram`/`messenger`: only this config sends; Instagram/Messenger service window is 24 h, 7 days when opened by an ad) |
 | status | enum | `active`, `closed` |
 | messageCount | number | Total messages |
+| translation | object? | Translation module (v0.80): `{ lang?, source, mode: auto\|manual\|off }` — the customer's language for this thread |
 | lastMessageAt | number | Timestamp of last message |
 
 ---
@@ -158,9 +160,10 @@ An individual message in a conversation.
 | senderType | enum | `contact`, `human`, `ai` |
 | content | string | Message text |
 | contentType | enum | `text`, `image`, `file`, `audio` |
+| translatedText | string? | Team-language version of the message (v0.80, translation module). `content` stays the wire text |
 | isInternal | boolean | Internal note (not visible to contact) |
 | mentionedUserIds | Id\<teamMembers\>[] | @mentioned team members |
-| metadata | Record\<string, any\>? | Channel-specific extras. On a WhatsApp group message: `mediaDeferred` (attachment the group's media policy did not download, v0.62) or `mediaPurged` (attachment removed later by storage cleanup) — only visible via `crm_get_messages` / `GET /api/v1/conversations/messages`, not `crm_list_groups`/`crm_get_group`/`GET /api/v1/groups/messages` |
+| metadata | Record\<string, any\>? | Channel-specific extras. `metadata.translation` (v0.80): `{ status: pending\|done\|failed\|skipped, role: inbound\|outbound\|display, sourceLang?, targetLang?, engine?, at }`, no message text. On a WhatsApp group message: `mediaDeferred` (attachment the group's media policy did not download, v0.62) or `mediaPurged` (attachment removed later by storage cleanup) — only visible via `crm_get_messages` / `GET /api/v1/conversations/messages`, not `crm_list_groups`/`crm_get_group`/`GET /api/v1/groups/messages` |
 
 ---
 

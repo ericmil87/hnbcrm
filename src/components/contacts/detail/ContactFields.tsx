@@ -101,18 +101,21 @@ export function EditSelect({
   value,
   onChange,
   options,
+  emptyLabel = "Selecionar…",
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   options: SelectOption[];
+  /** Rótulo da opção vazia. */
+  emptyLabel?: string;
 }) {
   return (
     <Select
       label={label}
       value={value}
       onValueChange={onChange}
-      options={[{ value: "", label: "Selecionar…" }, ...options]}
+      options={[{ value: "", label: emptyLabel }, ...options]}
     />
   );
 }

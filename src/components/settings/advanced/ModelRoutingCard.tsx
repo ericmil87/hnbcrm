@@ -196,6 +196,25 @@ export function ModelRoutingCard({ organizationId, status }: { organizationId: I
           </FormField>
           {route("telegramCopilot", status.products.telegramCopilot?.order ?? "inherit")}
         </Product>
+        <Product title="Tradução automática (reserva por IA)">
+          <p className="text-xs text-text-muted sm:col-span-2">
+            Usado só quando o servidor de tradução próprio não responde (ou quando o painel de tradução pede só IA).
+          </p>
+          <FormField label="Modelo">
+            {(aria) => (
+              <Select
+                {...aria}
+                value={status.products.translation?.model ?? ""}
+                onValueChange={(v) => void saveRouting("translation", { model: v })}
+                options={[
+                  { value: "", label: "Padrão (DeepSeek Flash via OpenRouter)" },
+                  ...(modelOptions ?? []).map((m) => ({ value: m.id, label: m.id })),
+                ]}
+              />
+            )}
+          </FormField>
+          {route("translation", status.products.translation?.order ?? "inherit")}
+        </Product>
       </div>
     </Card>
   );

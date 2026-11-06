@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 
-const EFFECTIVE_DATE = "28 de setembro de 2026";
+const EFFECTIVE_DATE = "5 de novembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -270,6 +270,15 @@ export function PrivacyPage() {
                 ela. Do mesmo modo, os webhooks e as chaves de API criados pela organização transmitem dados
                 aos sistemas externos que ela escolher. Em ambos os casos, a escolha do destino e a
                 conformidade dessa transmissão são de responsabilidade da organização controladora.
+              </p>
+              <p>
+                A tradução automática de mensagens também é opcional, vem desligada e só um administrador
+                pode ativá-la. Quando ativada, o texto das mensagens a traduzir é processado primeiro pelo
+                mecanismo de tradução hospedado na infraestrutura da própria organização e, se ele não
+                estiver disponível, pelo provedor de modelo de linguagem configurado por ela, apenas para
+                gerar a versão no outro idioma. A tradução é armazenada junto da mensagem. A escolha do
+                provedor e a conformidade dessa transmissão, inclusive a eventual transferência
+                internacional de dados, são de responsabilidade da organização controladora.
               </p>
             </LegalSection>
 

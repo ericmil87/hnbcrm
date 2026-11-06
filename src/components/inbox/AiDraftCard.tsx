@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
-import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw, Bot, Paperclip } from "lucide-react";
+import { Sparkles, Send, Pencil, Trash2, Check, X, RefreshCw, Bot, Paperclip, Languages } from "lucide-react";
 import { VOCAB } from "@/lib/vocab";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -14,6 +14,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { InboxMessage } from "./types";
+import { teamLanguageLabel } from "@/lib/translationRules";
 
 // v4.2: proposedActions estruturadas (aprováveis, uma a uma). Rascunhos
 // antigos ainda guardam string[] — sem checkbox, apenas informativo.
@@ -42,6 +43,11 @@ type AiDraftMeta = {
   followUpId?: string;
   // v0.64 — flyer da agenda externa, re-anexado no envio.
   attachments?: string[];
+  // v0.80 F3 — versão na língua da equipe do rascunho escrito no idioma do
+  // lead (só leitura; "Editar e enviar" edita o texto que sai).
+  translatedText?: string;
+  translatedFrom?: string;
+  translatedTo?: string;
 };
 
 // Atalhos de coaching — clicar preenche o campo, o humano ainda pode editar
@@ -101,6 +107,7 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
 
   const [editing, setEditing] = useState(false);
   const [editedText, setEditedText] = useState(message.content);
+  const [showTeamVersion, setShowTeamVersion] = useState(false);
   const [busy, setBusy] = useState(false);
   const [instruction, setInstruction] = useState("");
   // Enquanto a IA reescreve, este card fica congelado — quando o novo rascunho
@@ -269,9 +276,29 @@ export function AiDraftCard({ message }: { message: InboxMessage }) {
               className="w-full resize-y px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
             />
           ) : (
-            <p className="text-sm text-text-primary whitespace-pre-wrap break-words">
-              {message.content}
-            </p>
+            <>
+              <p
+                className="text-sm text-text-primary whitespace-pre-wrap break-words"
+                lang={showTeamVersion && draft.translatedText ? draft.translatedTo : draft.translatedFrom}
+                dir="auto"
+                aria-live="polite"
+              >
+                {showTeamVersion && draft.translatedText ? draft.translatedText : message.content}
+              </p>
+              {draft.translatedText && (
+                <button
+                  type="button"
+                  onClick={() => setShowTeamVersion((v) => !v)}
+                  aria-pressed={showTeamVersion}
+                  className="mt-1 inline-flex items-center gap-1 rounded-full py-0.5 coarse:min-h-11 text-xs text-ai-400 hover:underline"
+                >
+                  <Languages size={12} aria-hidden="true" />
+                  {showTeamVersion
+                    ? "Ver o que será enviado"
+                    : `Ver em ${teamLanguageLabel(draft.translatedTo)}`}
+                </button>
+              )}
+            </>
           )}
 
           {proposedActions.length > 0 && (

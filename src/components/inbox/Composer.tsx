@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -40,6 +40,13 @@ import { useConversationDoc } from "@/components/inbox/useConversationDoc";
 import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { useTypingBroadcast } from "@/components/inbox/useMarkReadAndPresence";
 import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
+import { ConversationLanguageChip } from "@/components/inbox/ConversationLanguageChip";
+import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
+import { useTranslationSettings } from "@/hooks/useTranslationSettings";
+import { conversationLanguageState, languageDisplayName } from "@/lib/translationRules";
+import { composerTranslationMode, planTranslatedSend, type SendPlan } from "@/lib/composerTranslation";
+import { useComposerTranslation } from "@/components/inbox/useComposerTranslation";
+import { TranslationPreviewRow } from "@/components/inbox/TranslationPreviewRow";
 
 export interface ComposerFeatures {
   /** Gravar nota de voz (padrão: ligado). O painel do lead desliga. */
@@ -50,6 +57,8 @@ export interface ComposerFeatures {
   internalNote?: boolean;
   /** "/" abre as respostas rápidas (padrão: ligado). */
   quickReplies?: boolean;
+  /** Chip de idioma da conversa (padrão: ligado; só aparece com o módulo `translation`). */
+  translation?: boolean;
 }
 
 export interface ComposerProps {
@@ -82,6 +91,7 @@ export function Composer({
   const scheduleOn = features?.schedule !== false;
   const internalNoteOn = features?.internalNote !== false;
   const quickRepliesOn = features?.quickReplies !== false;
+  const translationFeatureOn = features?.translation !== false;
 
   const interaction = useConversationInteraction();
   const { replyTo, setReplyTo, draft, consumeDraft } = interaction;
@@ -122,18 +132,48 @@ export function Composer({
   const blocked = isComposerBlockedByWindow(windowKind, windowExpiresAt, now) && !isInternal;
   const mediaBlocked = mediaSendBlocked(channel, transport) && !isInternal;
   const textLimit = textLimitFor(channel, transport);
-  const textCounter =
-    textLimit && !isInternal && text.length > 0
-      ? {
-          label: formatTextCounter(measureText(text, textLimit.unit), textLimit),
-          parts: textPartsCount(text, textLimit),
-          over: textNeedsSplit(text, textLimit),
-        }
-      : null;
   const contactName =
     `${conversation?.contact?.firstName ?? ""} ${conversation?.contact?.lastName ?? ""}`.trim();
 
   const typing = useTypingBroadcast(conversationId, canSendTyping);
+
+  // Tradução automática: módulo da org + conversa 1 a 1 (o chip decide se aparece).
+  const translationSettings = useTranslationSettings(translationFeatureOn ? organizationId : null);
+  const languageState = conversationLanguageState(conversation, translationSettings);
+  const conversationLanguage = useConversationLanguage(conversationId);
+  const scheduledLanguageNote =
+    languageState.active && languageState.lang
+      ? `será enviada em ${languageDisplayName(languageState.lang, { lower: true })}`
+      : null;
+
+  // F3: prévia viva ("Revisar rápido"/"Revisar antes"); `direct` = desvio do servidor.
+  const requestPreview = useAction(api.translation.preview);
+  const translationMode = composerTranslationMode({
+    moduleEnabled: translationFeatureOn && translationSettings.moduleEnabled,
+    outboundMode: translationSettings.outboundMode,
+    languageState,
+    isInternal: isInternal || isGroupConversation,
+  });
+  const preview = useComposerTranslation({
+    conversationId,
+    mode: translationMode,
+    targetLang: languageState.lang,
+    text,
+    requestPreview: (args) =>
+      requestPreview({ conversationId: args.conversationId as Id<"conversations">, text: args.text }),
+  });
+  const previewEditRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // O contador do canal mede o que SAI: a tradução (editada) quando há prévia.
+  const counted = isInternal ? text : preview.counterText(text);
+  const textCounter =
+    textLimit && !isInternal && text.length > 0
+      ? {
+          label: formatTextCounter(measureText(counted, textLimit.unit), textLimit),
+          parts: textPartsCount(counted, textLimit),
+          over: textNeedsSplit(counted, textLimit),
+        }
+      : null;
 
   // Rascunho vindo de `location.state` (Nova conversa, handoff): aplica uma vez.
   useEffect(() => {
@@ -187,11 +227,27 @@ export function Composer({
     },
   });
 
-  const handleSend = async () => {
+  /** Args de tradução do envio a partir do plano da prévia (vazio = como antes). */
+  const translationSendArgs = (plan: SendPlan, typed: string) =>
+    plan.kind === "translated"
+      ? { content: plan.content, translation: plan.translation }
+      : plan.kind === "untranslated"
+        ? { content: typed, language: "off" as const }
+        : { content: typed };
+
+  const handleSend = async (opts: { untranslated?: boolean } = {}) => {
     const trimmed = text.trim();
     if (!hasContentToSend(text, stagedFiles.length) || blocked || sending) return;
     setSending(true);
     try {
+      // Tradução (F3): decide antes de criar a conversa; "Revisar antes" pode
+      // só mostrar a prévia (primeiro Enter) e não enviar nada.
+      const plan: SendPlan =
+        !isInternal && trimmed ? await preview.decide(trimmed, opts) : { kind: "plain" };
+      if (plan.kind === "confirm") {
+        focusInput();
+        return;
+      }
       const id = conversationId ?? (await ensureConversation?.());
       if (!id) return;
       const attachments = stagedFiles.map((f) => f.fileId);
@@ -202,7 +258,7 @@ export function Composer({
         isGroupConversation && !isInternal ? groupMentions.mentionsFor(trimmed) : [];
       await sendMessage({
         conversationId: id,
-        content: trimmed,
+        ...translationSendArgs(plan, trimmed),
         contentType: attachments.length ? deriveContentType(stagedFiles) : "text",
         isInternal,
         attachments: attachments.length ? attachments : undefined,
@@ -250,13 +306,27 @@ export function Composer({
       // notificava ninguém na entrega.
       const trimmed = text.trim();
       const memberMentions = isGroupConversation ? groupMentions.mentionsFor(trimmed) : [];
+      // Tradução (F3, D9): agenda já traduzida quando a prévia existe; sem ela,
+      // o servidor traduz na entrega (F1). Nunca espera a prévia aqui.
+      const plan: SendPlan = planTranslatedSend({
+        mode: translationMode,
+        typed: trimmed,
+        preview: preview.result,
+        editedText: preview.editedText,
+        strictArmed: true,
+      });
+      const args = translationSendArgs(plan, trimmed);
       await scheduleMessage({
         conversationId,
-        content: trimmed,
+        ...args,
         scheduledAt,
         ...(memberMentions.length ? { mentions: memberMentions } : {}),
       });
-      toast.success(`Mensagem agendada para ${formatDateTime(scheduledAt)}`);
+      toast.success(
+        "translation" in args
+          ? `Mensagem traduzida e agendada para ${formatDateTime(scheduledAt)}`
+          : `Mensagem agendada para ${formatDateTime(scheduledAt)}`
+      );
       setText("");
       setScheduleOpen(false);
       groupMentions.reset();
@@ -314,7 +384,36 @@ export function Composer({
         blocked={blocked}
         canSend={hasContentToSend(text, stagedFiles.length)}
         sending={sending}
-        onSend={handleSend}
+        onSend={() => void handleSend()}
+        onSendUntranslated={preview.active ? () => void handleSend({ untranslated: true }) : undefined}
+        sendingLabel={preview.waitingSend ? "Traduzindo…" : null}
+        translationPreview={
+          preview.view ? (
+            <TranslationPreviewRow
+              view={preview.view}
+              editing={preview.editing}
+              editedText={preview.editedText}
+              edited={preview.edited}
+              armed={preview.armed}
+              onEdit={() => {
+                preview.startEdit();
+                requestAnimationFrame(() => previewEditRef.current?.focus());
+              }}
+              onEditChange={preview.setEditedText}
+              onRestore={() => {
+                preview.restoreTranslation();
+                focusInput();
+              }}
+              onUntranslated={() => void handleSend({ untranslated: true })}
+              onEditKeyDown={(e) => {
+                if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing) return;
+                e.preventDefault();
+                void handleSend(e.ctrlKey || e.metaKey ? { untranslated: true } : {});
+              }}
+              editRef={previewEditRef}
+            />
+          ) : null
+        }
         onKeyDownBefore={(e) => groupMentions.handleKeyDown(e) || quickReplies.handleKeyDown(e)}
         inputRef={inputRef}
         teamMembers={assignableMembers(teamMembers)}
@@ -347,6 +446,11 @@ export function Composer({
                   key={item._id}
                   item={item}
                   onCancel={() => handleCancelScheduled(item._id)}
+                  languageNote={
+                    item.targetLang
+                      ? `traduzida para ${languageDisplayName(item.targetLang, { lower: true })}`
+                      : scheduledLanguageNote
+                  }
                 />
               ))}
             </div>
@@ -402,6 +506,19 @@ export function Composer({
                 onClose: () => setScheduleOpen(false),
               }
             : null
+        }
+        languageControl={
+          translationFeatureOn && languageState.eligible && conversationId ? (
+            <ConversationLanguageChip
+              state={languageState}
+              teamLanguage={translationSettings.teamLanguage}
+              onSelect={(choice) => void conversationLanguage.choose(choice)}
+              showBoth={conversationLanguage.showBoth}
+              onShowBothChange={conversationLanguage.setShowBoth}
+              hasContact={!!conversation?.contact}
+              onClosed={focusInput}
+            />
+          ) : null
         }
         voice={
           showVoice ? (

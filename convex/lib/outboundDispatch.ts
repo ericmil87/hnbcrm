@@ -10,17 +10,27 @@
  *
  * Quem chama continua responsável pelos próprios guards de negócio (ex.:
  * `!isInternal`); o guard de CANAL fica aqui dentro.
+ *
+ * Tradução automática (F1): ANTES do ramo por canal, o desvio
+ * `maybeDivertOutboundForTranslation` (lib/translationOps.ts) decide se a
+ * mensagem humana sai traduzida. Desviada = grava `pending` e agenda a
+ * tradução, que volta aqui depois de trocar o `content`; retida (`pending`/
+ * `failed`) = não despacha. Org sem o módulo: "dispatch", nada muda. A ordem
+ * (desvio antes do canal) é guardada por `convex/translationPort.test.ts`.
  */
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
 import { scheduleMetaMessagingDispatch } from "./metaDispatch";
+import { maybeDivertOutboundForTranslation } from "./translationOps";
 
 export async function scheduleOutboundDispatch(
   ctx: MutationCtx,
   conversation: Doc<"conversations">,
   messageId: Id<"messages">
 ): Promise<void> {
+  const translation = await maybeDivertOutboundForTranslation(ctx, conversation, messageId);
+  if (translation !== "dispatch") return;
   if (conversation.channel === "whatsapp") {
     await scheduleWhatsappDispatch(ctx, conversation, messageId);
     return;

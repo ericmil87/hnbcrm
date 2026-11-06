@@ -33,6 +33,7 @@ import {
 } from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
 import { telegramWebhook } from "./telegramHttp";
+import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
 
 const http = httpRouter();
 
@@ -750,6 +751,14 @@ http.route({
       if (denied) return denied;
       const body = await request.json();
 
+      // Tradução automática (F1): idioma preferido validado pelo catálogo.
+      if (body.preferredLanguage !== undefined && !isValidPreferredLanguageBody(body.preferredLanguage)) {
+        return errorResponse(
+          `preferredLanguage inválido: use um destes códigos (ou "" para limpar): ${LANGUAGE_CODES.join(", ")}`,
+          400
+        );
+      }
+
       const contactId = await ctx.runMutation(internal.contacts.internalCreateContact, {
         organizationId: apiKeyRecord.organizationId,
         firstName: body.firstName,
@@ -782,6 +791,7 @@ http.route({
         linkedinConnections: body.linkedinConnections,
         socialInfluenceScore: body.socialInfluenceScore,
         customFields: body.customFields,
+        ...(typeof body.preferredLanguage === "string" ? { preferredLanguage: body.preferredLanguage } : {}),
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
@@ -830,6 +840,14 @@ http.route({
       const body = await request.json();
       if (!body.contactId) return errorResponse("contactId required", 400);
 
+      // Tradução automática (F1): idioma preferido validado pelo catálogo.
+      if (body.preferredLanguage !== undefined && !isValidPreferredLanguageBody(body.preferredLanguage)) {
+        return errorResponse(
+          `preferredLanguage inválido: use um destes códigos (ou "" para limpar): ${LANGUAGE_CODES.join(", ")}`,
+          400
+        );
+      }
+
       await ctx.runMutation(internal.contacts.internalUpdateContact, {
         contactId: body.contactId as Id<"contacts">,
         firstName: body.firstName,
@@ -862,6 +880,7 @@ http.route({
         linkedinConnections: body.linkedinConnections,
         socialInfluenceScore: body.socialInfluenceScore,
         customFields: body.customFields,
+        ...(typeof body.preferredLanguage === "string" ? { preferredLanguage: body.preferredLanguage } : {}),
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
@@ -1015,6 +1034,10 @@ http.route({
         return errorResponse("conversationId and content (or attachments) required", 400);
       }
 
+      if (body.translation !== undefined && !isTranslationBody(body.translation)) {
+        return errorResponse("translation must be {authoredText, sourceLang, targetLang, edited?}", 400);
+      }
+
       const messageId = await ctx.runMutation(internal.conversations.internalSendMessage, {
         conversationId: body.conversationId as Id<"conversations">,
         content: body.content ?? "",
@@ -1026,6 +1049,11 @@ http.route({
           ? (body.replyToMessageId as Id<"messages">)
           : undefined,
         teamMemberId: apiKeyRecord.teamMemberId,
+        // Tradução automática (F1): "auto" | "off" | código; ignorado sem o módulo.
+        ...(typeof body.language === "string" && body.language.trim()
+          ? { language: body.language.trim().slice(0, 16) }
+          : {}),
+        ...(isTranslationBody(body.translation) ? { translation: body.translation } : {}),
       });
 
       return jsonResponse({ success: true, messageId }, 201);
@@ -1040,6 +1068,26 @@ http.route({
 // Mesmo núcleo da UI ("Nova conversa" no inbox): `startConversation.ts`. O
 // ator é o membro dono da API key, e as permissões da CHAVE funcionam como teto
 // (o membro E a chave precisam ter cada nível).
+
+/** `preferredLanguage` de `/contacts/create|update`: código do catálogo ou "" (limpa). */
+function isValidPreferredLanguageBody(raw: unknown): boolean {
+  if (typeof raw !== "string") return false;
+  return raw.trim() === "" || normalizeLanguageCode(raw) !== undefined;
+}
+
+/** Corpo `translation` de `POST /conversations/send` (F3: o cliente já traduziu). */
+function isTranslationBody(
+  raw: unknown
+): raw is { authoredText: string; sourceLang: string; targetLang: string; edited?: boolean } {
+  if (!raw || typeof raw !== "object") return false;
+  const t = raw as Record<string, unknown>;
+  return (
+    typeof t.authoredText === "string" &&
+    typeof t.sourceLang === "string" &&
+    typeof t.targetLang === "string" &&
+    (t.edited === undefined || typeof t.edited === "boolean")
+  );
+}
 
 /**
  * Erro das rotas de nova conversa: validação/regra (ConvexError PT-BR) → 400;

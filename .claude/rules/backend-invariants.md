@@ -76,3 +76,7 @@ Project-specific rules that change how code must be written. Official Convex rul
 - When rewriting a file, preserve every export (diff the export list before/after).
 - Convex Auth envs (`JWT_PRIVATE_KEY`, `JWKS`, `SITE_URL`) are per deployment; multiline PEM via `"$(cat key.pem)"` — pasted by hand it loses newlines silently.
 - Limits per transaction: 16k document reads, 8k writes, 1 MiB per document, 8 MiB payload, ~1 s query CPU, 10 min action. "Too many reads/writes" means a missing index or a `collect()` on a growing table.
+
+## Tradução automática (v0.80)
+- Só `lib/translationOps.ts` agenda `internal.translation.*`; chamar o scheduler direto de outro módulo é desvio da porta.
+- Saída traduzida só pelo desvio `maybeDivertOutboundForTranslation` (`lib/translationOps.ts`), chamado pela porta `scheduleOutboundDispatch`/`internalApplyOutbound`: `content` é sempre o texto de fio e a mensagem traduzida nunca sai sem `translatedText`/`metadata.translation` coerentes. Nota interna, grupos e campanhas não passam por ele.

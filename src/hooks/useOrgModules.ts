@@ -10,6 +10,10 @@ export interface OrgModules {
   demoMode: boolean;
   /** Instagram e Messenger (Meta Messaging). NÃO acende a Central. */
   metaMessaging: boolean;
+  /** Copiloto no Telegram da equipe. */
+  telegram: boolean;
+  /** Tradução automática das conversas (v0.80). */
+  translation: boolean;
 }
 
 /** Módulos ligáveis por org (tudo menos `demoMode`). */
@@ -22,9 +26,11 @@ const ALL_OFF: OrgModules = {
   central: false,
   demoMode: false,
   metaMessaging: false,
+  telegram: false,
+  translation: false,
 };
 
-/** Gate da Central: `metaMessaging` e `demoMode` ficam de fora de propósito. */
+/** Gate da Central: `metaMessaging`, `telegram`, `translation` e `demoMode` ficam de fora de propósito. */
 export function computeAnyEnabled(m: OrgModules): boolean {
   return m.units || m.departments || m.attribution || m.central;
 }

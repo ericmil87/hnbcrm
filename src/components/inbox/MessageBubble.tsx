@@ -1,5 +1,6 @@
 import { Tooltip } from "@/components/ui/Tooltip";
 import { useState } from "react";
+import { toast } from "sonner";
 import { Check, CheckCheck, AlertCircle, AlertTriangle, MoreHorizontal, Megaphone, UserRound, Bot, Ban, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
@@ -17,6 +18,8 @@ import { ReactionChips } from "./ReactionChips";
 import { QuotedBlock } from "./QuotedBlock";
 import { VoiceTranscription } from "./VoiceTranscription";
 import { ImageDescription } from "./ImageDescription";
+import { MessageTranslation } from "./MessageTranslation";
+import type { TranslationView } from "@/lib/translationRules";
 import { DeferredMedia } from "./DeferredMedia";
 import { SpecialMessageCard } from "./SpecialMessageCard";
 import { MediaUnavailablePlaceholder, MetaSpecialCard, StoryReplyStrip } from "./MetaSpecialCard";
@@ -93,6 +96,33 @@ interface MessageBubbleProps {
   onDownloadMedia?: (message: InboxMessage) => void;
   /** Jump to the original message a reply quotes (if it's on screen). */
   onJumpToMessage: (messageId: string) => void;
+  /**
+   * Tradução automática (v0.80), já decidida pelo thread (`translationView`).
+   * Ausente = conversa sem tradução (bolha igual a antes).
+   */
+  translation?: {
+    view: TranslationView;
+    /** Menu "Traduzir mesmo assim". */
+    canRequest: boolean;
+    /** Preferência "mostrar original junto". */
+    showBoth: boolean;
+    /** Pedido manual em voo. */
+    busy: boolean;
+  };
+  onTranslate?: (message: InboxMessage) => void;
+  /** F3, idioma incerto: fixa o idioma da conversa e traduz a mensagem. */
+  onTranslateAs?: (message: InboxMessage, lang: string) => void;
+  onRetryOutbound?: (message: InboxMessage) => void;
+  onSendUntranslated?: (message: InboxMessage) => void;
+}
+
+async function copyText(value: string, done: string) {
+  try {
+    await navigator.clipboard.writeText(value);
+    toast.success(done);
+  } catch {
+    toast.error("Não foi possível copiar.");
+  }
 }
 
 type BubbleStyle = {
@@ -207,6 +237,11 @@ export function MessageBubble({
   onDescribeImage,
   onDownloadMedia,
   onJumpToMessage,
+  translation,
+  onTranslate,
+  onTranslateAs,
+  onRetryOutbound,
+  onSendUntranslated,
 }: MessageBubbleProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const style = getBubbleStyle(message);
@@ -274,6 +309,9 @@ export function MessageBubble({
     !message.isInternal && message.direction === "outbound" && ticksMode !== false;
   const viaDevice = !message.isInternal && message.metadata?.via === "device";
   const isFailed = showDeliveryTick && message.deliveryStatus === "failed";
+  // "Traduzindo e enviando…": nada saiu ainda, então nada de tique.
+  const translationPending = message.metadata?.translation?.role === "outbound" && message.metadata.translation.status === "pending";
+  const translationFailed = message.metadata?.translation?.role === "outbound" && message.metadata.translation.status === "failed";
 
   // Suppress server-side placeholders like "[imagem]" when the real media is
   // present (or expected). Real captions still render below the media.
@@ -324,7 +362,14 @@ export function MessageBubble({
 
   const timestamp = formatMessageTimestamp(message.createdAt);
 
-  const canShowActions = actionsEnabled && (canInteract || needsTranscription || needsVision);
+  // Tradução: só texto visível de conversa 1 a 1 (o thread já tirou grupo e nota).
+  const tview: TranslationView =
+    translation && visibleText && !group ? translation.view : { kind: "none" };
+  const translated = tview.kind === "translated" ? tview : null;
+  const canTranslate = !!translation?.canRequest && !!visibleText && !group && !!onTranslate;
+
+  const canShowActions =
+    actionsEnabled && (canInteract || needsTranscription || needsVision || canTranslate || !!translated);
 
   const handleReactToggle = (emoji: string) => onReact(message, emoji);
 
@@ -400,6 +445,31 @@ export function MessageBubble({
                   }
                 : undefined
             }
+            onTranslate={
+              canTranslate
+                ? () => {
+                    setMenuOpen(false);
+                    onTranslate?.(message);
+                  }
+                : undefined
+            }
+            copyItems={
+              translated
+                ? translated.role === "inbound"
+                  ? [
+                      { label: "Copiar tradução", value: translated.primary, done: "Tradução copiada" },
+                      { label: "Copiar original", value: translated.secondary, done: "Original copiado" },
+                    ]
+                  : [
+                      { label: "Copiar o que foi enviado", value: translated.primary, done: "Texto copiado" },
+                      { label: "Copiar versão da equipe", value: translated.secondary, done: "Texto copiado" },
+                    ]
+                : undefined
+            }
+            onCopy={(item) => {
+              setMenuOpen(false);
+              void copyText(item.value, item.done);
+            }}
           />
         )}
       </div>
@@ -432,7 +502,7 @@ export function MessageBubble({
         </button>
       )}
       <span className="text-caption tabular-nums">{timestamp}</span>
-      {showDeliveryTick && (
+      {showDeliveryTick && !translationPending && (
         <span
           className="inline-flex items-center"
           title={readCount > 0 ? `Lido por ${readCount}` : undefined}
@@ -678,6 +748,18 @@ export function MessageBubble({
             <MentionRenderer content={message.content} className="text-sm" />
           ) : visibleText && group && group.mentionTokens.length > 0 ? (
             <GroupMentionText text={visibleText} tokens={group.mentionTokens} />
+          ) : visibleText && tview.kind !== "none" ? (
+            <MessageTranslation
+              view={tview}
+              text={visibleText}
+              variant={style.variant}
+              showBoth={translation?.showBoth}
+              busy={translation?.busy}
+              onRetry={onTranslate ? () => onTranslate(message) : undefined}
+              onRetryOutbound={canInteract && onRetryOutbound ? () => onRetryOutbound(message) : undefined}
+              onSendUntranslated={canInteract && onSendUntranslated ? () => onSendUntranslated(message) : undefined}
+              onTranslateAs={onTranslateAs ? (lang) => onTranslateAs(message, lang) : undefined}
+            />
           ) : (
             visibleText && (
               <FormattedMessageText text={visibleText} variant={style.variant} className="text-sm" />
@@ -686,7 +768,7 @@ export function MessageBubble({
 
           {footer}
 
-          {isFailed && message.metadata?.deliveryError && (
+          {isFailed && !translationFailed && message.metadata?.deliveryError && (
             <p className={cn("text-caption", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-error")}>
               {message.metadata.deliveryError}
             </p>

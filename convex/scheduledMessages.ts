@@ -10,6 +10,14 @@ import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/gro
 import { firstResponsePatch } from "./lib/conversationTiming";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { outboundTranslationInsertFields } from "./lib/translationOps";
+
+const scheduledTranslationValidator = v.object({
+  authoredText: v.string(),
+  sourceLang: v.string(),
+  targetLang: v.string(),
+  edited: v.optional(v.boolean()),
+});
 
 // Mensagens agendadas: o composer agenda um texto para uma conversa; a entrega
 // roda via ctx.scheduler.runAt e reaproveita o mesmo caminho de dispatch do
@@ -24,6 +32,10 @@ export const schedule = mutation({
     // Validados contra os participantes na hora da ENTREGA — quem saiu da sala
     // entre o agendamento e o envio não é notificado.
     mentions: v.optional(v.array(v.string())),
+    // Tradução automática (F3): mesmos args do `sendMessage`. Com `translation`
+    // o `content` já é o traduzido (prévia do composer) e a entrega sai `done`.
+    language: v.optional(v.string()),
+    translation: v.optional(scheduledTranslationValidator),
   },
   returns: v.id("scheduledMessages"),
   handler: async (ctx, args) => {
@@ -52,12 +64,28 @@ export const schedule = mutation({
         ? args.mentions.filter((j) => typeof j === "string" && j.length > 0).slice(0, 1024)
         : undefined;
 
+    // Grupo nunca traduz; fora dele, valida já (idioma fora do catálogo = erro
+    // agora, não na entrega).
+    const translationArgs =
+      conversation.kind === "group"
+        ? {}
+        : {
+            ...(args.language !== undefined ? { language: args.language } : {}),
+            ...(args.translation
+              ? { translation: { ...args.translation, authoredText: args.translation.authoredText.trim() } }
+              : {}),
+          };
+    if (translationArgs.language !== undefined || translationArgs.translation) {
+      outboundTranslationInsertFields(translationArgs, now);
+    }
+
     const scheduledMessageId = await ctx.db.insert("scheduledMessages", {
       organizationId: conversation.organizationId,
       conversationId: args.conversationId,
       content,
       scheduledAt: args.scheduledAt,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
+      ...translationArgs,
       status: "pending",
       createdBy: userMember._id,
       createdAt: now,
@@ -82,6 +110,9 @@ export const listPending = query({
       content: v.string(),
       scheduledAt: v.number(),
       createdAt: v.number(), // início da janela — base da barra de progresso na UI
+      // F3: agendada já traduzida — o que a equipe escreveu e o idioma de saída.
+      authoredText: v.optional(v.string()),
+      targetLang: v.optional(v.string()),
     })
   ),
   handler: async (ctx, args) => {
@@ -101,6 +132,9 @@ export const listPending = query({
       content: r.content,
       scheduledAt: r.scheduledAt,
       createdAt: r.createdAt,
+      ...(r.translation
+        ? { authoredText: r.translation.authoredText, targetLang: r.translation.targetLang }
+        : {}),
     }));
   },
 });
@@ -160,6 +194,28 @@ export const deliver = internalMutation({
     // entrega não entra no `MentionedJID`.
     const mentions = await resolveGroupMentions(ctx, conversation, row.mentions);
 
+    // Tradução (F3): traduzida ao agendar = nasce `done` (sem desvio). Se a
+    // equipe desligou a tradução da conversa no meio tempo, sai o que ela
+    // escreveu, sem tradução. Sem nada disso, o desvio da porta decide (F1).
+    const translationOff = row.translation !== undefined && conversation.translation?.mode === "off";
+    const content = translationOff ? row.translation!.authoredText : row.content;
+    let translationFields: { metadata?: Record<string, unknown>; translatedText?: string } = {};
+    try {
+      translationFields = translationOff
+        ? outboundTranslationInsertFields({ language: "off" }, now)
+        : row.translation || row.language !== undefined
+          ? outboundTranslationInsertFields(
+              {
+                ...(row.translation ? { translation: row.translation } : {}),
+                ...(row.language !== undefined ? { language: row.language } : {}),
+              },
+              now
+            )
+          : {};
+    } catch {
+      translationFields = {};
+    }
+
     const messageId = await ctx.db.insert("messages", {
       organizationId: conversation.organizationId,
       conversationId: row.conversationId,
@@ -167,11 +223,12 @@ export const deliver = internalMutation({
       direction: "outbound",
       senderId: member._id,
       senderType: actorType,
-      content: row.content,
+      content,
       contentType: "text",
       isInternal: false,
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
-      metadata: { scheduled: true },
+      metadata: { scheduled: true, ...(translationFields.metadata ?? {}) },
+      ...(translationFields.translatedText !== undefined ? { translatedText: translationFields.translatedText } : {}),
       createdAt: now,
     });
 

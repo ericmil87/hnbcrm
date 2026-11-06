@@ -27,7 +27,7 @@ export type AiStatus = {
   // Override por produto. order "inherit" = herda o platformOrder da org;
   // model "" (só na visão) = Automático, a cadeia inteira com fallover.
   products: Record<
-    "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent" | "telegramCopilot",
+    "copilot" | "attendant" | "vision" | "groupPosts" | "groupAgent" | "telegramCopilot" | "translation",
     { order: string; model: string }
   >;
   byo: { provider: string; baseUrl: string | null; keyLast4: string | null } | null;

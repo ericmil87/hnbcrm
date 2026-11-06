@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
@@ -11,6 +11,7 @@ import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import type { Id } from "./_generated/dataModel";
+import { normalizeLanguageCode } from "./lib/languages";
 
 // Shared optional-field arg validators for enrichment fields
 const enrichmentArgFields = {
@@ -71,6 +72,32 @@ function diffChanges(args: Record<string, any>, contact: Record<string, any>) {
     before.customFields = contact.customFields;
   }
   return { changes, before };
+}
+
+/**
+ * Tradução automática (F1): `preferredLanguage` escrito por gente (app/REST/MCP)
+ * vira escolha MANUAL (a detecção não sobrescreve). `""` limpa; código fora do
+ * catálogo (`lib/languages.ts`) = erro legível.
+ */
+function parsePreferredLanguage(raw: string): string | undefined {
+  if (raw.trim() === "") return undefined;
+  const code = normalizeLanguageCode(raw);
+  if (!code) throw new ConvexError(`Idioma "${raw}" não suportado`);
+  return code;
+}
+
+function applyPreferredLanguageChange(
+  changes: Record<string, any>,
+  before: Record<string, any>,
+  contact: { preferredLanguage?: string },
+  raw: string | undefined
+): void {
+  if (raw === undefined) return;
+  const code = parsePreferredLanguage(raw);
+  if (code === contact.preferredLanguage) return;
+  changes.preferredLanguage = code;
+  changes.languageSource = code ? "manual" : undefined;
+  before.preferredLanguage = contact.preferredLanguage ?? null;
 }
 
 // ===== Public queries =====
@@ -341,6 +368,8 @@ export const updateContact = mutation({
     whatsappNumber: v.optional(v.string()),
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    // Tradução automática (F1): idioma preferido (código do catálogo); "" limpa.
+    preferredLanguage: v.optional(v.string()),
     ...enrichmentArgFields,
   },
   returns: v.null(),
@@ -351,7 +380,9 @@ export const updateContact = mutation({
     const userMember = await requireAuth(ctx, contact.organizationId);
     const now = Date.now();
 
-    const { changes, before } = diffChanges(args, contact);
+    const { preferredLanguage, ...rest } = args;
+    const { changes, before } = diffChanges(rest, contact);
+    applyPreferredLanguageChange(changes, before, contact, preferredLanguage);
     if (Object.keys(changes).length === 0) return null;
 
     const merged = { ...contact, ...changes };
@@ -570,6 +601,8 @@ export const internalCreateContact = internalMutation({
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     teamMemberId: v.id("teamMembers"),
+    // Tradução automática (F1): idioma preferido (código do catálogo).
+    preferredLanguage: v.optional(v.string()),
     ...enrichmentArgFields,
   },
   returns: v.id("contacts"),
@@ -583,6 +616,8 @@ export const internalCreateContact = internalMutation({
 
     const now = Date.now();
     const searchText = buildSearchText(args);
+    const preferredLanguage =
+      args.preferredLanguage !== undefined ? parsePreferredLanguage(args.preferredLanguage) : undefined;
 
     const contactId = await ctx.db.insert("contacts", {
       organizationId: args.organizationId,
@@ -617,6 +652,7 @@ export const internalCreateContact = internalMutation({
       linkedinConnections: args.linkedinConnections,
       socialInfluenceScore: args.socialInfluenceScore,
       customFields: args.customFields,
+      ...(preferredLanguage ? { preferredLanguage, languageSource: "manual" as const } : {}),
       createdAt: now,
       updatedAt: now,
     });
@@ -654,6 +690,8 @@ export const internalUpdateContact = internalMutation({
     telegramUsername: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
     teamMemberId: v.id("teamMembers"),
+    // Tradução automática (F1): idioma preferido (código do catálogo); "" limpa.
+    preferredLanguage: v.optional(v.string()),
     ...enrichmentArgFields,
   },
   returns: v.null(),
@@ -669,7 +707,9 @@ export const internalUpdateContact = internalMutation({
     }
 
     const now = Date.now();
-    const { changes, before } = diffChanges(args, contact);
+    const { preferredLanguage, ...rest } = args;
+    const { changes, before } = diffChanges(rest, contact);
+    applyPreferredLanguageChange(changes, before, contact, preferredLanguage);
     if (Object.keys(changes).length === 0) return null;
 
     const merged = { ...contact, ...changes };

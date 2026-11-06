@@ -8,6 +8,8 @@ const off: OrgModules = {
   central: false,
   demoMode: false,
   metaMessaging: false,
+  telegram: false,
+  translation: false,
 };
 
 describe("computeAnyEnabled", () => {
@@ -18,6 +20,7 @@ describe("computeAnyEnabled", () => {
   it("does not light up the Central for metaMessaging or demoMode", () => {
     expect(computeAnyEnabled({ ...off, metaMessaging: true })).toBe(false);
     expect(computeAnyEnabled({ ...off, demoMode: true })).toBe(false);
+    expect(computeAnyEnabled({ ...off, telegram: true, translation: true })).toBe(false);
   });
 
   it("is true for any Central module", () => {

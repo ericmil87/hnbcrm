@@ -59,6 +59,14 @@ export interface ComposerViewProps {
   schedule?: ComposerScheduleState | null;
   /** Gravador de voz: quando presente, substitui o botão de enviar. */
   voice?: ReactNode;
+  /** Chip de idioma da conversa (tradução automática), à direita de "Nota interna". */
+  languageControl?: ReactNode;
+  /** Prévia da tradução ("Será enviado em espanhol: …"), abaixo do campo. */
+  translationPreview?: ReactNode;
+  /** Ctrl+Enter (ou Cmd+Enter): enviar sem traduzir, uma vez. */
+  onSendUntranslated?: () => void;
+  /** Rótulo do botão enquanto envia (ex.: "Traduzindo…" com a prévia em voo). */
+  sendingLabel?: string | null;
 }
 
 /**
@@ -92,6 +100,10 @@ export function ComposerView({
   emojiButton,
   schedule,
   voice,
+  languageControl,
+  translationPreview,
+  onSendUntranslated,
+  sendingLabel,
 }: ComposerViewProps) {
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -100,13 +112,18 @@ export function ComposerView({
 
   const handleKeyDown = (e: KeyboardEvent) => {
     if (onKeyDownBefore?.(e)) return;
+    if (onSendUntranslated && e.key === "Enter" && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
+      e.preventDefault();
+      if (canSend && !blocked && !sending) onSendUntranslated();
+      return;
+    }
     if (isSendKey(e)) {
       e.preventDefault();
       if (canSend && !blocked && !sending) onSend();
     }
   };
 
-  const sendLabel = isInternal ? "Adicionar nota" : "Enviar";
+  const sendLabel = sending && sendingLabel ? sendingLabel : isInternal ? "Adicionar nota" : "Enviar";
 
   return (
     <form onSubmit={submit} className="shrink-0 border-t border-border bg-composer">
@@ -122,14 +139,18 @@ export function ComposerView({
             {windowInfo.text}
           </p>
         )}
-        {showInternalToggle && (
-          <div className="flex items-center gap-2 mb-2">
-            <Checkbox
-              checked={isInternal}
-              onChange={(e) => onInternalChange(e.target.checked)}
-              label="Nota interna"
-            />
+        {(showInternalToggle || (languageControl && !isInternal)) && (
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            {showInternalToggle && (
+              <Checkbox
+                checked={isInternal}
+                onChange={(e) => onInternalChange(e.target.checked)}
+                label="Nota interna"
+              />
+            )}
             {isInternal && <Badge variant="warning">Visível apenas para membros da equipe</Badge>}
+            {/* Nota interna nunca é traduzida: o chip some com ela. */}
+            {!isInternal && languageControl}
           </div>
         )}
 
@@ -240,6 +261,8 @@ export function ComposerView({
             </Button>
           )}
         </div>
+
+        {!hideField && !isInternal && translationPreview}
 
         {textCounter && (
           <p

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ArrowLeftRight, Bot, Clock, ExternalLink, Users } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Bot, Clock, ExternalLink, Languages, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -10,6 +10,10 @@ import { AiConversationControls, ReturnToAiButton } from "@/components/inbox/AiD
 import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { FollowUpChip } from "@/components/inbox/FollowUpChip";
+import { ConversationLanguageChip, ConversationLanguageDialog } from "@/components/inbox/ConversationLanguageChip";
+import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
+import { useTranslationSettings } from "@/hooks/useTranslationSettings";
+import { conversationLanguageState } from "@/lib/translationRules";
 import { GroupMembersButton } from "@/components/inbox/GroupMembersPanel";
 import { GroupMenuItems, type GroupMenuActions } from "@/components/inbox/GroupMenuItems";
 import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
@@ -103,6 +107,25 @@ export function ConversationHeader({
   const convTransport: string | undefined = conversation.channelProvider;
   const contactName = `${conversation.contact?.firstName ?? ""} ${conversation.contact?.lastName ?? ""}`.trim();
   const openContactId = conversation.contact?._id as Id<"contacts"> | undefined;
+
+  // Tradução automática: pílula de leitura quando o lead fala outro idioma e
+  // "Idioma da conversa…" no menu ⋮ (o seletor completo mora no composer).
+  const translationSettings = useTranslationSettings(organizationId);
+  const languageState = conversationLanguageState(conversation, translationSettings);
+  const conversationLanguage = useConversationLanguage(conversationId);
+  const [languageDialogOpen, setLanguageDialogOpen] = useState(false);
+  const languageOptions = {
+    state: languageState,
+    teamLanguage: translationSettings.teamLanguage,
+    onSelect: (choice: Parameters<typeof conversationLanguage.choose>[0]) => void conversationLanguage.choose(choice),
+    showBoth: conversationLanguage.showBoth,
+    onShowBothChange: conversationLanguage.setShowBoth,
+    hasContact: !!conversation.contact,
+  };
+  const languagePill =
+    !isGroup && languageState.foreign ? (
+      <ConversationLanguageChip {...languageOptions} variant="header" readOnly={!canReply} />
+    ) : null;
 
   // Estado do atendente nesta conversa (v4.2): alimenta o chip "IA em espera / preparando".
   const aiConvState = useQuery(api.attendant.getConversationAiState, aiActive ? { conversationId } : "skip");
@@ -270,7 +293,21 @@ export function ConversationHeader({
           ? (close) => (
               <GroupMenuItems close={close} conversationId={conversationId} actions={{ ...groupMenu, groupAiPaused }} />
             )
-          : undefined
+          : !isGroup && languageState.eligible && canReply
+            ? (close) => (
+                <button
+                  type="button"
+                  onClick={() => {
+                    close();
+                    setLanguageDialogOpen(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+                >
+                  <Languages size={15} />
+                  Idioma da conversa…
+                </button>
+              )
+            : undefined
       }
       leadId={!isGroup && conversation.leadId ? (conversation.leadId as Id<"leads">) : undefined}
       onLeadDeleted={onLeadDeleted}
@@ -310,11 +347,16 @@ export function ConversationHeader({
         )}
         {originLine && <div className="pl-11 flex">{originLine}</div>}
         {contactTyping && <span className="pl-11 text-xs text-brand-500 animate-pulse">{typingText}</span>}
-        {showAiControls && (
+        {(showAiControls || languagePill) && (
           <div className="pl-11 flex flex-wrap items-center gap-2">
-            {aiControls}
-            <AiStatusChip state={aiConvState as AiConvState} />
-            <FollowUpChip conversationId={conversationId} />
+            {showAiControls && (
+              <>
+                {aiControls}
+                <AiStatusChip state={aiConvState as AiConvState} />
+                <FollowUpChip conversationId={conversationId} />
+              </>
+            )}
+            {languagePill}
           </div>
         )}
         {windowInfo && (
@@ -342,6 +384,7 @@ export function ConversationHeader({
               <FollowUpChip conversationId={conversationId} />
             </>
           )}
+          {languagePill}
           {windowInfo && (
             <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
               <Clock className="h-4 w-4 shrink-0" />
@@ -353,6 +396,12 @@ export function ConversationHeader({
       </div>
 
       {children}
+
+      <ConversationLanguageDialog
+        open={languageDialogOpen}
+        onClose={() => setLanguageDialogOpen(false)}
+        {...languageOptions}
+      />
 
       {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
       {handoffPending && (

@@ -4,7 +4,7 @@ import type { OrgModules } from "@/hooks/useOrgModules";
 import { groupOf, groupSettingsPanels, resolveSettingsPanel, resolveSettingsPanelState, visibleSettingsPanels, type SettingsCtx } from "./settingsNav";
 
 const NO_MODULES: OrgModules = {
-  units: false, departments: false, attribution: false, central: false, demoMode: false, metaMessaging: false,
+  units: false, departments: false, attribution: false, central: false, demoMode: false, metaMessaging: false, telegram: false, translation: false,
 };
 const ctx = (allowed: Array<[string, string]>, modules: Partial<OrgModules> = {}): SettingsCtx => ({
   can: (c, l) => allowed.some(([ac, al]) => ac === c && (al === l || (al === "manage" && l === "view"))),

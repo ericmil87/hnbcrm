@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router";
 import {
+  Languages,
   Kanban,
   Contact2,
   MessageSquare,
@@ -70,8 +71,8 @@ export function LandingPage() {
     <>
       <SEO
         title="HNBCRM — CRM com Colaboração Humano-IA"
-        description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e central de atendimento no WhatsApp, e integre agentes de IA via API REST e MCP."
-        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas"
+        description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e central de atendimento no WhatsApp, e integre agentes de IA via API REST e MCP. Atenda clientes em outros idiomas com tradução automática de mensagens."
+        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas, tradução automática de mensagens, atendimento multilíngue"
       />
       <OrganizationStructuredData />
       <div className="min-h-screen bg-surface-base text-text-primary">
@@ -258,6 +259,12 @@ function FeaturesSection() {
         "Setores com filas, transferência de conversas entre atendentes e várias unidades no mesmo número. Painel por unidade, setor e campanha com CAC e ROAS de mídia paga. Opcional, ligado por empresa.",
     },
     {
+      icon: Languages,
+      title: "Tradução automática de conversas",
+      description:
+        "Seu cliente escreve em espanhol, inglês ou francês e você lê em português. Você responde em português e a mensagem chega no idioma dele. Detecção automática, sem copiar e colar em tradutor. Opcional, ligado por empresa.",
+    },
+    {
       icon: Bot,
       title: "IA Copiloto & Atendente",
       description: "Assistente in-app que opera o CRM com seu time e atendente virtual que responde no WhatsApp em modo sugestão, com follow-up automático dos combinados com o cliente.",
@@ -397,7 +404,7 @@ function DeveloperSection() {
     {
       icon: Server,
       title: "Servidor MCP",
-      description: "66 ferramentas para agentes de IA via Model Context Protocol. Compatível com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
+      description: "68 ferramentas para agentes de IA via Model Context Protocol. Compatível com Claude, Cursor, VS Code, Hermes Agent e OpenClaw.",
       link: "/developers#mcp",
       linkText: "Configurar MCP",
     },
@@ -778,6 +785,10 @@ function PricingSection() {
               <li className="flex items-start gap-2">
                 <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
                 <span className="text-text-secondary">Repasses IA ↔ Humano</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
+                <span className="text-text-secondary">Tradução automática de conversas</span>
               </li>
               <li className="flex items-start gap-2">
                 <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
