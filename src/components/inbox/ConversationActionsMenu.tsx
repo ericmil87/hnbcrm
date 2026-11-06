@@ -11,6 +11,7 @@ import { useChatMode } from "@/components/layout/chatMode";
 import { Popover } from "@/components/ui/Popover";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 // Menu "..." do header da conversa: arquivar/desarquivar + etiquetas (toggle,
 // criar, excluir). Paleta fixa — a cor vive no doc da etiqueta.
@@ -61,6 +62,8 @@ export function ConversationActionsMenu({
   const canDeleteLead = !!leadId && can("leads", "full");
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
+  // Excluir tira a etiqueta de TODAS as conversas da organização: sempre confirma.
+  const [labelToDelete, setLabelToDelete] = useState<{ id: Id<"conversationLabels">; name: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(LABEL_COLORS[3]);
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -205,7 +208,10 @@ export function ConversationActionsMenu({
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDeleteLabel(label._id, label.name)}
+                    onClick={() => {
+                      setOpen(false);
+                      setLabelToDelete({ id: label._id, name: label.name });
+                    }}
                     className="shrink-0 p-1 rounded-full text-text-muted opacity-0 coarse:opacity-100 group-hover:opacity-100 coarse:p-2.5 hover:text-semantic-error transition-all"
                     aria-label={`Excluir etiqueta ${label.name}`}
                   >
@@ -226,6 +232,21 @@ export function ConversationActionsMenu({
               }}
               className="px-3 py-2 space-y-2 border-t border-border mt-1"
             >
+              <div className="flex items-center gap-1.5 coarse:gap-2.5" role="group" aria-label="Cor da etiqueta">
+                {LABEL_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setNewColor(color)}
+                    className={cn(
+                      "h-5 w-5 coarse:h-8 coarse:w-8 rounded-full transition-transform hover:scale-110",
+                      newColor === color && "ring-2 ring-offset-1 ring-brand-500 ring-offset-surface-overlay"
+                    )}
+                    style={{ backgroundColor: color }}
+                    aria-label={`Cor ${color}`}
+                  />
+                ))}
+              </div>
               <input
                 autoFocus
                 value={newName}
@@ -236,21 +257,6 @@ export function ConversationActionsMenu({
                 aria-label="Nome da etiqueta"
                 className="w-full h-10 md:h-8 px-2.5 rounded-lg text-base md:text-sm bg-surface-sunken border border-border-strong text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
               />
-              <div className="flex items-center gap-1.5">
-                {LABEL_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    type="button"
-                    onClick={() => setNewColor(color)}
-                    className={cn(
-                      "h-5 w-5 rounded-full transition-transform hover:scale-110",
-                      newColor === color && "ring-2 ring-offset-1 ring-brand-500 ring-offset-surface-overlay"
-                    )}
-                    style={{ backgroundColor: color }}
-                    aria-label={`Cor ${color}`}
-                  />
-                ))}
-              </div>
               <div className="flex items-center justify-end gap-2">
                 <Button
                   type="button"
@@ -296,6 +302,19 @@ export function ConversationActionsMenu({
           )}
         </div>
       </Popover>
+
+      <ConfirmDialog
+        open={labelToDelete !== null}
+        onClose={() => setLabelToDelete(null)}
+        onConfirm={() => {
+          if (labelToDelete) void handleDeleteLabel(labelToDelete.id, labelToDelete.name);
+          setLabelToDelete(null);
+        }}
+        title="Excluir etiqueta?"
+        description={`A etiqueta "${labelToDelete?.name ?? ""}" sai de todas as conversas da organização. Não dá para desfazer.`}
+        confirmLabel="Excluir"
+        variant="danger"
+      />
 
       {confirmDeleteLead && leadId && (
         <DeleteLeadDialog
