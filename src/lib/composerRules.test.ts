@@ -4,6 +4,9 @@ import {
   deriveContentType,
   hasContentToSend,
   isSendKey,
+  isSendKeyFor,
+  composerMaxRows,
+  autoGrowHeight,
   placeholderFor,
   replyAuthorLabel,
   replyPreviewText,
@@ -60,5 +63,43 @@ describe("composerRules", () => {
     expect(placeholderFor({ internal: false, blocked: true, group: true })).toContain("Janela fechada");
     expect(placeholderFor({ internal: false, blocked: false, group: true })).toContain("grupo");
     expect(placeholderFor({ internal: false, blocked: false, group: false })).toBe("Digite uma mensagem...");
+  });
+});
+
+describe("isSendKeyFor", () => {
+  const enter = { key: "Enter", shiftKey: false };
+  it("desktop: Enter envia, Shift+Enter não", () => {
+    expect(isSendKeyFor(enter, false)).toBe(true);
+    expect(isSendKeyFor({ ...enter, shiftKey: true }, false)).toBe(false);
+  });
+  it("toque: Enter só quebra a linha; Ctrl/Cmd+Enter ainda envia", () => {
+    expect(isSendKeyFor(enter, true)).toBe(false);
+    expect(isSendKeyFor({ ...enter, ctrlKey: true }, true)).toBe(true);
+    expect(isSendKeyFor({ ...enter, metaKey: true }, true)).toBe(true);
+  });
+  it("composição IME nunca envia", () => {
+    expect(isSendKeyFor({ ...enter, nativeEvent: { isComposing: true } }, false)).toBe(false);
+  });
+});
+
+describe("autoGrowHeight", () => {
+  const base = { lineHeight: 24, paddingY: 20, maxRows: 6 };
+  it("uma linha fica na altura mínima", () => {
+    expect(autoGrowHeight({ ...base, scrollHeight: 44 })).toEqual({ height: 44, scrollable: false });
+    expect(autoGrowHeight({ ...base, scrollHeight: 10 })).toEqual({ height: 44, scrollable: false });
+  });
+  it("cresce com o conteúdo até o limite", () => {
+    expect(autoGrowHeight({ ...base, scrollHeight: 92 })).toEqual({ height: 92, scrollable: false });
+    expect(autoGrowHeight({ ...base, scrollHeight: 164 })).toEqual({ height: 164, scrollable: false });
+  });
+  it("passou de maxRows: trava e rola por dentro", () => {
+    expect(autoGrowHeight({ ...base, scrollHeight: 500 })).toEqual({ height: 164, scrollable: true });
+  });
+  it("conta a borda", () => {
+    expect(autoGrowHeight({ ...base, borderY: 2, scrollHeight: 44 })).toEqual({ height: 46, scrollable: false });
+  });
+  it("limites por aparelho", () => {
+    expect(composerMaxRows(false)).toBe(6);
+    expect(composerMaxRows(true)).toBe(10);
   });
 });

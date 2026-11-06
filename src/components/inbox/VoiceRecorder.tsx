@@ -205,12 +205,12 @@ export function VoiceRecorder({
           onClick={startRecording}
           disabled={disabled}
           className={cn(
-            "shrink-0 p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            "flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-brand-600 text-white transition-colors hover:bg-brand-700",
             "disabled:opacity-40 disabled:cursor-not-allowed"
           )}
           aria-label="Gravar nota de voz"
         >
-          <Mic size={18} />
+          <Mic size={20} />
         </button>
       </Tooltip>
     );
@@ -218,7 +218,7 @@ export function VoiceRecorder({
 
   if (mode === "recording") {
     return (
-      <div className="flex-1 flex items-center gap-3 h-10 px-3 bg-surface-sunken border border-border-strong rounded-lg">
+      <div className="flex-1 flex items-center gap-3 h-11 px-3 bg-surface-sunken border border-border-strong rounded-3xl">
         <span className="relative flex h-2.5 w-2.5 shrink-0">
           <span className="absolute inline-flex h-full w-full rounded-full bg-semantic-error opacity-75 animate-ping" />
           <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-semantic-error" />
@@ -248,7 +248,7 @@ export function VoiceRecorder({
 
   // preview
   return (
-    <div className="flex-1 flex items-center gap-2 h-auto min-h-10 px-2 py-1.5 bg-surface-sunken border border-border-strong rounded-lg">
+    <div className="flex-1 flex items-center gap-2 h-auto min-h-11 px-2 py-1.5 bg-surface-sunken border border-border-strong rounded-3xl">
       <button
         type="button"
         onClick={resetToIdle}

@@ -25,7 +25,7 @@ import {
   defaultScheduleValue,
   deriveContentType,
   hasContentToSend,
-  isSendKey,
+  isSendKeyFor,
   placeholderFor,
   replyAuthorLabel,
   replyPreviewText,
@@ -43,6 +43,7 @@ import { useTypingBroadcast } from "@/components/inbox/useMarkReadAndPresence";
 import { VoiceRecorder } from "@/components/inbox/VoiceRecorder";
 import { ConversationLanguageChip } from "@/components/inbox/ConversationLanguageChip";
 import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { conversationLanguageState, languageDisplayName } from "@/lib/translationRules";
 import { composerTranslationMode, planTranslatedSend, sendArgsForPlan, type SendPlan } from "@/lib/composerTranslation";
@@ -106,6 +107,7 @@ export function Composer({
   const [recorderActive, setRecorderActive] = useState(false);
   const [sending, setSending] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
 
   const sendMessage = useMutation(api.conversations.sendMessage);
   const scheduleMessage = useMutation(api.scheduledMessages.schedule);
@@ -380,6 +382,20 @@ export function Composer({
         canSend={hasContentToSend(text, stagedFiles.length)}
         sending={sending}
         onSend={() => void handleSend()}
+        onOpenQuickReplies={
+          quickRepliesOn && !isInternal
+            ? () => {
+                // Com rascunho, "/" apagaria o texto (o gatilho só vale na mensagem inteira):
+                // abre a lista de respostas rápidas em vez disso.
+                if (text.trim() === "") {
+                  setText("/");
+                  focusInput();
+                } else {
+                  quickReplies.setManageOpen(true);
+                }
+              }
+            : undefined
+        }
         sendingLabel={preview.waitingSend ? "Traduzindo…" : null}
         fieldReadOnly={preview.waitingSend}
         translationPreview={
@@ -403,7 +419,7 @@ export function Composer({
               }}
               onUntranslated={() => void handleSend({ untranslated: true })}
               onEditKeyDown={(e) => {
-                if (!isSendKey(e)) return;
+                if (!isSendKeyFor(e, coarsePointer)) return;
                 e.preventDefault();
                 void handleSend();
               }}
@@ -477,7 +493,8 @@ export function Composer({
             uploadedFiles={stagedFiles}
             onFilesUploaded={(newFiles) => setStagedFiles((prev) => [...prev, ...newFiles])}
             onFilesRemoved={(fileId) => setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))}
-            className="shrink-0"
+            // Botão de 44 px redondo; os arquivos anexados viram uma bandeja acima da linha.
+            variant="composer"
             disabled={sending || blocked || mediaBlocked}
             disabledHint={mediaBlocked ? MEDIA_BLOCKED_HINT : undefined}
             channel={channel}

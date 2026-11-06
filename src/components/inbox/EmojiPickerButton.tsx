@@ -4,7 +4,7 @@ import { Smile } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // Emoji aqui é conteúdo do usuário (vai no texto da mensagem), não ícone de UI —
-// mesma exceção do ReactionPicker; a UI em si continua com lucide.
+// mesma exceção das reações rápidas (MessageActionsBar); a UI em si continua com lucide.
 const CATEGORIES: Array<{ label: string; emojis: string[] }> = [
   {
     label: "Sorrisos",
@@ -108,14 +108,14 @@ export function EmojiPickerButton({ onPick, disabled }: EmojiPickerButtonProps) 
           onClick={() => setOpen((v) => !v)}
           disabled={disabled}
           className={cn(
-            "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            "flex h-11 w-9 items-center justify-center rounded-full text-text-muted hover:text-brand-500 transition-colors",
             "disabled:opacity-40 disabled:cursor-not-allowed",
-            open && "text-brand-500 bg-brand-500/10"
+            open && "text-brand-500"
           )}
           aria-label="Inserir emoji"
           aria-expanded={open}
         >
-          <Smile size={18} />
+          <Smile size={20} />
         </button>
       </Tooltip>
 

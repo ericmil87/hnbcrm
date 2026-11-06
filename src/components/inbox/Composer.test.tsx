@@ -16,6 +16,12 @@ import {
 } from "@/lib/composerTranslation";
 
 /** Envolve a view com estado de texto/nota, como o container faz. */
+/** "Nota interna" agora é um item do menu "Mais opções". */
+async function toggleInternalNote() {
+  await userEvent.click(screen.getByRole("button", { name: "Mais opções" }));
+  await userEvent.click(screen.getByRole("menuitem", { name: /nota interna|voltar para mensagem/i }));
+}
+
 function Harness(props: Partial<ComposerViewProps> & { initialText?: string; initialInternal?: boolean }) {
   const { initialText = "", initialInternal = false, ...rest } = props;
   const [text, setText] = useState(initialText);
@@ -70,22 +76,76 @@ describe("ComposerView", () => {
 
   it("nota interna muda o rótulo, o aviso e o estilo do campo", async () => {
     render(<Harness initialText="segredo" />);
-    const field = screen.getByPlaceholderText("Digite uma mensagem...");
-    expect(field.className).toContain("border-border-strong");
-    expect(screen.queryByText("Visível apenas para membros da equipe")).toBeNull();
+    expect(screen.getByTestId("composer-pill").className).toContain("border-border-strong");
+    expect(screen.queryByText(/visível só para a equipe/)).toBeNull();
 
-    await userEvent.click(screen.getByLabelText("Nota interna"));
+    await toggleInternalNote();
 
-    const note = screen.getByPlaceholderText("Escreva uma nota interna...");
-    expect(note.className).toContain("border-semantic-warning");
-    expect(screen.getByText("Visível apenas para membros da equipe")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Escreva uma nota interna...")).toBeInTheDocument();
+    expect(screen.getByTestId("composer-pill").className).toContain("border-bubble-note-border");
+    expect(screen.getByText("Nota interna · visível só para a equipe")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Adicionar nota" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Enviar" })).toBeNull();
+
+    // O X da faixa desliga a nota.
+    await userEvent.click(screen.getByRole("button", { name: "Desativar nota interna" }));
+    expect(screen.queryByText(/visível só para a equipe/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Enviar" })).toBeInTheDocument();
   });
 
-  it("sem a feature de nota interna o alternador some", () => {
+  it("sem a feature de nota interna o item some", () => {
     render(<Harness showInternalToggle={false} />);
-    expect(screen.queryByLabelText("Nota interna")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mais opções" })).toBeNull();
+  });
+
+  it("o campo cresce com o texto e usa 16 px no celular", () => {
+    render(<Harness initialText={"a\nb\nc\nd"} />);
+    const field = screen.getByPlaceholderText("Digite uma mensagem...") as HTMLTextAreaElement;
+    expect(field.className).toContain("text-base");
+    expect(field.style.height).not.toBe("");
+    expect(field.style.fontSize).toBe("");
+  });
+
+  it("no toque (ponteiro coarse) Enter quebra a linha e só o botão envia", async () => {
+    const original = window.matchMedia;
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes("pointer: coarse"),
+      media: q,
+      onchange: null,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      dispatchEvent: () => false,
+    })) as typeof window.matchMedia;
+    try {
+      const onSend = vi.fn();
+      render(<Harness initialText="olá" onSend={onSend} />);
+      fireEvent.keyDown(screen.getByPlaceholderText("Digite uma mensagem..."), { key: "Enter" });
+      expect(onSend).not.toHaveBeenCalled();
+      await userEvent.click(screen.getByRole("button", { name: "Enviar" }));
+      expect(onSend).toHaveBeenCalledTimes(1);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it("o menu Mais opções oferece agendar e respostas rápidas", async () => {
+    const onToggle = vi.fn();
+    const onQuick = vi.fn();
+    render(
+      <Harness
+        initialText="oi"
+        onOpenQuickReplies={onQuick}
+        schedule={{ open: false, value: "", onToggle, onChange: () => {}, onSubmit: () => {}, onClose: () => {} }}
+      />
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Mais opções" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Agendar mensagem" }));
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Mais opções" }));
+    await userEvent.click(screen.getByRole("menuitem", { name: "Respostas rápidas" }));
+    expect(onQuick).toHaveBeenCalledTimes(1);
   });
 
   it("mostra a janela de serviço e o tom de alerta quando fechada", () => {
@@ -142,14 +202,14 @@ describe("ComposerView", () => {
   it("chip de idioma aparece na faixa e some na nota interna (nunca traduzida)", async () => {
     render(<Harness languageControl={<button type="button">ES · auto</button>} />);
     expect(screen.getByRole("button", { name: "ES · auto" })).toBeInTheDocument();
-    await userEvent.click(screen.getByLabelText("Nota interna"));
+    await toggleInternalNote();
     expect(screen.queryByRole("button", { name: "ES · auto" })).not.toBeInTheDocument();
   });
 
   it("chip de idioma aparece mesmo sem o alternador de nota interna", () => {
     render(<Harness showInternalToggle={false} languageControl={<button type="button">ES · auto</button>} />);
     expect(screen.getByRole("button", { name: "ES · auto" })).toBeInTheDocument();
-    expect(screen.queryByLabelText("Nota interna")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mais opções" })).not.toBeInTheDocument();
   });
 });
 
@@ -256,7 +316,7 @@ describe("ComposerView + prévia da tradução (F3)", () => {
     await settle(400);
     expect(requestPreview).toHaveBeenCalledTimes(1);
     expect(requestPreview).toHaveBeenCalledWith({ conversationId: "c1", text: "Olá, tudo bem?" });
-    expect(screen.getByText("Será enviado em espanhol:")).toBeInTheDocument();
+    expect(screen.getByText("Espanhol:")).toBeInTheDocument();
     expect(screen.getByText("Hola, ¿qué tal?")).toBeInTheDocument();
 
     fireEvent.keyDown(field(), { key: "Enter" });

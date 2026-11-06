@@ -35,6 +35,7 @@ import { InboxOverlays, useInboxOverlays } from "@/components/inbox/InboxOverlay
 import { useConversationHeaderState } from "@/components/inbox/useConversationHeaderState";
 import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { ConversationRoutingBar } from "@/components/inbox/central/ConversationRoutingBar";
+import { useChatFrame } from "@/hooks/useVisualViewport";
 
 /**
  * Orquestrador de Conversas (/app/entrada): liga os hooks de filtros, lista,
@@ -53,8 +54,7 @@ export function Inbox() {
   );
   const showNewConversation = canReply && (sendableChannels?.length ?? 0) > 0;
 
-  // Busca em mensagens (a lista vira lista de resultados). O termo já chega
-  // com debounce do SearchInput.
+  // Busca em mensagens (a lista vira lista de resultados; termo com debounce do SearchInput).
   const [searchTerm, setSearchTerm] = useState("");
   const [searchMonth, setSearchMonth] = useState(""); // "YYYY-MM" ou ""
   const isSearching = searchTerm.trim().length >= 2;
@@ -84,6 +84,8 @@ export function Inbox() {
     onDraft: interaction.setDraft,
   });
   const { selectedConversation, showMessages, currentConversation } = selection;
+  // Celular com conversa aberta = tela cheia que segue o teclado (useChatFrame).
+  const chatFrame = useChatFrame(showMessages && !!selectedConversation);
   const bulk = useBulkConversationSelection({ organizationId, showArchived });
   const attentionCount = usePendingAttentionCount(organizationId, can("inbox", "view_own"));
   const overlays = useInboxOverlays(selectedConversation);
@@ -150,8 +152,7 @@ export function Inbox() {
     selection.select(conversationId, { archived: null });
   };
 
-  // Resultado da busca: na conversa aberta o thread rola até a mensagem; em
-  // outra, o salto fica pendente e o thread o efetiva quando o lote carregar.
+  // Resultado da busca: na conversa aberta o thread rola até a mensagem; em outra, o salto fica pendente.
   const handleOpenSearchResult = (result: { _id: string; conversationId: string }) => {
     if (result.conversationId === selectedConversation) {
       selection.setShowMessages(true);
@@ -170,9 +171,8 @@ export function Inbox() {
     );
   }
 
-  // Controles de IA (pausar/retomar) aparecem em canais oficiais sempre, e em
-  // canais bridge (não-oficiais) só depois do aceite de risco específico do
-  // atendente — não mexe na janela de 24h/templates do composer.
+  // Controles de IA (pausar/retomar): canais oficiais sempre; bridge só após o aceite de risco
+  // do atendente. Não mexe na janela de 24h/templates do composer.
   const aiControlsAllowed =
     currentConversation?.serviceWindowApplies !== false || aiStatus?.bridgeAiAckDone === true;
   const showAiControls = Boolean(
@@ -182,9 +182,8 @@ export function Inbox() {
       !isGroupConversation
   );
 
-  // Começa ABAIXO do header sticky do AppShell (top-0 escondia o spotlight atrás do sino).
   return (
-    <div className="fixed top-14 md:top-16 left-0 right-0 h-[calc(100dvh-3.5rem-64px-env(safe-area-inset-bottom,0px))] md:left-16 lg:left-56 md:h-[calc(100dvh-4rem)] flex flex-col bg-surface-base">
+    <div {...chatFrame}>
       {/* Onboarding spotlight — wrapper colapsa (empty:hidden) quando não há dica */}
       <div className="shrink-0 px-4 pt-4 md:px-6 empty:hidden">
         <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
@@ -268,6 +267,16 @@ export function Inbox() {
                   if (archived && !showArchived) handleBackToList();
                 }}
                 onLeadDeleted={handleBackToList}
+                banners={
+                  headerState.standbyActive && !isGroupConversation ? (
+                    <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-3 py-1.5 md:px-4">
+                      <p className="mx-auto flex w-full max-w-4xl items-start gap-2 text-xs text-text-secondary">
+                        <ArrowLeftRight size={14} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden />
+                        <span className="min-w-0">{STANDBY_BANNER_TEXT}</span>
+                      </p>
+                    </div>
+                  ) : undefined
+                }
               >
                 {/* Central (opcional): unidade/setor/responsável/tipo/desfecho + origem */}
                 {centralEnabled && !isGroupConversation && (
@@ -294,15 +303,6 @@ export function Inbox() {
                   />
                 )}
 
-                {/* Outro app controla a conversa (standby): só recebemos, composer livre */}
-                {headerState.standbyActive && !isGroupConversation && (
-                  <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-                    <p className="max-w-4xl mx-auto w-full flex items-start gap-2 text-sm text-text-secondary">
-                      <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
-                      <span className="min-w-0">{STANDBY_BANNER_TEXT}</span>
-                    </p>
-                  </div>
-                )}
               </ConversationHeader>
             ) : (
               <div className="md:hidden shrink-0 p-2 border-b border-border bg-chat-header">

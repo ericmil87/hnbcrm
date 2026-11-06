@@ -155,3 +155,27 @@ export function formatDateTimeShort(ts: Timestamp, now: number, opts: TimeZoneOp
   const day = new Date(ts).toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", timeZone: opts.timeZone });
   return `${day} ${formatTime(ts, opts)}`;
 }
+
+/**
+ * Separador de dia do thread de mensagens (estilo WhatsApp): "Hoje", "Ontem",
+ * "seg., 3 de nov." no mesmo ano de `now`, "3 de nov. de 2025" nos demais.
+ * Dia de calendário no fuso informado (padrão: o do navegador).
+ */
+export function formatDayLabel(ts: Timestamp, now: number, { timeZone }: TimeZoneOption = {}): string {
+  if (!isValid(ts)) return EMPTY;
+  const key = (value: Timestamp) =>
+    new Date(value).toLocaleDateString("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone });
+  const day = key(ts);
+  if (day === key(now)) return "Hoje";
+  // Meio-dia de "ontem" evita a borda do horário de verão.
+  const [y, m, d] = key(now).split("-").map(Number);
+  const yesterday = Date.UTC(y, m - 1, d - 1, 12);
+  if (day === new Date(yesterday).toISOString().slice(0, 10)) return "Ontem";
+  const sameYear = day.slice(0, 4) === key(now).slice(0, 4);
+  return new Date(ts).toLocaleDateString(
+    LOCALE,
+    sameYear
+      ? { weekday: "short", day: "numeric", month: "short", timeZone }
+      : { day: "numeric", month: "short", year: "numeric", timeZone }
+  );
+}

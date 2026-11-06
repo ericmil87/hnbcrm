@@ -49,6 +49,11 @@ interface FileUploadButtonProps {
   channel?: string | null;
   transport?: string | null;
   className?: string;
+  /**
+   * "composer": botão redondo de 44 px (estilo WhatsApp) e os anexos viram uma
+   * bandeja flutuando acima da linha do composer, sem empurrar o campo.
+   */
+  variant?: "default" | "composer";
 }
 
 export function FileUploadButton({
@@ -61,7 +66,9 @@ export function FileUploadButton({
   channel,
   transport,
   className,
+  variant = "default",
 }: FileUploadButtonProps) {
+  const composer = variant === "composer";
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -163,10 +170,16 @@ export function FileUploadButton({
   };
 
   return (
-    <div className={cn("flex flex-col gap-2", className)}>
+    <div className={cn(composer ? "relative shrink-0" : "flex flex-col gap-2", className)}>
       {/* Staged files */}
       {uploadedFiles.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
+        <div
+          className={cn(
+            "flex flex-wrap gap-1.5",
+            composer &&
+              "absolute bottom-full left-0 z-10 mb-2 w-max max-w-[calc(100vw-1rem)] rounded-card border border-border bg-surface-overlay p-1.5 shadow-elevated"
+          )}
+        >
           {uploadedFiles.map((file) => (
             <div
               key={file.fileId}
@@ -200,7 +213,8 @@ export function FileUploadButton({
           onClick={handleClick}
           disabled={disabled || uploading || uploadedFiles.length >= MAX_FILES}
           className={cn(
-            "p-2 rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
+            composer ? "flex h-11 w-11 items-center justify-center" : "p-2",
+            "rounded-full text-text-muted hover:text-brand-500 hover:bg-brand-500/10 transition-colors",
             "disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-text-muted disabled:hover:bg-transparent"
           )}
           aria-label="Anexar arquivo"

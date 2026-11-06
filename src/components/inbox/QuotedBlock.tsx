@@ -11,6 +11,7 @@ interface QuotedBlockProps {
   onJump?: () => void;
 }
 
+/** Citação dentro da bolha, como no WhatsApp: caixa arredondada, barra colorida, autor em destaque, 2 linhas. */
 export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBlockProps) {
   const outbound = variant === "outbound";
   const author = quoted.fromMe ? "Você" : contactName || "Contato";
@@ -20,25 +21,21 @@ export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBloc
   const content = (
     <div
       className={cn(
-        "flex flex-col gap-0.5 border-l-2 pl-2 py-1 rounded-r text-left",
-        outbound ? "border-bubble-out-fg/70 bg-bubble-out-fg/10" : "border-brand-500",
+        "flex w-full min-w-0 flex-col gap-0.5 rounded-md border-l-4 py-1 pl-2 pr-2.5 text-left",
+        outbound
+          ? "border-bubble-out-label bg-bubble-out-fg/10"
+          : "border-bubble-in-link bg-text-primary/5",
         onJump && "cursor-pointer transition-colors",
-        onJump && (outbound ? "hover:bg-bubble-out-fg/20" : "hover:bg-surface-sunken")
+        onJump && (outbound ? "hover:bg-bubble-out-fg/15" : "hover:bg-text-primary/10")
       )}
     >
       <span
-        className={cn(
-          "text-caption font-semibold",
-          outbound ? "text-bubble-out-fg/90" : "text-bubble-in-link"
-        )}
+        className={`truncate font-semibold text-caption ${outbound ? "text-bubble-out-label" : "text-bubble-in-link"}`}
       >
         {author}
       </span>
       <span
-        className={cn(
-          "text-xs truncate max-w-[240px]",
-          outbound ? "text-bubble-out-fg/80" : "text-text-secondary"
-        )}
+        className={`line-clamp-2 break-words text-caption ${outbound ? "text-bubble-out-fg/85" : "text-text-secondary"}`}
       >
         {preview}
       </span>
@@ -48,7 +45,12 @@ export function QuotedBlock({ quoted, contactName, variant, onJump }: QuotedBloc
   if (!onJump) return content;
 
   return (
-    <button type="button" onClick={onJump} className="block w-full" aria-label="Ir para a mensagem citada">
+    <button
+      type="button"
+      onClick={onJump}
+      className="block w-full rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+      aria-label={`Ir para a mensagem citada de ${author}`}
+    >
       {content}
     </button>
   );

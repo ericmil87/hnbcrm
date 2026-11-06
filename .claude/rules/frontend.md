@@ -98,3 +98,9 @@ Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.m
 - Campo `readOnly` (`fieldReadOnly`) enquanto o Enter espera a prévia (teto de 4 s no "Revisar rápido"); "Revisar antes de enviar" nunca envia sem prévia mostrada. O contador de caracteres mede o texto traduzido (`textForCounter`).
 - Irmãos fixos com `key` precisam de prefixos distintos (`header:${id}`, `composer:${id}`, `wizard:`, `detail:`); no máximo um `key={id}` nu. Guarda: `src/lib/siblingKeysGuard.test.ts` (chaves iguais deixam o React perder o irmão antigo: cabeçalhos empilhados).
 - Todo controle que escreve (chip, "Aplicar ao contato", "Sem traduzir", "Tentar de novo", aviso com escolha) exige `can("inbox","reply")`; sem permissão o chip vira `role="status"` somente leitura. Preferência "Mostrar original junto" é local do visualizador (`translationPrefs.ts`, `localStorage` em try/catch).
+
+## Conversa no celular (modo WhatsApp)
+- Conversa aberta no celular = tela cheia (`useChatModeActive`); nada de `fixed`/`sticky` no fundo nem alturas `100dvh`/`100vh` dentro da coluna da conversa: o container já segue o `visualViewport` (teclado do iOS). Composer `shrink-0` no fluxo com `pb-safe`; thread `flex-1 min-h-0 overflow-y-auto overscroll-contain`.
+- Trava de rolagem só pelo contador de `src/lib/scrollLock.ts`; nunca gravar `document.body.style.overflow` direto.
+- Comportamento de toque se decide por `(pointer: coarse)` (variante `coarse:`), não por largura: no toque Enter quebra linha e só o botão envia (`isSendKeyFor`), e dicas de tecla seguem a mesma regra.
+- `cn()` conhece `text-caption|micro`, sombras e raios próprios; ao criar uma escala nova no `tailwind.config.js`, registre-a em `src/lib/utils.ts`.

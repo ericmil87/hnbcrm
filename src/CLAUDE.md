@@ -84,7 +84,7 @@ src/
     │   └── detail/LeadConversationTab.tsx  # lead panel "Conversa" tab: ConversationThread variant="embedded" + Composer (no voice/schedule), Select when the lead has >1 conversation
     ├── Inbox.tsx               # Inbox orchestrator (/app/entrada, < 400 lines): wires the hooks above to InboxListColumn/ConversationHeader + ConversationThread + Composer; ?conversation=<id> (getConversationById fallback)
     ├── inbox/                  # MessageBubble, VoiceRecorder, VoiceTranscription, EmojiPickerButton, QuickReplies ("/"), ConversationActionsMenu,
-    │                           #   AiDraftCard (+ coaching, AiConversationControls, ReturnToAiButton), ReactionPicker, ForwardModal, AudioPlayer…
+    │                           #   AiDraftCard (+ coaching, AiConversationControls, ReturnToAiButton), MessageActionsBar (menu de ações + reações rápidas; substitui o antigo ReactionPicker), AiControlMenu, ForwardModal, AudioPlayer…
     │                           #   fv2-25: ConversationList (presentational column: header, SegmentedControl/Select filters, search, items, empty state, "Carregar mais", bulk bar) + ConversationListItem,
     │                           #   ConversationHeader (contact/group, origin, funnel stage, AiStatusChip, "Assumir conversa"/"Devolver à IA" always visible on a pending handoff, bot suspicion, actions menu),
     │                           #   AiStatusChip, AttentionBanner ("N conversas precisam de você · Ver" → /app/repasses; `usePendingAttentionCount`), GroupMenuItems, GroupConversationPanels (+ `useGroupPanels`),

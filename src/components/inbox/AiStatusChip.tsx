@@ -4,6 +4,8 @@ import { aiStateChipInfo, type AiConvState } from "@/lib/inboxState";
 interface AiStatusChipProps {
   /** Estado do atendente nesta conversa (`attendant.getConversationAiState`). */
   state: AiConvState;
+  /** A conversa já mostra "IA pausada": só o motivo "IA pausada" some (outros motivos, como limite ou horário, seguem visíveis). */
+  paused?: boolean;
   className?: string;
 }
 
@@ -11,9 +13,9 @@ interface AiStatusChipProps {
  * Chip "IA preparando resposta…" / "IA em espera: motivo". Some quando o item
  * da fila terminou ou já foi superado por uma mensagem mais nova.
  */
-export function AiStatusChip({ state, className }: AiStatusChipProps) {
+export function AiStatusChip({ state, paused = false, className }: AiStatusChipProps) {
   const info = aiStateChipInfo(state);
-  if (!info) return null;
+  if (!info || (paused && info.tone === "waiting" && state?.reason === "ia_pausada")) return null;
   return (
     <span
       role="status"

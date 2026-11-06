@@ -4,6 +4,15 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Conversas com cara de WhatsApp
+
+- No celular, a conversa aberta ocupa a tela inteira: somem o título "Conversas", a barra de abas e o botão do Copiloto (que passa para o menu ⋮ da conversa). Com o teclado aberto no iPhone, as mensagens e o campo de resposta continuam à vista, logo acima do teclado.
+- O cabeçalho da conversa virou uma linha só: voltar, foto, nome e uma linha de status ("digitando…", pedido de ajuda da IA ou funil e etapa). A IA tem um botão único que abre pausar, assumir, devolver e pedir resposta sugerida. Funil, canal, idioma, follow-up e a barra da Central ficam numa faixa fina que abre pela setinha; avisos urgentes (pedido de ajuda, robô, conversa com outro app, janela de 24 h fechada) continuam sempre visíveis.
+- As mensagens ficaram como no WhatsApp: hora e tiques dentro da bolha, nome de quem enviou só quando ajuda (grupo, IA, outro colega, nota interna), mensagens seguidas agrupadas, separador de dia ("Hoje", "Ontem", "ter., 3 de nov.") e a tradução numa linha pequena ("Traduzido do inglês · Ver original").
+- Para responder, reagir, encaminhar ou copiar, segure a mensagem no celular ou passe o mouse por cima no computador.
+- O campo de resposta cresce com o texto (até 6 linhas no celular e 10 no computador) e fica numa linha só: anexar, emoji, campo, menu com nota interna, agendar e respostas rápidas, e o botão de enviar ou gravar áudio. No celular, Enter quebra a linha e só o botão envia.
+- Corrigido: textos pequenos (hora, legendas, tradução) apareciam em tamanho normal em várias telas.
+
 ### Correções
 
 - Corrigido: na tradução automática para inglês, o servidor próprio cortava a mensagem no primeiro link, telefone ou emoji, e ela acabava traduzida pela IA. Agora links, telefones, menções, e-mails e emojis passam pelo servidor próprio intactos e no lugar, também em espanhol, francês, italiano e alemão. Mensagem só com emoji não é mais enviada para tradução.

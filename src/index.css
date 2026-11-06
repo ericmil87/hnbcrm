@@ -315,6 +315,45 @@ body {
   background-position: 0 0, 9px 9px;
 }
 
+/* === Bolhas do chat (estilo WhatsApp) ===
+   Cauda na 1ª bolha de um bloco: triângulo no canto de cima, na cor da própria
+   bolha (`background-color: inherit`), com o canto daquele lado reto. */
+.bubble-tail-start,
+.bubble-tail-end {
+  position: relative;
+}
+.bubble-tail-start::before,
+.bubble-tail-end::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 13px;
+  background-color: inherit;
+}
+.bubble-tail-start {
+  border-top-left-radius: 0;
+}
+.bubble-tail-start::before {
+  left: -8px;
+  clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+.bubble-tail-end {
+  border-top-right-radius: 0;
+}
+.bubble-tail-end::before {
+  right: -8px;
+  clip-path: polygon(0 0, 100% 0, 0 100%);
+}
+/* Toque longo abre as ações: sem lupa/seleção nem o balão nativo do iOS. */
+@media (pointer: coarse) {
+  .bubble-touch {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+}
+
 /* === Safe area utility === */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);

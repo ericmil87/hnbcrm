@@ -47,6 +47,7 @@ export function useConversationHeaderState(
     ? {
         text: windowResult.text,
         tone: windowResult.closed ? "text-semantic-warning" : "text-text-secondary",
+        closed: windowResult.closed,
       }
     : null;
 

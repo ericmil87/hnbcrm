@@ -1,12 +1,12 @@
 import { useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ArrowLeftRight, Bot, Clock, ExternalLink, Languages, Users } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
-import { AiStatusChip } from "@/components/inbox/AiStatusChip";
-import { AiConversationControls, ReturnToAiButton } from "@/components/inbox/AiDraftCard";
+import { AiControlMenu } from "@/components/inbox/AiControlMenu";
+import { ReturnToAiButton } from "@/components/inbox/AiDraftCard";
 import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { FollowUpChip } from "@/components/inbox/FollowUpChip";
@@ -14,9 +14,9 @@ import { ConversationLanguageChip, ConversationLanguageDialog } from "@/componen
 import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { conversationLanguageState } from "@/lib/translationRules";
-import { GroupMembersButton } from "@/components/inbox/GroupMembersPanel";
 import { GroupMenuItems, type GroupMenuActions } from "@/components/inbox/GroupMenuItems";
 import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
+import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import {
   accountFullLabel,
@@ -29,15 +29,21 @@ import {
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   activeBotSuspicion,
+  aiStateChipInfo,
   isHandoffPending,
   type AiConvState,
   type LeadHandoffState,
 } from "@/lib/inboxState";
+import { headerSubtitle, readHeaderDetailsOpen, writeHeaderDetailsOpen } from "@/lib/conversationHeader";
 import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
 
 type ConversationDoc = Record<string, any>;
+
+/** Chip fino da faixa de detalhes (uma linha, sem quebra). */
+const chipClass =
+  "inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-surface-overlay/60 px-2.5 text-xs text-text-secondary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 coarse:h-9";
 
 interface ConversationHeaderProps {
   organizationId: Id<"organizations">;
@@ -60,7 +66,7 @@ interface ConversationHeaderProps {
   /** "digitando…" do contato (TTL de 12 s já aplicado). */
   contactTyping: boolean;
   /** Janela de serviço do canal (texto + tom). */
-  windowInfo: { text: string; tone: string } | null;
+  windowInfo: { text: string; tone: string; closed?: boolean } | null;
   onBack: () => void;
   onOpenContact: () => void;
   onOpenLead: () => void;
@@ -68,15 +74,17 @@ interface ConversationHeaderProps {
   /** Arquivou/desarquivou pelo menu. */
   onArchivedChange: (archived: boolean) => void;
   onLeadDeleted: () => void;
-  /** Entre os cabeçalhos e os avisos de repasse (barra de roteamento, standby). */
+  /** Recolhível no celular (barra de roteamento da Central). */
   children?: ReactNode;
+  /** Avisos sempre à vista, junto dos de repasse e robô (ex.: outro app controla a conversa). */
+  banners?: ReactNode;
 }
 
 /**
- * Cabeçalho da conversa aberta (mobile e desktop) e os avisos logo abaixo:
- * contato ou sala, canal de origem, etapa do funil, chip de estado da IA,
- * pedido de ajuda pendente com "Assumir conversa" / "Devolver à IA" sempre à
- * vista e a suspeita de robô.
+ * Cabeçalho da conversa aberta, estilo WhatsApp: uma linha (voltar, avatar,
+ * nome + subtítulo único, IA, detalhes, ⋮), a faixa de detalhes recolhível no
+ * celular (funil, origem, idioma, follow-up, janela e a barra da Central) e os
+ * avisos de ação urgente (pedido de ajuda, suspeita de robô) em uma linha.
  */
 export function ConversationHeader({
   organizationId,
@@ -100,8 +108,17 @@ export function ConversationHeader({
   onArchivedChange,
   onLeadDeleted,
   children,
+  banners,
 }: ConversationHeaderProps) {
   const navigate = useNavigate();
+  // Faixa de detalhes: recolhida por padrão no celular (preferência local do visualizador); no desktop sempre aberta.
+  const [detailsOpen, setDetailsOpen] = useState(readHeaderDetailsOpen);
+  const toggleDetails = () => {
+    setDetailsOpen((open) => {
+      writeHeaderDetailsOpen(!open);
+      return !open;
+    });
+  };
   const conversationId = conversation._id as Id<"conversations">;
   const convChannel: string | undefined = conversation.channel;
   const convTransport: string | undefined = conversation.channelProvider;
@@ -130,29 +147,6 @@ export function ConversationHeader({
   // Estado do atendente nesta conversa (v4.2): alimenta o chip "IA em espera / preparando".
   const aiConvState = useQuery(api.attendant.getConversationAiState, aiActive ? { conversationId } : "skip");
 
-  const renderContactHeading = (className: string) =>
-    isGroup ? (
-      <h2 className={className}>
-        <span className="flex items-center gap-2 min-w-0">
-          <Users size={16} className="shrink-0 text-text-muted" aria-hidden />
-          <span className="truncate">{groupSubject}</span>
-        </span>
-      </h2>
-    ) : openContactId && conversation.contact ? (
-      <h2 className={className}>
-        {/* Nome editável ali mesmo: clicar no nome abre o contato; o lápis (ou
-            o próprio "Sem nome") renomeia sem passar pelo painel do lead. */}
-        <InlineNameEditor
-          contact={conversation.contact as InlineNameContact}
-          lead={conversation.lead as InlineNameLead}
-          onOpen={onOpenContact}
-          openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
-        />
-      </h2>
-    ) : (
-      <h2 className={className}>{contactName || "Sem nome"}</h2>
-    );
-
   // Funil do lead da conversa aberta (C2): "Funil: <board> → <etapa>" + lead.
   const openLeadId = conversation.leadId as Id<"leads"> | undefined;
   const leadBoardId = conversation.lead?.boardId as Id<"boards"> | undefined;
@@ -166,37 +160,35 @@ export function ConversationHeader({
     | undefined;
   const leadBoardName = leadBoards?.find((b) => b._id === leadBoardId)?.name;
   const leadStageName = leadStages?.find((s) => s._id === leadStageId)?.name;
-  const funnelText = (
-    <>
-      {VOCAB.funnel.nav}: <span className="text-text-secondary font-medium">{leadBoardName ?? "…"}</span>
-      {" → "}
-      <span className="text-text-secondary font-medium">{leadStageName ?? "…"}</span>
-    </>
-  );
-  const funnelLine = leadBoardId ? (
-    <div className="flex items-center gap-1 min-w-0">
+  const funnelChip = leadBoardId ? (
+    <span className="inline-flex shrink-0 items-center gap-0.5">
       {openLeadId ? (
         <button
           type="button"
           onClick={onOpenLead}
-          className="flex-1 min-w-0 truncate py-2 -my-2 text-left text-xs text-text-muted hover:text-brand-500 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 rounded"
           aria-label="Ver detalhes do lead"
+          className={cn(chipClass, "hover:text-brand-500")}
         >
-          {funnelText}
-          <span className="ml-1.5 text-brand-500">Ver lead</span>
+          <span>{VOCAB.funnel.nav}:</span>
+          <span className="font-medium text-text-primary">{leadBoardName ?? "…"}</span>
+          <span aria-hidden>→</span>
+          <span className="font-medium text-text-primary">{leadStageName ?? "…"}</span>
         </button>
       ) : (
-        <span className="flex-1 min-w-0 truncate text-xs text-text-muted">{funnelText}</span>
+        <span className={chipClass}>
+          {VOCAB.funnel.nav}: <span className="font-medium text-text-primary">{leadBoardName ?? "…"}</span> →{" "}
+          <span className="font-medium text-text-primary">{leadStageName ?? "…"}</span>
+        </span>
       )}
       <button
         type="button"
         onClick={() => navigate(`${TAB_ROUTES.board}?board=${leadBoardId}` + (openLeadId ? `&lead=${openLeadId}` : ""))}
         aria-label="Abrir no funil"
-        className="shrink-0 flex items-center justify-center min-h-[44px] min-w-[44px] -my-3 rounded-full text-text-muted transition-colors hover:text-brand-500 hover:bg-surface-overlay focus:outline-none focus:ring-2 focus:ring-brand-500"
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-surface-overlay hover:text-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 coarse:h-9 coarse:w-9"
       >
-        <ExternalLink size={14} />
+        <ExternalLink size={14} aria-hidden />
       </button>
-    </div>
+    </span>
   ) : null;
 
   // Origem no cabeçalho: ícone + conta completa + "via <canal>".
@@ -216,7 +208,7 @@ export function ConversationHeader({
     : viaLabel(convChannel ?? "");
   const OriginIcon = channelIcon(convChannel ?? "", convTransport);
   const originLine = originShown ? (
-    <span className="inline-flex items-center gap-1 min-w-0 text-xs text-text-muted">
+    <span className={cn(chipClass, "max-w-[16rem]")}>
       {currentAccount?.avatarUrl ? (
         <ChannelAvatar
           channel={convChannel ?? ""}
@@ -301,7 +293,7 @@ export function ConversationHeader({
                     close();
                     setLanguageDialogOpen(true);
                   }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+                  className="w-full coarse:min-h-11 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
                 >
                   <Languages size={15} />
                   Idioma da conversa…
@@ -313,89 +305,180 @@ export function ConversationHeader({
       onLeadDeleted={onLeadDeleted}
     />
   );
-  const aiControls = showAiControls ? (
-    <AiConversationControls
-      conversationId={conversationId}
-      aiPausedUntil={conversation.aiPausedUntil as number | undefined}
-      hasPendingDraft={hasPendingDraft}
-    />
+  const aiPaused = typeof conversation.aiPausedUntil === "number" && conversation.aiPausedUntil > Date.now();
+  const aiProcessing = aiConvState?.status === "pending" || aiConvState?.status === "processing";
+  const subtitle = headerSubtitle({
+    typing: contactTyping,
+    isGroup,
+    participantsCount: groupParticipantsCount,
+    handoffPending,
+    botSuspected: !!botSuspicion,
+    aiProcessing,
+    aiWaiting: aiStateChipInfo(aiConvState as AiConvState)?.tone === "waiting" && !(aiPaused && aiConvState?.reason === "ia_pausada"),
+    funnel: leadBoardId ? { board: leadBoardName, stage: leadStageName } : null,
+  });
+  const subtitleTone =
+    subtitle?.tone === "typing"
+      ? "text-brand-500 motion-safe:animate-pulse"
+      : subtitle?.tone === "attention"
+        ? "text-semantic-warning"
+        : subtitle?.tone === "ai"
+          ? "text-ai-400"
+          : "text-text-muted";
+  const displayName = isGroup ? groupSubject : contactName || "Sem nome";
+  const primaryAction = isGroup ? onOpenMembers : onOpenContact;
+  const canOpenPrimary = isGroup || !!openContactId;
+  const primaryLabel = isGroup
+    ? "Ver participantes da sala"
+    : `Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`;
+
+  const avatar = isGroup ? (
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-overlay text-text-muted">
+      <Users size={20} aria-hidden />
+    </span>
+  ) : (
+    <Avatar name={displayName === "Sem nome" ? "?" : displayName} size="md" />
+  );
+  const subtitleLine = subtitle ? (
+    <span className={cn("block truncate text-xs", subtitleTone)} role={subtitle.tone === "typing" ? "status" : undefined}>
+      {subtitle.text}
+    </span>
   ) : null;
 
-  const typingText = isGroup ? "alguém está digitando…" : "digitando…";
+  const windowClosed = windowInfo?.closed === true;
+  const hasStripItems = !!(funnelChip || originLine || languagePill || showAiControls || windowInfo);
 
   return (
     <>
-      {/* Mobile header with back button */}
-      <div className="md:hidden shrink-0 p-4 border-b border-border bg-chat-header flex flex-col gap-1">
-        <div className="flex items-center gap-3">
+      <div className="shrink-0 border-b border-border bg-chat-header md:bg-surface-raised">
+        {/* Linha única: voltar · avatar · nome + subtítulo · IA · detalhes · ⋮ */}
+        <div className="flex min-h-14 items-center gap-1 px-1 pt-[env(safe-area-inset-top)] md:pt-0 md:min-h-16 md:gap-2 md:px-4">
           <button
             type="button"
             onClick={onBack}
-            className="flex h-11 w-11 -ml-2 items-center justify-center text-text-primary hover:bg-surface-overlay rounded-full transition-colors"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-primary transition-colors hover:bg-surface-overlay md:hidden"
             aria-label="Voltar"
           >
-            <ArrowLeft size={20} />
+            <ArrowLeft size={22} aria-hidden />
           </button>
-          {renderContactHeading("flex-1 min-w-0 truncate text-base font-semibold text-text-primary")}
-          {actionsMenu}
-        </div>
-        {funnelLine && <div className="pl-11">{funnelLine}</div>}
-        {isGroup && (
-          <div className="pl-11">
-            <GroupMembersButton participantsCount={groupParticipantsCount} onClick={onOpenMembers} />
-          </div>
-        )}
-        {originLine && <div className="pl-11 flex">{originLine}</div>}
-        {contactTyping && <span className="pl-11 text-xs text-brand-500 animate-pulse">{typingText}</span>}
-        {(showAiControls || languagePill) && (
-          <div className="pl-11 flex flex-wrap items-center gap-2">
-            {showAiControls && (
-              <>
-                {aiControls}
-                <AiStatusChip state={aiConvState as AiConvState} />
-                <FollowUpChip conversationId={conversationId} />
-              </>
-            )}
-            {languagePill}
-          </div>
-        )}
-        {windowInfo && (
-          <div className={cn("flex items-center gap-1 pl-11 text-xs", windowInfo.tone)}>
-            <Clock className="h-3.5 w-3.5 shrink-0" />
-            {windowInfo.text}
-          </div>
-        )}
-      </div>
 
-      {/* Desktop header */}
-      <div className="hidden md:flex shrink-0 p-4 border-b border-border bg-surface-raised items-center justify-between">
-        <div className="min-w-0">
-          {renderContactHeading("text-base font-semibold text-text-primary truncate")}
-          {funnelLine}
-          {isGroup && <GroupMembersButton participantsCount={groupParticipantsCount} onClick={onOpenMembers} />}
-          {originLine && <div className="flex">{originLine}</div>}
-          {contactTyping && <span className="text-xs text-brand-500 animate-pulse">{typingText}</span>}
+          {/* Celular: avatar e nome são um só alvo de toque (sem contato, só informam) */}
+          {(() => {
+            const inner = (
+              <>
+                {avatar}
+                <span className="min-w-0 flex-1">
+                  <h2 className="truncate text-base font-semibold leading-tight text-text-primary">{displayName}</h2>
+                  {subtitleLine}
+                </span>
+              </>
+            );
+            return canOpenPrimary ? (
+              <button
+                type="button"
+                onClick={primaryAction}
+                aria-label={primaryLabel}
+                className="flex min-h-11 min-w-0 flex-1 items-center gap-3 rounded-lg text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 md:hidden"
+              >
+                {inner}
+              </button>
+            ) : (
+              <div className="flex min-h-11 min-w-0 flex-1 items-center gap-3 md:hidden">{inner}</div>
+            );
+          })()}
+
+          {/* Desktop: nome editável ali mesmo (lápis) e subtítulo clicável na sala */}
+          <div className="hidden min-w-0 flex-1 items-center gap-3 md:flex">
+            {avatar}
+            <div className="min-w-0 flex-1">
+              {isGroup ? (
+                <h2 className="truncate text-base font-semibold text-text-primary">{groupSubject}</h2>
+              ) : openContactId && conversation.contact ? (
+                <h2 className="text-base font-semibold text-text-primary truncate">
+                  {/* Clicar no nome abre o contato; o lápis (ou o próprio "Sem nome") renomeia. */}
+                  <InlineNameEditor
+                    contact={conversation.contact as InlineNameContact}
+                    lead={conversation.lead as InlineNameLead}
+                    onOpen={onOpenContact}
+                    openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
+                  />
+                </h2>
+              ) : (
+                <h2 className="truncate text-base font-semibold text-text-primary">{displayName}</h2>
+              )}
+              {isGroup && subtitle ? (
+                <button
+                  type="button"
+                  onClick={onOpenMembers}
+                  className={cn(
+                    "block max-w-full truncate rounded text-left text-xs hover:text-brand-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+                    subtitleTone
+                  )}
+                >
+                  {subtitle.text}
+                </button>
+              ) : (
+                subtitleLine
+              )}
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center">
+            {showAiControls && (
+              <AiControlMenu
+                conversationId={conversationId}
+                aiPausedUntil={conversation.aiPausedUntil as number | undefined}
+                hasPendingDraft={hasPendingDraft}
+                aiState={aiConvState as AiConvState}
+                canReply={canReply}
+              />
+            )}
+            {(hasStripItems || !!children) && (
+            <button
+              type="button"
+              onClick={toggleDetails}
+              aria-expanded={detailsOpen}
+              aria-label={detailsOpen ? "Ocultar detalhes da conversa" : "Mostrar detalhes da conversa"}
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:bg-surface-overlay hover:text-text-primary md:hidden"
+            >
+              <ChevronDown size={20} aria-hidden className={cn("transition-transform", detailsOpen && "rotate-180")} />
+            </button>
+            )}
+            {actionsMenu}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          {showAiControls && (
-            <>
-              {aiControls}
-              <AiStatusChip state={aiConvState as AiConvState} />
-              <FollowUpChip conversationId={conversationId} />
-            </>
-          )}
-          {languagePill}
-          {windowInfo && (
-            <div className={cn("flex items-center gap-1.5 text-sm", windowInfo.tone)}>
-              <Clock className="h-4 w-4 shrink-0" />
-              {windowInfo.text}
+
+        {/* Janela fechada: sempre à vista no celular (no desktop vai para a faixa) */}
+        {windowInfo && windowClosed && (
+          <p className={cn("flex items-center gap-1.5 px-4 pb-1.5 text-xs md:hidden", windowInfo.tone)}>
+            <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            {windowInfo.text}
+          </p>
+        )}
+
+        {/* Detalhes: recolhíveis no celular, sempre à vista no desktop */}
+        <div className={cn(detailsOpen ? "block" : "hidden md:block")}>
+          {(funnelChip || originLine || languagePill || windowInfo || (showAiControls && !isGroup)) && (
+            <div
+              className="flex items-center gap-2 overflow-x-auto px-3 pb-1.5 [-ms-overflow-style:none] [scrollbar-width:none] md:px-4 [&::-webkit-scrollbar]:hidden"
+              role="toolbar"
+              aria-label="Detalhes da conversa"
+            >
+              {funnelChip}
+              {originLine}
+              {languagePill}
+              {showAiControls && <FollowUpChip conversationId={conversationId} />}
+              {windowInfo && (
+                <span className={cn(chipClass, windowInfo.tone, windowClosed && "hidden md:inline-flex")}>
+                  <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  {windowInfo.text}
+                </span>
+              )}
             </div>
           )}
-          {actionsMenu}
+          {children}
         </div>
       </div>
-
-      {children}
 
       <ConversationLanguageDialog
         open={languageDialogOpen}
@@ -403,19 +486,21 @@ export function ConversationHeader({
         {...languageOptions}
       />
 
-      {/* Repasse pendente — uma vez só, abaixo dos dois headers */}
+      {banners}
+
+      {/* Repasse pendente — uma vez só, abaixo do cabeçalho */}
       {handoffPending && (
-        <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-          <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
-            <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
-              <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-semantic-warning" />
-              <span className="min-w-0">
+        <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-3 py-1.5 md:px-4">
+          <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-3 gap-y-1.5">
+            <p className="flex min-w-0 flex-1 basis-48 items-center gap-2 text-xs">
+              <ArrowLeftRight size={14} className="shrink-0 text-semantic-warning" aria-hidden />
+              <span className="min-w-0 truncate" title={handoffReason}>
                 <span className="font-medium text-semantic-warning">A IA pediu ajuda</span>
                 {handoffReason && <span className="text-text-secondary"> — {handoffReason}</span>}
               </span>
             </p>
             {canReply && (
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button type="button" size="sm" disabled={!pendingHandoff} onClick={handleAcceptHandoff}>
                   {VOCAB.attention.accept}
                 </Button>
@@ -438,21 +523,19 @@ export function ConversationHeader({
 
       {/* Suspeita de robô (v0.65) — adicional ao banner de repasse */}
       {botSuspicion && !isGroup && (
-        <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-4 py-2.5">
-          <div className="max-w-4xl mx-auto w-full flex flex-col sm:flex-row sm:items-center gap-2">
-            <p className="flex items-start gap-2 flex-1 min-w-0 text-sm">
-              <Bot size={16} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden />
-              <span className="min-w-0">
-                <span className="block font-medium text-semantic-warning">
+        <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-3 py-1.5 md:px-4">
+          <div className="mx-auto flex w-full max-w-4xl flex-wrap items-center gap-x-3 gap-y-1.5">
+            <p className="flex min-w-0 flex-1 basis-48 items-center gap-2 text-xs">
+              <Bot size={14} className="shrink-0 text-semantic-warning" aria-hidden />
+              <span className="min-w-0 truncate" title={botSuspicion.reason || undefined}>
+                <span className="font-medium text-semantic-warning">
                   A IA parou de responder: o outro lado parece um robô ou mensagem automática
                 </span>
-                {botSuspicion.reason && (
-                  <span className="block text-xs text-text-secondary mt-0.5 break-words">{botSuspicion.reason}</span>
-                )}
+                {botSuspicion.reason && <span className="text-text-secondary"> — {botSuspicion.reason}</span>}
               </span>
             </p>
             {canReply && (
-              <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button type="button" size="sm" disabled={returningFromBot} onClick={() => void handleNotABot()}>
                   É uma pessoa — devolver para a IA
                 </Button>
