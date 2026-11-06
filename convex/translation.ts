@@ -1135,3 +1135,26 @@ export const pingProviders = action({
     return out;
   },
 });
+
+/**
+ * Sonda de ops (sem escrita, sem PII): confirma que o detector de idioma
+ * (`tinyld/light`) carrega e responde no runtime V8 do deployment.
+ * Uso: `npx convex run translation:internalDetectProbe '{"text":"hola, tienen disponibilidad?"}'`
+ */
+export const internalDetectProbe = internalAction({
+  args: { text: v.string() },
+  returns: v.object({
+    lang: v.optional(v.string()),
+    confidence: v.optional(v.number()),
+    alphaChars: v.number(),
+    minAlphaChars: v.number(),
+  }),
+  handler: async (_ctx, args) => {
+    const detected = detectLanguage(args.text);
+    return {
+      ...(detected ? { lang: detected.lang, confidence: detected.confidence } : {}),
+      alphaChars: countAlphaChars(args.text),
+      minAlphaChars: MIN_ALPHA_CHARS,
+    };
+  },
+});
