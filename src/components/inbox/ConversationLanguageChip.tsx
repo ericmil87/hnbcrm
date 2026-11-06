@@ -125,7 +125,8 @@ export function ConversationLanguageChip({
   if (!label) return null;
 
   const pill = cn(
-    "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium tabular-nums coarse:min-h-11",
+    "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium tabular-nums",
+    variant === "header" ? "coarse:min-h-9" : "coarse:min-h-11",
     label.tone === "active" ? "bg-brand-500/10 text-brand-400" : "bg-surface-sunken text-text-secondary"
   );
 

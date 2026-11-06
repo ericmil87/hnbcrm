@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { useQuery } from "convex/react";
 import { Building2, ChevronsUpDown } from "lucide-react";
@@ -10,6 +10,10 @@ import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { activeTabForPath } from "@/lib/routes";
 import { navItemFor, shellPageTitle } from "@/lib/nav";
 import { usePageTitle } from "@/hooks/usePageTitle";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useDocumentScrollLock } from "@/hooks/useVisualViewport";
+import { cn } from "@/lib/utils";
+import { ChatModeProvider, type ChatModeValue } from "./chatMode";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { UiTheme } from "@/lib/theme";
@@ -43,8 +47,24 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
 
   // IA é opt-in por organização — sem status "active", o gatilho nem renderiza.
   const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  const copilotEnabled = Boolean(aiStatus?.active && aiStatus.copilotEnabled);
+
+  // Modo conversa (Inbox com conversa aberta): abaixo de `md` some o cabeçalho, as
+  // abas e o FAB (tela cheia como o WhatsApp) e o documento para de rolar por trás.
+  const [chatModeActive, setChatModeActive] = useState(false);
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  useDocumentScrollLock(chatModeActive && isMobile);
+  const chatMode = useMemo<ChatModeValue>(
+    () => ({
+      active: chatModeActive,
+      setActive: setChatModeActive,
+      openCopilot: copilotEnabled ? () => setCopilotOpen(true) : undefined,
+    }),
+    [chatModeActive, copilotEnabled]
+  );
 
   return (
+    <ChatModeProvider value={chatMode}>
     <div className="min-h-screen supports-[height:100dvh]:min-h-[100dvh] bg-surface-base">
       {/* Desktop sidebar */}
       <Sidebar
@@ -59,7 +79,10 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
       {/* Main content area */}
       <main className="md:ml-16 lg:ml-56 transition-all duration-200">
         {/* Header — título da página + troca de org (só mobile; no desktop fica na sidebar) + sino */}
-        <header className="sticky top-0 z-30 h-14 md:h-16 flex items-center justify-between md:justify-end gap-3 px-4 md:px-6 backdrop-blur border-b border-border">
+        <header className={cn(
+          "sticky top-0 z-30 h-14 md:h-16 items-center justify-between md:justify-end gap-3 px-4 md:px-6 backdrop-blur border-b border-border",
+          chatModeActive ? "hidden md:flex" : "flex"
+        )}>
           <div className="md:hidden flex items-center gap-1 min-w-0">
             <div className="min-w-0">
               <p className="truncate text-base font-semibold text-text-primary leading-tight">{pageTitle}</p>
@@ -95,12 +118,14 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         onSignOut={onSignOut}
         theme={theme}
         setTheme={setTheme}
+        hidden={chatModeActive}
       />
 
       {/* Gatilho flutuante do Copiloto IA — só aparece se a org ativou a IA e o produto Copiloto */}
-      {aiStatus?.active && aiStatus.copilotEnabled && (
+      {copilotEnabled && (
         <>
-          <CopilotFab onOpen={() => setCopilotOpen(true)} hidden={copilotOpen} />
+          {/* Conversa aberta: o FAB cobria o enviar/microfone; o Copiloto fica no ⋮ do cabeçalho. */}
+          <CopilotFab onOpen={() => setCopilotOpen(true)} hidden={copilotOpen || chatModeActive} />
           <LazyCopilotPanel
             organizationId={organizationId}
             open={copilotOpen}
@@ -109,5 +134,6 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         </>
       )}
     </div>
+    </ChatModeProvider>
   );
 }

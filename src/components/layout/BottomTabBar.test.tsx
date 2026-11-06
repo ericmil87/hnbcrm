@@ -53,6 +53,11 @@ describe("BottomTabBarView", () => {
     expect(within(nav).getByRole("button", { name: "Painel" })).toHaveAttribute("aria-current", "page");
   });
 
+  it("modo conversa: a barra some, mas continua montada", () => {
+    setup({ hidden: true });
+    expect(screen.getByRole("navigation", { hidden: true })).toHaveClass("hidden");
+  });
+
   it("ponto no Mais quando item escondido tem badge", () => {
     setup({ badges: { ...zero, pausedCampaigns: 2 } });
     expect(screen.getByRole("button", { name: /Mais opções, há itens/ })).toBeInTheDocument();

@@ -32,6 +32,8 @@ interface BottomTabBarViewProps {
   onSignOut: () => void;
   theme: UiTheme;
   onOpenAppearance: () => void;
+  /** Modo conversa: a barra some (a folha "Mais" continua montada). */
+  hidden?: boolean;
 }
 
 const BADGE_PILL =
@@ -50,6 +52,7 @@ export function BottomTabBarView({
   onSignOut,
   theme,
   onOpenAppearance,
+  hidden = false,
 }: BottomTabBarViewProps) {
   const { primary, more } = useMemo(() => splitMobile(items), [items]);
   const sections = useMemo(() => moreSheetSections(more), [more]);
@@ -154,7 +157,10 @@ export function BottomTabBarView({
       </Modal>
 
       {/* Barra */}
-      <nav aria-label="Menu principal" className="fixed bottom-0 left-0 right-0 z-30 md:hidden bg-surface-raised border-t border-border pb-safe">
+      <nav
+        aria-label="Menu principal"
+        className={cn("fixed bottom-0 left-0 right-0 z-30 md:hidden bg-surface-raised border-t border-border pb-safe", hidden && "hidden")}
+      >
         <div className="flex items-center justify-around h-16">
           {primary.map((item) => {
             const Icon = item.icon;
@@ -222,6 +228,8 @@ interface BottomTabBarProps {
   onSignOut: () => void;
   theme: UiTheme;
   setTheme: (theme: UiTheme) => void;
+  /** Modo conversa no celular: esconde a barra. */
+  hidden?: boolean;
 }
 
 export function BottomTabBar({
@@ -233,6 +241,7 @@ export function BottomTabBar({
   onSignOut,
   theme,
   setTheme,
+  hidden = false,
 }: BottomTabBarProps) {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const location = useLocation();
@@ -257,6 +266,7 @@ export function BottomTabBar({
       onSignOut={onSignOut}
       theme={theme}
       onOpenAppearance={() => setAppearanceOpen(true)}
+      hidden={hidden}
     />
     <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
     </>

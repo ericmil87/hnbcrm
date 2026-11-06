@@ -1,8 +1,7 @@
-import type { KeyboardEvent, RefObject } from "react";
-import { AlertCircle, Languages, Pencil, RotateCcw } from "lucide-react";
+import { useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+import { AlertCircle, Languages, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { languageDisplayName } from "@/lib/translationRules";
-import { Button } from "@/components/ui/Button";
 import { Tooltip } from "@/components/ui/Tooltip";
 import type { ComposerPreviewView } from "@/components/inbox/useComposerTranslation";
 
@@ -27,9 +26,23 @@ export interface TranslationPreviewRowProps {
   editRef?: RefObject<HTMLTextAreaElement | null>;
 }
 
+/** Botão de texto compacto da faixa: visual de ~24 px, área de toque de 44 px. */
+const STRIP_BUTTON =
+  "relative inline-flex h-6 shrink-0 items-center gap-1 rounded-full px-2 text-caption font-medium text-brand-400 transition-colors hover:bg-brand-500/10 " +
+  "before:absolute before:inset-x-0 before:-inset-y-2.5 before:content-['']";
+
+function StripButton({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className={STRIP_BUTTON}>
+      {children}
+    </button>
+  );
+}
+
 /**
- * Linha "Será enviado em espanhol: …" abaixo do campo do composer (tradução,
- * F3). Apresentacional: o container (`Composer.tsx`) liga a prévia e o envio.
+ * Faixa fina "Espanhol: …" ACIMA do campo do composer (tradução, F3), no
+ * estilo da barra de resposta. Apresentacional: o container (`Composer.tsx`)
+ * liga a prévia e o envio.
  */
 export function TranslationPreviewRow({
   view,
@@ -46,48 +59,50 @@ export function TranslationPreviewRow({
   onEditKeyDown,
   editRef,
 }: TranslationPreviewRowProps) {
+  const [expanded, setExpanded] = useState(false);
+  const skipReason = view.kind === "skipped" ? view.reason : null;
   const untranslatedButton = (
     <Tooltip content="Envia o texto como você escreveu, só desta vez">
-      <Button type="button" variant="ghost" size="sm" onClick={onUntranslated}>
-        Sem traduzir
-      </Button>
+      <StripButton onClick={onUntranslated}>Sem traduzir</StripButton>
     </Tooltip>
   );
-  const skipReason = view.kind === "skipped" ? view.reason : null;
+  const icon = <Languages size={13} className="shrink-0 text-brand-500" aria-hidden />;
 
   return (
     <div
       className={cn(
-        "mt-2 rounded-lg border bg-surface-sunken px-3 py-2 text-xs",
-        armed ? "border-brand-500" : "border-border"
+        "mb-1.5 overflow-hidden rounded-xl border-l-4 bg-surface-sunken py-1.5 pl-2.5 pr-1.5 text-caption",
+        armed ? "border-brand-500 ring-1 ring-brand-500" : "border-brand-500/60"
       )}
       data-testid="translation-preview"
     >
       {view.kind === "loading" && (
-        <p className="flex items-center gap-1.5 text-text-muted" aria-live="polite">
-          <Languages size={12} className="shrink-0 text-brand-500" aria-hidden />
-          <span className="skeleton-shimmer rounded px-1">Traduzindo…</span>
-        </p>
+        <div className="flex items-center gap-1.5 text-text-muted" aria-live="polite">
+          {icon}
+          <span className="skeleton-shimmer min-w-0 flex-1 rounded px-1">Traduzindo…</span>
+          {untranslatedButton}
+        </div>
       )}
 
       {view.kind === "skipped" && view.reason === "same_language" && (
-        <p className="flex items-center gap-1.5 text-text-secondary" aria-live="polite">
-          <Languages size={12} className="shrink-0 text-brand-500" aria-hidden />
+        <p className="flex items-center gap-1.5 py-0.5 text-text-secondary" aria-live="polite">
+          {icon}
           Já está em {languageDisplayName(view.targetLang, { lower: true })}. Enviando sem traduzir.
         </p>
       )}
 
       {view.kind === "skipped" && view.reason === "long_text" && (
-        <p className="flex items-center gap-1.5 text-text-secondary" aria-live="polite">
-          <Languages size={12} className="shrink-0 text-brand-500" aria-hidden />
-          Será traduzido ao enviar.
-        </p>
+        <div className="flex items-center gap-1.5 text-text-secondary" aria-live="polite">
+          {icon}
+          <span className="min-w-0 flex-1">Será traduzido ao enviar.</span>
+          {untranslatedButton}
+        </div>
       )}
 
       {view.kind === "error" && (
-        <div className="space-y-1.5">
+        <div className="space-y-1">
           <p className="flex items-start gap-1.5 text-semantic-warning" aria-live="polite">
-            <AlertCircle size={12} className="mt-0.5 shrink-0" aria-hidden />
+            <AlertCircle size={13} className="mt-0.5 shrink-0" aria-hidden />
             <span>
               {strict
                 ? `Prévia indisponível: ${view.message} Nada é enviado sem você ver a tradução.`
@@ -96,25 +111,27 @@ export function TranslationPreviewRow({
           </p>
           <div className="flex flex-wrap items-center justify-end gap-1">
             {onRetry && (
-              <Button type="button" variant="ghost" size="sm" onClick={onRetry}>
-                <RotateCcw size={14} aria-hidden />
+              <StripButton onClick={onRetry}>
+                <RotateCcw size={12} aria-hidden />
                 Tentar de novo
-              </Button>
+              </StripButton>
             )}
-            <Button type="button" variant="ghost" size="sm" onClick={onUntranslated}>
-              Enviar sem traduzir
-            </Button>
+            <StripButton onClick={onUntranslated}>Enviar sem traduzir</StripButton>
           </div>
         </div>
       )}
 
       {view.kind === "ready" && (
-        <div className="space-y-1.5">
-          <p className="flex flex-wrap items-center gap-1.5 text-text-secondary">
-            <Languages size={12} className="shrink-0 text-brand-500" aria-hidden />
-            <span>Será enviado em {languageDisplayName(view.targetLang, { lower: true })}:</span>
-            {edited && <span className="font-medium text-text-primary">Tradução editada por você</span>}
-          </p>
+        <div className="space-y-0.5">
+          <div className="flex items-center gap-1.5">
+            {icon}
+            <span className="min-w-0 flex-1 truncate font-medium text-text-secondary">
+              <span className="sr-only">Será enviado em </span>
+              <span>{languageDisplayName(view.targetLang)}:</span>
+            </span>
+            {!editing && <StripButton onClick={onEdit}>Editar</StripButton>}
+            {untranslatedButton}
+          </div>
           {editing ? (
             <textarea
               ref={editRef}
@@ -125,44 +142,54 @@ export function TranslationPreviewRow({
               dir="auto"
               rows={2}
               aria-label={`Tradução em ${languageDisplayName(view.targetLang, { lower: true })}`}
-              className="w-full resize-y rounded-field border border-border-strong bg-composer-field px-2.5 py-1.5 text-base md:text-sm text-text-primary focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
+              className="mt-1 w-full resize-y rounded-field border border-border-strong bg-composer-field px-2.5 py-1.5 text-base text-text-primary focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 md:text-sm"
             />
           ) : (
-            <p lang={view.targetLang} dir="auto" className="whitespace-pre-wrap break-words text-sm text-text-primary">
-              {editedText !== undefined && editedText.trim() ? editedText : view.text}
-            </p>
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              className="block w-full text-left"
+            >
+              <span
+                lang={view.targetLang}
+                dir="auto"
+                className={cn(
+                  "block whitespace-pre-wrap break-words text-sm text-text-primary",
+                  !expanded && !armed && !strict && "line-clamp-2"
+                )}
+              >
+                {editedText !== undefined && editedText.trim() ? editedText : view.text}
+              </span>
+            </button>
           )}
-          <div className="flex flex-wrap items-center justify-end gap-1">
-            {edited && (
-              <Button type="button" variant="ghost" size="sm" onClick={onRestore}>
-                <RotateCcw size={14} aria-hidden />
+          {edited && (
+            <div className="flex items-center gap-1">
+              <span className="font-medium text-text-primary">Tradução editada por você</span>
+              <StripButton onClick={onRestore}>
+                <RotateCcw size={12} aria-hidden />
                 Usar a tradução automática
-              </Button>
-            )}
-            {!editing && (
-              <Button type="button" variant="ghost" size="sm" onClick={onEdit}>
-                <Pencil size={14} aria-hidden />
-                Editar
-              </Button>
-            )}
-            {untranslatedButton}
-          </div>
+              </StripButton>
+            </div>
+          )}
         </div>
       )}
 
-      {(view.kind === "loading" || skipReason === "long_text") && (
-        <div className="mt-1 flex justify-end">{untranslatedButton}</div>
-      )}
-
-      <p className="mt-1 text-text-muted" aria-live="polite">
+      <p className="empty:hidden text-text-muted" aria-live="polite">
         {armed && view.kind === "loading" ? (
           <span className="font-medium text-brand-500">Aguarde a tradução para revisar e enviar.</span>
         ) : armed && view.kind === "skipped" && skipReason !== "same_language" && skipReason !== "long_text" ? (
-          <span className="font-medium text-brand-500">Nada a traduzir. Enter de novo envia como está.</span>
+          <span className="font-medium text-brand-500">
+            <span className="coarse:inline hidden">Nada a traduzir. Toque em enviar de novo para enviar como está.</span>
+            <span className="coarse:hidden">Nada a traduzir. Enter de novo envia como está.</span>
+          </span>
         ) : armed && view.kind !== "error" ? (
-          <span className="font-medium text-brand-500">Revise e confirme: Enter de novo envia.</span>
+          <span className="font-medium text-brand-500">
+            <span className="coarse:inline hidden">Revise e confirme: toque em enviar de novo.</span>
+            <span className="coarse:hidden">Revise e confirme: Enter de novo envia.</span>
+          </span>
         ) : view.kind === "ready" ? (
-          <span className="hidden md:inline">Enter envia a versão traduzida · Shift+Enter nova linha</span>
+          <span className="hidden md:inline coarse:hidden">Enter envia a versão traduzida · Shift+Enter nova linha</span>
         ) : null}
       </p>
     </div>

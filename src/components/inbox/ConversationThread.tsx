@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { useShowOriginalPref } from "@/lib/translationPrefs";
 import { bubbleTranslation, conversationLanguageState, hasFreshUntranslated } from "@/lib/translationRules";
@@ -11,6 +11,8 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
 import { MESSAGES_MAX_LIMIT } from "@/lib/inboxPaging";
 import { cn } from "@/lib/utils";
+import { formatDayLabel } from "@/lib/format";
+import { layoutThread } from "@/lib/threadLayout";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
@@ -24,6 +26,8 @@ import { useConversationDoc } from "@/components/inbox/useConversationDoc";
 import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { useMarkReadAndPresence } from "@/components/inbox/useMarkReadAndPresence";
 import { useThreadPaging } from "@/components/inbox/useThreadPaging";
+
+const EMPTY_MESSAGES: InboxMessage[] = [];
 
 export interface ConversationThreadProps {
   organizationId: Id<"organizations">;
@@ -118,6 +122,18 @@ export function ConversationThread({
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
 
   const ready = messageDocReady && messages !== undefined;
+  // Blocos estilo WhatsApp (cauda, espaço, rótulo) e separadores de dia.
+  // Transferência e rascunho da IA não são bolhas: quebram o bloco.
+  const threadMessages = ready ? (messages as InboxMessage[]) : EMPTY_MESSAGES;
+  const layout = useMemo(
+    () =>
+      layoutThread(threadMessages, {
+        isGroup: isGroupConversation,
+        currentMemberId,
+        isBubble: (m) => !(m.metadata?.kind === "transfer" && m.metadata?.transfer) && !getAiDraft(m),
+      }),
+    [threadMessages, isGroupConversation, currentMemberId]
+  );
   const convChannel: string | undefined = conversation?.channel;
   const convTransport: string | undefined = conversation?.channelProvider;
   const contactName =
@@ -250,11 +266,11 @@ export function ConversationThread({
       <div
         ref={paging.scrollRef}
         onScroll={paging.onScroll}
-        className="flex-1 min-h-0 overflow-y-auto bg-chat-bg chat-wallpaper"
+        className="flex-1 min-h-0 overflow-y-auto overscroll-contain bg-chat-bg chat-wallpaper"
       >
         <div
           className={cn(
-            "min-h-full flex flex-col justify-end w-full p-4 space-y-4",
+            "min-h-full flex flex-col justify-end w-full px-1.5 pt-2 pb-3 md:px-4",
             !embedded && "max-w-4xl mx-auto"
           )}
         >
@@ -271,7 +287,7 @@ export function ConversationThread({
           )}
 
           {ready && (loadingOlder || paging.canLoadOlder) ? (
-            <div className="text-center py-2 mb-2">
+            <div className="text-center py-2">
               <div ref={paging.sentinelRef} aria-hidden="true" className="h-px" />
               <Button
                 variant="ghost"
@@ -291,79 +307,92 @@ export function ConversationThread({
               </Button>
             </div>
           ) : ready && paging.reachedMax ? (
-            <div className="text-center py-2 mb-2">
+            <div className="text-center py-2">
               <span className="text-xs text-bubble-system-fg bg-bubble-system inline-block px-3 py-1.5 rounded-full">
                 Exibindo as últimas {MESSAGES_MAX_LIMIT} mensagens
               </span>
             </div>
           ) : null}
 
-          {(ready ? (messages as InboxMessage[]) : []).map((message) =>
-            message.metadata?.kind === "transfer" && message.metadata?.transfer ? (
-              // Transferência de setor (Central): evento de sistema, não bolha
-              <TransferEvent
-                key={message._id}
-                actorName={message.sender?.name ?? null}
-                transfer={message.metadata.transfer}
-                createdAt={message.createdAt}
-              />
-            ) : getAiDraft(message) ? (
-              // Rascunho do atendente IA (modo sugestão): revisão humana
-              <AiDraftCard key={message._id} message={message} />
-            ) : (
-              <MessageBubble
-                key={message._id}
-                message={message}
-                channel={convChannel}
-                transport={convTransport}
-                canInteract={canReply}
-                currentMemberId={currentMemberId}
-                contactName={contactName}
-                transcribing={transcribingIds.has(message._id)}
-                describing={describingIds.has(message._id)}
-                downloadingMedia={downloadingIds.has(message._id)}
-                visionEnabled={visionEnabled}
-                highlighted={paging.highlightId === message._id}
-                group={
-                  isGroupConversation
-                    ? {
-                        mentionTokens: mentionTokensFor(message.mentions, groupNameByKey),
-                        onOpenContact: onOpenGroupMemberContact
-                          ? (contactId) => onOpenGroupMemberContact(contactId as Id<"contacts">)
-                          : undefined,
+          {threadMessages.map((message, index) => {
+            const place = layout[index];
+            return (
+              <Fragment key={message._id}>
+                {place?.daySeparator && (
+                  <div className="flex justify-center py-2" role="separator" aria-label={formatDayLabel(message.createdAt, now)}>
+                    <span className="rounded-full bg-bubble-system px-3 py-1 text-caption font-medium text-bubble-system-fg shadow-bubble">
+                      {formatDayLabel(message.createdAt, now)}
+                    </span>
+                  </div>
+                )}
+                <div className={place?.daySeparator ? undefined : place?.first ?? true ? "mt-2.5" : "mt-0.5"}>
+                  {message.metadata?.kind === "transfer" && message.metadata?.transfer ? (
+                    // Transferência de setor (Central): evento de sistema, não bolha
+                    <TransferEvent
+                      actorName={message.sender?.name ?? null}
+                      transfer={message.metadata.transfer}
+                      createdAt={message.createdAt}
+                    />
+                  ) : getAiDraft(message) ? (
+                    // Rascunho do atendente IA (modo sugestão): revisão humana
+                    <AiDraftCard message={message} />
+                  ) : (
+                    <MessageBubble
+                      message={message}
+                      run={place}
+                      channel={convChannel}
+                      transport={convTransport}
+                      canInteract={canReply}
+                      currentMemberId={currentMemberId}
+                      contactName={contactName}
+                      transcribing={transcribingIds.has(message._id)}
+                      describing={describingIds.has(message._id)}
+                      downloadingMedia={downloadingIds.has(message._id)}
+                      visionEnabled={visionEnabled}
+                      highlighted={paging.highlightId === message._id}
+                      group={
+                        isGroupConversation
+                          ? {
+                              mentionTokens: mentionTokensFor(message.mentions, groupNameByKey),
+                              onOpenContact: onOpenGroupMemberContact
+                                ? (contactId) => onOpenGroupMemberContact(contactId as Id<"contacts">)
+                                : undefined,
+                            }
+                          : undefined
                       }
-                    : undefined
-                }
-                onReply={setReplyTo}
-                onReact={handleReact}
-                onForward={setForwardTarget}
-                onTranscribe={handleTranscribe}
-                onDescribeImage={(m) => void handleDescribeImage(m)}
-                {...(canReply
-                  ? { onDownloadMedia: (m: InboxMessage) => void handleDownloadMedia(m) }
-                  : {})}
-                onJumpToMessage={paging.jumpToMessage}
-                translation={(() => {
-                  // Módulo desligado: só a enviada retida (pending/failed) mantém as ações.
-                  const decided = bubbleTranslation(message, {
-                    moduleEnabled: translationSettings.moduleEnabled,
-                    isGroup: isGroupConversation,
-                    teamLanguage: translationSettings.teamLanguage,
-                    conversationActive: languageState.active,
-                    now,
-                    conversation,
-                  });
-                  return decided
-                    ? { ...decided, showBoth, busy: translatingIds.has(message._id) }
-                    : undefined;
-                })()}
-                onTranslate={(m) => void handleTranslate(m)}
-                onTranslateAs={canReply ? (m, lang) => void handleTranslateAs(m, lang) : undefined}
-                onRetryOutbound={(m) => void handleRetryOutbound(m)}
-                onSendUntranslated={(m) => void handleSendUntranslated(m)}
-              />
-            )
-          )}
+                      onReply={setReplyTo}
+                      onReact={handleReact}
+                      onForward={setForwardTarget}
+                      onTranscribe={handleTranscribe}
+                      onDescribeImage={(m) => void handleDescribeImage(m)}
+                      {...(canReply
+                        ? { onDownloadMedia: (m: InboxMessage) => void handleDownloadMedia(m) }
+                        : {})}
+                      onJumpToMessage={paging.jumpToMessage}
+                      translation={(() => {
+                        // Módulo desligado: só a enviada retida (pending/failed) mantém as ações.
+                        const decided = bubbleTranslation(message, {
+                          moduleEnabled: translationSettings.moduleEnabled,
+                          isGroup: isGroupConversation,
+                          teamLanguage: translationSettings.teamLanguage,
+                          conversationActive: languageState.active,
+                          now,
+                          conversation,
+                        });
+                        return decided
+                          ? { ...decided, showBoth, busy: translatingIds.has(message._id) }
+                          : undefined;
+                      })()}
+                      onTranslate={(m) => void handleTranslate(m)}
+                      onTranslateAs={canReply ? (m, lang) => void handleTranslateAs(m, lang) : undefined}
+                      onRetryOutbound={(m) => void handleRetryOutbound(m)}
+                      onSendUntranslated={(m) => void handleSendUntranslated(m)}
+                    />
+                  )}
+                </div>
+              </Fragment>
+            );
+          })}
         </div>
       </div>
 

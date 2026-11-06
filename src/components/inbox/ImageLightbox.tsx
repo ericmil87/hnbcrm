@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from "react";
 import { X, Download } from "lucide-react";
+import { lockBodyScroll } from "@/lib/scrollLock";
 
 interface ImageLightboxProps {
   open: boolean;
@@ -19,13 +20,13 @@ export function ImageLightbox({ open, onClose, src, alt, downloadName }: ImageLi
   );
 
   useEffect(() => {
-    if (open) {
-      document.addEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "hidden";
-    }
+    if (!open) return;
+    document.addEventListener("keydown", handleKeyDown);
+    // Contador compartilhado: não desfaz a trava de outra camada (modo conversa, Modal).
+    const unlock = lockBodyScroll();
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = "";
+      unlock();
     };
   }, [open, handleKeyDown]);
 

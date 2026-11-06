@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   formatCount,
   formatDate,
+  formatDayLabel,
   formatDateTime,
   formatDateTimeShort,
   formatDueRelative,
@@ -171,5 +172,23 @@ describe("formatDateTimeShort", () => {
   });
   it("devolve traço para data inválida", () => {
     expect(formatDateTimeShort(Number.NaN, NOW_2025)).toBe("—");
+  });
+});
+
+describe("formatDayLabel", () => {
+  // 06/11/2026 15:00 em São Paulo.
+  const NOW = Date.UTC(2026, 10, 6, 18, 0);
+  it("hoje e ontem pelo dia de calendário do fuso", () => {
+    expect(formatDayLabel(Date.UTC(2026, 10, 6, 3, 30), NOW, SP)).toBe("Hoje"); // 00:30 local
+    expect(formatDayLabel(Date.UTC(2026, 10, 6, 2, 30), NOW, SP)).toBe("Ontem"); // 23:30 de ontem
+    expect(formatDayLabel(Date.UTC(2026, 10, 5, 3, 0), NOW, SP)).toBe("Ontem");
+  });
+  it("mesmo ano: dia da semana curto; outro ano: com o ano", () => {
+    expect(formatDayLabel(Date.UTC(2026, 10, 3, 15, 0), NOW, SP)).toBe("ter., 3 de nov.");
+    expect(formatDayLabel(Date.UTC(2025, 10, 3, 15, 0), NOW, SP)).toBe("3 de nov. de 2025");
+  });
+  it("virada do mês no 'ontem'", () => {
+    const firstOfMonth = Date.UTC(2026, 11, 1, 15, 0);
+    expect(formatDayLabel(Date.UTC(2026, 10, 30, 15, 0), firstOfMonth, SP)).toBe("Ontem");
   });
 });

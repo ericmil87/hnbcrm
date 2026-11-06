@@ -55,7 +55,7 @@ function PillSelect({ label, value, display, options, onChange, icon, color, dis
   return (
     <span
       className={cn(
-        "relative inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors",
+        "relative inline-flex h-8 shrink-0 items-center whitespace-nowrap gap-1.5 rounded-full border px-2.5 text-xs transition-colors",
         "focus-within:ring-2 focus-within:ring-brand-500 focus-within:ring-offset-2 focus-within:ring-offset-surface-base",
         disabled ? "opacity-60" : "hover:bg-surface-overlay",
         color ? "text-text-primary" : "border-border-strong",
@@ -68,11 +68,10 @@ function PillSelect({ label, value, display, options, onChange, icon, color, dis
       ) : (
         icon
       )}
-      <span className="max-w-[9rem] truncate font-medium">{display}</span>
+      <span className="max-w-[8rem] truncate font-medium">{display}</span>
       <ChevronDown size={12} className="shrink-0 text-text-muted" aria-hidden />
       <select
         aria-label={label}
-        title={label}
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
@@ -183,7 +182,7 @@ export function ConversationRoutingBar({
 
   return (
     <>
-      <div className="shrink-0 border-b border-border px-4 py-2">
+      <div className="shrink-0 border-b border-border px-3 py-1.5 md:px-4 md:py-2">
         <div
           role="toolbar"
           aria-label="Roteamento e desfecho da conversa"
@@ -281,7 +280,7 @@ export function ConversationRoutingBar({
             <button
               type="button"
               onClick={() => setTransferOpen(true)}
-              className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-border-strong px-2.5 text-xs font-medium text-text-primary transition-colors hover:border-brand-500 hover:text-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base"
+              className="inline-flex h-8 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border border-border-strong px-2.5 text-xs font-medium text-text-primary transition-colors hover:border-brand-500 hover:text-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base"
             >
               <ArrowRightLeft size={13} aria-hidden />
               Transferir
@@ -289,11 +288,11 @@ export function ConversationRoutingBar({
           )}
 
           {lead && isSalesLead && (
-            <div className="flex shrink-0 items-center gap-1.5 md:ml-auto">
+            <div className="flex shrink-0 items-center gap-1.5 pr-1 md:ml-auto md:pr-0">
               {outcome ? (
                 <span
                   className={cn(
-                    "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3 text-xs font-medium tabular-nums",
+                    "inline-flex h-8 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full px-3 text-xs font-medium tabular-nums",
                     outcome.status === "converted"
                       ? "bg-semantic-success/10 text-semantic-success"
                       : "bg-semantic-error/10 text-semantic-error"
@@ -328,7 +327,7 @@ export function ConversationRoutingBar({
                     <button
                       type="button"
                       onClick={() => setOutcomeKind("converted")}
-                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full bg-semantic-success/10 px-2.5 text-xs font-semibold text-semantic-success transition-colors hover:bg-semantic-success/20 focus:outline-none focus:ring-2 focus:ring-semantic-success focus:ring-offset-2 focus:ring-offset-surface-base"
+                      className="inline-flex h-8 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full bg-semantic-success/10 px-2.5 text-xs font-semibold text-semantic-success transition-colors hover:bg-semantic-success/20 focus:outline-none focus:ring-2 focus:ring-semantic-success focus:ring-offset-2 focus:ring-offset-surface-base"
                     >
                       <CircleCheck size={14} aria-hidden />
                       Convertido
@@ -336,7 +335,7 @@ export function ConversationRoutingBar({
                     <button
                       type="button"
                       onClick={() => setOutcomeKind("not_converted")}
-                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border border-border-strong px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error focus:outline-none focus:ring-2 focus:ring-semantic-error focus:ring-offset-2 focus:ring-offset-surface-base"
+                      className="inline-flex h-8 shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border border-border-strong px-2.5 text-xs font-medium text-text-secondary transition-colors hover:border-semantic-error hover:text-semantic-error focus:outline-none focus:ring-2 focus:ring-semantic-error focus:ring-offset-2 focus:ring-offset-surface-base"
                     >
                       <CircleX size={14} aria-hidden />
                       Não convertido

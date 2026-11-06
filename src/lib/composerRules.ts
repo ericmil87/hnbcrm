@@ -35,6 +35,43 @@ export function isSendKey(e: { key: string; shiftKey: boolean; nativeEvent?: { i
   return e.key === "Enter" && !e.shiftKey && !e.nativeEvent?.isComposing;
 }
 
+/**
+ * Tecla de envio conforme o aparelho. No celular/tablet (ponteiro "coarse") o
+ * Enter quebra a linha, como no WhatsApp: só o botão envia (Ctrl/Cmd+Enter de
+ * um teclado físico ainda envia). No desktop vale `isSendKey`.
+ */
+export function isSendKeyFor(
+  e: { key: string; shiftKey: boolean; ctrlKey?: boolean; metaKey?: boolean; nativeEvent?: { isComposing?: boolean } },
+  coarsePointer: boolean
+): boolean {
+  if (!isSendKey(e)) return false;
+  return coarsePointer ? !!(e.ctrlKey || e.metaKey) : true;
+}
+
+/** Linhas máximas do campo antes de rolar: celular 6, desktop 10. */
+export function composerMaxRows(isDesktop: boolean): number {
+  return isDesktop ? 10 : 6;
+}
+
+/**
+ * Altura de um textarea que cresce com o texto: `scrollHeight` (conteúdo +
+ * padding) limitado a `maxRows` linhas; acima disso o campo rola por dentro.
+ */
+export function autoGrowHeight(opts: {
+  scrollHeight: number;
+  lineHeight: number;
+  paddingY: number;
+  borderY?: number;
+  rows?: number;
+  maxRows: number;
+}): { height: number; scrollable: boolean } {
+  const { scrollHeight, lineHeight, paddingY, borderY = 0, rows = 1, maxRows } = opts;
+  const min = lineHeight * Math.max(1, rows) + paddingY + borderY;
+  const max = lineHeight * Math.max(Math.max(1, rows), maxRows) + paddingY + borderY;
+  const wanted = Math.max(scrollHeight + borderY, min);
+  return wanted > max ? { height: max, scrollable: true } : { height: wanted, scrollable: false };
+}
+
 export function hasContentToSend(text: string, stagedCount: number): boolean {
   return text.trim().length > 0 || stagedCount > 0;
 }

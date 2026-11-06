@@ -95,3 +95,9 @@ Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.m
 - O chip de idioma é pílula + `Popover` (folha inferior no celular), com `Languages` e código curto ("ES · auto"); nunca bandeira emoji, porque idioma não é país.
 - `message.content` é o texto de fio. A versão da equipe vem de `translatedText` e o estado de `metadata.translation`; nunca exiba um no lugar do outro sem rótulo, e nunca grave texto em `metadata.translation`.
 - Nota interna nunca é traduzida (sem chip, sem botão "Traduzir"); falha de tradução de saída nunca envia sozinha, mostra "Tentar de novo" e "Enviar sem traduzir".
+
+## Conversa no celular (modo WhatsApp)
+- Conversa aberta no celular = tela cheia (`useChatModeActive`); nada de `fixed`/`sticky` no fundo nem alturas `100dvh`/`100vh` dentro da coluna da conversa: o container já segue o `visualViewport` (teclado do iOS). Composer `shrink-0` no fluxo com `pb-safe`; thread `flex-1 min-h-0 overflow-y-auto overscroll-contain`.
+- Trava de rolagem só pelo contador de `src/lib/scrollLock.ts`; nunca gravar `document.body.style.overflow` direto.
+- Comportamento de toque se decide por `(pointer: coarse)` (variante `coarse:`), não por largura: no toque Enter quebra linha e só o botão envia (`isSendKeyFor`), e dicas de tecla seguem a mesma regra.
+- `cn()` conhece `text-caption|micro`, sombras e raios próprios; ao criar uma escala nova no `tailwind.config.js`, registre-a em `src/lib/utils.ts`.

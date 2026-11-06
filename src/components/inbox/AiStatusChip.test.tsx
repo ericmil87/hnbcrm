@@ -31,3 +31,17 @@ describe("AiStatusChip", () => {
     expect(container).toBeEmptyDOMElement();
   });
 });
+
+describe("AiStatusChip com a conversa pausada", () => {
+  it("não repete o aviso de espera quando a IA já aparece pausada", () => {
+    const { container } = render(
+      <AiStatusChip paused state={{ status: "skipped", reason: "ia_pausada", at: 1, afterLastInbound: true }} />
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("mantém outros motivos de espera mesmo pausada", () => {
+    render(<AiStatusChip paused state={{ status: "skipped", reason: "teto_hora", at: 1, afterLastInbound: true }} />);
+    expect(screen.getByRole("status")).toHaveTextContent("IA em espera");
+  });
+});

@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
-import { MoreVertical, Archive, ArchiveRestore, Check, Plus, Trash2 } from "lucide-react";
+import { MoreVertical, Archive, ArchiveRestore, Bot, Check, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { DeleteLeadDialog } from "@/components/leads/DeleteLeadDialog";
+import { useChatMode } from "@/components/layout/chatMode";
+import { Popover } from "@/components/ui/Popover";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 // Menu "..." do header da conversa: arquivar/desarquivar + etiquetas (toggle,
 // criar, excluir). Paleta fixa — a cor vive no doc da etiqueta.
@@ -58,31 +61,15 @@ export function ConversationActionsMenu({
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(LABEL_COLORS[3]);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const { openCopilot } = useChatMode();
 
   const labels = useQuery(api.conversations.listLabels, { organizationId });
   const setArchived = useMutation(api.conversations.setConversationArchived);
   const toggleLabel = useMutation(api.conversations.toggleConversationLabel);
   const createLabel = useMutation(api.conversations.createLabel);
   const deleteLabel = useMutation(api.conversations.deleteLabel);
-
-  useEffect(() => {
-    if (!open) return;
-    const handlePointer = (e: MouseEvent | TouchEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", handlePointer);
-    document.addEventListener("touchstart", handlePointer);
-    document.addEventListener("keydown", handleKey);
-    return () => {
-      document.removeEventListener("mousedown", handlePointer);
-      document.removeEventListener("touchstart", handlePointer);
-      document.removeEventListener("keydown", handleKey);
-    };
-  }, [open]);
 
   const archived = !!archivedAt;
 
@@ -128,22 +115,48 @@ export function ConversationActionsMenu({
   };
 
   return (
-    <div ref={rootRef} className="relative shrink-0">
+    <div className="relative shrink-0">
       <button
+        ref={anchorRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "p-2 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors",
+          "flex h-11 w-11 items-center justify-center rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors md:h-9 md:w-9",
           open && "text-text-primary bg-surface-overlay"
         )}
         aria-label="Ações da conversa"
+        aria-haspopup="dialog"
         aria-expanded={open}
       >
-        <MoreVertical size={18} />
+        <MoreVertical size={20} />
       </button>
 
-      {open && (
-        <div className="absolute top-full right-0 mt-1 z-40 w-60 py-1 bg-surface-overlay border border-border rounded-xl shadow-elevated">
+      <Popover
+        open={open}
+        onOpenChange={setOpen}
+        anchor={anchorRef}
+        align="end"
+        sheet={isMobile}
+        role="dialog"
+        aria-label="Ações da conversa"
+        className={cn("py-1", !isMobile && "w-60")}
+      >
+        <div>
+          {openCopilot && (
+            <div className="border-b border-border pb-1 mb-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  openCopilot();
+                }}
+                className="w-full min-h-[44px] md:min-h-0 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+              >
+                <Bot size={15} />
+                Copiloto
+              </button>
+            </div>
+          )}
           {renderExtraItems && (
             <div className="border-b border-border pb-1 mb-1">
               {renderExtraItems(() => setOpen(false))}
@@ -152,7 +165,7 @@ export function ConversationActionsMenu({
           <button
             type="button"
             onClick={handleArchive}
-            className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+            className="w-full coarse:min-h-11 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
           >
             {archived ? <ArchiveRestore size={15} /> : <Archive size={15} />}
             {archived ? "Desarquivar conversa" : "Arquivar conversa"}
@@ -169,7 +182,7 @@ export function ConversationActionsMenu({
               return (
                 <div
                   key={label._id}
-                  className="group flex items-center gap-2.5 px-3 py-1.5 hover:bg-surface-raised transition-colors"
+                  className="group flex coarse:min-h-11 items-center gap-2.5 px-3 py-1.5 hover:bg-surface-raised transition-colors"
                 >
                   <button
                     type="button"
@@ -188,7 +201,7 @@ export function ConversationActionsMenu({
                   <button
                     type="button"
                     onClick={() => handleDeleteLabel(label._id, label.name)}
-                    className="shrink-0 p-1 rounded-full text-text-muted opacity-0 group-hover:opacity-100 hover:text-semantic-error transition-all"
+                    className="shrink-0 p-1 rounded-full text-text-muted opacity-0 coarse:opacity-100 group-hover:opacity-100 coarse:p-2.5 hover:text-semantic-error transition-all"
                     aria-label={`Excluir etiqueta ${label.name}`}
                   >
                     <Trash2 size={12} />
@@ -233,7 +246,7 @@ export function ConversationActionsMenu({
             <button
               type="button"
               onClick={() => setCreating(true)}
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-left text-xs text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+              className="w-full coarse:min-h-11 flex items-center gap-2.5 px-3 py-2 text-left text-xs text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
             >
               <Plus size={13} />
               Nova etiqueta
@@ -256,7 +269,7 @@ export function ConversationActionsMenu({
             </div>
           )}
         </div>
-      )}
+      </Popover>
 
       {confirmDeleteLead && leadId && (
         <DeleteLeadDialog

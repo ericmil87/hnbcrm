@@ -1,5 +1,6 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import { cn } from "@/lib/utils";
+import { autoGrowHeight } from "@/lib/composerRules";
 import { getMentionQuery, insertMention, filterMembers } from "@/lib/mentions";
 import { Badge } from "@/components/ui/Badge";
 
@@ -25,6 +26,9 @@ interface MentionTextareaProps {
   mentionEnabled?: boolean;
   /** Expõe o textarea interno (ex.: inserir emoji na posição do cursor). */
   inputRef?: React.RefObject<HTMLTextAreaElement | null>;
+  /** Cresce com o texto de `rows` até `maxRows` linhas e depois rola por dentro. Padrão: desligado. */
+  autoGrow?: boolean;
+  maxRows?: number;
 }
 
 const ROLE_LABELS: Record<string, string> = {
@@ -51,6 +55,8 @@ export function MentionTextarea({
   className,
   mentionEnabled = false,
   inputRef,
+  autoGrow = false,
+  maxRows = 6,
 }: MentionTextareaProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -65,6 +71,27 @@ export function MentionTextarea({
     : [];
 
   const showDropdown = mentionEnabled && mentionState !== null && filteredMembers.length > 0;
+
+  // Auto-grow: mede o conteúdo com altura "auto" e fixa a altura resultante.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!autoGrow || !el) return;
+    el.style.height = "auto";
+    const cs = window.getComputedStyle(el);
+    const px = (v: string) => Number.parseFloat(v) || 0;
+    const fontSize = px(cs.fontSize) || 16;
+    const lineHeight = px(cs.lineHeight) || fontSize * 1.4;
+    const { height, scrollable } = autoGrowHeight({
+      scrollHeight: el.scrollHeight,
+      lineHeight,
+      paddingY: px(cs.paddingTop) + px(cs.paddingBottom),
+      borderY: px(cs.borderTopWidth) + px(cs.borderBottomWidth),
+      rows,
+      maxRows,
+    });
+    el.style.height = `${height}px`;
+    el.style.overflowY = scrollable ? "auto" : "hidden";
+  }, [autoGrow, value, rows, maxRows]);
 
   // Update mention state when value or cursor position changes
   const updateMentionState = useCallback(() => {
@@ -157,7 +184,7 @@ export function MentionTextarea({
   };
 
   return (
-    <div className="relative flex-1">
+    <div className="relative min-w-0 flex-1">
       {/* Dropdown — positioned above textarea */}
       {showDropdown && (
         <>
@@ -167,7 +194,7 @@ export function MentionTextarea({
           />
           <div
             ref={dropdownRef}
-            className="absolute bottom-full mb-1 left-0 right-0 z-50 bg-surface-overlay border border-border rounded-xl shadow-elevated max-h-48 overflow-y-auto"
+            className="absolute bottom-full mb-1 left-0 right-0 min-w-64 z-50 bg-surface-overlay border border-border rounded-xl shadow-elevated max-h-48 overflow-y-auto"
             role="listbox"
             id="mention-listbox"
           >
@@ -247,7 +274,7 @@ export function MentionTextarea({
           "w-full px-3 py-2 bg-surface-raised border border-border-strong text-text-primary rounded-field text-sm resize-none focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 placeholder:text-text-muted",
           className,
         )}
-        style={{ fontSize: "16px" }}
+        style={autoGrow ? undefined : { fontSize: "16px" }}
         aria-expanded={showDropdown}
         aria-autocomplete={mentionEnabled ? "list" : undefined}
         aria-controls={showDropdown ? "mention-listbox" : undefined}

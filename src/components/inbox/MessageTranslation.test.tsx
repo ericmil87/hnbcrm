@@ -23,7 +23,7 @@ describe("MessageTranslation", () => {
     render(<MessageTranslation view={inboundDone} text="Hola, ¿qué tal?" variant="inbound" />);
     expect(screen.getByText("Olá, tudo bem?")).toBeInTheDocument();
     expect(screen.queryByText("Hola, ¿qué tal?")).not.toBeInTheDocument();
-    const toggle = screen.getByRole("button", { name: /Espanhol → pt-BR.*Ver original/ });
+    const toggle = screen.getByRole("button", { name: /Traduzido do espanhol.*Ver original/ });
     await userEvent.click(toggle);
     expect(screen.getByText("Hola, ¿qué tal?")).toBeInTheDocument();
     expect(screen.getByText("Hola, ¿qué tal?").closest("[lang]")).toHaveAttribute("lang", "es");
@@ -127,7 +127,7 @@ describe("MessageTranslation", () => {
     if (view.kind === "none") throw new Error("esperava tradução");
     render(<MessageTranslation view={view} text="¡Sí tenemos!" variant="outbound" />);
     expect(screen.getByText("¡Sí tenemos!")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /Você escreveu/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Enviado em espanhol.*Ver o que você escreveu/ }));
     expect(screen.getByText("Temos sim!")).toBeInTheDocument();
   });
 
