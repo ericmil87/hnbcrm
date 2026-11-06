@@ -235,6 +235,77 @@ describe("translationText", () => {
     expect(checkTranslation(a, b).ok).toBe(false);
   });
 
+  // Saídas REAIS do LibreTranslate do VPS (06/11/2026, pt → en/es). Antes da
+  // correção, "10h" → "10:00" reprovava o "Testar conexão" com "números alterados".
+  it.each([
+    ["Bom dia, tudo bem? Podemos conversar amanhã às 10h.", "Good morning, all right? We can talk tomorrow at 10:00."],
+    ["Bom dia, tudo bem? Podemos conversar amanhã às 10h.", "Buenos días, todo bien? Podemos hablar mañana a las 10."],
+    [
+      "Bom dia, tudo bem? Podemos conversar amanhã às 10h. O valor é R$ 1.500,00.",
+      "Good morning, all right? We can talk tomorrow at 10:00. The amount is R$ 1,500.00.",
+    ],
+    [
+      "Bom dia, tudo bem? Podemos conversar amanhã às 10h. O valor é R$ 1.500,00.",
+      "Buenos días, todo bien? Podemos hablar mañana a las 10. El valor es R$ 1.500,00.",
+    ],
+    [
+      "O condomínio é R$ 1.200,00 e a visita pode ser dia 15/12 às 14h30, 2x por semana.",
+      "El condominio es R$ 1200,00 y la visita puede ser el día 15/12 a las 14.30, 2x por semana.",
+    ],
+    ["Apartamento de 85m² com 3 quartos, 1º andar, valor 450 mil.", "Apartment 85m2 with 3 bedrooms, 1st floor, value 450 thousand."],
+    ["Apartamento de 85m² com 3 quartos, 1º andar, valor 450 mil.", "Apartamento de 85m2 con 3 habitaciones, 1o piso, valor 450 mil."],
+    [
+      "Me liga no (11) 98765-4321 ou acesse https://exemplo.com/imovel?id=42",
+      "Me une en (11) 98765-4321 o visite https://exemplo.com/imovel?id=42",
+    ],
+    ["Chego às 9h e saio às 18h30. Custa R$ 99,90 ou 3x de R$ 35.", "Llego a las 9h y salgo a las 18.30. Custa R$ 99,90 o 3x de R$ 35."],
+    ["Oi 👍🏽 *promoção* de 20% até 31/12 ❤️", "Oi 👍🏽 *promoción* del 20% hasta el 31/12 ❤️"],
+  ])("guard aceita a saída real do LibreTranslate: %s", (a, b) => {
+    expect(checkTranslation(a, b)).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["10h", "Até amanhã às 10h, combinado?", "See you tomorrow at 10 am, deal?"],
+    ["14h30 em 12h com pm", "A visita é às 14h30, combinado?", "The visit is at 2:30 pm, deal?"],
+    ["centavos omitidos", "O sinal é de R$ 1.500,00 no Pix.", "The deposit is R$ 1,500 via Pix."],
+    ["espaço fino de milhar", "O sinal é de R$ 1.500,00 no Pix.", "Le dépôt est de 1\u202F500,00 R$ par Pix."],
+    ["emoji sem seletor e sem tom de pele", "Obrigado pela visita 👍🏽❤️", "Gracias por la visita 👍❤"],
+  ])("guard tolera reformatação legítima (%s)", (_k, a, b) => {
+    expect(checkTranslation(a, b)).toEqual({ ok: true });
+  });
+
+  it.each([
+    ["valor trocado", "O condomínio é R$ 1.200,00 por mês.", "The condo fee is R$ 1,300.00 per month.", "números alterados"],
+    ["valor sumiu", "O condomínio é R$ 1.200,00 por mês.", "The condo fee is paid every month.", "números alterados"],
+    ["mil não é um", "O sinal é de R$ 1.000 no Pix.", "The deposit is R$ 1 via Pix.", "números alterados"],
+    ["horário trocado", "Podemos conversar amanhã às 10h.", "We can talk tomorrow at 11:00.", "números alterados"],
+    [
+      "frase inventada com telefone",
+      "Podemos conversar amanhã às 10h.",
+      "We can talk tomorrow at 10:00. Call 555-1234.",
+      "número novo na tradução",
+    ],
+    // Saída real do servidor em en: "às 14h30" → "at 2:30", "às 18h" → "6:00".
+    ["24h → 12h sem am/pm", "Visita às 14h30 ou às 18h.", "Visit at 2:30 or 6:00.", "horário convertido para 12h sem am/pm"],
+    ["link sumiu", "Veja o imóvel em https://exemplo.com/imovel?id=42 hoje", "See the property today", "links alterados"],
+    ["negrito desbalanceado", "Isso é *muito* importante, viu?", "This is *very important, ok?", "formatação do WhatsApp alterada"],
+    [
+      "5× mais longa",
+      "Podemos conversar amanhã cedo?",
+      "Can we talk tomorrow morning? We would also like to tell you about our other properties, our team and our payment plans for this year.",
+      "tamanho fora do esperado",
+    ],
+  ])("guard reprova %s", (_k, a, b, reason) => {
+    expect(checkTranslation(a, b)).toEqual({ ok: false, reason });
+  });
+
+  it("marcador perdido pelo servidor (saída real em en) reprova na restauração", () => {
+    const p = protectText("Me liga no (11) 98765-4321 ou acesse https://exemplo.com/imovel?id=42", []);
+    expect(p.text).toContain("⟦P1⟧");
+    expect(p.text).toContain("⟦U1⟧");
+    expect(restoreText("Call me at ", p.tokens).ok).toBe(false);
+  });
+
   it("parser do JSON do modelo", () => {
     expect(parseLlmTranslationReply('{"lang":"es","text":"Hola"}')).toEqual({ lang: "es", text: "Hola" });
     expect(parseLlmTranslationReply('```json\n{"lang":"en","text":"Hi"}\n```')).toEqual({ lang: "en", text: "Hi" });
