@@ -568,8 +568,15 @@ async function rejectHandoffCore(
       handoff.conversationId ?? (await resolveLeadPrimaryConversationId(ctx, handoff.leadId));
     if (candidateId) {
       const conversation = await ctx.db.get(candidateId);
-      if (conversation && conversation.aiPausedUntil !== undefined) {
-        await ctx.db.patch(candidateId, { aiPausedUntil: undefined, updatedAt: now });
+      // Marca a volta à IA SEMPRE (pausada ou não): o item `handoff_pendente`
+      // pulado enquanto o repasse estava aberto não descreve mais o estado e
+      // o chip "IA em espera" deve sumir (getConversationAiState).
+      if (conversation && conversation.organizationId === handoff.organizationId) {
+        await ctx.db.patch(candidateId, {
+          aiPausedUntil: undefined,
+          aiResumedAt: now,
+          updatedAt: now,
+        });
       }
     }
   }

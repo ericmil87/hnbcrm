@@ -15,9 +15,10 @@
  * Modo sugestão (default): a IA gera mas NÃO envia — vira rascunho interno na
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
+import { isSupersededByResume, latestReactiveQueueItem } from "./lib/aiStateQueue";
 import { matchesHandoffKeyword } from "./lib/handoffKeywords";
 import { insertFileRow } from "./lib/storageUsage";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import {
   action,
@@ -4207,27 +4208,12 @@ export const getConversationAiState = query({
     if (!conversation) return null;
     await requireAuth(ctx, conversation.organizationId);
 
-    const statuses = ["pending", "processing", "done", "skipped", "failed"] as const;
-    let latest: Doc<"aiReplyQueue"> | null = null;
-    for (const status of statuses) {
-      // Itens de FOLLOW-UP ficam de fora: este chip fala sobre a última
-      // mensagem do cliente ("IA em espera: teto"), e um turno proativo que
-      // acabou de ser pulado diria isso sobre uma conversa em que ninguém
-      // escreveu nada.
-      // take generoso: uma conversa pode acumular vários itens `follow_up`
-      // pulados (cada adiamento deixa rastro), e com uma janela curta o chip
-      // ficaria cego para o último turno REATIVO, que é o que ele descreve.
-      const items = await ctx.db
-        .query("aiReplyQueue")
-        .withIndex("by_conversation_and_status", (q) =>
-          q.eq("conversationId", args.conversationId).eq("status", status)
-        )
-        .order("desc")
-        .take(100);
-      const item = items.find((i) => i.origin !== "follow_up");
-      if (item && (!latest || item.updatedAt > latest.updatedAt)) latest = item;
-    }
+    const latest = await latestReactiveQueueItem(ctx.db, args.conversationId);
     if (!latest) return null;
+    // Item pulado/falho anterior a uma devolução à IA (aiResumedAt) não
+    // descreve mais o estado: sem isto o chip "IA em espera" ficava até o
+    // cliente escrever de novo.
+    if (isSupersededByResume(latest, conversation.aiResumedAt)) return null;
     return {
       status: latest.status,
       reason: latest.error ?? null,
@@ -4765,7 +4751,11 @@ async function returnGroupConversationToAi(
 ): Promise<void> {
   const { conversation, memberId, memberName, instruction, now } = params;
 
-  await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+  await ctx.db.patch(conversation._id, {
+    aiPausedUntil: undefined,
+    aiResumedAt: now,
+    updatedAt: now,
+  });
 
   if (instruction) {
     await appendAiTeamNote(ctx, conversation, { text: instruction, byMemberId: memberId, at: now });
@@ -4862,7 +4852,7 @@ export async function returnToAiCore(
   if (conversation.kind === "group") {
     const groupInstruction = args.instruction?.trim() || undefined;
     if (groupInstruction && groupInstruction.length > MAX_INSTRUCTION_CHARS) {
-      throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+      throw new ConvexError(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
     }
     await returnGroupConversationToAi(ctx, {
       conversation,
@@ -4875,7 +4865,7 @@ export async function returnToAiCore(
   }
   const org = await ctx.db.get(conversation.organizationId);
   const lead = await getLeadRef(ctx.db, conversation.leadId);
-  if (!lead) throw new Error("Lead da conversa não encontrado");
+  if (!lead) throw new ConvexError("Lead da conversa não encontrado");
   const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
   const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
 
@@ -4883,15 +4873,21 @@ export async function returnToAiCore(
   // ninguém — e o patch abaixo APAGARIA o dono humano do lead em silêncio.
   // Erro claro em vez de conversa órfã.
   if (!agent) {
-    throw new Error("Nenhum atendente IA configurado para este canal");
+    throw new ConvexError(
+      "Nenhum atendente IA ativo para o número desta conversa. Confira em Configurações › Atendente IA e se o número está ativo."
+    );
   }
   const instruction = args.instruction?.trim() || undefined;
   if (instruction && instruction.length > MAX_INSTRUCTION_CHARS) {
-    throw new Error(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
+    throw new ConvexError(`Instrução muito longa (máx. ${MAX_INSTRUCTION_CHARS} caracteres)`);
   }
 
   const now = Date.now();
-  await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+  await ctx.db.patch(conversation._id, {
+    aiPausedUntil: undefined,
+    aiResumedAt: now,
+    updatedAt: now,
+  });
 
   // Guardrail anti-bot (v0.65): "Devolver para IA" é o humano dizendo "é
   // pessoa" — limpa a suspeita (a condição 12 deixaria a IA muda) e tira a
@@ -5040,7 +5036,11 @@ export const internalQueueInstructedTurn = internalMutation({
     if (!agent) return null;
 
     const now = Date.now();
-    await ctx.db.patch(conversation._id, { aiPausedUntil: undefined, updatedAt: now });
+    await ctx.db.patch(conversation._id, {
+      aiPausedUntil: undefined,
+      aiResumedAt: now,
+      updatedAt: now,
+    });
     await ctx.db.patch(lead._id, {
       assignedTo: agent._id,
       handoffState: undefined,
