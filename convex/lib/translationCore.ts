@@ -29,7 +29,7 @@ import {
   toLibreTranslateCode,
 } from "./languages";
 import { availableEngines, resolveTranslationSettings, TranslationEngine, TranslationRole } from "./translationGate";
-import { checkTranslation, parseLlmTranslationReply, protectText, restoreText } from "./translationText";
+import { checkTranslation, hasTranslatableText, parseLlmTranslationReply, protectText, restoreText } from "./translationText";
 
 export const LIBRETRANSLATE_TIMEOUT_MS = 12_000;
 export const LLM_TRANSLATION_TIMEOUT_MS = 15_000;
@@ -125,7 +125,14 @@ async function translateWithLibre(
   if (!url) return { ok: false, error: "não configurado" };
   const urlProblem = libreTranslateUrlProblem(url);
   if (urlProblem) return { ok: false, error: urlProblem };
-  const protectedText = protectText(text, glossary);
+  const protectedText = protectText(text, glossary, "libre");
+  // Só emoji/link/telefone: nada para o servidor traduzir (e texto vazio dá 400).
+  if (!hasTranslatableText(protectedText)) {
+    return {
+      ok: true,
+      outcome: { status: "done", text, ...(from ? { sourceLang: from } : {}), targetLang: to, engine: "libretranslate" },
+    };
+  }
   try {
     const response = await fetch(`${url.replace(/\/$/, "")}/translate`, {
       method: "POST",
@@ -155,7 +162,7 @@ async function translateWithLibre(
       return { ok: true, outcome: { status: "same_language", sourceLang, targetLang: to, engine: "libretranslate" } };
     }
     const translated = typeof body?.translatedText === "string" ? body.translatedText : "";
-    const restored = restoreText(translated, protectedText.tokens);
+    const restored = restoreText(translated, protectedText, "libre");
     if (!restored.ok) return { ok: false, error: "marcadores perdidos na tradução" };
     const guard = checkTranslation(text, restored.text);
     if (!guard.ok) return { ok: false, error: guard.reason };

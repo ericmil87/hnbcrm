@@ -19,7 +19,7 @@ import {
   firstDetectionFixesLanguage,
   resolveTargetLanguage,
 } from "./translationLang";
-import { checkTranslation, parseLlmTranslationReply, protectText, restoreText } from "./translationText";
+import { checkTranslation, hasTranslatableText, parseLlmTranslationReply, protectText, restoreText } from "./translationText";
 import { outboundTranslationInsertFields, shouldScheduleMessageTranslation } from "./translationOps";
 import { buildTranslationSystemPrompt, libreTranslateUrlProblem, translationMaxTokens } from "./translationCore";
 import { fixedAgentLanguage } from "./languages";
@@ -269,6 +269,7 @@ describe("translationText", () => {
     ["14h30 em 12h com pm", "A visita é às 14h30, combinado?", "The visit is at 2:30 pm, deal?"],
     ["centavos omitidos", "O sinal é de R$ 1.500,00 no Pix.", "The deposit is R$ 1,500 via Pix."],
     ["espaço fino de milhar", "O sinal é de R$ 1.500,00 no Pix.", "Le dépôt est de 1\u202F500,00 R$ par Pix."],
+    ["espaço comum de milhar com decimal (saída real fr)", "O valor é R$ 1.500,00.", "Le montant est de R$ 1 500.00."],
     ["emoji sem seletor e sem tom de pele", "Obrigado pela visita 👍🏽❤️", "Gracias por la visita 👍❤"],
   ])("guard tolera reformatação legítima (%s)", (_k, a, b) => {
     expect(checkTranslation(a, b)).toEqual({ ok: true });
@@ -304,6 +305,101 @@ describe("translationText", () => {
     expect(p.text).toContain("⟦P1⟧");
     expect(p.text).toContain("⟦U1⟧");
     expect(restoreText("Call me at ", p.tokens).ok).toBe(false);
+  });
+
+  // Respostas REAIS do LibreTranslate do VPS (06/11/2026) ao texto já protegido
+  // no formato `libre`. Antes, com `⟦…⟧` e emoji cru, o pt→en cortava o texto:
+  // "Me liga no ⟦P1⟧ ou acesse ⟦U1⟧" → "Call me at ", "Oi 👍🏽 *promoção*…" → "Hi ".
+  it.each([
+    ["Me liga no (11) 98765-4321 ou acesse https://exemplo.com/imovel?id=42", "en", "Call me at {2} or access {1}", "Call me at (11) 98765-4321 or access https://exemplo.com/imovel?id=42"],
+    ["Me liga no (11) 98765-4321 ou acesse https://exemplo.com/imovel?id=42", "fr", "Appelez-moi à {2} ou accédez à {1}", "Appelez-moi à (11) 98765-4321 ou accédez à https://exemplo.com/imovel?id=42"],
+    ["Me liga no (11) 98765-4321 ou acesse https://exemplo.com/imovel?id=42", "de", "Ruf mich an {2} oder access {1}", "Ruf mich an (11) 98765-4321 oder access https://exemplo.com/imovel?id=42"],
+    ["Oi 👍 tudo bem? Até amanhã.", "en", "Hey, XEMO1X, what's up? See you tomorrow.", "Hey, 👍, what's up? See you tomorrow."],
+    ["Oi 👍 tudo bem? Até amanhã.", "fr", "XEMO1X, quoi de neuf ? A demain.", "👍, quoi de neuf ? A demain."],
+    ["Oi 👍 tudo bem? Até amanhã.", "de", "Hey, XEMO1X, was ist los? Wir sehen uns morgen.", "Hey, 👍, was ist los? Wir sehen uns morgen."],
+    ["Oi 👍🏽 *promoção* até 15/12 ❤️", "en", "Hi XEMO1X *promotion* up to 15/12", "Hi 👍🏽 *promotion* up to 15/12 ❤️"],
+    ["Oi 👍🏽 *promoção* até 15/12 ❤️", "fr", "Bonjour XEMO1X *promotion* jusqu'à 15/12", "Bonjour 👍🏽 *promotion* jusqu'à 15/12 ❤️"],
+    ["Oi 👍🏽 *promoção* até 15/12 ❤️", "de", "Hi XEMO1X *Promotion* bis 15/12", "Hi 👍🏽 *Promotion* bis 15/12 ❤️"],
+    ["Obrigado pela visita 🙏🙏 O Residencial Mar Azul fica a 200m da praia 🏖️. Fale com @marina ou escreva para contato@exemplo.com.", "en", "Thank you for visiting XEMO4X The {3} is 200m from XEMO5X beach. Talk to {2} or write to {1}.", "Thank you for visiting 🙏🙏 The Residencial Mar Azul is 200m from 🏖️ beach. Talk to @marina or write to contato@exemplo.com."],
+    ["Obrigado pela visita 🙏🙏 O Residencial Mar Azul fica a 200m da praia 🏖️. Fale com @marina ou escreva para contato@exemplo.com.", "fr", "Merci de visiter XEMO4X Le {3} est à 200m de la plage XEMO5X. Parlez à {2} ou écrivez à {1}.", "Merci de visiter 🙏🙏 Le Residencial Mar Azul est à 200m de la plage 🏖️. Parlez à @marina ou écrivez à contato@exemplo.com."],
+    ["Obrigado pela visita 🙏🙏 O Residencial Mar Azul fica a 200m da praia 🏖️. Fale com @marina ou escreva para contato@exemplo.com.", "de", "Vielen Dank für Ihren Besuch XEMO4X Die {3} ist 200m vom Strand XEMO5X. Sprich mit {2} oder schreibe mit {1}.", "Vielen Dank für Ihren Besuch 🙏🙏 Die Residencial Mar Azul ist 200m vom Strand 🏖️. Sprich mit @marina oder schreibe mit contato@exemplo.com."],
+    ["Bom dia, tudo bem? Podemos conversar amanhã às 10h. O valor é R$ 1.500,00.", "en", "Good morning, all right? We can talk tomorrow at 10:00. The amount is R$ 1,500.00.", "Good morning, all right? We can talk tomorrow at 10:00. The amount is R$ 1,500.00."],
+    ["Bom dia, tudo bem? Podemos conversar amanhã às 10h. O valor é R$ 1.500,00.", "fr", "Bonjour. On peut parler demain à 10 h. Le montant est de R$ 1 500.00.", "Bonjour. On peut parler demain à 10 h. Le montant est de R$ 1 500.00."],
+    ["Bom dia, tudo bem? Podemos conversar amanhã às 10h. O valor é R$ 1.500,00.", "de", "Guten Morgen, okay? Wir können morgen um 10:00 Uhr sprechen. Der Betrag ist R$ 1.500.00.", "Guten Morgen, okay? Wir können morgen um 10:00 Uhr sprechen. Der Betrag ist R$ 1.500.00."],
+    ["🎉 Parabéns! Seu cadastro foi aprovado.", "en", "Congratulations! Your record has been approved.", "🎉 Congratulations! Your record has been approved."],
+    ["🎉 Parabéns! Seu cadastro foi aprovado.", "fr", "Félicitations ! Votre dossier a été approuvé.", "🎉 Félicitations ! Votre dossier a été approuvé."],
+    ["🎉 Parabéns! Seu cadastro foi aprovado.", "de", "Herzlichen Glückwunsch! Ihre Aufzeichnung wurde genehmigt.", "🎉 Herzlichen Glückwunsch! Ihre Aufzeichnung wurde genehmigt."],
+    ["Segue o link: https://exemplo.com/a_b?x=1", "en", "Following link: {1}", "Following link: https://exemplo.com/a_b?x=1"],
+    ["Segue o link: https://exemplo.com/a_b?x=1", "fr", "Lien suivant: {1}", "Lien suivant: https://exemplo.com/a_b?x=1"],
+    ["Segue o link: https://exemplo.com/a_b?x=1", "de", "Nach dem Link: {1}", "Nach dem Link: https://exemplo.com/a_b?x=1"],
+    ["Oi! 👋\nA casa é linda 😍 e fica perto da praia.\nMe chama no (11) 98765-4321 🙏", "en", "Hello!\nThe house is beautiful XEMO2X and is close to the beach.\nCall me in {1}", "Hello! 👋\nThe house is beautiful 😍 and is close to the beach.\nCall me in (11) 98765-4321 🙏"],
+    ["Oi! 👋\nA casa é linda 😍 e fica perto da praia.\nMe chama no (11) 98765-4321 🙏", "fr", "Bonjour !\nLa maison est belle XEMO2X et est proche de la plage.\nAppelez-moi dans {1}", "Bonjour ! 👋\nLa maison est belle 😍 et est proche de la plage.\nAppelez-moi dans (11) 98765-4321 🙏"],
+    ["Oi! 👋\nA casa é linda 😍 e fica perto da praia.\nMe chama no (11) 98765-4321 🙏", "de", "Hallo!\nDas Haus ist schön XEMO2X und liegt in der Nähe des Strandes.\nRuf mich an {1}", "Hallo! 👋\nDas Haus ist schön 😍 und liegt in der Nähe des Strandes.\nRuf mich an (11) 98765-4321 🙏"],
+    ["Visita confirmada ✅ amanhã às 10h, combinado? 👍🏽", "en", "Confirmed XEMO1X visit tomorrow at 10:00, agreed?", "Confirmed ✅ visit tomorrow at 10:00, agreed? 👍🏽"],
+    ["Visita confirmada ✅ amanhã às 10h, combinado? 👍🏽", "fr", "Confirmé la visite de XEMO1X demain à 10h, d'accord ?", "Confirmé la visite de ✅ demain à 10h, d'accord ? 👍🏽"],
+    ["Visita confirmada ✅ amanhã às 10h, combinado? 👍🏽", "de", "Bestätigt XEMO1X Besuch morgen um 10:00 Uhr, vereinbart?", "Bestätigt ✅ Besuch morgen um 10:00 Uhr, vereinbart? 👍🏽"],
+  ])("formato libre: %s → %s volta inteiro e passa no guard", (source, _lang, engineOut, expected) => {
+    const p = protectText(source, ["Residencial Mar Azul"], "libre");
+    expect(p.text).not.toMatch(/⟦|\p{Extended_Pictographic}/u);
+    const back = restoreText(engineOut, p, "libre");
+    expect(back).toEqual({ ok: true, text: expected });
+    expect(checkTranslation(source, back.text)).toEqual({ ok: true });
+  });
+
+  it("formato libre: tokens, bordas de linha e emoji no meio", () => {
+    const p = protectText("Oi! 👋\nA casa é linda 😍 e fica perto da praia.\nMe chama no (11) 98765-4321 🙏", [], "libre");
+    expect(p.text).toBe("Oi!\nA casa é linda XEMO2X e fica perto da praia.\nMe chama no {1}");
+    expect(p.tokens).toEqual([
+      { token: "{1}", value: "(11) 98765-4321" },
+      { token: "XEMO2X", value: "😍" },
+    ]);
+    expect(p.edges).toEqual([
+      { lead: "", trail: " 👋" },
+      { lead: "", trail: "" },
+      { lead: "", trail: " 🙏" },
+    ]);
+  });
+
+  it("formato libre: caixa e espaço variando no token ainda restauram", () => {
+    const p = protectText("Veja https://ex.com, é lindo 😍 demais", [], "libre");
+    expect(restoreText("See { 1 }, it is so xemo2x beautiful", p, "libre")).toEqual({
+      ok: true,
+      text: "See https://ex.com, it is so 😍 beautiful",
+    });
+  });
+
+  it("formato libre: token sumido, inventado ou linhas mudadas reprovam", () => {
+    const p = protectText("🎉 Parabéns!\nVeja https://ex.com hoje", [], "libre");
+    expect(p.text).toBe("Parabéns!\nVeja {1} hoje");
+    expect(restoreText("Congratulations!\nSee today", p, "libre").ok).toBe(false);
+    expect(restoreText("Congratulations!\nSee {1} {7} today", p, "libre").ok).toBe(false);
+    expect(restoreText("Congratulations! See {1} today", p, "libre").ok).toBe(false);
+    expect(restoreText("Congratulations!\nSee {1} today", p, "libre")).toEqual({
+      ok: true,
+      text: "🎉 Congratulations!\nSee https://ex.com today",
+    });
+  });
+
+  it("formato libre: \"{1}\" escrito pelo usuário vira token e volta igual", () => {
+    const p = protectText("Use o código {1} no link https://ex.com", [], "libre");
+    expect(p.text).toBe("Use o código {1} no link {2}");
+    expect(p.tokens[0]).toEqual({ token: "{1}", value: "{1}" });
+    expect(restoreText("Use code {1} at the link {2}", p, "libre")).toEqual({
+      ok: true,
+      text: "Use code {1} at the link https://ex.com",
+    });
+  });
+
+  it("formato llm continua com ⟦…⟧ e emoji cru", () => {
+    const p = protectText("Oi 👍 veja https://ex.com", []);
+    expect(p.text).toBe("Oi 👍 veja ⟦U1⟧");
+    expect(p.edges).toBeUndefined();
+  });
+
+  it("hasTranslatableText: só emoji/link/telefone não tem o que traduzir", () => {
+    expect(hasTranslatableText(protectText("👍🏽🙏", [], "libre"))).toBe(false);
+    expect(hasTranslatableText(protectText("https://ex.com 👍", [], "libre"))).toBe(false);
+    expect(hasTranslatableText(protectText("Oi 👍", [], "libre"))).toBe(true);
   });
 
   it("parser do JSON do modelo", () => {
