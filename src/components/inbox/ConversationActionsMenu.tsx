@@ -10,6 +10,7 @@ import { DeleteLeadDialog } from "@/components/leads/DeleteLeadDialog";
 import { useChatMode } from "@/components/layout/chatMode";
 import { Popover } from "@/components/ui/Popover";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { Button } from "@/components/ui/Button";
 
 // Menu "..." do header da conversa: arquivar/desarquivar + etiquetas (toggle,
 // criar, excluir). Paleta fixa — a cor vive no doc da etiqueta.
@@ -59,6 +60,7 @@ export function ConversationActionsMenu({
   const { can } = usePermissions(organizationId);
   const canDeleteLead = !!leadId && can("leads", "full");
   const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(LABEL_COLORS[3]);
   const anchorRef = useRef<HTMLButtonElement>(null);
@@ -93,7 +95,8 @@ export function ConversationActionsMenu({
   };
 
   const handleCreateLabel = async () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || saving) return;
+    setSaving(true);
     try {
       const labelId = await createLabel({ organizationId, name: newName, color: newColor });
       // Já aplica a etiqueta recém-criada nesta conversa.
@@ -102,6 +105,8 @@ export function ConversationActionsMenu({
       setCreating(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message.split("\n")[0].replace(/^.*Error: /, "") : "Não foi possível criar a etiqueta.");
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -212,19 +217,24 @@ export function ConversationActionsMenu({
           )}
 
           {creating ? (
-            <div className="px-3 py-2 space-y-2 border-t border-border mt-1">
+            // <form>: no iPhone o ✓/"OK" do teclado envia o formulário; sem ele
+            // o teclado só fechava e a etiqueta não era criada (só Enter criava).
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleCreateLabel();
+              }}
+              className="px-3 py-2 space-y-2 border-t border-border mt-1"
+            >
               <input
                 autoFocus
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleCreateLabel();
-                  }
-                }}
+                enterKeyHint="done"
+                maxLength={30}
                 placeholder="Nome da etiqueta"
-                className="w-full h-8 px-2.5 rounded-lg text-sm bg-surface-sunken border border-border-strong text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
+                aria-label="Nome da etiqueta"
+                className="w-full h-10 md:h-8 px-2.5 rounded-lg text-base md:text-sm bg-surface-sunken border border-border-strong text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500"
               />
               <div className="flex items-center gap-1.5">
                 {LABEL_COLORS.map((color) => (
@@ -241,7 +251,23 @@ export function ConversationActionsMenu({
                   />
                 ))}
               </div>
-            </div>
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setCreating(false);
+                    setNewName("");
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button type="submit" size="sm" disabled={!newName.trim()} loading={saving}>
+                  Criar
+                </Button>
+              </div>
+            </form>
           ) : (
             <button
               type="button"

@@ -15,6 +15,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Correções
 
+- Corrigido: no iPhone, não dava para criar etiqueta pelo menu ⋮ da conversa. O ✓ do teclado só fechava o teclado, e no computador só o Enter criava. Agora há os botões **Criar** e **Cancelar**, o ✓ do teclado também cria e o campo não dá mais zoom no iPhone.
 - Corrigido: a prévia da tradução falhava em mensagens com horário da tarde ou da noite, como "às 19h" e "Chega 18h45". Aparecia "Prévia indisponível: horário convertido para 12h sem am/pm; IA: resposta cortada". O servidor próprio trocava 19h por "7:00" sem dizer se era manhã ou noite, e a IA gastava todo o limite da resposta "pensando" antes de escrever a tradução. Agora o horário vai ao servidor próprio como "19:00", e a IA traduz sem raciocínio prévio, com folga no tamanho da resposta. Também fica mais rápida e mais barata.
 - Corrigido: na tradução automática para inglês, o servidor próprio cortava a mensagem no primeiro link, telefone ou emoji, e ela acabava traduzida pela IA. Agora links, telefones, menções, e-mails e emojis passam pelo servidor próprio intactos e no lugar, também em espanhol, francês, italiano e alemão. Mensagem só com emoji não é mais enviada para tradução.
 - Corrigido: a verificação da tradução rejeitava horários e valores reformatados pelo servidor próprio de tradução ("10h" virando "10:00", "R$ 1.500,00" virando "R$ 1,500.00"). Por isso o **Testar conexão** falhava e essas mensagens iam para a IA. Número trocado, sumido ou inventado continua barrado.
