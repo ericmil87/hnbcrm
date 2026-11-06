@@ -15,6 +15,9 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Correções
 
+- Corrigido: depois de **Devolver à IA** (ou de recusar o pedido de ajuda da IA), o cabeçalho da conversa continuava mostrando "IA em espera" até o cliente mandar outra mensagem. Agora o aviso some na hora e só volta se a IA deixar de responder a uma mensagem nova.
+- Conversas devolvidas à IA antes desta correção também deixam de mostrar "IA em espera" depois de uma rotina de manutenção.
+- Quando não há atendente IA ativo para o número da conversa, **Devolver à IA** agora explica o motivo ("Nenhum atendente IA ativo para o número desta conversa. Confira em Configurações › Atendente IA e se o número está ativo.") em vez de mostrar um erro genérico do servidor. Instrução longa demais e lead não encontrado também aparecem com a mensagem certa.
 - Excluir uma etiqueta pelo menu ⋮ da conversa agora pede confirmação, porque ela sai de todas as conversas. Ao criar uma etiqueta, a cor vem antes do nome e as bolinhas de cor ficaram maiores no celular.
 - Corrigido: no iPhone, não dava para criar etiqueta pelo menu ⋮ da conversa. O ✓ do teclado só fechava o teclado, e no computador só o Enter criava. Agora há os botões **Criar** e **Cancelar**, o ✓ do teclado também cria e o campo não dá mais zoom no iPhone.
 - Corrigido: a prévia da tradução falhava em mensagens com horário da tarde ou da noite, como "às 19h" e "Chega 18h45". Aparecia "Prévia indisponível: horário convertido para 12h sem am/pm; IA: resposta cortada". O servidor próprio trocava 19h por "7:00" sem dizer se era manhã ou noite, e a IA gastava todo o limite da resposta "pensando" antes de escrever a tradução. Agora o horário vai ao servidor próprio como "19:00", e a IA traduz sem raciocínio prévio, com folga no tamanho da resposta. Também fica mais rápida e mais barata.

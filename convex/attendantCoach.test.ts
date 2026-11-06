@@ -19,6 +19,7 @@ import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
+import { ConvexError } from "convex/values";
 import schema from "./schema";
 import { upsertRuntime } from "./lib/conversationRuntime";
 import { requestAiDraftCore, returnToAiCore } from "./attendant";
@@ -671,11 +672,17 @@ describe("returnToAi (devolver a conversa à IA)", () => {
       await ctx.db.patch(seed.leadId, { assignedTo: seed.sellerId });
     });
 
-    await expect(
-      asUser(t, seed.sellerUserId).mutation(api.attendant.returnToAi, {
-        conversationId: seed.conversationId,
-      })
-    ).rejects.toThrow(/atendente/i);
+    // ConvexError: a mensagem chega inteira ao toast (Error comum vira
+    // "Server Error" em produção — achado do E2E).
+    const error = await asUser(t, seed.sellerUserId)
+      .mutation(api.attendant.returnToAi, { conversationId: seed.conversationId })
+      .then(() => null, (e: unknown) => e);
+    expect(error).toBeInstanceOf(ConvexError);
+    // convex-test devolve `data` serializado em JSON; o cliente real já o decodifica.
+    const data = (error as ConvexError<string>).data;
+    expect(data.startsWith('"') ? JSON.parse(data) : data).toBe(
+      "Nenhum atendente IA ativo para o número desta conversa. Confira em Configurações › Atendente IA e se o número está ativo."
+    );
 
     const { lead, conversation } = await t.run(async (ctx) => ({
       lead: await ctx.db.get(seed.leadId),
@@ -1160,6 +1167,16 @@ describe("origem do pedido pelo Telegram (D23)", () => {
   });
 });
 
+async function cancelPendingJobs(t: TestConvex<typeof schema>) {
+  await t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    for (const job of jobs) {
+      if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+    }
+  });
+  await t.finishInProgressScheduledFunctions();
+}
+
 describe("0.77.2 (D23): instrução pedida pelo Telegram vira rascunho, mesmo em autopilot", () => {
   const instructAndRun = async (t: TestConvex<typeof schema>, seed: Seed, via?: "telegram") => {
     await t.run(async (ctx) => {
@@ -1180,6 +1197,10 @@ describe("0.77.2 (D23): instrução pedida pelo Telegram vira rascunho, mesmo em
       (await ctx.db.query("messages").withIndex("by_conversation_and_created", (q) => q.eq("conversationId", seed.conversationId)).collect())
         .filter((m) => m.direction === "outbound"),
     );
+    // O turno agenda jobs (dispatch, tradução, notificação) que ninguém drena
+    // aqui; sem cancelar, eles disparavam DEPOIS do teste ("Write outside of
+    // transaction") e quebravam o describe seguinte.
+    await cancelPendingJobs(t);
     return { item: item!, outbound };
   };
 
@@ -1200,5 +1221,169 @@ describe("0.77.2 (D23): instrução pedida pelo Telegram vira rascunho, mesmo em
     const { outbound } = await instructAndRun(t, seed);
     expect(outbound).toHaveLength(1);
     expect(outbound[0].metadata?.aiReply).toBeUndefined();
+  });
+});
+
+describe("chip 'IA em espera' some depois de devolver à IA (aiResumedAt)", () => {
+  // PROD: o último item da fila era `skipped`/`handoff_pendente`, gravado com
+  // o repasse aberto. Devolver sem instrução não enfileira nada, então esse
+  // item velho mantinha o chip "IA em espera" até o cliente escrever de novo.
+  async function insertSkipped(
+    t: TestConvex<typeof schema>,
+    seed: Seed,
+    opts: { triggerMessageId: Id<"messages">; error: string; at: number }
+  ) {
+    await t.run(async (ctx) => {
+      await ctx.db.insert("aiReplyQueue", {
+        organizationId: seed.organizationId,
+        conversationId: seed.conversationId,
+        triggerMessageId: opts.triggerMessageId,
+        agentMemberId: seed.agentId,
+        status: "skipped",
+        attempts: 0,
+        nextAttemptAt: opts.at,
+        error: opts.error,
+        createdAt: opts.at,
+        updatedAt: opts.at,
+      });
+    });
+  }
+
+  async function aiStateOf(t: TestConvex<typeof schema>, seed: Seed) {
+    return await asUser(t, seed.sellerUserId).query(api.attendant.getConversationAiState, {
+      conversationId: seed.conversationId,
+    });
+  }
+
+  async function openAiHandoff(t: TestConvex<typeof schema>, seed: Seed) {
+    return await t.mutation(internal.handoffs.internalRequestHandoff, {
+      leadId: seed.leadId,
+      conversationId: seed.conversationId,
+      reason: "Cliente pediu humano",
+      suggestedActions: [],
+      teamMemberId: seed.agentId,
+      origin: "ai_tool",
+    });
+  }
+
+  test("devolver sem instrução apaga o chip do skip handoff_pendente anterior", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await openAiHandoff(t, seed);
+    vi.setSystemTime(Date.now() + 1_000);
+    await insertSkipped(t, seed, {
+      triggerMessageId: seed.inboundId,
+      error: "handoff_pendente",
+      at: Date.now(),
+    });
+    expect(await aiStateOf(t, seed)).toMatchObject({
+      status: "skipped",
+      reason: "handoff_pendente",
+      afterLastInbound: true,
+    });
+
+    vi.setSystemTime(Date.now() + 60_000);
+    await asUser(t, seed.sellerUserId).mutation(api.attendant.returnToAi, {
+      conversationId: seed.conversationId,
+    });
+
+    expect(await aiStateOf(t, seed)).toBeNull();
+  });
+
+  test("rejeitar o repasse da IA também apaga o chip", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    const handoffId = await openAiHandoff(t, seed);
+    vi.setSystemTime(Date.now() + 1_000);
+    await insertSkipped(t, seed, {
+      triggerMessageId: seed.inboundId,
+      error: "handoff_pendente",
+      at: Date.now(),
+    });
+    expect(await aiStateOf(t, seed)).not.toBeNull();
+
+    vi.setSystemTime(Date.now() + 60_000);
+    await asUser(t, seed.sellerUserId).mutation(api.handoffs.rejectHandoff, { handoffId });
+
+    const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
+    expect(conversation!.aiResumedAt).toBe(Date.now());
+    expect(await aiStateOf(t, seed)).toBeNull();
+  });
+
+  test("rejeitar com humano dono do lead não marca a volta à IA", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    const handoffId = await openAiHandoff(t, seed);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(seed.leadId, { assignedTo: seed.sellerId });
+    });
+    await asUser(t, seed.sellerUserId).mutation(api.handoffs.rejectHandoff, { handoffId });
+    const conversation = await t.run(async (ctx) => ctx.db.get(seed.conversationId));
+    expect(conversation!.aiResumedAt).toBeUndefined();
+  });
+
+  test("nova mensagem do cliente com novo skip depois da devolução mostra o chip de novo", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await openAiHandoff(t, seed);
+    vi.setSystemTime(Date.now() + 1_000);
+    await insertSkipped(t, seed, {
+      triggerMessageId: seed.inboundId,
+      error: "handoff_pendente",
+      at: Date.now(),
+    });
+    vi.setSystemTime(Date.now() + 60_000);
+    await asUser(t, seed.sellerUserId).mutation(api.attendant.returnToAi, {
+      conversationId: seed.conversationId,
+    });
+    expect(await aiStateOf(t, seed)).toBeNull();
+
+    vi.setSystemTime(Date.now() + 60_000);
+    const later = Date.now();
+    const newInboundId = await t.run(async (ctx) => {
+      await ctx.db.patch(seed.conversationId, { lastInboundAt: later });
+      return await ctx.db.insert("messages", {
+        organizationId: seed.organizationId,
+        conversationId: seed.conversationId,
+        leadId: seed.leadId,
+        direction: "inbound",
+        senderType: "contact",
+        content: "Oi?",
+        contentType: "text",
+        isInternal: false,
+        createdAt: later,
+      });
+    });
+    vi.setSystemTime(later + 1_000);
+    await insertSkipped(t, seed, {
+      triggerMessageId: newInboundId,
+      error: "lead_com_humano",
+      at: Date.now(),
+    });
+
+    expect(await aiStateOf(t, seed)).toMatchObject({
+      status: "skipped",
+      reason: "lead_com_humano",
+      afterLastInbound: true,
+    });
+  });
+
+  test("devolver com instrução expõe o item pendente (não esconde)", async () => {
+    const t = setup();
+    const seed = await seedCoachOrg(t);
+    await openAiHandoff(t, seed);
+    vi.setSystemTime(Date.now() + 1_000);
+    await insertSkipped(t, seed, {
+      triggerMessageId: seed.inboundId,
+      error: "handoff_pendente",
+      at: Date.now(),
+    });
+    vi.setSystemTime(Date.now() + 60_000);
+    await asUser(t, seed.sellerUserId).mutation(api.attendant.returnToAi, {
+      conversationId: seed.conversationId,
+      instruction: "Ofereça o plano anual",
+    });
+
+    expect(await aiStateOf(t, seed)).toMatchObject({ status: "pending" });
   });
 });
