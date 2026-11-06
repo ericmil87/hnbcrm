@@ -4,6 +4,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Correções
+
+- Corrigido: ao trocar de conversa na Caixa de Entrada, o cabeçalho da conversa anterior ficava empilhado em cima do novo, com nome, botões da IA e barra de etapa repetidos. Agora só aparece o cabeçalho da conversa aberta.
+
 ### Tradução automática
 
 - Nova opção em **Configurações → Tradução automática**: as mensagens de clientes que escrevem em outro idioma aparecem também em português, e o que você responde sai no idioma do cliente. O recurso é opcional, vem desligado e só um administrador liga.
