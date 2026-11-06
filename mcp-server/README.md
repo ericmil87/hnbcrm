@@ -34,7 +34,7 @@ npm install -g hnbcrm-mcp
 
 ## v0.80 note (automatic translation, MCP server 0.4.0)
 
-No new tools (still 68). When the organization turns on the optional translation module, `crm_get_messages` returns `translatedText` (the message in the team's language) and `metadata.translation` on each message; `content` is always the text that travelled the channel. `crm_send_message` gains an optional `language`: `"auto"` (translate to the conversation's language), `"off"` (send as written) or a language code such as `es`. Omitted, the conversation's own behaviour applies, so existing integrations are unchanged. `preferredLanguage` on contacts is not exposed through `crm_create_contact`/`crm_update_contact` yet (the REST contacts routes do not accept it).
+No new tools (still 68). When the organization turns on the optional translation module, `crm_get_messages` returns `translatedText` (the message in the team's language) and `metadata.translation` on each message; `content` is always the text that travelled the channel. `crm_send_message` gains an optional `language`: `"auto"` (translate to the conversation's language), `"off"` (send as written) or a language code such as `es`. Omitted, the conversation's own behaviour applies, so existing integrations are unchanged. `crm_create_contact` and `crm_update_contact` accept `preferredLanguage` (a language code such as `es`, `en`, `pt-BR`; `""` clears it on update; an invalid code is a 400). Each message's `metadata.translation` is `{ status, role, sourceLang, targetLang, engine, reason?, edited? }`; an outgoing message held by the translation step has `deliveryStatus: "failed"` and nothing is sent. An invalid `language` on send is a 400.
 
 ## v0.67 note (start a conversation, international phones)
 

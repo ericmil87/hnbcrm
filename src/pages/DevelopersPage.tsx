@@ -661,7 +661,9 @@ npm run dev`}</CodeBlock>
                   <code className="font-mono text-brand-400">role</code>,{" "}
                   <code className="font-mono text-brand-400">sourceLang</code>,{" "}
                   <code className="font-mono text-brand-400">targetLang</code>,{" "}
-                  <code className="font-mono text-brand-400">engine</code>).
+                  <code className="font-mono text-brand-400">engine</code>, e quando existem{" "}
+                  <code className="font-mono text-brand-400">reason</code> e{" "}
+                  <code className="font-mono text-brand-400">edited</code>).
                 </li>
                 <li>
                   <code className="font-mono text-brand-400">content</code> é sempre o texto que trafegou pelo canal, no idioma do cliente. A tradução nunca o substitui.
@@ -671,7 +673,7 @@ npm run dev`}</CodeBlock>
                   <code className="font-mono text-brand-400">language</code> opcional:{" "}
                   <code className="font-mono text-brand-400">"auto"</code>,{" "}
                   <code className="font-mono text-brand-400">"off"</code> ou um código de idioma (por exemplo{" "}
-                  <code className="font-mono text-brand-400">es</code>). Sem ele, vale o comportamento da conversa. A mesma opção existe na ferramenta{" "}
+                  <code className="font-mono text-brand-400">es</code>). Sem ele, vale o comportamento da conversa; qualquer outro valor responde 400. A mesma opção existe na ferramenta{" "}
                   <code className="font-mono text-brand-400">crm_send_message</code>. O código por mensagem fica em{" "}
                   <code className="font-mono text-brand-400">metadata.translationTarget</code>.
                 </li>
@@ -684,6 +686,11 @@ npm run dev`}</CodeBlock>
                   Se a tradução de saída falhar, a mensagem fica com{" "}
                   <code className="font-mono text-brand-400">deliveryStatus: "failed"</code> e{" "}
                   <code className="font-mono text-brand-400">metadata.deliveryError</code> começando com "Tradução falhou: …"; nada é enviado.
+                </li>
+                <li>
+                  Contatos têm <code className="font-mono text-brand-400">preferredLanguage</code> (por exemplo{" "}
+                  <code className="font-mono text-brand-400">es</code>, <code className="font-mono text-brand-400">pt-BR</code>; vazio limpa), aceito em{" "}
+                  <code className="font-mono text-brand-400">/contacts/create</code> e <code className="font-mono text-brand-400">/contacts/update</code>.
                 </li>
                 <li>
                   O idioma da conversa vem de contato, detecção automática ou ajuste manual. Os webhooks{" "}

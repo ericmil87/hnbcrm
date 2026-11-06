@@ -17,7 +17,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 - Corrigido: na tradução automática para inglês, o servidor próprio cortava a mensagem no primeiro link, telefone ou emoji, e ela acabava traduzida pela IA. Agora links, telefones, menções, e-mails e emojis passam pelo servidor próprio intactos e no lugar, também em espanhol, francês, italiano e alemão. Mensagem só com emoji não é mais enviada para tradução.
 - Corrigido: a verificação da tradução rejeitava horários e valores reformatados pelo servidor próprio de tradução ("10h" virando "10:00", "R$ 1.500,00" virando "R$ 1,500.00"). Por isso o **Testar conexão** falhava e essas mensagens iam para a IA. Número trocado, sumido ou inventado continua barrado.
-- Corrigido: ao trocar de conversa na Caixa de Entrada, o cabeçalho da conversa anterior ficava empilhado em cima do novo, com nome, botões da IA e barra de etapa repetidos. Agora só aparece o cabeçalho da conversa aberta.
+- Corrigido: ao trocar de conversa na Caixa de Entrada, o cabeçalho da conversa anterior ficava empilhado em cima do novo, com nome, botões da IA e barra de etapa repetidos. Agora só aparece o cabeçalho da conversa aberta. Um teste automático passa a barrar esse tipo de repetição.
 
 ### Tradução automática
 
@@ -26,10 +26,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - O idioma de cada conversa é detectado sozinho e pode ser corrigido pelo seletor de idioma no campo de resposta. Também dá para definir o **Idioma preferido** de um contato.
 - Ao responder em português numa conversa em outro idioma, a mensagem sai traduzida e a bolha mostra o que foi enviado. Se a tradução falhar, nada é enviado sozinho: você escolhe entre tentar de novo e **Enviar sem traduzir**.
 - O Atendente IA pode responder no idioma do cliente, e a equipe lê a resposta em português.
-- Enquanto você digita, uma prévia mostra como a mensagem vai sair no idioma do cliente; Enter envia a versão traduzida. Em **Configurações → Tradução automática** dá para escolher entre **Revisar rápido** (padrão), **Enviar direto** e **Revisar antes de enviar**. Dá para editar a tradução antes de enviar ou mandar sem traduzir.
+- Enquanto você digita, uma prévia mostra como a mensagem vai sair no idioma do cliente; Enter envia a versão traduzida. Em **Configurações → Tradução automática** dá para escolher entre **Revisar rápido** (padrão), **Enviar direto** e **Revisar antes de enviar**. Dá para editar a tradução antes de enviar ou mandar sem traduzir pelo botão **Sem traduzir** da prévia. Enquanto o Enter espera a prévia (no máximo 4 segundos no Revisar rápido), o campo fica bloqueado para não perder o que você digitar; em **Revisar antes de enviar** nada sai sem você ver a prévia. O contador de caracteres do canal passa a medir o texto traduzido. Mensagem longa demais para traduzir fica retida, e só **Enviar sem traduzir** resolve.
 - Mensagens agendadas são traduzidas na hora de agendar, e o rascunho do Atendente IA numa conversa em outro idioma ganha o botão **Ver em pt-BR**. Mensagens curtas ou de idioma duvidoso não são traduzidas às cegas: aparece "Idioma incerto" com a opção de traduzir.
-- A tradução usa primeiro um serviço hospedado na infraestrutura da própria empresa e, se ele não estiver disponível, a IA configurada. Notas internas, grupos e campanhas não são traduzidos.
-- API e MCP: o envio de mensagem aceita o campo opcional `language`, e as mensagens podem trazer `translatedText` e `metadata.translation`. O campo `content` continua sendo sempre o texto que passou pelo canal. Servidor MCP na versão 0.4.0.
+- A tradução usa primeiro um serviço hospedado na infraestrutura da própria empresa (LibreTranslate) e, se ele não estiver disponível, a IA configurada. O serviço próprio mantém horários, valores, links, telefones, menções e emojis no lugar. Em **Configurações → Tradução automática**, **Testar conexão** mostra o resultado dos dois motores. Notas internas, grupos e campanhas não são traduzidos.
+- Ao iniciar uma conversa nova, dá para escolher o idioma; a primeira mensagem já sai traduzida. Os controles de idioma, prévia e reenvio só aparecem para quem pode responder conversas.
+- API e MCP: o envio de mensagem aceita o campo opcional `language` (`auto`, `off` ou um código de idioma; outro valor responde 400) e o objeto `translation` para quem já traduziu; as mensagens podem trazer `translatedText` e `metadata.translation`; os contatos aceitam `preferredLanguage`. O campo `content` continua sendo sempre o texto que passou pelo canal. Servidor MCP na versão 0.4.0.
 - A Política de Privacidade e os Termos de Uso ganharam o texto sobre a tradução automática.
 
 ### Funil

@@ -388,7 +388,7 @@ List conversations with cursor-based pagination, optionally filtered by lead.
 
 Get all messages in a conversation thread. Also works for a WhatsApp group room's conversation (its id is `group.conversationId`, from `crm_get_group`) — unlike `GET /api/v1/groups/messages`, this returns the full message document, including `metadata`.
 
-With the optional translation module on (v0.80), each message may include `translatedText` (team-language version) and `metadata.translation` (`status`, `role`, `sourceLang`, `targetLang`, `engine`). `content` is always the text that travelled the channel.
+With the optional translation module on (v0.80), each message may include `translatedText` (team-language version) and `metadata.translation` (`status`, `role`, `sourceLang`, `targetLang`, `engine`, and when present `reason` such as `long_text`, `same_language`, `short`, and `edited`). `content` is always the text that travelled the channel.
 
 **MCP Parameters:**
 | Param | Type | Required | Description |
@@ -415,7 +415,7 @@ Send a message or internal note in a conversation. On Instagram and Messenger co
 | contentType | string | no | `text`, `image`, `file`, `audio` (default: text) |
 | isInternal | boolean | no | Mark as internal note (default: false) |
 | mentionedUserIds | string[] | no | Team member IDs to mention |
-| language | string | no | Translation of the outgoing text (v0.80, optional module): `auto`, `off` or a language code (`es`, `en`, `pt-BR`). Default: the conversation's behaviour. Ignored for internal notes |
+| language | string | no | Translation of the outgoing text (v0.80, optional module): `auto`, `off` or a language code (`es`, `en`, `pt-BR`). Default: the conversation's behaviour. Ignored for internal notes; any other value → 400 (REST) |
 
 **REST:** `POST /api/v1/conversations/send` — Same body as MCP params
 

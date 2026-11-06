@@ -92,9 +92,12 @@ paths:
 Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.md`
 
 ## Tradução automática (v0.80)
-- O chip de idioma é pílula + `Popover` (folha inferior no celular), com `Languages` e código curto ("ES · auto"); nunca bandeira emoji, porque idioma não é país.
-- `message.content` é o texto de fio. A versão da equipe vem de `translatedText` e o estado de `metadata.translation`; nunca exiba um no lugar do outro sem rótulo, e nunca grave texto em `metadata.translation`.
-- Nota interna nunca é traduzida (sem chip, sem botão "Traduzir"); falha de tradução de saída nunca envia sozinha, mostra "Tentar de novo" e "Enviar sem traduzir".
+- `message.content` é o texto de fio; a versão da equipe vem de `translatedText` e o estado de `metadata.translation`. Renderize por papel/estado (recebida `done` = tradução principal com original sob "Ver original"; enviada `done` = o que o lead recebeu), nunca um no lugar do outro sem rótulo, e nunca grave texto em `metadata.translation`. `bubbleTranslation()` decide; com o módulo desligado só a enviada retida (`outbound_pending`/`outbound_failed`) mantém "Tentar de novo"/"Enviar sem traduzir", e `long_text` esconde o "Tentar de novo".
+- Chip de idioma = pílula + `Popover` (folha inferior no celular), `Languages` e código curto ("ES · auto"); nunca bandeira emoji, idioma não é país. Nota interna nunca traduz (sem chip, prévia nem botão "Traduzir").
+- Prévia do composer: só o motivo `same_language` vira `language:"off"`; qualquer outro `skipped` (`short`, `long_text`, `low_confidence`, `ask_mode`, desconhecido) envia sem args e o servidor decide (`planTranslatedSend`). Sem atalho para "sem traduzir": Ctrl/Cmd+Enter é Enter comum, "Sem traduzir" é só o botão da prévia.
+- Campo `readOnly` (`fieldReadOnly`) enquanto o Enter espera a prévia (teto de 4 s no "Revisar rápido"); "Revisar antes de enviar" nunca envia sem prévia mostrada. O contador de caracteres mede o texto traduzido (`textForCounter`).
+- Irmãos fixos com `key` precisam de prefixos distintos (`header:${id}`, `composer:${id}`, `wizard:`, `detail:`); no máximo um `key={id}` nu. Guarda: `src/lib/siblingKeysGuard.test.ts` (chaves iguais deixam o React perder o irmão antigo: cabeçalhos empilhados).
+- Todo controle que escreve (chip, "Aplicar ao contato", "Sem traduzir", "Tentar de novo", aviso com escolha) exige `can("inbox","reply")`; sem permissão o chip vira `role="status"` somente leitura. Preferência "Mostrar original junto" é local do visualizador (`translationPrefs.ts`, `localStorage` em try/catch).
 
 ## Conversa no celular (modo WhatsApp)
 - Conversa aberta no celular = tela cheia (`useChatModeActive`); nada de `fixed`/`sticky` no fundo nem alturas `100dvh`/`100vh` dentro da coluna da conversa: o container já segue o `visualViewport` (teclado do iOS). Composer `shrink-0` no fluxo com `pb-safe`; thread `flex-1 min-h-0 overflow-y-auto overscroll-contain`.
