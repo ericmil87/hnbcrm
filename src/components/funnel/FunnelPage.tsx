@@ -28,7 +28,7 @@ import { useOrgModules } from "@/hooks/useOrgModules";
 import { useFunnelUrlState } from "@/hooks/useFunnelUrlState";
 import { useFunnelCardPrefs } from "@/hooks/useFunnelCardPrefs";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { isClosedStage } from "@/lib/funnelMove";
+import { planMove } from "@/lib/funnelMove";
 import { VOCAB } from "@/lib/vocab";
 import { assignableMembers } from "@/lib/teamMembers";
 import { defaultSortOrder, filterLeads, normalizeFunnelFilters, sortLeads, type SortOrder } from "@/lib/funnelFilters";
@@ -176,17 +176,28 @@ export function FunnelPage() {
   const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
 
-  const revealLead = useCallback((leadId: Id<"leads">, stageId: Id<"stages">) => {
+  const clearHighlight = useCallback(() => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = null;
+    setHighlightedLeadId(null);
+  }, []);
+
+  const revealLead = useCallback((leadId: Id<"leads">) => {
     setHighlightedLeadId(leadId);
     if (highlightTimer.current) clearTimeout(highlightTimer.current);
     highlightTimer.current = setTimeout(() => setHighlightedLeadId(null), 1600);
+    // Depois do render do optimistic update o card já está na coluna de destino.
     requestAnimationFrame(() => {
       const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
       document
-        .querySelector(`[data-stage-id="${stageId}"]`)
-        ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", inline: "start", block: "nearest" });
+        .querySelector(`[data-lead-id="${leadId}"]`)
+        ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", inline: "nearest", block: "nearest" });
     });
   }, []);
+
+  // Sempre o último `leads`: o "Desfazer" do toast relê o estado atual.
+  const leadsRef = useRef(leads);
+  leadsRef.current = leads;
 
   const filteredLeads = useMemo(
     () => filterLeads(leads, filters, orgModules.units),
@@ -230,13 +241,15 @@ export function FunnelPage() {
 
   // Única porta de movimentação (arrasto e setas): etapa Ganho/Perdido pede o
   // motivo; as demais movem na hora (o optimistic update assenta o card) com
-  // "Desfazer" quando a etapa de origem é aberta.
-  const requestMove = (leadId: Id<"leads">, stageId: Id<"stages">) => {
+  // "Desfazer" quando a etapa de origem é aberta. `reveal` (setas e menu) rola
+  // até o card e o destaca; no arrasto o usuário já está olhando para ele.
+  const requestMove = (leadId: Id<"leads">, stageId: Id<"stages">, opts?: { reveal?: boolean }) => {
     const lead = leads?.find((l) => l._id === leadId);
+    const plan = planMove(lead, stages, stageId);
     const targetStage = stages?.find((s) => s._id === stageId);
-    if (!lead || !targetStage || lead.stageId === stageId) return;
+    if (plan === "noop" || !lead || !targetStage) return;
 
-    if (isClosedStage(targetStage)) {
+    if (plan === "close") {
       setPendingClose({
         leadId,
         stageId,
@@ -247,24 +260,36 @@ export function FunnelPage() {
     }
 
     const originStageId = lead.stageId;
-    const canUndo = !isClosedStage(stages?.find((s) => s._id === originStageId));
-    moveLeadToStage({ leadId, stageId })
+    const promise = moveLeadToStage({ leadId, stageId });
+    if (opts?.reveal) revealLead(leadId);
+    promise
       .then(() => {
-        revealLead(leadId, stageId);
         toast.success(`Movido para ${targetStage.name}`, {
-          action: canUndo
+          action: plan.undo
             ? {
                 label: "Desfazer",
                 onClick: () => {
-                  moveLeadToStage({ leadId, stageId: originStageId }).catch(() =>
-                    toast.error("Não foi possível mover o lead.")
-                  );
+                  // Só desfaz se o lead ainda está onde o movemos.
+                  const current = leadsRef.current?.find((l) => l._id === leadId);
+                  if (!current || current.stageId !== stageId) {
+                    toast("O lead já mudou de etapa");
+                    return;
+                  }
+                  const undo = moveLeadToStage({ leadId, stageId: originStageId });
+                  if (opts?.reveal) revealLead(leadId);
+                  undo.catch(() => {
+                    clearHighlight();
+                    toast.error("Não foi possível mover o lead.");
+                  });
                 },
               }
             : undefined,
         });
       })
-      .catch(() => toast.error("Não foi possível mover o lead."));
+      .catch(() => {
+        clearHighlight();
+        toast.error("Não foi possível mover o lead.");
+      });
   };
 
   const closeDialog = useCallback(() => setDialog(null), []);
@@ -363,7 +388,7 @@ export function FunnelPage() {
                 const totalValue = stageLeads.reduce((sum, lead) => sum + lead.value, 0);
 
                 return (
-                  <div key={stage._id} data-stage-id={stage._id} className="flex-shrink-0 w-80 relative snap-start">
+                  <div key={stage._id} data-stage-id={stage._id} className="flex-shrink-0 w-80 relative">
                     {quickAddStageId === stage._id && (
                       <QuickAddLead
                         stageId={stage._id}
@@ -380,7 +405,7 @@ export function FunnelPage() {
                       justDraggedRef={justDraggedRef}
                       cardPrefs={cardPrefs}
                       stages={stages}
-                      onMoveLead={requestMove}
+                      onMoveLead={(leadId, stageId) => requestMove(leadId, stageId, { reveal: true })}
                       highlightedLeadId={highlightedLeadId}
                       onLeadClick={(leadId) => openLeadPanel(leadId)}
                       onQuickAdd={() => setQuickAddStageId(stage._id)}

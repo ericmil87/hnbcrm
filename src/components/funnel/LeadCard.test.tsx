@@ -142,23 +142,23 @@ describe("LeadMoveControls", () => {
     const onParent = vi.fn();
     render(
       <div onClick={onParent}>
-        <LeadMoveControls stages={[a, b, c]} currentStageId="b" prevStage={a} nextStage={c} onMove={onMove} />
+        <LeadMoveControls leadTitle="Contrato Acme" stages={[a, b, c]} currentStageId="b" prevStage={a} nextStage={c} onMove={onMove} />
       </div>
     );
-    await userEvent.click(screen.getByRole("button", { name: "Mover para Ganho" }));
+    await userEvent.click(screen.getByRole("button", { name: "Mover Contrato Acme para Ganho" }));
     expect(onMove).toHaveBeenCalledWith("c");
     expect(onParent).not.toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Mover para Novo" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mover Contrato Acme para Novo" })).toBeInTheDocument();
   });
 
   it("some a seta na primeira e na última etapa", () => {
     const { rerender } = render(
-      <LeadMoveControls stages={[a, b]} currentStageId="a" prevStage={null} nextStage={b} onMove={vi.fn()} />
+      <LeadMoveControls leadTitle="Contrato Acme" stages={[a, b]} currentStageId="a" prevStage={null} nextStage={b} onMove={vi.fn()} />
     );
-    expect(screen.queryByRole("button", { name: "Mover para Novo" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Mover para Proposta" })).toBeInTheDocument();
-    rerender(<LeadMoveControls stages={[a, b]} currentStageId="b" prevStage={a} nextStage={null} onMove={vi.fn()} />);
-    expect(screen.queryByRole("button", { name: "Mover para Proposta" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mover Contrato Acme para Novo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mover Contrato Acme para Proposta" })).toBeInTheDocument();
+    rerender(<LeadMoveControls leadTitle="Contrato Acme" stages={[a, b]} currentStageId="b" prevStage={a} nextStage={null} onMove={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Mover Contrato Acme para Proposta" })).not.toBeInTheDocument();
   });
 });
 

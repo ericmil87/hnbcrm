@@ -261,12 +261,14 @@ const MOVE_BTN =
  * seguinte. Só aparece em toque (`coarse:`); as setas somem nas pontas.
  */
 export function LeadMoveControls({
+  leadTitle,
   stages,
   currentStageId,
   prevStage,
   nextStage,
   onMove,
 }: {
+  leadTitle: string;
   stages: Stage[];
   currentStageId: string;
   prevStage: Stage | null;
@@ -277,6 +279,7 @@ export function LeadMoveControls({
   const stop = {
     onClick: (e: React.MouseEvent) => e.stopPropagation(),
     onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+    onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
     onTouchStart: (e: React.TouchEvent) => e.stopPropagation(),
     onKeyDown: (e: React.KeyboardEvent) => e.stopPropagation(),
   };
@@ -287,14 +290,14 @@ export function LeadMoveControls({
       {...stop}
     >
       {prevStage ? (
-        <button type="button" className={MOVE_BTN} aria-label={`Mover para ${prevStage.name}`} onClick={() => onMove(prevStage._id)}>
+        <button type="button" className={MOVE_BTN} aria-label={`Mover ${leadTitle} para ${prevStage.name}`} onClick={() => onMove(prevStage._id)}>
           <ChevronLeft size={20} aria-hidden="true" />
         </button>
       ) : (
         <span className="h-11 w-11" aria-hidden="true" />
       )}
       <Menu
-        ariaLabel="Mover para…"
+        ariaLabel={`Mover ${leadTitle} para…`}
         align="center"
         items={stages.map((st) => ({
           id: st._id,
@@ -303,13 +306,13 @@ export function LeadMoveControls({
           onSelect: () => onMove(st._id),
         }))}
         trigger={(props) => (
-          <button type="button" {...props} className={MOVE_BTN} aria-label="Mover para…">
+          <button type="button" {...props} className={MOVE_BTN} aria-label={`Mover ${leadTitle} para…`}>
             <MoreHorizontal size={20} aria-hidden="true" />
           </button>
         )}
       />
       {nextStage ? (
-        <button type="button" className={MOVE_BTN} aria-label={`Mover para ${nextStage.name}`} onClick={() => onMove(nextStage._id)}>
+        <button type="button" className={MOVE_BTN} aria-label={`Mover ${leadTitle} para ${nextStage.name}`} onClick={() => onMove(nextStage._id)}>
           <ChevronRight size={20} aria-hidden="true" />
         </button>
       ) : (
@@ -354,20 +357,19 @@ export function DraggableCard({
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      onClick={handleClick}
-      data-lead-id={lead._id}
-      className={cn(
-        "cursor-pointer touch-manipulation select-none rounded-card",
-        highlighted && "ring-2 ring-brand-500 motion-safe:animate-pulse"
-      )}
-    >
-      <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} />
+    <div data-lead-id={lead._id} className={cn("rounded-card", highlighted && "ring-2 ring-brand-500 motion-safe:animate-pulse")}>
+      <div
+        ref={setNodeRef}
+        {...attributes}
+        {...listeners}
+        onClick={handleClick}
+        className="cursor-pointer touch-manipulation select-none rounded-card"
+      >
+        <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} />
+      </div>
       {move && (
         <LeadMoveControls
+          leadTitle={lead.title}
           stages={move.stages}
           currentStageId={lead.stageId}
           prevStage={move.prevStage}

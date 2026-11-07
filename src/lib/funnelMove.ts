@@ -20,6 +20,25 @@ function ordered<T extends MovableStage>(stages: readonly T[]): T[] {
     .map(({ s }) => s);
 }
 
+export type MovePlan = "noop" | "close" | { undo: boolean };
+
+/**
+ * Decide o que fazer ao mover um lead: nada (mesma etapa / etapa desconhecida),
+ * pedir o motivo (destino Ganho/Perdido) ou mover na hora, com `undo` dizendo
+ * se "Desfazer" é permitido (só quando a etapa de origem é aberta).
+ */
+export function planMove(
+  lead: { stageId: string } | null | undefined,
+  stages: readonly MovableStage[] | undefined,
+  targetId: string
+): MovePlan {
+  const target = stages?.find((s) => s._id === targetId);
+  if (!lead || !target || lead.stageId === targetId) return "noop";
+  if (isClosedStage(target)) return "close";
+  const origin = stages?.find((s) => s._id === lead.stageId);
+  return { undo: !isClosedStage(origin) };
+}
+
 /** Etapa anterior/seguinte pela ordem do funil; `null` nas pontas ou se a etapa não existe. */
 export function adjacentStage<T extends MovableStage>(
   stages: readonly T[] | undefined,
