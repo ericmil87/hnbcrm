@@ -1595,12 +1595,10 @@ const applicationTables = {
       searchField: "imageDescription",
       filterFields: ["organizationId", "conversationId"],
     })
-    // Staged no deploy A (tabela grande: o build do índice não trava o push);
-    // o deploy B tira o `staged` e liga a consulta em `searchMessages`.
+    // Busca sem acento: nasceu `staged` no deploy A; ativo desde o deploy B.
     .searchIndex("search_norm", {
       searchField: "searchNorm",
       filterFields: ["organizationId", "conversationId"],
-      staged: true,
     }),
 
   // ── MVP Central ──

@@ -777,13 +777,20 @@ export const searchMessages = query({
     if (term.length < 2) return [];
 
     // Busca mais que o limite exibido para o filtro de data ainda ter material.
-    // Três índices: texto da mensagem, transcrição de nota de voz e leitura de
-    // imagem (o espelho de topo `imageDescription`), com o termo cru.
-    // Sem acento (07/11/2026): o índice `search_norm` ainda está `staged` (deploy
-    // A); a consulta a ele entra no deploy B, depois do backfill. O trecho e a
-    // origem do match já são decididos sem acento (`foldedTerm`).
+    // Sem acento (07/11/2026): `search_norm` (o `searchNorm` dobrado de conteúdo +
+    // transcrição + leitura da imagem) com o termo dobrado. Os três índices
+    // antigos (texto, transcrição, leitura da imagem) continuam com o termo cru:
+    // mensagem gravada antes do campo (sem backfill) ainda é achada quando o
+    // termo é digitado como está no texto.
     const foldedTerm = foldForSearch(term);
-    const [contentHits, transcriptHits, imageHits] = await Promise.all([
+    const [normHits, contentHits, transcriptHits, imageHits] = await Promise.all([
+      ctx.db
+        .query("messages")
+        .withSearchIndex("search_norm", (q) => {
+          const scoped = q.search("searchNorm", foldedTerm).eq("organizationId", args.organizationId);
+          return args.conversationId ? scoped.eq("conversationId", args.conversationId) : scoped;
+        })
+        .take(150),
       ctx.db
         .query("messages")
         .withSearchIndex("search_content", (q) => {
@@ -814,7 +821,7 @@ export const searchMessages = query({
     const transcriptIds = new Set(transcriptHits.map((m) => m._id));
     const imageIds = new Set(imageHits.map((m) => m._id));
     const seen = new Set<string>();
-    let results = [...contentHits, ...transcriptHits, ...imageHits].filter((m) => {
+    let results = [...normHits, ...contentHits, ...transcriptHits, ...imageHits].filter((m) => {
       if (seen.has(m._id)) return false;
       seen.add(m._id);
       return true;

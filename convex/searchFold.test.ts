@@ -352,3 +352,68 @@ describe("mensagens sem acento", () => {
     expect(docs.every((d) => d.searchNorm?.startsWith("acao "))).toBe(true);
   });
 });
+
+describe("deploy B: consulta ao índice search_norm", () => {
+  test("mensagem nova 'Rua Rebouças' é achada por reboucas (lista e dentro da conversa); outra org não aparece", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t, "org-a");
+    const other = await seedOrg(t, "org-b");
+    const { conversationId } = await addContact(t, org, { firstName: "Ana" });
+    const { conversationId: otherConv } = await addContact(t, other, { firstName: "Ana" });
+    const messageId = await addMessage(t, org, conversationId, "Moro na Rua Rebouças, 12");
+    await addMessage(t, other, otherConv, "Moro na Rua Rebouças, 12");
+
+    const hits = await asAdmin(t, org).query(api.conversations.searchMessages, {
+      organizationId: org.organizationId,
+      searchQuery: "reboucas",
+    });
+    expect(hits.map((h) => h._id)).toEqual([messageId]);
+    expect(hits[0].snippetText).toBe("Moro na Rua Rebouças, 12");
+
+    const inConv = await asAdmin(t, org).query(api.conversations.searchMessages, {
+      organizationId: org.organizationId,
+      searchQuery: "reboucas",
+      conversationId,
+    });
+    expect(inConv.map((h) => h._id)).toEqual([messageId]);
+  });
+
+  test("transcrição sem acento: 'vivencia' acha o áudio e marca matchedTranscript", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t, "org-a");
+    const { conversationId } = await addContact(t, org, { firstName: "Ana" });
+    const audioId = await addMessage(t, org, conversationId, "[áudio]", { contentType: "audio" });
+    await t.mutation(internal.transcription.internalSetTranscriptionResult, {
+      messageId: audioId,
+      status: "done",
+      text: "Quero ir na Vivência de São João",
+    });
+    const hits = await asAdmin(t, org).query(api.conversations.searchMessages, {
+      organizationId: org.organizationId,
+      searchQuery: "vivencia",
+    });
+    expect(hits.map((h) => h._id)).toEqual([audioId]);
+    expect(hits[0].matchedTranscript).toBe(true);
+    expect(hits[0].snippetText).toBe("Quero ir na Vivência de São João");
+  });
+
+  test("mensagem antiga passa a ser achada sem acento depois do backfill", async () => {
+    const t = convexTest(schema, modules);
+    const org = await seedOrg(t, "org-a");
+    const { conversationId } = await addContact(t, org, { firstName: "Ana" });
+    const oldId = await addMessage(t, org, conversationId, "Rua Rebouças", { legacy: true });
+
+    const before = await asAdmin(t, org).query(api.conversations.searchMessages, {
+      organizationId: org.organizationId,
+      searchQuery: "reboucas",
+    });
+    expect(before).toEqual([]);
+
+    await t.mutation(internal.opsSearchFold.internalBackfillMessageSearchText, { dryRun: false });
+    const after = await asAdmin(t, org).query(api.conversations.searchMessages, {
+      organizationId: org.organizationId,
+      searchQuery: "reboucas",
+    });
+    expect(after.map((h) => h._id)).toEqual([oldId]);
+  });
+});
