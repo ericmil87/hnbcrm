@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { usePageHeader, type PageMenuItem } from "@/components/layout/pageHeader";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { funnelHeaderPlan, type FunnelHeaderCommand, type FunnelHeaderEntry } from "@/lib/funnelHeader";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Select, type SelectOption } from "@/components/ui/Select";
@@ -106,63 +107,68 @@ export function FunnelToolbar({
   const { archivedItems, settingsItems } = useFunnelBoardMenus(selector);
   const sheetCount = sheetFilterCount(filters, units !== null);
 
-  const mobileMenuItems: PageMenuItem[] = [
-    {
-      id: "funnel-archived-leads",
-      label: showArchived ? "Ver leads ativos" : "Ver leads arquivados",
-      icon: showArchived ? (
-        <ArchiveRestore size={16} aria-hidden="true" className="shrink-0" />
-      ) : (
-        <Archive size={16} aria-hidden="true" className="shrink-0" />
-      ),
-      onSelect: onToggleArchived,
-    },
-    ...(filters.view === "board"
-      ? [
-          {
-            id: "funnel-card-display",
-            label: "Exibição dos cards",
-            icon: <SlidersHorizontal size={16} aria-hidden="true" className="shrink-0" />,
-            onSelect: () => setSheet("cards"),
-          },
-        ]
-      : []),
-    ...(selector.selectedBoardId
-      ? settingsItems.map((item, i) => ({
-          ...item,
-          id: `funnel-board-${item.id}`,
-          icon: item.icon ?? BOARD_SETTING_ICONS[item.id ?? ""],
-          separatorBefore: i === 0,
-        }))
-      : []),
-    ...(selector.archivedBoards.length > 0
-      ? [
-          {
-            id: "funnel-archived-boards",
-            label: `Funis arquivados (${selector.archivedBoards.length})`,
-            icon: <Archive size={16} aria-hidden="true" className="shrink-0" />,
-            separatorBefore: !selector.selectedBoardId,
-            onSelect: () => setSheet("archivedBoards"),
-          },
-        ]
-      : []),
-  ];
+  // Cabeçalho do AppShell no celular: o plano (ids, rótulos, ordem) é puro em
+  // `lib/funnelHeader.ts`; aqui só entram ícones e handlers.
+  const headerPlan = funnelHeaderPlan({
+    canCreateLead: selector.canCreateLead,
+    view: filters.view,
+    showArchivedLeads: showArchived,
+    hasSelectedBoard: !!selector.selectedBoardId,
+    boardSettings: settingsItems.map((item) => ({ id: item.id ?? item.label, label: item.label, danger: item.danger })),
+    archivedBoardCount: selector.archivedBoards.length,
+  });
+
+  const runCommand = (command: FunnelHeaderCommand) => {
+    switch (command.kind) {
+      case "createLead":
+        return selector.onOpenDialog({ kind: "createLead" });
+      case "toggleArchivedLeads":
+        return onToggleArchived();
+      case "cardDisplay":
+        return setSheet("cards");
+      case "archivedBoards":
+        return setSheet("archivedBoards");
+      case "boardSetting":
+        return settingsItems.find((item) => (item.id ?? item.label) === command.settingId)?.onSelect();
+    }
+  };
+
+  const iconFor = (command: FunnelHeaderCommand): ReactNode => {
+    const props = { size: 16, "aria-hidden": true, className: "shrink-0" } as const;
+    switch (command.kind) {
+      case "createLead":
+        return <Plus size={22} aria-hidden="true" />;
+      case "toggleArchivedLeads":
+        return showArchived ? <ArchiveRestore {...props} /> : <Archive {...props} />;
+      case "cardDisplay":
+        return <SlidersHorizontal {...props} />;
+      case "archivedBoards":
+        return <Archive {...props} />;
+      case "boardSetting":
+        return (
+          settingsItems.find((item) => (item.id ?? item.label) === command.settingId)?.icon ??
+          BOARD_SETTING_ICONS[command.settingId]
+        );
+    }
+  };
+
+  const toPageEntry = ({ command, ...entry }: FunnelHeaderEntry): PageMenuItem => ({
+    ...entry,
+    icon: iconFor(command),
+    onSelect: () => runCommand(command),
+  });
 
   usePageHeader(
     isMobile
       ? {
           menuLabel: "Mais ações",
-          menuItems: mobileMenuItems,
-          actions: selector.canCreateLead
-            ? [
-                {
-                  id: "funnel-create-lead",
-                  label: "Criar lead",
-                  icon: <Plus size={22} aria-hidden="true" />,
-                  onSelect: () => selector.onOpenDialog({ kind: "createLead" }),
-                },
-              ]
-            : [],
+          menuItems: headerPlan.menuItems.map(toPageEntry),
+          actions: headerPlan.actions.map(({ id, label, command }) => ({
+            id,
+            label,
+            icon: iconFor(command),
+            onSelect: () => runCommand(command),
+          })),
         }
       : null
   );
@@ -200,27 +206,14 @@ export function FunnelToolbar({
               </span>
             )}
           </Button>
-          <div role="group" aria-label="Modo de exibição" className="flex shrink-0 rounded-full bg-surface-sunken">
-            {VIEW_OPTIONS.map((option) => {
-              const selected = filters.view === option.value;
-              return (
-                <button
-                  key={option.value}
-                  type="button"
-                  aria-pressed={selected}
-                  aria-label={option.label}
-                  onClick={() => onFiltersChange({ view: option.value as FunnelView })}
-                  className={cn(
-                    "flex h-10 w-10 coarse:h-11 coarse:w-11 items-center justify-center rounded-full transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
-                    selected ? "bg-brand-600 text-white" : "text-text-secondary hover:bg-surface-overlay"
-                  )}
-                >
-                  {option.icon}
-                </button>
-              );
-            })}
-          </div>
+          <SegmentedControl
+            iconOnly
+            ariaLabel="Modo de exibição"
+            value={filters.view}
+            onValueChange={(view) => onFiltersChange({ view: view as FunnelView })}
+            options={VIEW_OPTIONS}
+            className="shrink-0 rounded-full [&>button]:rounded-full"
+          />
         </div>
 
         {showArchived && (
@@ -248,6 +241,9 @@ export function FunnelToolbar({
 
         <Modal open={sheet === "cards"} onClose={closeSheet} title="Exibição dos cards">
           <FunnelCardPrefsFields prefs={cardPrefs} onChange={onCardPrefsChange} />
+          <Button type="button" variant="primary" size="lg" className="mt-4 w-full" onClick={closeSheet}>
+            Pronto
+          </Button>
         </Modal>
 
         <Modal open={sheet === "archivedBoards"} onClose={closeSheet} title="Funis arquivados">
@@ -274,6 +270,9 @@ export function FunnelToolbar({
               </li>
             ))}
           </ul>
+          <Button type="button" variant="primary" size="lg" className="mt-4 w-full" onClick={closeSheet}>
+            Pronto
+          </Button>
         </Modal>
       </>
     );

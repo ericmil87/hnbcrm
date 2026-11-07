@@ -42,4 +42,27 @@ describe("SegmentedControl", () => {
     await user.keyboard("{ArrowLeft}{ArrowLeft}");
     expect(screen.getByRole("radio", { name: "Grupos" })).toHaveAttribute("aria-checked", "true");
   });
+
+  it("iconOnly mostra só o ícone e usa o rótulo como nome acessível", async () => {
+    const user = userEvent.setup();
+    let value = "board";
+    const { rerender } = render(
+      <SegmentedControl
+        iconOnly
+        ariaLabel="Modo de exibição"
+        value={value}
+        onValueChange={(v) => (value = v)}
+        options={[
+          { value: "board", label: "Modo quadro", icon: <svg data-testid="i-board" /> },
+          { value: "list", label: "Modo lista", icon: <svg data-testid="i-list" /> },
+        ]}
+      />
+    );
+    const list = screen.getByRole("radio", { name: "Modo lista" });
+    expect(list).not.toHaveTextContent("Modo lista");
+    expect(screen.getByTestId("i-list")).toBeInTheDocument();
+    await user.click(list);
+    expect(value).toBe("list");
+    rerender(<></>);
+  });
 });

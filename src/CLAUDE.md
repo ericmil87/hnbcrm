@@ -31,6 +31,7 @@ src/
 ├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, isAppPath, resolveTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR, THEME_OPTIONS, themeLabel); test next to it
 ├── lib/themeDom.ts             # applyTheme/clearTheme on <html> + meta theme-color; subscribe/getAppliedTheme
 ├── lib/funnelCardPrefs.ts      # Funil card preference (density compact|comfortable + visible fields, localStorage hnbcrm.funnelCard.<org>), tolerant parse (+ test); hook hooks/useFunnelCardPrefs.ts
+├── lib/funnelHeader.ts         # pure plan of the Funil contribution to the AppShell mobile header (funnelHeaderPlan: "Criar lead" +, ⋯ items/order/separators as commands); test next to it
 ├── lib/funnelFilters.ts        # Funil labels/variants, client filter, sort, URL (de)serialization (?view=&q=&owner=&temp=&priority=&unit=), initial-funnel pick (+ test)
 ├── hooks/useFunnelUrlState.ts  # Funil URL state: ?board= (initial pick), ?lead= (panel, replace), filters/view (replace), last funnel per org in localStorage
 ├── hooks/useUiTheme.ts         # AuthLayout only: syncs theme with teamMembers.uiTheme + localStorage; exposes {theme, setTheme}

@@ -108,7 +108,7 @@ export function LeadCardView({
     variant === "default" && "border-border hover:border-border-strong hover:shadow-card-hover",
     variant === "placeholder" && "opacity-40 border-dashed border-border-strong",
     variant === "overlay" && "w-80 border-brand-500 rotate-2 scale-[1.03] shadow-elevated cursor-grabbing",
-    framed && "coarse:rounded-none coarse:border-transparent coarse:bg-transparent coarse:hover:border-transparent coarse:hover:shadow-none",
+    framed && "coarse:rounded-none coarse:border-transparent coarse:bg-transparent coarse:opacity-100 coarse:hover:border-transparent coarse:hover:shadow-none",
   );
 
   const stripe = <div className={cn("absolute left-0 top-0 bottom-0 w-1 rounded-l-card", priorityColor)} />;
@@ -394,6 +394,8 @@ export function DraggableCard({
         "rounded-card",
         // Toque: um card só (corpo + rodapé "Mover"), a moldura mora aqui.
         move && "coarse:overflow-hidden coarse:border coarse:border-border coarse:bg-surface-raised coarse:shadow-card",
+        // Arrasto com mouse num aparelho de toque: a moldura externa vira o espaço tracejado.
+        move && isDragging && "coarse:border-dashed coarse:border-border-strong coarse:opacity-40",
         highlighted && "ring-2 ring-brand-500 motion-safe:animate-pulse"
       )}
     >
@@ -402,7 +404,11 @@ export function DraggableCard({
         {...attributes}
         {...listeners}
         onClick={handleClick}
-        className="cursor-pointer touch-manipulation select-none rounded-card"
+        className={cn(
+          "cursor-pointer touch-manipulation select-none rounded-card",
+          // Anel por dentro: o `coarse:overflow-hidden` do contêiner cortaria o contorno.
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+        )}
       >
         <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} framed={!!move} />
       </div>

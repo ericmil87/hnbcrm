@@ -8,7 +8,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 - No celular, o topo do Funil ocupa bem menos espaço: **Criar lead** virou o botão + do cabeçalho, e o menu ⋯ (depois do Copiloto) reúne **Ver leads arquivados**, **Exibição dos cards**, **Editar funil**, **Gerenciar etapas**, **Arquivar funil**, **Excluir funil** e os funis arquivados.
 - Abaixo do cabeçalho ficam só o seletor de funil e uma linha com a busca em pílula, o botão **Filtros** e o modo quadro/lista em ícones. Prioridade, temperatura, responsável (e unidade, quando houver) abrem numa folha com **Limpar filtros**; o botão mostra quantos filtros estão ligados, para nenhum filtro ficar escondido. Com os leads arquivados à vista aparece um aviso com **Ver ativos**.
-- Os botões de mover do card agora fazem parte do card: um rodapé separado por uma linha fina com "‹ etapa anterior", **Mover** (escolhe qualquer etapa) e "etapa seguinte ›", com o nome da etapa para deixar claro o que acontece. Os cards ficaram mais próximos uns dos outros.
+- Os botões de mover do card agora fazem parte do card: um rodapé separado por uma linha fina com "‹ etapa anterior", **Mover** (escolhe qualquer etapa) e "etapa seguinte ›", com o nome da etapa para deixar claro o que acontece. Como os botões ficam dentro do card, não sobra mais aquele espaço solto entre um card e outro.
 - No modo lista do celular, cada lead ocupa menos altura: etapa, valor, prioridade e temperatura numa linha só.
 - No computador, o Funil continua como antes.
 
