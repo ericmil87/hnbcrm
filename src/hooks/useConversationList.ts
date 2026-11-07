@@ -20,6 +20,8 @@ interface UseConversationListArgs {
   /** Args de servidor da fila (Central) e do canal/conta. */
   queueArgs: Record<string, unknown>;
   channelArgs: Record<string, unknown>;
+  /** "Não lidas" do celular (`{ unreadOnly: true }` ou `{}`): filtro de servidor. */
+  unreadArgs?: Record<string, unknown>;
   /** Busca em mensagens ativa: a lista vira resultados e o scroll infinito para. */
   isSearching: boolean;
 }
@@ -35,9 +37,10 @@ export function useConversationList({
   showArchived,
   queueArgs,
   channelArgs,
+  unreadArgs = {},
   isSearching,
 }: UseConversationListArgs) {
-  const filterKey = listFilterKey(showArchived, queueArgs, channelArgs);
+  const filterKey = listFilterKey(showArchived, queueArgs, { ...channelArgs, ...unreadArgs });
   const [listPage, setListPage] = useState<{ key: string | null; limit: number }>(() => ({
     key: null,
     limit: CONVERSATIONS_DEFAULT_LIMIT,
@@ -48,6 +51,7 @@ export function useConversationList({
     ...(showArchived ? { archived: true } : {}),
     ...queueArgs,
     ...channelArgs,
+    ...unreadArgs,
     limit: listLimit,
   });
   // Mantém a lista na tela enquanto o lote maior carrega.

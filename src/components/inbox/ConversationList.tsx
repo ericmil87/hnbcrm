@@ -134,6 +134,8 @@ export interface ConversationListMobile {
   onLongPress: (id: string) => void;
   /** "Agora" da hora dos itens. */
   now: number;
+  /** Abre Arquivadas (desliga "Não lidas" na mesma escrita da URL). */
+  onOpenArchived: () => void;
 }
 
 function SearchResults({ search }: { search: ConversationListSearch }) {
@@ -445,9 +447,9 @@ export function ConversationList({
               type="button"
               onClick={() => filters.onShowArchivedChange(false)}
               className="-ml-2 flex min-h-11 items-center gap-2 rounded-full pr-3 pl-2 text-text-primary hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              aria-label="Voltar para as conversas ativas"
             >
               <ArrowLeft size={20} aria-hidden="true" />
+              <span className="sr-only">Voltar de </span>
               <span className="text-lg font-semibold">Arquivadas</span>
             </button>
           )}
@@ -480,7 +482,7 @@ export function ConversationList({
               {!filters.showArchived && (
                 <button
                   type="button"
-                  onClick={() => filters.onShowArchivedChange(true)}
+                  onClick={mobile.onOpenArchived}
                   className="flex w-full items-center gap-3 pl-4 text-left hover:bg-surface-overlay active:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
                 >
                   <span className="flex w-12 shrink-0 justify-center text-text-muted" aria-hidden="true">

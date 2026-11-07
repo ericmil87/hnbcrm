@@ -77,6 +77,7 @@ export function readKindFilter(
 }
 
 interface FilterableConversation {
+  _id?: string;
   kind?: string;
   labelIds?: readonly string[] | null;
   unreadCount?: number | null;
@@ -92,10 +93,17 @@ export function filterConversations<T extends FilterableConversation>(
     kind,
     labelId,
     unreadOnly = false,
-  }: { kind: ConversationKindFilter; labelId: string | null; unreadOnly?: boolean }
+    keepId = null,
+  }: {
+    kind: ConversationKindFilter;
+    labelId: string | null;
+    unreadOnly?: boolean;
+    /** Conversa aberta: não some de "Não lidas" ao ser marcada como lida. */
+    keepId?: string | null;
+  }
 ): T[] {
   return list.filter((c) => {
-    if (unreadOnly && !((c.unreadCount ?? 0) > 0)) return false;
+    if (unreadOnly && !((c.unreadCount ?? 0) > 0) && !(keepId && c._id === keepId)) return false;
     if (labelId && !((c.labelIds ?? []) as readonly string[]).includes(labelId)) return false;
     if (kind === "group") return c.kind === "group";
     if (kind === "direct") return c.kind !== "group";
@@ -113,7 +121,19 @@ export interface InboxChipState {
   kind: ConversationKindFilter;
   unreadOnly: boolean;
   labelId: string | null;
+  /** Canal/conta (preferência em localStorage, escolhida no ⋯ ou no desktop). */
+  channel: string | null;
+  configId: string | null;
 }
+
+/** Nenhum filtro de tela: é quando "Todas" fica marcado. */
+export const NO_CHIP_FILTERS: InboxChipState = {
+  kind: "all",
+  unreadOnly: false,
+  labelId: null,
+  channel: null,
+  configId: null,
+};
 
 export interface InboxChip {
   /** "all" | "unread" | "group" | "direct" | "label:<id>" */
@@ -123,6 +143,8 @@ export interface InboxChip {
   count?: number;
   /** Cor da etiqueta (bolinha antes do nome). */
   color?: string;
+  /** O contador é um mínimo ("12+"). */
+  countMore?: boolean;
 }
 
 const LABEL_CHIP = "label:";
@@ -130,8 +152,10 @@ const LABEL_CHIP = "label:";
 /**
  * Chips da lista no celular (estilo WhatsApp): Todas · Não lidas · Grupos ·
  * uma por etiqueta. "Grupos" só com grupo na org (ou o filtro guardado em
- * "Grupos"); "Diretas" só aparece quando o filtro guardado (no ⋯) está nele,
- * para nunca haver filtro ativo sem chip que o desligue.
+ * "Grupos"). "Diretas", canal e conta (escolhidos no ⋯ ou no desktop e
+ * guardados no aparelho) só aparecem quando ativos, sempre marcados: nunca há
+ * filtro ativo sem chip que o desligue, e "Todas" só fica marcado sem nenhum.
+ * `unreadMore` = pode haver mais não lidas além do lote ("12+").
  */
 export function inboxFilterChips(
   state: InboxChipState,
@@ -139,12 +163,33 @@ export function inboxFilterChips(
     labels,
     showGroups,
     unreadCount,
-  }: { labels: readonly { _id: string; name: string; color: string }[]; showGroups: boolean; unreadCount: number }
+    unreadMore = false,
+    channelLabel,
+    accountLabel,
+  }: {
+    labels: readonly { _id: string; name: string; color: string }[];
+    showGroups: boolean;
+    unreadCount: number;
+    unreadMore?: boolean;
+    /** Rótulos do canal/conta ativos (ex.: "Instagram", "WhatsApp ····1234"). */
+    channelLabel?: string;
+    accountLabel?: string;
+  }
 ): InboxChip[] {
+  const none =
+    state.kind === "all" && !state.unreadOnly && !state.labelId && !state.channel && !state.configId;
   const chips: InboxChip[] = [
-    { id: "all", label: "Todas", pressed: state.kind === "all" && !state.unreadOnly && !state.labelId },
-    { id: "unread", label: "Não lidas", pressed: state.unreadOnly, count: unreadCount > 0 ? unreadCount : undefined },
+    { id: "all", label: "Todas", pressed: none },
+    {
+      id: "unread",
+      label: "Não lidas",
+      pressed: state.unreadOnly,
+      count: unreadCount > 0 ? unreadCount : undefined,
+      ...(unreadCount > 0 && unreadMore ? { countMore: true } : {}),
+    },
   ];
+  if (state.channel) chips.push({ id: "channel", label: channelLabel || state.channel, pressed: true });
+  if (state.configId) chips.push({ id: "account", label: accountLabel || "Conta", pressed: true });
   if (showGroups || state.kind === "group") {
     chips.push({ id: "group", label: "Grupos", pressed: state.kind === "group" });
   }
@@ -157,7 +202,9 @@ export function inboxFilterChips(
 
 /** Próximo estado ao tocar num chip: "Todas" limpa tudo; os demais ligam/desligam. */
 export function applyInboxChip(id: string, state: InboxChipState): InboxChipState {
-  if (id === "all") return { kind: "all", unreadOnly: false, labelId: null };
+  if (id === "all") return NO_CHIP_FILTERS;
+  if (id === "channel") return { ...state, channel: null, configId: null };
+  if (id === "account") return { ...state, configId: null };
   if (id === "unread") return { ...state, unreadOnly: !state.unreadOnly };
   if (id === "group") return { ...state, kind: state.kind === "group" ? "all" : "group" };
   if (id === "direct") return { ...state, kind: state.kind === "direct" ? "all" : "direct" };

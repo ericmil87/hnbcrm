@@ -18,6 +18,17 @@ describe("FilterChips", () => {
     expect(screen.getByRole("button", { name: /Não lidas/ })).toHaveTextContent("12");
   });
 
+  it("contador lido com pausa e mínimo com '+'", () => {
+    render(
+      <FilterChips
+        chips={[{ id: "unread", label: "Não lidas", pressed: false, count: 12, countMore: true }]}
+        onToggle={() => {}}
+        ariaLabel="Filtros"
+      />
+    );
+    expect(screen.getByRole("button", { name: /^Não lidas\s*,\s*12\+$/ })).toBeInTheDocument();
+  });
+
   it("clique chama onToggle com o id", async () => {
     const onToggle = vi.fn();
     render(<FilterChips chips={chips} onToggle={onToggle} ariaLabel="Filtros" />);

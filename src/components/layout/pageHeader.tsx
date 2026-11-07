@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
 import { mergeHeaderMenuItems, pageHeaderSignature } from "@/lib/pageHeader";
@@ -28,22 +28,35 @@ export interface PageHeaderContribution {
 }
 
 interface Registration {
+  /** Dono (id do componente que registrou): só ele pode limpar. */
+  owner: string;
   signature: string;
   get: () => PageHeaderContribution | null;
 }
 
-type Register = (registration: Registration | null) => void;
+interface Registry {
+  register: (registration: Registration) => void;
+  /** Limpa só se o registro atual ainda for deste dono. */
+  unregister: (owner: string) => void;
+}
 
-const PageHeaderContext = createContext<Register | null>(null);
+const PageHeaderContext = createContext<Registry | null>(null);
 
 /** Estado do AppShell: guarda a contribuição registrada pela página atual. */
 export function usePageHeaderRegistry() {
   const [registration, setRegistration] = useState<Registration | null>(null);
-  return { registration, register: setRegistration as Register };
+  const registry = useMemo<Registry>(
+    () => ({
+      register: setRegistration,
+      unregister: (owner) => setRegistration((current) => (current?.owner === owner ? null : current)),
+    }),
+    []
+  );
+  return { registration, registry };
 }
 
-export function PageHeaderProvider({ register, children }: { register: Register; children: ReactNode }) {
-  return <PageHeaderContext.Provider value={register}>{children}</PageHeaderContext.Provider>;
+export function PageHeaderProvider({ registry, children }: { registry: Registry; children: ReactNode }) {
+  return <PageHeaderContext.Provider value={registry}>{children}</PageHeaderContext.Provider>;
 }
 
 /**
@@ -53,15 +66,20 @@ export function PageHeaderProvider({ register, children }: { register: Register;
  * recente. `null` = sem contribuição. Fora do AppShell não faz nada.
  */
 export function usePageHeader(contribution: PageHeaderContribution | null) {
-  const register = useContext(PageHeaderContext);
+  const registry = useContext(PageHeaderContext);
+  const owner = useId();
   const latest = useRef(contribution);
-  latest.current = contribution;
+  // Depois do commit (nunca durante o render): o AppShell lê a versão mais recente.
+  useLayoutEffect(() => {
+    latest.current = contribution;
+  });
   const signature = pageHeaderSignature(contribution);
   useEffect(() => {
-    if (!register) return;
-    register(signature ? { signature, get: () => latest.current } : null);
-  }, [register, signature]);
-  useEffect(() => () => register?.(null), [register]);
+    if (!registry) return;
+    if (signature) registry.register({ owner, signature, get: () => latest.current });
+    else registry.unregister(owner);
+  }, [registry, owner, signature]);
+  useEffect(() => () => registry?.unregister(owner), [registry, owner]);
 }
 
 interface PageHeaderSlotProps {

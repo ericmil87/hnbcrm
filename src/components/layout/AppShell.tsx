@@ -68,7 +68,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
 
   return (
     <ChatModeProvider value={chatMode}>
-    <PageHeaderProvider register={pageHeader.register}>
+    <PageHeaderProvider registry={pageHeader.registry}>
     <div className="min-h-screen supports-[height:100dvh]:min-h-[100dvh] bg-surface-base">
       {/* Desktop sidebar */}
       <Sidebar

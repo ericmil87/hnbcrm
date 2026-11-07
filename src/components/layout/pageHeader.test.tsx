@@ -7,7 +7,7 @@ import { PageHeaderProvider, PageHeaderSlot, usePageHeader, usePageHeaderRegistr
 function Shell({ children, globalMenuItems }: { children: ReactNode; globalMenuItems?: PageMenuItem[] }) {
   const registry = usePageHeaderRegistry();
   return (
-    <PageHeaderProvider register={registry.register}>
+    <PageHeaderProvider registry={registry.registry}>
       <header>
         <PageHeaderSlot registration={registry.registration} globalMenuItems={globalMenuItems} />
       </header>

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { useState } from "react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithRouter } from "@/test/render";
 import {
@@ -186,6 +187,43 @@ describe("ConversationListItem compact (celular)", () => {
     await userEvent.click(screen.getByRole("button"));
     expect(onClick).toHaveBeenCalledTimes(1);
     expect(onLongPress).not.toHaveBeenCalled();
+  });
+
+  it("toque longo seleciona e o clique ao soltar (1,5 s depois) não desmarca", () => {
+    vi.useFakeTimers();
+    try {
+      const onClick = vi.fn();
+      function Harness() {
+        const [mode, setMode] = useState(false);
+        return (
+          <ConversationListItem
+            conversation={base}
+            selected={false}
+            selectionMode={mode}
+            checked={mode}
+            labelById={new Map()}
+            showAccount={false}
+            variant="compact"
+            now={NOW}
+            onClick={onClick}
+            onLongPress={() => setMode(true)}
+          />
+        );
+      }
+      renderWithRouter(<Harness />);
+      const row = screen.getByRole("button");
+      fireEvent.pointerDown(row, { pointerType: "touch", button: 0, clientX: 10, clientY: 10 });
+      act(() => {
+        vi.advanceTimersByTime(1500);
+      });
+      expect(row).toHaveAttribute("aria-pressed", "true");
+      fireEvent.pointerUp(row, { pointerType: "touch", button: 0 });
+      fireEvent.click(row);
+      expect(onClick).not.toHaveBeenCalled();
+      expect(row).toHaveAttribute("aria-pressed", "true");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

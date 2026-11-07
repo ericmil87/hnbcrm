@@ -389,11 +389,19 @@ export const getConversations = query({
     // Filtro por CONTA (D11): índice próprio [org, channelConfigId, archivedAt,
     // lastMessageAt], sem pós-filtro. Combinável com `channel` (pós-filtro).
     channelConfigId: v.optional(v.id("channelConfigs")),
+    // Chip "Não lidas" (celular): só conversas com `unreadCount > 0`. Nas ativas
+    // sem conta/setor/unidade usa o índice [org, archivedAt, unreadCount] (sem
+    // pós-filtro); nos demais ramos vira pós-filtro com o piso de leitura.
+    unreadOnly: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const me = await requireAuth(ctx, args.organizationId);
     const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
+    const unreadOnly = !args.leadId && args.unreadOnly === true;
+    // Ativas, sem conta/setor/unidade: o índice de não lidas já devolve só elas.
+    const unreadByIndex =
+      unreadOnly && !args.archived && !args.channelConfigId && !args.departmentId && !args.noDepartment && !args.unitId;
 
     // Ramos da Central (setor/unidade): índices por [org, setor|unidade,
     // archivedAt, lastMessageAt] — ativas = eq(archivedAt, undefined),
@@ -407,7 +415,8 @@ export const getConversations = query({
     const hasPostFilter = !args.leadId && (
       ((args.departmentId || args.noDepartment) && !!args.unitId) ||
       (!!args.channelConfigId && (!!args.departmentId || !!args.noDepartment || !!args.unitId)) ||
-      !!args.assignedToMe || !!args.assignedTo || !!args.channel
+      !!args.assignedToMe || !!args.assignedTo || !!args.channel ||
+      (unreadOnly && !unreadByIndex)
     );
     const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
     let conversations;
@@ -446,6 +455,16 @@ export const getConversations = query({
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
         .take(limit);
+    } else if (unreadByIndex) {
+      // "Não lidas" nas ativas: só conversas com `unreadCount > 0` (o take não
+      // gasta vagas com lidas). A ordem do índice é por contador; o sort final
+      // reordena por última mensagem.
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_archived_and_unread", (q) =>
+          q.eq("organizationId", args.organizationId).eq("archivedAt", undefined).gt("unreadCount", 0)
+        )
+        .order("desc")
+        .take(readLimit);
     } else if (args.archived) {
       // Arquivadas: `archivedAt` presente (`gt(undefined)` — undefined é o menor
       // valor do índice). A ordem do índice é a de ARQUIVAMENTO (desc); a lista
@@ -489,6 +508,7 @@ export const getConversations = query({
         conversations = conversations.filter(c => !c.departmentId);
       }
       if (args.assignedToMe) conversations = conversations.filter(c => c.assignedTo === me._id);
+      if (unreadOnly) conversations = conversations.filter(c => (c.unreadCount ?? 0) > 0);
     }
 
     // Batch fetch related data

@@ -4,6 +4,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
 import { useOrgModules } from "@/hooks/useOrgModules";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import {
   INBOX_FILTER_STORAGE_KEY,
@@ -38,8 +39,14 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const labelParam = useSearchParamState("label", stringParam);
   const unreadParam = useSearchParamState("unread", booleanParam);
   const showArchived = archivedParam.value;
-  const unreadOnly = unreadParam.value;
+  // "Não lidas" é chip só do celular: no desktop não há controle para desligá-lo,
+  // então `?unread=1` nem vale lá (gate na fonte).
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const unreadOnly = isMobile && unreadParam.value;
+  const unreadArgs = unreadOnly ? { unreadOnly: true as const } : {};
   const setShowArchived = archivedParam.set;
+  /** Celular: abrir Arquivadas desliga "Não lidas" na mesma escrita da URL. */
+  const openArchived = () => archivedParam.set(true, { also: { unread: null } });
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
   // Etiqueta apagada (ou colada de outra org) na URL não pode deixar a lista
@@ -117,6 +124,9 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   /** Chips do celular: etiqueta e "Não lidas" numa escrita só da URL; tipo no localStorage. */
   const applyChipState = (next: InboxChipState) => {
     if (next.kind !== kindFilter) setKindFilter(next.kind);
+    if (next.channel !== channelFilter.channel || next.configId !== channelFilter.configId) {
+      updateChannelFilter({ channel: next.channel, configId: next.configId });
+    }
     if (next.unreadOnly !== unreadOnly || next.labelId !== filterLabelId) {
       unreadParam.set(next.unreadOnly, { also: { label: next.labelId } });
     }
@@ -126,6 +136,8 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
     // URL
     showArchived,
     unreadOnly,
+    unreadArgs,
+    openArchived,
     applyChipState,
     setShowArchived,
     filterLabelId,

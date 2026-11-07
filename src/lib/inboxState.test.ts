@@ -6,6 +6,7 @@ import {
   applyInboxChip,
   countUnreadConversations,
   inboxFilterChips,
+  NO_CHIP_FILTERS,
   decideConversationParamAction,
   emptyListMessage,
   filterConversations,
@@ -227,6 +228,15 @@ describe("filtro 'Não lidas'", () => {
       "a",
     ]);
   });
+  it("keepId: a conversa aberta não some ao ser marcada como lida", () => {
+    const withIds = [
+      { _id: "a", unreadCount: 2 },
+      { _id: "b", unreadCount: 0 },
+    ];
+    expect(
+      filterConversations(withIds, { kind: "all", labelId: null, unreadOnly: true, keepId: "b" }).map((c) => c._id)
+    ).toEqual(["a", "b"]);
+  });
   it("countUnreadConversations conta conversas, não mensagens", () => {
     expect(countUnreadConversations(list)).toBe(2);
     expect(countUnreadConversations([])).toBe(0);
@@ -235,7 +245,7 @@ describe("filtro 'Não lidas'", () => {
 
 describe("chips da lista (celular)", () => {
   const labels = [{ _id: "l1", name: "VIP", color: "#10b981" }];
-  const none = { kind: "all" as const, unreadOnly: false, labelId: null };
+  const none = NO_CHIP_FILTERS;
 
   it("Todas pressionado sem filtro; Grupos só com grupo; uma por etiqueta", () => {
     const chips = inboxFilterChips(none, { labels, showGroups: false, unreadCount: 0 });
@@ -258,7 +268,7 @@ describe("chips da lista (celular)", () => {
   });
 
   it("applyInboxChip: Todas limpa; os outros ligam e desligam", () => {
-    const busy = { kind: "group" as const, unreadOnly: true, labelId: "l1" };
+    const busy = { ...none, kind: "group" as const, unreadOnly: true, labelId: "l1" };
     expect(applyInboxChip("all", busy)).toEqual(none);
     expect(applyInboxChip("unread", none)).toEqual({ ...none, unreadOnly: true });
     expect(applyInboxChip("unread", busy).unreadOnly).toBe(false);
@@ -269,5 +279,32 @@ describe("chips da lista (celular)", () => {
     expect(applyInboxChip("label:l1", busy).labelId).toBeNull();
     expect(applyInboxChip("label:l2", busy).labelId).toBe("l2");
     expect(applyInboxChip("desconhecido", busy)).toBe(busy);
+  });
+
+  it("canal/conta ativos (guardados no aparelho): chip marcado que desliga, e Todas desmarcado", () => {
+    const withChannel = { ...none, channel: "instagram", configId: "cfg1" };
+    const chips = inboxFilterChips(withChannel, {
+      labels: [],
+      showGroups: false,
+      unreadCount: 0,
+      channelLabel: "Instagram",
+      accountLabel: "@casalumiar",
+    });
+    expect(chips.map((c) => [c.id, c.label, c.pressed])).toEqual([
+      ["all", "Todas", false],
+      ["unread", "Não lidas", false],
+      ["channel", "Instagram", true],
+      ["account", "@casalumiar", true],
+    ]);
+    expect(applyInboxChip("account", withChannel)).toEqual({ ...withChannel, configId: null });
+    expect(applyInboxChip("channel", withChannel)).toEqual(none);
+    expect(applyInboxChip("all", { ...withChannel, unreadOnly: true, kind: "direct" })).toEqual(none);
+  });
+
+  it("contador de não lidas vira mínimo ('12+') quando pode haver mais", () => {
+    const [, unread] = inboxFilterChips(none, { labels: [], showGroups: false, unreadCount: 12, unreadMore: true });
+    expect(unread).toMatchObject({ count: 12, countMore: true });
+    const [, zero] = inboxFilterChips(none, { labels: [], showGroups: false, unreadCount: 0, unreadMore: true });
+    expect(zero.countMore).toBeUndefined();
   });
 });

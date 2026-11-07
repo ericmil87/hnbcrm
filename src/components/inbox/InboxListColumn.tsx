@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 import { CheckSquare, Plus, SlidersHorizontal } from "lucide-react";
-import { shouldShowAccount } from "@/lib/channelAccounts";
+import { accountBadgeLabel, channelLabel, shouldShowAccount } from "@/lib/channelAccounts";
 import { applyInboxChip, countUnreadConversations, inboxFilterChips } from "@/lib/inboxState";
 import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -15,6 +15,7 @@ import { InboxQueueBar } from "@/components/inbox/central/InboxQueueBar";
 import { InboxFiltersSheet, hasSheetFilters } from "@/components/inbox/InboxFiltersSheet";
 import { usePageHeader } from "@/components/layout/pageHeader";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useNow } from "@/hooks/useNow";
 
 interface InboxListColumnProps {
   className?: string;
@@ -59,6 +60,8 @@ export function InboxListColumn({
   // Celular (< md): layout estilo WhatsApp; desktop fica como sempre (D1).
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [filtersSheetOpen, setFiltersSheetOpen] = useState(false);
+  // Relógio da hora dos itens (vira "Ontem" na virada do dia sem outro render).
+  const now = useNow(isMobile);
   const sheetFilters = {
     showKindFilter,
     channelChipVisible: filters.channelChipVisible,
@@ -96,7 +99,15 @@ export function InboxListColumn({
       : null
   );
 
-  const chipState = { kind: kindFilter, unreadOnly: filters.unreadOnly, labelId: filterLabelId };
+  const { channelFilter } = filters;
+  const chipState = {
+    kind: kindFilter,
+    unreadOnly: filters.unreadOnly,
+    labelId: filterLabelId,
+    channel: channelFilter.channel,
+    configId: channelFilter.configId,
+  };
+  const activeAccount = channelFilter.configId ? filters.accountById.get(channelFilter.configId) : undefined;
 
   return (
     <>
@@ -121,11 +132,15 @@ export function InboxListColumn({
                 labels: (conversationLabels ?? []).map((l) => ({ _id: l._id as string, name: l.name, color: l.color })),
                 showGroups: showKindFilter,
                 unreadCount: countUnreadConversations(list.validConversations),
+                unreadMore: list.canLoadMore,
+                channelLabel: channelFilter.channel ? channelLabel(channelFilter.channel) : undefined,
+                accountLabel: activeAccount ? accountBadgeLabel(activeAccount) : undefined,
               }),
               onChip: (id) => filters.applyChipState(applyInboxChip(id, chipState)),
               unreadOnly: filters.unreadOnly,
               onLongPress: bulk.startSelectionWith,
-              now: Date.now(),
+              now,
+              onOpenArchived: filters.openArchived,
             }
           : undefined
       }

@@ -8,6 +8,8 @@ export interface FilterChip {
   pressed: boolean;
   /** Contador depois do rótulo ("Não lidas 12"). */
   count?: number;
+  /** O contador é um mínimo: mostra "12+". */
+  countMore?: boolean;
   /** Cor (dado, ex.: etiqueta) da bolinha antes do rótulo. */
   color?: string;
 }
@@ -79,7 +81,10 @@ export function FilterChips({ chips, onToggle, ariaLabel, className }: FilterChi
           )}
           <span className="max-w-[10rem] truncate">{chip.label}</span>
           {chip.count !== undefined && (
-            <span className="tabular-nums text-text-muted">{chip.count > 999 ? "999+" : chip.count}</span>
+            <span className="tabular-nums text-text-muted">
+              <span className="sr-only">, </span>
+              {chip.count > 999 ? "999+" : `${chip.count}${chip.countMore ? "+" : ""}`}
+            </span>
           )}
         </button>
       ))}

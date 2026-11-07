@@ -163,7 +163,12 @@ function CompactItem({
   onLongPress,
   now,
 }: ConversationListItemProps) {
-  const longPress = useLongPress(() => onLongPress?.(), Boolean(onLongPress) && !selectionMode);
+  // Sempre ligado (com `onLongPress`) e decide dentro: desligar ao entrar na
+  // seleção tirava o `onClickCapture` antes do dedo sair, e o clique do iOS ao
+  // soltar desmarcava o item recém-selecionado ("0 selecionadas").
+  const longPress = useLongPress(() => {
+    if (!selectionMode) onLongPress?.();
+  }, Boolean(onLongPress));
   const unread = conversation.unreadCount ?? 0;
   const isGroup = conversation.kind === "group";
   const name = conversationDisplayName(conversation);
