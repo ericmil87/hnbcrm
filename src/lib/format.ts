@@ -204,3 +204,20 @@ export function formatListTime(ts: Timestamp, now: number, { timeZone }: TimeZon
   }
   return new Date(ts).toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", year: "2-digit", timeZone });
 }
+
+/**
+ * Valor de `<input type="month">` ("2026-10") como texto: "out. de 2026".
+ * Vazio ou fora do formato: `null` (o chamador mostra o rótulo padrão).
+ */
+export function formatMonthValue(value: string | null | undefined): string | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(value ?? "");
+  if (!match) return null;
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  // Meio-dia UTC do dia 15: nenhum fuso muda o mês.
+  return new Date(Date.UTC(Number(match[1]), month - 1, 15, 12)).toLocaleDateString(LOCALE, {
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}

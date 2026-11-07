@@ -49,19 +49,18 @@ function resetWindowScroll(): boolean {
 }
 
 /**
- * Área visível da tela (`visualViewport`): topo, altura e teclado aberto.
- * Assina resize/scroll da visualViewport e resize/scroll/orientationchange da
- * janela, com uma leitura por quadro (rAF). Enquanto ligado, mantém a janela em
- * `scrollY = 0`: o Safari do iOS rola a janela ao focar o campo (mesmo com o
- * documento travado) e aí o container `fixed` em `offsetTop` sai da área
- * visível (ver `lib/chatViewport`). Com o foco num campo fora do container
- * (`[data-chat-frame]`), como Copiloto, Modais e folhas em portal, ou num
- * diálogo aninhado nele (SlideOver do lead/contato), a rolagem do Safari fica:
- * é ela que traz esse campo para cima do teclado. Sem `visualViewport` (jsdom, navegador
- * antigo) cai para `innerHeight`. `enabled=false` não assina nada.
+ * Assinatura comum da área visível (`visualViewport`): resize/scroll da
+ * visualViewport e resize/scroll/orientationchange da janela, com uma leitura
+ * por quadro (rAF). `holdScroll` é chamado no próprio evento de rolagem da
+ * janela (sem esperar o quadro, para não piscar a camada fora do lugar) e a
+ * cada leitura: é onde cada uso desfaz a rolagem que o Safari faz ao focar um
+ * campo. Sem `visualViewport` (jsdom, navegador antigo) cai para `innerHeight`.
+ * `enabled=false` não assina nada.
  */
-export function useVisualViewport(enabled = true): ChatViewport {
+export function useViewportTracking(enabled: boolean, holdScroll: () => void): ChatViewport {
   const baseline = useRef<ViewportBaseline | null>(null);
+  const hold = useRef(holdScroll);
+  hold.current = holdScroll;
   const [vp, setVp] = useState<ChatViewport>(() => {
     const s = sample();
     baseline.current = nextBaseline(null, s);
@@ -73,7 +72,7 @@ export function useVisualViewport(enabled = true): ChatViewport {
     let frame: number | null = null;
     const read = () => {
       frame = null;
-      resetWindowScroll();
+      hold.current();
       const s = sample();
       baseline.current = nextBaseline(baseline.current, s);
       const next = computeChatViewport(s, baseline.current);
@@ -84,10 +83,8 @@ export function useVisualViewport(enabled = true): ChatViewport {
       frame = typeof requestAnimationFrame === "function" ? requestAnimationFrame(read) : null;
       if (frame === null) read();
     };
-    // Rolagem da janela: volta a 0 já no evento (sem esperar o quadro, para não
-    // piscar o container fora do lugar) e relê as medidas no próximo quadro.
     const onWindowScroll = () => {
-      resetWindowScroll();
+      hold.current();
       schedule();
     };
     read();
@@ -108,6 +105,21 @@ export function useVisualViewport(enabled = true): ChatViewport {
   }, [enabled]);
 
   return vp;
+}
+
+/**
+ * Área visível da tela no modo conversa: topo, altura e teclado aberto.
+ * Enquanto ligado, mantém a janela em `scrollY = 0`: o Safari do iOS rola a
+ * janela ao focar o campo (mesmo com o documento travado) e aí o container
+ * `fixed` em `offsetTop` sai da área visível (ver `lib/chatViewport`). Com o
+ * foco num campo fora do container (`[data-chat-frame]`), como Copiloto, Modais
+ * e folhas em portal, ou num diálogo aninhado nele (SlideOver do lead/contato),
+ * esta regra não mexe: essas camadas seguem a área visível sozinhas
+ * (`useKeyboardViewportBox`) e seguram a janela no `scrollY` de quando abriram
+ * (0 no modo conversa, então as duas regras concordam).
+ */
+export function useVisualViewport(enabled = true): ChatViewport {
+  return useViewportTracking(enabled, resetWindowScroll);
 }
 
 /**

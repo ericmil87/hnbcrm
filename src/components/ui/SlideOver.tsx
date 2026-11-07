@@ -1,5 +1,7 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { lockBodyScroll } from "@/lib/scrollLock";
+import { useKeyboardViewportBox } from "@/hooks/useKeyboardViewportBox";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { X, ArrowLeft } from "lucide-react";
 
@@ -51,6 +53,38 @@ export function SlideOver({
   if (!open) return null;
 
   return (
+    <SlideOverLayer
+      onClose={onClose}
+      title={title}
+      titleIcon={titleIcon}
+      headerActions={headerActions}
+      className={className}
+      bodyClassName={bodyClassName}
+    >
+      {children}
+    </SlideOverLayer>
+  );
+}
+
+/**
+ * Camada do SlideOver (montada só aberta). Abaixo de `md` é tela cheia: com o
+ * teclado aberto o painel segue a área visível (`useKeyboardViewportBox`), o
+ * corpo rola por dentro e um rodapé fixo (composer do Copiloto, comentários)
+ * fica logo acima do teclado.
+ */
+function SlideOverLayer({
+  onClose,
+  title,
+  titleIcon,
+  headerActions,
+  children,
+  className,
+  bodyClassName,
+}: Omit<SlideOverProps, "open">) {
+  const isFullScreen = useMediaQuery("(max-width: 767px)");
+  const panelRef = useRef<HTMLDivElement>(null);
+  const { style, keyboardOpen } = useKeyboardViewportBox(isFullScreen, panelRef);
+  return (
     <div className="fixed inset-0 z-50">
       {/* Overlay (desktop only) */}
       <div
@@ -61,9 +95,12 @@ export function SlideOver({
 
       {/* Panel */}
       <div
+        ref={panelRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        style={style}
+        data-keyboard={keyboardOpen ? "open" : "closed"}
         className={cn(
           "fixed bg-surface-raised border-l border-border flex flex-col",
           // Mobile: full screen

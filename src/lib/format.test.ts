@@ -4,6 +4,7 @@ import {
   formatDate,
   formatDayLabel,
   formatListTime,
+  formatMonthValue,
   formatDateTime,
   formatDateTimeShort,
   formatDueRelative,
@@ -215,5 +216,18 @@ describe("formatListTime", () => {
   });
   it("virada do ano no 'ontem'", () => {
     expect(formatListTime(Date.UTC(2026, 11, 31, 15, 0), Date.UTC(2027, 0, 1, 15, 0), SP)).toBe("Ontem");
+  });
+});
+
+describe("formatMonthValue", () => {
+  it("valor do input de mês vira texto curto", () => {
+    expect(formatMonthValue("2026-10")).toBe("out. de 2026");
+    expect(formatMonthValue("2025-01")).toBe("jan. de 2025");
+  });
+  it("vazio ou inválido: null (o chamador mostra o rótulo padrão)", () => {
+    expect(formatMonthValue("")).toBeNull();
+    expect(formatMonthValue(undefined)).toBeNull();
+    expect(formatMonthValue("2026-13")).toBeNull();
+    expect(formatMonthValue("10/2026")).toBeNull();
   });
 });

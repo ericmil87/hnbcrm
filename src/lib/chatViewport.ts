@@ -115,9 +115,10 @@ export function sameChatViewport(a: ChatViewport, b: ChatViewport): boolean {
  * travado): no modo conversa ela volta a 0 para o container `fixed` e a
  * `visualViewport` usarem a mesma referência. EXCETO com o foco num campo FORA
  * do container (Copiloto, folha de "Criar etiqueta", Modais em portal no
- * `body`): esses dependem da rolagem do Safari para o campo aparecer acima do
- * teclado. Foco no container ou em lugar nenhum (`body`) zera. Meio pixel de
- * folga (zoom).
+ * `body`): essas camadas seguem a área visível sozinhas e seguram a janela no
+ * `scrollY` de quando abriram (`useKeyboardViewportBox`, `lib/keyboardSheet`),
+ * que no modo conversa é 0. Foco no container ou em lugar nenhum (`body`) zera.
+ * Meio pixel de folga (zoom).
  */
 export function shouldResetWindowScroll(s: {
   scrollY?: number | null;
