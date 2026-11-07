@@ -4,6 +4,17 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Copiloto no menu
+
+- O Copiloto agora abre pelo menu ⋯ do cabeçalho do celular, em qualquer tela (primeiro item), e pelo item "Copiloto" da barra lateral no computador; o atalho Ctrl+K (Cmd+K no Mac, onde Ctrl+K continua apagando até o fim da linha) também abre, exceto com uma janela aberta.
+- O botão flutuante do Copiloto vem desligado. Quem quiser liga em "Botão flutuante do Copiloto" em Aparência (pela barra lateral, pelo Mais ou em Configurações › Conta); a escolha vale só no aparelho.
+
+### Funil no celular
+
+- No celular, cada card do Funil ganha as setas ‹ e › para mover o lead para a etapa anterior ou seguinte com um toque, e o botão ⋯ "Mover para…" para escolher qualquer etapa. Mover para Ganho ou Perdido continua pedindo o motivo.
+- Depois de mover aparece "Movido para {etapa}" com **Desfazer** (quando a etapa de origem não é Ganho nem Perdido); a coluna de destino rola para a vista e o card pisca de leve.
+- Arrastar com o dedo foi desligado no celular, porque disputava com a rolagem do quadro; com mouse o arrasto continua igual.
+
 ### Conversas com cara de WhatsApp
 
 - No celular, a conversa aberta ocupa a tela inteira: somem o título "Conversas", a barra de abas e o botão do Copiloto (que passa para o menu ⋮ da conversa). Com o teclado aberto no iPhone, as mensagens e o campo de resposta continuam à vista, logo acima do teclado.
@@ -12,9 +23,13 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Para responder, reagir, encaminhar ou copiar, segure a mensagem no celular ou passe o mouse por cima no computador.
 - O campo de resposta cresce com o texto (até 6 linhas no celular e 10 no computador) e fica numa linha só: anexar, emoji, campo, menu com nota interna, agendar e respostas rápidas, e o botão de enviar ou gravar áudio. No celular, Enter quebra a linha e só o botão envia.
 - Corrigido: textos pequenos (hora, legendas, tradução) apareciam em tamanho normal em várias telas.
+- A lista de Conversas no celular também ficou como a do WhatsApp: um título só, busca em pílula, filtros em chips logo abaixo (Todas, Não lidas, Grupos e uma por etiqueta; **Não lidas** busca em todas as conversas ativas, não só nas mais recentes, e o filtro de canal ou conta escolhido no ⋯ aparece como chip que se desliga com um toque), **Arquivadas** como primeira linha da lista e conversas de borda a borda em duas linhas (nome e hora, prévia e não lidas), com o ícone do canal no canto da foto. A hora segue o WhatsApp: "14:30" hoje, "Ontem", o dia da semana até 6 dias e depois a data curta. O título do lead só aparece quando é diferente do nome do contato.
+- No celular, **Nova conversa** (+) e o menu ⋯ (**Selecionar conversas** e **Filtrar por tipo e canal**) ficam no topo, ao lado do sino. Segurar uma conversa também entra na seleção. A dica "Todas as conversas em um só lugar" não aparece mais no celular. No computador, a lista continua como antes.
 
 ### Correções
 
+- Corrigido: no iPhone, ao abrir o teclado numa conversa, o campo de resposta subia para o topo da tela e sobrava uma faixa vazia até o teclado. Agora o cabeçalho fica no topo, as últimas mensagens logo acima do campo e o campo colado no teclado.
+- Corrigido: o Copiloto dava erro para quem entrava com outra conta no mesmo navegador (o painel tentava abrir a conversa de outra pessoa). Agora cada conta guarda a própria conversa, e uma conversa que não é sua é descartada em silêncio e o Copiloto começa uma nova. Ao sair da conta, as conversas guardadas no aparelho são apagadas. Depois desta atualização, a conversa atual do Copiloto em cada aparelho recomeça uma vez.
 - Corrigido: depois de **Devolver à IA** (ou de recusar o pedido de ajuda da IA), o cabeçalho da conversa continuava mostrando "IA em espera" até o cliente mandar outra mensagem. Agora o aviso some na hora e só volta se a IA deixar de responder a uma mensagem nova.
 - Conversas devolvidas à IA antes desta correção também deixam de mostrar "IA em espera" depois de uma rotina de manutenção.
 - Quando não há atendente IA ativo para o número da conversa, **Devolver à IA** agora explica o motivo ("Nenhum atendente IA ativo para o número desta conversa. Confira em Configurações › Atendente IA e se o número está ativo.") em vez de mostrar um erro genérico do servidor. Instrução longa demais e lead não encontrado também aparecem com a mensagem certa.

@@ -20,6 +20,7 @@ import { Building2, LogOut, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
+import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -217,7 +218,10 @@ export function AuthLayout() {
   const { theme, setTheme } = useUiTheme(currentMember, activeOrgId);
   // Sessão expirada (sem "Sair"): o tema do aparelho também não pode passar para o próximo usuário.
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) clearStoredTheme();
+    if (!isLoading && !isAuthenticated) {
+      clearStoredTheme();
+      clearStoredCopilotThreads();
+    }
   }, [isLoading, isAuthenticated]);
   const mustChangePassword = useQuery(
     api.teamMembers.getMustChangePassword,
@@ -313,6 +317,7 @@ export function AuthLayout() {
     clearStoredOrgId();
     // O tema do aparelho também é da pessoa: não migra para a conta de outro usuário.
     clearStoredTheme();
+    clearStoredCopilotThreads();
     // Toasts da sessão (ex.: "você foi adicionado…", com botão de trocar de
     // org) não podem sobrar para o próximo usuário deste navegador.
     toast.dismiss();

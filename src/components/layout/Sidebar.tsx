@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { LogOut, Palette } from "lucide-react";
+import { LogOut, Palette, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -20,6 +20,8 @@ import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
 import type { UiTheme } from "@/lib/theme";
+import { VOCAB } from "@/lib/vocab";
+import { copilotAriaShortcut, detectIsMac } from "@/lib/copilotShortcut";
 
 type NavGroups = ReturnType<typeof groupNavItems>;
 
@@ -35,6 +37,10 @@ interface SidebarViewProps {
   onSignOut: () => void;
   onOpenOrgSwitcher: () => void;
   onOpenAppearance: () => void;
+  /** Só com o Copiloto ativo na organização; sem ele o item não aparece. */
+  onOpenCopilot?: () => void;
+  /** `aria-keyshortcuts` do atalho do Copiloto na plataforma (padrão: Ctrl+K). */
+  copilotKeys?: string;
 }
 
 /** Sidebar pura: recebe o modelo já filtrado e as contagens. */
@@ -48,6 +54,8 @@ export function SidebarView({
   onSignOut,
   onOpenOrgSwitcher,
   onOpenAppearance,
+  onOpenCopilot,
+  copilotKeys = copilotAriaShortcut(false),
 }: SidebarViewProps) {
   const withTip = (label: string, node: React.ReactElement<{ "aria-describedby"?: string }>) =>
     collapsed ? (
@@ -140,6 +148,21 @@ export function SidebarView({
 
       {/* Bottom section */}
       <div className="border-t border-border p-2 space-y-1 shrink-0">
+        {onOpenCopilot &&
+          withTip(
+            VOCAB.copilot.name,
+            <button
+              type="button"
+              onClick={onOpenCopilot}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-label={VOCAB.copilot.name}
+              aria-haspopup="dialog"
+              aria-keyshortcuts={copilotKeys}
+            >
+              <Sparkles size={20} className="shrink-0" aria-hidden="true" />
+              <span className="hidden lg:block">{VOCAB.copilot.name}</span>
+            </button>
+          )}
         {withTip(
           `Organização: ${orgName}`,
           <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} />
@@ -181,9 +204,10 @@ interface SidebarProps {
   onOpenOrgSwitcher: () => void;
   theme: UiTheme;
   setTheme: (theme: UiTheme) => void;
+  onOpenCopilot?: () => void;
 }
 
-export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme }: SidebarProps) {
+export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme, onOpenCopilot }: SidebarProps) {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -209,8 +233,10 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher,
       onSignOut={onSignOut}
       onOpenOrgSwitcher={onOpenOrgSwitcher}
       onOpenAppearance={() => setAppearanceOpen(true)}
+      onOpenCopilot={onOpenCopilot}
+      copilotKeys={copilotAriaShortcut(detectIsMac())}
     />
-    <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
+    <ThemePickerModal open={appearanceOpen} organizationId={organizationId} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
     </>
   );
 }

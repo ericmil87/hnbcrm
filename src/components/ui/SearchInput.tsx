@@ -13,6 +13,8 @@ export interface SearchInputProps {
   debounceMs?: number;
   ariaLabel?: string;
   className?: string;
+  /** `pill` = pílula com fundo afundado, sem borda (lista de Conversas no celular). */
+  variant?: "default" | "pill";
 }
 
 /** Campo de busca com debounce, ícone e botão de limpar. */
@@ -24,6 +26,7 @@ export function SearchInput({
   debounceMs = 300,
   ariaLabel,
   className,
+  variant = "default",
 }: SearchInputProps) {
   const [text, setText] = useState(value);
   const debounced = useDebouncedValue(text, debounceMs);
@@ -69,7 +72,12 @@ export function SearchInput({
         onChange={(e) => setText(e.target.value)}
         placeholder={placeholder}
         aria-label={ariaLabel ?? placeholder}
-        className="h-10 coarse:min-h-11 w-full rounded-field border border-border bg-surface-raised pl-9 pr-10 text-base md:text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base [&::-webkit-search-cancel-button]:appearance-none"
+        className={cn(
+          "h-10 coarse:min-h-11 w-full pl-9 pr-10 text-base md:text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base [&::-webkit-search-cancel-button]:appearance-none",
+          variant === "pill"
+            ? "rounded-full border border-transparent bg-surface-sunken"
+            : "rounded-field border border-border bg-surface-raised"
+        )}
       />
       {text && (
         <button

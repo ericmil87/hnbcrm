@@ -268,7 +268,7 @@ export function BottomTabBar({
       onOpenAppearance={() => setAppearanceOpen(true)}
       hidden={hidden}
     />
-    <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
+    <ThemePickerModal open={appearanceOpen} organizationId={organizationId} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
     </>
   );
 }

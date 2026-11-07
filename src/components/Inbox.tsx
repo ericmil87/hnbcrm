@@ -71,6 +71,7 @@ export function Inbox() {
     showArchived,
     queueArgs: filters.queueArgs,
     channelArgs: filters.channelArgs,
+    unreadArgs: filters.unreadArgs,
     isSearching,
   });
   const { validConversations } = list;
@@ -116,8 +117,7 @@ export function Inbox() {
   const hasGroupConversations =
     validConversations.some((c) => c.kind === "group") || kindFilter !== "all";
   const filteredConversations = filterConversations(validConversations, {
-    kind: kindFilter,
-    labelId: filterLabelId,
+    kind: kindFilter, labelId: filterLabelId, unreadOnly: filters.unreadOnly, keepId: selectedConversation,
   });
   const listedConversations: ConversationListEntry[] = selection.pinnedConversation
     ? [selection.pinnedConversation as ConversationListEntry, ...filteredConversations]
@@ -184,8 +184,8 @@ export function Inbox() {
 
   return (
     <div {...chatFrame}>
-      {/* Onboarding spotlight — wrapper colapsa (empty:hidden) quando não há dica */}
-      <div className="shrink-0 px-4 pt-4 md:px-6 empty:hidden">
+      {/* Dica de onboarding (só md+: no celular a lista começa logo abaixo do cabeçalho) */}
+      <div className="hidden shrink-0 px-4 pt-4 md:block md:px-6 md:empty:hidden">
         <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
       </div>
 

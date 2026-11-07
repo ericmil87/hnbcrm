@@ -3,6 +3,10 @@ import {
   KIND_FILTER_KEY,
   activeBotSuspicion,
   aiStateChipInfo,
+  applyInboxChip,
+  countUnreadConversations,
+  inboxFilterChips,
+  NO_CHIP_FILTERS,
   decideConversationParamAction,
   emptyListMessage,
   filterConversations,
@@ -202,5 +206,105 @@ describe("emptyListMessage", () => {
     expect(emptyListMessage({ ...base, showArchived: true, labelId: "l" }).text).toBe("Nenhuma conversa arquivada");
     expect(emptyListMessage({ ...base, labelId: "l" }).text).toBe("Nenhuma conversa com essa etiqueta");
     expect(emptyListMessage(base).text).toBe("Nenhuma conversa ainda");
+  });
+  it("Não lidas", () => {
+    expect(emptyListMessage({ ...base, unreadOnly: true }).text).toBe("Nenhuma conversa não lida");
+  });
+});
+
+describe("filtro 'Não lidas'", () => {
+  const list = [
+    { id: "a", unreadCount: 2 },
+    { id: "b", unreadCount: 0 },
+    { id: "c" },
+    { id: "d", kind: "group", unreadCount: 1 },
+  ];
+  it("filterConversations com unreadOnly mantém só as não lidas (e combina com o tipo)", () => {
+    expect(filterConversations(list, { kind: "all", labelId: null, unreadOnly: true }).map((c) => c.id)).toEqual([
+      "a",
+      "d",
+    ]);
+    expect(filterConversations(list, { kind: "direct", labelId: null, unreadOnly: true }).map((c) => c.id)).toEqual([
+      "a",
+    ]);
+  });
+  it("keepId: a conversa aberta não some ao ser marcada como lida", () => {
+    const withIds = [
+      { _id: "a", unreadCount: 2 },
+      { _id: "b", unreadCount: 0 },
+    ];
+    expect(
+      filterConversations(withIds, { kind: "all", labelId: null, unreadOnly: true, keepId: "b" }).map((c) => c._id)
+    ).toEqual(["a", "b"]);
+  });
+  it("countUnreadConversations conta conversas, não mensagens", () => {
+    expect(countUnreadConversations(list)).toBe(2);
+    expect(countUnreadConversations([])).toBe(0);
+  });
+});
+
+describe("chips da lista (celular)", () => {
+  const labels = [{ _id: "l1", name: "VIP", color: "#10b981" }];
+  const none = NO_CHIP_FILTERS;
+
+  it("Todas pressionado sem filtro; Grupos só com grupo; uma por etiqueta", () => {
+    const chips = inboxFilterChips(none, { labels, showGroups: false, unreadCount: 0 });
+    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "label:l1"]);
+    expect(chips[0].pressed).toBe(true);
+    expect(chips[1].count).toBeUndefined();
+    const withGroups = inboxFilterChips(none, { labels: [], showGroups: true, unreadCount: 12 });
+    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "group"]);
+    expect(withGroups[1].count).toBe(12);
+  });
+
+  it("filtro guardado em Diretas/Grupos sempre tem chip para desligar", () => {
+    expect(inboxFilterChips({ ...none, kind: "direct" }, { labels: [], showGroups: false, unreadCount: 0 })).toEqual([
+      { id: "all", label: "Todas", pressed: false },
+      { id: "unread", label: "Não lidas", pressed: false, count: undefined },
+      { id: "direct", label: "Diretas", pressed: true },
+    ]);
+    const group = inboxFilterChips({ ...none, kind: "group" }, { labels: [], showGroups: false, unreadCount: 0 });
+    expect(group.find((c) => c.id === "group")?.pressed).toBe(true);
+  });
+
+  it("applyInboxChip: Todas limpa; os outros ligam e desligam", () => {
+    const busy = { ...none, kind: "group" as const, unreadOnly: true, labelId: "l1" };
+    expect(applyInboxChip("all", busy)).toEqual(none);
+    expect(applyInboxChip("unread", none)).toEqual({ ...none, unreadOnly: true });
+    expect(applyInboxChip("unread", busy).unreadOnly).toBe(false);
+    expect(applyInboxChip("group", none).kind).toBe("group");
+    expect(applyInboxChip("group", busy).kind).toBe("all");
+    expect(applyInboxChip("direct", { ...none, kind: "direct" }).kind).toBe("all");
+    expect(applyInboxChip("label:l1", none).labelId).toBe("l1");
+    expect(applyInboxChip("label:l1", busy).labelId).toBeNull();
+    expect(applyInboxChip("label:l2", busy).labelId).toBe("l2");
+    expect(applyInboxChip("desconhecido", busy)).toBe(busy);
+  });
+
+  it("canal/conta ativos (guardados no aparelho): chip marcado que desliga, e Todas desmarcado", () => {
+    const withChannel = { ...none, channel: "instagram", configId: "cfg1" };
+    const chips = inboxFilterChips(withChannel, {
+      labels: [],
+      showGroups: false,
+      unreadCount: 0,
+      channelLabel: "Instagram",
+      accountLabel: "@casalumiar",
+    });
+    expect(chips.map((c) => [c.id, c.label, c.pressed])).toEqual([
+      ["all", "Todas", false],
+      ["unread", "Não lidas", false],
+      ["channel", "Instagram", true],
+      ["account", "@casalumiar", true],
+    ]);
+    expect(applyInboxChip("account", withChannel)).toEqual({ ...withChannel, configId: null });
+    expect(applyInboxChip("channel", withChannel)).toEqual(none);
+    expect(applyInboxChip("all", { ...withChannel, unreadOnly: true, kind: "direct" })).toEqual(none);
+  });
+
+  it("contador de não lidas vira mínimo ('12+') quando pode haver mais", () => {
+    const [, unread] = inboxFilterChips(none, { labels: [], showGroups: false, unreadCount: 12, unreadMore: true });
+    expect(unread).toMatchObject({ count: 12, countMore: true });
+    const [, zero] = inboxFilterChips(none, { labels: [], showGroups: false, unreadCount: 0, unreadMore: true });
+    expect(zero.countMore).toBeUndefined();
   });
 });

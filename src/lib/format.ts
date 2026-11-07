@@ -179,3 +179,28 @@ export function formatDayLabel(ts: Timestamp, now: number, { timeZone }: TimeZon
       : { day: "numeric", month: "short", year: "numeric", timeZone }
   );
 }
+
+const DAY_MS = 86_400_000;
+
+/**
+ * Hora da lista de conversas (estilo WhatsApp): hoje "14:30", ontem "Ontem",
+ * de 2 a 6 dias atrás o dia da semana ("segunda", "sábado"), senão "09/03/25".
+ * Dia de calendário no fuso informado (padrão: o do navegador).
+ */
+export function formatListTime(ts: Timestamp, now: number, { timeZone }: TimeZoneOption = {}): string {
+  if (!isValid(ts)) return EMPTY;
+  const dayIndex = (value: Timestamp) => {
+    const [y, m, d] = new Date(value)
+      .toLocaleDateString("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone })
+      .split("-")
+      .map(Number);
+    return Math.round(Date.UTC(y, m - 1, d) / DAY_MS);
+  };
+  const diff = dayIndex(now) - dayIndex(ts);
+  if (diff === 0) return formatTime(ts, { timeZone });
+  if (diff === 1) return "Ontem";
+  if (diff > 1 && diff < 7) {
+    return new Date(ts).toLocaleDateString(LOCALE, { weekday: "long", timeZone }).replace(/-feira$/, "");
+  }
+  return new Date(ts).toLocaleDateString(LOCALE, { day: "2-digit", month: "2-digit", year: "2-digit", timeZone });
+}
