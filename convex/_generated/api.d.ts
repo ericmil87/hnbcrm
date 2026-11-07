@@ -110,6 +110,7 @@ import type * as lib_channelReconnectCore from "../lib/channelReconnectCore.js";
 import type * as lib_channelResolve from "../lib/channelResolve.js";
 import type * as lib_channelTransport from "../lib/channelTransport.js";
 import type * as lib_chatText from "../lib/chatText.js";
+import type * as lib_contactSearchRank from "../lib/contactSearchRank.js";
 import type * as lib_conversationHolder from "../lib/conversationHolder.js";
 import type * as lib_conversationListFields from "../lib/conversationListFields.js";
 import type * as lib_conversationRuntime from "../lib/conversationRuntime.js";
@@ -387,6 +388,7 @@ declare const fullApi: ApiFromModules<{
   "lib/channelResolve": typeof lib_channelResolve;
   "lib/channelTransport": typeof lib_channelTransport;
   "lib/chatText": typeof lib_chatText;
+  "lib/contactSearchRank": typeof lib_contactSearchRank;
   "lib/conversationHolder": typeof lib_conversationHolder;
   "lib/conversationListFields": typeof lib_conversationListFields;
   "lib/conversationRuntime": typeof lib_conversationRuntime;
