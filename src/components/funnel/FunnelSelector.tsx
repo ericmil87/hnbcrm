@@ -26,6 +26,11 @@ export interface FunnelSelectorProps {
   onSelectBoard: (boardId: Id<"boards">) => void;
   onOpenDialog: (dialog: FunnelDialog) => void;
   canCreateLead: boolean;
+  /**
+   * Celular: só o seletor de funil, largura total. "Criar lead", funis
+   * arquivados e configurações vão para o cabeçalho do AppShell (+ e ⋯).
+   */
+  compact?: boolean;
 }
 
 function ColorDot({ color }: { color: string }) {
@@ -33,16 +38,16 @@ function ColorDot({ color }: { color: string }) {
   return <span aria-hidden="true" className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />;
 }
 
-/** Seletor de funil, funis arquivados, configurações do funil ativo e "Criar lead". */
-export function FunnelSelector({
+/**
+ * Itens dos menus "Funis arquivados" (restaurar/excluir) e "Configurações do
+ * funil". O desktop desenha em botões próprios; o celular, no ⋯ do cabeçalho.
+ */
+export function useFunnelBoardMenus({
   boards,
   archivedBoards,
-  leadCountByBoard,
   selectedBoardId,
-  onSelectBoard,
   onOpenDialog,
-  canCreateLead,
-}: FunnelSelectorProps) {
+}: Pick<FunnelSelectorProps, "boards" | "archivedBoards" | "selectedBoardId" | "onOpenDialog">) {
   const unarchiveBoard = useMutation(api.boards.unarchiveBoard);
   const selectedBoard = boards.find((b) => b._id === selectedBoardId);
 
@@ -54,33 +59,6 @@ export function FunnelSelector({
       toast.error(error instanceof Error ? error.message : "Não foi possível restaurar o funil.");
     }
   };
-
-  const boardItems = useMemo<MenuItem[]>(
-    () => [
-      ...boards.map((board) => {
-        const count = leadCountByBoard.get(board._id);
-        return {
-          id: board._id,
-          label: count ? `${board.name} (${count})` : board.name,
-          icon:
-            board._id === selectedBoardId ? (
-              <Check size={16} aria-hidden="true" className="shrink-0 text-brand-500" />
-            ) : (
-              <ColorDot color={board.color} />
-            ),
-          onSelect: () => onSelectBoard(board._id),
-        };
-      }),
-      {
-        id: "create-board",
-        label: VOCAB.funnel.new,
-        icon: <Plus size={16} aria-hidden="true" className="shrink-0" />,
-        separatorBefore: true,
-        onSelect: () => onOpenDialog({ kind: "createBoard" }),
-      },
-    ],
-    [boards, leadCountByBoard, selectedBoardId, onSelectBoard, onOpenDialog]
-  );
 
   const archivedItems: MenuItem[] = archivedBoards.flatMap<MenuItem>((board) =>
         board.deletionStartedAt
@@ -123,25 +101,75 @@ export function FunnelSelector({
     },
   ];
 
+  return { archivedItems, settingsItems };
+}
+
+/** Seletor de funil, funis arquivados, configurações do funil ativo e "Criar lead". */
+export function FunnelSelector({
+  boards,
+  archivedBoards,
+  leadCountByBoard,
+  selectedBoardId,
+  onSelectBoard,
+  onOpenDialog,
+  canCreateLead,
+  compact = false,
+}: FunnelSelectorProps) {
+  const selectedBoard = boards.find((b) => b._id === selectedBoardId);
+  const { archivedItems, settingsItems } = useFunnelBoardMenus({ boards, archivedBoards, selectedBoardId, onOpenDialog });
+
+  const boardItems = useMemo<MenuItem[]>(
+    () => [
+      ...boards.map((board) => {
+        const count = leadCountByBoard.get(board._id);
+        return {
+          id: board._id,
+          label: count ? `${board.name} (${count})` : board.name,
+          icon:
+            board._id === selectedBoardId ? (
+              <Check size={16} aria-hidden="true" className="shrink-0 text-brand-500" />
+            ) : (
+              <ColorDot color={board.color} />
+            ),
+          onSelect: () => onSelectBoard(board._id),
+        };
+      }),
+      {
+        id: "create-board",
+        label: VOCAB.funnel.new,
+        icon: <Plus size={16} aria-hidden="true" className="shrink-0" />,
+        separatorBefore: true,
+        onSelect: () => onOpenDialog({ kind: "createBoard" }),
+      },
+    ],
+    [boards, leadCountByBoard, selectedBoardId, onSelectBoard, onOpenDialog]
+  );
+
+  const boardMenu = (
+    <Menu
+      ariaLabel="Funis"
+      align="start"
+      items={boardItems}
+      trigger={(props, { open }) => (
+        <Button
+          {...props}
+          type="button"
+          variant="secondary"
+          className={cn("max-w-full min-w-0", compact && "w-full", open && "border-brand-500")}
+        >
+          {selectedBoard && <ColorDot color={selectedBoard.color} />}
+          <span className={cn("truncate", compact && "flex-1 text-left")}>{selectedBoard?.name ?? VOCAB.funnel.nav}</span>
+          <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-text-muted" />
+        </Button>
+      )}
+    />
+  );
+
+  if (compact) return <div className="mb-2">{boardMenu}</div>;
+
   return (
     <div className="mb-4 flex flex-wrap items-center gap-2">
-      <Menu
-        ariaLabel="Funis"
-        align="start"
-        items={boardItems}
-        trigger={(props, { open }) => (
-          <Button
-            {...props}
-            type="button"
-            variant="secondary"
-            className={cn("max-w-full min-w-0", open && "border-brand-500")}
-          >
-            {selectedBoard && <ColorDot color={selectedBoard.color} />}
-            <span className="truncate">{selectedBoard?.name ?? VOCAB.funnel.nav}</span>
-            <ChevronDown size={16} aria-hidden="true" className="shrink-0 text-text-muted" />
-          </Button>
-        )}
-      />
+      {boardMenu}
 
       {archivedBoards.length > 0 && (
         <Menu

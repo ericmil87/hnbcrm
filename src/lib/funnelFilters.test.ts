@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  CLEARED_SHEET_FILTERS,
   DEFAULT_FUNNEL_FILTERS,
   activeFilterCount,
+  filtersButtonLabel,
+  sheetFilterCount,
   defaultSortOrder,
   filterLeads,
   getPriorityLabel,
@@ -105,6 +108,36 @@ describe("activeFilterCount", () => {
   it("não conta o modo", () => {
     expect(activeFilterCount({ ...DEFAULT_FUNNEL_FILTERS, view: "list" })).toBe(0);
     expect(activeFilterCount({ ...DEFAULT_FUNNEL_FILTERS, q: "a", temp: "hot", unit: "none" })).toBe(3);
+  });
+});
+
+describe("filtros da folha (celular)", () => {
+  it("não conta busca nem modo", () => {
+    expect(sheetFilterCount({ ...DEFAULT_FUNNEL_FILTERS, q: "acme", view: "list" }, true)).toBe(0);
+  });
+
+  it("conta prioridade, temperatura, responsável e unidade", () => {
+    const f = { ...DEFAULT_FUNNEL_FILTERS, priority: "high", temp: "hot", owner: "unassigned", unit: "none" };
+    expect(sheetFilterCount(f, true)).toBe(4);
+  });
+
+  it("unidade só conta com o módulo ligado", () => {
+    expect(sheetFilterCount({ ...DEFAULT_FUNNEL_FILTERS, unit: "u1" }, false)).toBe(0);
+    expect(sheetFilterCount({ ...DEFAULT_FUNNEL_FILTERS, unit: "u1" }, true)).toBe(1);
+  });
+
+  it("limpar a folha volta os quatro ao padrão e preserva busca e modo", () => {
+    const f = { ...DEFAULT_FUNNEL_FILTERS, q: "acme", view: "list" as const, priority: "high", temp: "hot", owner: "m1", unit: "u1" };
+    const cleared = { ...f, ...CLEARED_SHEET_FILTERS };
+    expect(sheetFilterCount(cleared, true)).toBe(0);
+    expect(cleared.q).toBe("acme");
+    expect(cleared.view).toBe("list");
+  });
+
+  it("nome do botão inclui a contagem", () => {
+    expect(filtersButtonLabel(0)).toBe("Filtros");
+    expect(filtersButtonLabel(1)).toBe("Filtros, 1 ativo");
+    expect(filtersButtonLabel(3)).toBe("Filtros, 3 ativos");
   });
 });
 

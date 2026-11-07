@@ -1,6 +1,8 @@
-import { useEffect, useCallback } from "react";
+import { useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import { lockBodyScroll } from "@/lib/scrollLock";
+import { useKeyboardViewportBox } from "@/hooks/useKeyboardViewportBox";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
@@ -37,7 +39,31 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   // folha inferior ficava atrás da tab bar do mobile (z-30) — o botão de
   // confirmar sumia (caso real: "Excluir lead" pela conversa, 03/10/2026).
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center">
+    <ModalLayer onClose={onClose} title={title} className={className}>
+      {children}
+    </ModalLayer>,
+    document.body
+  );
+}
+
+/**
+ * Camada do Modal (montada só aberta). Abaixo de `sm` é folha inferior; abaixo
+ * de `sm` ou no toque, com o teclado aberto o container segue a área visível
+ * (`useKeyboardViewportBox`) e a folha/diálogo cabe nela com rolagem interna
+ * (campo e botões acima do teclado).
+ */
+function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "open">) {
+  const isSheet = useMediaQuery("(max-width: 639px)");
+  // Toque em tela larga (iPhone deitado, iPad): o teclado cobre o diálogo centralizado também.
+  const isTouch = useMediaQuery("(pointer: coarse)");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const { style, keyboardOpen } = useKeyboardViewportBox(isSheet || isTouch, dialogRef);
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center"
+      style={style}
+      data-keyboard={keyboardOpen ? "open" : "closed"}
+    >
       {/* Overlay */}
       <div
         className="fixed inset-0 bg-black/60 backdrop-blur-sm animate-fade-in"
@@ -47,17 +73,23 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
 
       {/* Dialog */}
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         className={cn(
           "relative z-10 w-full bg-surface-overlay border border-border",
-          "max-h-[85vh] overflow-y-auto",
+          "max-h-[85vh] overflow-y-auto overscroll-contain",
           // Mobile: bottom sheet (cobre a tab bar; respeita a safe-area)
-          "rounded-t-xl animate-slide-in-up pb-safe sm:pb-0",
+          "rounded-t-xl animate-slide-in-up sm:pb-0",
+          // Teclado aberto: a safe-area de baixo fica atrás dele.
+          keyboardOpen ? "pb-0" : "pb-safe",
           // Desktop: centered dialog
           "sm:rounded-xl sm:max-w-lg sm:mx-4 sm:animate-fade-in-up",
-          className
+          className,
+          // Teclado aberto (folha no celular): no máximo a área visível, mesmo
+          // com um `max-h` vindo do chamador.
+          keyboardOpen && "max-h-full"
         )}
       >
         {title && (
@@ -74,7 +106,6 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
         )}
         <div className="p-4 md:p-6">{children}</div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
 }

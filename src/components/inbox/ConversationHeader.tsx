@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, Users } from "lucide-react";
@@ -9,6 +9,7 @@ import { AiControlMenu } from "@/components/inbox/AiControlMenu";
 import { ReturnToAiButton } from "@/components/inbox/AiDraftCard";
 import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
+import { ConversationSearchBar } from "@/components/inbox/ConversationSearchBar";
 import { FollowUpChip } from "@/components/inbox/FollowUpChip";
 import { ConversationLanguageChip, ConversationLanguageDialog } from "@/components/inbox/ConversationLanguageChip";
 import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
@@ -119,6 +120,20 @@ export function ConversationHeader({
       return !open;
     });
   };
+  // "Pesquisar na conversa" (menu ⋮): a barra de pesquisa ocupa a linha do cabeçalho.
+  const [searching, setSearching] = useState(false);
+  // Ao fechar a pesquisa (seta ←, X ou Esc) o foco volta ao ⋮, que reaparece no próximo render.
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
+  const closeSearch = () => {
+    restoreFocusRef.current = true;
+    setSearching(false);
+  };
+  useEffect(() => {
+    if (searching || !restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    menuTriggerRef.current?.focus();
+  }, [searching]);
   const conversationId = conversation._id as Id<"conversations">;
   const convChannel: string | undefined = conversation.channel;
   const convTransport: string | undefined = conversation.channelProvider;
@@ -303,6 +318,8 @@ export function ConversationHeader({
       }
       leadId={!isGroup && conversation.leadId ? (conversation.leadId as Id<"leads">) : undefined}
       onLeadDeleted={onLeadDeleted}
+      onSearchInConversation={() => setSearching(true)}
+      triggerRef={menuTriggerRef}
     />
   );
   const aiPaused = typeof conversation.aiPausedUntil === "number" && conversation.aiPausedUntil > Date.now();
@@ -351,8 +368,20 @@ export function ConversationHeader({
   return (
     <>
       <div className="shrink-0 border-b border-border bg-chat-header md:bg-surface-raised">
+        {searching && (
+          <ConversationSearchBar
+            organizationId={organizationId}
+            conversationId={conversationId}
+            onClose={closeSearch}
+          />
+        )}
         {/* Linha única: voltar · avatar · nome + subtítulo · IA · detalhes · ⋮ */}
-        <div className="flex min-h-14 items-center gap-1 px-1 pt-[env(safe-area-inset-top)] md:pt-0 md:min-h-16 md:gap-2 md:px-4">
+        <div
+          className={cn(
+            "flex min-h-14 items-center gap-1 px-1 pt-[env(safe-area-inset-top)] md:pt-0 md:min-h-16 md:gap-2 md:px-4",
+            searching && "hidden md:hidden"
+          )}
+        >
           <button
             type="button"
             onClick={onBack}

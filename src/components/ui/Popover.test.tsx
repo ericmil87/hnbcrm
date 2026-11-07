@@ -69,6 +69,39 @@ describe("Popover", () => {
     document.body.style.overflow = "";
   });
 
+  it("folha com teclado aberto: segue a área visível e cabe nela (campo e botões acima do teclado)", async () => {
+    const vv = Object.assign(new EventTarget(), { height: 420, offsetTop: 180, width: 390 });
+    const prevVv = Object.getOwnPropertyDescriptor(window, "visualViewport");
+    const prevInner = window.innerHeight;
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 844 });
+    try {
+      render(<Harness sheet />);
+      await userEvent.click(screen.getByText("gatilho"));
+      const dialog = screen.getByRole("dialog");
+      const layer = dialog.parentElement!;
+      expect(layer).toHaveAttribute("data-keyboard", "open");
+      expect(layer.style.top).toBe("180px");
+      expect(layer.style.height).toBe("420px");
+      expect(layer.style.bottom).toBe("auto");
+      expect(dialog).toHaveClass("max-h-full");
+      expect(dialog).not.toHaveClass("max-h-[80dvh]");
+    } finally {
+      if (prevVv) Object.defineProperty(window, "visualViewport", prevVv);
+      else delete (window as { visualViewport?: unknown }).visualViewport;
+      Object.defineProperty(window, "innerHeight", { configurable: true, value: prevInner });
+    }
+  });
+
+  it("folha com teclado fechado: classes padrão (inset-0, 80dvh), sem estilo inline", async () => {
+    render(<Harness sheet />);
+    await userEvent.click(screen.getByText("gatilho"));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.parentElement).toHaveAttribute("data-keyboard", "closed");
+    expect(dialog.parentElement!.getAttribute("style")).toBeNull();
+    expect(dialog).toHaveClass("max-h-[80dvh]");
+  });
+
   it("fechado, o Esc chega a listeners do document", async () => {
     const seen = vi.fn();
     document.addEventListener("keydown", seen);

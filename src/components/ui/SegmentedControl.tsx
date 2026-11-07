@@ -14,6 +14,8 @@ interface SegmentedControlProps {
   options: SegmentedOption[];
   ariaLabel: string;
   size?: "sm" | "md";
+  /** Só o ícone de cada opção (quadrado de 44 px); o `label` vira o `aria-label`. */
+  iconOnly?: boolean;
   className?: string;
 }
 
@@ -24,6 +26,7 @@ export function SegmentedControl({
   options,
   ariaLabel,
   size = "md",
+  iconOnly = false,
   className,
 }: SegmentedControlProps) {
   const refs = useRef(new Map<string, HTMLButtonElement>());
@@ -70,10 +73,12 @@ export function SegmentedControl({
             type="button"
             role="radio"
             aria-checked={selected}
+            aria-label={iconOnly ? o.label : undefined}
             tabIndex={selected || (!hasSelected && i === 0) ? 0 : -1}
             onClick={() => onValueChange(o.value)}
             className={cn(
-              "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-3 font-medium transition-colors",
+              "inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors",
+              iconOnly ? "min-w-11 px-0" : "px-3",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
               // sm também mantém 44 px de altura até existir a variante `coarse` (fv2-05).
               size === "md" ? "min-h-11 text-sm" : "min-h-11 text-[13px]",
@@ -83,7 +88,7 @@ export function SegmentedControl({
             )}
           >
             {o.icon}
-            {o.label}
+            {!iconOnly && o.label}
           </button>
         );
       })}

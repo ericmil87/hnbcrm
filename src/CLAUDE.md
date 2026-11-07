@@ -31,6 +31,7 @@ src/
 ├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, isAppPath, resolveTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR, THEME_OPTIONS, themeLabel); test next to it
 ├── lib/themeDom.ts             # applyTheme/clearTheme on <html> + meta theme-color; subscribe/getAppliedTheme
 ├── lib/funnelCardPrefs.ts      # Funil card preference (density compact|comfortable + visible fields, localStorage hnbcrm.funnelCard.<org>), tolerant parse (+ test); hook hooks/useFunnelCardPrefs.ts
+├── lib/funnelHeader.ts         # pure plan of the Funil contribution to the AppShell mobile header (funnelHeaderPlan: "Criar lead" +, ⋯ items/order/separators as commands); test next to it
 ├── lib/funnelFilters.ts        # Funil labels/variants, client filter, sort, URL (de)serialization (?view=&q=&owner=&temp=&priority=&unit=), initial-funnel pick (+ test)
 ├── hooks/useFunnelUrlState.ts  # Funil URL state: ?board= (initial pick), ?lead= (panel, replace), filters/view (replace), last funnel per org in localStorage
 ├── hooks/useUiTheme.ts         # AuthLayout only: syncs theme with teamMembers.uiTheme + localStorage; exposes {theme, setTheme}
@@ -48,6 +49,7 @@ src/
 ├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount; `usePageTitle(null)` leaves the title as is
 ├── hooks/useInlineCrud.ts      # useReducer over lib/inlineCrud (showForm/editingId/form/confirmDeleteId + actions)
 ├── hooks/useMediaQuery.ts      # matchMedia subscription (tested with the stub in src/test/setup.ts)
+├── hooks/useKeyboardViewportBox.ts # Popover sheet / Modal (< sm or coarse) / SlideOver (< md or coarse) follow the visualViewport while the iOS keyboard is open (top/height, max-h-full, pb-0, focused field revealed via container scrollTop, window scroll held by the top layer of `scrollHolders`); pure part in lib/keyboardSheet.ts (+ test); shares useViewportTracking and the shared `viewportBaseline` with hooks/useVisualViewport.ts; component test next to it
 ├── hooks/useNow.ts             # "now" that ticks every minute while enabled (Conversas list times turn into "Ontem")
 ├── lib/searchParamState.ts     # pure URL-state codecs (stringParam, enumParam, booleanParam `1`, numberParam, listParam), writeParams (several params in one write) and the in-flight write (beginWrite/settleWrite); test next to it
 ├── hooks/useSearchParamState.ts # typed search-param state: replace for filters, push for entities; `isInFlight()` guards URL → state effects (single copy of the `{target, stale}` mechanism)
@@ -77,7 +79,7 @@ src/
     ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at /; auth screen at /entrar
     ├── DashboardOverview.tsx   # Metrics (/app/painel)
     ├── KanbanBoard.tsx         # re-export of funnel/FunnelPage (main.tsx lazy import, route /app/pipeline)
-    ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista) + FunnelCardPicker (Exibição dos cards: density and fields popover) + FunnelSelector (funnel/archived/settings Menus),
+    ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista; < md: usePageHeader "+ Criar lead" and ⋯ items, pill search + "Filtros" sheet FunnelFiltersSheet with active count, icon view toggle) + FunnelCardPicker (Exibição dos cards: density and fields popover; FunnelCardPrefsFields reused in the mobile sheet) + FunnelSelector (funnel/archived/settings Menus; `compact`; useFunnelBoardMenus),
     │                           #   StageColumn (useDroppable id=stageId), LeadCard (LeadCardView + DraggableCard useDraggable id=leadId, optional `lastMessage`), QuickAddLead,
     │                           #   StageEditPopover (on Popover), AddStageColumn, FunnelDialogs (modals), useFunnelBulkActions, LeadDeepLinkResolver
     ├── CreateLeadModal.tsx     # Lead creation modal
@@ -100,8 +102,9 @@ src/
     │                           #     TranslationBanner (apresentacional) + ConversationTranslationBanner (container no topo do ConversationThread: idioma detectado, pergunta, convite para ligar), TranslationPreviewRow (slot `translationPreview`: prévia viva, "Editar", "Sem traduzir", "Idioma incerto · Traduzir como…") + useComposerTranslation (debounce, LRU, teto de 4 s, `decide()`),
     │                           #     ScheduledPendingRow ("Você escreveu"/versão traduzida da agendada), AiDraftCard ("Ver em pt-BR"), NewConversationModal (seletor de idioma), contacts/detail ("Idioma preferido"); painel settings/TranslationPanel.tsx (id `translation`, grupo `whatsapp`: módulo, idioma da equipe, "Ao responder" Revisar rápido/Enviar direto/Revisar antes, "Testar conexão" com os dois motores; ModelRoutingCard tem o bloco do produto)
     │                           #     Composer `features={{voice,schedule,internalNote,quickReplies,translation}}` (`translation:false` desliga chip e prévia, ex.: grupos); ComposerView recebe os slots `languageControl`/`translationPreview` (+ `fieldReadOnly` enquanto espera a prévia, `sendingLabel`)
-    ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id> via useSearchParamState; accepting navigates to /app/entrada?conversation=<id>
+    ├── HandoffQueue.tsx        # AI→human handoffs (/app/repasses): peek, ?handoff=<id> via useOpenEntityParam (push, close = back); accepting navigates to /app/entrada?conversation=<id>
     ├── handoffs/AttentionRow.tsx  # Presentational row of the Requer atenção list: compact (default) with expandable details, or comfortable card; density pref in lib/attentionPrefs.ts (localStorage hnbcrm.attentionDensity)
+    ├── handoffs/AttentionListItem.tsx  # Mobile (< md) row of Requer atenção: 2 lines (name + time; reason dot + summary), whole row opens the peek, no per-row buttons; pure rules in lib/attentionList.ts
     ├── handoffs/HandoffPeekSlideOver.tsx  # Read-only peek at the handoff conversation (summary + BANT, no composer)
     ├── TeamPage.tsx, AuditLogs.tsx  # /app/equipe, /app/auditoria
     ├── ContactsPage.tsx        # /app/contatos: `?contact=<id>` (push; own entry marked in location.state, close = navigate(-1)), `?q=` and `?page=` (1-based, replace)

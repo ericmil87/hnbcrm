@@ -21,6 +21,7 @@ import { useConversationList } from "@/hooks/useConversationList";
 import { useConversationSelection } from "@/hooks/useConversationSelection";
 import { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
 import { filterConversations } from "@/lib/inboxState";
+import { jumpableMatches } from "@/lib/inboxSearch";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { NewConversationModal } from "@/components/inbox/NewConversationModal";
 import { usePendingAttentionCount } from "@/components/inbox/AttentionBanner";
@@ -105,10 +106,19 @@ export function Inbox() {
     const [y, m] = searchMonth.split("-").map(Number);
     return { dateFrom: new Date(y, m - 1, 1).getTime(), dateTo: new Date(y, m, 1).getTime() - 1 };
   })();
-  const searchResults = useQuery(
+  // Rascunho da IA e transferência não são bolhas do thread: tocar neles não teria onde saltar.
+  const searchResultsRaw = useQuery(
     api.conversations.searchMessages,
     isSearching ? { organizationId, searchQuery: searchTerm, ...(monthRange ?? {}) } : "skip"
   );
+  const searchResults = searchResultsRaw && jumpableMatches(searchResultsRaw);
+  // Seção "Contatos" (antes das mensagens). Com recorte de mês não se aplica:
+  // o mês filtra mensagens, não contatos.
+  const contactResultsRaw = useQuery(
+    api.conversations.searchConversationsByContact,
+    isSearching && !monthRange ? { organizationId, searchQuery: searchTerm } : "skip"
+  );
+  const contactResults = monthRange ? [] : contactResultsRaw;
 
   const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
   // Os chips aparecem com grupo na lista OU filtro guardado diferente de "Todas":
@@ -211,6 +221,8 @@ export function Inbox() {
           onMonthChange: setSearchMonth,
           results: searchResults,
           onOpenResult: handleOpenSearchResult,
+          contactResults,
+          onOpenContactResult: (result) => selection.select(result.conversationId),
         }}
         onSelect={(id) => selection.select(id)}
         onNewConversation={showNewConversation ? selection.openNewConversation : undefined}

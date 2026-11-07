@@ -151,6 +151,28 @@ describe("LeadMoveControls", () => {
     expect(screen.getByRole("button", { name: "Mover Contrato Acme para Novo" })).toBeInTheDocument();
   });
 
+  it("rodapé do card: nomes das etapas à vista, botão Mover no meio e linha divisória", () => {
+    render(
+      <LeadMoveControls leadTitle="Contrato Acme" stages={[a, b, c]} currentStageId="b" prevStage={a} nextStage={c} onMove={vi.fn()} />
+    );
+    const footer = screen.getByTestId("lead-move-controls");
+    expect(footer).toHaveClass("border-t", "border-border-subtle");
+    expect(screen.getByRole("button", { name: "Mover Contrato Acme para Novo" })).toHaveTextContent("Novo");
+    expect(screen.getByRole("button", { name: "Mover Contrato Acme para Ganho" })).toHaveTextContent("Ganho");
+    expect(screen.getByRole("button", { name: "Mover Contrato Acme para…" })).toHaveTextContent("Mover");
+  });
+
+  it("Mover abre o menu com todas as etapas e a atual desabilitada", async () => {
+    const onMove = vi.fn();
+    render(
+      <LeadMoveControls leadTitle="Contrato Acme" stages={[a, b, c]} currentStageId="b" prevStage={a} nextStage={c} onMove={onMove} />
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Mover Contrato Acme para…" }));
+    expect(screen.getByRole("menuitem", { name: "Proposta" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Novo" }));
+    expect(onMove).toHaveBeenCalledWith("a");
+  });
+
   it("some a seta na primeira e na última etapa", () => {
     const { rerender } = render(
       <LeadMoveControls leadTitle="Contrato Acme" stages={[a, b]} currentStageId="a" prevStage={null} nextStage={b} onMove={vi.fn()} />
@@ -159,6 +181,15 @@ describe("LeadMoveControls", () => {
     expect(screen.getByRole("button", { name: "Mover Contrato Acme para Proposta" })).toBeInTheDocument();
     rerender(<LeadMoveControls leadTitle="Contrato Acme" stages={[a, b]} currentStageId="b" prevStage={a} nextStage={null} onMove={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Mover Contrato Acme para Proposta" })).not.toBeInTheDocument();
+  });
+});
+
+describe("LeadCardView framed", () => {
+  it("em toque cede a moldura ao contêiner externo; sem framed, nada muda", () => {
+    const { container, rerender } = render(<LeadCardView lead={lead} framed />);
+    expect(container.firstElementChild).toHaveClass("coarse:border-transparent", "coarse:rounded-none");
+    rerender(<LeadCardView lead={lead} />);
+    expect(container.firstElementChild).not.toHaveClass("coarse:border-transparent");
   });
 });
 

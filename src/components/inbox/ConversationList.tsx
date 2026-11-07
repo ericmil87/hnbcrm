@@ -2,6 +2,7 @@ import type { ReactNode, RefObject } from "react";
 import {
   Archive,
   ArrowLeft,
+  CalendarDays,
   CheckSquare,
   Image as ImageIcon,
   MessageSquare,
@@ -24,7 +25,13 @@ import {
   type ConversationListLabel,
 } from "@/components/inbox/ConversationListItem";
 import { accountFullLabel, channelLabel, type InboxChannelAccount, type InboxFilterState } from "@/lib/channelAccounts";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatMonthValue } from "@/lib/format";
+import { inboxSearchState, searchCountLabel } from "@/lib/inboxSearch";
+import {
+  ContactSearchRow,
+  SearchSectionHeader,
+  type InboxContactResult,
+} from "@/components/inbox/ContactSearchResults";
 import { KIND_FILTERS, emptyListMessage, type ConversationKindFilter } from "@/lib/inboxState";
 import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
@@ -55,6 +62,9 @@ export interface ConversationListSearch {
   /** `undefined` enquanto carrega. */
   results: readonly InboxSearchResult[] | undefined;
   onOpenResult: (result: InboxSearchResult) => void;
+  /** Seção "Contatos" (antes das mensagens); `undefined` enquanto carrega, `[]` com recorte de mês. */
+  contactResults?: readonly InboxContactResult[] | undefined;
+  onOpenContactResult?: (result: InboxContactResult) => void;
 }
 
 export interface ConversationListFilters {
@@ -139,48 +149,71 @@ export interface ConversationListMobile {
 }
 
 function SearchResults({ search }: { search: ConversationListSearch }) {
-  const { results, term, month, onOpenResult } = search;
-  if (results === undefined) {
+  const { results, term, month, onOpenResult, contactResults, onOpenContactResult } = search;
+  const { status } = inboxSearchState({ contacts: contactResults, messages: results });
+  if (status === "loading") {
     return (
       <div className="p-6 flex justify-center">
         <Spinner size="md" />
       </div>
     );
   }
-  if (results.length === 0) {
+  if (status === "empty") {
     return (
       <div className="p-4 text-center text-text-muted text-sm">
         Nada encontrado{month ? " nesse mês" : ""} para "{term}"
       </div>
     );
   }
+  const hasContacts = !!contactResults && contactResults.length > 0;
   return (
     <>
-      {results.map((result) => (
-        <button
-          key={result._id}
-          type="button"
-          onClick={() => onOpenResult(result)}
-          className="w-full text-left p-4 border-b border-border hover:bg-surface-overlay transition-colors"
-        >
-          <div className="flex items-center justify-between gap-2 mb-0.5">
-            <span className="text-sm font-medium text-text-primary truncate">
-              {result.contactName}
-              {result.direction !== "inbound" && <span className="text-text-muted font-normal"> · você</span>}
-            </span>
-            <span className="shrink-0 text-xs text-text-muted tabular-nums">{formatDate(result.createdAt)}</span>
-          </div>
-          <p className="text-xs text-text-secondary truncate flex items-center gap-1">
-            {result.matchedTranscript && (
-              <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
-            )}
-            {result.matchedImage && (
-              <ImageIcon size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na leitura da imagem" />
-            )}
-            <span className="truncate">{renderSnippet(result.snippetText, term.trim())}</span>
-          </p>
-        </button>
-      ))}
+      {hasContacts && (
+        <section aria-label="Contatos">
+          <SearchSectionHeader>Contatos</SearchSectionHeader>
+          {contactResults.map((result) => (
+            <ContactSearchRow
+              key={`contact:${result.conversationId}`}
+              result={result}
+              onOpen={(r) => onOpenContactResult?.(r)}
+            />
+          ))}
+        </section>
+      )}
+      {results === undefined ? (
+        <div className="p-4 flex justify-center">
+          <Spinner size="sm" />
+        </div>
+      ) : results.length > 0 ? (
+        <section aria-label="Mensagens">
+          {hasContacts && <SearchSectionHeader>Mensagens</SearchSectionHeader>}
+          {results.map((result) => (
+            <button
+              key={result._id}
+              type="button"
+              onClick={() => onOpenResult(result)}
+              className="w-full text-left p-4 border-b border-border hover:bg-surface-overlay transition-colors"
+            >
+              <div className="flex items-center justify-between gap-2 mb-0.5">
+                <span className="text-sm font-medium text-text-primary truncate">
+                  {result.contactName}
+                  {result.direction !== "inbound" && <span className="text-text-muted font-normal"> · você</span>}
+                </span>
+                <span className="shrink-0 text-xs text-text-muted tabular-nums">{formatDate(result.createdAt)}</span>
+              </div>
+              <p className="text-xs text-text-secondary truncate flex items-center gap-1">
+                {result.matchedTranscript && (
+                  <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
+                )}
+                {result.matchedImage && (
+                  <ImageIcon size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na leitura da imagem" />
+                )}
+                <span className="truncate">{renderSnippet(result.snippetText, term.trim())}</span>
+              </p>
+            </button>
+          ))}
+        </section>
+      ) : null}
     </>
   );
 }
@@ -410,17 +443,50 @@ export function ConversationList({
   });
   const searchMonthRow = search.active && (
     <div className="flex items-center gap-2">
-      <input
-        type="month"
-        value={search.month}
-        onChange={(e) => search.onMonthChange(e.target.value)}
-        className={cn(
-          "h-8 coarse:h-11 px-2.5 rounded-full text-base md:text-xs bg-surface-sunken border border-border-strong text-text-secondary",
-          "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
-          search.month && "border-brand-500 text-text-primary"
-        )}
-        aria-label="Filtrar por mês"
-      />
+      {isMobile ? (
+        // iOS Safari desenha o `type="month"` vazio como uma pílula em branco
+        // (sem placeholder): o input nativo fica invisível por cima de um
+        // rótulo, e o toque continua abrindo o seletor de mês do sistema.
+        <label
+          className={cn(
+            "relative inline-flex h-8 coarse:h-11 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs",
+            "focus-within:ring-2 focus-within:ring-brand-500/20 focus-within:border-brand-500",
+            search.month
+              ? "border-brand-500 bg-brand-500/10 text-text-primary"
+              : "border-border-strong bg-surface-sunken text-text-secondary"
+          )}
+        >
+          <CalendarDays size={14} aria-hidden="true" />
+          <span>{formatMonthValue(search.month) ?? "Qualquer mês"}</span>
+          <input
+            type="month"
+            value={search.month}
+            onChange={(e) => search.onMonthChange(e.target.value)}
+            onClick={(e) => {
+              // Navegadores sem abrir o seletor no toque do input invisível.
+              try {
+                e.currentTarget.showPicker?.();
+              } catch {
+                // Sem gesto válido ou já aberto: o toque nativo segue valendo.
+              }
+            }}
+            className="absolute inset-0 h-full w-full min-w-0 cursor-pointer appearance-none opacity-0 text-base"
+            aria-label="Filtrar por mês"
+          />
+        </label>
+      ) : (
+        <input
+          type="month"
+          value={search.month}
+          onChange={(e) => search.onMonthChange(e.target.value)}
+          className={cn(
+            "h-8 coarse:h-11 px-2.5 rounded-full text-base md:text-xs bg-surface-sunken border border-border-strong text-text-secondary",
+            "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
+            search.month && "border-brand-500 text-text-primary"
+          )}
+          aria-label="Filtrar por mês"
+        />
+      )}
       {search.month && (
         <button
           type="button"
@@ -431,9 +497,7 @@ export function ConversationList({
         </button>
       )}
       <span className="ml-auto text-xs text-text-muted tabular-nums">
-        {search.results === undefined
-          ? "…"
-          : `${search.results.length} resultado${search.results.length === 1 ? "" : "s"}`}
+        {searchCountLabel(inboxSearchState({ contacts: search.contactResults, messages: search.results }).total)}
       </span>
     </div>
   );
@@ -458,8 +522,8 @@ export function ConversationList({
             variant="pill"
             value={search.term}
             onValueChange={search.onTermChange}
-            placeholder="Buscar nas mensagens…"
-            ariaLabel="Buscar nas mensagens"
+            placeholder="Buscar contatos e mensagens…"
+            ariaLabel="Buscar contatos e mensagens"
           />
           {search.active ? (
             searchMonthRow
@@ -555,8 +619,8 @@ export function ConversationList({
         <SearchInput
           value={search.term}
           onValueChange={search.onTermChange}
-          placeholder="Buscar nas mensagens…"
-          ariaLabel="Buscar nas mensagens"
+          placeholder="Buscar contatos e mensagens…"
+          ariaLabel="Buscar contatos e mensagens"
         />
         {!search.active && <FilterBar filters={filters} selection={selection} />}
         {!search.active && queueBar}

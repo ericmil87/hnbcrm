@@ -4,6 +4,27 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Requer atenção no celular
+
+- No celular, "Requer atenção" virou uma lista enxuta no estilo de Conversas: cada pedido ocupa duas linhas (nome e hora; motivo e resumo) e cabem de 6 a 8 na tela, mesmo em aparelhos menores.
+- Tocar no pedido abre a conversa em modo leitura com as decisões no rodapé, sempre à vista: "Devolver à IA" e "Assumir conversa" lado a lado, além de "Instruir a IA em vez de assumir".
+- Pedidos esperando há uma hora ou mais ganham ponto e hora em vermelho; o topo mostra só a contagem e há quanto tempo espera o mais antigo.
+- O gesto de voltar do celular (e o voltar do navegador) fecha a conversa aberta e volta à lista, em vez de sair de "Requer atenção".
+- Saíram do celular o título repetido, a dica da página e a escolha Compacto/Completo. No computador nada muda.
+
+### Funil mais enxuto no celular
+
+- No celular, o topo do Funil ocupa bem menos espaço: **Criar lead** virou o botão + do cabeçalho, e o menu ⋯ (depois do Copiloto) reúne **Ver leads arquivados**, **Exibição dos cards**, **Editar funil**, **Gerenciar etapas**, **Arquivar funil**, **Excluir funil** e os funis arquivados.
+- Abaixo do cabeçalho ficam só o seletor de funil e uma linha com a busca em pílula, o botão **Filtros** e o modo quadro/lista em ícones. Prioridade, temperatura, responsável (e unidade, quando houver) abrem numa folha com **Limpar filtros**; o botão mostra quantos filtros estão ligados, para nenhum filtro ficar escondido. Com os leads arquivados à vista aparece um aviso com **Ver ativos**.
+- Os botões de mover do card agora fazem parte do card: um rodapé separado por uma linha fina com "‹ etapa anterior", **Mover** (escolhe qualquer etapa) e "etapa seguinte ›", com o nome da etapa para deixar claro o que acontece. Como os botões ficam dentro do card, não sobra mais aquele espaço solto entre um card e outro.
+- No modo lista do celular, cada lead ocupa menos altura: etapa, valor, prioridade e temperatura numa linha só.
+- No computador, o Funil continua como antes.
+
+### Busca por contato e dentro da conversa
+
+- A busca de Conversas agora procura também pelo contato: nome, telefone (dá para digitar como "11 99999-8888") ou e-mail aparecem primeiro, na seção "Contatos" (com a última mensagem, a hora e "Arquivada" quando for o caso), e as mensagens que contêm o termo vêm logo abaixo, em "Mensagens". Quem casou pelo nome ou telefone vem antes de quem só casou pela cidade ou pela bio. O total de resultados soma as duas.
+- Novo "Pesquisar na conversa" no menu ⋮ da conversa: a barra de pesquisa ocupa o lugar do cabeçalho, mostra "3 de 12" (ou "3 de 50+" quando há mais) e as setas ▲ ▼ levam de uma ocorrência a outra, rolando a conversa até a mensagem. A seta ← da barra (ou Esc, no computador) fecha a pesquisa; o voltar do navegador continua fechando a conversa.
+
 ### Copiloto no menu
 
 - O Copiloto agora abre pelo menu ⋯ do cabeçalho do celular, em qualquer tela (primeiro item), e pelo item "Copiloto" da barra lateral no computador; o atalho Ctrl+K (Cmd+K no Mac, onde Ctrl+K continua apagando até o fim da linha) também abre, exceto com uma janela aberta.
@@ -29,6 +50,8 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 ### Correções
 
 - Corrigido: no iPhone, ao abrir o teclado numa conversa, o campo de resposta subia para o topo da tela e sobrava uma faixa vazia até o teclado. Agora o cabeçalho fica no topo, as últimas mensagens logo acima do campo e o campo colado no teclado.
+- Corrigido: no iPhone, ao tocar em **Devolver à IA** (em Requer atenção ou no cabeçalho da conversa), a caixa da instrução abria escondida atrás do teclado na primeira vez, e só o fundo escurecido aparecia. Agora o campo e os botões **Cancelar** e **Devolver** ficam logo acima do teclado já no primeiro toque, inclusive quando o teclado já estava aberto (digitando uma resposta e tocando no botão). Vale para todas as folhas e janelas com campo no celular (menus em folha, janelas como Encaminhar e Respostas rápidas, painéis como o Copiloto).
+- Corrigido: na busca de Conversas no celular aparecia uma pílula vazia ao lado de "N resultados". Era o filtro de mês, que o iPhone mostra em branco. Agora ele aparece como "Qualquer mês" (ou o mês escolhido, como "out. de 2026") e continua abrindo o seletor de mês com um toque.
 - Corrigido: o Copiloto dava erro para quem entrava com outra conta no mesmo navegador (o painel tentava abrir a conversa de outra pessoa). Agora cada conta guarda a própria conversa, e uma conversa que não é sua é descartada em silêncio e o Copiloto começa uma nova. Ao sair da conta, as conversas guardadas no aparelho são apagadas. Depois desta atualização, a conversa atual do Copiloto em cada aparelho recomeça uma vez.
 - Corrigido: depois de **Devolver à IA** (ou de recusar o pedido de ajuda da IA), o cabeçalho da conversa continuava mostrando "IA em espera" até o cliente mandar outra mensagem. Agora o aviso some na hora e só volta se a IA deixar de responder a uma mensagem nova.
 - Conversas devolvidas à IA antes desta correção também deixam de mostrar "IA em espera" depois de uma rotina de manutenção.

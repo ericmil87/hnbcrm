@@ -74,6 +74,12 @@ function temperatureVariant(temperature: string): "error" | "warning" | "info" {
   return "info";
 }
 
+// Rodapé abaixo de sm: os dois botões dividem a largura (144 px cada a 320 px),
+// então o texto pode quebrar em duas linhas com padding menor; de sm para cima
+// volta ao botão md de uma linha. `coarse:min-h-11` do Button segue valendo.
+const FOOTER_BUTTON_FIT =
+  "h-auto min-h-11 px-3 py-1.5 leading-tight whitespace-normal text-center sm:h-10 sm:min-h-0 sm:px-4 sm:py-0 sm:whitespace-nowrap";
+
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
@@ -219,7 +225,7 @@ export function HandoffPeekSlideOver({
       bodyClassName="flex-1 min-h-0 flex flex-col overflow-hidden"
     >
       {/* Contexto estruturado — fixo no topo, o thread rola abaixo dele */}
-      <div className="shrink-0 border-b border-border bg-surface-raised px-4 py-3 md:px-5 space-y-3 max-h-[45%] overflow-y-auto">
+      <div className="shrink-0 border-b border-border bg-surface-raised px-4 py-3 md:px-5 space-y-3 max-h-[38%] md:max-h-[45%] overflow-y-auto">
         {contactName && (
           <p className="text-sm text-text-secondary truncate">
             {contactName}
@@ -383,7 +389,9 @@ export function HandoffPeekSlideOver({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-border bg-surface-raised p-3 space-y-2">
+      {/* Rodapé de decisão: fora da área que rola, sempre visível; pb-safe livra a barra do iPhone. */}
+      <div className="shrink-0 border-t border-border bg-surface-raised pb-safe">
+      <div className="p-3 space-y-2">
         {conversationId && (
           <div>
             {instructOpen ? (
@@ -431,8 +439,9 @@ export function HandoffPeekSlideOver({
           </div>
         )}
 
-        <div className="flex flex-col sm:flex-row gap-2">
-          <div>
+        {/* Celular: os dois lado a lado (uma linha só, sobra mais espaço para a conversa). */}
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-row">
+          <div className="min-w-0">
             <Button
               ref={returnRef}
               variant="secondary"
@@ -440,7 +449,10 @@ export function HandoffPeekSlideOver({
               aria-haspopup="dialog"
               aria-expanded={returnOpen}
               onClick={() => setReturnOpen((v) => !v)}
-              className="w-full whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
+              className={cn(
+                "w-full text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10",
+                FOOTER_BUTTON_FIT
+              )}
             >
               {VOCAB.attention.giveBack}
             </Button>
@@ -462,17 +474,19 @@ export function HandoffPeekSlideOver({
                 setReturnOpen(false);
                 void onReject(handoff._id, instruction);
               }}
-                onClose={() => setReturnOpen(false)}
-              />
+              onClose={() => setReturnOpen(false)}
+            />
           </div>
           <Button
             disabled={busy}
             onClick={() => void onAccept(handoff._id)}
-            className="flex-1 whitespace-nowrap"
+            className={cn("w-full min-w-0 sm:w-auto sm:flex-1", FOOTER_BUTTON_FIT)}
           >
-            Assumir conversa e abrir
+            <span className="sm:hidden">{VOCAB.attention.accept}</span>
+            <span className="hidden sm:inline">Assumir conversa e abrir</span>
           </Button>
         </div>
+      </div>
       </div>
     </SlideOver>
   );

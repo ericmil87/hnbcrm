@@ -1,6 +1,21 @@
-import { useMemo } from "react";
-import { Archive, LayoutGrid, List } from "lucide-react";
+import { useMemo, useState, type ReactNode } from "react";
+import {
+  Archive,
+  ArchiveRestore,
+  Columns3,
+  LayoutGrid,
+  List,
+  ListFilter,
+  Pencil,
+  Plus,
+  SlidersHorizontal,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { usePageHeader, type PageMenuItem } from "@/components/layout/pageHeader";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { funnelHeaderPlan, type FunnelHeaderCommand, type FunnelHeaderEntry } from "@/lib/funnelHeader";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Select, type SelectOption } from "@/components/ui/Select";
@@ -8,15 +23,19 @@ import { memberLabel } from "@/lib/teamMembers";
 import {
   PRIORITY_FILTER_OPTIONS,
   TEMPERATURE_FILTER_OPTIONS,
+  CLEARED_SHEET_FILTERS,
   activeFilterCount,
+  filtersButtonLabel,
+  sheetFilterCount,
   type FunnelFilters,
   type FunnelView,
 } from "@/lib/funnelFilters";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
-import { FunnelCardPicker } from "./FunnelCardPicker";
+import { FunnelCardPicker, FunnelCardPrefsFields } from "./FunnelCardPicker";
+import { FunnelFiltersSheet } from "./FunnelFiltersSheet";
 import type { FunnelCardPrefs } from "@/lib/funnelCardPrefs";
-import { FunnelSelector, type FunnelSelectorProps } from "./FunnelSelector";
+import { FunnelSelector, useFunnelBoardMenus, type FunnelSelectorProps } from "./FunnelSelector";
 
 interface FunnelToolbarProps {
   selector: FunnelSelectorProps;
@@ -38,7 +57,21 @@ const VIEW_OPTIONS = [
   { value: "list", label: "Modo lista", icon: <List size={16} aria-hidden="true" /> },
 ];
 
-/** Funil + busca, filtros, modo quadro/lista e leads arquivados. Modo e filtros moram na URL. */
+/** Ícones dos itens de configuração do funil no ⋯ do celular (o desktop segue sem ícone). */
+const BOARD_SETTING_ICONS: Record<string, ReactNode> = {
+  edit: <Pencil size={16} aria-hidden="true" className="shrink-0" />,
+  stages: <Columns3 size={16} aria-hidden="true" className="shrink-0" />,
+  delete: <Trash2 size={16} aria-hidden="true" className="shrink-0" />,
+};
+
+type MobileSheet = "filters" | "cards" | "archivedBoards";
+
+/**
+ * Funil + busca, filtros, modo quadro/lista e leads arquivados. Modo e filtros moram na URL.
+ * Celular (< md): "Criar lead" vira o + do cabeçalho do AppShell e as ações
+ * secundárias vão para o ⋯; o corpo fica com o seletor de funil e uma linha
+ * com busca, "Filtros" (folha, com contador) e o modo quadro/lista em ícones.
+ */
 export function FunnelToolbar({
   selector,
   filters,
@@ -67,6 +100,183 @@ export function FunnelToolbar({
     ],
     [units]
   );
+
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const [sheet, setSheet] = useState<MobileSheet | null>(null);
+  const closeSheet = () => setSheet(null);
+  const { archivedItems, settingsItems } = useFunnelBoardMenus(selector);
+  const sheetCount = sheetFilterCount(filters, units !== null);
+
+  // Cabeçalho do AppShell no celular: o plano (ids, rótulos, ordem) é puro em
+  // `lib/funnelHeader.ts`; aqui só entram ícones e handlers.
+  const headerPlan = funnelHeaderPlan({
+    canCreateLead: selector.canCreateLead,
+    view: filters.view,
+    showArchivedLeads: showArchived,
+    hasSelectedBoard: !!selector.selectedBoardId,
+    boardSettings: settingsItems.map((item) => ({ id: item.id ?? item.label, label: item.label, danger: item.danger })),
+    archivedBoardCount: selector.archivedBoards.length,
+  });
+
+  const runCommand = (command: FunnelHeaderCommand) => {
+    switch (command.kind) {
+      case "createLead":
+        return selector.onOpenDialog({ kind: "createLead" });
+      case "toggleArchivedLeads":
+        return onToggleArchived();
+      case "cardDisplay":
+        return setSheet("cards");
+      case "archivedBoards":
+        return setSheet("archivedBoards");
+      case "boardSetting":
+        return settingsItems.find((item) => (item.id ?? item.label) === command.settingId)?.onSelect();
+    }
+  };
+
+  const iconFor = (command: FunnelHeaderCommand): ReactNode => {
+    const props = { size: 16, "aria-hidden": true, className: "shrink-0" } as const;
+    switch (command.kind) {
+      case "createLead":
+        return <Plus size={22} aria-hidden="true" />;
+      case "toggleArchivedLeads":
+        return showArchived ? <ArchiveRestore {...props} /> : <Archive {...props} />;
+      case "cardDisplay":
+        return <SlidersHorizontal {...props} />;
+      case "archivedBoards":
+        return <Archive {...props} />;
+      case "boardSetting":
+        return (
+          settingsItems.find((item) => (item.id ?? item.label) === command.settingId)?.icon ??
+          BOARD_SETTING_ICONS[command.settingId]
+        );
+    }
+  };
+
+  const toPageEntry = ({ command, ...entry }: FunnelHeaderEntry): PageMenuItem => ({
+    ...entry,
+    icon: iconFor(command),
+    onSelect: () => runCommand(command),
+  });
+
+  usePageHeader(
+    isMobile
+      ? {
+          menuLabel: "Mais ações",
+          menuItems: headerPlan.menuItems.map(toPageEntry),
+          actions: headerPlan.actions.map(({ id, label, command }) => ({
+            id,
+            label,
+            icon: iconFor(command),
+            onSelect: () => runCommand(command),
+          })),
+        }
+      : null
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        <FunnelSelector {...selector} compact />
+
+        <div className="mb-3 flex items-center gap-2">
+          <SearchInput
+            variant="pill"
+            value={filters.q}
+            onValueChange={(q) => onFiltersChange({ q })}
+            placeholder={`Buscar ${VOCAB.lead.many}…`}
+            ariaLabel={`Buscar ${VOCAB.lead.many}`}
+            className="min-w-0 flex-1"
+          />
+          <Button
+            type="button"
+            variant="secondary"
+            iconOnly
+            aria-label={filtersButtonLabel(sheetCount)}
+            aria-haspopup="dialog"
+            onClick={() => setSheet("filters")}
+            className={cn("relative shrink-0", sheetCount > 0 && "border-brand-500 bg-brand-500/10 text-brand-500")}
+          >
+            <ListFilter size={18} aria-hidden="true" />
+            {sheetCount > 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-brand-600 px-1 text-micro font-semibold tabular-nums text-white"
+              >
+                {sheetCount}
+              </span>
+            )}
+          </Button>
+          <SegmentedControl
+            iconOnly
+            ariaLabel="Modo de exibição"
+            value={filters.view}
+            onValueChange={(view) => onFiltersChange({ view: view as FunnelView })}
+            options={VIEW_OPTIONS}
+            className="shrink-0 rounded-full [&>button]:rounded-full"
+          />
+        </div>
+
+        {showArchived && (
+          <div className="mb-3 flex items-center justify-between gap-2 rounded-card border border-brand-500 bg-brand-500/10 py-1 pl-3 pr-1">
+            <span className="flex min-w-0 items-center gap-2 text-sm text-text-primary">
+              <Archive size={16} aria-hidden="true" className="shrink-0 text-brand-500" />
+              <span className="truncate">Mostrando leads arquivados</span>
+            </span>
+            <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={onToggleArchived}>
+              Ver ativos
+            </Button>
+          </div>
+        )}
+
+        <FunnelFiltersSheet
+          open={sheet === "filters"}
+          onClose={closeSheet}
+          filters={filters}
+          onFiltersChange={onFiltersChange}
+          ownerOptions={ownerOptions}
+          unitOptions={units && (units.length > 0 || filters.unit !== "all") ? unitOptions : null}
+          activeCount={sheetCount}
+          onClear={() => onFiltersChange(CLEARED_SHEET_FILTERS)}
+        />
+
+        <Modal open={sheet === "cards"} onClose={closeSheet} title="Exibição dos cards">
+          <FunnelCardPrefsFields prefs={cardPrefs} onChange={onCardPrefsChange} />
+          <Button type="button" variant="primary" size="lg" className="mt-4 w-full" onClick={closeSheet}>
+            Pronto
+          </Button>
+        </Modal>
+
+        <Modal open={sheet === "archivedBoards"} onClose={closeSheet} title="Funis arquivados">
+          <ul className="-mx-4 -my-2">
+            {archivedItems.map((item) => (
+              <li key={item.id}>
+              <button
+                type="button"
+                disabled={item.disabled}
+                onClick={() => {
+                  closeSheet();
+                  item.onSelect();
+                }}
+                className={cn(
+                  "flex w-full min-h-11 items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors",
+                  "hover:bg-surface-raised focus-visible:bg-surface-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
+                  "disabled:cursor-not-allowed disabled:opacity-50",
+                  item.danger ? "text-semantic-error" : "text-text-primary"
+                )}
+              >
+                {item.icon}
+                <span className="min-w-0 truncate">{item.label}</span>
+              </button>
+              </li>
+            ))}
+          </ul>
+          <Button type="button" variant="primary" size="lg" className="mt-4 w-full" onClick={closeSheet}>
+            Pronto
+          </Button>
+        </Modal>
+      </>
+    );
+  }
 
   return (
     <>
