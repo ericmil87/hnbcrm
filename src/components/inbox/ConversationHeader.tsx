@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, Users } from "lucide-react";
@@ -122,6 +122,18 @@ export function ConversationHeader({
   };
   // "Pesquisar na conversa" (menu ⋮): a barra de pesquisa ocupa a linha do cabeçalho.
   const [searching, setSearching] = useState(false);
+  // Ao fechar a pesquisa (seta ←, X ou Esc) o foco volta ao ⋮, que reaparece no próximo render.
+  const menuTriggerRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusRef = useRef(false);
+  const closeSearch = () => {
+    restoreFocusRef.current = true;
+    setSearching(false);
+  };
+  useEffect(() => {
+    if (searching || !restoreFocusRef.current) return;
+    restoreFocusRef.current = false;
+    menuTriggerRef.current?.focus();
+  }, [searching]);
   const conversationId = conversation._id as Id<"conversations">;
   const convChannel: string | undefined = conversation.channel;
   const convTransport: string | undefined = conversation.channelProvider;
@@ -307,6 +319,7 @@ export function ConversationHeader({
       leadId={!isGroup && conversation.leadId ? (conversation.leadId as Id<"leads">) : undefined}
       onLeadDeleted={onLeadDeleted}
       onSearchInConversation={() => setSearching(true)}
+      triggerRef={menuTriggerRef}
     />
   );
   const aiPaused = typeof conversation.aiPausedUntil === "number" && conversation.aiPausedUntil > Date.now();
@@ -359,7 +372,7 @@ export function ConversationHeader({
           <ConversationSearchBar
             organizationId={organizationId}
             conversationId={conversationId}
-            onClose={() => setSearching(false)}
+            onClose={closeSearch}
           />
         )}
         {/* Linha única: voltar · avatar · nome + subtítulo · IA · detalhes · ⋮ */}

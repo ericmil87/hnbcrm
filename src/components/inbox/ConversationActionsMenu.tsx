@@ -46,6 +46,8 @@ interface ConversationActionsMenuProps {
   onLeadDeleted?: () => void;
   /** "Pesquisar na conversa": abre a barra de pesquisa no lugar do cabeçalho. */
   onSearchInConversation?: () => void;
+  /** Ref do botão ⋮ (quem abre a pesquisa devolve o foco a ele ao fechar). */
+  triggerRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export function ConversationActionsMenu({
@@ -58,6 +60,7 @@ export function ConversationActionsMenu({
   leadId,
   onLeadDeleted,
   onSearchInConversation,
+  triggerRef,
 }: ConversationActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [confirmDeleteLead, setConfirmDeleteLead] = useState(false);
@@ -69,7 +72,8 @@ export function ConversationActionsMenu({
   const [labelToDelete, setLabelToDelete] = useState<{ id: Id<"conversationLabels">; name: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(LABEL_COLORS[3]);
-  const anchorRef = useRef<HTMLButtonElement>(null);
+  const ownAnchorRef = useRef<HTMLButtonElement>(null);
+  const anchorRef = triggerRef ?? ownAnchorRef;
   const isMobile = useMediaQuery("(max-width: 767px)");
   const { openCopilot } = useChatMode();
 

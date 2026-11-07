@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { ArrowLeft, ChevronDown, ChevronUp, Image as ImageIcon, Mic, X } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
@@ -6,7 +6,7 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { useConversationInteraction } from "@/components/inbox/conversationInteraction";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { formatDateTime } from "@/lib/format";
-import { matchCounterLabel, snippetWindow, stepMatch } from "@/lib/inboxSearch";
+import { SEARCH_MESSAGES_CAP, jumpableMatches, matchCounterLabel, snippetWindow, stepMatch } from "@/lib/inboxSearch";
 import { cn } from "@/lib/utils";
 
 const iconButton =
@@ -25,8 +25,10 @@ export interface ConversationSearchBarViewProps {
   onTextChange: (text: string) => void;
   /** Termo com 2+ letras (com debounce): só então há contador e setas. */
   active: boolean;
-  /** `undefined` enquanto carrega. */
+  /** Só as que o thread consegue mostrar; `undefined` enquanto carrega. */
   matches: readonly ConversationSearchMatch[] | undefined;
+  /** O servidor devolveu o lote cheio: o contador vira "N de 50+". */
+  capped?: boolean;
   index: number;
   term: string;
   onOlder: () => void;
@@ -45,6 +47,7 @@ export function ConversationSearchBarView({
   onTextChange,
   active,
   matches,
+  capped = false,
   index,
   term,
   onOlder,
@@ -53,7 +56,7 @@ export function ConversationSearchBarView({
 }: ConversationSearchBarViewProps) {
   const total = matches?.length ?? 0;
   const current = active && matches && total > 0 ? matches[Math.min(index, total - 1)] : null;
-  const counter = !active ? null : matches === undefined ? "…" : total === 0 ? "Nenhum resultado" : matchCounterLabel(index, total);
+  const counter = !active ? null : matches === undefined ? "…" : total === 0 ? "Nenhum resultado" : matchCounterLabel(index, total, capped);
   const snippet = current ? snippetWindow(current.snippetText, term) : null;
   return (
     <div role="search" aria-label="Pesquisar na conversa">
@@ -132,10 +135,13 @@ export function ConversationSearchBar({ organizationId, conversationId, onClose 
   const [text, setText] = useState("");
   const term = useDebouncedValue(text.trim(), 300);
   const active = term.length >= 2;
-  const matches = useQuery(
+  const raw = useQuery(
     api.conversations.searchMessages,
     active ? { organizationId, conversationId, searchQuery: term } : "skip"
   );
+  // Rascunho da IA e transferência não são bolha: o thread não tem para onde saltar.
+  const matches = useMemo(() => (raw ? jumpableMatches(raw) : undefined), [raw]);
+  const capped = (raw?.length ?? 0) >= SEARCH_MESSAGES_CAP;
   // O resultado atual é guardado pelo id: uma mensagem nova que case não muda o alvo.
   const [currentId, setCurrentId] = useState<string | null>(null);
   const foundIndex = matches && currentId ? matches.findIndex((m) => m._id === currentId) : -1;
@@ -168,6 +174,7 @@ export function ConversationSearchBar({ organizationId, conversationId, onClose 
       onTextChange={setText}
       active={active}
       matches={matches}
+      capped={capped}
       index={index}
       term={term}
       onOlder={() => go("older")}

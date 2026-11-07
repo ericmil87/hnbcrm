@@ -6,8 +6,8 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Busca por contato e dentro da conversa
 
-- A busca de Conversas agora procura também pelo contato: nome, telefone ou e-mail aparecem primeiro, na seção "Contatos" (com a última mensagem, a hora e "Arquivada" quando for o caso), e as mensagens que contêm o termo vêm logo abaixo, em "Mensagens". O total de resultados soma as duas.
-- Novo "Pesquisar na conversa" no menu ⋮ da conversa: a barra de pesquisa ocupa o lugar do cabeçalho, mostra "3 de 12" e as setas ▲ ▼ levam de uma ocorrência a outra, rolando a conversa até a mensagem. Esc ou voltar fecha a pesquisa.
+- A busca de Conversas agora procura também pelo contato: nome, telefone (dá para digitar como "11 99999-8888") ou e-mail aparecem primeiro, na seção "Contatos" (com a última mensagem, a hora e "Arquivada" quando for o caso), e as mensagens que contêm o termo vêm logo abaixo, em "Mensagens". Quem casou pelo nome ou telefone vem antes de quem só casou pela cidade ou pela bio. O total de resultados soma as duas.
+- Novo "Pesquisar na conversa" no menu ⋮ da conversa: a barra de pesquisa ocupa o lugar do cabeçalho, mostra "3 de 12" (ou "3 de 50+" quando há mais) e as setas ▲ ▼ levam de uma ocorrência a outra, rolando a conversa até a mensagem. A seta ← da barra (ou Esc, no computador) fecha a pesquisa; o voltar do navegador continua fechando a conversa.
 
 ### Copiloto no menu
 

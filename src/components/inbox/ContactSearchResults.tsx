@@ -8,6 +8,8 @@ import { contactResultName } from "@/lib/inboxSearch";
 export interface InboxContactResult {
   conversationId: string;
   contactName: string;
+  /** Contato sem nome: @ do Instagram ou título do lead. */
+  fallbackName?: string | null;
   phoneSuffix: string | null;
   channel: string;
   lastMessageAt: number | null;
@@ -41,7 +43,7 @@ export function ContactSearchRow({ result, onOpen }: ContactSearchRowProps) {
       onClick={() => onOpen(result)}
       className="flex w-full items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
     >
-      <Avatar name={result.contactName.trim() || "?"} size="md" />
+      <Avatar name={result.contactName.trim() || result.fallbackName?.trim() || "?"} size="md" />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{name}</span>

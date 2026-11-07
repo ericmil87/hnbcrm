@@ -53,6 +53,11 @@ describe("ConversationSearchBarView", () => {
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("lote cheio do servidor: contador com +", () => {
+    setup({ capped: true });
+    expect(screen.getByText("1 de 3+")).toBeInTheDocument();
+  });
+
   it("sem resultados: aviso e setas desligadas", () => {
     setup({ matches: [] });
     expect(screen.getByText("Nenhum resultado")).toBeInTheDocument();
@@ -96,6 +101,11 @@ describe("ContactSearchRow", () => {
     expect(screen.queryByText("Arquivada")).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button"));
     expect(onOpen).toHaveBeenCalledWith(base);
+  });
+
+  it("sem nome com @ do Instagram", () => {
+    render(<ContactSearchRow result={{ ...base, contactName: "", fallbackName: "@maura.ig" }} onOpen={vi.fn()} />);
+    expect(screen.getByText("@maura.ig")).toBeInTheDocument();
   });
 
   it("arquivada e sem nome", () => {

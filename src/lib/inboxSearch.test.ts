@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   contactResultName,
   inboxSearchState,
+  jumpableMatches,
   matchCounterLabel,
   searchCountLabel,
   snippetWindow,
@@ -9,12 +10,13 @@ import {
 } from "./inboxSearch";
 
 describe("inboxSearchState", () => {
-  it("carrega enquanto nenhuma seção chegou", () => {
+  it("carrega até os contatos chegarem (mensagens não aparecem antes)", () => {
     expect(inboxSearchState({ contacts: undefined, messages: undefined })).toEqual({ status: "loading", total: null });
+    expect(inboxSearchState({ contacts: undefined, messages: [1, 2] })).toEqual({ status: "loading", total: null });
   });
-  it("mostra a seção que chegou, total pendente até a outra chegar", () => {
+  it("contatos chegaram, mensagens ainda não: mostra contatos, total pendente", () => {
     expect(inboxSearchState({ contacts: [1], messages: undefined })).toEqual({ status: "results", total: null });
-    expect(inboxSearchState({ contacts: undefined, messages: [] })).toEqual({ status: "results", total: null });
+    expect(inboxSearchState({ contacts: [], messages: undefined })).toEqual({ status: "loading", total: null });
   });
   it("soma as duas seções", () => {
     expect(inboxSearchState({ contacts: [1, 2], messages: [3] })).toEqual({ status: "results", total: 3 });
@@ -58,6 +60,21 @@ describe("matchCounterLabel", () => {
     expect(matchCounterLabel(20, 12)).toBe("12 de 12");
     expect(matchCounterLabel(0, 0)).toBe("0 de 0");
   });
+  it("lote cheio do servidor vira N+", () => {
+    expect(matchCounterLabel(0, 50, true)).toBe("1 de 50+");
+  });
+});
+
+describe("jumpableMatches", () => {
+  it("tira rascunho da IA e transferência; sem kind (servidor antigo) fica", () => {
+    const out = jumpableMatches([
+      { id: 1, kind: "message" },
+      { id: 2, kind: "ai_draft" },
+      { id: 3, kind: "transfer" },
+      { id: 4 },
+    ] as { id: number; kind?: string }[]);
+    expect(out.map((m) => m.id)).toEqual([1, 4]);
+  });
 });
 
 describe("snippetWindow", () => {
@@ -79,5 +96,6 @@ describe("contactResultName", () => {
     expect(contactResultName({ contactName: " Maura ", phoneSuffix: "1234" })).toBe("Maura");
     expect(contactResultName({ contactName: "", phoneSuffix: "1234" })).toBe("Sem nome · final 1234");
     expect(contactResultName({ contactName: "", phoneSuffix: null })).toBe("Sem nome");
+    expect(contactResultName({ contactName: "", fallbackName: "@maura", phoneSuffix: "1234" })).toBe("@maura");
   });
 });

@@ -65,6 +65,15 @@ import {
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
+import { normalizeCampaignPhone } from "./lib/phone";
+import { resolveDefaultCountry } from "./lib/orgPhone";
+import {
+  contactFallbackName,
+  matchesIdentity,
+  phoneLikeDigits,
+  rankContacts,
+} from "./lib/contactSearchRank";
 import { maybeBufferInboundForRelay } from "./lib/telegramRelay";
 
 type ConversationChannel =
@@ -750,6 +759,10 @@ export const searchMessages = query({
       snippetText: v.string(),
       matchedTranscript: v.boolean(),
       matchedImage: v.boolean(),
+      // Como o thread desenha a mensagem: bolha comum, rascunho da IA
+      // (`metadata.aiDraft`, cartão de revisão) ou evento de transferência de
+      // setor. A pesquisa dentro da conversa só salta para bolhas.
+      kind: v.optional(v.union(v.literal("message"), v.literal("ai_draft"), v.literal("transfer"))),
     })
   ),
   handler: async (ctx, args) => {
@@ -861,16 +874,31 @@ export const searchMessages = query({
             : m.content,
         matchedTranscript,
         matchedImage,
+        kind: messageRenderKind(m.metadata),
       };
     });
   },
 });
 
+/** Espelho de `ConversationThread`: transferência e rascunho da IA não são bolha. */
+function messageRenderKind(metadata: unknown): "message" | "ai_draft" | "transfer" {
+  const meta = (metadata ?? {}) as { kind?: unknown; transfer?: unknown; aiDraft?: { status?: unknown } };
+  if (meta.kind === "transfer" && meta.transfer) return "transfer";
+  if (meta.aiDraft && typeof meta.aiDraft.status === "string") return "ai_draft";
+  return "message";
+}
+
 // Busca de Conversas por CONTATO (seção "Contatos", acima das mensagens).
-// Contatos pelo índice `search_contacts` (nome, telefone, e-mail, empresa… —
-// ver `lib/searchText.ts`; o último termo casa por prefixo), depois
-// contato → leads (`by_contact`) → conversas (`by_lead`). Leituras limitadas:
-// 20 contatos × 5 leads × 5 conversas, resposta com no máximo 30 linhas.
+// 1) Termo com cara de telefone (8+ dígitos): normaliza pela porta única
+//    (`normalizeCampaignPhone` + DDI padrão da org) e acha por igualdade
+//    (`findContactsByPhoneCandidates`: phone/whatsappNumber, variante do 9º
+//    dígito). 2) Índice `search_contacts` (o `searchText` de `lib/searchText.ts`;
+//    o último termo casa por prefixo). Ordem: telefone exato, depois quem casou
+//    pela identidade (nome, e-mail, telefone, empresa, @), depois o resto
+//    (só cidade/bio/setor). Por contato, sequencialmente: leads mais RECENTES
+//    (`by_contact` desc — o ingest liga a conversa nova ao lead mais novo) e
+//    as conversas mais recentes de cada lead (`by_lead` desc); para ao juntar
+//    30 linhas. Teto: 20 contatos × 5 leads × 5 conversas.
 // Grupos ficam de fora: `groupChats.search_name` é filtrado por sala, não por
 // org, e não há índice barato do nome da sala na conversa.
 // Mesmo gate de `getConversations`/`searchMessages` (`requireAuth`): quem vê a
@@ -890,6 +918,8 @@ export const searchConversationsByContact = query({
       conversationId: v.id("conversations"),
       contactId: v.id("contacts"),
       contactName: v.string(),
+      // Contato sem nome: @ do Instagram, senão título do lead.
+      fallbackName: v.union(v.string(), v.null()),
       // Só os 4 últimos dígitos (linha sem nome ainda se distingue).
       phoneSuffix: v.union(v.string(), v.null()),
       channel: v.string(),
@@ -909,77 +939,68 @@ export const searchConversationsByContact = query({
     const term = args.searchQuery.trim();
     if (term.length < 2) return [];
 
-    const contacts = (
-      await ctx.db
-        .query("contacts")
-        .withSearchIndex("search_contacts", (q) =>
-          q.search("searchText", term).eq("organizationId", args.organizationId)
-        )
-        .take(CONTACT_SEARCH_CONTACTS)
-    ).filter((c) => c.organizationId === args.organizationId);
-
-    const leadsByContact = await Promise.all(
-      contacts.map((c) =>
-        ctx.db
-          .query("leads")
-          .withIndex("by_contact", (q) => q.eq("contactId", c._id))
-          .take(CONTACT_SEARCH_LEADS_PER_CONTACT)
-      )
-    );
-    const pairs: { contact: Doc<"contacts">; lead: Doc<"leads"> }[] = [];
-    contacts.forEach((contact, i) => {
-      for (const lead of leadsByContact[i]) {
-        if (lead.organizationId === args.organizationId) pairs.push({ contact, lead });
+    let exactPhone: Doc<"contacts">[] = [];
+    if (phoneLikeDigits(term)) {
+      const org = await ctx.db.get(args.organizationId);
+      const normalized = normalizeCampaignPhone(term, resolveDefaultCountry(org?.settings));
+      if (normalized.ok) {
+        exactPhone = await findContactsByPhoneCandidates(ctx, args.organizationId, normalized.phone);
       }
-    });
-    const conversationsByLead = await Promise.all(
-      pairs.map(({ lead }) =>
-        ctx.db
+    }
+    const searched = await ctx.db
+      .query("contacts")
+      .withSearchIndex("search_contacts", (q) =>
+        q.search("searchText", term).eq("organizationId", args.organizationId)
+      )
+      .take(CONTACT_SEARCH_CONTACTS);
+    const contacts = rankContacts(exactPhone, searched, (c) => matchesIdentity(c, term))
+      .filter((c) => c.organizationId === args.organizationId)
+      .slice(0, CONTACT_SEARCH_CONTACTS);
+
+    const rows: { contact: Doc<"contacts">; lead: Doc<"leads">; conversation: Doc<"conversations"> }[] = [];
+    const seen = new Set<string>();
+    for (const contact of contacts) {
+      if (rows.length >= CONTACT_SEARCH_MAX_RESULTS) break;
+      const leads = await ctx.db
+        .query("leads")
+        .withIndex("by_contact", (q) => q.eq("contactId", contact._id))
+        .order("desc")
+        .take(CONTACT_SEARCH_LEADS_PER_CONTACT);
+      const perContact: typeof rows = [];
+      for (const lead of leads) {
+        if (lead.organizationId !== args.organizationId) continue;
+        const conversations = await ctx.db
           .query("conversations")
           .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
-          .take(CONTACT_SEARCH_CONVERSATIONS_PER_LEAD)
-      )
-    );
-
-    // Ordem: relevância do contato (a do índice); dentro do contato, última
-    // mensagem primeiro.
-    const seen = new Set<string>();
-    const rows: { contact: Doc<"contacts">; conversation: Doc<"conversations"> }[] = [];
-    let contactRows: typeof rows = [];
-    let currentContact: Id<"contacts"> | null = null;
-    const flush = () => {
-      contactRows.sort(
+          .order("desc")
+          .take(CONTACT_SEARCH_CONVERSATIONS_PER_LEAD);
+        for (const conversation of conversations) {
+          if (conversation.organizationId !== args.organizationId) continue;
+          if (conversation.kind === "group") continue;
+          if (seen.has(conversation._id)) continue;
+          seen.add(conversation._id);
+          perContact.push({ contact, lead, conversation });
+        }
+      }
+      // Dentro do contato, última mensagem primeiro.
+      perContact.sort(
         (a, b) =>
           (b.conversation.lastMessageAt ?? b.conversation.createdAt) -
           (a.conversation.lastMessageAt ?? a.conversation.createdAt)
       );
-      rows.push(...contactRows);
-      contactRows = [];
-    };
-    pairs.forEach(({ contact }, i) => {
-      if (currentContact !== contact._id) {
-        flush();
-        currentContact = contact._id;
-      }
-      for (const conversation of conversationsByLead[i]) {
-        if (conversation.organizationId !== args.organizationId) continue;
-        if (conversation.kind === "group") continue;
-        if (seen.has(conversation._id)) continue;
-        seen.add(conversation._id);
-        contactRows.push({ contact, conversation });
-      }
-    });
-    flush();
+      rows.push(...perContact);
+    }
     const top = rows.slice(0, CONTACT_SEARCH_MAX_RESULTS);
 
     const extras = await inboxRowExtras(ctx, top.map((r) => r.conversation));
-    return top.map(({ contact, conversation }) => {
+    return top.map(({ contact, lead, conversation }) => {
       const extra = extras.get(conversation._id)!;
       const digits = (contact.phone ?? contact.whatsappNumber ?? "").replace(/\D/g, "");
       return {
         conversationId: conversation._id,
         contactId: contact._id,
         contactName: `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim(),
+        fallbackName: contactFallbackName(contact, lead.title),
         phoneSuffix: digits.length >= 4 ? digits.slice(-4) : null,
         channel: conversation.channel,
         lastMessageAt: conversation.lastMessageAt ?? null,
