@@ -420,4 +420,49 @@ describe("copilot SSE golden", () => {
     const runs = await t.run(async (ctx) => await ctx.db.query("agentRuns").collect());
     expect(runs[0].status).toBe("error");
   });
+
+  test("thread de outro membro: 409 thread_not_owned, sem mensagens nem run", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const calls = stubLlm([textFrames("não deve rodar")]);
+    const { otherUserId, threadId } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const otherUserId = await ctx.db.insert("users", { email: "outro@example.com" });
+      const otherMemberId = await ctx.db.insert("teamMembers", {
+        organizationId: s.organizationId,
+        userId: otherUserId,
+        name: "Outro",
+        email: "outro@example.com",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const threadId = await ctx.db.insert("copilotThreads", {
+        organizationId: s.organizationId,
+        memberId: otherMemberId,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { otherUserId, threadId };
+    });
+    expect(otherUserId).not.toBe(s.userId);
+    const res = await t.withIdentity({ subject: `${s.userId}|s1` }).fetch("/api/copilot/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ organizationId: s.organizationId, threadId, message: "oi" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("thread_not_owned");
+    expect(typeof body.error).toBe("string");
+    expect(calls).toHaveLength(0);
+    const after = await t.run(async (ctx) => ({
+      messages: await ctx.db.query("copilotMessages").collect(),
+      runs: await ctx.db.query("agentRuns").collect(),
+    }));
+    expect(after.messages).toHaveLength(0);
+    expect(after.runs).toHaveLength(0);
+  });
 });

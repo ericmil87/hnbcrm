@@ -86,6 +86,26 @@ export const copilotStream = httpAction(async (ctx, request) => {
     });
   }
 
+  // Thread guardada no navegador por outra conta (ou apagada): 409 com código
+  // para o cliente descartar a thread e reenviar numa nova.
+  if (body.threadId) {
+    // Sem catch: falha real vira 5xx (o dono não pode perder a thread por erro transitório).
+    const owned = await ctx.runQuery(internal.copilot.internalThreadOwnedBy, {
+      threadId: String(body.threadId),
+      organizationId,
+      memberId: session.member._id,
+    });
+    if (!owned) {
+      return new Response(
+        JSON.stringify({
+          error: "Essa conversa não pertence a esta conta.",
+          code: "thread_not_owned",
+        }),
+        { status: 409, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+  }
+
   // Teto de gastos em R$ em `block` (v0.69): copiloto suspenso até virar o mês,
   // com o motivo na tela (403 legível — nunca silêncio).
   const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
