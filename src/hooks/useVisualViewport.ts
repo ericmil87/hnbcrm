@@ -26,9 +26,24 @@ function sample(): ViewportSample {
   };
 }
 
+/** Marca o container da conversa (`useChatFrame`); o foco fora dele é de uma camada por cima. */
+export const CHAT_FRAME_ATTR = "data-chat-frame";
+
+/**
+ * Foco numa camada por cima da conversa: fora do container (Modal, Popover e
+ * Copiloto em portal) ou num diálogo aninhado nele (painéis de lead/contato/grupo
+ * do `InboxOverlays` são `SlideOver` sem portal, renderizados dentro do container).
+ */
+function focusOutsideFrame(): boolean {
+  const active = document.activeElement;
+  if (!active || active === document.body || active === document.documentElement) return false;
+  const nearest = active.closest(`[role="dialog"], [${CHAT_FRAME_ATTR}]`);
+  return !nearest || !nearest.hasAttribute(CHAT_FRAME_ATTR);
+}
+
 /** Janela rolada (foco no iOS) volta ao topo; devolve se precisou. */
 function resetWindowScroll(): boolean {
-  if (!shouldResetWindowScroll({ scrollY: window.scrollY })) return false;
+  if (!shouldResetWindowScroll({ scrollY: window.scrollY, focusOutsideFrame: focusOutsideFrame() })) return false;
   window.scrollTo(0, 0);
   return true;
 }
@@ -39,7 +54,10 @@ function resetWindowScroll(): boolean {
  * janela, com uma leitura por quadro (rAF). Enquanto ligado, mantém a janela em
  * `scrollY = 0`: o Safari do iOS rola a janela ao focar o campo (mesmo com o
  * documento travado) e aí o container `fixed` em `offsetTop` sai da área
- * visível (ver `lib/chatViewport`). Sem `visualViewport` (jsdom, navegador
+ * visível (ver `lib/chatViewport`). Com o foco num campo fora do container
+ * (`[data-chat-frame]`), como Copiloto, Modais e folhas em portal, ou num
+ * diálogo aninhado nele (SlideOver do lead/contato), a rolagem do Safari fica:
+ * é ela que traz esse campo para cima do teclado. Sem `visualViewport` (jsdom, navegador
  * antigo) cai para `innerHeight`. `enabled=false` não assina nada.
  */
 export function useVisualViewport(enabled = true): ChatViewport {
@@ -113,6 +131,7 @@ const MOBILE_QUERY = "(max-width: 767px)";
  * (`group-data-[keyboard=open]/chatframe:...`).
  */
 export function useChatFrame(chatOpen: boolean): {
+  [CHAT_FRAME_ATTR]: "";
   className: string;
   style: CSSProperties | undefined;
   "data-keyboard": "open" | "closed";
@@ -122,6 +141,7 @@ export function useChatFrame(chatOpen: boolean): {
   const tracking = chatOpen && isMobile;
   const vp = useVisualViewport(tracking);
   return {
+    [CHAT_FRAME_ATTR]: "",
     "data-keyboard": tracking && vp.keyboardOpen ? "open" : "closed",
     style: tracking ? (chatViewportStyle(vp) as CSSProperties) : undefined,
     className: cn(

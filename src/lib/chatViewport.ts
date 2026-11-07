@@ -35,10 +35,18 @@ export interface ViewportSample {
   scrollY?: number | null;
 }
 
-/** Maior altura vista na largura atual: referência de "teclado fechado". */
+/**
+ * Linha de base ("teclado fechado"): maior altura vista POR LARGURA. Girar o
+ * aparelho com o teclado aberto e voltar não perde a altura da orientação
+ * anterior (a primeira leitura na largura nova já vem encolhida pelo teclado).
+ */
 export interface ViewportBaseline {
+  /** Largura da amostra atual. */
   width: number;
+  /** Maior altura já vista nesta largura. */
   height: number;
+  /** Maior altura por largura (px arredondados → px). */
+  byWidth?: Readonly<Record<string, number>>;
 }
 
 export interface ChatViewport {
@@ -63,14 +71,19 @@ export function visibleHeight(s: ViewportSample): number {
 }
 
 /**
- * Atualiza a linha de base (altura com teclado fechado). Mudou a largura
- * (girou o aparelho): recomeça da amostra atual. Senão guarda o maior valor
- * entre a base, a viewport de layout e a visível.
+ * Atualiza a linha de base: guarda, para a largura atual, o maior valor entre
+ * o já visto, a viewport de layout e a visível. Outras larguras ficam
+ * guardadas (girar e voltar reaproveita a altura de antes).
  */
 export function nextBaseline(prev: ViewportBaseline | null, s: ViewportSample): ViewportBaseline {
   const h = Math.max(visibleHeight(s), finite(s.innerHeight, 0));
-  if (!prev || prev.width !== s.width) return { width: s.width, height: h };
-  return { width: s.width, height: Math.max(prev.height, h) };
+  const key = String(Math.round(finite(s.width, 0)));
+  const byWidth: Record<string, number> = { ...(prev?.byWidth ?? {}) };
+  if (prev && byWidth[String(Math.round(prev.width))] === undefined) {
+    byWidth[String(Math.round(prev.width))] = prev.height;
+  }
+  byWidth[key] = Math.max(byWidth[key] ?? 0, h);
+  return { width: s.width, height: byWidth[key], byWidth };
 }
 
 /** Topo e altura do container da conversa + detecção do teclado. */
@@ -99,9 +112,17 @@ export function sameChatViewport(a: ChatViewport, b: ChatViewport): boolean {
 
 /**
  * A janela rolou (o Safari rola ao focar o campo, mesmo com o documento
- * travado): no modo conversa ela deve voltar a 0 para o container `fixed` e a
- * `visualViewport` usarem a mesma referência. Meio pixel de folga (zoom).
+ * travado): no modo conversa ela volta a 0 para o container `fixed` e a
+ * `visualViewport` usarem a mesma referência. EXCETO com o foco num campo FORA
+ * do container (Copiloto, folha de "Criar etiqueta", Modais em portal no
+ * `body`): esses dependem da rolagem do Safari para o campo aparecer acima do
+ * teclado. Foco no container ou em lugar nenhum (`body`) zera. Meio pixel de
+ * folga (zoom).
  */
-export function shouldResetWindowScroll(s: Pick<ViewportSample, "scrollY">): boolean {
+export function shouldResetWindowScroll(s: {
+  scrollY?: number | null;
+  focusOutsideFrame?: boolean;
+}): boolean {
+  if (s.focusOutsideFrame) return false;
   return Math.abs(finite(s.scrollY, 0)) >= 1;
 }

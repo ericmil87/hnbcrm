@@ -121,6 +121,8 @@ export function useThreadPaging(
 
   const flash = (messageId: string) => {
     const el = document.getElementById(`msg-${messageId}`);
+    // Saindo do fim de propósito: o ResizeObserver não pode puxar de volta.
+    nearBottomRef.current = false;
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
     setHighlightId(messageId);
     window.setTimeout(() => setHighlightId((cur) => (cur === messageId ? null : cur)), 2000);
