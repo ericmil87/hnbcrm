@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Funil no celular
+
+- No celular, cada card do Funil ganha as setas ‹ e › para mover o lead para a etapa anterior ou seguinte com um toque, e o botão ⋯ "Mover para…" para escolher qualquer etapa. Mover para Ganho ou Perdido continua pedindo o motivo.
+- Depois de mover aparece "Movido para {etapa}" com **Desfazer** (quando a etapa de origem não é Ganho nem Perdido); a coluna de destino rola para a vista e o card pisca de leve.
+- Arrastar com o dedo foi desligado no celular, porque disputava com a rolagem do quadro; com mouse o arrasto continua igual.
+
 ### Conversas com cara de WhatsApp
 
 - No celular, a conversa aberta ocupa a tela inteira: somem o título "Conversas", a barra de abas e o botão do Copiloto (que passa para o menu ⋮ da conversa). Com o teclado aberto no iPhone, as mensagens e o campo de resposta continuam à vista, logo acima do teclado.

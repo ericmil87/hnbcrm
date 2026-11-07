@@ -1,10 +1,11 @@
 import { EmptyState } from "@/components/ui/EmptyState";
-import React, { useState, useMemo, useRef, useCallback } from "react";
+import React, { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import {
   DndContext,
   DragOverlay,
+  MouseSensor,
   PointerSensor,
   TouchSensor,
   useSensor,
@@ -26,6 +27,8 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { useFunnelUrlState } from "@/hooks/useFunnelUrlState";
 import { useFunnelCardPrefs } from "@/hooks/useFunnelCardPrefs";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { planMove } from "@/lib/funnelMove";
 import { VOCAB } from "@/lib/vocab";
 import { assignableMembers } from "@/lib/teamMembers";
 import { defaultSortOrder, filterLeads, normalizeFunnelFilters, sortLeads, type SortOrder } from "@/lib/funnelFilters";
@@ -158,15 +161,43 @@ export function FunnelPage() {
   // Suppress the click that fires immediately after a drag ends.
   const justDraggedRef = useRef(false);
 
-  // DnD Sensors
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 8 },
-    }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 8 },
-    })
-  );
+  // DnD Sensors. Em toque (D4) não há arrasto: ele brigava com a rolagem
+  // horizontal do quadro; o mouse continua arrastando e o toque usa as setas.
+  const coarsePointer = useMediaQuery("(pointer: coarse)");
+  const pointerSensor = useSensor(coarsePointer ? MouseSensor : PointerSensor, {
+    activationConstraint: { distance: 8 },
+  });
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 8 } });
+  // `useSensors` ignores undefined: no TouchSensor registered on coarse pointers.
+  const sensors = useSensors(pointerSensor, coarsePointer ? undefined : touchSensor);
+
+  // Card que acabou de chegar numa coluna (destaque breve + rolagem até ela).
+  const [highlightedLeadId, setHighlightedLeadId] = useState<Id<"leads"> | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (highlightTimer.current) clearTimeout(highlightTimer.current); }, []);
+
+  const clearHighlight = useCallback(() => {
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = null;
+    setHighlightedLeadId(null);
+  }, []);
+
+  const revealLead = useCallback((leadId: Id<"leads">) => {
+    setHighlightedLeadId(leadId);
+    if (highlightTimer.current) clearTimeout(highlightTimer.current);
+    highlightTimer.current = setTimeout(() => setHighlightedLeadId(null), 1600);
+    // Depois do render do optimistic update o card já está na coluna de destino.
+    requestAnimationFrame(() => {
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      document
+        .querySelector(`[data-lead-id="${leadId}"]`)
+        ?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", inline: "nearest", block: "nearest" });
+    });
+  }, []);
+
+  // Sempre o último `leads`: o "Desfazer" do toast relê o estado atual.
+  const leadsRef = useRef(leads);
+  leadsRef.current = leads;
 
   const filteredLeads = useMemo(
     () => filterLeads(leads, filters, orgModules.units),
@@ -205,15 +236,20 @@ export function FunnelPage() {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const leadId = active.id as Id<"leads">;
-    const stageId = over.id as Id<"stages">;
+    requestMove(active.id as Id<"leads">, over.id as Id<"stages">);
+  };
 
-    // Check if target stage is closed (won or lost)
-    const targetStage = stages?.find((s) => s._id === stageId);
+  // Única porta de movimentação (arrasto e setas): etapa Ganho/Perdido pede o
+  // motivo; as demais movem na hora (o optimistic update assenta o card) com
+  // "Desfazer" quando a etapa de origem é aberta. `reveal` (setas e menu) rola
+  // até o card e o destaca; no arrasto o usuário já está olhando para ele.
+  const requestMove = (leadId: Id<"leads">, stageId: Id<"stages">, opts?: { reveal?: boolean }) => {
     const lead = leads?.find((l) => l._id === leadId);
+    const plan = planMove(lead, stages, stageId);
+    const targetStage = stages?.find((s) => s._id === stageId);
+    if (plan === "noop" || !lead || !targetStage) return;
 
-    if (targetStage && lead && (targetStage.isClosedWon || targetStage.isClosedLost)) {
-      // Show close reason modal
+    if (plan === "close") {
       setPendingClose({
         leadId,
         stageId,
@@ -223,11 +259,37 @@ export function FunnelPage() {
       return;
     }
 
-    // Normal move (non-closed stage). The optimistic update settles the card in
-    // the target column instantly, so a simple success/error toast is enough.
-    moveLeadToStage({ leadId, stageId })
-      .then(() => toast.success("Lead movido"))
-      .catch(() => toast.error("Não foi possível mover o lead."));
+    const originStageId = lead.stageId;
+    const promise = moveLeadToStage({ leadId, stageId });
+    if (opts?.reveal) revealLead(leadId);
+    promise
+      .then(() => {
+        toast.success(`Movido para ${targetStage.name}`, {
+          action: plan.undo
+            ? {
+                label: "Desfazer",
+                onClick: () => {
+                  // Só desfaz se o lead ainda está onde o movemos.
+                  const current = leadsRef.current?.find((l) => l._id === leadId);
+                  if (!current || current.stageId !== stageId) {
+                    toast("O lead já mudou de etapa");
+                    return;
+                  }
+                  const undo = moveLeadToStage({ leadId, stageId: originStageId });
+                  if (opts?.reveal) revealLead(leadId);
+                  undo.catch(() => {
+                    clearHighlight();
+                    toast.error("Não foi possível mover o lead.");
+                  });
+                },
+              }
+            : undefined,
+        });
+      })
+      .catch(() => {
+        clearHighlight();
+        toast.error("Não foi possível mover o lead.");
+      });
   };
 
   const closeDialog = useCallback(() => setDialog(null), []);
@@ -326,7 +388,7 @@ export function FunnelPage() {
                 const totalValue = stageLeads.reduce((sum, lead) => sum + lead.value, 0);
 
                 return (
-                  <div key={stage._id} className="flex-shrink-0 w-80 relative">
+                  <div key={stage._id} data-stage-id={stage._id} className="flex-shrink-0 w-80 relative">
                     {quickAddStageId === stage._id && (
                       <QuickAddLead
                         stageId={stage._id}
@@ -342,6 +404,9 @@ export function FunnelPage() {
                       isDragActive={draggedLeadId !== null}
                       justDraggedRef={justDraggedRef}
                       cardPrefs={cardPrefs}
+                      stages={stages}
+                      onMoveLead={(leadId, stageId) => requestMove(leadId, stageId, { reveal: true })}
+                      highlightedLeadId={highlightedLeadId}
                       onLeadClick={(leadId) => openLeadPanel(leadId)}
                       onQuickAdd={() => setQuickAddStageId(stage._id)}
                       onStageMenu={(e: React.MouseEvent) => {

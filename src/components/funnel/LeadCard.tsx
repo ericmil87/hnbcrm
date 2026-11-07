@@ -1,6 +1,7 @@
 import React from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { Clock, Flame } from "lucide-react";
+import { ChevronLeft, ChevronRight, Clock, Flame, MoreHorizontal } from "lucide-react";
+import { Menu } from "@/components/ui/Menu";
 import { Badge } from "@/components/ui/Badge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -18,7 +19,7 @@ import {
   type FunnelCardField,
   type FunnelCardPrefs,
 } from "@/lib/funnelCardPrefs";
-import type { Lead } from "./types";
+import type { Lead, Stage } from "./types";
 
 // Presentational lead card — shared by the in-column DraggableCard and the
 // DragOverlay so the dragged card looks identical to the real one.
@@ -252,17 +253,98 @@ export function LeadCardView({
   );
 }
 
+const MOVE_BTN =
+  "flex h-11 w-11 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-surface-overlay hover:text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500";
+
+/**
+ * Mover sem arrastar: ‹ etapa anterior, ⋯ "Mover para…" (todas as etapas) e › etapa
+ * seguinte. Só aparece em toque (`coarse:`); as setas somem nas pontas.
+ */
+export function LeadMoveControls({
+  leadTitle,
+  stages,
+  currentStageId,
+  prevStage,
+  nextStage,
+  onMove,
+}: {
+  leadTitle: string;
+  stages: Stage[];
+  currentStageId: string;
+  prevStage: Stage | null;
+  nextStage: Stage | null;
+  onMove: (stageId: Stage["_id"]) => void;
+}) {
+  // Evita que o toque abra o painel do lead ou inicie um arrasto do dnd-kit.
+  const stop = {
+    onClick: (e: React.MouseEvent) => e.stopPropagation(),
+    onPointerDown: (e: React.PointerEvent) => e.stopPropagation(),
+    onMouseDown: (e: React.MouseEvent) => e.stopPropagation(),
+    onTouchStart: (e: React.TouchEvent) => e.stopPropagation(),
+    onKeyDown: (e: React.KeyboardEvent) => e.stopPropagation(),
+  };
+  return (
+    <div
+      className="hidden coarse:flex items-center justify-between px-1 pb-1"
+      data-testid="lead-move-controls"
+      {...stop}
+    >
+      {prevStage ? (
+        <button type="button" className={MOVE_BTN} aria-label={`Mover ${leadTitle} para ${prevStage.name}`} onClick={() => onMove(prevStage._id)}>
+          <ChevronLeft size={20} aria-hidden="true" />
+        </button>
+      ) : (
+        <span className="h-11 w-11" aria-hidden="true" />
+      )}
+      <Menu
+        ariaLabel={`Mover ${leadTitle} para…`}
+        align="center"
+        items={stages.map((st) => ({
+          id: st._id,
+          label: st.name,
+          disabled: st._id === currentStageId,
+          onSelect: () => onMove(st._id),
+        }))}
+        trigger={(props) => (
+          <button type="button" {...props} className={MOVE_BTN} aria-label={`Mover ${leadTitle} para…`}>
+            <MoreHorizontal size={20} aria-hidden="true" />
+          </button>
+        )}
+      />
+      {nextStage ? (
+        <button type="button" className={MOVE_BTN} aria-label={`Mover ${leadTitle} para ${nextStage.name}`} onClick={() => onMove(nextStage._id)}>
+          <ChevronRight size={20} aria-hidden="true" />
+        </button>
+      ) : (
+        <span className="h-11 w-11" aria-hidden="true" />
+      )}
+    </div>
+  );
+}
+
+export interface LeadMoveProps {
+  stages: Stage[];
+  prevStage: Stage | null;
+  nextStage: Stage | null;
+  onMove: (leadId: Lead["_id"], stageId: Stage["_id"]) => void;
+}
+
 // Draggable Card Component
 export function DraggableCard({
   lead,
   onClick,
   justDraggedRef,
   prefs,
+  move,
+  highlighted,
 }: {
   lead: Lead;
   onClick: () => void;
   justDraggedRef: React.MutableRefObject<boolean>;
   prefs?: FunnelCardPrefs;
+  move?: LeadMoveProps;
+  /** Pisca de leve depois de chegar nesta coluna (respeita reduced motion). */
+  highlighted?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: lead._id,
@@ -275,14 +357,26 @@ export function DraggableCard({
   };
 
   return (
-    <div
-      ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      onClick={handleClick}
-      className="cursor-pointer touch-manipulation select-none"
-    >
-      <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} />
+    <div data-lead-id={lead._id} className={cn("rounded-card", highlighted && "ring-2 ring-brand-500 motion-safe:animate-pulse")}>
+      <div
+        ref={setNodeRef}
+        {...attributes}
+        {...listeners}
+        onClick={handleClick}
+        className="cursor-pointer touch-manipulation select-none rounded-card"
+      >
+        <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} />
+      </div>
+      {move && (
+        <LeadMoveControls
+          leadTitle={lead.title}
+          stages={move.stages}
+          currentStageId={lead.stageId}
+          prevStage={move.prevStage}
+          nextStage={move.nextStage}
+          onMove={(stageId) => move.onMove(lead._id, stageId)}
+        />
+      )}
     </div>
   );
 }
