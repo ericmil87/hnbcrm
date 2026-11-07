@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
-import { MoreVertical, Archive, ArchiveRestore, Bot, Check, Plus, Trash2 } from "lucide-react";
+import { MoreVertical, Archive, ArchiveRestore, Bot, Check, Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -44,6 +44,10 @@ interface ConversationActionsMenuProps {
   leadId?: Id<"leads">;
   /** Chamado após o lead ser excluído (ex.: fechar a conversa). */
   onLeadDeleted?: () => void;
+  /** "Pesquisar na conversa": abre a barra de pesquisa no lugar do cabeçalho. */
+  onSearchInConversation?: () => void;
+  /** Ref do botão ⋮ (quem abre a pesquisa devolve o foco a ele ao fechar). */
+  triggerRef?: React.RefObject<HTMLButtonElement | null>;
 }
 
 export function ConversationActionsMenu({
@@ -55,6 +59,8 @@ export function ConversationActionsMenu({
   renderExtraItems,
   leadId,
   onLeadDeleted,
+  onSearchInConversation,
+  triggerRef,
 }: ConversationActionsMenuProps) {
   const [open, setOpen] = useState(false);
   const [confirmDeleteLead, setConfirmDeleteLead] = useState(false);
@@ -66,7 +72,8 @@ export function ConversationActionsMenu({
   const [labelToDelete, setLabelToDelete] = useState<{ id: Id<"conversationLabels">; name: string } | null>(null);
   const [newName, setNewName] = useState("");
   const [newColor, setNewColor] = useState<string>(LABEL_COLORS[3]);
-  const anchorRef = useRef<HTMLButtonElement>(null);
+  const ownAnchorRef = useRef<HTMLButtonElement>(null);
+  const anchorRef = triggerRef ?? ownAnchorRef;
   const isMobile = useMediaQuery("(max-width: 767px)");
   const { openCopilot } = useChatMode();
 
@@ -162,6 +169,21 @@ export function ConversationActionsMenu({
               >
                 <Bot size={15} />
                 Copiloto
+              </button>
+            </div>
+          )}
+          {onSearchInConversation && (
+            <div className="border-b border-border pb-1 mb-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  onSearchInConversation();
+                }}
+                className="w-full coarse:min-h-11 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors"
+              >
+                <Search size={15} aria-hidden />
+                Pesquisar na conversa
               </button>
             </div>
           )}

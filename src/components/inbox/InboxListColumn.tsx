@@ -35,6 +35,8 @@ interface InboxListColumnProps {
     onMonthChange: (month: string) => void;
     results: NonNullable<React.ComponentProps<typeof ConversationList>["search"]>["results"];
     onOpenResult: (result: { _id: string; conversationId: string }) => void;
+    contactResults: NonNullable<React.ComponentProps<typeof ConversationList>["search"]>["contactResults"];
+    onOpenContactResult: (result: { conversationId: string }) => void;
   };
   onSelect: (conversationId: string) => void;
   onNewConversation?: () => void;
