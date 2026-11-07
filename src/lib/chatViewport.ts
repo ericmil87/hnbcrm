@@ -86,6 +86,37 @@ export function nextBaseline(prev: ViewportBaseline | null, s: ViewportSample): 
   return { width: s.width, height: byWidth[key], byWidth };
 }
 
+/**
+ * Linha de base compartilhada por todas as leituras (conversa, folhas, Modais,
+ * SlideOvers). Uma camada que monta com o teclado JÁ aberto (digitando no
+ * composer e tocando num botão: no iOS o toque não tira o foco do campo) mede
+ * valores encolhidos; com uma linha de base própria ela concluiria "teclado
+ * fechado" e ficaria atrás dele. A memória comum, por largura, guarda a altura
+ * de uma leitura anterior com o teclado fechado.
+ */
+export interface BaselineStore {
+  /** Registra a amostra e devolve a linha de base da largura dela. */
+  record(s: ViewportSample): ViewportBaseline;
+  /** Última linha de base (ou `null` sem leitura). */
+  current(): ViewportBaseline | null;
+  /** Esquece tudo (testes). */
+  reset(): void;
+}
+
+export function createBaselineStore(): BaselineStore {
+  let baseline: ViewportBaseline | null = null;
+  return {
+    record(s) {
+      baseline = nextBaseline(baseline, s);
+      return baseline;
+    },
+    current: () => baseline,
+    reset() {
+      baseline = null;
+    },
+  };
+}
+
 /** Topo e altura do container da conversa + detecção do teclado. */
 export function computeChatViewport(s: ViewportSample, baseline: ViewportBaseline | null): ChatViewport {
   const height = Math.round(visibleHeight(s));
@@ -115,9 +146,10 @@ export function sameChatViewport(a: ChatViewport, b: ChatViewport): boolean {
  * travado): no modo conversa ela volta a 0 para o container `fixed` e a
  * `visualViewport` usarem a mesma referência. EXCETO com o foco num campo FORA
  * do container (Copiloto, folha de "Criar etiqueta", Modais em portal no
- * `body`): esses dependem da rolagem do Safari para o campo aparecer acima do
- * teclado. Foco no container ou em lugar nenhum (`body`) zera. Meio pixel de
- * folga (zoom).
+ * `body`): essas camadas seguem a área visível sozinhas e seguram a janela no
+ * `scrollY` de quando abriram (`useKeyboardViewportBox`, `lib/keyboardSheet`),
+ * que no modo conversa é 0. Foco no container ou em lugar nenhum (`body`) zera.
+ * Meio pixel de folga (zoom).
  */
 export function shouldResetWindowScroll(s: {
   scrollY?: number | null;

@@ -49,6 +49,7 @@ src/
 ├── hooks/usePageTitle.ts       # document.title = "{title} · HNBCRM", restored on unmount; `usePageTitle(null)` leaves the title as is
 ├── hooks/useInlineCrud.ts      # useReducer over lib/inlineCrud (showForm/editingId/form/confirmDeleteId + actions)
 ├── hooks/useMediaQuery.ts      # matchMedia subscription (tested with the stub in src/test/setup.ts)
+├── hooks/useKeyboardViewportBox.ts # Popover sheet / Modal (< sm or coarse) / SlideOver (< md or coarse) follow the visualViewport while the iOS keyboard is open (top/height, max-h-full, pb-0, focused field revealed via container scrollTop, window scroll held by the top layer of `scrollHolders`); pure part in lib/keyboardSheet.ts (+ test); shares useViewportTracking and the shared `viewportBaseline` with hooks/useVisualViewport.ts; component test next to it
 ├── hooks/useNow.ts             # "now" that ticks every minute while enabled (Conversas list times turn into "Ontem")
 ├── lib/searchParamState.ts     # pure URL-state codecs (stringParam, enumParam, booleanParam `1`, numberParam, listParam), writeParams (several params in one write) and the in-flight write (beginWrite/settleWrite); test next to it
 ├── hooks/useSearchParamState.ts # typed search-param state: replace for filters, push for entities; `isInFlight()` guards URL → state effects (single copy of the `{target, stale}` mechanism)

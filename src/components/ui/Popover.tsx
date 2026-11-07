@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
+import { useKeyboardViewportBox } from "@/hooks/useKeyboardViewportBox";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 import { lockBodyScroll } from "@/lib/scrollLock";
@@ -109,25 +110,16 @@ export function Popover({
 
   if (sheet) {
     return createPortal(
-      <div className="fixed inset-0 z-50 flex items-end">
-        <div
-          className="absolute inset-0 bg-black/50 motion-safe:animate-fade-in"
-          aria-hidden="true"
-          onClick={() => onOpenChange(false)}
-        />
-        <div
-          ref={popRef}
-          id={id}
-          role={role}
-          aria-label={ariaLabel}
-          className={cn(
-            "relative w-full max-h-[80dvh] overflow-y-auto rounded-t-2xl border-t border-border bg-surface-overlay pb-safe shadow-elevated motion-safe:animate-slide-in-up",
-            className
-          )}
-        >
-          {children}
-        </div>
-      </div>,
+      <PopoverSheet
+        sheetRef={popRef}
+        id={id}
+        role={role}
+        ariaLabel={ariaLabel}
+        className={className}
+        onDismiss={() => onOpenChange(false)}
+      >
+        {children}
+      </PopoverSheet>,
       document.body
     );
   }
@@ -148,5 +140,57 @@ export function Popover({
       {children}
     </div>,
     document.body
+  );
+}
+
+/**
+ * Folha inferior (montada só com o Popover aberto): com o teclado aberto o
+ * container segue a área visível (`useKeyboardViewportBox`) e a folha cabe
+ * nela com rolagem interna, então campo e botões ficam acima do teclado já na
+ * primeira abertura.
+ */
+function PopoverSheet({
+  sheetRef,
+  id,
+  role,
+  ariaLabel,
+  className,
+  onDismiss,
+  children,
+}: {
+  sheetRef: RefObject<HTMLDivElement | null>;
+  id?: string;
+  role?: string;
+  ariaLabel?: string;
+  className?: string;
+  onDismiss: () => void;
+  children: ReactNode;
+}) {
+  const { style, keyboardOpen } = useKeyboardViewportBox(true, sheetRef);
+  return (
+    <div className="fixed inset-0 z-50 flex items-end" style={style} data-keyboard={keyboardOpen ? "open" : "closed"}>
+      <div
+        className="absolute inset-0 bg-black/50 motion-safe:animate-fade-in"
+        aria-hidden="true"
+        onClick={onDismiss}
+      />
+      <div
+        ref={sheetRef}
+        id={id}
+        role={role}
+        aria-label={ariaLabel}
+        className={cn(
+          "relative w-full max-h-[80dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface-overlay shadow-elevated motion-safe:animate-slide-in-up",
+          // Teclado aberto: a safe-area de baixo fica atrás dele.
+          keyboardOpen ? "pb-0" : "pb-safe",
+          className,
+          // Teclado aberto: a folha ocupa no máximo a área visível (botões à
+          // vista), mesmo com um `max-h` vindo do chamador.
+          keyboardOpen && "max-h-full"
+        )}
+      >
+        {children}
+      </div>
+    </div>
   );
 }
