@@ -46,7 +46,12 @@ describe("copilotFabPref", () => {
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("blocked");
     });
-    expect(readCopilotFabEnabled()).toBe(false);
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
     expect(() => writeCopilotFabEnabled(true)).not.toThrow();
+    expect(readCopilotFabEnabled()).toBe(true);
+    writeCopilotFabEnabled(false);
+    expect(readCopilotFabEnabled()).toBe(false);
   });
 });

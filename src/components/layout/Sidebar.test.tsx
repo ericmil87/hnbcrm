@@ -75,7 +75,7 @@ describe("SidebarView", () => {
     expect(screen.getByRole("tooltip")).toHaveTextContent("Funil");
   });
 
-  it("Copiloto só aparece com o Copiloto ativo, e abre ao clicar", async () => {
+  it("sem onOpenCopilot a barra lateral não mostra o Copiloto", async () => {
     setup();
     expect(screen.queryByRole("button", { name: "Copiloto" })).not.toBeInTheDocument();
   });

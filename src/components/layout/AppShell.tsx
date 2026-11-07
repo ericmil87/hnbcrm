@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { ChatModeProvider, type ChatModeValue } from "./chatMode";
 import { PageHeaderProvider, PageHeaderSlot, usePageHeaderRegistry, type PageMenuItem } from "./pageHeader";
 import { useCopilotFabPref } from "@/hooks/useCopilotFabPref";
-import { shouldOpenCopilotFromKey } from "@/lib/copilotShortcut";
+import { detectIsMac, shouldOpenCopilotFromKey } from "@/lib/copilotShortcut";
 import { VOCAB } from "@/lib/vocab";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -61,20 +61,21 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
   const isMobile = useMediaQuery("(max-width: 767px)");
   useDocumentScrollLock(chatModeActive && isMobile);
   const fabPref = useCopilotFabPref();
+  const [isMac] = useState(detectIsMac);
   const openCopilot = useCallback(() => setCopilotOpen(true), []);
 
-  // Ctrl/Cmd+K abre o Copiloto em qualquer tela, menos com janela aberta (Modal/SlideOver).
+  // Cmd+K (Mac) ou Ctrl+K abre o Copiloto em qualquer tela, menos com janela aberta (Modal/SlideOver).
   useEffect(() => {
     if (!copilotEnabled) return;
     const onKeyDown = (e: KeyboardEvent) => {
       const modalOpen = document.querySelector('[role="dialog"][aria-modal="true"]') !== null;
-      if (!shouldOpenCopilotFromKey(e, { modalOpen, enabled: true })) return;
+      if (!shouldOpenCopilotFromKey(e, { modalOpen, enabled: true, isMac })) return;
       e.preventDefault();
       setCopilotOpen(true);
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [copilotEnabled]);
+  }, [copilotEnabled, isMac]);
 
   // ⋯ global do celular: "Copiloto" em toda tela (a página soma os itens dela depois).
   const globalMenuItems = useMemo<PageMenuItem[]>(

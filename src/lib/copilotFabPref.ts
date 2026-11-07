@@ -13,9 +13,12 @@ export function readCopilotFabEnabled(): boolean {
   try {
     return parseCopilotFabEnabled(localStorage.getItem(COPILOT_FAB_ENABLED_KEY));
   } catch {
-    return false;
+    return sessionValue ?? false;
   }
 }
+
+/** Valor da sessão: vale quando o localStorage falha (modo privado), para o Switch ainda alternar. */
+let sessionValue: boolean | null = null;
 
 const listeners = new Set<() => void>();
 
@@ -24,7 +27,8 @@ export function writeCopilotFabEnabled(enabled: boolean): void {
     if (enabled) localStorage.setItem(COPILOT_FAB_ENABLED_KEY, "1");
     else localStorage.removeItem(COPILOT_FAB_ENABLED_KEY);
   } catch {
-    // Armazenamento indisponível: a escolha não persiste.
+    // Armazenamento indisponível: a escolha vale só nesta sessão (sessionValue).
+    sessionValue = enabled;
   }
   listeners.forEach((l) => l());
 }

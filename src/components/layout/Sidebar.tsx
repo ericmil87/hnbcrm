@@ -21,6 +21,7 @@ import { Tooltip } from "@/components/ui/Tooltip";
 import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
 import type { UiTheme } from "@/lib/theme";
 import { VOCAB } from "@/lib/vocab";
+import { copilotAriaShortcut, detectIsMac } from "@/lib/copilotShortcut";
 
 type NavGroups = ReturnType<typeof groupNavItems>;
 
@@ -38,6 +39,8 @@ interface SidebarViewProps {
   onOpenAppearance: () => void;
   /** Só com o Copiloto ativo na organização; sem ele o item não aparece. */
   onOpenCopilot?: () => void;
+  /** `aria-keyshortcuts` do atalho do Copiloto na plataforma (padrão: Ctrl+K). */
+  copilotKeys?: string;
 }
 
 /** Sidebar pura: recebe o modelo já filtrado e as contagens. */
@@ -52,6 +55,7 @@ export function SidebarView({
   onOpenOrgSwitcher,
   onOpenAppearance,
   onOpenCopilot,
+  copilotKeys = copilotAriaShortcut(false),
 }: SidebarViewProps) {
   const withTip = (label: string, node: React.ReactElement<{ "aria-describedby"?: string }>) =>
     collapsed ? (
@@ -153,7 +157,7 @@ export function SidebarView({
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
               aria-label={VOCAB.copilot.name}
               aria-haspopup="dialog"
-              aria-keyshortcuts="Control+K Meta+K"
+              aria-keyshortcuts={copilotKeys}
             >
               <Sparkles size={20} className="shrink-0" aria-hidden="true" />
               <span className="hidden lg:block">{VOCAB.copilot.name}</span>
@@ -230,8 +234,9 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher,
       onOpenOrgSwitcher={onOpenOrgSwitcher}
       onOpenAppearance={() => setAppearanceOpen(true)}
       onOpenCopilot={onOpenCopilot}
+      copilotKeys={copilotAriaShortcut(detectIsMac())}
     />
-    <ThemePickerModal open={appearanceOpen} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
+    <ThemePickerModal open={appearanceOpen} organizationId={organizationId} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
     </>
   );
 }
