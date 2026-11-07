@@ -128,6 +128,33 @@ export function activeFilterCount(filters: FunnelFilters): number {
   );
 }
 
+/** Filtros que moram na folha "Filtros" do celular; a busca fica sempre à vista, fora dela. */
+export const SHEET_FILTER_KEYS = ["priority", "temp", "owner", "unit"] as const;
+
+/** Valores que o "Limpar filtros" da folha grava (a busca e o modo ficam como estão). */
+export const CLEARED_SHEET_FILTERS: Pick<FunnelFilters, (typeof SHEET_FILTER_KEYS)[number]> = {
+  priority: DEFAULT_FUNNEL_FILTERS.priority,
+  temp: DEFAULT_FUNNEL_FILTERS.temp,
+  owner: DEFAULT_FUNNEL_FILTERS.owner,
+  unit: DEFAULT_FUNNEL_FILTERS.unit,
+};
+
+/**
+ * Quantos filtros da folha estão ativos (o número no botão "Filtros").
+ * `unit` só conta com o módulo de unidades ligado, igual ao `filterLeads`.
+ */
+export function sheetFilterCount(filters: FunnelFilters, unitsEnabled: boolean): number {
+  return SHEET_FILTER_KEYS.filter(
+    (key) => (key !== "unit" || unitsEnabled) && filters[key] !== DEFAULT_FUNNEL_FILTERS[key]
+  ).length;
+}
+
+/** Nome acessível do botão "Filtros": o número ativo entra no nome, nunca só no visual. */
+export function filtersButtonLabel(count: number): string {
+  if (count <= 0) return "Filtros";
+  return count === 1 ? "Filtros, 1 ativo" : `Filtros, ${count} ativos`;
+}
+
 export interface FilterableLead {
   title: string;
   priority: string;

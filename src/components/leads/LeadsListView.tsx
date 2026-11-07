@@ -222,7 +222,7 @@ export function LeadsListView({
           return (
             <div
               key={lead._id}
-              className={cn("flex items-start gap-3 p-4 transition-colors active:bg-surface-overlay", selected && "bg-brand-500/10")}
+              className={cn("flex items-start gap-3 px-4 py-2.5 transition-colors active:bg-surface-overlay", selected && "bg-brand-500/10")}
             >
               <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
                 <Checkbox
@@ -236,7 +236,8 @@ export function LeadsListView({
                 {lead.contact?.name && (
                   <div className="truncate text-xs text-text-secondary">{lead.contact.name}</div>
                 )}
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+                {/* Etapa, valor, prioridade e temperatura numa linha só (quebra se faltar espaço). */}
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
                   <span className="flex items-center gap-1.5">
                     <span
                       className="h-2 w-2 shrink-0 rounded-full"
@@ -248,8 +249,6 @@ export function LeadsListView({
                   <span className="font-semibold tabular-nums text-brand-400">
                     {formatMoney(lead.value, lead.currency, { fractionDigits: 0 })}
                   </span>
-                </div>
-                <div className="mt-2 flex items-center gap-1.5">
                   <Badge variant={getPriorityVariant(lead.priority)}>{PRIORITY_LABELS[lead.priority]}</Badge>
                   <Badge variant={getTemperatureVariant(lead.temperature)}>
                     {TEMPERATURE_LABELS[lead.temperature]}

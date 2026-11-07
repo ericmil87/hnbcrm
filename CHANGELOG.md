@@ -12,6 +12,14 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - O gesto de voltar do celular (e o voltar do navegador) fecha a conversa aberta e volta à lista, em vez de sair de "Requer atenção".
 - Saíram do celular o título repetido, a dica da página e a escolha Compacto/Completo. No computador nada muda.
 
+### Funil mais enxuto no celular
+
+- No celular, o topo do Funil ocupa bem menos espaço: **Criar lead** virou o botão + do cabeçalho, e o menu ⋯ (depois do Copiloto) reúne **Ver leads arquivados**, **Exibição dos cards**, **Editar funil**, **Gerenciar etapas**, **Arquivar funil**, **Excluir funil** e os funis arquivados.
+- Abaixo do cabeçalho ficam só o seletor de funil e uma linha com a busca em pílula, o botão **Filtros** e o modo quadro/lista em ícones. Prioridade, temperatura, responsável (e unidade, quando houver) abrem numa folha com **Limpar filtros**; o botão mostra quantos filtros estão ligados, para nenhum filtro ficar escondido. Com os leads arquivados à vista aparece um aviso com **Ver ativos**.
+- Os botões de mover do card agora fazem parte do card: um rodapé separado por uma linha fina com "‹ etapa anterior", **Mover** (escolhe qualquer etapa) e "etapa seguinte ›", com o nome da etapa para deixar claro o que acontece. Como os botões ficam dentro do card, não sobra mais aquele espaço solto entre um card e outro.
+- No modo lista do celular, cada lead ocupa menos altura: etapa, valor, prioridade e temperatura numa linha só.
+- No computador, o Funil continua como antes.
+
 ### Copiloto no menu
 
 - O Copiloto agora abre pelo menu ⋯ do cabeçalho do celular, em qualquer tela (primeiro item), e pelo item "Copiloto" da barra lateral no computador; o atalho Ctrl+K (Cmd+K no Mac, onde Ctrl+K continua apagando até o fim da linha) também abre, exceto com uma janela aberta.

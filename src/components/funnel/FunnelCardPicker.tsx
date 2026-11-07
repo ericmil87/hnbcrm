@@ -58,32 +58,42 @@ export function FunnelCardPicker({ prefs, onChange }: FunnelCardPickerProps) {
         aria-label="Exibição dos cards"
         className="w-72 p-4 pb-safe"
       >
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <p className="text-sm font-medium text-text-primary">Densidade</p>
-            <SegmentedControl
-              ariaLabel="Densidade dos cards"
-              value={prefs.density}
-              onValueChange={(density) => onChange({ ...prefs, density: density as FunnelCardDensity })}
-              options={DENSITY_OPTIONS}
-            />
-          </div>
-
-          <fieldset className="space-y-1">
-            <legend className="mb-1 text-sm font-medium text-text-primary">Campos no card</legend>
-            {FUNNEL_CARD_FIELDS.map((field) => (
-              <Checkbox
-                key={field}
-                id={`funnel-card-field-${field}`}
-                label={FUNNEL_CARD_FIELD_LABELS[field]}
-                checked={isFieldVisible(prefs, field)}
-                onChange={(e) => onChange(toggleFunnelCardField(prefs, field, e.target.checked))}
-                containerClassName="flex w-full items-center py-2.5 coarse:min-h-11"
-              />
-            ))}
-          </fieldset>
-        </div>
+        <FunnelCardPrefsFields prefs={prefs} onChange={onChange} />
       </Popover>
     </>
+  );
+}
+
+/**
+ * Campos da "Exibição dos cards" (densidade + campos visíveis). Usado pelo
+ * popover do desktop e pela folha aberta pelo ⋯ do cabeçalho no celular.
+ */
+export function FunnelCardPrefsFields({ prefs, onChange }: FunnelCardPickerProps) {
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <p className="text-sm font-medium text-text-primary">Densidade</p>
+        <SegmentedControl
+          ariaLabel="Densidade dos cards"
+          value={prefs.density}
+          onValueChange={(density) => onChange({ ...prefs, density: density as FunnelCardDensity })}
+          options={DENSITY_OPTIONS}
+        />
+      </div>
+
+      <fieldset className="space-y-1">
+        <legend className="mb-1 text-sm font-medium text-text-primary">Campos no card</legend>
+        {FUNNEL_CARD_FIELDS.map((field) => (
+          <Checkbox
+            key={field}
+            id={`funnel-card-field-${field}`}
+            label={FUNNEL_CARD_FIELD_LABELS[field]}
+            checked={isFieldVisible(prefs, field)}
+            onChange={(e) => onChange(toggleFunnelCardField(prefs, field, e.target.checked))}
+            containerClassName="flex w-full items-center py-2.5 coarse:min-h-11"
+          />
+        ))}
+      </fieldset>
+    </div>
   );
 }
