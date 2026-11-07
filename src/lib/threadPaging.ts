@@ -35,6 +35,20 @@ export function isNearBottom(m: ScrollMetrics, threshold = NEAR_BOTTOM_PX): bool
   return m.scrollHeight - m.scrollTop - m.clientHeight < threshold;
 }
 
+/**
+ * O thread mudou de altura (teclado abriu/fechou, composer cresceu): quem
+ * estava lendo o fim continua grudado no fim. `nearBottom` é o estado ANTES da
+ * mudança (encolher a caixa não dispara `scroll`, então o valor guardado vale).
+ */
+export function shouldPinAfterResize(m: {
+  prevClientHeight: number | null;
+  clientHeight: number;
+  nearBottom: boolean;
+}): boolean {
+  if (!m.nearBottom || m.prevClientHeight === null) return false;
+  return Math.round(m.prevClientHeight) !== Math.round(m.clientHeight);
+}
+
 export function makePrependAnchor(
   conversationId: string,
   limit: number,
