@@ -4,6 +4,13 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Requer atenção no celular
+
+- No celular, "Requer atenção" virou uma lista enxuta no estilo de Conversas: cada pedido ocupa duas linhas (nome e hora; motivo e resumo) e cabem de 6 a 8 na tela, mesmo em aparelhos menores.
+- Tocar no pedido abre a conversa em modo leitura com as decisões no rodapé, sempre à vista: "Devolver à IA" e "Assumir conversa" lado a lado, além de "Instruir a IA em vez de assumir".
+- Pedidos esperando há uma hora ou mais ganham ponto e hora em vermelho; o topo mostra só a contagem e há quanto tempo espera o mais antigo.
+- Saíram do celular o título repetido, a dica da página e a escolha Compacto/Completo. No computador nada muda.
+
 ### Copiloto no menu
 
 - O Copiloto agora abre pelo menu ⋯ do cabeçalho do celular, em qualquer tela (primeiro item), e pelo item "Copiloto" da barra lateral no computador; o atalho Ctrl+K (Cmd+K no Mac, onde Ctrl+K continua apagando até o fim da linha) também abre, exceto com uma janela aberta.

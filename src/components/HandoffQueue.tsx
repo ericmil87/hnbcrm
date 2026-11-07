@@ -21,6 +21,9 @@ import { stringParam } from "@/lib/searchParamState";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AttentionRow, type AttentionItem } from "@/components/handoffs/AttentionRow";
+import { AttentionListItem } from "@/components/handoffs/AttentionListItem";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { attentionSummaryLine, pendingCountLabel } from "@/lib/attentionList";
 import {
   parseAttentionDensity,
   readAttentionDensity,
@@ -34,6 +37,9 @@ export function HandoffQueue() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can } = usePermissions(organizationId);
+  // Celular: lista de duas linhas estilo Conversas, sem densidade nem dica;
+  // o título já está no cabeçalho do AppShell.
+  const isMobile = useMediaQuery("(max-width: 767px)");
   // O repasse aberto vive na URL (`?handoff=`, destino do sino de notificações).
   const { value: handoffParam, set: setHandoffParam, isInFlight } = useSearchParamState(
     "handoff",
@@ -201,6 +207,54 @@ export function HandoffQueue() {
     ? (handoffs.find((h: PeekHandoff) => h._id === peekHandoffId) as PeekHandoff | undefined)
     : undefined;
 
+  const peek = peekHandoff ? (
+    <HandoffPeekSlideOver
+      organizationId={organizationId}
+      handoff={peekHandoff}
+      onClose={closePeek}
+      onAccept={handlePeekAccept}
+      onReject={handlePeekReject}
+      busy={peekBusy}
+    />
+  ) : null;
+
+  if (isMobile) {
+    return (
+      <div className="min-w-0 pb-safe">
+        {/* O AppShell mostra "Requer atenção" num <p>: o <h1> fica para leitores de tela. */}
+        <h1 className="sr-only">{VOCAB.attention.title}</h1>
+        {handoffs.length === 0 ? (
+          <EmptyState
+            icon={CheckCircle2}
+            title={VOCAB.attention.emptyTitle}
+            description={VOCAB.attention.emptyHint}
+          />
+        ) : (
+          <>
+            <p className="-mt-1 pb-2 text-caption text-text-muted tabular-nums">
+              {attentionSummaryLine(handoffs, now)}
+            </p>
+            <ul
+              aria-label={VOCAB.attention.title}
+              className="-mx-4 divide-y divide-border-subtle border-y border-border-subtle"
+            >
+              {handoffs.map((handoff) => (
+                <AttentionListItem
+                  key={handoff._id}
+                  handoff={handoff as AttentionItem}
+                  now={now}
+                  selected={peekHandoffId === handoff._id}
+                  onOpen={() => openPeek(handoff._id)}
+                />
+              ))}
+            </ul>
+          </>
+        )}
+        {peek}
+      </div>
+    );
+  }
+
   return (
     <div className="min-w-0 space-y-4 pb-safe md:space-y-6">
       <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
@@ -211,7 +265,7 @@ export function HandoffQueue() {
         badge={
           // Um único texto: o Badge é inline-flex e engolia o espaço entre os nós.
           <Badge variant="warning" className="tabular-nums">
-            {`${handoffs.length} ${handoffs.length === 1 ? "pendente" : "pendentes"}`}
+            {pendingCountLabel(handoffs.length)}
           </Badge>
         }
         actions={
@@ -277,16 +331,7 @@ export function HandoffQueue() {
         </div>
       )}
 
-      {peekHandoff && (
-        <HandoffPeekSlideOver
-          organizationId={organizationId}
-          handoff={peekHandoff}
-          onClose={closePeek}
-          onAccept={handlePeekAccept}
-          onReject={handlePeekReject}
-          busy={peekBusy}
-        />
-      )}
+      {peek}
     </div>
   );
 }
