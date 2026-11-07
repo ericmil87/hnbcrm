@@ -1,5 +1,5 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
-import React, { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { CheckCircle2 } from "lucide-react";
@@ -16,11 +16,13 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { VOCAB } from "@/lib/vocab";
-import { useSearchParamState } from "@/hooks/useSearchParamState";
-import { stringParam } from "@/lib/searchParamState";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AttentionRow, type AttentionItem } from "@/components/handoffs/AttentionRow";
+import { AttentionListItem } from "@/components/handoffs/AttentionListItem";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { attentionSummaryLine, pendingCountLabel } from "@/lib/attentionList";
 import {
   parseAttentionDensity,
   readAttentionDensity,
@@ -34,11 +36,16 @@ export function HandoffQueue() {
   const { organizationId } = useOutletContext<AppOutletContext>();
   const navigate = useNavigate();
   const { can } = usePermissions(organizationId);
-  // O repasse aberto vive na URL (`?handoff=`, destino do sino de notificações).
-  const { value: handoffParam, set: setHandoffParam, isInFlight } = useSearchParamState(
-    "handoff",
-    stringParam
-  );
+  // Celular: lista de duas linhas estilo Conversas, sem densidade nem dica;
+  // o título já está no cabeçalho do AppShell.
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  // O repasse aberto vive na URL (`?handoff=`, destino do sino de notificações):
+  // abrir é push com a entrada marcada como nossa, então o gesto de voltar do
+  // iPhone fecha a espiada em vez de sair da página; fechar pelo app volta a
+  // essa entrada (ou faz replace num deep link).
+  const handoffParam = useOpenEntityParam("handoff");
+  const peekHandoffId = handoffParam.id;
+  const { open: openPeek, close: closePeek } = handoffParam;
 
   // getHandoffs agora exige inbox:view_own no servidor — sem o skip, um membro
   // sem permissão que cole a URL derrubaria a página no ErrorBoundary genérico
@@ -52,15 +59,10 @@ export function HandoffQueue() {
   const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
   const rejectHandoff = useMutation(api.handoffs.rejectHandoff);
 
-  // Espiar a conversa antes de decidir — o repasse aberto vive na URL
-  // (`?handoff=`), que é o destino do sino de notificações.
-  const [peekHandoffId, setPeekHandoffId] = useState<string | null>(null);
   const [peekBusy, setPeekBusy] = useState(false);
 
   // Popover "Devolver à IA" aberto em qual card (um por vez).
   const [returnPopoverFor, setReturnPopoverFor] = useState<string | null>(null);
-
-  const syncHandoffParam = setHandoffParam;
 
   // Preferência pessoal de densidade (localStorage) e detalhes abertos (locais).
   const [density, setDensity] = useState<AttentionDensity>(readAttentionDensity);
@@ -82,39 +84,12 @@ export function HandoffQueue() {
       return next;
     });
 
-  // URL → estado. Um id que não está na fila (repasse já resolvido, inválido ou
-  // de outra org) sai da URL em silêncio.
-  useEffect(() => {
-    // Escrita nossa ainda em voo (o param é o valor antigo): o efeito fica quieto.
-    if (isInFlight()) return;
-
-    if (!handoffParam || handoffParam === peekHandoffId) return;
-    if (handoffs === undefined) return;
-    if (handoffs.some((h: { _id: string }) => h._id === handoffParam)) {
-      setPeekHandoffId(handoffParam);
-    } else {
-      syncHandoffParam(null);
-    }
-  }, [handoffParam, handoffs, peekHandoffId, syncHandoffParam, isInFlight]);
-
-  // O repasse aberto pode ser resolvido por outra pessoa enquanto está na tela.
+  // A espiada é derivada da URL (sumiu o param = fechou). Um id que não está
+  // na fila (resolvido por outra pessoa, inválido ou de outra org) fecha sozinho.
   useEffect(() => {
     if (!peekHandoffId || handoffs === undefined) return;
-    if (!handoffs.some((h: { _id: string }) => h._id === peekHandoffId)) {
-      setPeekHandoffId(null);
-      syncHandoffParam(null);
-    }
-  }, [handoffs, peekHandoffId, syncHandoffParam]);
-
-  const openPeek = (handoffId: string) => {
-    setPeekHandoffId(handoffId);
-    syncHandoffParam(handoffId);
-  };
-
-  const closePeek = useCallback(() => {
-    setPeekHandoffId(null);
-    syncHandoffParam(null);
-  }, [syncHandoffParam]);
+    if (!handoffs.some((h: { _id: string }) => h._id === peekHandoffId)) closePeek();
+  }, [handoffs, peekHandoffId, closePeek]);
 
   if (!can("inbox", "view_own")) {
     return (
@@ -201,92 +176,131 @@ export function HandoffQueue() {
     ? (handoffs.find((h: PeekHandoff) => h._id === peekHandoffId) as PeekHandoff | undefined)
     : undefined;
 
+  const peek = peekHandoff ? (
+    <HandoffPeekSlideOver
+      organizationId={organizationId}
+      handoff={peekHandoff}
+      onClose={closePeek}
+      onAccept={handlePeekAccept}
+      onReject={handlePeekReject}
+      busy={peekBusy}
+    />
+  ) : null;
+
+  // A espiada fica fora dos dois layouts (mesma posição na árvore): cruzar os
+  // 768 px com ela aberta não a remonta (rascunho de instrução e rolagem ficam).
   return (
-    <div className="min-w-0 space-y-4 pb-safe md:space-y-6">
-      <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
-
-      <PageHeader
-        title={VOCAB.attention.title}
-        subtitle={VOCAB.attention.subtitle}
-        badge={
-          // Um único texto: o Badge é inline-flex e engolia o espaço entre os nós.
-          <Badge variant="warning" className="tabular-nums">
-            {`${handoffs.length} ${handoffs.length === 1 ? "pendente" : "pendentes"}`}
-          </Badge>
-        }
-        actions={
-          <SegmentedControl
-            ariaLabel="Densidade da lista"
-            size="sm"
-            value={density}
-            onValueChange={changeDensity}
-            options={[
-              { value: "compact", label: "Compacto" },
-              { value: "comfortable", label: "Completo" },
-            ]}
-          />
-        }
-      />
-
-      {handoffs.length === 0 ? (
-        <EmptyState
-          icon={CheckCircle2}
-          title={VOCAB.attention.emptyTitle}
-          description={VOCAB.attention.emptyHint}
-        />
-      ) : (
-        <div className={density === "compact" ? "grid min-w-0 gap-2" : "grid min-w-0 gap-6"}>
-          {handoffs.map((handoff) => (
-            <AttentionRow
-              key={handoff._id}
-              handoff={handoff as AttentionItem}
-              density={density}
-              now={now}
-              expanded={expandedIds.has(handoff._id)}
-              onToggleExpanded={() => toggleExpanded(handoff._id)}
-              onView={() => openPeek(handoff._id)}
-              onAccept={() => handleAccept(handoff._id)}
-              onToggleGiveBack={() =>
-                setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
-              }
-              giveBackOpen={returnPopoverFor === handoff._id}
-              renderGiveBackPopover={(anchor) => (
-                <AiInstructionPopover
-                  open={returnPopoverFor === handoff._id}
-                  anchor={anchor}
-                  title={
-                    handoff.isGroup
-                      ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
-                      : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
-                  }
-                  placeholder={
-                    handoff.isGroup
-                      ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
-                      : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
-                  }
-                  submitLabel="Devolver"
-                  onSubmit={(instruction) => {
-                    setReturnPopoverFor(null);
-                    void handleReject(handoff._id, instruction, handoff.isGroup);
-                  }}
-                  onClose={() => setReturnPopoverFor(null)}
-                />
-              )}
+    <>
+      {isMobile ? (
+        <div className="min-w-0 pb-safe">
+          {/* O AppShell mostra "Requer atenção" num <p>: o <h1> fica para leitores de tela. */}
+          <h1 className="sr-only">{VOCAB.attention.title}</h1>
+          {handoffs.length === 0 ? (
+            <EmptyState
+              icon={CheckCircle2}
+              title={VOCAB.attention.emptyTitle}
+              description={VOCAB.attention.emptyHint}
             />
-          ))}
+          ) : (
+            <>
+              <p className="-mt-1 pb-2 text-caption text-text-muted tabular-nums">
+                {attentionSummaryLine(handoffs, now)}
+              </p>
+              <ul
+                aria-label={VOCAB.attention.title}
+                className="-mx-4 divide-y divide-border-subtle border-y border-border-subtle"
+              >
+                {handoffs.map((handoff) => (
+                  <AttentionListItem
+                    key={handoff._id}
+                    handoff={handoff as AttentionItem}
+                    now={now}
+                    selected={peekHandoffId === handoff._id}
+                    onOpen={() => openPeek(handoff._id)}
+                  />
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="min-w-0 space-y-4 pb-safe md:space-y-6">
+          <SpotlightTooltip spotlightId="handoffs" organizationId={organizationId} />
+
+          <PageHeader
+            title={VOCAB.attention.title}
+            subtitle={VOCAB.attention.subtitle}
+            badge={
+              // Um único texto: o Badge é inline-flex e engolia o espaço entre os nós.
+              <Badge variant="warning" className="tabular-nums">
+                {pendingCountLabel(handoffs.length)}
+              </Badge>
+            }
+            actions={
+              <SegmentedControl
+                ariaLabel="Densidade da lista"
+                size="sm"
+                value={density}
+                onValueChange={changeDensity}
+                options={[
+                  { value: "compact", label: "Compacto" },
+                  { value: "comfortable", label: "Completo" },
+                ]}
+              />
+            }
+          />
+
+          {handoffs.length === 0 ? (
+            <EmptyState
+              icon={CheckCircle2}
+              title={VOCAB.attention.emptyTitle}
+              description={VOCAB.attention.emptyHint}
+            />
+          ) : (
+            <div className={density === "compact" ? "grid min-w-0 gap-2" : "grid min-w-0 gap-6"}>
+              {handoffs.map((handoff) => (
+                <AttentionRow
+                  key={handoff._id}
+                  handoff={handoff as AttentionItem}
+                  density={density}
+                  now={now}
+                  expanded={expandedIds.has(handoff._id)}
+                  onToggleExpanded={() => toggleExpanded(handoff._id)}
+                  onView={() => openPeek(handoff._id)}
+                  onAccept={() => handleAccept(handoff._id)}
+                  onToggleGiveBack={() =>
+                    setReturnPopoverFor((v) => (v === handoff._id ? null : handoff._id))
+                  }
+                  giveBackOpen={returnPopoverFor === handoff._id}
+                  renderGiveBackPopover={(anchor) => (
+                    <AiInstructionPopover
+                      open={returnPopoverFor === handoff._id}
+                      anchor={anchor}
+                      title={
+                        handoff.isGroup
+                          ? `${VOCAB.attention.giveBack}: o que ela precisa saber (opcional)`
+                          : `${VOCAB.attention.giveBack}: responda o que ela precisa (opcional)`
+                      }
+                      placeholder={
+                        handoff.isGroup
+                          ? 'Ex.: "o preço do plano é R$ 150" — vale a partir da próxima menção na sala. Vazio = só devolver.'
+                          : 'Ex.: "o Pix é financeiro@empresa.com e o valor é R$ 150 — pode passar ao cliente". Vazio = só devolver.'
+                      }
+                      submitLabel="Devolver"
+                      onSubmit={(instruction) => {
+                        setReturnPopoverFor(null);
+                        void handleReject(handoff._id, instruction, handoff.isGroup);
+                      }}
+                      onClose={() => setReturnPopoverFor(null)}
+                    />
+                  )}
+                />
+              ))}
+            </div>
+          )}
         </div>
       )}
-
-      {peekHandoff && (
-        <HandoffPeekSlideOver
-          organizationId={organizationId}
-          handoff={peekHandoff}
-          onClose={closePeek}
-          onAccept={handlePeekAccept}
-          onReject={handlePeekReject}
-          busy={peekBusy}
-        />
-      )}
-    </div>
+      {peek}
+    </>
   );
 }
