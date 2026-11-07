@@ -109,6 +109,13 @@ export function Inbox() {
     api.conversations.searchMessages,
     isSearching ? { organizationId, searchQuery: searchTerm, ...(monthRange ?? {}) } : "skip"
   );
+  // Seção "Contatos" (antes das mensagens). Com recorte de mês não se aplica:
+  // o mês filtra mensagens, não contatos.
+  const contactResultsRaw = useQuery(
+    api.conversations.searchConversationsByContact,
+    isSearching && !monthRange ? { organizationId, searchQuery: searchTerm } : "skip"
+  );
+  const contactResults = monthRange ? [] : contactResultsRaw;
 
   const labelById = new Map((conversationLabels ?? []).map((l) => [l._id as string, l]));
   // Os chips aparecem com grupo na lista OU filtro guardado diferente de "Todas":
@@ -211,6 +218,8 @@ export function Inbox() {
           onMonthChange: setSearchMonth,
           results: searchResults,
           onOpenResult: handleOpenSearchResult,
+          contactResults,
+          onOpenContactResult: (result) => selection.select(result.conversationId),
         }}
         onSelect={(id) => selection.select(id)}
         onNewConversation={showNewConversation ? selection.openNewConversation : undefined}

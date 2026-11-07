@@ -866,6 +866,136 @@ export const searchMessages = query({
   },
 });
 
+// Busca de Conversas por CONTATO (seção "Contatos", acima das mensagens).
+// Contatos pelo índice `search_contacts` (nome, telefone, e-mail, empresa… —
+// ver `lib/searchText.ts`; o último termo casa por prefixo), depois
+// contato → leads (`by_contact`) → conversas (`by_lead`). Leituras limitadas:
+// 20 contatos × 5 leads × 5 conversas, resposta com no máximo 30 linhas.
+// Grupos ficam de fora: `groupChats.search_name` é filtrado por sala, não por
+// org, e não há índice barato do nome da sala na conversa.
+// Mesmo gate de `getConversations`/`searchMessages` (`requireAuth`): quem vê a
+// lista vê estes resultados, quem não é membro ativo leva o mesmo erro.
+const CONTACT_SEARCH_CONTACTS = 20;
+const CONTACT_SEARCH_LEADS_PER_CONTACT = 5;
+const CONTACT_SEARCH_CONVERSATIONS_PER_LEAD = 5;
+const CONTACT_SEARCH_MAX_RESULTS = 30;
+
+export const searchConversationsByContact = query({
+  args: {
+    organizationId: v.id("organizations"),
+    searchQuery: v.string(),
+  },
+  returns: v.array(
+    v.object({
+      conversationId: v.id("conversations"),
+      contactId: v.id("contacts"),
+      contactName: v.string(),
+      // Só os 4 últimos dígitos (linha sem nome ainda se distingue).
+      phoneSuffix: v.union(v.string(), v.null()),
+      channel: v.string(),
+      lastMessageAt: v.union(v.number(), v.null()),
+      lastMessagePreview: v.union(v.string(), v.null()),
+      lastMessageDirection: v.union(v.string(), v.null()),
+      lastMessageContentType: v.union(v.string(), v.null()),
+      lastMessageBridgeType: v.union(v.string(), v.null()),
+      lastMessageRevoked: v.boolean(),
+      unreadCount: v.number(),
+      archived: v.boolean(),
+      isGroup: v.literal(false),
+    })
+  ),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const term = args.searchQuery.trim();
+    if (term.length < 2) return [];
+
+    const contacts = (
+      await ctx.db
+        .query("contacts")
+        .withSearchIndex("search_contacts", (q) =>
+          q.search("searchText", term).eq("organizationId", args.organizationId)
+        )
+        .take(CONTACT_SEARCH_CONTACTS)
+    ).filter((c) => c.organizationId === args.organizationId);
+
+    const leadsByContact = await Promise.all(
+      contacts.map((c) =>
+        ctx.db
+          .query("leads")
+          .withIndex("by_contact", (q) => q.eq("contactId", c._id))
+          .take(CONTACT_SEARCH_LEADS_PER_CONTACT)
+      )
+    );
+    const pairs: { contact: Doc<"contacts">; lead: Doc<"leads"> }[] = [];
+    contacts.forEach((contact, i) => {
+      for (const lead of leadsByContact[i]) {
+        if (lead.organizationId === args.organizationId) pairs.push({ contact, lead });
+      }
+    });
+    const conversationsByLead = await Promise.all(
+      pairs.map(({ lead }) =>
+        ctx.db
+          .query("conversations")
+          .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
+          .take(CONTACT_SEARCH_CONVERSATIONS_PER_LEAD)
+      )
+    );
+
+    // Ordem: relevância do contato (a do índice); dentro do contato, última
+    // mensagem primeiro.
+    const seen = new Set<string>();
+    const rows: { contact: Doc<"contacts">; conversation: Doc<"conversations"> }[] = [];
+    let contactRows: typeof rows = [];
+    let currentContact: Id<"contacts"> | null = null;
+    const flush = () => {
+      contactRows.sort(
+        (a, b) =>
+          (b.conversation.lastMessageAt ?? b.conversation.createdAt) -
+          (a.conversation.lastMessageAt ?? a.conversation.createdAt)
+      );
+      rows.push(...contactRows);
+      contactRows = [];
+    };
+    pairs.forEach(({ contact }, i) => {
+      if (currentContact !== contact._id) {
+        flush();
+        currentContact = contact._id;
+      }
+      for (const conversation of conversationsByLead[i]) {
+        if (conversation.organizationId !== args.organizationId) continue;
+        if (conversation.kind === "group") continue;
+        if (seen.has(conversation._id)) continue;
+        seen.add(conversation._id);
+        contactRows.push({ contact, conversation });
+      }
+    });
+    flush();
+    const top = rows.slice(0, CONTACT_SEARCH_MAX_RESULTS);
+
+    const extras = await inboxRowExtras(ctx, top.map((r) => r.conversation));
+    return top.map(({ contact, conversation }) => {
+      const extra = extras.get(conversation._id)!;
+      const digits = (contact.phone ?? contact.whatsappNumber ?? "").replace(/\D/g, "");
+      return {
+        conversationId: conversation._id,
+        contactId: contact._id,
+        contactName: `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim(),
+        phoneSuffix: digits.length >= 4 ? digits.slice(-4) : null,
+        channel: conversation.channel,
+        lastMessageAt: conversation.lastMessageAt ?? null,
+        lastMessagePreview: extra.lastMessagePreview,
+        lastMessageDirection: extra.lastMessageDirection,
+        lastMessageContentType: extra.lastMessageContentType,
+        lastMessageBridgeType: extra.lastMessageBridgeType,
+        lastMessageRevoked: extra.lastMessageRevoked,
+        unreadCount: conversation.unreadCount ?? 0,
+        archived: !!conversation.archivedAt,
+        isGroup: false as const,
+      };
+    });
+  },
+});
+
 // ── Arquivar conversa + etiquetas ──
 
 export const setConversationArchived = mutation({
