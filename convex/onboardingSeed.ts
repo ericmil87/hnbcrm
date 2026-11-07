@@ -1,7 +1,9 @@
 import { v } from "convex/values";
+import { buildSearchText } from "./lib/searchText";
 import { internalMutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
+import { withMessageSearch } from "./lib/messageSearch";
 
 // Helper: generate a timestamp N hours ago from a reference point
 function hoursAgo(now: number, hours: number): number {
@@ -283,16 +285,7 @@ export const generateSampleData = internalMutation({
     const contactIds: Id<"contacts">[] = [];
     for (let i = 0; i < contactDefs.length; i++) {
       const c = contactDefs[i];
-      const searchText = [
-        c.firstName,
-        c.lastName,
-        c.email,
-        c.company,
-        c.city,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
+      const searchText = buildSearchText(c);
 
       const id = await ctx.db.insert("contacts", {
         organizationId,
@@ -514,7 +507,7 @@ export const generateSampleData = internalMutation({
 
       let lastMessageId: Id<"messages"> | null = null;
       for (const m of msgs) {
-        lastMessageId = await ctx.db.insert("messages", {
+        lastMessageId = await ctx.db.insert("messages", withMessageSearch({
           organizationId,
           conversationId: convoId,
           leadId: leadIds[leadIdx],
@@ -526,7 +519,7 @@ export const generateSampleData = internalMutation({
           deliveryStatus: m.direction === "outbound" ? "delivered" : undefined,
           isInternal: false,
           createdAt: convoCreatedAt + m.minutesOffset * 60 * 1000,
-        });
+        }));
       }
       // Prévia da lista do inbox (fase 4c) — senão a conversa de exemplo cairia
       // sempre no fallback que lê a última mensagem.

@@ -67,6 +67,7 @@ import type { CheckedWhatsappUser } from "./lib/startConversation";
 import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
 import { channelConfigPatchFor } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { withMessageSearch } from "./lib/messageSearch";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
@@ -1170,7 +1171,7 @@ async function startConversationCore(
     // 9. Primeira mensagem (só bridge) — mesmo caminho de saída do sendMessage.
     let messageId: Id<"messages"> | undefined;
     if (content) {
-      messageId = await ctx.db.insert("messages", {
+      messageId = await ctx.db.insert("messages", withMessageSearch({
         organizationId: args.organizationId,
         conversationId,
         leadId: lead._id,
@@ -1181,7 +1182,7 @@ async function startConversationCore(
         contentType: "text",
         isInternal: false,
         createdAt: now,
-      });
+      }));
       await applyOutboundMessageSideEffects(ctx, {
         conversation,
         member,

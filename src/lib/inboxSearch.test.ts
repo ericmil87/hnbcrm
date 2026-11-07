@@ -86,6 +86,16 @@ describe("snippetWindow", () => {
     expect(w.before).toHaveLength(24);
     expect(w.after).toBe(" enviado agora");
   });
+  it("sem diferenciar acentos: destaca o texto original acentuado", () => {
+    expect(snippetWindow("Moro na Rua Rebouças, 12", "reboucas")).toEqual({
+      ellipsis: false,
+      before: "Moro na Rua ",
+      match: "Rebouças",
+      after: ", 12",
+    });
+    expect(snippetWindow("Falei com o Antonio", "ANTÔNIO").match).toBe("Antonio");
+    expect(snippetWindow("👋 AÇÃO hoje", "acao")).toMatchObject({ before: "👋 ", match: "AÇÃO", after: " hoje" });
+  });
   it("sem match devolve o começo", () => {
     expect(snippetWindow("Olá tudo bem", "xyz")).toEqual({ ellipsis: false, before: "Olá tudo bem", match: "", after: "" });
   });

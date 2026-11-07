@@ -56,7 +56,7 @@ export async function findOrCreateContactByMetaIdentity(
         firstName: displayName,
         ...(args.kind === "instagram" && username ? { instagramUsername: username } : {}),
         tags: [],
-        searchText: [buildSearchText({ firstName: displayName }), username].filter(Boolean).join(" ") || undefined,
+        searchText: buildSearchText({ firstName: displayName, instagramUsername: username }) || undefined,
         createdAt: now,
         updatedAt: now,
       });
@@ -84,8 +84,7 @@ export async function findOrCreateContactByMetaIdentity(
         const next = { ...contact, ...patch } as typeof contact;
         await ctx.db.patch(contact._id, {
           ...patch,
-          searchText:
-            [buildSearchText(next), next.instagramUsername].filter(Boolean).join(" ") || undefined,
+          searchText: buildSearchText(next) || undefined,
           updatedAt: now,
         });
       }
@@ -100,7 +99,7 @@ export async function findOrCreateContactByMetaIdentity(
 
   const displayName =
     name ?? (username ? `@${username}` : fallbackMetaName(args.kind, args.externalId));
-  const searchText = [buildSearchText({ firstName: displayName }), username].filter(Boolean).join(" ");
+  const searchText = buildSearchText({ firstName: displayName, instagramUsername: username });
   const contactId = await ctx.db.insert("contacts", {
     organizationId: args.organizationId,
     firstName: displayName,

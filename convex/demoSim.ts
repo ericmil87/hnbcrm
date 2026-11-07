@@ -41,6 +41,7 @@ import {
 } from "./lib/leadCascade";
 import { DEFAULT_STORED_MODELS } from "./lib/llm/registry";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
+import { withMessageSearch } from "./lib/messageSearch";
 
 export const MAX_OPS_PER_CALL = 50;
 // Escritas por execução do reset. Cada escrita custa várias leituras (cascata
@@ -885,7 +886,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         throw new ConvexError("demoSim: mensagem de equipe/IA precisa de senderId");
       }
       const inbound = op.direction === "inbound";
-      const messageId = await ctx.db.insert("messages", {
+      const messageId = await ctx.db.insert("messages", withMessageSearch({
         organizationId: orgId,
         conversationId: conversation._id,
         ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
@@ -898,7 +899,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         isInternal: op.direction === "internal",
         metadata: { ...(op.demo ?? {}), demo: true },
         createdAt: at,
-      });
+      }));
       const patch: Partial<Doc<"conversations">> = {
         status: "active",
         lastMessageAt: Math.max(conversation.lastMessageAt ?? 0, at),

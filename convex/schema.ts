@@ -1570,6 +1570,12 @@ const applicationTables = {
     // língua da equipe). `content` continua sendo o texto que trafegou no canal.
     // Estado/metadados em `metadata.translation` (nunca o texto).
     translatedText: v.optional(v.string()),
+    // Busca sem acento (07/11/2026): dobra (minúsculas, sem acento) de content +
+    // transcriptText + imageDescription, até 8k caracteres. Escrito SÓ por
+    // `lib/messageSearch.ts` (`withMessageSearch`/`withMessageSearchPatch`);
+    // mensagem antiga sem o campo continua achável pelos índices de cima com o
+    // termo digitado (backfill: `opsSearchFold.internalBackfillMessageSearchText`).
+    searchNorm: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
@@ -1587,6 +1593,10 @@ const applicationTables = {
     })
     .searchIndex("search_image", {
       searchField: "imageDescription",
+      filterFields: ["organizationId", "conversationId"],
+    })
+    .searchIndex("search_norm", {
+      searchField: "searchNorm",
       filterFields: ["organizationId", "conversationId"],
     }),
 

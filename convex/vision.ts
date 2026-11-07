@@ -48,6 +48,7 @@
  */
 
 import { v } from "convex/values";
+import { withMessageSearchPatch } from "./lib/messageSearch";
 import {
   action,
   internalAction,
@@ -943,17 +944,20 @@ export const internalSetVisionResult = internalMutation({
       ...(args.upstream !== undefined ? { upstream: args.upstream } : {}),
       ...(args.attempts !== undefined ? { attempts: args.attempts.slice(0, 10) } : {}),
     };
-    await ctx.db.patch(args.messageId, {
-      metadata: { ...(message.metadata ?? {}), vision },
-      // Espelho de topo para o search index (busca do inbox). Leitura que FALHA
-      // apaga o espelho: ao reprocessar uma imagem mal lida (marca failed →
-      // autoDescribe), a descrição errada não fica pesquisável se a nova falhar.
-      ...(args.status === "done" && args.text
-        ? { imageDescription: args.text }
-        : args.status === "failed"
-          ? { imageDescription: undefined }
-          : {}),
-    });
+    await ctx.db.patch(
+      args.messageId,
+      withMessageSearchPatch(message, {
+        metadata: { ...(message.metadata ?? {}), vision },
+        // Espelho de topo para o search index (busca do inbox). Leitura que FALHA
+        // apaga o espelho: ao reprocessar uma imagem mal lida (marca failed →
+        // autoDescribe), a descrição errada não fica pesquisável se a nova falhar.
+        ...(args.status === "done" && args.text
+          ? { imageDescription: args.text }
+          : args.status === "failed"
+            ? { imageDescription: undefined }
+            : {}),
+      })
+    );
     return null;
   },
 });
@@ -975,7 +979,10 @@ export const internalBackfillImageDescription = internalMutation({
         vision.text &&
         message.imageDescription !== vision.text
       ) {
-        await ctx.db.patch(message._id, { imageDescription: vision.text });
+        await ctx.db.patch(
+          message._id,
+          withMessageSearchPatch(message, { imageDescription: vision.text })
+        );
         patched++;
       }
     }

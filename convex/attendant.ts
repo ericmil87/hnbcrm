@@ -131,6 +131,7 @@ import { maybeScheduleAiReplyRelay, maybeScheduleHandoffCardsUpdate } from "./li
 import { scheduleMessageTranslation } from "./lib/translationOps";
 import { editedDraftNeedsTranslation } from "./lib/translationGate";
 import { languageName, normalizeLanguageCode } from "./lib/languages";
+import { withMessageSearch } from "./lib/messageSearch";
 
 export { isWithinSchedule };
 
@@ -2805,7 +2806,7 @@ export const internalCommitAiReply = internalMutation({
       }
     }
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: conversation._id,
       leadId: conversation.leadId,
@@ -2830,7 +2831,7 @@ export const internalCommitAiReply = internalMutation({
           : {}),
       },
       createdAt: now,
-    });
+    }));
     await linkFilesToMessage(ctx, args.attachments, messageId, conversation.organizationId);
     await applyOutboundMessageSideEffects(ctx, {
       conversation,
@@ -2962,7 +2963,7 @@ export const internalCommitAiSuggestion = internalMutation({
         ?.followUpId ??
         undefined);
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: conversation._id,
       leadId: conversation.leadId,
@@ -2990,7 +2991,7 @@ export const internalCommitAiSuggestion = internalMutation({
         },
       },
       createdAt: now,
-    });
+    }));
     await linkFilesToMessage(ctx, args.attachments, messageId, conversation.organizationId);
     // Tradução (F3): rascunho no idioma do lead ganha a versão pt-BR para a
     // equipe revisar (no-op barato sem módulo ou sem idioma estrangeiro).
@@ -4324,7 +4325,7 @@ export async function acceptAiDraftCore(
       })
     );
   }
-  const messageId = await ctx.db.insert("messages", {
+  const messageId = await ctx.db.insert("messages", withMessageSearch({
     organizationId: conversation.organizationId,
     conversationId: conversation._id,
     leadId: conversation.leadId,
@@ -4348,7 +4349,7 @@ export async function acceptAiDraftCore(
       ...(aiDraft.followUpId ? { followUp: { followUpId: aiDraft.followUpId } } : {}),
     },
     createdAt: now,
-  });
+  }));
   for (const fileId of outboundAttachments) await ctx.db.patch(fileId, { messageId });
 
   const agent = draft.senderId ? await ctx.db.get(draft.senderId) : null;

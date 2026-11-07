@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { searchContactsByText } from "./lib/contactTextSearch";
 import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
@@ -143,12 +144,7 @@ export const searchContacts = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
-    return await ctx.db
-      .query("contacts")
-      .withSearchIndex("search_contacts", (q) =>
-        q.search("searchText", args.searchText).eq("organizationId", args.organizationId)
-      )
-      .take(args.limit ?? 20);
+    return await searchContactsByText(ctx, args.organizationId, args.searchText, args.limit ?? 20);
   },
 });
 
@@ -893,12 +889,7 @@ export const internalSearchContacts = internalQuery({
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    return await ctx.db
-      .query("contacts")
-      .withSearchIndex("search_contacts", (q) =>
-        q.search("searchText", args.searchText).eq("organizationId", args.organizationId)
-      )
-      .take(args.limit ?? 20);
+    return await searchContactsByText(ctx, args.organizationId, args.searchText, args.limit ?? 20);
   },
 });
 

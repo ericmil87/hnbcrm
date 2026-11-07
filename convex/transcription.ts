@@ -20,6 +20,7 @@
 //     history imports are never auto-transcribed.
 
 import { v } from "convex/values";
+import { withMessageSearchPatch } from "./lib/messageSearch";
 import {
   action,
   internalAction,
@@ -390,11 +391,14 @@ export const internalSetTranscriptionResult = internalMutation({
       ...(args.durationSec !== undefined ? { durationSec: args.durationSec } : {}),
       ...(args.error !== undefined ? { error: args.error } : {}),
     };
-    await ctx.db.patch(args.messageId, {
-      metadata: { ...(message.metadata ?? {}), transcription },
-      // Espelha o texto num campo de topo para o search index (busca do inbox).
-      ...(args.status === "done" && args.text ? { transcriptText: args.text } : {}),
-    });
+    await ctx.db.patch(
+      args.messageId,
+      withMessageSearchPatch(message, {
+        metadata: { ...(message.metadata ?? {}), transcription },
+        // Espelha o texto num campo de topo para o search index (busca do inbox).
+        ...(args.status === "done" && args.text ? { transcriptText: args.text } : {}),
+      })
+    );
     // Tradução automática (F1): a transcrição de um áudio do CLIENTE é
     // traduzida para a equipe, com o idioma do Whisper como dica. No-op sem o
     // módulo (o gate fica na porta).
@@ -425,7 +429,10 @@ export const internalBackfillTranscriptText = internalMutation({
         transcription.text &&
         message.transcriptText !== transcription.text
       ) {
-        await ctx.db.patch(message._id, { transcriptText: transcription.text });
+        await ctx.db.patch(
+          message._id,
+          withMessageSearchPatch(message, { transcriptText: transcription.text })
+        );
         patched++;
       }
     }

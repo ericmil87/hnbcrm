@@ -12,6 +12,7 @@
  * enfileira IA/transcrição.
  */
 import type { MutationCtx } from "../_generated/server";
+import { withMessageSearchPatch } from "./messageSearch";
 import type { Doc, Id } from "../_generated/dataModel";
 import { phoneLookupCandidates } from "./phone";
 import { refreshLastMessagePreviewIfLast } from "./conversationListFields";
@@ -160,7 +161,7 @@ export async function applyBridgeEdit(
   const previousContent =
     typeof prior === "string" ? prior : message.content.slice(0, EDIT_PREVIOUS_CONTENT_MAX);
   const metadata = { ...(message.metadata ?? {}), edited: true, editedAt: args.at, previousContent };
-  await ctx.db.patch(message._id, { content: newContent, metadata });
+  await ctx.db.patch(message._id, withMessageSearchPatch(message, { content: newContent, metadata }));
   await refreshLastMessagePreviewIfLast(ctx, { ...message, content: newContent, metadata });
   return message._id;
 }

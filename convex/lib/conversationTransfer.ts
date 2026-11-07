@@ -13,6 +13,7 @@ import { createNotification } from "./notify";
 import { getLeadRef } from "./leadRef";
 import { lastMessagePatchForId } from "./conversationListFields";
 import { scheduleWebhookEvent } from "./webhookDispatch";
+import { withMessageSearch } from "./messageSearch";
 
 export async function transferConversationCore(
   ctx: MutationCtx,
@@ -48,7 +49,7 @@ export async function transferConversationCore(
 
   // Evento de sistema na timeline da conversa (nota interna, nunca sai).
   const target = [toDept?.name, toMember?.name].filter(Boolean).join(" · ");
-  const noteMessageId = await ctx.db.insert("messages", {
+  const noteMessageId = await ctx.db.insert("messages", withMessageSearch({
     organizationId: orgId,
     conversationId: conversation._id,
     ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
@@ -69,7 +70,7 @@ export async function transferConversationCore(
       },
     },
     createdAt: now,
-  });
+  }));
 
   // A nota NÃO mexe em `lastMessageAt` (a ordem da lista não muda) e também
   // não vira prévia da lista: nota interna fica fora de `lastMessage*` desde a

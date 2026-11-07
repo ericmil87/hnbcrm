@@ -965,6 +965,8 @@ function shapeBackupDoc(table: string, doc: any): Record<string, unknown> {
       ? doc.attachments.map((id: unknown) => String(id))
       : undefined;
     if (shaped.attachments === undefined) delete shaped.attachments;
+    // Derivado (busca sem acento): recalculável, não entra no backup.
+    delete shaped.searchNorm;
     return shaped;
   }
   return { ...doc };

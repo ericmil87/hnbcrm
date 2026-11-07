@@ -91,6 +91,7 @@ import {
   renderPostText,
 } from "./lib/groupPostCore";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
+import { withMessageSearch } from "./lib/messageSearch";
 
 /**
  * Atraso máximo tolerado para ainda disparar um slot. Além disso o slot é
@@ -400,7 +401,7 @@ async function publishToTargets(
       const text = renderPostText(content.text, vars, `${post._id}:${slotKey}:${group._id}`);
       const body = text || content.text;
 
-      const messageId = await ctx.db.insert("messages", {
+      const messageId = await ctx.db.insert("messages", withMessageSearch({
         organizationId: post.organizationId,
         conversationId: conversation._id,
         direction: "outbound",
@@ -422,7 +423,7 @@ async function publishToTargets(
           scheduled: true,
         },
         createdAt: now,
-      });
+      }));
 
       if (content.attachments && content.attachments.length > 0) {
         // `files.messageId` é 1:1 e a mesma linha não pode apontar para N

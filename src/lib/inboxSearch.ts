@@ -3,6 +3,8 @@
  * "Mensagens") e a busca dentro da conversa aberta ("3 de 12", ▲ ▼).
  */
 
+import { findFolded } from "../../convex/lib/searchFold";
+
 /** Seções da busca da lista, na ordem exibida. `undefined` = ainda carregando. */
 export interface InboxSearchSections<C, M> {
   contacts: readonly C[] | undefined;
@@ -61,23 +63,23 @@ export function jumpableMatches<M extends { kind?: string }>(matches: readonly M
 }
 
 /**
- * Janela do trecho em volta do 1º match (sem diferenciar maiúsculas): até 24
- * caracteres antes e 60 depois. Sem match, o começo do texto.
+ * Janela do trecho em volta do 1º match, sem diferenciar maiúsculas NEM
+ * acentos ("reboucas" destaca "Rebouças" com o acento original, pela mesma
+ * dobra do backend): até 24 caracteres antes e 60 depois. Sem match, o começo
+ * do texto.
  */
 export function snippetWindow(
   content: string,
   term: string
 ): { ellipsis: boolean; before: string; match: string; after: string } {
-  const needle = term.trim().toLowerCase();
-  const idx = needle ? content.toLowerCase().indexOf(needle) : -1;
-  if (idx === -1) return { ellipsis: false, before: content.slice(0, 90), match: "", after: "" };
-  const start = Math.max(0, idx - 24);
-  const end = idx + needle.length;
+  const hit = findFolded(content, term);
+  if (!hit) return { ellipsis: false, before: content.slice(0, 90), match: "", after: "" };
+  const start = Math.max(0, hit.start - 24);
   return {
     ellipsis: start > 0,
-    before: content.slice(start, idx),
-    match: content.slice(idx, end),
-    after: content.slice(end, end + 60),
+    before: content.slice(start, hit.start),
+    match: content.slice(hit.start, hit.end),
+    after: content.slice(hit.end, hit.end + 60),
   };
 }
 
