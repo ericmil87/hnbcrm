@@ -77,7 +77,7 @@ src/
     ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at /; auth screen at /entrar
     ├── DashboardOverview.tsx   # Metrics (/app/painel)
     ├── KanbanBoard.tsx         # re-export of funnel/FunnelPage (main.tsx lazy import, route /app/pipeline)
-    ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista) + FunnelCardPicker (Exibição dos cards: density and fields popover) + FunnelSelector (funnel/archived/settings Menus),
+    ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista; < md: usePageHeader "+ Criar lead" and ⋯ items, pill search + "Filtros" sheet FunnelFiltersSheet with active count, icon view toggle) + FunnelCardPicker (Exibição dos cards: density and fields popover; FunnelCardPrefsFields reused in the mobile sheet) + FunnelSelector (funnel/archived/settings Menus; `compact`; useFunnelBoardMenus),
     │                           #   StageColumn (useDroppable id=stageId), LeadCard (LeadCardView + DraggableCard useDraggable id=leadId, optional `lastMessage`), QuickAddLead,
     │                           #   StageEditPopover (on Popover), AddStageColumn, FunnelDialogs (modals), useFunnelBulkActions, LeadDeepLinkResolver
     ├── CreateLeadModal.tsx     # Lead creation modal

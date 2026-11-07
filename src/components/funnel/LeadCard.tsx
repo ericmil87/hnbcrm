@@ -65,6 +65,7 @@ export function LeadCardView({
   variant = "default",
   lastMessage,
   prefs = DEFAULT_FUNNEL_CARD_PREFS,
+  framed = false,
 }: {
   lead: Lead;
   variant?: "default" | "placeholder" | "overlay";
@@ -72,6 +73,11 @@ export function LeadCardView({
   lastMessage?: LeadLastMessage;
   /** Densidade e campos visíveis (preferência pessoal); sem valor, o padrão compacto. */
   prefs?: FunnelCardPrefs;
+  /**
+   * Em toque, a moldura (borda, fundo, raio, sombra) é do contêiner externo do
+   * `DraggableCard`, que também envolve o rodapé "Mover"; aqui ela some.
+   */
+  framed?: boolean;
 }) {
   const priorityColor = {
     urgent: "bg-semantic-error",
@@ -102,6 +108,7 @@ export function LeadCardView({
     variant === "default" && "border-border hover:border-border-strong hover:shadow-card-hover",
     variant === "placeholder" && "opacity-40 border-dashed border-border-strong",
     variant === "overlay" && "w-80 border-brand-500 rotate-2 scale-[1.03] shadow-elevated cursor-grabbing",
+    framed && "coarse:rounded-none coarse:border-transparent coarse:bg-transparent coarse:hover:border-transparent coarse:hover:shadow-none",
   );
 
   const stripe = <div className={cn("absolute left-0 top-0 bottom-0 w-1 rounded-l-card", priorityColor)} />;
@@ -253,12 +260,18 @@ export function LeadCardView({
   );
 }
 
-const MOVE_BTN =
-  "flex h-11 w-11 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-surface-overlay hover:text-brand-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500";
+const MOVE_BTN = cn(
+  "flex min-h-11 min-w-0 items-center gap-1 text-caption font-medium text-text-secondary transition-colors",
+  "hover:bg-surface-overlay hover:text-text-primary active:bg-surface-overlay",
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+);
 
 /**
- * Mover sem arrastar: ‹ etapa anterior, ⋯ "Mover para…" (todas as etapas) e › etapa
- * seguinte. Só aparece em toque (`coarse:`); as setas somem nas pontas.
+ * Mover sem arrastar: rodapé do card com "‹ etapa anterior", "Mover" (menu
+ * "Mover para…" com todas as etapas) e "etapa seguinte ›". Só aparece em
+ * toque (`coarse:`); as setas somem nas pontas. Fica FORA do elemento
+ * arrastável (que tem `role="button"`): o `DraggableCard` desenha a moldura
+ * única em volta dos dois.
  */
 export function LeadMoveControls({
   leadTitle,
@@ -285,17 +298,23 @@ export function LeadMoveControls({
   };
   return (
     <div
-      className="hidden coarse:flex items-center justify-between px-1 pb-1"
+      className="hidden coarse:flex items-stretch border-t border-border-subtle"
       data-testid="lead-move-controls"
       {...stop}
     >
-      {prevStage ? (
-        <button type="button" className={MOVE_BTN} aria-label={`Mover ${leadTitle} para ${prevStage.name}`} onClick={() => onMove(prevStage._id)}>
-          <ChevronLeft size={20} aria-hidden="true" />
-        </button>
-      ) : (
-        <span className="h-11 w-11" aria-hidden="true" />
-      )}
+      <div className="flex min-w-0 flex-1">
+        {prevStage && (
+          <button
+            type="button"
+            className={cn(MOVE_BTN, "w-full justify-start pl-1.5 pr-1")}
+            aria-label={`Mover ${leadTitle} para ${prevStage.name}`}
+            onClick={() => onMove(prevStage._id)}
+          >
+            <ChevronLeft size={16} aria-hidden="true" className="shrink-0" />
+            <span className="truncate">{prevStage.name}</span>
+          </button>
+        )}
+      </div>
       <Menu
         ariaLabel={`Mover ${leadTitle} para…`}
         align="center"
@@ -306,18 +325,30 @@ export function LeadMoveControls({
           onSelect: () => onMove(st._id),
         }))}
         trigger={(props) => (
-          <button type="button" {...props} className={MOVE_BTN} aria-label={`Mover ${leadTitle} para…`}>
-            <MoreHorizontal size={20} aria-hidden="true" />
+          <button
+            type="button"
+            {...props}
+            className={cn(MOVE_BTN, "shrink-0 justify-center border-x border-border-subtle px-3")}
+            aria-label={`Mover ${leadTitle} para…`}
+          >
+            <MoreHorizontal size={16} aria-hidden="true" className="shrink-0" />
+            Mover
           </button>
         )}
       />
-      {nextStage ? (
-        <button type="button" className={MOVE_BTN} aria-label={`Mover ${leadTitle} para ${nextStage.name}`} onClick={() => onMove(nextStage._id)}>
-          <ChevronRight size={20} aria-hidden="true" />
-        </button>
-      ) : (
-        <span className="h-11 w-11" aria-hidden="true" />
-      )}
+      <div className="flex min-w-0 flex-1 justify-end">
+        {nextStage && (
+          <button
+            type="button"
+            className={cn(MOVE_BTN, "w-full justify-end pl-1 pr-1.5")}
+            aria-label={`Mover ${leadTitle} para ${nextStage.name}`}
+            onClick={() => onMove(nextStage._id)}
+          >
+            <span className="truncate">{nextStage.name}</span>
+            <ChevronRight size={16} aria-hidden="true" className="shrink-0" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }
@@ -357,7 +388,15 @@ export function DraggableCard({
   };
 
   return (
-    <div data-lead-id={lead._id} className={cn("rounded-card", highlighted && "ring-2 ring-brand-500 motion-safe:animate-pulse")}>
+    <div
+      data-lead-id={lead._id}
+      className={cn(
+        "rounded-card",
+        // Toque: um card só (corpo + rodapé "Mover"), a moldura mora aqui.
+        move && "coarse:overflow-hidden coarse:border coarse:border-border coarse:bg-surface-raised coarse:shadow-card",
+        highlighted && "ring-2 ring-brand-500 motion-safe:animate-pulse"
+      )}
+    >
       <div
         ref={setNodeRef}
         {...attributes}
@@ -365,7 +404,7 @@ export function DraggableCard({
         onClick={handleClick}
         className="cursor-pointer touch-manipulation select-none rounded-card"
       >
-        <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} />
+        <LeadCardView lead={lead} variant={isDragging ? "placeholder" : "default"} prefs={prefs} framed={!!move} />
       </div>
       {move && (
         <LeadMoveControls
