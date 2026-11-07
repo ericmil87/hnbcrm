@@ -28,6 +28,12 @@ export function useBulkConversationSelection({
     setSelectedIds(new Set());
   };
 
+  /** Toque longo num item (celular): entra na seleção já com ele marcado. */
+  const startSelectionWith = (id: string) => {
+    setSelectionMode(true);
+    setSelectedIds(new Set([id]));
+  };
+
   const toggleSelected = (id: string) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -95,6 +101,7 @@ export function useBulkConversationSelection({
     confirmBulk,
     setConfirmBulk,
     exitSelection,
+    startSelectionWith,
     toggleSelected,
     handleBulkArchiveClick,
     handleBulkLabelClick,

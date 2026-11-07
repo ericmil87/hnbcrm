@@ -14,6 +14,7 @@ const ORG_AGNOSTIC_PARAMS = new Set([
   "secao",
   "aba",
   "archived",
+  "unread",
   "view",
   "q",
   "date",

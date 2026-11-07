@@ -3,6 +3,7 @@ import {
   formatCount,
   formatDate,
   formatDayLabel,
+  formatListTime,
   formatDateTime,
   formatDateTimeShort,
   formatDueRelative,
@@ -190,5 +191,29 @@ describe("formatDayLabel", () => {
   it("virada do mês no 'ontem'", () => {
     const firstOfMonth = Date.UTC(2026, 11, 1, 15, 0);
     expect(formatDayLabel(Date.UTC(2026, 10, 30, 15, 0), firstOfMonth, SP)).toBe("Ontem");
+  });
+});
+
+describe("formatListTime", () => {
+  // Sábado, 07/11/2026 15:00 em São Paulo.
+  const NOW = Date.UTC(2026, 10, 7, 18, 0);
+  it("hoje: só a hora; ontem: 'Ontem' pelo dia de calendário", () => {
+    expect(formatListTime(Date.UTC(2026, 10, 7, 12, 5), NOW, SP)).toBe("09:05");
+    expect(formatListTime(Date.UTC(2026, 10, 7, 3, 0), NOW, SP)).toBe("00:00");
+    expect(formatListTime(Date.UTC(2026, 10, 7, 2, 59), NOW, SP)).toBe("Ontem"); // 23:59 de ontem
+  });
+  it("de 2 a 6 dias atrás: dia da semana sem '-feira'", () => {
+    expect(formatListTime(Date.UTC(2026, 10, 5, 15, 0), NOW, SP)).toBe("quinta");
+    expect(formatListTime(Date.UTC(2026, 10, 2, 15, 0), NOW, SP)).toBe("segunda");
+    expect(formatListTime(Date.UTC(2026, 10, 1, 15, 0), NOW, SP)).toBe("domingo");
+  });
+  it("7 dias ou mais, futuro e inválido", () => {
+    expect(formatListTime(Date.UTC(2026, 9, 31, 15, 0), NOW, SP)).toBe("31/10/26");
+    expect(formatListTime(Date.UTC(2025, 2, 9, 15, 0), NOW, SP)).toBe("09/03/25");
+    expect(formatListTime(Date.UTC(2026, 10, 9, 15, 0), NOW, SP)).toBe("09/11/26");
+    expect(formatListTime(Number.NaN, NOW)).toBe("—");
+  });
+  it("virada do ano no 'ontem'", () => {
+    expect(formatListTime(Date.UTC(2026, 11, 31, 15, 0), Date.UTC(2027, 0, 1, 15, 0), SP)).toBe("Ontem");
   });
 });

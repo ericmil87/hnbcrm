@@ -18,6 +18,8 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Para responder, reagir, encaminhar ou copiar, segure a mensagem no celular ou passe o mouse por cima no computador.
 - O campo de resposta cresce com o texto (até 6 linhas no celular e 10 no computador) e fica numa linha só: anexar, emoji, campo, menu com nota interna, agendar e respostas rápidas, e o botão de enviar ou gravar áudio. No celular, Enter quebra a linha e só o botão envia.
 - Corrigido: textos pequenos (hora, legendas, tradução) apareciam em tamanho normal em várias telas.
+- A lista de Conversas no celular também ficou como a do WhatsApp: um título só, busca em pílula, filtros em chips logo abaixo (Todas, Não lidas, Grupos e uma por etiqueta; **Não lidas** busca em todas as conversas ativas, não só nas mais recentes, e o filtro de canal ou conta escolhido no ⋯ aparece como chip que se desliga com um toque), **Arquivadas** como primeira linha da lista e conversas de borda a borda em duas linhas (nome e hora, prévia e não lidas), com o ícone do canal no canto da foto. A hora segue o WhatsApp: "14:30" hoje, "Ontem", o dia da semana até 6 dias e depois a data curta. O título do lead só aparece quando é diferente do nome do contato.
+- No celular, **Nova conversa** (+) e o menu ⋯ (**Selecionar conversas** e **Filtrar por tipo e canal**) ficam no topo, ao lado do sino. Segurar uma conversa também entra na seleção. A dica "Todas as conversas em um só lugar" não aparece mais no celular. No computador, a lista continua como antes.
 
 ### Correções
 

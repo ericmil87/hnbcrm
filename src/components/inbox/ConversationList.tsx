@@ -1,7 +1,17 @@
 import type { ReactNode, RefObject } from "react";
-import { CheckSquare, Image as ImageIcon, MessageSquare, MessageSquarePlus, Mic, Users } from "lucide-react";
+import {
+  Archive,
+  ArrowLeft,
+  CheckSquare,
+  Image as ImageIcon,
+  MessageSquare,
+  MessageSquarePlus,
+  Mic,
+  Users,
+} from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { FilterChips, type FilterChip } from "@/components/ui/FilterChips";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
@@ -104,7 +114,28 @@ interface ConversationListProps {
   selection: ConversationListSelection;
   paging: ConversationListPaging;
   onChooseGroups: () => void;
+  /**
+   * `mobile` (< md): estilo WhatsApp, sem título próprio (o do AppShell é o
+   * único), busca em pílula, chips, "Arquivadas" como 1ª linha e itens de 2
+   * linhas. "Nova conversa", "Selecionar" e os filtros de canal/tipo ficam no
+   * cabeçalho do AppShell (`usePageHeader`). `default` = desktop de sempre.
+   */
+  layout?: "default" | "mobile";
+  /** Obrigatório com `layout="mobile"`. */
+  mobile?: ConversationListMobile;
   className?: string;
+}
+
+export interface ConversationListMobile {
+  chips: readonly FilterChip[];
+  onChip: (id: string) => void;
+  unreadOnly: boolean;
+  /** Toque longo num item: entra na seleção com ele marcado. */
+  onLongPress: (id: string) => void;
+  /** "Agora" da hora dos itens. */
+  now: number;
+  /** Abre Arquivadas (desliga "Não lidas" na mesma escrita da URL). */
+  onOpenArchived: () => void;
 }
 
 function SearchResults({ search }: { search: ConversationListSearch }) {
@@ -260,14 +291,51 @@ function FilterBar({ filters, selection }: { filters: ConversationListFilters; s
   );
 }
 
+function LoadMore({ paging }: { paging: ConversationListPaging }) {
+  if (paging.canLoadMore) {
+    return (
+      <div className="text-center py-3">
+        <div ref={paging.sentinelRef} aria-hidden="true" className="h-px" />
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={paging.onLoadMore}
+          disabled={paging.loadingMore}
+          aria-busy={paging.loadingMore}
+        >
+          {paging.loadingMore ? (
+            <span className="inline-flex items-center gap-2">
+              <Spinner size="sm" />
+              Carregando mais conversas…
+            </span>
+          ) : (
+            "Carregar mais conversas"
+          )}
+        </Button>
+      </div>
+    );
+  }
+  if (paging.reachedMax) {
+    return (
+      <div className="text-center py-2">
+        <span className="text-xs text-text-muted">Mostrando as {paging.maxLimit} conversas mais recentes</span>
+      </div>
+    );
+  }
+  return null;
+}
+
 function BulkBar({
   selection,
   showArchived,
   labels,
+  showCancel = false,
 }: {
   selection: ConversationListSelection;
   showArchived: boolean;
   labels: readonly ConversationListLabelOption[];
+  /** Celular: o "Selecionar" mora no ⋯, então a saída fica aqui. */
+  showCancel?: boolean;
 }) {
   const count = selection.selectedIds.size;
   const labelItems: MenuItem[] =
@@ -281,6 +349,11 @@ function BulkBar({
         }));
   return (
     <div className="shrink-0 border-t border-border bg-surface-raised p-3 flex items-center gap-2">
+      {showCancel && (
+        <Button type="button" variant="ghost" size="sm" onClick={selection.onToggleMode}>
+          Cancelar
+        </Button>
+      )}
       <span className="flex-1 text-xs text-text-secondary tabular-nums">
         {count} selecionada{count === 1 ? "" : "s"}
       </span>
@@ -323,14 +396,142 @@ export function ConversationList({
   selection,
   paging,
   onChooseGroups,
+  layout = "default",
+  mobile,
   className,
 }: ConversationListProps) {
+  const isMobile = layout === "mobile";
   const empty = emptyListMessage({
     kind: filters.kind,
     showArchived: filters.showArchived,
     queueFilterActive: filters.queueFilterActive,
     labelId: filters.labelId,
+    unreadOnly: isMobile ? mobile?.unreadOnly : false,
   });
+  const searchMonthRow = search.active && (
+    <div className="flex items-center gap-2">
+      <input
+        type="month"
+        value={search.month}
+        onChange={(e) => search.onMonthChange(e.target.value)}
+        className={cn(
+          "h-8 coarse:h-11 px-2.5 rounded-full text-base md:text-xs bg-surface-sunken border border-border-strong text-text-secondary",
+          "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
+          search.month && "border-brand-500 text-text-primary"
+        )}
+        aria-label="Filtrar por mês"
+      />
+      {search.month && (
+        <button
+          type="button"
+          onClick={() => search.onMonthChange("")}
+          className="coarse:min-h-11 text-xs text-text-muted hover:text-text-primary transition-colors"
+        >
+          Limpar mês
+        </button>
+      )}
+      <span className="ml-auto text-xs text-text-muted tabular-nums">
+        {search.results === undefined
+          ? "…"
+          : `${search.results.length} resultado${search.results.length === 1 ? "" : "s"}`}
+      </span>
+    </div>
+  );
+
+  if (isMobile && mobile) {
+    return (
+      <div className={cn("w-full bg-surface-base flex flex-col min-h-0", className)}>
+        <div className="shrink-0 space-y-2 px-4 pt-2 pb-2">
+          {filters.showArchived && !search.active && (
+            <button
+              type="button"
+              onClick={() => filters.onShowArchivedChange(false)}
+              className="-ml-2 flex min-h-11 items-center gap-2 rounded-full pr-3 pl-2 text-text-primary hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              <ArrowLeft size={20} aria-hidden="true" />
+              <span className="sr-only">Voltar de </span>
+              <span className="text-lg font-semibold">Arquivadas</span>
+            </button>
+          )}
+          {attentionBanner}
+          <SearchInput
+            variant="pill"
+            value={search.term}
+            onValueChange={search.onTermChange}
+            placeholder="Buscar nas mensagens…"
+            ariaLabel="Buscar nas mensagens"
+          />
+          {search.active ? (
+            searchMonthRow
+          ) : (
+            <FilterChips
+              ariaLabel="Filtrar conversas"
+              chips={mobile.chips}
+              onToggle={mobile.onChip}
+              className="-mx-4 px-4"
+            />
+          )}
+          {!search.active && queueBar}
+        </div>
+
+        <div ref={paging.scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+          {search.active ? (
+            <SearchResults search={search} />
+          ) : (
+            <>
+              {!filters.showArchived && (
+                <button
+                  type="button"
+                  onClick={mobile.onOpenArchived}
+                  className="flex w-full items-center gap-3 pl-4 text-left hover:bg-surface-overlay active:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+                >
+                  <span className="flex w-12 shrink-0 justify-center text-text-muted" aria-hidden="true">
+                    <Archive size={20} />
+                  </span>
+                  <span className="flex min-h-12 flex-1 items-center border-b border-border pr-4 text-base font-medium text-text-secondary">
+                    Arquivadas
+                  </span>
+                </button>
+              )}
+              {conversations.length === 0 ? (
+                <EmptyState
+                  icon={MessageSquare}
+                  size="sm"
+                  title={empty.text}
+                  description={empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined}
+                  action={empty.chooseGroups ? { label: "Escolher grupos", onClick: onChooseGroups } : undefined}
+                />
+              ) : (
+                conversations.map((conversation) => (
+                  <ConversationListItem
+                    key={conversation._id}
+                    variant="compact"
+                    now={mobile.now}
+                    conversation={conversation}
+                    selected={selectedId === conversation._id}
+                    selectionMode={selection.mode}
+                    checked={selection.selectedIds.has(conversation._id)}
+                    labelById={labelById}
+                    account={accountFor(conversation)}
+                    showAccount={showAccountFor(conversation)}
+                    central={centralFor?.(conversation)}
+                    onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
+                    onLongPress={() => mobile.onLongPress(conversation._id)}
+                  />
+                ))
+              )}
+              <LoadMore paging={paging} />
+            </>
+          )}
+        </div>
+
+        {selection.mode && (
+          <BulkBar selection={selection} showArchived={filters.showArchived} labels={filters.labels} showCancel />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className={cn("w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col min-h-0", className)}>
       <div className="p-4 border-b border-border space-y-2.5">
@@ -359,35 +560,7 @@ export function ConversationList({
         />
         {!search.active && <FilterBar filters={filters} selection={selection} />}
         {!search.active && queueBar}
-        {search.active && (
-          <div className="flex items-center gap-2">
-            <input
-              type="month"
-              value={search.month}
-              onChange={(e) => search.onMonthChange(e.target.value)}
-              className={cn(
-                "h-8 coarse:h-11 px-2.5 rounded-full text-xs bg-surface-sunken border border-border-strong text-text-secondary",
-                "focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500",
-                search.month && "border-brand-500 text-text-primary"
-              )}
-              aria-label="Filtrar por mês"
-            />
-            {search.month && (
-              <button
-                type="button"
-                onClick={() => search.onMonthChange("")}
-                className="text-xs text-text-muted hover:text-text-primary transition-colors"
-              >
-                Limpar mês
-              </button>
-            )}
-            <span className="ml-auto text-xs text-text-muted tabular-nums">
-              {search.results === undefined
-                ? "…"
-                : `${search.results.length} resultado${search.results.length === 1 ? "" : "s"}`}
-            </span>
-          </div>
-        )}
+        {searchMonthRow}
       </div>
 
       <div ref={paging.scrollRef} className="overflow-y-auto flex-1">
@@ -417,31 +590,7 @@ export function ConversationList({
             />
           ))
         )}
-        {!search.active && paging.canLoadMore ? (
-          <div className="text-center py-3">
-            <div ref={paging.sentinelRef} aria-hidden="true" className="h-px" />
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={paging.onLoadMore}
-              disabled={paging.loadingMore}
-              aria-busy={paging.loadingMore}
-            >
-              {paging.loadingMore ? (
-                <span className="inline-flex items-center gap-2">
-                  <Spinner size="sm" />
-                  Carregando mais conversas…
-                </span>
-              ) : (
-                "Carregar mais conversas"
-              )}
-            </Button>
-          </div>
-        ) : !search.active && paging.reachedMax ? (
-          <div className="text-center py-2">
-            <span className="text-xs text-text-muted">Mostrando as {paging.maxLimit} conversas mais recentes</span>
-          </div>
-        ) : null}
+        {!search.active && <LoadMore paging={paging} />}
       </div>
 
       {selection.mode && <BulkBar selection={selection} showArchived={filters.showArchived} labels={filters.labels} />}

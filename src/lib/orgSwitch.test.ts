@@ -35,6 +35,7 @@ describe("pathAfterOrgSwitch", () => {
       "/app/entrada?archived=1"
     );
     expect(pathAfterOrgSwitch("/app/entrada", "?label=k17abc")).toBe("/app/entrada");
+    expect(pathAfterOrgSwitch("/app/entrada", "?unread=1&label=k17abc")).toBe("/app/entrada?unread=1");
   });
 
   it("Tarefas: mantém modo, filtro rápido e status; derruba responsável, etiqueta e projeto", () => {
