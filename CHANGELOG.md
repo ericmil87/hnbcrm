@@ -15,7 +15,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Correções
 
-- Corrigido: o Copiloto dava erro para quem entrava com outra conta no mesmo navegador (o painel tentava abrir a conversa de outra pessoa). Agora cada conta guarda a própria conversa, e uma conversa que não é sua é descartada em silêncio e o Copiloto começa uma nova. Ao sair da conta, as conversas guardadas no aparelho são apagadas.
+- Corrigido: o Copiloto dava erro para quem entrava com outra conta no mesmo navegador (o painel tentava abrir a conversa de outra pessoa). Agora cada conta guarda a própria conversa, e uma conversa que não é sua é descartada em silêncio e o Copiloto começa uma nova. Ao sair da conta, as conversas guardadas no aparelho são apagadas. Depois desta atualização, a conversa atual do Copiloto em cada aparelho recomeça uma vez.
 - Corrigido: depois de **Devolver à IA** (ou de recusar o pedido de ajuda da IA), o cabeçalho da conversa continuava mostrando "IA em espera" até o cliente mandar outra mensagem. Agora o aviso some na hora e só volta se a IA deixar de responder a uma mensagem nova.
 - Conversas devolvidas à IA antes desta correção também deixam de mostrar "IA em espera" depois de uma rotina de manutenção.
 - Quando não há atendente IA ativo para o número da conversa, **Devolver à IA** agora explica o motivo ("Nenhum atendente IA ativo para o número desta conversa. Confira em Configurações › Atendente IA e se o número está ativo.") em vez de mostrar um erro genérico do servidor. Instrução longa demais e lead não encontrado também aparecem com a mensagem certa.

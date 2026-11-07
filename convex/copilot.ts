@@ -136,7 +136,19 @@ export const getThreadMessages = query({
   args: { threadId: v.id("copilotThreads") },
   // `null` = thread inexistente, de outro membro ou de org onde a pessoa não é
   // membro (ex.: id guardado no navegador por outra conta). Nunca vaza mensagens.
-  returns: v.any(),
+  returns: v.union(
+    v.null(),
+    v.array(
+      v.object({
+        _id: v.id("copilotMessages"),
+        role: v.union(v.literal("user"), v.literal("assistant"), v.literal("tool")),
+        content: v.string(),
+        toolCalls: v.optional(v.array(v.object({ name: v.string() }))),
+        status: v.optional(v.union(v.literal("streaming"), v.literal("done"), v.literal("error"))),
+        createdAt: v.number(),
+      })
+    )
+  ),
   handler: async (ctx, args) => {
     const thread = await ctx.db.get(args.threadId);
     if (!thread) return null;
@@ -255,11 +267,20 @@ export const internalResolveSessionForMember = internalQuery({
 
 /** O SSE checa antes de abrir o stream: thread de outro membro/org (ou apagada) vira 409. */
 export const internalThreadOwnedBy = internalQuery({
-  args: { threadId: v.id("copilotThreads"), memberId: v.id("teamMembers") },
+  args: {
+    threadId: v.string(),
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+  },
   returns: v.boolean(),
   handler: async (ctx, args) => {
-    const thread = await ctx.db.get(args.threadId);
-    return !!thread && thread.memberId === args.memberId;
+    // id vindo do cliente: formato inválido ou de outra tabela = não é dono (sem lançar).
+    const threadId = ctx.db.normalizeId("copilotThreads", args.threadId);
+    if (!threadId) return false;
+    const thread = await ctx.db.get(threadId);
+    return (
+      !!thread && thread.organizationId === args.organizationId && thread.memberId === args.memberId
+    );
   },
 });
 

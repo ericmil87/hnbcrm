@@ -89,12 +89,12 @@ export const copilotStream = httpAction(async (ctx, request) => {
   // Thread guardada no navegador por outra conta (ou apagada): 409 com código
   // para o cliente descartar a thread e reenviar numa nova.
   if (body.threadId) {
-    const owned = await ctx
-      .runQuery(internal.copilot.internalThreadOwnedBy, {
-        threadId: body.threadId as Id<"copilotThreads">,
-        memberId: session.member._id,
-      })
-      .catch(() => false);
+    // Sem catch: falha real vira 5xx (o dono não pode perder a thread por erro transitório).
+    const owned = await ctx.runQuery(internal.copilot.internalThreadOwnedBy, {
+      threadId: String(body.threadId),
+      organizationId,
+      memberId: session.member._id,
+    });
     if (!owned) {
       return new Response(
         JSON.stringify({

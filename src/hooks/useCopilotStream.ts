@@ -7,6 +7,7 @@ import { Id } from "../../convex/_generated/dataModel";
 import {
   copilotThreadKey,
   readCopilotThread,
+  shouldRetryWithoutThread,
   removeCopilotThread,
   removeLegacyCopilotThreads,
   writeCopilotThread,
@@ -108,8 +109,10 @@ export function useCopilotStream(
     removeLegacyCopilotThreads(organizationId);
     if (!storageKey) return;
     const stored = readCopilotThread(storageKey);
-    setThreadId(
-      (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null),
+    const fallback = initialThreadRef.current as Id<"copilotThreads"> | null;
+    // Só sobrescreve se ainda não há thread ou ela é a inicial (não pisa numa thread criada nesse meio-tempo).
+    setThreadId((current) =>
+      current === null || current === fallback ? ((stored as Id<"copilotThreads"> | null) ?? fallback) : current
     );
   }, [organizationId, storageKey]);
 
@@ -141,6 +144,11 @@ export function useCopilotStream(
       if (!trimmed || isStreaming) return;
       if (!token) {
         toast.error("Sessão expirada — faça login novamente");
+        return;
+      }
+      // Sem o usuário carregado não dá para guardar nem ler a thread: não envia ainda.
+      if (!storageKeyRef.current) {
+        toast.error("Aguarde um instante e tente de novo.");
         return;
       }
 
@@ -177,7 +185,7 @@ export function useCopilotStream(
             // resposta não era JSON — mantém a mensagem genérica
           }
           // Thread de outra conta (guardada neste navegador): descarta e reenvia UMA vez sem thread.
-          if (res.status === 409 && code === "thread_not_owned" && attempt === 0) {
+          if (shouldRetryWithoutThread(res.status, code, attempt)) {
             discardThread();
             continue;
           }

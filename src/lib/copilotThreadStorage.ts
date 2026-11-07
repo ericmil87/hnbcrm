@@ -46,6 +46,11 @@ export function removeCopilotThread(key: string): void {
   }
 }
 
+/** 409 `thread_not_owned` na 1ª tentativa: descarta a thread e reenvia UMA vez sem ela. */
+export function shouldRetryWithoutThread(status: number, code: string | undefined, attempt: number): boolean {
+  return status === 409 && code === "thread_not_owned" && attempt === 0;
+}
+
 /** Sair da conta: nenhuma thread do Copiloto fica para o próximo usuário do aparelho. */
 export function clearStoredCopilotThreads(): void {
   try {

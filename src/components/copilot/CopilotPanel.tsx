@@ -71,9 +71,11 @@ export function CopilotPanel(props: CopilotPanelProps) {
     threadId && active ? { threadId } : "skip"
   );
   // `null` = o servidor diz que a thread não é desta conta (ou sumiu): descarta em silêncio.
+  // Só com o usuário carregado: sem sessão a query também devolve null e isso não é "thread alheia".
+  const loggedInUser = useQuery(api.auth.loggedInUser);
   useEffect(() => {
-    if (threadId && liveMessages === null) discardThread();
-  }, [threadId, liveMessages, discardThread]);
+    if (threadId && liveMessages === null && loggedInUser) discardThread();
+  }, [threadId, liveMessages, loggedInUser, discardThread]);
   const [cachedMessages, setCachedMessages] = useState<{
     threadId: string;
     messages: NonNullable<typeof liveMessages>;

@@ -4,6 +4,7 @@ import {
   copilotThreadKey,
   legacyCopilotThreadKeys,
   removeLegacyCopilotThreads,
+  shouldRetryWithoutThread,
 } from "./copilotThreadStorage";
 
 describe("copilotThreadKey", () => {
@@ -29,6 +30,16 @@ function memoryStorage(): Storage {
     clear: () => m.clear(),
   };
 }
+
+describe("shouldRetryWithoutThread", () => {
+  it("só na 1ª tentativa de um 409 thread_not_owned", () => {
+    expect(shouldRetryWithoutThread(409, "thread_not_owned", 0)).toBe(true);
+    expect(shouldRetryWithoutThread(409, "thread_not_owned", 1)).toBe(false);
+    expect(shouldRetryWithoutThread(409, undefined, 0)).toBe(false);
+    expect(shouldRetryWithoutThread(500, "thread_not_owned", 0)).toBe(false);
+    expect(shouldRetryWithoutThread(403, "thread_not_owned", 0)).toBe(false);
+  });
+});
 
 describe("storage helpers", () => {
   beforeEach(() => {

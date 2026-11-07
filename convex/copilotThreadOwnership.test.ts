@@ -86,6 +86,13 @@ describe("copilot: thread de outro usuário", () => {
     expect(res).toBeNull();
   });
 
+  test("membro removido (removedAt) recebe null", async () => {
+    const { t, a, threadId, as } = await setup();
+    await t.run(async (ctx) => ctx.db.patch(a.people[0].memberId, { removedAt: Date.now() }));
+    const res = await as(a.people[0].userId).query(api.copilot.getThreadMessages, { threadId });
+    expect(res).toBeNull();
+  });
+
   test("thread apagada devolve null", async () => {
     const { t, a, threadId, as } = await setup();
     await t.run(async (ctx) => ctx.db.delete(threadId));
