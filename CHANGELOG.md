@@ -4,6 +4,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Copiloto no menu
+
+- O Copiloto agora abre pelo menu ⋯ do cabeçalho do celular, em qualquer tela (primeiro item), e pelo item "Copiloto" da barra lateral no computador; o atalho Ctrl+K (Cmd+K no Mac) também abre, exceto com uma janela aberta.
+- O botão flutuante do Copiloto vem desligado. Quem quiser liga em Configurações › Conta › Aparência › "Botão flutuante do Copiloto"; a escolha vale só no aparelho.
+
 ### Funil no celular
 
 - No celular, cada card do Funil ganha as setas ‹ e › para mover o lead para a etapa anterior ou seguinte com um toque, e o botão ⋯ "Mover para…" para escolher qualquer etapa. Mover para Ganho ou Perdido continua pedindo o motivo.

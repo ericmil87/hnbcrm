@@ -74,4 +74,18 @@ describe("SidebarView", () => {
     await userEvent.hover(screen.getByRole("button", { name: "Funil" }));
     expect(screen.getByRole("tooltip")).toHaveTextContent("Funil");
   });
+
+  it("Copiloto só aparece com o Copiloto ativo, e abre ao clicar", async () => {
+    setup();
+    expect(screen.queryByRole("button", { name: "Copiloto" })).not.toBeInTheDocument();
+  });
+
+  it("Copiloto na barra lateral: 44 px, ícone com aria-label, chama onOpenCopilot", async () => {
+    const onOpenCopilot = vi.fn();
+    setup({ onOpenCopilot, collapsed: true });
+    const btn = screen.getByRole("button", { name: "Copiloto" });
+    expect(btn.className).toContain("min-h-[44px]");
+    await userEvent.click(btn);
+    expect(onOpenCopilot).toHaveBeenCalled();
+  });
 });
