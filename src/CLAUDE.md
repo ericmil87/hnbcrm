@@ -13,6 +13,7 @@ src/
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
 ├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal, formatListTime for the Conversas list) — the only entry point
 ├── lib/pageHeader.ts           # pure signature/merge of the page contribution to the AppShell mobile header (components/layout/pageHeader.tsx: usePageHeader, PageHeaderSlot, globalMenuItems); test next to it
+├── lib/copilotFabPref.ts      # per-device "Botão flutuante do Copiloto" pref (localStorage hnbcrm.copilotFab.enabled, off by default; hook hooks/useCopilotFabPref.ts); lib/copilotShortcut.ts = Ctrl/Cmd+K rule; tests next to them
 ├── lib/nav.ts                  # NAV_ITEMS/NAV_GROUPS (single nav model), visibleNavItems(), splitMobile(), badge helpers; test next to it
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
 ├── lib/settingsNav.ts          # Settings: resolveSettingsPanel(), visibleSettingsPanels(), groupOf(), groupSettingsPanels(); test next to it

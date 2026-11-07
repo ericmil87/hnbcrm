@@ -73,7 +73,7 @@ export function InboxListColumn({
   usePageHeader(
     isMobile
       ? {
-          menuLabel: "Mais ações em Conversas",
+          menuLabel: "Mais ações",
           menuItems: [
             {
               id: "select",

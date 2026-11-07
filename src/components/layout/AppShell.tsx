@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { useQuery } from "convex/react";
-import { Building2, ChevronsUpDown } from "lucide-react";
+import { Building2, ChevronsUpDown, Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
 import { CopilotFab } from "@/components/copilot/CopilotFab";
@@ -14,7 +14,10 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useDocumentScrollLock } from "@/hooks/useVisualViewport";
 import { cn } from "@/lib/utils";
 import { ChatModeProvider, type ChatModeValue } from "./chatMode";
-import { PageHeaderProvider, PageHeaderSlot, usePageHeaderRegistry } from "./pageHeader";
+import { PageHeaderProvider, PageHeaderSlot, usePageHeaderRegistry, type PageMenuItem } from "./pageHeader";
+import { useCopilotFabPref } from "@/hooks/useCopilotFabPref";
+import { detectIsMac, shouldOpenCopilotFromKey } from "@/lib/copilotShortcut";
+import { VOCAB } from "@/lib/vocab";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { UiTheme } from "@/lib/theme";
@@ -57,13 +60,39 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
   const pageHeader = usePageHeaderRegistry();
   const isMobile = useMediaQuery("(max-width: 767px)");
   useDocumentScrollLock(chatModeActive && isMobile);
+  const fabPref = useCopilotFabPref();
+  const [isMac] = useState(detectIsMac);
+  const openCopilot = useCallback(() => setCopilotOpen(true), []);
+
+  // Cmd+K (Mac) ou Ctrl+K abre o Copiloto em qualquer tela, menos com janela aberta (Modal/SlideOver).
+  useEffect(() => {
+    if (!copilotEnabled) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const modalOpen = document.querySelector('[role="dialog"][aria-modal="true"]') !== null;
+      if (!shouldOpenCopilotFromKey(e, { modalOpen, enabled: true, isMac })) return;
+      e.preventDefault();
+      setCopilotOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [copilotEnabled, isMac]);
+
+  // ⋯ global do celular: "Copiloto" em toda tela (a página soma os itens dela depois).
+  const globalMenuItems = useMemo<PageMenuItem[]>(
+    () =>
+      copilotEnabled
+        ? [{ id: "copilot", label: VOCAB.copilot.name, icon: <Sparkles size={16} aria-hidden="true" />, onSelect: openCopilot }]
+        : [],
+    [copilotEnabled, openCopilot]
+  );
+
   const chatMode = useMemo<ChatModeValue>(
     () => ({
       active: chatModeActive,
       setActive: setChatModeActive,
-      openCopilot: copilotEnabled ? () => setCopilotOpen(true) : undefined,
+      openCopilot: copilotEnabled ? openCopilot : undefined,
     }),
-    [chatModeActive, copilotEnabled]
+    [chatModeActive, copilotEnabled, openCopilot]
   );
 
   return (
@@ -78,6 +107,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         onOpenOrgSwitcher={onOpenOrgSwitcher}
         theme={theme}
         setTheme={setTheme}
+        onOpenCopilot={copilotEnabled ? openCopilot : undefined}
       />
 
       {/* Main content area */}
@@ -106,7 +136,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
             <NotificationBell organizationId={organizationId} />
             {/* Contribuição da página (só celular; no desktop cada tela tem o seu cabeçalho). */}
             <div className="md:hidden flex items-center">
-              <PageHeaderSlot registration={pageHeader.registration} />
+              <PageHeaderSlot registration={pageHeader.registration} globalMenuItems={globalMenuItems} />
             </div>
           </div>
         </header>
@@ -131,11 +161,12 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         hidden={chatModeActive}
       />
 
-      {/* Gatilho flutuante do Copiloto IA — só aparece se a org ativou a IA e o produto Copiloto */}
+      {/* Copiloto IA — só se a org ativou a IA e o produto Copiloto. Abre pelo ⋯ (celular), pela
+          barra lateral e por Ctrl/Cmd+K (computador); o botão flutuante é opcional (Aparência), por aparelho. */}
       {copilotEnabled && (
         <>
           {/* Conversa aberta: o FAB cobria o enviar/microfone; o Copiloto fica no ⋮ do cabeçalho. */}
-          <CopilotFab onOpen={() => setCopilotOpen(true)} hidden={copilotOpen || chatModeActive} />
+          {fabPref && <CopilotFab onOpen={openCopilot} hidden={copilotOpen || chatModeActive} />}
           <LazyCopilotPanel
             organizationId={organizationId}
             open={copilotOpen}
