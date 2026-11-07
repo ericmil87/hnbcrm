@@ -22,7 +22,7 @@ import {
 } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { requireAuth, isMembershipRevoked } from "./lib/auth";
+import { requireAuth, isMembershipRevoked, isActiveMemberOf } from "./lib/auth";
 import { assertAgentCan, orgAiActive } from "./lib/agentSecurity";
 import {
   projectToolResult,
@@ -134,12 +134,15 @@ export const listThreads = query({
 
 export const getThreadMessages = query({
   args: { threadId: v.id("copilotThreads") },
+  // `null` = thread inexistente, de outro membro ou de org onde a pessoa não é
+  // membro (ex.: id guardado no navegador por outra conta). Nunca vaza mensagens.
   returns: v.any(),
   handler: async (ctx, args) => {
     const thread = await ctx.db.get(args.threadId);
-    if (!thread) return [];
+    if (!thread) return null;
+    if (!(await isActiveMemberOf(ctx, thread.organizationId))) return null;
     const member = await requireAuth(ctx, thread.organizationId);
-    if (thread.memberId !== member._id) throw new Error("Thread de outro usuário");
+    if (thread.memberId !== member._id) return null;
 
     const messages = await ctx.db
       .query("copilotMessages")
@@ -163,8 +166,10 @@ export const deleteThread = mutation({
   handler: async (ctx, args) => {
     const thread = await ctx.db.get(args.threadId);
     if (!thread) return null;
+    // Thread alheia (ou de org sem vínculo): no-op, sem revelar que existe.
+    if (!(await isActiveMemberOf(ctx, thread.organizationId))) return null;
     const member = await requireAuth(ctx, thread.organizationId);
-    if (thread.memberId !== member._id) throw new Error("Thread de outro usuário");
+    if (thread.memberId !== member._id) return null;
 
     const messages = await ctx.db
       .query("copilotMessages")
@@ -245,6 +250,16 @@ export const internalResolveSessionForMember = internalQuery({
       },
       providerConfig: aiConfig.providerConfig ?? null,
     };
+  },
+});
+
+/** O SSE checa antes de abrir o stream: thread de outro membro/org (ou apagada) vira 409. */
+export const internalThreadOwnedBy = internalQuery({
+  args: { threadId: v.id("copilotThreads"), memberId: v.id("teamMembers") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get(args.threadId);
+    return !!thread && thread.memberId === args.memberId;
   },
 });
 

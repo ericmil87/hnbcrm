@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuthToken } from "@convex-dev/auth/react";
 import { toast } from "sonner";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
+import {
+  copilotThreadKey,
+  readCopilotThread,
+  removeCopilotThread,
+  removeLegacyCopilotThreads,
+  writeCopilotThread,
+} from "@/lib/copilotThreadStorage";
 
 /** Rótulos PT-BR amigáveis para os chips "consultando…" durante o streaming. */
 const TOOL_LABELS: Record<string, string> = {
@@ -34,10 +43,6 @@ const SITE_URL = ((import.meta.env.VITE_CONVEX_URL as string) ?? "").replace(
   ".convex.site"
 );
 
-function threadStorageKey(organizationId: string, purpose?: string): string {
-  return `hnbcrm_copilot_thread_${purpose ? `${purpose}_` : ""}${organizationId}`;
-}
-
 type CopilotSSEEvent =
   | { type: "thread"; threadId: string }
   | { type: "delta"; text: string }
@@ -54,8 +59,10 @@ interface UseCopilotStreamResult {
   error: string | null;
   threadId: Id<"copilotThreads"> | null;
   sendMessage: (text: string) => Promise<void>;
-  /** Limpa a thread atual (guardada em localStorage por organização). */
+  /** Limpa a thread atual (guardada em localStorage por usuário e organização). */
   startNewThread: () => void;
+  /** Descarta a thread atual em silêncio (ex.: o servidor disse que não é desta conta). */
+  discardThread: () => void;
 }
 
 export interface UseCopilotStreamOptions {
@@ -78,11 +85,16 @@ export function useCopilotStream(
   const onThreadChangeRef = useRef(options?.onThreadChange);
   onThreadChangeRef.current = options?.onThreadChange;
 
-  const [threadId, setThreadId] = useState<Id<"copilotThreads"> | null>(() => {
-    if (typeof window === "undefined") return null;
-    const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
-    return (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null);
-  });
+  // A chave da thread inclui o usuário; sem ele (carregando) não há o que ler.
+  const loggedInUser = useQuery(api.auth.loggedInUser);
+  const userId: string | undefined = loggedInUser?._id;
+  const storageKey = userId ? copilotThreadKey(userId, organizationId, purpose) : null;
+  const storageKeyRef = useRef(storageKey);
+  storageKeyRef.current = storageKey;
+
+  const [threadId, setThreadId] = useState<Id<"copilotThreads"> | null>(
+    (initialThreadRef.current as Id<"copilotThreads"> | null) ?? null
+  );
   const [streamingText, setStreamingText] = useState("");
   const [activeTools, setActiveTools] = useState<string[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -91,13 +103,15 @@ export function useCopilotStream(
   const threadIdRef = useRef(threadId);
   threadIdRef.current = threadId;
 
-  // Cada organização tem sua própria thread persistida — recarrega ao trocar de org.
+  // Cada usuário/organização tem sua própria thread persistida — recarrega ao trocar.
   useEffect(() => {
-    const stored = window.localStorage.getItem(threadStorageKey(organizationId, purpose));
+    removeLegacyCopilotThreads(organizationId);
+    if (!storageKey) return;
+    const stored = readCopilotThread(storageKey);
     setThreadId(
       (stored as Id<"copilotThreads"> | null) ?? (initialThreadRef.current as Id<"copilotThreads"> | null),
     );
-  }, [organizationId, purpose]);
+  }, [organizationId, storageKey]);
 
   // Avisa quem guarda a thread fora do navegador, só quando ela muda de fato.
   const reportedThreadRef = useRef<string | null>(initialThreadRef.current);
@@ -107,13 +121,19 @@ export function useCopilotStream(
     onThreadChangeRef.current?.(threadId);
   }, [threadId]);
 
-  const startNewThread = useCallback(() => {
-    window.localStorage.removeItem(threadStorageKey(organizationId, purpose));
+  const discardThread = useCallback(() => {
+    if (storageKeyRef.current) removeCopilotThread(storageKeyRef.current);
+    initialThreadRef.current = null;
+    threadIdRef.current = null;
     setThreadId(null);
+  }, []);
+
+  const startNewThread = useCallback(() => {
+    discardThread();
     setStreamingText("");
     setActiveTools([]);
     setError(null);
-  }, [organizationId, purpose]);
+  }, [discardThread]);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -130,30 +150,40 @@ export function useCopilotStream(
       setIsStreaming(true);
 
       try {
-        const res = await fetch(`${SITE_URL}/api/copilot/stream`, {
+        let res: Response | null = null;
+        for (let attempt = 0; attempt < 2; attempt++) {
+          res = await fetch(`${SITE_URL}/api/copilot/stream`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            organizationId,
-            threadId: threadIdRef.current ?? undefined,
-            message: trimmed,
-            ...(purpose ? { purpose } : {}),
-          }),
-        });
+            body: JSON.stringify({
+              organizationId,
+              threadId: threadIdRef.current ?? undefined,
+              message: trimmed,
+              ...(purpose ? { purpose } : {}),
+            }),
+          });
 
-        if (!res.ok || !res.body) {
+          if (res.ok && res.body) break;
           let message = "Não foi possível conectar com o copiloto.";
+          let code: string | undefined;
           try {
             const data = await res.json();
             if (typeof data?.error === "string") message = data.error;
+            if (typeof data?.code === "string") code = data.code;
           } catch {
             // resposta não era JSON — mantém a mensagem genérica
           }
+          // Thread de outra conta (guardada neste navegador): descarta e reenvia UMA vez sem thread.
+          if (res.status === 409 && code === "thread_not_owned" && attempt === 0) {
+            discardThread();
+            continue;
+          }
           throw new Error(message);
         }
+        if (!res || !res.ok || !res.body) throw new Error("Não foi possível conectar com o copiloto.");
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -183,10 +213,7 @@ export function useCopilotStream(
             switch (event.type) {
               case "thread":
                 setThreadId(event.threadId as Id<"copilotThreads">);
-                window.localStorage.setItem(
-                  threadStorageKey(organizationId, purpose),
-                  event.threadId
-                );
+                if (storageKeyRef.current) writeCopilotThread(storageKeyRef.current, event.threadId);
                 break;
               case "delta":
                 setStreamingText((prev) => prev + event.text);
@@ -214,7 +241,7 @@ export function useCopilotStream(
         setIsStreaming(false);
       }
     },
-    [isStreaming, organizationId, token, purpose]
+    [isStreaming, organizationId, token, purpose, discardThread]
   );
 
   return {
@@ -225,5 +252,6 @@ export function useCopilotStream(
     threadId,
     sendMessage,
     startNewThread,
+    discardThread,
   };
 }

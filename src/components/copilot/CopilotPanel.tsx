@@ -54,6 +54,7 @@ export function CopilotPanel(props: CopilotPanelProps) {
     threadId,
     sendMessage,
     startNewThread,
+    discardThread,
   } = useCopilotStream(
     organizationId,
     purpose || props.initialThreadId || props.onThreadChange
@@ -69,12 +70,16 @@ export function CopilotPanel(props: CopilotPanelProps) {
     api.copilot.getThreadMessages,
     threadId && active ? { threadId } : "skip"
   );
+  // `null` = o servidor diz que a thread não é desta conta (ou sumiu): descarta em silêncio.
+  useEffect(() => {
+    if (threadId && liveMessages === null) discardThread();
+  }, [threadId, liveMessages, discardThread]);
   const [cachedMessages, setCachedMessages] = useState<{
     threadId: string;
     messages: NonNullable<typeof liveMessages>;
   } | null>(null);
   useEffect(() => {
-    if (threadId && liveMessages !== undefined) {
+    if (threadId && liveMessages) {
       setCachedMessages({ threadId, messages: liveMessages });
     }
   }, [threadId, liveMessages]);
