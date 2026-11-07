@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 import { useChatModeActive } from "@/components/layout/chatMode";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -6,13 +6,13 @@ import { lockDocumentScroll } from "@/lib/scrollLock";
 import {
   chatViewportStyle,
   computeChatViewport,
-  nextBaseline,
+  createBaselineStore,
   sameChatViewport,
   shouldResetWindowScroll,
   type ChatViewport,
-  type ViewportBaseline,
   type ViewportSample,
 } from "@/lib/chatViewport";
+import { createLayerStack } from "@/lib/keyboardSheet";
 
 function sample(): ViewportSample {
   if (typeof window === "undefined") return { width: 0, innerHeight: 0 };
@@ -24,6 +24,26 @@ function sample(): ViewportSample {
     vvOffsetTop: vv?.offsetTop ?? null,
     scrollY: window.scrollY,
   };
+}
+
+/**
+ * Linha de base comum a todas as leituras (`lib/chatViewport`
+ * `createBaselineStore`). Primeira leitura ao carregar o módulo (o app abre com
+ * o teclado fechado) e a cada resize da janela, mesmo sem nenhuma camada
+ * rastreando: uma folha que monta com o teclado já aberto encontra a altura
+ * "fechada" daqui.
+ */
+export const viewportBaseline = createBaselineStore();
+
+/**
+ * Camadas (folhas, Modais, SlideOvers) que seguram a rolagem da janela agora;
+ * só a do topo segura. A regra da conversa é o fundo: só zera com ela vazia.
+ */
+export const scrollHolders = createLayerStack();
+
+if (typeof window !== "undefined") {
+  viewportBaseline.record(sample());
+  window.addEventListener("resize", () => viewportBaseline.record(sample()), { passive: true });
 }
 
 /** Marca o container da conversa (`useChatFrame`); o foco fora dele é de uma camada por cima. */
@@ -43,6 +63,7 @@ function focusOutsideFrame(): boolean {
 
 /** Janela rolada (foco no iOS) volta ao topo; devolve se precisou. */
 function resetWindowScroll(): boolean {
+  if (scrollHolders.size() > 0) return false;
   if (!shouldResetWindowScroll({ scrollY: window.scrollY, focusOutsideFrame: focusOutsideFrame() })) return false;
   window.scrollTo(0, 0);
   return true;
@@ -54,17 +75,18 @@ function resetWindowScroll(): boolean {
  * por quadro (rAF). `holdScroll` é chamado no próprio evento de rolagem da
  * janela (sem esperar o quadro, para não piscar a camada fora do lugar) e a
  * cada leitura: é onde cada uso desfaz a rolagem que o Safari faz ao focar um
- * campo. Sem `visualViewport` (jsdom, navegador antigo) cai para `innerHeight`.
+ * campo. A linha de base é a comum (`viewportBaseline`), então uma camada que
+ * monta com o teclado já aberto sabe que ele está aberto. Sem `visualViewport` (jsdom, navegador antigo) cai para `innerHeight`.
  * `enabled=false` não assina nada.
  */
 export function useViewportTracking(enabled: boolean, holdScroll: () => void): ChatViewport {
-  const baseline = useRef<ViewportBaseline | null>(null);
   const hold = useRef(holdScroll);
-  hold.current = holdScroll;
+  useLayoutEffect(() => {
+    hold.current = holdScroll;
+  }, [holdScroll]);
   const [vp, setVp] = useState<ChatViewport>(() => {
     const s = sample();
-    baseline.current = nextBaseline(null, s);
-    return computeChatViewport(s, baseline.current);
+    return computeChatViewport(s, viewportBaseline.record(s));
   });
 
   useEffect(() => {
@@ -74,8 +96,7 @@ export function useViewportTracking(enabled: boolean, holdScroll: () => void): C
       frame = null;
       hold.current();
       const s = sample();
-      baseline.current = nextBaseline(baseline.current, s);
-      const next = computeChatViewport(s, baseline.current);
+      const next = computeChatViewport(s, viewportBaseline.record(s));
       setVp((prev) => (sameChatViewport(prev, next) ? prev : next));
     };
     const schedule = () => {
@@ -114,9 +135,10 @@ export function useViewportTracking(enabled: boolean, holdScroll: () => void): C
  * `fixed` em `offsetTop` sai da área visível (ver `lib/chatViewport`). Com o
  * foco num campo fora do container (`[data-chat-frame]`), como Copiloto, Modais
  * e folhas em portal, ou num diálogo aninhado nele (SlideOver do lead/contato),
- * esta regra não mexe: essas camadas seguem a área visível sozinhas
+ * esta regra não mexe; com qualquer camada segurando a rolagem
+ * (`scrollHolders`), também não: elas seguem a área visível sozinhas
  * (`useKeyboardViewportBox`) e seguram a janela no `scrollY` de quando abriram
- * (0 no modo conversa, então as duas regras concordam).
+ * (0 no modo conversa, então as regras concordam).
  */
 export function useVisualViewport(enabled = true): ChatViewport {
   return useViewportTracking(enabled, resetWindowScroll);

@@ -47,14 +47,17 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
 }
 
 /**
- * Camada do Modal (montada só aberta). Abaixo de `sm` é folha inferior: com o
- * teclado aberto o container segue a área visível (`useKeyboardViewportBox`) e
- * a folha cabe nela com rolagem interna (campo e botões acima do teclado).
+ * Camada do Modal (montada só aberta). Abaixo de `sm` é folha inferior; abaixo
+ * de `sm` ou no toque, com o teclado aberto o container segue a área visível
+ * (`useKeyboardViewportBox`) e a folha/diálogo cabe nela com rolagem interna
+ * (campo e botões acima do teclado).
  */
 function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "open">) {
   const isSheet = useMediaQuery("(max-width: 639px)");
+  // Toque em tela larga (iPhone deitado, iPad): o teclado cobre o diálogo centralizado também.
+  const isTouch = useMediaQuery("(pointer: coarse)");
   const dialogRef = useRef<HTMLDivElement>(null);
-  const { style, keyboardOpen } = useKeyboardViewportBox(isSheet, dialogRef);
+  const { style, keyboardOpen } = useKeyboardViewportBox(isSheet || isTouch, dialogRef);
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center sm:justify-center"
@@ -78,7 +81,9 @@ function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "o
           "relative z-10 w-full bg-surface-overlay border border-border",
           "max-h-[85vh] overflow-y-auto overscroll-contain",
           // Mobile: bottom sheet (cobre a tab bar; respeita a safe-area)
-          "rounded-t-xl animate-slide-in-up pb-safe sm:pb-0",
+          "rounded-t-xl animate-slide-in-up sm:pb-0",
+          // Teclado aberto: a safe-area de baixo fica atrás dele.
+          keyboardOpen ? "pb-0" : "pb-safe",
           // Desktop: centered dialog
           "sm:rounded-xl sm:max-w-lg sm:mx-4 sm:animate-fade-in-up",
           className,

@@ -38,6 +38,66 @@ export function keyboardBoxStyle(vp: ChatViewport, tracking: boolean): KeyboardB
 }
 
 /**
+ * Pilha de camadas que seguram a rolagem da janela. Só a do topo (a última
+ * aberta ainda ativa) segura; a regra da conversa (`shouldResetWindowScroll`)
+ * é o fundo da pilha e só age com a pilha vazia. Sem isso, duas camadas
+ * abertas (SlideOver do lead + Modal por cima) brigariam pela rolagem.
+ */
+export interface LayerStack {
+  /** Empilha uma camada; devolve o id. */
+  push(): number;
+  /** Tira a camada (em qualquer ordem; id desconhecido é ignorado). */
+  remove(id: number): void;
+  /** Id da camada do topo, ou `null`. */
+  top(): number | null;
+  size(): number;
+}
+
+export function createLayerStack(): LayerStack {
+  const ids: number[] = [];
+  let nextId = 1;
+  return {
+    push() {
+      const id = nextId++;
+      ids.push(id);
+      return id;
+    },
+    remove(id) {
+      const i = ids.indexOf(id);
+      if (i >= 0) ids.splice(i, 1);
+    },
+    top: () => (ids.length ? ids[ids.length - 1] : null),
+    size: () => ids.length,
+  };
+}
+
+interface VerticalBox {
+  top: number;
+  bottom: number;
+}
+
+/**
+ * Novo `scrollTop` do container de rolagem para o campo focado caber nele (com
+ * `margin` px de folga), ou `null` se já está à vista. Campo mais alto que o
+ * container: alinha o topo. Só o container rola (nunca a janela, ao contrário
+ * de `scrollIntoView`).
+ */
+export function revealScrollTop(
+  container: VerticalBox,
+  field: VerticalBox,
+  scrollTop: number,
+  margin = 8
+): number | null {
+  const minTop = container.top + margin;
+  const maxBottom = container.bottom - margin;
+  let delta = 0;
+  if (field.top < minTop) delta = field.top - minTop;
+  else if (field.bottom > maxBottom) delta = Math.min(field.bottom - maxBottom, field.top - minTop);
+  if (Math.abs(delta) < 1) return null;
+  return Math.max(0, Math.round(scrollTop + delta));
+}
+
+/**
  * A janela saiu do `scrollY` guardado ao abrir a camada (rolagem do Safari ao
  * focar o campo): deve voltar. Meio pixel de folga (zoom).
  */

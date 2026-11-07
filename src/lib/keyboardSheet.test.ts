@@ -1,6 +1,61 @@
 import { describe, expect, it } from "vitest";
-import { computeChatViewport, nextBaseline } from "./chatViewport";
-import { keyboardBoxStyle, shouldRestoreWindowScroll } from "./keyboardSheet";
+import { computeChatViewport, createBaselineStore, nextBaseline } from "./chatViewport";
+import { createLayerStack, keyboardBoxStyle, revealScrollTop, shouldRestoreWindowScroll } from "./keyboardSheet";
+
+describe("createBaselineStore (linha de base comum)", () => {
+  it("camada que monta com o teclado já aberto usa a altura de uma leitura anterior", () => {
+    const store = createBaselineStore();
+    store.record({ width: 390, innerHeight: 844, vvHeight: 844 });
+    // iOS: innerHeight encolhe junto com o teclado; leitura isolada diria "fechado".
+    const open = { width: 390, innerHeight: 420, vvHeight: 420, vvOffsetTop: 0 };
+    expect(computeChatViewport(open, nextBaseline(null, open)).keyboardOpen).toBe(false);
+    const vp = computeChatViewport(open, store.record(open));
+    expect(vp).toEqual({ top: 0, height: 420, keyboardOpen: true });
+    expect(keyboardBoxStyle(vp, true)).toEqual({ top: "0px", height: "420px", bottom: "auto" });
+  });
+
+  it("guarda por largura (girar não mistura) e reset esquece", () => {
+    const store = createBaselineStore();
+    store.record({ width: 390, innerHeight: 844 });
+    expect(store.record({ width: 844, innerHeight: 390 }).height).toBe(390);
+    expect(store.record({ width: 390, innerHeight: 420 }).height).toBe(844);
+    store.reset();
+    expect(store.current()).toBeNull();
+  });
+});
+
+describe("createLayerStack", () => {
+  it("topo é a última camada ainda ativa, em qualquer ordem de saída", () => {
+    const stack = createLayerStack();
+    expect(stack.top()).toBeNull();
+    const a = stack.push();
+    const b = stack.push();
+    expect(stack.top()).toBe(b);
+    stack.remove(a);
+    expect(stack.top()).toBe(b);
+    stack.remove(b);
+    stack.remove(b);
+    expect(stack.size()).toBe(0);
+    expect(stack.top()).toBeNull();
+  });
+});
+
+describe("revealScrollTop", () => {
+  const box = { top: 100, bottom: 500 };
+  it("campo à vista: não rola", () => {
+    expect(revealScrollTop(box, { top: 200, bottom: 260 }, 50)).toBeNull();
+  });
+  it("campo abaixo da área: rola só o necessário (+ folga)", () => {
+    expect(revealScrollTop(box, { top: 520, bottom: 580 }, 50)).toBe(50 + 88);
+  });
+  it("campo acima da área: rola para cima, sem passar de 0", () => {
+    expect(revealScrollTop(box, { top: 60, bottom: 120 }, 200)).toBe(200 - 48);
+    expect(revealScrollTop(box, { top: 60, bottom: 120 }, 10)).toBe(0);
+  });
+  it("campo mais alto que a área: alinha o topo", () => {
+    expect(revealScrollTop(box, { top: 300, bottom: 900 }, 0)).toBe(192);
+  });
+});
 
 describe("keyboardBoxStyle", () => {
   it("teclado fechado: sem estilo (vale o inset-0 das classes)", () => {

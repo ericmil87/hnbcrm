@@ -417,7 +417,7 @@ export function ConversationList({
         // rótulo, e o toque continua abrindo o seletor de mês do sistema.
         <label
           className={cn(
-            "relative inline-flex h-8 coarse:h-11 items-center gap-1.5 rounded-full border px-3 text-xs",
+            "relative inline-flex h-8 coarse:h-11 items-center gap-1.5 overflow-hidden rounded-full border px-3 text-xs",
             "focus-within:ring-2 focus-within:ring-brand-500/20 focus-within:border-brand-500",
             search.month
               ? "border-brand-500 bg-brand-500/10 text-text-primary"
@@ -430,7 +430,15 @@ export function ConversationList({
             type="month"
             value={search.month}
             onChange={(e) => search.onMonthChange(e.target.value)}
-            className="absolute inset-0 h-full w-full cursor-pointer opacity-0 text-base"
+            onClick={(e) => {
+              // Navegadores sem abrir o seletor no toque do input invisível.
+              try {
+                e.currentTarget.showPicker?.();
+              } catch {
+                // Sem gesto válido ou já aberto: o toque nativo segue valendo.
+              }
+            }}
+            className="absolute inset-0 h-full w-full min-w-0 cursor-pointer appearance-none opacity-0 text-base"
             aria-label="Filtrar por mês"
           />
         </label>

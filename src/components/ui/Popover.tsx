@@ -180,7 +180,9 @@ function PopoverSheet({
         role={role}
         aria-label={ariaLabel}
         className={cn(
-          "relative w-full max-h-[80dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface-overlay pb-safe shadow-elevated motion-safe:animate-slide-in-up",
+          "relative w-full max-h-[80dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface-overlay shadow-elevated motion-safe:animate-slide-in-up",
+          // Teclado aberto: a safe-area de baixo fica atrás dele.
+          keyboardOpen ? "pb-0" : "pb-safe",
           className,
           // Teclado aberto: a folha ocupa no máximo a área visível (botões à
           // vista), mesmo com um `max-h` vindo do chamador.

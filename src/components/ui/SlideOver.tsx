@@ -67,8 +67,8 @@ export function SlideOver({
 }
 
 /**
- * Camada do SlideOver (montada só aberta). Abaixo de `md` é tela cheia: com o
- * teclado aberto o painel segue a área visível (`useKeyboardViewportBox`), o
+ * Camada do SlideOver (montada só aberta). Abaixo de `md` é tela cheia. Abaixo
+ * de `md` ou no toque, com o teclado aberto o painel segue a área visível (`useKeyboardViewportBox`), o
  * corpo rola por dentro e um rodapé fixo (composer do Copiloto, comentários)
  * fica logo acima do teclado.
  */
@@ -82,8 +82,10 @@ function SlideOverLayer({
   bodyClassName,
 }: Omit<SlideOverProps, "open">) {
   const isFullScreen = useMediaQuery("(max-width: 767px)");
+  // Toque em tela larga (iPad, iPhone deitado): o painel lateral também encolhe com o teclado.
+  const isTouch = useMediaQuery("(pointer: coarse)");
   const panelRef = useRef<HTMLDivElement>(null);
-  const { style, keyboardOpen } = useKeyboardViewportBox(isFullScreen, panelRef);
+  const { style, keyboardOpen } = useKeyboardViewportBox(isFullScreen || isTouch, panelRef);
   return (
     <div className="fixed inset-0 z-50">
       {/* Overlay (desktop only) */}
