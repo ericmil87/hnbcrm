@@ -74,6 +74,12 @@ function temperatureVariant(temperature: string): "error" | "warning" | "info" {
   return "info";
 }
 
+// Rodapé abaixo de sm: os dois botões dividem a largura (144 px cada a 320 px),
+// então o texto pode quebrar em duas linhas com padding menor; de sm para cima
+// volta ao botão md de uma linha. `coarse:min-h-11` do Button segue valendo.
+const FOOTER_BUTTON_FIT =
+  "h-auto min-h-11 px-3 py-1.5 leading-tight whitespace-normal text-center sm:h-10 sm:min-h-0 sm:px-4 sm:py-0 sm:whitespace-nowrap";
+
 const currencyFormatter = new Intl.NumberFormat("pt-BR", {
   style: "currency",
   currency: "BRL",
@@ -443,7 +449,10 @@ export function HandoffPeekSlideOver({
               aria-haspopup="dialog"
               aria-expanded={returnOpen}
               onClick={() => setReturnOpen((v) => !v)}
-              className="w-full whitespace-nowrap text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10"
+              className={cn(
+                "w-full text-semantic-error border-semantic-error/30 hover:bg-semantic-error/10",
+                FOOTER_BUTTON_FIT
+              )}
             >
               {VOCAB.attention.giveBack}
             </Button>
@@ -471,7 +480,7 @@ export function HandoffPeekSlideOver({
           <Button
             disabled={busy}
             onClick={() => void onAccept(handoff._id)}
-            className="w-full min-w-0 sm:w-auto sm:flex-1 whitespace-nowrap"
+            className={cn("w-full min-w-0 sm:w-auto sm:flex-1", FOOTER_BUTTON_FIT)}
           >
             <span className="sm:hidden">{VOCAB.attention.accept}</span>
             <span className="hidden sm:inline">Assumir conversa e abrir</span>

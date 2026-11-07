@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ATTENTION_LATE_AFTER_MS,
   attentionItemDetail,
+  attentionItemReason,
   attentionItemTitle,
   attentionSummaryLine,
   attentionUrgency,
@@ -34,6 +35,14 @@ describe("attentionItemDetail", () => {
   it("grupo sem resumo vira Grupo de WhatsApp; sem nada, vazio", () => {
     expect(attentionItemDetail({ ...base, isGroup: true })).toBe("Grupo de WhatsApp");
     expect(attentionItemDetail({ ...base, title: "X" })).toBe("");
+  });
+});
+
+describe("attentionItemReason", () => {
+  it("usa o motivo numa linha só e cai em Pedido de ajuda quando vazio", () => {
+    expect(attentionItemReason({ reason: " Pediu\n desconto " })).toBe("Pediu desconto");
+    expect(attentionItemReason({ reason: "   " })).toBe("Pedido de ajuda");
+    expect(attentionItemReason({ reason: "" })).toBe("Pedido de ajuda");
   });
 });
 

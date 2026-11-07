@@ -47,6 +47,11 @@ export function attentionItemDetail(h: AttentionListSource): string {
   return parts.join(" • ");
 }
 
+/** Motivo da linha 2; motivo vazio (pedido sem texto) vira "Pedido de ajuda". */
+export function attentionItemReason(h: Pick<AttentionListSource, "reason">): string {
+  return clean(h.reason) || "Pedido de ajuda";
+}
+
 /** Espera de uma hora ou mais vira atraso (ponto e hora em vermelho). */
 export function attentionUrgency(createdAt: number, now: number): AttentionUrgency {
   return now - createdAt >= ATTENTION_LATE_AFTER_MS ? "late" : "waiting";

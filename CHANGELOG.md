@@ -9,6 +9,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - No celular, "Requer atenção" virou uma lista enxuta no estilo de Conversas: cada pedido ocupa duas linhas (nome e hora; motivo e resumo) e cabem de 6 a 8 na tela, mesmo em aparelhos menores.
 - Tocar no pedido abre a conversa em modo leitura com as decisões no rodapé, sempre à vista: "Devolver à IA" e "Assumir conversa" lado a lado, além de "Instruir a IA em vez de assumir".
 - Pedidos esperando há uma hora ou mais ganham ponto e hora em vermelho; o topo mostra só a contagem e há quanto tempo espera o mais antigo.
+- O gesto de voltar do celular (e o voltar do navegador) fecha a conversa aberta e volta à lista, em vez de sair de "Requer atenção".
 - Saíram do celular o título repetido, a dica da página e a escolha Compacto/Completo. No computador nada muda.
 
 ### Copiloto no menu

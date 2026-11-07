@@ -65,10 +65,44 @@ describe("AttentionListItem", () => {
     expect(screen.getByText("há 10 min")).toHaveClass("text-text-muted");
   });
 
-  it("grupo sem resumo mostra o ícone de grupo e o subtítulo", () => {
-    renderItem({ handoff: { ...handoff, isGroup: true, summary: null, title: "Sala Vendas" } });
+  it("grupo sem resumo mostra o ícone de grupo (sem iniciais) e o subtítulo", () => {
+    const { container } = render(
+      <ul>
+        <AttentionListItem
+          handoff={{ ...handoff, isGroup: true, summary: null, title: "Sala Vendas" }}
+          now={NOW}
+          onOpen={vi.fn()}
+        />
+      </ul>
+    );
     expect(screen.getByText(/· Grupo de WhatsApp/)).toBeInTheDocument();
-    expect(screen.queryByLabelText(/Humano/)).not.toBeInTheDocument();
+    const avatar = container.querySelector("[data-avatar]");
+    expect(avatar).toHaveAttribute("data-avatar", "group");
+    expect(avatar?.querySelector("svg")).not.toBeNull();
+    expect(avatar).not.toHaveTextContent("SV");
+  });
+
+  it("pessoa mostra as iniciais do nome no avatar", () => {
+    const { container } = render(
+      <ul>
+        <AttentionListItem handoff={handoff} now={NOW} onOpen={vi.fn()} />
+      </ul>
+    );
+    const avatar = container.querySelector("[data-avatar]");
+    expect(avatar).toHaveAttribute("data-avatar", "person");
+    expect(avatar).toHaveTextContent("MS");
+  });
+
+  it("motivo vazio vira Pedido de ajuda", () => {
+    renderItem({ handoff: { ...handoff, reason: "  " } });
+    expect(screen.getByText("Pedido de ajuda")).toBeInTheDocument();
+  });
+
+  it("hover só para ponteiro fino (sem linha presa no toque)", () => {
+    renderItem();
+    const btn = screen.getByRole("button");
+    expect(btn).toHaveClass("[@media(hover:hover)]:hover:bg-surface-overlay", "active:bg-surface-overlay");
+    expect(btn).not.toHaveClass("hover:bg-surface-overlay");
   });
 
   it("marca o pedido aberto com aria-current", () => {

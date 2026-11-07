@@ -1,7 +1,7 @@
 import { Users } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
 import { formatRelative } from "@/lib/format";
-import { attentionItemDetail, attentionItemTitle, attentionUrgency } from "@/lib/attentionList";
+import { attentionItemDetail, attentionItemReason, attentionItemTitle, attentionUrgency } from "@/lib/attentionList";
 import { cn } from "@/lib/utils";
 import type { AttentionItem } from "./AttentionRow";
 
@@ -23,7 +23,7 @@ export function AttentionListItem({ handoff, now, selected = false, onOpen }: At
   const title = attentionItemTitle(handoff);
   const detail = attentionItemDetail(handoff);
   const late = attentionUrgency(handoff.createdAt, now) === "late";
-  const reason = handoff.reason.trim() || "Pedido de ajuda";
+  const reason = attentionItemReason(handoff);
 
   return (
     <li className="min-w-0">
@@ -33,12 +33,13 @@ export function AttentionListItem({ handoff, now, selected = false, onOpen }: At
         aria-current={selected ? "true" : undefined}
         className={cn(
           "flex w-full min-w-0 min-h-[72px] items-center gap-3 px-4 py-3 text-left transition-colors",
-          "hover:bg-surface-overlay active:bg-surface-overlay",
+          // Hover só com mouse: no toque o Safari deixaria a linha "presa" acesa.
+          "[@media(hover:hover)]:hover:bg-surface-overlay active:bg-surface-overlay",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
           selected && "bg-brand-500/10"
         )}
       >
-        <span aria-hidden="true" className="shrink-0">
+        <span aria-hidden="true" className="shrink-0" data-avatar={handoff.isGroup ? "group" : "person"}>
           {handoff.isGroup ? (
             <span className="flex h-10 w-10 items-center justify-center rounded-full bg-surface-overlay text-brand-500">
               <Users size={18} />
