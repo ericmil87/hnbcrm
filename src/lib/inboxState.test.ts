@@ -3,6 +3,9 @@ import {
   KIND_FILTER_KEY,
   activeBotSuspicion,
   aiStateChipInfo,
+  applyInboxChip,
+  countUnreadConversations,
+  inboxFilterChips,
   decideConversationParamAction,
   emptyListMessage,
   filterConversations,
@@ -202,5 +205,69 @@ describe("emptyListMessage", () => {
     expect(emptyListMessage({ ...base, showArchived: true, labelId: "l" }).text).toBe("Nenhuma conversa arquivada");
     expect(emptyListMessage({ ...base, labelId: "l" }).text).toBe("Nenhuma conversa com essa etiqueta");
     expect(emptyListMessage(base).text).toBe("Nenhuma conversa ainda");
+  });
+  it("Não lidas", () => {
+    expect(emptyListMessage({ ...base, unreadOnly: true }).text).toBe("Nenhuma conversa não lida");
+  });
+});
+
+describe("filtro 'Não lidas'", () => {
+  const list = [
+    { id: "a", unreadCount: 2 },
+    { id: "b", unreadCount: 0 },
+    { id: "c" },
+    { id: "d", kind: "group", unreadCount: 1 },
+  ];
+  it("filterConversations com unreadOnly mantém só as não lidas (e combina com o tipo)", () => {
+    expect(filterConversations(list, { kind: "all", labelId: null, unreadOnly: true }).map((c) => c.id)).toEqual([
+      "a",
+      "d",
+    ]);
+    expect(filterConversations(list, { kind: "direct", labelId: null, unreadOnly: true }).map((c) => c.id)).toEqual([
+      "a",
+    ]);
+  });
+  it("countUnreadConversations conta conversas, não mensagens", () => {
+    expect(countUnreadConversations(list)).toBe(2);
+    expect(countUnreadConversations([])).toBe(0);
+  });
+});
+
+describe("chips da lista (celular)", () => {
+  const labels = [{ _id: "l1", name: "VIP", color: "#10b981" }];
+  const none = { kind: "all" as const, unreadOnly: false, labelId: null };
+
+  it("Todas pressionado sem filtro; Grupos só com grupo; uma por etiqueta", () => {
+    const chips = inboxFilterChips(none, { labels, showGroups: false, unreadCount: 0 });
+    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "label:l1"]);
+    expect(chips[0].pressed).toBe(true);
+    expect(chips[1].count).toBeUndefined();
+    const withGroups = inboxFilterChips(none, { labels: [], showGroups: true, unreadCount: 12 });
+    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "group"]);
+    expect(withGroups[1].count).toBe(12);
+  });
+
+  it("filtro guardado em Diretas/Grupos sempre tem chip para desligar", () => {
+    expect(inboxFilterChips({ ...none, kind: "direct" }, { labels: [], showGroups: false, unreadCount: 0 })).toEqual([
+      { id: "all", label: "Todas", pressed: false },
+      { id: "unread", label: "Não lidas", pressed: false, count: undefined },
+      { id: "direct", label: "Diretas", pressed: true },
+    ]);
+    const group = inboxFilterChips({ ...none, kind: "group" }, { labels: [], showGroups: false, unreadCount: 0 });
+    expect(group.find((c) => c.id === "group")?.pressed).toBe(true);
+  });
+
+  it("applyInboxChip: Todas limpa; os outros ligam e desligam", () => {
+    const busy = { kind: "group" as const, unreadOnly: true, labelId: "l1" };
+    expect(applyInboxChip("all", busy)).toEqual(none);
+    expect(applyInboxChip("unread", none)).toEqual({ ...none, unreadOnly: true });
+    expect(applyInboxChip("unread", busy).unreadOnly).toBe(false);
+    expect(applyInboxChip("group", none).kind).toBe("group");
+    expect(applyInboxChip("group", busy).kind).toBe("all");
+    expect(applyInboxChip("direct", { ...none, kind: "direct" }).kind).toBe("all");
+    expect(applyInboxChip("label:l1", none).labelId).toBe("l1");
+    expect(applyInboxChip("label:l1", busy).labelId).toBeNull();
+    expect(applyInboxChip("label:l2", busy).labelId).toBe("l2");
+    expect(applyInboxChip("desconhecido", busy)).toBe(busy);
   });
 });

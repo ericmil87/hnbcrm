@@ -11,7 +11,8 @@ src/
 ├── SignOutButton.tsx           # Sign-out button
 ├── index.css                   # --rgb-* color channels + full-color aliases (dark/light/whatsapp), shadows, auth classes, shimmer, .chat-wallpaper
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
-├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal) — the only entry point
+├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal, formatListTime for the Conversas list) — the only entry point
+├── lib/pageHeader.ts           # pure signature/merge of the page contribution to the AppShell mobile header (components/layout/pageHeader.tsx: usePageHeader, PageHeaderSlot, globalMenuItems); test next to it
 ├── lib/nav.ts                  # NAV_ITEMS/NAV_GROUPS (single nav model), visibleNavItems(), splitMobile(), badge helpers; test next to it
 ├── lib/vocab.ts                # VOCAB (one UI name per concept) + BANNED_UI_TERMS; guard: lib/vocabGuard.test.ts (+ vocabGuard.allowlist.ts)
 ├── lib/settingsNav.ts          # Settings: resolveSettingsPanel(), visibleSettingsPanels(), groupOf(), groupSettingsPanels(); test next to it
@@ -49,12 +50,12 @@ src/
 ├── lib/searchParamState.ts     # pure URL-state codecs (stringParam, enumParam, booleanParam `1`, numberParam, listParam), writeParams (several params in one write) and the in-flight write (beginWrite/settleWrite); test next to it
 ├── hooks/useSearchParamState.ts # typed search-param state: replace for filters, push for entities; `isInFlight()` guards URL → state effects (single copy of the `{target, stale}` mechanism)
 ├── hooks/useTranslationSettings.ts # translation module flag (`useOrgModules`) + `translation.getInboxSettings` (any member): team language, outbound mode
-├── lib/inboxState.ts           # pure Conversas logic: activeBotSuspicion, isHandoffPending, aiStateChipInfo, readKindFilter, filterConversations, listFilterKey, linkedMatchesView, decideConversationParamAction (param → selection state machine), emptyListMessage; test next to it
+├── lib/inboxState.ts           # pure Conversas logic: activeBotSuspicion, isHandoffPending, aiStateChipInfo, readKindFilter, filterConversations (+ unreadOnly), countUnreadConversations, inboxFilterChips/applyInboxChip (mobile chips), listFilterKey, linkedMatchesView, decideConversationParamAction (param → selection state machine), emptyListMessage; test next to it
 ├── hooks/useOpenEntityParam.ts # open item in a URL param (?log=, ?member=): push + own-entry mark, close = navigate(-1) or replace, no scroll reset; test next to it
 ├── hooks/useTasksUrlState.ts   # Tarefas URL state: ?view=list|status, ?smart=, ?status=, ?assignee=, ?label=, ?project= (replace, one write for compound changes); pure part in lib/tasksFilters.ts (codecs, resolveTaskIds) + test
 ├── hooks/useAuditUrlState.ts   # Histórico URL state: ?entity=&action=&actor=&severity=&from=&to= (replace) and ?log= (push); pure part in lib/auditFilters.ts + test; cursorStack stays in state
 ├── lib/campaignFilters.ts      # Campanhas ?status=&provider= codecs (replace)
-├── hooks/useInboxFilters.ts    # Conversas filters: `?archived=1` and `?label=<id>` (URL, replace); direct/group and channel/account (localStorage); Central queue
+├── hooks/useInboxFilters.ts    # Conversas filters: `?archived=1`, `?label=<id>` and `?unread=1` (mobile chip) (URL, replace; `applyChipState`); direct/group and channel/account (localStorage); Central queue
 ├── hooks/useConversationList.ts # list batches 50→500, keep-previous, infinite sentinel
 ├── hooks/useConversationSelection.ts # `?conversation=` (push) ↔ open conversation, deep-link resolver state, `?nova=`, `location.state` draft; test next to it
 ├── hooks/useBulkConversationSelection.ts # multi-select in the list: archive/unarchive/label in bulk
@@ -65,7 +66,7 @@ src/
     ├── ui/                     # Primitives: Button, Input, Badge, Card, Modal (bottom sheet/dialog), SlideOver, Spinner, Skeleton, Avatar,
     │                           #   ConfirmDialog, Checkbox, FileDropZone (drag/click .csv, >10 MB warning), ApiKeyRevealModal,
     │                           #   form controls: Switch, Select (native), SegmentedControl, Tabs/TabPanel, FormField, Textarea
-    │                           #   structure: PageHeader, SectionCard, EmptyState, Stepper, SearchInput, Popover, Menu, Tooltip (+ lib/popoverPosition.ts)
+    │                           #   structure: PageHeader, SectionCard, EmptyState, Stepper, SearchInput (`variant="pill"`), Popover, Menu, Tooltip (+ lib/popoverPosition.ts), FilterChips (toolbar of aria-pressed chips, horizontal scroll)
     ├── notifications/          # NotificationBell (unread count) → NotificationPanel (list, opens item pointer, mark read); NotificationPreferences (Settings)
     ├── copilot/CopilotPanel.tsx  # Copilot chat SlideOver: streams via useCopilotStream, renders tool calls + pendingAction confirmations
     ├── copilot/ConfigPreview.tsx # Pure "Antes/Depois" preview of a pendingAction (bold labels, -/+ diff colors)
@@ -85,7 +86,7 @@ src/
     ├── Inbox.tsx               # Inbox orchestrator (/app/entrada, < 400 lines): wires the hooks above to InboxListColumn/ConversationHeader + ConversationThread + Composer; ?conversation=<id> (getConversationById fallback)
     ├── inbox/                  # MessageBubble, VoiceRecorder, VoiceTranscription, EmojiPickerButton, QuickReplies ("/"), ConversationActionsMenu,
     │                           #   AiDraftCard (+ coaching, AiConversationControls, ReturnToAiButton), MessageActionsBar (menu de ações + reações rápidas; substitui o antigo ReactionPicker), AiControlMenu, ForwardModal, AudioPlayer…
-    │                           #   fv2-25: ConversationList (presentational column: header, SegmentedControl/Select filters, search, items, empty state, "Carregar mais", bulk bar) + ConversationListItem,
+    │                           #   fv2-25: ConversationList (presentational column: header, SegmentedControl/Select filters, search, items, empty state, "Carregar mais", bulk bar; `layout="mobile"` < md = WhatsApp style: pill search, chips, "Arquivadas" row) + ConversationListItem (`variant="compact"` 2 lines, long press → selection; `leadTitleToShow`), InboxFiltersSheet (mobile ⋯ → type/channel/account),
     │                           #   ConversationHeader (contact/group, origin, funnel stage, AiStatusChip, "Assumir conversa"/"Devolver à IA" always visible on a pending handoff, bot suspicion, actions menu),
     │                           #   AiStatusChip, AttentionBanner ("N conversas precisam de você · Ver" → /app/repasses; `usePendingAttentionCount`), GroupMenuItems, GroupConversationPanels (+ `useGroupPanels`),
     │                           #   useGroupMode (group doc + mention names by JID), ScheduledPendingRow, InboxListColumn (list wiring), InboxOverlays (+ `useInboxOverlays`: lead/contact/group panels), ConversationDeepLinkResolver, useConversationHeaderState (typing/window/draft/standby for the header),

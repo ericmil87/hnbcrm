@@ -1,5 +1,8 @@
+import { useState } from "react";
 import { useNavigate } from "react-router";
+import { CheckSquare, Plus, SlidersHorizontal } from "lucide-react";
 import { shouldShowAccount } from "@/lib/channelAccounts";
+import { applyInboxChip, countUnreadConversations, inboxFilterChips } from "@/lib/inboxState";
 import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import type { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
@@ -9,6 +12,9 @@ import { AttentionBanner } from "@/components/inbox/AttentionBanner";
 import { ConversationList } from "@/components/inbox/ConversationList";
 import type { ConversationListEntry } from "@/components/inbox/ConversationListItem";
 import { InboxQueueBar } from "@/components/inbox/central/InboxQueueBar";
+import { InboxFiltersSheet, hasSheetFilters } from "@/components/inbox/InboxFiltersSheet";
+import { usePageHeader } from "@/components/layout/pageHeader";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 
 interface InboxListColumnProps {
   className?: string;
@@ -50,8 +56,79 @@ export function InboxListColumn({
 }: InboxListColumnProps) {
   const navigate = useNavigate();
   const { centralModules, centralEnabled, showArchived, kindFilter, filterLabelId, conversationLabels } = filters;
+  // Celular (< md): layout estilo WhatsApp; desktop fica como sempre (D1).
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const [filtersSheetOpen, setFiltersSheetOpen] = useState(false);
+  const sheetFilters = {
+    showKindFilter,
+    channelChipVisible: filters.channelChipVisible,
+    accountChoices: filters.accountChoices,
+  };
+  const toggleSelectionMode = () => (bulk.selectionMode ? bulk.exitSelection() : bulk.setSelectionMode(true));
+
+  // Cabeçalho do AppShell no celular: [⋯] (Selecionar, Filtrar) e [+] (Nova conversa).
+  usePageHeader(
+    isMobile
+      ? {
+          menuLabel: "Mais ações em Conversas",
+          menuItems: [
+            {
+              id: "select",
+              label: bulk.selectionMode ? "Cancelar seleção" : "Selecionar conversas",
+              icon: <CheckSquare size={16} aria-hidden="true" />,
+              onSelect: toggleSelectionMode,
+            },
+            ...(hasSheetFilters(sheetFilters)
+              ? [
+                  {
+                    id: "filters",
+                    label: "Filtrar por tipo e canal",
+                    icon: <SlidersHorizontal size={16} aria-hidden="true" />,
+                    onSelect: () => setFiltersSheetOpen(true),
+                  },
+                ]
+              : []),
+          ],
+          actions: onNewConversation
+            ? [{ id: "new", label: "Nova conversa", icon: <Plus size={22} aria-hidden="true" />, onSelect: onNewConversation }]
+            : [],
+        }
+      : null
+  );
+
+  const chipState = { kind: kindFilter, unreadOnly: filters.unreadOnly, labelId: filterLabelId };
+
   return (
+    <>
+    {isMobile && (
+      <InboxFiltersSheet
+        open={filtersSheetOpen}
+        onClose={() => setFiltersSheetOpen(false)}
+        kind={kindFilter}
+        onKindChange={filters.setKindFilter}
+        {...sheetFilters}
+        channel={filters.channelFilter}
+        onChannelChange={filters.updateChannelFilter}
+        channelOptions={filters.channelOptions}
+      />
+    )}
     <ConversationList
+      layout={isMobile ? "mobile" : "default"}
+      mobile={
+        isMobile
+          ? {
+              chips: inboxFilterChips(chipState, {
+                labels: (conversationLabels ?? []).map((l) => ({ _id: l._id as string, name: l.name, color: l.color })),
+                showGroups: showKindFilter,
+                unreadCount: countUnreadConversations(list.validConversations),
+              }),
+              onChip: (id) => filters.applyChipState(applyInboxChip(id, chipState)),
+              unreadOnly: filters.unreadOnly,
+              onLongPress: bulk.startSelectionWith,
+              now: Date.now(),
+            }
+          : undefined
+      }
       className={cn(
         // Central ligada: a coluna não encolhe (a barra de filas e a de
         // roteamento disputavam espaço e a lista caía para ~230 px).
@@ -111,7 +188,7 @@ export function InboxListColumn({
       }}
       selection={{
         mode: bulk.selectionMode,
-        onToggleMode: () => (bulk.selectionMode ? bulk.exitSelection() : bulk.setSelectionMode(true)),
+        onToggleMode: toggleSelectionMode,
         selectedIds: bulk.selectedIds,
         onToggle: bulk.toggleSelected,
         onArchive: bulk.handleBulkArchiveClick,
@@ -128,5 +205,6 @@ export function InboxListColumn({
       }}
       onChooseGroups={() => navigate(TAB_ROUTES.groups)}
     />
+    </>
   );
 }

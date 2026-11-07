@@ -14,6 +14,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useDocumentScrollLock } from "@/hooks/useVisualViewport";
 import { cn } from "@/lib/utils";
 import { ChatModeProvider, type ChatModeValue } from "./chatMode";
+import { PageHeaderProvider, PageHeaderSlot, usePageHeaderRegistry } from "./pageHeader";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import type { UiTheme } from "@/lib/theme";
@@ -52,6 +53,8 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
   // Modo conversa (Inbox com conversa aberta): abaixo de `md` some o cabeçalho, as
   // abas e o FAB (tela cheia como o WhatsApp) e o documento para de rolar por trás.
   const [chatModeActive, setChatModeActive] = useState(false);
+  // Ações e ⋯ que a página põe no cabeçalho do celular (`usePageHeader`).
+  const pageHeader = usePageHeaderRegistry();
   const isMobile = useMediaQuery("(max-width: 767px)");
   useDocumentScrollLock(chatModeActive && isMobile);
   const chatMode = useMemo<ChatModeValue>(
@@ -65,6 +68,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
 
   return (
     <ChatModeProvider value={chatMode}>
+    <PageHeaderProvider register={pageHeader.register}>
     <div className="min-h-screen supports-[height:100dvh]:min-h-[100dvh] bg-surface-base">
       {/* Desktop sidebar */}
       <Sidebar
@@ -98,7 +102,13 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
               <ChevronsUpDown size={12} aria-hidden="true" />
             </button>
           </div>
-          <NotificationBell organizationId={organizationId} />
+          <div className="flex shrink-0 items-center">
+            <NotificationBell organizationId={organizationId} />
+            {/* Contribuição da página (só celular; no desktop cada tela tem o seu cabeçalho). */}
+            <div className="md:hidden flex items-center">
+              <PageHeaderSlot registration={pageHeader.registration} />
+            </div>
+          </div>
         </header>
 
         <div className="min-h-[calc(100vh-3.5rem)] supports-[height:100dvh]:min-h-[calc(100dvh-3.5rem)] md:min-h-[calc(100vh-4rem)] md:supports-[height:100dvh]:min-h-[calc(100dvh-4rem)] pb-20 md:pb-0">
@@ -134,6 +144,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
         </>
       )}
     </div>
+    </PageHeaderProvider>
     </ChatModeProvider>
   );
 }

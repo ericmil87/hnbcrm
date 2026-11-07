@@ -13,7 +13,12 @@ import {
   showChannelChip,
   type InboxFilterState,
 } from "@/lib/channelAccounts";
-import { KIND_FILTER_KEY, readKindFilter, type ConversationKindFilter } from "@/lib/inboxState";
+import {
+  KIND_FILTER_KEY,
+  readKindFilter,
+  type ConversationKindFilter,
+  type InboxChipState,
+} from "@/lib/inboxState";
 import { booleanParam, stringParam } from "@/lib/searchParamState";
 import {
   EMPTY_QUEUE_FILTER,
@@ -24,14 +29,16 @@ import {
 /**
  * Filtros da lista de Conversas.
  * - Estado de tela, na URL (replace, não polui o histórico): `?archived=1`,
- *   `?label=<id>`.
+ *   `?label=<id>` e `?unread=1` (chip "Não lidas" do celular).
  * - Preferência pessoal, em `localStorage`: Diretas/Grupos e Canal/Conta.
  * - Fila (Central, opcional por org): estado local.
  */
 export function useInboxFilters(organizationId: Id<"organizations">) {
   const archivedParam = useSearchParamState("archived", booleanParam);
   const labelParam = useSearchParamState("label", stringParam);
+  const unreadParam = useSearchParamState("unread", booleanParam);
   const showArchived = archivedParam.value;
+  const unreadOnly = unreadParam.value;
   const setShowArchived = archivedParam.set;
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
@@ -107,9 +114,19 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const unitById = new Map((inboxQueues?.units ?? []).map((u) => [u._id as string, u]));
   const departmentById = new Map((inboxQueues?.departments ?? []).map((d) => [d._id as string, d]));
 
+  /** Chips do celular: etiqueta e "Não lidas" numa escrita só da URL; tipo no localStorage. */
+  const applyChipState = (next: InboxChipState) => {
+    if (next.kind !== kindFilter) setKindFilter(next.kind);
+    if (next.unreadOnly !== unreadOnly || next.labelId !== filterLabelId) {
+      unreadParam.set(next.unreadOnly, { also: { label: next.labelId } });
+    }
+  };
+
   return {
     // URL
     showArchived,
+    unreadOnly,
+    applyChipState,
     setShowArchived,
     filterLabelId,
     setFilterLabelId,

@@ -5,6 +5,7 @@ import { renderWithRouter } from "@/test/render";
 import {
   ConversationListItem,
   conversationDisplayName,
+  leadTitleToShow,
   type ConversationListEntry,
 } from "./ConversationListItem";
 
@@ -115,6 +116,86 @@ describe("ConversationListItem", () => {
     renderItem({}, { selectionMode: true, checked: true });
     expect(screen.getByRole("button")).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByTestId("selection-box")).toBeInTheDocument();
+  });
+});
+
+describe("ConversationListItem compact (celular)", () => {
+  // Sábado, 07/11/2026 15:00 no fuso local do teste.
+  const NOW = new Date(2026, 10, 7, 15, 0).getTime();
+  const compact = { variant: "compact" as const, now: NOW, showAccount: false };
+
+  it("2 linhas: nome + hora de hoje, prévia; sem pílula de canal visível", () => {
+    renderItem({ lastMessageAt: new Date(2026, 10, 7, 9, 5).getTime() }, compact);
+    expect(screen.getByText("Maria Silva")).toBeInTheDocument();
+    expect(screen.getByText("09:05")).toBeInTheDocument();
+    expect(screen.getByText("Posso confirmar?")).toBeInTheDocument();
+    // O canal vira ícone no avatar; o nome do canal fica só para leitor de tela.
+    expect(screen.getByText("WhatsApp")).toHaveClass("sr-only");
+  });
+
+  it("hora estilo WhatsApp: ontem vira 'Ontem'", () => {
+    renderItem({ lastMessageAt: new Date(2026, 10, 6, 20).getTime() }, compact);
+    expect(screen.getByText("Ontem")).toBeInTheDocument();
+  });
+
+  it("título do lead só quando diferente do nome do contato (D2)", () => {
+    renderItem({}, compact);
+    expect(screen.getByText(/Reserva de março/)).toBeInTheDocument();
+  });
+
+  it("título igual ao nome do contato não se repete", () => {
+    renderItem({ lead: { title: "  maria   silva " } }, compact);
+    expect(screen.getAllByText(/Maria Silva/i)).toHaveLength(1);
+  });
+
+  it("não lidas: selo com bg-badge-unread e hora em destaque", () => {
+    renderItem({ unreadCount: 3, lastMessageAt: new Date(2026, 10, 7, 9, 5).getTime() }, compact);
+    expect(screen.getByLabelText("3 mensagens não lidas")).toHaveClass("bg-badge-unread");
+    expect(screen.getByText("09:05")).toHaveClass("text-brand-500");
+  });
+
+  it("mantém 'Você:', pedido de ajuda e suspeita de robô compactos", () => {
+    renderItem(
+      {
+        lastMessageDirection: "outbound",
+        lead: { title: "L", handoffState: { status: "pending" } },
+        botSuspicion: { at: 1, source: "heuristic", reason: "x" },
+      },
+      compact
+    );
+    expect(screen.getByText(/Você:/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Pediu ajuda" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Suspeita de robô" })).toBeInTheDocument();
+  });
+
+  it("grupo: leitor de tela ouve que é grupo", () => {
+    renderItem({ kind: "group", groupChat: { subject: "Vendas SP", participantsCount: 12 }, lead: null }, compact);
+    expect(screen.getByText("Vendas SP")).toBeInTheDocument();
+    expect(screen.getByText(/Conversa de grupo/)).toHaveClass("sr-only");
+  });
+
+  it("modo seleção: caixa e aria-pressed", () => {
+    renderItem({}, { ...compact, selectionMode: true, checked: true });
+    expect(screen.getByRole("button")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("selection-box")).toBeInTheDocument();
+  });
+
+  it("clique aciona onClick (o toque longo não dispara com mouse)", async () => {
+    const onLongPress = vi.fn();
+    const { onClick } = renderItem({}, { ...compact, onLongPress });
+    await userEvent.click(screen.getByRole("button"));
+    expect(onClick).toHaveBeenCalledTimes(1);
+    expect(onLongPress).not.toHaveBeenCalled();
+  });
+});
+
+describe("leadTitleToShow", () => {
+  it("diferente do nome mostra; igual, vazio ou grupo não", () => {
+    expect(leadTitleToShow(base)).toBe("Reserva de março");
+    expect(leadTitleToShow({ ...base, lead: { title: "Maria Silva" } })).toBeNull();
+    expect(leadTitleToShow({ ...base, lead: { title: "  " } })).toBeNull();
+    expect(leadTitleToShow({ ...base, lead: null })).toBeNull();
+    expect(leadTitleToShow({ ...base, kind: "group", groupChat: { subject: "X" } })).toBeNull();
   });
 });
 

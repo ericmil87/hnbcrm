@@ -21,6 +21,7 @@ import { useConversationList } from "@/hooks/useConversationList";
 import { useConversationSelection } from "@/hooks/useConversationSelection";
 import { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
 import { filterConversations } from "@/lib/inboxState";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { NewConversationModal } from "@/components/inbox/NewConversationModal";
 import { usePendingAttentionCount } from "@/components/inbox/AttentionBanner";
@@ -115,9 +116,12 @@ export function Inbox() {
   // quando a org parava de acompanhar salas, e a caixa ficava vazia sem saída.
   const hasGroupConversations =
     validConversations.some((c) => c.kind === "group") || kindFilter !== "all";
+  // "Não lidas" é chip só do celular (no desktop não há como desligá-lo).
+  const isMobile = useMediaQuery("(max-width: 767px)");
   const filteredConversations = filterConversations(validConversations, {
     kind: kindFilter,
     labelId: filterLabelId,
+    unreadOnly: isMobile && filters.unreadOnly,
   });
   const listedConversations: ConversationListEntry[] = selection.pinnedConversation
     ? [selection.pinnedConversation as ConversationListEntry, ...filteredConversations]
@@ -184,10 +188,12 @@ export function Inbox() {
 
   return (
     <div {...chatFrame}>
-      {/* Onboarding spotlight — wrapper colapsa (empty:hidden) quando não há dica */}
-      <div className="shrink-0 px-4 pt-4 md:px-6 empty:hidden">
-        <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
-      </div>
+      {/* Dica de onboarding (só md+; no celular a lista começa logo abaixo do cabeçalho) */}
+      {!isMobile && (
+        <div className="shrink-0 px-4 pt-4 md:px-6 empty:hidden">
+          <SpotlightTooltip spotlightId="inbox" organizationId={organizationId} />
+        </div>
+      )}
 
       <div className="flex-1 min-h-0 flex flex-col md:flex-row">
       <InboxListColumn
