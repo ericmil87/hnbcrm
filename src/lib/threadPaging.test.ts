@@ -9,6 +9,7 @@ import {
   makePrependAnchor,
   newestInbound,
   readSignature,
+  shouldPinAfterResize,
 } from "./threadPaging";
 
 const base = {
@@ -113,5 +114,18 @@ describe("isContactTyping", () => {
     expect(isContactTyping({ state: "composing", at: 1000 }, 13_000)).toBe(false);
     expect(isContactTyping({ state: "paused", at: 1000 }, 1001)).toBe(false);
     expect(isContactTyping(null, 1)).toBe(false);
+  });
+});
+
+describe("shouldPinAfterResize", () => {
+  it("teclado abriu com o leitor no fim: gruda no fim", () => {
+    expect(shouldPinAfterResize({ prevClientHeight: 700, clientHeight: 340, nearBottom: true })).toBe(true);
+  });
+  it("leitor no meio do histórico: não mexe", () => {
+    expect(shouldPinAfterResize({ prevClientHeight: 700, clientHeight: 340, nearBottom: false })).toBe(false);
+  });
+  it("sem medida anterior ou mesma altura: não mexe", () => {
+    expect(shouldPinAfterResize({ prevClientHeight: null, clientHeight: 340, nearBottom: true })).toBe(false);
+    expect(shouldPinAfterResize({ prevClientHeight: 340.2, clientHeight: 340, nearBottom: true })).toBe(false);
   });
 });

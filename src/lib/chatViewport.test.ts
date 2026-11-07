@@ -5,6 +5,7 @@ import {
   computeChatViewport,
   nextBaseline,
   sameChatViewport,
+  shouldResetWindowScroll,
   visibleHeight,
 } from "./chatViewport";
 
@@ -55,6 +56,21 @@ describe("computeChatViewport", () => {
     expect(computeChatViewport(s, { width: 390, height: 844 }).keyboardOpen).toBe(false);
   });
 
+  it("iOS com innerHeight encolhendo junto: o topo segue offsetTop (bug B2 da v0.82)", () => {
+    // Antes o topo era limitado por innerHeight - altura = 0 e o container ficava
+    // acima da área visível (só o composer no topo, faixa vazia até o teclado).
+    const base = nextBaseline(null, { width: 390, innerHeight: 827, vvHeight: 827, vvOffsetTop: 0 });
+    const s = { width: 390, innerHeight: 470, vvHeight: 470, vvOffsetTop: 357 };
+    expect(computeChatViewport(s, nextBaseline(base, s))).toEqual({ top: 357, height: 470, keyboardOpen: true });
+  });
+
+  it("janela de volta a 0 com teclado aberto: container no topo, composer colado no teclado", () => {
+    const s = { width: 390, innerHeight: 827, vvHeight: 470, vvOffsetTop: 0, scrollY: 0 };
+    const vp = computeChatViewport(s, { width: 390, height: 827 });
+    expect(vp).toEqual({ top: 0, height: 470, keyboardOpen: true });
+    expect(vp.top + vp.height).toBe(470);
+  });
+
   it("overscroll elástico: topo fica entre 0 e o fim da viewport de layout", () => {
     expect(computeChatViewport({ width: 390, innerHeight: 844, vvHeight: 500, vvOffsetTop: -30 }, null).top).toBe(0);
     expect(computeChatViewport({ width: 390, innerHeight: 844, vvHeight: 500, vvOffsetTop: 600 }, null).top).toBe(344);
@@ -73,5 +89,18 @@ describe("chatViewportStyle / sameChatViewport", () => {
     expect(sameChatViewport(a, { ...a })).toBe(true);
     expect(sameChatViewport(a, { ...a, height: 801 })).toBe(false);
     expect(sameChatViewport(a, { ...a, keyboardOpen: true })).toBe(false);
+  });
+});
+
+describe("shouldResetWindowScroll", () => {
+  it("janela rolada pelo foco do iOS volta a 0", () => {
+    expect(shouldResetWindowScroll({ scrollY: 357 })).toBe(true);
+    expect(shouldResetWindowScroll({ scrollY: -12 })).toBe(true);
+  });
+  it("parada (ou meio pixel de zoom) não mexe", () => {
+    expect(shouldResetWindowScroll({ scrollY: 0 })).toBe(false);
+    expect(shouldResetWindowScroll({ scrollY: 0.4 })).toBe(false);
+    expect(shouldResetWindowScroll({})).toBe(false);
+    expect(shouldResetWindowScroll({ scrollY: Number.NaN })).toBe(false);
   });
 });

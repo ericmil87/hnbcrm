@@ -18,6 +18,7 @@ import {
   decideThreadScroll,
   isNearBottom,
   makePrependAnchor,
+  shouldPinAfterResize,
   type PrependAnchor,
 } from "@/lib/threadPaging";
 import type { InboxMessage } from "@/components/inbox/types";
@@ -99,6 +100,24 @@ export function useThreadPaging(
     if (decision.scrollTop === "bottom") el.scrollTop = el.scrollHeight;
     else if (decision.scrollTop !== null) el.scrollTop = decision.scrollTop;
   }, [messages, messagesRaw, limit, conversationId, ready]);
+
+  // Teclado do celular abrindo (container segue a visualViewport) ou composer
+  // crescendo encolhem o thread sem evento de `scroll`: quem estava no fim
+  // continua vendo as últimas mensagens.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let prevClientHeight: number | null = el.clientHeight;
+    const observer = new ResizeObserver(() => {
+      const clientHeight = el.clientHeight;
+      if (shouldPinAfterResize({ prevClientHeight, clientHeight, nearBottom: nearBottomRef.current })) {
+        el.scrollTop = el.scrollHeight;
+      }
+      prevClientHeight = clientHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [conversationId]);
 
   const flash = (messageId: string) => {
     const el = document.getElementById(`msg-${messageId}`);

@@ -1,12 +1,25 @@
 /**
  * Geometria da conversa em tela cheia no celular (modo conversa).
  *
- * No iOS Safari o `dvh` não encolhe quando o teclado abre: a viewport de layout
- * continua do tamanho da tela e só a `visualViewport` diminui (e pode rolar,
- * `offsetTop > 0`). Um container `position: fixed` com `top = offsetTop` e
- * `height = visualViewport.height` fica exatamente na área visível, com o
- * composer logo acima do teclado. No Android com `interactive-widget=resizes-content`
- * a viewport de layout encolhe junto e a mesma conta continua valendo.
+ * O container é `position: fixed` com `top = visualViewport.offsetTop` e
+ * `height = visualViewport.height`: fica exatamente na área visível, com o
+ * composer logo acima do teclado.
+ *
+ * Premissas sobre o iOS Safari (17/18/26; sem iPhone no CI, validar no aparelho):
+ * - O `dvh` não encolhe com o teclado e `interactive-widget` é ignorado: só a
+ *   `visualViewport` diminui.
+ * - Ao focar o campo, o Safari ROLA A JANELA (`scrollY > 0`) para trazer o campo
+ *   acima do teclado, mesmo com `overflow: hidden` no html/body. Com o teclado
+ *   aberto, `fixed` e `offsetTop` deixam de concordar com essa rolagem: o
+ *   container desenhado em `offsetTop` fica ACIMA da área visível (só o composer
+ *   aparece no topo, com uma faixa vazia até o teclado). Por isso, no modo
+ *   conversa, a janela volta a `scrollY = 0` a cada rolagem (`shouldResetWindowScroll`);
+ *   com a janela em 0 as duas referências coincidem.
+ * - O `window.innerHeight` do WebKit acompanha a área visível (encolhe com o
+ *   teclado em algumas versões). Ele não pode limitar o `top`: o limite usa a
+ *   maior altura já vista na largura (linha de base).
+ * No Android com `interactive-widget=resizes-content` a viewport de layout
+ * encolhe junto, `offsetTop` fica 0 e a mesma conta continua valendo.
  */
 
 export interface ViewportSample {
@@ -18,6 +31,8 @@ export interface ViewportSample {
   vvHeight?: number | null;
   /** `visualViewport.offsetTop` (ausente: 0). */
   vvOffsetTop?: number | null;
+  /** `window.scrollY` (ausente: 0). */
+  scrollY?: number | null;
 }
 
 /** Maior altura vista na largura atual: referência de "teclado fechado". */
@@ -62,10 +77,12 @@ export function nextBaseline(prev: ViewportBaseline | null, s: ViewportSample): 
 export function computeChatViewport(s: ViewportSample, baseline: ViewportBaseline | null): ChatViewport {
   const height = Math.round(visibleHeight(s));
   const rawTop = finite(s.vvOffsetTop, 0);
-  // Overscroll elástico do iOS pode dar offsetTop negativo ou além do fim.
-  const maxTop = Math.max(0, finite(s.innerHeight, height) - height);
-  const top = Math.round(Math.min(Math.max(0, rawTop), maxTop));
   const reference = Math.max(baseline?.height ?? 0, finite(s.innerHeight, 0));
+  // Overscroll elástico do iOS pode dar offsetTop negativo ou além do fim. O fim
+  // é a altura com teclado fechado (linha de base), não `innerHeight`: no WebKit
+  // ele pode encolher junto com o teclado e prenderia o container em `top: 0`.
+  const maxTop = Math.max(0, reference - height);
+  const top = Math.round(Math.min(Math.max(0, rawTop), maxTop));
   const keyboardOpen = reference - height > KEYBOARD_THRESHOLD_PX;
   return { top, height, keyboardOpen };
 }
@@ -78,4 +95,13 @@ export function chatViewportStyle(vp: ChatViewport): Record<"--chat-top" | "--ch
 /** Duas leituras iguais não re-renderizam. */
 export function sameChatViewport(a: ChatViewport, b: ChatViewport): boolean {
   return a.top === b.top && a.height === b.height && a.keyboardOpen === b.keyboardOpen;
+}
+
+/**
+ * A janela rolou (o Safari rola ao focar o campo, mesmo com o documento
+ * travado): no modo conversa ela deve voltar a 0 para o container `fixed` e a
+ * `visualViewport` usarem a mesma referência. Meio pixel de folga (zoom).
+ */
+export function shouldResetWindowScroll(s: Pick<ViewportSample, "scrollY">): boolean {
+  return Math.abs(finite(s.scrollY, 0)) >= 1;
 }

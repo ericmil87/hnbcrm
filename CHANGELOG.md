@@ -4,6 +4,8 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+- Corrigido: no iPhone, ao abrir o teclado numa conversa, o campo de resposta subia para o topo da tela e sobrava uma faixa vazia até o teclado. Agora o cabeçalho fica no topo, as últimas mensagens logo acima do campo e o campo colado no teclado.
+
 ### Conversas com cara de WhatsApp
 
 - No celular, a conversa aberta ocupa a tela inteira: somem o título "Conversas", a barra de abas e o botão do Copiloto (que passa para o menu ⋮ da conversa). Com o teclado aberto no iPhone, as mensagens e o campo de resposta continuam à vista, logo acima do teclado.
