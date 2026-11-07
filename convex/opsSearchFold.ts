@@ -8,8 +8,9 @@
  *   o que cada escritor gravou, ex.: @ do Instagram); contato SEM o campo
  *   ganha `buildSearchText(contact)`.
  * - `internalBackfillMessageSearchText`: grava `messages.searchNorm`
- *   (`messageSearchNorm`) nas mensagens antigas. Opcional `organizationId`
- *   e `sinceMs` (`createdAt >=`).
+ *   (`messageSearchNorm`) nas mensagens antigas. Opcional `organizationId`,
+ *   `sinceMs` (`createdAt >=`) e `delayMs` (pausa entre páginas, default 500).
+ *   Rodar fora do horário: escreve ~1 doc por mensagem com texto.
  *
  * Dry run lê UMA página e devolve o que escreveria. `countAll: true` no dry
  * run segue pelas páginas (agendando a si mesmo, sem escrever) e loga o total
@@ -21,6 +22,11 @@
  *   npx convex run opsSearchFold:internalBackfillMessageSearchText '{"dryRun":true,"countAll":true}'
  *   npx convex run opsSearchFold:internalBackfillMessageSearchText '{"dryRun":false}'
  * (PROD: o mesmo com `--prod`, sempre depois do dry run.)
+ *
+ * Rollout em dois deploys (o índice `search_norm` nasce `staged`): deploy A
+ * (campo + escritores + índice staged) → backfill de contatos → dry run com
+ * `countAll` das mensagens → real → índice pronto no painel → deploy B (tira o
+ * `staged` e liga a consulta em `searchMessages`). Ver docs/architecture/inbox.md.
  */
 import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
@@ -31,6 +37,8 @@ import { messageSearchNorm } from "./lib/messageSearch";
 
 const DEFAULT_PAGE_SIZE = 200;
 const MAX_PAGE_SIZE = 500;
+const DEFAULT_DELAY_MS = 500;
+const MAX_DELAY_MS = 60_000;
 
 const totalsValidator = v.object({
   scanned: v.number(),
@@ -143,6 +151,8 @@ export const internalBackfillMessageSearchText = internalMutation({
     organizationId: v.optional(v.id("organizations")),
     /** Só mensagens com `createdAt >= sinceMs`. */
     sinceMs: v.optional(v.number()),
+    /** Pausa entre páginas (ms, default 500, 0–60000): espalha o I/O. */
+    delayMs: v.optional(v.number()),
     totals: v.optional(totalsValidator),
   },
   returns: resultValidator,
@@ -153,6 +163,10 @@ export const internalBackfillMessageSearchText = internalMutation({
       args.sinceMs !== undefined && Number.isFinite(args.sinceMs) && args.sinceMs > 0
         ? args.sinceMs
         : undefined;
+    const delayMs =
+      args.delayMs !== undefined && Number.isFinite(args.delayMs)
+        ? Math.max(0, Math.min(MAX_DELAY_MS, Math.floor(args.delayMs)))
+        : DEFAULT_DELAY_MS;
     const paginationOpts = { cursor: args.cursor ?? null, numItems: pageSize };
     // Com org: índice da org (o `sinceMs` vira filtro em código, a página ainda
     // lê as linhas antigas). Sem org: o próprio `_creationTime` (≈ createdAt)
@@ -190,13 +204,14 @@ export const internalBackfillMessageSearchText = internalMutation({
     };
     const chain = !page.isDone && (!dryRun || args.countAll === true);
     if (chain) {
-      await ctx.scheduler.runAfter(0, internal.opsSearchFold.internalBackfillMessageSearchText, {
+      await ctx.scheduler.runAfter(delayMs, internal.opsSearchFold.internalBackfillMessageSearchText, {
         dryRun,
         ...(args.countAll ? { countAll: true } : {}),
         cursor: page.continueCursor,
         pageSize,
         ...(args.organizationId ? { organizationId: args.organizationId } : {}),
         ...(sinceMs !== undefined ? { sinceMs } : {}),
+        delayMs,
         totals,
       });
     }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { findFolded, foldForSearch, foldWithMap } from "./searchFold";
 import { buildSearchText } from "./searchText";
-import { MESSAGE_SEARCH_MAX_CHARS, messageSearchNorm, withMessageSearchPatch } from "./messageSearch";
+import { MESSAGE_SEARCH_MAX_CHARS, cutUtf16, messageSearchNorm, withMessageSearchPatch } from "./messageSearch";
 import { matchesIdentity } from "./contactSearchRank";
 
 describe("foldForSearch", () => {
@@ -74,6 +74,19 @@ describe("messageSearchNorm", () => {
     expect(messageSearchNorm({ content: "a".repeat(MESSAGE_SEARCH_MAX_CHARS + 50) })!.length).toBe(
       MESSAGE_SEARCH_MAX_CHARS
     );
+  });
+  it("teto não parte emoji (par substituto) na fronteira", () => {
+    expect(MESSAGE_SEARCH_MAX_CHARS).toBe(4000);
+    const text = "a".repeat(MESSAGE_SEARCH_MAX_CHARS - 1) + "👋 fim";
+    const norm = messageSearchNorm({ content: text })!;
+    expect(norm).toBe("a".repeat(MESSAGE_SEARCH_MAX_CHARS - 1));
+    const last = norm.charCodeAt(norm.length - 1);
+    expect(last >= 0xd800 && last <= 0xdbff).toBe(false);
+    // Emoji inteiro antes da fronteira fica.
+    const fits = "a".repeat(MESSAGE_SEARCH_MAX_CHARS - 2) + "👋b";
+    expect(messageSearchNorm({ content: fits })!.endsWith("👋")).toBe(true);
+    expect(cutUtf16("x👋", 2)).toBe("x");
+    expect(cutUtf16("abc", 10)).toBe("abc");
   });
   it("patch recalcula sobre o estado final, e chave undefined apaga o campo", () => {
     const current = { content: "[imagem]", imageDescription: "Recibo errado" };

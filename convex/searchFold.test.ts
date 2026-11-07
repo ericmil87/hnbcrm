@@ -222,7 +222,7 @@ describe("contatos sem acento", () => {
 });
 
 describe("mensagens sem acento", () => {
-  test("mensagem nova 'Rua Rebouças' é achada por reboucas; outra org não aparece", async () => {
+  test("mensagem nova grava searchNorm dobrado; REBOUÇAS/Rebouças acham pelos índices antigos; outra org não aparece", async () => {
     const t = convexTest(schema, modules);
     const org = await seedOrg(t, "org-a");
     const other = await seedOrg(t, "org-b");
@@ -231,7 +231,8 @@ describe("mensagens sem acento", () => {
     const messageId = await addMessage(t, org, conversationId, "Moro na Rua Rebouças, 12");
     await addMessage(t, other, otherConv, "Moro na Rua Rebouças, 12");
 
-    for (const term of ["reboucas", "REBOUÇAS", "Rebouças"]) {
+    expect((await t.run((ctx) => ctx.db.get(messageId)))!.searchNorm).toBe("moro na rua reboucas, 12");
+    for (const term of ["REBOUÇAS", "Rebouças"]) {
       const hits = await asAdmin(t, org).query(api.conversations.searchMessages, {
         organizationId: org.organizationId,
         searchQuery: term,
@@ -242,7 +243,7 @@ describe("mensagens sem acento", () => {
     // Dentro da conversa (pesquisa na conversa).
     const inConv = await asAdmin(t, org).query(api.conversations.searchMessages, {
       organizationId: org.organizationId,
-      searchQuery: "reboucas",
+      searchQuery: "Rebouças",
       conversationId,
     });
     expect(inConv).toHaveLength(1);
@@ -276,7 +277,7 @@ describe("mensagens sem acento", () => {
 
     const hits = await asAdmin(t, org).query(api.conversations.searchMessages, {
       organizationId: org.organizationId,
-      searchQuery: "vivencia",
+      searchQuery: "Vivência",
     });
     expect(hits).toHaveLength(1);
     expect(hits[0].matchedTranscript).toBe(true);
@@ -329,12 +330,6 @@ describe("mensagens sem acento", () => {
       organizationId: org.organizationId,
     });
     expect(again).toMatchObject({ written: 0 });
-
-    const hits = await asAdmin(t, org).query(api.conversations.searchMessages, {
-      organizationId: org.organizationId,
-      searchQuery: "reboucas",
-    });
-    expect(hits.map((h) => h._id)).toEqual([oldId]);
   });
 
   test("backfill real em várias páginas agenda a continuação até o fim", async () => {
@@ -348,6 +343,10 @@ describe("mensagens sem acento", () => {
       pageSize: 2,
     });
     expect(first).toMatchObject({ written: 2, isDone: false, scheduledNext: true });
+    // Próxima página com a pausa padrão (500 ms) entre páginas.
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").take(5));
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].scheduledTime - Date.now()).toBeGreaterThanOrEqual(500);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     const docs = await t.run((ctx) => ctx.db.query("messages").take(10));
     expect(docs.every((d) => d.searchNorm?.startsWith("acao "))).toBe(true);

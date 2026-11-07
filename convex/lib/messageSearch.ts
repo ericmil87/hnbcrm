@@ -12,8 +12,20 @@ import type { Doc } from "../_generated/dataModel";
 import type { WithoutSystemFields } from "convex/server";
 import { foldForSearch } from "./searchFold";
 
-/** Teto do campo dobrado (o índice só precisa do começo de textos longos). */
-export const MESSAGE_SEARCH_MAX_CHARS = 8000;
+/** Teto do campo dobrado em unidades UTF-16 (o índice só precisa do começo de textos longos). */
+export const MESSAGE_SEARCH_MAX_CHARS = 4000;
+
+/**
+ * Corta em `max` unidades UTF-16 sem partir um par substituto (emoji): um
+ * high surrogate solto no fim é UTF-16 inválido e o backend recusa a string.
+ */
+export function cutUtf16(text: string, max: number): string {
+  if (text.length <= max) return text;
+  let out = text.slice(0, max);
+  const last = out.charCodeAt(out.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) out = out.slice(0, -1);
+  return out;
+}
 
 type SearchSource = {
   content?: string;
@@ -28,7 +40,12 @@ export function messageSearchNorm(m: SearchSource): string | undefined {
     .filter(Boolean)
     .join(" ");
   if (!joined) return undefined;
-  const folded = foldForSearch(joined).slice(0, MESSAGE_SEARCH_MAX_CHARS).trim();
+  // Pré-corte antes da dobra (texto enorme não é dobrado inteiro); o corte
+  // final é o que vale. Os dois respeitam pares substitutos.
+  const folded = cutUtf16(
+    foldForSearch(cutUtf16(joined, MESSAGE_SEARCH_MAX_CHARS * 2)),
+    MESSAGE_SEARCH_MAX_CHARS
+  ).trim();
   return folded || undefined;
 }
 

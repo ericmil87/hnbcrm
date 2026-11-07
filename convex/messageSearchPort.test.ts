@@ -67,8 +67,14 @@ function findUnrefreshedPatches(src: string, file = "<mem>"): Violation[] {
     const call = sliceBalanced(src, openIdx, "(", ")");
     if (call.includes("withMessageSearchPatch(")) continue;
     // Regex `.replace(/…/, …)` de string não é escrita no banco.
-    if (/^\(\s*\//.test(call) || /^\(\s*["'`]/.test(call)) continue;
-    const firstArg = call.slice(1).split(",")[0].trim();
+    if (/^\(\s*\//.test(call)) continue;
+    // Forma com a tabela no 1º argumento (`patch("messages", id, {...})`): só
+    // "messages" conta (o 3º argumento é checado abaixo); outra tabela ou
+    // `String.replace("x", …)` não é escrita de mensagem.
+    const tableArg = /^\(\s*["'`]([^"'`]*)["'`]\s*,/.exec(call);
+    if (tableArg && tableArg[1] !== "messages") continue;
+    if (/^\(\s*["'`]/.test(call) && !tableArg) continue;
+    const firstArg = call.slice(1).split(",")[tableArg ? 1 : 0].trim();
     if (ALLOWED[`${file}|${firstArg}`]) continue;
     const line = src.slice(0, m.index).split("\n").length;
     const snippet = call.replace(/\s+/g, " ").slice(0, 100);
@@ -121,6 +127,13 @@ describe("porta de messages.searchNorm (busca sem acento)", () => {
     ).toHaveLength(1);
     expect(findUnrefreshedPatches(`await ctx.db.patch(m._id, { readBy, deliveryStatus: "read" });`)).toHaveLength(0);
     expect(findUnrefreshedPatches(`s.replace(/x/g, (content: string) => content)`)).toHaveLength(0);
+    expect(findUnrefreshedPatches(`await ctx.db.patch("messages", m._id, { content: "x" });`)).toHaveLength(1);
+    expect(findUnrefreshedPatches(`await ctx.db.replace("messages", m._id, { ...m, imageDescription: "y" });`)).toHaveLength(1);
+    expect(
+      findUnrefreshedPatches(`await ctx.db.patch("messages", m._id, withMessageSearchPatch(m, { content: "x" }));`)
+    ).toHaveLength(0);
+    expect(findUnrefreshedPatches(`await ctx.db.patch("taskComments", c._id, { content: "x" });`)).toHaveLength(0);
+    expect(findUnrefreshedPatches(`const t = s.replace("a", "content: b");`)).toHaveLength(0);
     expect(
       findUnrefreshedPatches(`await ctx.db.patch(m._id, withMessageSearchPatch(m, { content: "x" }));`)
     ).toHaveLength(0);
