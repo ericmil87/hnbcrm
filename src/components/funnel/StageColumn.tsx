@@ -7,6 +7,7 @@ import { formatMoney } from "@/lib/format";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { DraggableCard } from "./LeadCard";
 import type { FunnelCardPrefs } from "@/lib/funnelCardPrefs";
+import { adjacentStage } from "@/lib/funnelMove";
 import type { Lead, Stage } from "./types";
 
 // Droppable Column Component
@@ -20,6 +21,9 @@ export function StageColumn({
   onStageMenu,
   justDraggedRef,
   cardPrefs,
+  stages,
+  onMoveLead,
+  highlightedLeadId,
 }: {
   stage: Stage;
   leads: Lead[];
@@ -30,6 +34,10 @@ export function StageColumn({
   onStageMenu: (e: React.MouseEvent) => void;
   justDraggedRef: React.MutableRefObject<boolean>;
   cardPrefs?: FunnelCardPrefs;
+  /** Todas as etapas do funil (para as setas e o "Mover para…" em toque). */
+  stages?: Stage[];
+  onMoveLead?: (leadId: Id<"leads">, stageId: Id<"stages">) => void;
+  highlightedLeadId?: Id<"leads"> | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({
     id: stage._id,
@@ -89,6 +97,17 @@ export function StageColumn({
             onClick={() => onLeadClick(lead._id)}
             justDraggedRef={justDraggedRef}
             prefs={cardPrefs}
+            highlighted={highlightedLeadId === lead._id}
+            move={
+              stages && onMoveLead
+                ? {
+                    stages,
+                    prevStage: adjacentStage(stages, stage._id, "prev"),
+                    nextStage: adjacentStage(stages, stage._id, "next"),
+                    onMove: onMoveLead,
+                  }
+                : undefined
+            }
           />
         ))}
 

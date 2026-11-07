@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { render, screen } from "@testing-library/react";
-import { LeadCardView } from "./LeadCard";
+import { LeadCardView, LeadMoveControls } from "./LeadCard";
 import { defaultFunnelCardPrefs, type FunnelCardPrefs } from "@/lib/funnelCardPrefs";
-import type { Lead } from "./types";
+import type { Lead, Stage } from "./types";
 
 const lead = {
   _id: "l1",
@@ -129,6 +130,35 @@ describe("LeadCardView", () => {
       expect(screen.queryByText(/Ana Souza/)).not.toBeInTheDocument();
       expect(screen.queryByText("vip")).not.toBeInTheDocument();
     });
+  });
+});
+
+describe("LeadMoveControls", () => {
+  const st = (id: string, name: string) => ({ _id: id, name, color: "#000" }) as unknown as Stage;
+  const [a, b, c] = [st("a", "Novo"), st("b", "Proposta"), st("c", "Ganho")];
+
+  it("mostra setas com a etapa de destino e chama onMove sem propagar o clique", async () => {
+    const onMove = vi.fn();
+    const onParent = vi.fn();
+    render(
+      <div onClick={onParent}>
+        <LeadMoveControls stages={[a, b, c]} currentStageId="b" prevStage={a} nextStage={c} onMove={onMove} />
+      </div>
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Mover para Ganho" }));
+    expect(onMove).toHaveBeenCalledWith("c");
+    expect(onParent).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Mover para Novo" })).toBeInTheDocument();
+  });
+
+  it("some a seta na primeira e na última etapa", () => {
+    const { rerender } = render(
+      <LeadMoveControls stages={[a, b]} currentStageId="a" prevStage={null} nextStage={b} onMove={vi.fn()} />
+    );
+    expect(screen.queryByRole("button", { name: "Mover para Novo" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mover para Proposta" })).toBeInTheDocument();
+    rerender(<LeadMoveControls stages={[a, b]} currentStageId="b" prevStage={a} nextStage={null} onMove={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Mover para Proposta" })).not.toBeInTheDocument();
   });
 });
 
