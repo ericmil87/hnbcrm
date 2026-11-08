@@ -516,7 +516,7 @@ describe("relay (D20)", () => {
   }
   const buffers = () => t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect());
 
-  test("só com humano no comando: IA no comando, sem dono, dono sem vínculo, pref desligada, grupo → nada", async () => {
+  test("só com humano no comando: IA no comando, sem dono, grupo → nada; sem vínculo ou pref desligada → só o sino (B2)", async () => {
     const s = await seedOrg({ aiOn: true });
     // IA no comando (lead do atendente, sem pausa).
     await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN);
@@ -528,15 +528,24 @@ describe("relay (D20)", () => {
     await t.run((ctx) => ctx.db.patch(s.conversationId, { assignedTo: undefined }));
     await inbound(s, "oi");
     expect(await buffers()).toEqual([]);
-    // Dono humano sem vínculo.
+    // Dono humano sem vínculo: B2 — o buffer é por membro, o sino recebe.
     await t.run((ctx) => ctx.db.patch(s.leadId, { assignedTo: s.sellerId }));
     await inbound(s, "oi");
-    expect(await buffers()).toEqual([]);
-    // Dono com vínculo mas preferência desligada.
+    expect((await buffers()).map((b) => b.memberId)).toEqual([s.sellerId]);
+    await drain();
+    const bell = () =>
+      t.run((ctx) => ctx.db.query("notifications").withIndex("by_member_and_created", (q) => q.eq("memberId", s.sellerId)).collect());
+    expect((await bell()).map((n) => n.type)).toEqual(["new_message"]);
+    expect(sends()).toEqual([]);
+    // Dono com vínculo mas preferência do relay desligada: sino sim, Telegram não.
     await linkMember(s, s.sellerId, s.sellerUserId, CHAT_SELLER, {
       prefs: { relayAssignedConversations: false, mediaInbound: true },
     });
-    await inbound(s, "oi");
+    await inbound(s, "oi de novo");
+    await drain();
+    expect(await bell()).toHaveLength(1); // agrupada na mesma não lida
+    expect((await bell())[0].data?.count).toBe(2);
+    expect(sends(CHAT_SELLER)).toEqual([]);
     expect(await buffers()).toEqual([]);
     // Grupo: nunca.
     await t.run(async (ctx) => {
@@ -774,7 +783,7 @@ describe("revisão F1 — lote 1", () => {
     expect(await t.run((ctx) => ctx.db.get(handoffA))).toMatchObject({ status: "rejected", resolvedBy: a.adminId });
   });
 
-  test("#6 relay não acontece com vínculo mutado nem com o módulo desligado", async () => {
+  test("#6 relay não vai ao Telegram com vínculo mutado nem com o módulo desligado (o sino recebe, B2)", async () => {
     const s = await seedOrg({ aiOn: true });
     const link = await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN, { mutedUntil: Date.now() + 3600_000 });
     await t.run((ctx) => ctx.db.patch(s.leadId, { assignedTo: s.adminId }));
@@ -783,15 +792,22 @@ describe("revisão F1 — lote 1", () => {
         organizationId: s.organizationId, leadId: s.leadId, channel: "whatsapp", channelConfigId: s.configId,
         content: "oi", skipAiEnqueue: true,
       });
+    const bell = () => t.run((ctx) => ctx.db.query("notifications").collect());
     await inbound();
-    expect(await t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect())).toEqual([]);
+    await drain();
+    // B2: `/pausar` só pausa o Telegram — o sino recebe.
+    expect((await bell()).map((n) => n.type)).toEqual(["new_message"]);
+    expect(sends(CHAT_ADMIN)).toEqual([]);
     await t.run(async (ctx) => {
       await ctx.db.patch(link, { mutedUntil: undefined });
       const org = (await ctx.db.get(s.organizationId))!;
       await ctx.db.patch(s.organizationId, { settings: { ...org.settings, modules: { telegram: false } } });
     });
     await inbound();
-    expect(await t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect())).toEqual([]);
+    await drain();
+    expect(await bell()).toHaveLength(1);
+    expect((await bell())[0].data?.count).toBe(2);
+    expect(sends(CHAT_ADMIN)).toEqual([]);
   });
 
   test("#7/#8 (0.77.2) resposta sem pedido pelo Telegram não agenda relay, mesmo com foco; dedupe acha o relay mais recente", async () => {

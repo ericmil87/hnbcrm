@@ -1362,7 +1362,8 @@ describe("F8 — tetos, repasse e menção perdida", () => {
     const notifications = await t.run(async (ctx) => ctx.db.query("notifications").collect());
     const opportunity = notifications.find((n) => n.type === "group_opportunity")!;
     expect(opportunity.body).not.toContain(MEMBER_PHONE);
-    expect(opportunity.body).toContain("••••");
+    // B2: nem telefone mascarado no texto (pode ir à tela de bloqueio).
+    expect(opportunity.body).toBe("Um membro: quer comprar 10 unidades");
   });
 });
 

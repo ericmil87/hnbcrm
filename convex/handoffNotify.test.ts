@@ -251,7 +251,7 @@ describe("handoff_resolved", () => {
     const resolved = (await notifications(t)).filter((n) => n.type === "handoff_resolved");
     expect(resolved).toHaveLength(1);
     expect(resolved[0].memberId).toBe(seed.adminId);
-    expect(resolved[0].title).toMatch(/devolvido à IA/i);
+    expect(resolved[0].title).toMatch(/devolveu à IA/i);
   });
 });
 
