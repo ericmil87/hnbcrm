@@ -244,6 +244,7 @@ export async function emitChannelSessionLost(
       type: "channel_session_lost",
       title: `WhatsApp "${config.displayName}" perdeu a conexão`,
       body: args.detail,
+      channelConfigId: config._id,
       data: { channelConfigId: config._id, state: args.state },
     });
     // E-mail pelo MESMO gatilho do sino (o dedupe por `bridgeSessionAlertedAt`
@@ -374,6 +375,7 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
       type: "channel_session_lost",
       title,
       body: args.state !== "data_access_expiring" ? args.detail : "Reconecte a conta para manter o acesso às mensagens.",
+      metaConnectionId: conn._id,
       data: { metaConnectionId: conn._id, state: args.state },
     });
     await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {

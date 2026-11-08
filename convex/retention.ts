@@ -7,7 +7,7 @@
  *
  * | tabela        | o que sai                                   | campo de data   | janela |
  * |---------------|---------------------------------------------|-----------------|--------|
- * | notifications | LIDAS (`readAt` definido)                   | `readAt`        |  90 d  |
+ * | notifications | LIDAS (`readAt` definido); NÃO lidas > 30 d viram lidas (B1) | `readAt` |  90 d  |
  * | aiReplyQueue  | `done`/`skipped`/`failed` (nunca `pending`/`processing`) | `updatedAt` | 90 d |
  * | agentRuns     | `done`/`error`/`aborted` (nunca `running`)  | `startedAt`     |  90 d  |
  * | formPartials  | `abandoned` (nunca `in_progress`/`converted`) | `lastActivityAt` | 30 d |
@@ -67,7 +67,7 @@
  *   npx convex run --prod retention:internalRunRetentionNow '{"dryRun":false}'
  */
 import { v } from "convex/values";
-import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { cronsDisabled } from "./lib/cronGuard";
@@ -363,6 +363,33 @@ async function countCandidates(db: QueryCtx["db"], table: RetentionTable, cutoff
   };
 }
 
+/** Não lidas com mais de N dias viram lidas (B1). */
+export const UNREAD_NOTIFICATION_EXPIRE_DAYS = 30;
+
+/**
+ * Lote de `notifications` não lidas antigas → lidas. Índice
+ * `by_read_at_and_created` (readAt ausente + createdAt < corte); lote cheio
+ * deixa o resto para o próximo cron diário (cada execução do dia repete).
+ */
+export async function expireStaleUnreadNotifications(
+  ctx: MutationCtx,
+  now: number,
+  batch: number
+): Promise<number> {
+  const cutoff = now - UNREAD_NOTIFICATION_EXPIRE_DAYS * DAY_MS;
+  const rows = await ctx.db
+    .query("notifications")
+    .withIndex("by_read_at_and_created", (q) => q.eq("readAt", undefined).lt("createdAt", cutoff))
+    .take(batch);
+  for (const n of rows) {
+    await ctx.db.patch(n._id, {
+      readAt: now,
+      data: { ...(n.data ?? {}), resolvedAt: now, resolvedReason: "expired_unread" },
+    });
+  }
+  return rows.length;
+}
+
 const runResultValidator = v.object({
   status: v.union(
     v.literal("crons_disabled"),
@@ -414,6 +441,18 @@ export const internalRunRetention = internalMutation({
     const days = retentionDays(table, args.olderThanOverrides);
     const cutoff = startedAt - days * DAY_MS;
     const batch = Math.min(RETENTION_BATCH_SIZE, remaining);
+    // B1: NÃO lidas com mais de 30 dias viram lidas (o sino não acumula pilha
+    // eterna); a linha lida sai pela janela normal de 90 dias. Patch, não delete:
+    // não conta no teto diário de apagamentos.
+    if (table === "notifications") {
+      let expired = 0;
+      for (let i = 0; i < 5; i++) {
+        const n = await expireStaleUnreadNotifications(ctx, startedAt, RETENTION_BATCH_SIZE);
+        expired += n;
+        if (n < RETENTION_BATCH_SIZE) break;
+      }
+      if (expired > 0) console.log(JSON.stringify({ event: "retention", table, unreadExpired: expired }));
+    }
     const rows = await takeCandidates(ctx.db, table, cutoff, batch);
     for (const row of rows) await ctx.db.delete(row.id);
     const deletedSoFar = deletedBefore + rows.length;

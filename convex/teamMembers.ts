@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { markMemberNotificationsRead } from "./lib/notificationResolve";
 import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -422,6 +423,9 @@ export const removeTeamMember = mutation({
     // Telegram (F0): o vínculo cai junto — revoga, apaga as mensagens ≤ 48 h e
     // avisa no chat. O processador também recusa membro removido (D6).
     await revokeTelegramLinksForMember(ctx, args.teamMemberId, { actorId: userMember._id });
+
+    // B1: o que o removido tinha por ler não reaparece numa readmissão.
+    await markMemberNotificationsRead(ctx, args.teamMemberId, "member_removed");
 
     // Log audit entry
     await ctx.db.insert("auditLogs", {
