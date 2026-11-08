@@ -5,6 +5,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { requireAuth, requirePermission, isActiveMemberOf, assertAssignableMember } from "./lib/auth";
+import { seesWholeInbox, isMyHandoff } from "./lib/inboxScope";
 // `inboxRepliers` mudou para lib/notify: o follow-up da IA usa a MESMA regra
 // de destinatário e não pode importar deste módulo (ciclo).
 import { createNotification, inboxRepliers } from "./lib/notify";
@@ -776,14 +777,16 @@ export const getPendingHandoffCount = query({
   args: { organizationId: v.id("organizations") },
   returns: v.number(),
   handler: async (ctx, args) => {
-    await requirePermission(ctx, args.organizationId, "inbox", "view_own");
+    const me = await requirePermission(ctx, args.organizationId, "inbox", "view_own");
     const pending = await ctx.db
       .query("handoffs")
       .withIndex("by_organization_and_status", (q) =>
         q.eq("organizationId", args.organizationId).eq("status", "pending")
       )
-      .collect();
-    return pending.length;
+      .take(500);
+    // D1: `inbox:view_own` conta só os repasses dirigidos a mim ou broadcast.
+    if (seesWholeInbox(me)) return pending.length;
+    return pending.filter((h) => isMyHandoff(h, me._id)).length;
   },
 });
 

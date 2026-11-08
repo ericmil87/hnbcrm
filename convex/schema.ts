@@ -2361,6 +2361,15 @@ const applicationTables = {
     // uma leitura indexada por `createNotification` com `coalesce`.
     .index("by_member_and_coalesce_and_read", ["memberId", "coalesceKey", "readAt"]),
 
+  // D1 — "visto" do sino por membro (visto != lido): o badge conta o que chegou
+  // depois de `seenAt`. Tabela própria para não regravar o doc quente do
+  // teamMember. Uma linha por membro (upsert em `notifications.markSeen`).
+  notificationSeen: defineTable({
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    seenAt: v.number(),
+  }).index("by_member", ["memberId"]),
+
   // Calendar Events
   calendarEvents: defineTable({
     organizationId: v.id("organizations"),
