@@ -3362,7 +3362,8 @@ export const reactToMessage = mutation({
 // conversation it also sends the read receipts to the gateway (Meta already
 // best-effort marks read on dispatch, so we don't duplicate it there). A
 // repeated call with nothing new since `lastReadAt` writes NOTHING.
-// Requires inbox "view_all".
+// Requires inbox "view_own" (resolves the reader's own notifications); the
+// read receipt and `unreadCount` need "view_all".
 export const markConversationRead = mutation({
   args: {
     conversationId: v.id("conversations"),

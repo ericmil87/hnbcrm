@@ -15,7 +15,7 @@
  * Modo sugestão (default): a IA gera mas NÃO envia — vira rascunho interno na
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
-import { resolveEntityNotifications, draftNotificationAlreadyPending } from "./lib/notificationResolve";
+import { resolveEntityNotifications, resolveRepliedNotifications, draftNotificationAlreadyPending } from "./lib/notificationResolve";
 import { notificationCopy } from "./lib/notificationCopy";
 import { isSupersededByResume, latestReactiveQueueItem } from "./lib/aiStateQueue";
 import { matchesHandoffKeyword } from "./lib/handoffKeywords";
@@ -4307,6 +4307,8 @@ export async function acceptAiDraftCore(
     reason: "draft_approved",
     types: ["ai_draft_pending"],
   });
+  // Aprovar o rascunho é responder ao cliente: resolve os avisos de mensagem do próprio aprovador.
+  await resolveRepliedNotifications(ctx, { conversation, sender: member });
 
   const finalText = (args.editedText ?? draft.content).trim();
   if (!finalText) throw new Error("Resposta vazia");

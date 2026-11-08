@@ -287,6 +287,112 @@ describe("8/9/10. preferências: REST pela porta, modelo exposto, permissões", 
   });
 });
 
+describe("revisão: motivo, orçamento, aprovar rascunho, remetente IA, dedupe", () => {
+  test("deleteConversationCascade grava o motivo recebido (grupo/demo)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
+    const { deleteConversationCascade, newBudget } = await import("./lib/leadCascade");
+    const ok = await t.run((ctx) => deleteConversationCascade(ctx, s.conversationId, newBudget(), "conversation_deleted"));
+    expect(ok).toBe(true);
+    const [n] = await all(t);
+    expect(n.data?.resolvedReason).toBe("conversation_deleted");
+  });
+
+  test("broadcast de 25 com orçamento quase esgotado: false, reagenda e termina", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const handoffId = await t.run(async (ctx) =>
+      ctx.db.insert("handoffs", {
+        organizationId: s.organizationId, leadId: s.leadId, conversationId: s.conversationId,
+        fromMemberId: s.admin.memberId, reason: "x", suggestedActions: [], status: "pending", createdAt: Date.now(),
+      } as any)
+    );
+    for (let i = 0; i < 25; i++) await notify(t, s, s.seller.memberId, "handoff_requested", { handoffId });
+    const { cascadeLeadChildren, newBudget } = await import("./lib/leadCascade");
+    // 1ª rodada: sobra pouco; resolve só o que cabe e devolve false.
+    const first = newBudget(6);
+    // (a conversa sai antes: 1 escrita para ela + o resto para os avisos do repasse)
+    expect(await t.run((ctx) => cascadeLeadChildren(ctx, s.leadId, first))).toBe(false);
+    const unreadAfterFirst = (await all(t)).filter((n) => n.readAt === undefined).length;
+    expect(unreadAfterFirst).toBeGreaterThan(0);
+    expect(unreadAfterFirst).toBeLessThan(25);
+    expect(first.left).toBeLessThanOrEqual(0);
+    let done = false;
+    for (let i = 0; i < 10 && !done; i++) done = await t.run((ctx) => cascadeLeadChildren(ctx, s.leadId, newBudget()));
+    expect(done).toBe(true);
+    const rows = await all(t);
+    expect(rows).toHaveLength(25);
+    expect(rows.every((n) => n.readAt !== undefined && n.data?.resolvedReason === "lead_deleted")).toBe(true);
+  });
+
+  test("aprovar o rascunho conta como responder: resolve o new_message do aprovador", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const draftId = await t.run(async (ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId,
+        direction: "internal", senderId: s.admin.memberId, senderType: "ai", content: "oi",
+        contentType: "text", isInternal: true, metadata: { aiDraft: { status: "pending" } }, createdAt: Date.now(),
+      } as any)
+    );
+    await notify(t, s, s.admin.memberId, "new_message", { conversationId: s.conversationId });
+    await notify(t, s, s.third.memberId, "new_message", { conversationId: s.conversationId });
+    await asUser(t, s.admin.userId).mutation(api.attendant.acceptAiDraft, { draftMessageId: draftId });
+    const rows = await all(t);
+    const mine = rows.find((n) => n.memberId === s.admin.memberId)!;
+    expect(mine.readAt).toBeDefined();
+    expect(mine.data?.resolvedReason).toBe("replied");
+    expect(rows.find((n) => n.memberId === s.third.memberId)?.readAt).toBeUndefined();
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("remetente IA não resolve avisos", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const aiId = await t.run((ctx) =>
+      ctx.db.insert("teamMembers", {
+        organizationId: s.organizationId, name: "IA", role: "ai", type: "ai", status: "active",
+        agentProfile: { kind: "attendant", mode: "suggest" }, createdAt: 1, updatedAt: 1,
+      } as any)
+    );
+    await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
+    const { resolveRepliedNotifications } = await import("./lib/notificationResolve");
+    const n = await t.run(async (ctx) => {
+      const conversation = (await ctx.db.get(s.conversationId))!;
+      return resolveRepliedNotifications(ctx, { conversation, sender: { _id: aiId, type: "ai" } });
+    });
+    expect(n).toBe(0);
+    expect((await all(t))[0].readAt).toBeUndefined();
+  });
+
+  test("dedupe do rascunho pelo índice (membro + chave de agrupamento)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { coalesceKeys } = await import("./lib/notify");
+    const { draftNotificationAlreadyPending } = await import("./lib/notificationResolve");
+    const pending = () =>
+      t.run((ctx) =>
+        ctx.db.insert("messages", {
+          organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId,
+          direction: "internal", senderId: s.admin.memberId, senderType: "ai", content: "oi",
+          contentType: "text", isInternal: true, metadata: { aiDraft: { status: "pending" } }, createdAt: Date.now(),
+        } as any)
+      );
+    await pending();
+    const fresh = await pending();
+    const check = (memberId: Id<"teamMembers">) =>
+      t.run((ctx) =>
+        draftNotificationAlreadyPending(ctx, { memberId, conversationId: s.conversationId, excludeMessageId: fresh })
+      );
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", {
+      conversationId: s.conversationId, coalesce: { key: coalesceKeys.aiDraft(s.conversationId) },
+    });
+    expect(await check(s.seller.memberId)).toBe(true);
+    expect(await check(s.third.memberId)).toBe(false);
+  });
+});
+
 describe("2. excluir lead resolve avisos de conversa e repasse", () => {
   test("deleteLead + cascata", async () => {
     const t = convexTest(schema, modules);
