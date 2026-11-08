@@ -102,4 +102,4 @@ export const SW_NAVIGATE = "hnb:navigate";
 /** SW → page: the browser rotated the push subscription; the page re-syncs it with the backend. */
 export const SW_PUSH_RESUBSCRIBED = "hnb:push-resubscribed";
 /** How long the SW waits for the page's ack before falling back to `client.navigate`. */
-export const SW_NAVIGATE_ACK_MS = 800;
+export const SW_NAVIGATE_ACK_MS = 250;

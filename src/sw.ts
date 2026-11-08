@@ -6,14 +6,8 @@
 import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { NAVIGATION_ALLOWLIST, NAVIGATION_DENYLIST, SHELL_URL } from "./lib/pwa/swRoutes";
-import { buildNotification, genericNotification, readPushData } from "./lib/push/buildNotification";
-import {
-  SW_NAVIGATE,
-  SW_NAVIGATE_ACK_MS,
-  SW_PUSH_RESUBSCRIBED,
-  notificationClick,
-  pickAppClient,
-} from "./lib/push/notificationClick";
+import { SW_NAVIGATE, SW_PUSH_RESUBSCRIBED, notificationClick } from "./lib/push/notificationClick";
+import { openFromNotification, showPushNotification } from "./lib/push/swHandlers";
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<string | { url: string; revision: string | null }>;
@@ -38,8 +32,8 @@ self.addEventListener("message", (event) => {
 // ---------------------------------------------------------------------------
 // Push (F1). Rules: EVERY `push` shows a notification inside `event.waitUntil` (iOS revokes the
 // permission otherwise), the generic one when the payload is unreadable. The SW has no auth token,
-// so it never calls the backend (no network at all here). Builder and click routing are pure modules
-// in src/lib/push/ (tested). Payload format: convex/lib/webPush.ts `buildPushPayload` (we read `hnb.url`,
+// so it never calls the backend (no network at all here). The logic lives in src/lib/push/ (tested);
+// this file only wires browser APIs. Payload: convex/lib/webPush.ts `buildPushPayload` (we read `hnb.url`,
 // relative; `notification.navigate` is absolute and only for Declarative Web Push on iOS 18.4+).
 // ---------------------------------------------------------------------------
 
@@ -72,69 +66,52 @@ async function applyAppBadge(count: number | undefined): Promise<void> {
   }
 }
 
-async function showPush(event: PushEvent): Promise<void> {
-  const built = buildNotification(readPushData(event.data), { supportsActions: supportsActions() });
-  try {
-    await self.registration.showNotification(built.title, built.options);
-  } catch {
-    // A browser that rejects some option (actions, renotify…) still gets a notification.
-    const g = genericNotification();
-    await self.registration.showNotification(g.title, g.options);
-  }
-  await applyAppBadge(built.appBadge);
-}
-
 self.addEventListener("push", (event) => {
-  event.waitUntil(showPush(event));
+  event.waitUntil(
+    showPushNotification(event.data, {
+      show: (title, options) => self.registration.showNotification(title, options),
+      supportsActions: supportsActions(),
+      applyBadge: applyAppBadge,
+    }),
+  );
 });
 
 /** Asks an open window to navigate the SPA (no reload); `false` when it does not answer in time. */
-function askClientToNavigate(client: WindowClient, url: string): Promise<boolean> {
+function askClientToNavigate(client: WindowClient, url: string, timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const channel = new MessageChannel();
-    const timer = setTimeout(() => resolve(false), SW_NAVIGATE_ACK_MS);
-    channel.port1.onmessage = (e: MessageEvent) => {
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
-      resolve(!!(e.data && (e.data as { ok?: unknown }).ok === true));
+      channel.port1.onmessage = null;
+      channel.port1.close();
+      resolve(ok);
     };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    channel.port1.onmessage = (e: MessageEvent) => finish(!!(e.data && (e.data as { ok?: unknown }).ok === true));
     try {
       client.postMessage({ type: SW_NAVIGATE, url }, [channel.port2]);
     } catch {
-      clearTimeout(timer);
-      resolve(false);
+      finish(false);
     }
   });
-}
-
-async function openFromNotification(url: string): Promise<void> {
-  const all = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-  const index = pickAppClient(
-    all.map((c) => ({ url: c.url, focused: c.focused, visibilityState: c.visibilityState })),
-    self.location.origin,
-  );
-  if (index >= 0) {
-    let client: WindowClient = all[index];
-    try {
-      client = await client.focus();
-    } catch {
-      /* focus may be refused; keep going */
-    }
-    if (await askClientToNavigate(client, url)) return;
-    try {
-      // Works only for windows this SW controls; otherwise falls through to a new window.
-      const navigated = await client.navigate(new URL(url, self.location.origin).href);
-      if (navigated) return;
-    } catch {
-      /* uncontrolled client */
-    }
-  }
-  await self.clients.openWindow(url);
 }
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = notificationClick(event.action, event.notification.data);
-  event.waitUntil(openFromNotification(url));
+  event.waitUntil(
+    openFromNotification<WindowClient>(url, {
+      origin: self.location.origin,
+      matchAll: (includeUncontrolled) => self.clients.matchAll({ type: "window", includeUncontrolled }),
+      askNavigate: askClientToNavigate,
+      focus: (c) => c.focus(),
+      navigate: (c, href) => c.navigate(href),
+      openWindow: (u) => self.clients.openWindow(u),
+    }),
+  );
 });
 
 // `notificationclose`: intentionally not handled (no authenticated network in the SW).

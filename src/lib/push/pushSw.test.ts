@@ -282,8 +282,10 @@ describe("service worker push handlers (source guard)", () => {
   it("every push handler shows the notification inside waitUntil", () => {
     const push = handlers("push");
     expect(push.length).toBeGreaterThan(0);
-    for (const h of push) expect(h).toMatch(/waitUntil\(\s*showPush\(/);
-    expect(sw).toMatch(/async function showPush[\s\S]*?showNotification\([\s\S]*?catch[\s\S]*?showNotification\(/);
+    for (const h of push) {
+      expect(h).toMatch(/waitUntil\(\s*showPushNotification\(/);
+      expect(h).toContain("showNotification(");
+    }
   });
   it("click and subscription-change handlers use waitUntil; click closes the notification", () => {
     for (const t of ["notificationclick", "pushsubscriptionchange"]) {
@@ -292,16 +294,21 @@ describe("service worker push handlers (source guard)", () => {
       expect(hs[0], t).toContain("waitUntil(");
     }
     expect(handlers("notificationclick")[0]).toContain("notification.close()");
+    expect(handlers("notificationclick")[0]).toMatch(/waitUntil\(\s*openFromNotification/);
+    // The ack channel is always closed (ack and timeout).
+    expect(sw).toContain("channel.port1.close()");
   });
   it("makes no network calls (no fetch, no backend) and reads the relative hnb.url only", () => {
-    const code = sw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    expect(code).not.toMatch(/\bfetch\(|XMLHttpRequest|importScripts|convex\.(cloud|site)|from "convex|ConvexHttpClient|sendBeacon/);
-    expect(code).not.toMatch(/\.navigate\b(?!\()/); // never reads notification.navigate (only client.navigate(...))
+    for (const f of ["src/sw.ts", "src/lib/push/swHandlers.ts", "src/lib/push/buildNotification.ts", "src/lib/push/notificationClick.ts"]) {
+      const code = read(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      expect(code, f).not.toMatch(/\bfetch\(|XMLHttpRequest|importScripts|convex\.(cloud|site)|from "convex|ConvexHttpClient|sendBeacon/);
+      expect(code, f).not.toMatch(/\.navigate\b(?!\()/); // never reads notification.navigate (only client.navigate(...))
+    }
   });
   it("pure push modules bundled into the SW import nothing heavy", () => {
-    for (const f of ["src/lib/push/buildNotification.ts", "src/lib/push/notificationClick.ts"]) {
+    for (const f of ["src/lib/push/buildNotification.ts", "src/lib/push/notificationClick.ts", "src/lib/push/swHandlers.ts"]) {
       const imports = [...read(f).matchAll(/^import .* from "(.+)";$/gm)].map((m) => m[1]);
-      for (const i of imports) expect(i, f).toMatch(/^\.\/notificationClick$/);
+      for (const i of imports) expect(i, f).toMatch(/^\.\/(notificationClick|buildNotification)$/);
     }
   });
 });

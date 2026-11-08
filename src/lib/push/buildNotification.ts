@@ -89,7 +89,8 @@ export function buildNotification(payload: unknown, opts: { supportsActions: boo
     for (const raw of hnb.actions as unknown[]) {
       const a = obj(raw);
       const name = typeof a?.action === "string" ? a.action : "";
-      if (!(name in ACTION_TITLES) || actions.some((x) => x.action === name)) continue;
+      // Own keys only (`Object.hasOwn` needs lib es2022; the app targets es2020).
+      if (!Object.prototype.hasOwnProperty.call(ACTION_TITLES, name) || actions.some((x) => x.action === name)) continue;
       if (name === "assumir") {
         const au = safeNotificationUrl(a?.url);
         if (!au) continue;
