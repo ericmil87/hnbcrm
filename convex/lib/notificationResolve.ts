@@ -28,7 +28,7 @@ export const SCAN_MAX_PAGES = 5;
 
 /**
  * Não lidas de uma conversa (todas as pessoas), da mais nova para a mais
- * antiga, em até SCAN_MAX_PAGES lotes de SCAN_PAGE. `match` filtra em memória
+ * antiga, até SCAN_PAGE * SCAN_MAX_PAGES linhas, numa única leitura. `match` filtra em memória
  * (o índice é por conversa); `stopAtFirst` para na primeira que casar.
  */
 async function scanConversationUnread(
@@ -36,22 +36,19 @@ async function scanConversationUnread(
   conversationId: Id<"conversations">,
   opts: { match?: (n: Doc<"notifications">) => boolean; stopAtFirst?: boolean }
 ): Promise<Doc<"notifications">[]> {
+  // UMA leitura (o servidor só aceita uma query paginada por função; paginar
+  // em laço quebraria): as mais novas primeiro, com teto.
+  const rows = await ctx.db
+    .query("notifications")
+    .withIndex("by_conversation_and_read", (q) => q.eq("conversationId", conversationId).eq("readAt", undefined))
+    .order("desc")
+    .take(SCAN_PAGE * SCAN_MAX_PAGES);
   const out: Doc<"notifications">[] = [];
-  let cursor: string | null = null;
-  for (let page = 0; page < SCAN_MAX_PAGES; page++) {
-    const res = await ctx.db
-      .query("notifications")
-      .withIndex("by_conversation_and_read", (q) => q.eq("conversationId", conversationId).eq("readAt", undefined))
-      .order("desc")
-      .paginate({ numItems: SCAN_PAGE, cursor });
-    for (const n of res.page) {
-      if (!opts.match || opts.match(n)) {
-        out.push(n);
-        if (opts.stopAtFirst) return out;
-      }
+  for (const n of rows) {
+    if (!opts.match || opts.match(n)) {
+      out.push(n);
+      if (opts.stopAtFirst) break;
     }
-    if (res.isDone) break;
-    cursor = res.continueCursor;
   }
   return out;
 }

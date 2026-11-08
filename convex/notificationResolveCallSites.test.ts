@@ -38,6 +38,10 @@ describe("call sites da porta resolveEntityNotifications", () => {
     });
   }
 
+  test("a porta nunca usa .paginate( (uma query paginada por função no servidor)", () => {
+    expect(src("lib/notificationResolve.ts")).not.toMatch(/\.paginate\(/);
+  });
+
   test("abrir/marcar conversa como lida", () => {
     const text = src("conversations.ts");
     const i = text.indexOf("export const markConversationRead");
