@@ -1,3 +1,4 @@
+import { NotificationPauseMenu } from "./NotificationPauseMenu";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { useLocation, useNavigate } from "react-router";
@@ -721,18 +722,21 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
       }
       // Ponto de encaixe do cabeçalho: o C2 põe aqui o menu "Pausar avisos" e o indicador "Pausado até …".
       headerExtra={
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label={sound ? "Desligar som de aviso" : "Ligar som de aviso"}
-          aria-pressed={sound}
-          onClick={toggleSound}
-          className="text-text-secondary"
-        >
-          <SoundIcon size={16} aria-hidden="true" />
-        </Button>
+        <>
+          <NotificationPauseMenu organizationId={organizationId} />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            iconOnly
+            aria-label={sound ? "Desligar som de aviso" : "Ligar som de aviso"}
+            aria-pressed={sound}
+            onClick={toggleSound}
+            className="text-text-secondary"
+          >
+            <SoundIcon size={16} aria-hidden="true" />
+          </Button>
+        </>
       }
       liveMessage={live}
     >

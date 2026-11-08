@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Preferências de aviso e pausa (telas)
+
+- Configurações › Notificações foi refeita: atalhos "Tudo", "Só o que é comigo" e "Nada (só o sino)", e "Personalizar" com a lista de avisos por grupo e as colunas Sino, E-mail e Telegram (Telegram só com a conta vinculada). Cada toque salva sozinho ("Preferência salva") e volta atrás se der erro. Avisos que pedem uma ação sua ficam sempre no sino, e a tela explica isso. A linha travada "Convites de equipe" saiu.
+- Pausa e silêncio seguram e-mail e Telegram (o que sai nesse período não é reenviado depois; fica registrado no sino). Novo: "Pausar avisos" (1 h, 4 h ou até amanhã 8 h) no sino e na tela, com "Pausado até 14:00" e "Retomar"; horário de silêncio (fuso do aparelho); "Pedido de ajuda urgente fura pausa e silêncio"; "Mostrar prévia na tela de bloqueio" (aparece quando os avisos no aparelho forem ativados); "Aplicar a todas as minhas organizações".
+- Administradores definem o atalho inicial da organização e podem ocultar a prévia na tela de bloqueio.
+
 ### Sino como caixa de entrada (telas)
 
 - O sino agora tem abas "Não lidas" e "Todas", filtros por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" pelo número real de não lidas e "Marcar como lida/não lida" em cada aviso. Avisos já resolvidos por outra pessoa aparecem em cinza ("Assumido por Ana") e não voltam para não lidas (o app explica).
