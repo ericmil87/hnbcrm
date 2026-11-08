@@ -133,6 +133,8 @@ export function channelAllows(
   // Sino: acionável sempre registra (flag antigo vale só para os canais externos);
   // informativo segue o flag antigo.
   if (channel === "bell") return isActionable(flag) || !legacyOff;
+  // Informativo: Telegram/push só chegam se o sino do tipo também está ligado (canal && sino).
+  if (legacyOff && !isActionable(flag) && (channel === "telegram" || channel === "push")) return false;
   const explicit = prefs?.channels?.[channel]?.[flag];
   if (explicit !== undefined) return explicit;
   if (legacyOff) return false;
@@ -179,7 +181,10 @@ export function isInQuietHours(at: number, q: QuietHours | undefined): boolean {
   return s < e ? m >= s && m < e : m >= s || m < e;
 }
 
-/** Fim da pausa vigente (a maior entre o campo novo e o `mutedUntil` legado do vínculo), ou undefined. */
+/**
+ * Fim da pausa vigente (a maior entre o campo novo e o `mutedUntil` legado do vínculo), ou undefined.
+ * `mutedUntil` é só da transição: o `/pausar` novo grava `pausedUntil` e limpa o legado.
+ */
 export function activePausedUntil(
   prefs: PolicyPrefs | null | undefined,
   legacyMutedUntil: number | undefined,
@@ -206,6 +211,7 @@ export function shouldDeliver(args: {
   if (channel === "bell") return "deliver";
   if (URGENT_FLAGS.has(flag) && prefs?.urgentBypass !== false) return "deliver";
   if (activePausedUntil(prefs, args.legacyMutedUntil, now) !== undefined) return "hold_paused";
-  if (isInQuietHours(now, prefs?.quietHours)) return "hold_quiet";
+  // O resumo diário (e-mail das 8h) não é intrusivo: ignora o silêncio; a pausa continua valendo.
+  if (flag !== "dailyDigest" && isInQuietHours(now, prefs?.quietHours)) return "hold_quiet";
   return "deliver";
 }

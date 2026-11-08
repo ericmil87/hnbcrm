@@ -337,7 +337,7 @@ describe("applyToAllMyOrgs", () => {
     await me.mutation(api.notificationPreferences.pauseFor, { organizationId: a.organizationId, mode: "1h" });
 
     const res = await me.mutation(api.notificationPreferences.applyToAllMyOrgs, { sourceOrganizationId: a.organizationId });
-    expect(res).toEqual({ applied: 1 });
+    expect(res).toEqual({ applied: 1, skipped: 0 });
     const rowB = await t.run((ctx) =>
       ctx.db.query("notificationPreferences").withIndex("by_organization_and_member", (q) => q.eq("organizationId", b.organizationId).eq("teamMemberId", second)).first()
     );
@@ -361,7 +361,7 @@ describe("applyToAllMyOrgs", () => {
       })
     );
     const res = await as(a.admin.userId).mutation(api.notificationPreferences.applyToAllMyOrgs, { sourceOrganizationId: a.organizationId });
-    expect(res).toEqual({ applied: 0 });
+    expect(res).toEqual({ applied: 0, skipped: 0 });
     expect(await t.run((ctx) => ctx.db.query("notificationPreferences").withIndex("by_organization_and_member", (q) => q.eq("organizationId", b.organizationId).eq("teamMemberId", second)).first())).toBeNull();
   });
 });
@@ -371,6 +371,10 @@ describe("resumo diário no horário local da org", () => {
     t.run(async (ctx) =>
       (await ctx.db.system.query("_scheduled_functions").collect()).filter((j) => j.name.includes("dispatchNotification") && (j.args[0] as any).eventType === "dailyDigest")
     );
+  async function runDigest(now?: number) {
+    await t.mutation(internal.email.sendDailyDigest, now === undefined ? {} : { now });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  }
   async function withLead(organizationId: Id<"organizations">) {
     // dia com algo para contar (senão o resumo é pulado)
     await t.run(async (ctx) => {
@@ -387,13 +391,13 @@ describe("resumo diário no horário local da org", () => {
     const sp = await seedOrg("dg-sp", { timezone: "America/Sao_Paulo" }); // 12:00
     const tk = await seedOrg("dg-tk", { timezone: "Asia/Tokyo" }); // 00:00
     for (const o of [la, sp, tk]) await withLead(o.organizationId);
-    await t.mutation(internal.email.sendDailyDigest, {});
+    await runDigest();
     const jobs = await digestJobs();
     const orgs = new Set(jobs.map((j) => (j.args[0] as any).organizationId));
     expect(orgs).toEqual(new Set([la.organizationId]));
     expect(jobs).toHaveLength(2); // admin + agente
     expect((await t.run((ctx) => ctx.db.get(la.organizationId)))?.lastDailyDigestDate).toBe("2026-11-04");
-    await t.mutation(internal.email.sendDailyDigest, {});
+    await runDigest();
     expect(await digestJobs()).toHaveLength(2);
   });
 
@@ -401,12 +405,123 @@ describe("resumo diário no horário local da org", () => {
     const sp = await seedOrg("dg-sp2", { timezone: "America/Sao_Paulo" });
     await withLead(sp.organizationId);
     // 11:00Z = 08:00 BRT
-    await t.mutation(internal.email.sendDailyDigest, { now: Date.UTC(2026, 10, 4, 11, 0) });
+    await runDigest(Date.UTC(2026, 10, 4, 11, 0));
     expect(await digestJobs()).toHaveLength(2);
-    await t.mutation(internal.email.sendDailyDigest, { now: Date.UTC(2026, 10, 4, 11, 30) });
+    await runDigest(Date.UTC(2026, 10, 4, 11, 30));
     expect(await digestJobs()).toHaveLength(2);
-    await t.mutation(internal.email.sendDailyDigest, { now: Date.UTC(2026, 10, 5, 11, 0) });
+    await runDigest(Date.UTC(2026, 10, 5, 11, 0));
     expect(await digestJobs()).toHaveLength(4);
+  });
+});
+
+describe("resumo diário: janela, falha e pré-filtro", () => {
+  const digestJobs = () =>
+    t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter((j) => j.name.includes("dispatchNotification") && (j.args[0] as any).eventType === "dailyDigest")
+    );
+  async function withTask(organizationId: Id<"organizations">) {
+    await t.run(async (ctx) => {
+      const author = (await ctx.db.query("teamMembers").withIndex("by_organization_and_type", (q) => q.eq("organizationId", organizationId).eq("type", "human")).first())!;
+      await ctx.db.insert("tasks", {
+        organizationId, createdBy: author._id, title: "Feita", type: "task", status: "completed", priority: "low",
+        completedAt: NOW - HOUR, createdAt: NOW - 2 * HOUR, updatedAt: NOW,
+      });
+    });
+  }
+  const run = async (now: number) => {
+    await t.mutation(internal.email.sendDailyDigest, { now });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  };
+
+  test("janela 08h-12h locais: recupera rodada perdida às 9h, não envia às 7h nem às 12h; carimbo evita repetir", async () => {
+    const org = await seedOrg("dg-janela", { timezone: "America/Sao_Paulo" });
+    await withTask(org.organizationId);
+    await run(Date.UTC(2026, 10, 4, 10, 0)); // 07:00 BRT
+    expect(await digestJobs()).toHaveLength(0);
+    await run(Date.UTC(2026, 10, 4, 15, 0)); // 12:00 BRT
+    expect(await digestJobs()).toHaveLength(0);
+    await run(Date.UTC(2026, 10, 4, 12, 0)); // 09:00 BRT (a das 08h "falhou")
+    expect(await digestJobs()).toHaveLength(2);
+    await run(Date.UTC(2026, 10, 4, 13, 0)); // 10:00 BRT: já carimbado
+    expect(await digestJobs()).toHaveLength(2);
+  });
+
+  test("a página só seleciona: agenda 1 job interno por org, e o carimbo só nasce no job", async () => {
+    const org = await seedOrg("dg-pagina", { timezone: "America/Sao_Paulo" });
+    await withTask(org.organizationId);
+    await t.mutation(internal.email.sendDailyDigest, { now: Date.UTC(2026, 10, 4, 11, 0) });
+    const names = await t.run(async (ctx) => (await ctx.db.system.query("_scheduled_functions").collect()).map((j) => j.name));
+    expect(names.filter((n) => n.includes("internalSendOrgDigest"))).toHaveLength(1);
+    expect(names.filter((n) => n.includes("dispatchNotification"))).toHaveLength(0);
+    expect((await t.run((ctx) => ctx.db.get(org.organizationId)))?.lastDailyDigestDate).toBeUndefined();
+  });
+
+  test("pré-filtro: preset none e canal explícito desligado não agendam; pausa idem; silêncio não segura o digest", async () => {
+    const org = await seedOrg("dg-prefiltro", { timezone: "America/Sao_Paulo" });
+    await withTask(org.organizationId);
+    await as(org.agent.userId).mutation(api.notificationPreferences.setPreset, { organizationId: org.organizationId, preset: "none" });
+    await as(org.admin.userId).mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "email", flag: "dailyDigest", enabled: false });
+    await run(Date.UTC(2026, 10, 4, 11, 0));
+    expect(await digestJobs()).toHaveLength(0);
+
+    const org2 = await seedOrg("dg-prefiltro2", { timezone: "America/Sao_Paulo" });
+    await withTask(org2.organizationId);
+    vi.setSystemTime(Date.UTC(2026, 10, 4, 11, 0));
+    await as(org2.admin.userId).mutation(api.notificationPreferences.pauseFor, { organizationId: org2.organizationId, mode: "1h" });
+    await as(org2.agent.userId).mutation(api.notificationPreferences.setQuietHours, { organizationId: org2.organizationId, enabled: true, start: "21:00", end: "09:00" });
+    await run(Date.UTC(2026, 10, 4, 11, 0));
+    const jobs = await digestJobs();
+    expect(jobs.map((j) => (j.args[0] as any).recipientMemberId)).toEqual([org2.agent.memberId]);
+  });
+});
+
+describe("revisão do C1", () => {
+  test("informativo: sino desligado desliga Telegram; ligar o canal religa o sino", async () => {
+    const org = await seedOrg("informativo");
+    await linkTelegram(org, org.admin);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("notificationPreferences", {
+        organizationId: org.organizationId, teamMemberId: org.admin.memberId, invite: true, handoffRequested: true,
+        handoffResolved: true, taskOverdue: true, taskAssigned: true, leadAssigned: true, newMessage: true,
+        dailyDigest: true, campaignCompleted: false, channels: { telegram: { campaignCompleted: true } },
+        createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const me = as(org.admin.userId);
+    let eff = await me.query(api.notificationPreferences.getMyEffectivePreferences, { organizationId: org.organizationId });
+    expect(eff.channels.bell.campaignCompleted).toBe(false);
+    expect(eff.channels.telegram.campaignCompleted).toBe(false); // canal && sino
+    await notify(org, org.admin, "campaign_completed");
+    expect(await bell(org.admin.memberId)).toHaveLength(0);
+    expect(await telegramJobs()).toHaveLength(0);
+    await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "telegram", flag: "campaignCompleted", enabled: true });
+    expect((await prefsOf(org, org.admin))?.campaignCompleted).toBe(true);
+    eff = await me.query(api.notificationPreferences.getMyEffectivePreferences, { organizationId: org.organizationId });
+    expect(eff.channels.bell.campaignCompleted).toBe(true);
+    expect(eff.channels.telegram.campaignCompleted).toBe(true);
+    await notify(org, org.admin, "campaign_completed");
+    expect(await bell(org.admin.memberId)).toHaveLength(1);
+    expect(await telegramJobs()).toHaveLength(1);
+  });
+
+  test("setQuietHours: início igual ao fim é recusado", async () => {
+    const org = await seedOrg("igual");
+    await expect(
+      as(org.admin.userId).mutation(api.notificationPreferences.setQuietHours, { organizationId: org.organizationId, enabled: true, start: "22:00", end: "22:00" })
+    ).rejects.toThrow(/mesmo horário/);
+  });
+
+  test("templates de atrasada escapam HTML do título", async () => {
+    const { buildTemplate } = await import("./emailTemplates");
+    const evil = '<img src=x onerror="alert(1)">';
+    const one = buildTemplate("taskOverdue", { taskTitle: evil, dueDate: "01/01", taskUrl: "https://x.com.br/app/tarefas?task=1" });
+    const many = buildTemplate("taskOverdueSummary", {
+      count: 2, tasks: [{ title: evil, dueDate: "01/01", taskUrl: "https://x.com.br/app/tarefas?task=1" }], appUrl: "https://x.com.br",
+    });
+    for (const out of [one, many]) {
+      expect(out.html).not.toContain("<img");
+      expect(out.html).toContain("&lt;img");
+    }
   });
 });
 

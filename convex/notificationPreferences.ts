@@ -459,7 +459,19 @@ export const setChannelPref = mutation({
       ...(existing?.channels ?? {}),
       [args.channel]: { ...(existing?.channels?.[args.channel] ?? {}), [args.flag]: args.enabled },
     };
-    await patchMemberPrefs(ctx, args.organizationId, member._id, { channels }, Date.now());
+    // Tipo informativo: Telegram/push dependem do sino. Ligar um canal também liga o flag
+    // antigo (o sino) para a escolha ter efeito.
+    const reviveBell =
+      args.enabled &&
+      !ACTIONABLE_FLAGS.includes(args.flag) &&
+      (existing as Record<string, unknown> | null)?.[args.flag] === false;
+    await patchMemberPrefs(
+      ctx,
+      args.organizationId,
+      member._id,
+      { channels, ...(reviveBell ? { [args.flag]: true } : {}) },
+      Date.now()
+    );
     return null;
   },
 });
@@ -536,6 +548,9 @@ export const setQuietHours = mutation({
     if (!isValidHHMM(quietHours.start) || !isValidHHMM(quietHours.end)) {
       throw new ConvexError("Horário inválido — use HH:MM");
     }
+    if (quietHours.enabled && quietHours.start === quietHours.end) {
+      throw new ConvexError("O início e o fim do silêncio não podem ser o mesmo horário");
+    }
     if (!isValidTimeZone(quietHours.timeZone)) throw new ConvexError("Fuso horário inválido");
     await patchMemberPrefs(ctx, args.organizationId, member._id, { quietHours }, Date.now());
     return null;
@@ -571,7 +586,7 @@ export const setShowPreview = mutation({
  */
 export const applyToAllMyOrgs = mutation({
   args: { sourceOrganizationId: v.id("organizations") },
-  returns: v.object({ applied: v.number() }),
+  returns: v.object({ applied: v.number(), skipped: v.number() }),
   handler: async (ctx, args) => {
     const sourceMember = await requireAuth(ctx, args.sourceOrganizationId);
     const userId = await getAuthUserId(ctx);
@@ -594,13 +609,18 @@ export const applyToAllMyOrgs = mutation({
       .take(50);
     const seen = new Set<string>([args.sourceOrganizationId]);
     let applied = 0;
+    let skipped = 0;
     for (const m of memberships) {
       if (isMembershipRevoked(m) || m.type !== "human" || seen.has(m.organizationId)) continue;
       seen.add(m.organizationId);
-      const target = await requireAuth(ctx, m.organizationId);
-      await patchMemberPrefs(ctx, m.organizationId, target._id, patch, now);
-      applied++;
+      try {
+        const target = await requireAuth(ctx, m.organizationId);
+        await patchMemberPrefs(ctx, m.organizationId, target._id, patch, now);
+        applied++;
+      } catch {
+        skipped++; // uma org problemática não derruba as demais
+      }
     }
-    return { applied };
+    return { applied, skipped };
   },
 });
