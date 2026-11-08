@@ -1304,6 +1304,21 @@ export const updateTask = mutation({
       updatedAt: now,
     });
 
+    // Concluída/cancelada por status (Kanban, seletor, calendário): os avisos de
+    // prazo/atribuição deixam de valer e o e-mail de reserva não sai (porta única).
+    if (
+      (changes.status === "completed" || changes.status === "cancelled") &&
+      task.status !== "completed" &&
+      task.status !== "cancelled"
+    ) {
+      await resolveTaskNotifications(
+        ctx,
+        task,
+        changes.status === "completed" ? "task_completed" : "task_cancelled",
+        userMember._id
+      );
+    }
+
     if (reminderChanged) {
       await schedulePreDueReminder(
         ctx,

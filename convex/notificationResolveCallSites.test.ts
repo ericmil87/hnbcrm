@@ -68,6 +68,14 @@ describe("call sites da porta resolveEntityNotifications", () => {
     }
   });
 
+  test("updateTask por status (completed/cancelled) resolve os avisos", () => {
+    const text = src("tasks.ts");
+    const i = text.indexOf("export const updateTask");
+    const j = text.indexOf("\nexport const ", i + 10);
+    const body = text.slice(i, j);
+    expect(body).toMatch(/resolveTaskNotifications\(\s*ctx,\s*task,\s*changes\.status === "completed" \? "task_completed" : "task_cancelled"/);
+  });
+
   test("desfazer no Telegram reabre os avisos (repasse e tarefa)", () => {
     const text = src("lib/telegramActions.ts");
     expect(text).toMatch(/reopenEntityNotifications\(ctx, \{[^}]*handoffId[^}]*\}[^)]*handoff_accepted/s);

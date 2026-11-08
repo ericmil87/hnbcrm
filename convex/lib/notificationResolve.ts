@@ -65,7 +65,11 @@ export async function resolveTaskNotifications(
     target: { taskId: task._id },
     resolvedByMemberId,
     reason,
-    types: ["task_due_soon", "task_overdue", "task_assigned"],
+    // Excluída: a menção em comentário também perde o destino (na conclusão ela segue valendo).
+    types:
+      reason === "task_deleted"
+        ? ["task_due_soon", "task_overdue", "task_assigned", "task_comment_mention"]
+        : ["task_due_soon", "task_overdue", "task_assigned"],
   });
 }
 
