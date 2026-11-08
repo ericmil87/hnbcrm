@@ -2,112 +2,60 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
-## [Não lançado]
-
-### Avisos no aparelho (push): ativar, aparelhos e convite
-
-- Em Configurações › Notificações (e em Este aparelho) há o cartão **Receber avisos neste aparelho**: toque em **Ativar avisos** e o navegador pede a permissão (só depois do seu toque). Ligado, mostra "Avisos ligados neste aparelho" com **Desligar**. Se estiver bloqueado, explica como reabrir (Chrome no Android, Ajustes do iPhone, ícone na barra do computador). No iPhone fora da Tela de Início, aparece "Instale o app para receber avisos" com o passo a passo.
-- **Meus aparelhos** lista onde você recebe avisos (nome do aparelho, "Este aparelho", visto há quanto tempo) e deixa **Remover** com confirmação.
-- Depois do primeiro pedido de ajuda ou mensagem atribuída com o app aberto, um aviso pergunta "Quer receber isso neste aparelho mesmo com o app fechado?" com o botão **Ativar** (no iPhone fora da Tela de Início, oferece instalar o app). Nunca aparece ao abrir o app e no máximo 1 vez a cada 7 dias.
-- Ao sair da conta, o aparelho deixa de receber os avisos da sua conta (a próxima pessoa no mesmo navegador não recebe os seus).
-- Ao abrir o app, os avisos que você já leu somem do aparelho.
-- O botão **Assumir** do aviso abre o pedido de ajuda perguntando "Assumir este pedido de ajuda?" antes de assumir.
-- A coluna **Push** das preferências e as opções de prévia na tela de bloqueio aparecem quando o aparelho suporta avisos.
-
-### Avisos no aparelho (push): o app recebe e abre
-
-- O app instalado (e o navegador no computador) passa a mostrar os avisos que o servidor manda. Tocar no aviso abre direto a conversa, o pedido de ajuda ou a tarefa, na organização certa; se o app já estiver aberto, ele só troca de tela, sem recarregar.
-- No Android e no computador, o pedido de ajuda traz os botões **Assumir** e **Abrir**. "Assumir" abre a tela para você confirmar; nada é assumido sem você ver.
-- O ícone do app mostra quantos avisos estão esperando, onde o aparelho permite.
-- Se um aviso chegar ilegível, aparece "Novidade no HNBCRM" e o toque abre o Painel (o iPhone exige que todo aviso apareça).
-
-### Instalar o app e rascunho da mensagem
-
-- A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
-- Em Configurações › Conta há a nova seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
-- O app instalado respeita o notch e a barra inferior do celular.
-- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
+## [0.79.0] - 2026-11-08
 
 ### App instalável e atualizações sem susto
 
-- O HNBCRM agora pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas.
-- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece o aviso "Nova versão disponível" com o botão **Atualizar**; depois de atualizar, o app avisa "Atualizado".
-- Se uma versão muito antiga ficar incompatível, aparece a faixa "Atualize para continuar".
-- Se uma tela não carregar por causa de uma atualização, o app recarrega sozinho uma vez.
+- O HNBCRM pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas. O app instalado respeita o notch e a barra inferior do celular.
+- A partir do 3º acesso aparece um convite para instalar: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, só volta depois de 30 dias, e nunca aparece dentro do app instalado. Em Configurações › Conta há a seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
+- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece "Nova versão disponível" com **Atualizar**; depois, o app avisa "Atualizado". Uma versão muito antiga e incompatível mostra a faixa "Atualize para continuar", e uma tela que não carregar por causa de uma atualização recarrega sozinha uma vez.
+- O texto que você está digitando numa conversa fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
 
-### Avisos no aparelho (push) e e-mail como reserva (backend)
+### Sino que não mente: lidas certas e agrupamento
 
-- O servidor já sabe mandar avisos para o celular e o computador (push), para quem ativar neste aparelho (a tela de ativar chega na próxima etapa). Vão por push só os avisos que pedem ação sua: pedido de ajuda, mensagem nova numa conversa sua (um aviso por leva de mensagens, não um por mensagem), conversa transferida para você, menção, resposta sugerida da IA, tarefa atribuída, vencendo ou atrasada, follow-up que voltou para a equipe e canal desconectado.
-- Se você já leu o aviso (no app, no Telegram ou abrindo a conversa) antes de ele sair, o celular não toca. Pausa, horário de silêncio e a escolha por canal valem também para o push; o pedido de ajuda continua furando a pausa, como no Telegram.
-- O texto na tela de bloqueio nunca mostra telefone, e-mail nem links. Se a organização ocultou a prévia na tela de bloqueio, ou você desligou "Mostrar prévia", o aviso mostra só quem e o quê ("Mensagem nova de Ana"), sem o conteúdo.
-- Um aparelho pode receber avisos de várias organizações; nesse caso o nome da organização aparece no aviso. Ao trocar de conta no mesmo navegador, o aparelho deixa de receber os avisos da conta anterior. Quem é removido da equipe para de receber push dela na hora; aparelhos sem uso há 60 dias saem sozinhos.
-- O e-mail de pedido de ajuda, menção em tarefa e tarefa atribuída, vencendo ou atrasada virou uma rede de segurança: sai 10 minutos depois (pedido de ajuda e menção) ou 30 minutos depois (tarefas) e só se o aviso ainda não foi lido. O e-mail de lembrete de tarefa chega antes do prazo (com pouca antecedência, na metade do tempo que falta). E-mails de lead atribuído, canal desconectado e os demais continuam saindo na hora.
-
-### Preferências de aviso e pausa (telas)
-
-- Configurações › Notificações foi refeita: atalhos "Tudo", "Só o que é comigo" e "Nada (só o sino)", e "Personalizar" com a lista de avisos por grupo e as colunas Sino, E-mail e Telegram (Telegram só com a conta vinculada). Cada toque salva sozinho ("Preferência salva") e volta atrás se der erro. Avisos que pedem uma ação sua ficam sempre no sino, e a tela explica isso. A linha travada "Convites de equipe" saiu.
-- Pausa e silêncio seguram e-mail e Telegram (o que sai nesse período não é reenviado depois; fica registrado no sino). Novo: "Pausar avisos" (1 h, 4 h ou até amanhã 8 h) no sino e na tela, com "Pausado até 14:00" e "Retomar"; horário de silêncio (fuso do aparelho); "Pedido de ajuda urgente fura pausa e silêncio"; "Mostrar prévia na tela de bloqueio" (aparece quando os avisos no aparelho forem ativados); "Aplicar a todas as minhas organizações".
-- Administradores definem o atalho inicial da organização e podem ocultar a prévia na tela de bloqueio.
-
-### Sino como caixa de entrada (telas)
-
-- O sino agora tem abas "Não lidas" e "Todas", filtros por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" pelo número real de não lidas e "Marcar como lida/não lida" em cada aviso. Avisos já resolvidos por outra pessoa aparecem em cinza ("Assumido por Ana") e não voltam para não lidas (o app explica).
-- Ações direto no aviso: "Assumir" (pedido de ajuda), "Revisar rascunho" (abre a conversa) e "Adiar 1 h" (lembrete da tarefa).
-- A bolinha do sino mostra só o que chegou desde a última vez que você abriu o sino; os avisos não lidos continuam na lista.
-- Com o app aberto, o que pede ação (pedido de ajuda, mensagem em outra conversa, transferência, menção, rascunho, tarefa) aparece como aviso na tela com "Abrir", sem repetir e sem avisar da conversa que você já está olhando. O título da aba mostra "(3) Conversas · HNBCRM" e, no app instalado, o selo do ícone acompanha. Som de aviso opcional (botão no painel do sino, desligado por padrão, só neste aparelho).
-- Quem usa mais de uma organização vê um ponto no seletor de organização e, no sino, "Você tem 2 novidades em {organização}"; tocar troca de organização e abre o sino lá.
-- Ainda não: o ícone do canal (WhatsApp, Instagram…) em cada aviso fica para depois; por enquanto o ícone mostra o tipo do aviso. A conversa aberta dentro do painel do lead ainda gera aviso na tela.
-- Aviso de lead atribuído abre o lead. Celular: folha com alça e botão "Fechar", rolagem infinita, tempo relativo que se atualiza, textos de clientes em qualquer idioma sem quebrar a linha, leitura por leitor de tela (diálogo, região de avisos, foco preso).
-
-### Sino como caixa de entrada (base no servidor)
-
-- O servidor do sino passou a suportar: lista só das não lidas ou por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" em lotes (também por grupo), "Marcar como não lida", "visto" do sino para o contador de novidades e a contagem de novidades de cada organização para o seletor de organização. Itens resolvidos por outra pessoa trazem o nome de quem assumiu. Nenhuma tela mudou ainda.
-- Quem só tem permissão de ver as próprias conversas (Conversas: "ver as próprias") agora vê nos contadores do menu apenas as suas conversas não lidas e os pedidos de ajuda dirigidos a você ou abertos a todos, e não mais o total da organização.
-
-### Preferências de aviso por canal, pausa e silêncio (backend)
-
-- Cada pessoa pode escolher, por tipo de aviso, se ele chega por e-mail, Telegram (e, depois, push). O sino sempre mostra o que pede ação sua (mensagem nova, pedido de ajuda, tarefa, menção, rascunho da IA, lead atribuído, canal desconectado); as preferências controlam e-mail e Telegram. Quem tinha desligado um desses tipos na tela antiga passa a vê-lo no sino.
-- Atalhos "Tudo", "Só o que é comigo" e "Nada (só o sino)", pausa de 1 h, 4 h, até amanhã 8h ou até uma data, e horário de silêncio (ex.: 21h às 8h, no fuso de quem configura). Durante pausa ou silêncio o sino segue registrando e e-mail e Telegram seguram; pedido de ajuda da IA ainda avisa, e dá para desligar essa exceção.
-- "Pausar" do Telegram (/pausar) e a pausa do app são a mesma coisa; o aviso de confirmação agora diz que o pedido de ajuda urgente ainda avisa.
-- Administradores definem o padrão da organização (atalho inicial de quem ainda não escolheu e ocultar prévia na tela de bloqueio). Há "aplicar a todas as minhas organizações".
-- O resumo diário por e-mail sai às 8h no horário da organização (antes era um horário fixo para todas). Várias tarefas atrasadas do mesmo responsável na mesma rodada chegam em um e-mail só.
-
-### Sino agrupado e com textos novos
-
-- Mensagens novas da mesma conversa viram um aviso só no sino: "5 mensagens novas de Ana", com a mais recente na prévia, e o aviso sobe para o topo a cada mensagem. Depois de lido, a próxima mensagem abre um aviso novo. O mesmo vale para as respostas sugeridas pela IA na mesma conversa (o aviso mostra a resposta pendente agora) e para as menções num grupo em até 10 minutos ("3 menções a você no grupo Sementes").
-- O aviso de mensagem nova passa a chegar no sino para quem atende a conversa mesmo sem ter vinculado o Telegram. Quem usa o Telegram continua recebendo um cartão por leva de mensagens (a cada 20 s), sem repetição.
-- "Pausar" no Telegram (/pausar) e a opção "Receber as mensagens das conversas que eu atendo" do Telegram agora valem só para o Telegram: o sino continua recebendo.
-- Lead atribuído a você agora aparece no sino (antes só por e-mail).
-- Textos do sino revistos com os nomes do app: "A IA pediu ajuda: Ana Souza", "Bruno assumiu a conversa com Ana Souza", "A IA sugeriu uma resposta para Ana Souza", "Ligar para a Ana vence às 14:30". Datas e horas seguem o fuso da organização.
-- Quando o cliente escreve em outro idioma e a tradução automática já traduziu, a prévia mostra o texto traduzido com "(traduzido do inglês)".
-- Nomes longos, emoji e textos em árabe ou hebraico são cortados sem quebrar caracteres. Telefone e e-mail não aparecem mais no texto dos avisos: quando o contato não tem nome, aparece "Contato".
-- O aviso de mensagem nova segue quem atende a conversa: depois de transferida, as próximas mensagens avisam a nova pessoa, não mais o dono do lead.
-- Ao transferir a conversa para outra pessoa, ou trocar o dono do lead, os avisos de mensagem nova e de resposta sugerida dela saem das não lidas de quem a atendia.
-- Cada menção num grupo continua chegando no Telegram, mesmo agrupada no sino. Ao trocar o responsável de uma tarefa, o aviso "atribuiu uma tarefa a você" sai das não lidas de quem deixou a tarefa.
-
-### Avisos do sino que se resolvem sozinhos
-
-- Quando o assunto de um aviso é resolvido em outro lugar, o aviso do sino passa a ficar lido sozinho: abrir a conversa (mensagem nova, transferência e rascunho daquela conversa, só os seus), assumir ou devolver um pedido de ajuda (some para todos que receberam), aprovar, descartar ou pedir outro rascunho da IA, concluir ou excluir uma tarefa (vence em breve, atrasada, atribuída) e reconectar o WhatsApp ou a Página do Instagram/Messenger.
+- Quando o assunto de um aviso é resolvido em outro lugar, o aviso fica lido sozinho: abrir a conversa (mensagem nova, transferência e rascunho daquela conversa, só os seus), assumir ou devolver um pedido de ajuda (some para todos que receberam), aprovar, descartar ou pedir outro rascunho da IA, concluir ou excluir uma tarefa, e reconectar o WhatsApp ou a Página do Instagram/Messenger. Ao transferir a conversa ou trocar o dono do lead, os avisos de mensagem nova e de resposta sugerida saem das não lidas de quem a atendia; ao trocar o responsável de uma tarefa, o "atribuiu uma tarefa a você" sai das não lidas de quem a deixou.
 - O aviso "Rascunho da IA aguardando revisão" não deixa mais de aparecer depois que você revisa um rascunho direto na conversa: o próximo rascunho avisa de novo.
+- Mensagens novas da mesma conversa viram um aviso só: "5 mensagens novas de Ana", com a mais recente na prévia, e o aviso sobe para o topo a cada mensagem. Depois de lido, a próxima mensagem abre um aviso novo. O mesmo vale para as respostas sugeridas pela IA na mesma conversa e para as menções num grupo em até 10 minutos ("3 menções a você no grupo Sementes"); cada menção continua chegando no Telegram.
+- O aviso de mensagem nova passa a chegar no sino para quem atende a conversa, mesmo sem Telegram vinculado, e segue quem atende: depois de transferida, as próximas mensagens avisam a nova pessoa, não mais o dono do lead. Quem usa o Telegram continua recebendo um cartão por leva de mensagens (a cada 20 s). Lead atribuído a você agora aparece no sino (antes só por e-mail).
+- Textos revistos com os nomes do app: "A IA pediu ajuda: Ana Souza", "Bruno assumiu a conversa com Ana Souza", "A IA sugeriu uma resposta para Ana Souza", "Ligar para a Ana vence às 14:30". Datas e horas seguem o fuso da organização. Quando o cliente escreve em outro idioma e a tradução automática já traduziu, a prévia mostra o texto traduzido com "(traduzido do inglês)". Nomes longos, emoji e textos em árabe ou hebraico são cortados sem quebrar caracteres. Telefone e e-mail não aparecem mais nos avisos: sem nome, aparece "Contato".
 - Quem foi removido da equipe, ou ainda não aceitou o convite, deixa de receber avisos; o que estava por ler dele não reaparece se voltar. Avisos não lidos há mais de 30 dias passam a ficar lidos.
 
-### Instalar o app e rascunho da mensagem
+### Preferências, pausa e silêncio
 
-- A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
-- Em Configurações › Conta há a nova seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
-- O app instalado respeita o notch e a barra inferior do celular.
-- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
+- Configurações › Notificações foi refeita: atalhos "Tudo", "Só o que é comigo" e "Nada (só o sino)", e "Personalizar" com a lista de avisos por grupo e as colunas Sino, E-mail e Telegram (Telegram só com a conta vinculada; Push quando o aparelho suporta). Cada toque salva sozinho ("Preferência salva") e volta atrás se der erro. Avisos que pedem uma ação sua ficam sempre no sino, e a tela explica isso. A linha travada "Convites de equipe" saiu.
+- Para quem já usa: quem tinha desligado um desses avisos na tela antiga passa a vê-lo no sino; as preferências controlam e-mail, Telegram e push.
+- **Pausar avisos** (1 h, 4 h ou até amanhã 8 h) no sino e na tela, com "Pausado até 14:00" e **Retomar**; horário de silêncio (no fuso do aparelho); "Pedido de ajuda urgente fura pausa e silêncio"; "Mostrar prévia na tela de bloqueio"; "Aplicar a todas as minhas organizações". Durante a pausa ou o silêncio o sino segue registrando, e e-mail, Telegram e push seguram; o que sai nesse período não é reenviado depois.
+- O /pausar do Telegram e a pausa do app são a mesma coisa; a confirmação diz que o pedido de ajuda urgente ainda avisa. A opção "Receber as mensagens das conversas que eu atendo" do Telegram vale só para o Telegram: o sino continua recebendo.
+- Administradores definem o atalho inicial da organização e podem ocultar a prévia na tela de bloqueio.
+- O resumo diário por e-mail sai às 8h no horário da organização (antes era um horário fixo para todas). Várias tarefas atrasadas do mesmo responsável na mesma rodada chegam em um e-mail só.
 
-### App instalável e atualizações sem susto
+### Sino como caixa de entrada
 
-- O HNBCRM agora pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas.
-- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece o aviso "Nova versão disponível" com o botão **Atualizar**; depois de atualizar, o app avisa "Atualizado".
-- Se uma versão muito antiga ficar incompatível, aparece a faixa "Atualize para continuar".
-- Se uma tela não carregar por causa de uma atualização, o app recarrega sozinho uma vez.
+- O sino ganhou abas "Não lidas" e "Todas", filtros por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" pelo número real de não lidas e "Marcar como lida/não lida" em cada aviso. Avisos já resolvidos por outra pessoa aparecem em cinza ("Assumido por Ana") e não voltam para não lidas.
+- Ações direto no aviso: **Assumir** (pedido de ajuda), **Revisar rascunho** (abre a conversa) e **Adiar 1 h** (lembrete da tarefa). Aviso de lead atribuído abre o lead.
+- A bolinha do sino mostra só o que chegou desde a última vez que você abriu o sino; os não lidos continuam na lista.
+- Com o app aberto, o que pede ação (pedido de ajuda, mensagem em outra conversa, transferência, menção, rascunho, tarefa) aparece como aviso na tela com "Abrir", sem repetir e sem avisar da conversa que você já está olhando. O título da aba mostra "(3) Conversas · HNBCRM" e, no app instalado, o selo do ícone acompanha. Há som opcional (botão no painel do sino, desligado por padrão, só neste aparelho).
+- Quem usa mais de uma organização vê um ponto no seletor de organização e, no sino, "Você tem 2 novidades em {organização}"; tocar troca de organização e abre o sino lá.
+- No celular, o painel abre como folha com alça e botão "Fechar", com rolagem infinita, tempo relativo que se atualiza, textos de clientes em qualquer idioma sem quebrar a linha e leitura por leitor de tela.
+- Quem só pode ver as próprias conversas vê nos contadores do menu apenas as suas conversas não lidas e os pedidos de ajuda dirigidos a você ou abertos a todos, não mais o total da organização.
+- Ainda não: o ícone do canal (WhatsApp, Instagram…) em cada aviso; por enquanto o ícone mostra o tipo do aviso. A conversa aberta dentro do painel do lead ainda gera aviso na tela.
+
+### Avisos no celular e no computador (push)
+
+- O HNBCRM agora manda avisos para o aparelho, mesmo com o app fechado. Em Configurações › Notificações (e em Configurações › Conta › Este aparelho) há o cartão **Receber avisos neste aparelho**: toque em **Ativar avisos** e o navegador pede a permissão (só depois do seu toque). Ligado, mostra "Avisos ligados neste aparelho" com **Desligar**; se estiver bloqueado, explica como reabrir (Chrome no Android, Ajustes do iPhone, ícone na barra do computador). No iPhone, os avisos exigem o app instalado na Tela de Início; fora dela aparece "Instale o app para receber avisos" com o passo a passo.
+- Vão por push só os avisos que pedem ação sua: pedido de ajuda, mensagem nova numa conversa sua (um aviso por leva de mensagens, não um por mensagem), conversa transferida para você, menção, resposta sugerida da IA, tarefa atribuída, vencendo ou atrasada, follow-up que voltou para a equipe e canal desconectado.
+- Tocar no aviso abre direto a conversa, o pedido de ajuda ou a tarefa, na organização certa; se o app já estiver aberto, ele só troca de tela, sem recarregar. No Android e no computador, o pedido de ajuda traz os botões **Assumir** e **Abrir**; "Assumir" abre o pedido perguntando "Assumir este pedido de ajuda?" e nada é assumido sem você ver. O ícone do app mostra quantos avisos esperam, onde o aparelho permite.
+- Se você já leu o aviso (no app, no Telegram ou abrindo a conversa) antes de ele sair, o celular não toca; ao abrir o app, os avisos que você já leu somem do aparelho. Pausa, horário de silêncio e a escolha por canal valem também para o push; o pedido de ajuda urgente continua furando a pausa, como no Telegram.
+- A tela de bloqueio nunca mostra telefone, e-mail nem links. Se a organização ocultou a prévia, ou você desligou "Mostrar prévia", o aviso mostra só quem e o quê ("Mensagem nova de Ana"). Quem usa mais de uma organização vê o nome dela no aviso. Se um aviso chegar ilegível, aparece "Novidade no HNBCRM" e o toque abre o Painel.
+- **Meus aparelhos** lista onde você recebe avisos (nome, "Este aparelho", visto há quanto tempo) e deixa **Remover** com confirmação. Aparelhos sem uso há 60 dias saem sozinhos, quem é removido da equipe para de receber push dela na hora, e ao sair da conta ou trocar de conta no mesmo navegador o aparelho deixa de receber os avisos da conta anterior.
+- Depois do primeiro pedido de ajuda ou mensagem atribuída com o app aberto, um aviso pergunta "Quer receber isso neste aparelho mesmo com o app fechado?" com o botão **Ativar**. Nunca aparece ao abrir o app e no máximo 1 vez a cada 7 dias.
+- Para quem já usa: o e-mail de pedido de ajuda, menção em tarefa e tarefa atribuída, vencendo ou atrasada agora é uma rede de segurança. Sai 10 minutos depois (pedido de ajuda e menção) ou 30 minutos depois (tarefas) e só se o aviso ainda não foi lido. O lembrete "vence em breve" chega antes do prazo (com pouca antecedência, na metade do tempo que falta). E-mails de lead atribuído, canal desconectado e os demais continuam saindo na hora.
 
 ### Segurança
 
 - Os e-mails automáticos agora escapam o texto vindo de clientes, formulários e equipe (título do lead, prévia da mensagem, comentários, nomes), e os links dos botões só aceitam https ou caminho do app.
+
+## [Não lançado]
 
 ### Busca sem acento
 

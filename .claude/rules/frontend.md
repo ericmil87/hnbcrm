@@ -91,6 +91,12 @@ paths:
 
 Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.md`
 
+## PWA, push e avisos
+- O service worker (`src/sw.ts`) não cacheia Convex nem storage e não faz rede; todo `push` termina em `event.waitUntil(showNotification(...))` (iOS revoga a permissão se não mostrar) e todo handler usa `waitUntil` (`lib/push/pushSw.test.ts`).
+- Atualização do app só em momento seguro (`isSafeMomentToReload`): texto digitado ou rascunho registrado em `lib/pwa/composerDirty.ts` bloqueia; composer persiste o rascunho (`useComposerDraft`, nota interna nunca). `MIN_CLIENT_BUILD` só aponta para versão já publicada.
+- `PUSH_ENABLED` (`lib/featureFlags.ts`) é o kill switch de UI do push; `PWA_KILL_SWITCH=1` no build derruba o SW.
+- `/app/abrir?org=&to=` é a única entrada de deep link externo (push, e-mail); o destino passa por `safeAppTarget`.
+
 ## Tradução automática (v0.80)
 - `message.content` é o texto de fio; a versão da equipe vem de `translatedText` e o estado de `metadata.translation`. Renderize por papel/estado (recebida `done` = tradução principal com original sob "Ver original"; enviada `done` = o que o lead recebeu), nunca um no lugar do outro sem rótulo, e nunca grave texto em `metadata.translation`. `bubbleTranslation()` decide; com o módulo desligado só a enviada retida (`outbound_pending`/`outbound_failed`) mantém "Tentar de novo"/"Enviar sem traduzir", e `long_text` esconde o "Tentar de novo".
 - Chip de idioma = pílula + `Popover` (folha inferior no celular), `Languages` e código curto ("ES · auto"); nunca bandeira emoji, idioma não é país. Nota interna nunca traduz (sem chip, prévia nem botão "Traduzir").
