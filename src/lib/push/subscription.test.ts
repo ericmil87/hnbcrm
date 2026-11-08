@@ -4,6 +4,7 @@ import {
   bufferToBase64Url,
   deviceDisplayName,
   pushStatusOf,
+  pushStatusWithServer,
   pushSupportOf,
   urlBase64ToUint8Array,
   userAgentLabelOf,
@@ -71,5 +72,15 @@ describe("textos por plataforma", () => {
   it("nome genérico quando não há rótulo", () => {
     expect(deviceDisplayName({ userAgentLabel: null, platform: "desktop" })).toBe("Computador");
     expect(deviceDisplayName({ userAgentLabel: "Chrome no Android", platform: "android" })).toBe("Chrome no Android");
+  });
+});
+
+describe("pushStatusWithServer", () => {
+  it("ligado exige que o servidor conheça o aparelho nesta org", () => {
+    expect(pushStatusWithServer("subscribed", [{ isCurrent: true, linkedHere: true }])).toBe("subscribed");
+    expect(pushStatusWithServer("subscribed", [{ isCurrent: true, linkedHere: false }])).toBe("default");
+    expect(pushStatusWithServer("subscribed", [])).toBe("default");
+    expect(pushStatusWithServer("subscribed", undefined)).toBe("subscribed");
+    expect(pushStatusWithServer("denied", [])).toBe("denied");
   });
 });

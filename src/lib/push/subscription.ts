@@ -54,6 +54,15 @@ export function pushStatusOf({ support, permission, hasSubscription }: PushStatu
   return "default";
 }
 
+/**
+ * "Ligado" só vale se o servidor também conhece este aparelho nesta org. `devices` indefinido
+ * (consulta carregando ou pulada) não muda o estado; carregado e sem `isCurrent && linkedHere`, volta a "default".
+ */
+export function pushStatusWithServer(status: PushStatus, devices: readonly { isCurrent: boolean; linkedHere: boolean }[] | undefined): PushStatus {
+  if (status !== "subscribed" || devices === undefined) return status;
+  return devices.some((d) => d.isCurrent && d.linkedHere) ? "subscribed" : "default";
+}
+
 /** Como reabrir a permissão bloqueada, por plataforma. */
 export function blockedHelp(platform: InstallPlatform, userAgent = ""): string {
   if (platform === "ios") return "No iPhone, abra Ajustes › Notificações › HNBCRM e ative Permitir notificações.";
@@ -215,8 +224,29 @@ export function removeLinkedOrg(orgId: string): void {
   }
 }
 
+const OWNER_KEY = "hnbcrm.push.owner";
+
+/** Dono (userId) da assinatura deste navegador: outra pessoa logada não herda o aparelho. */
+export function readPushOwner(): string | null {
+  try {
+    return localStorage.getItem(OWNER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function writePushOwner(userId: string): void {
+  try {
+    localStorage.setItem(OWNER_KEY, userId);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Esquece orgs vinculadas e dono. */
 export function clearLinkedOrgs(): void {
   try {
+    localStorage.removeItem(OWNER_KEY);
     localStorage.removeItem(LINKED_ORGS_KEY);
   } catch {
     /* ignore */
@@ -239,25 +269,16 @@ export async function teardownPushOnLogout({ unsubscribe, extraOrgIds = [], time
   const run = async () => {
     const sub = await getExistingSubscription();
     if (!sub) return;
+    const endpoint = sub.endpoint;
     const orgs = Array.from(new Set([...readLinkedOrgs(), ...extraOrgIds]));
-    await Promise.allSettled(orgs.map((organizationId) => unsubscribe({ organizationId, endpoint: sub.endpoint })));
-    await sub.unsubscribe().catch(() => false);
+    // Navegador primeiro (em paralelo com o backend): mesmo que o servidor demore, a assinatura já saiu.
+    const browser = sub.unsubscribe().catch(() => false);
+    await Promise.allSettled([browser, ...orgs.map((organizationId) => unsubscribe({ organizationId, endpoint }))]);
   };
   try {
     await Promise.race([run(), new Promise<void>((resolve) => setTimeout(resolve, timeoutMs))]);
   } catch {
     /* melhor esforço */
-  } finally {
-    clearLinkedOrgs();
-  }
-}
-
-/** Só o navegador: sessão já expirada (o servidor não aceita mais a chamada). */
-export async function teardownPushLocalOnly(): Promise<void> {
-  try {
-    await Promise.race([unsubscribeBrowser(), new Promise<void>((resolve) => setTimeout(resolve, 2500))]);
-  } catch {
-    /* ignore */
   } finally {
     clearLinkedOrgs();
   }

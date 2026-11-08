@@ -23,7 +23,7 @@ import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import { clearStoredDrafts } from "@/lib/pwa/composerDraft";
-import { teardownPushLocalOnly, teardownPushOnLogout } from "@/lib/push/subscription";
+import { teardownPushOnLogout } from "@/lib/push/subscription";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -233,8 +233,8 @@ function AuthLayoutContent() {
       clearStoredTheme();
       clearStoredCopilotThreads();
       clearStoredDrafts();
-      // O servidor já não aceita chamadas desta sessão: só cancela a assinatura no navegador.
-      void teardownPushLocalOnly();
+      // A assinatura de push NÃO é cancelada aqui (um "não autenticado" momentâneo, offline, não pode
+      // desligar os avisos); o re-sync da próxima pessoa logada detecta o dono diferente e a limpa.
     }
   }, [isLoading, isAuthenticated]);
   const mustChangePassword = useQuery(

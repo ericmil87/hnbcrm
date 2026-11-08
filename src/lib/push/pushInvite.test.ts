@@ -7,10 +7,14 @@ const base = { openConversationId: null, status: "default", lastShownAt: null, n
 
 describe("shouldInvite", () => {
   it("só com o aparelho ainda por ativar", () => {
-    for (const status of ["subscribed", "denied", "unsupported", "needs-install", "loading", "error"]) {
+    for (const status of ["subscribed", "denied", "unsupported", "loading", "error"]) {
       expect(shouldInvite({ status, lastShownAt: null, now: 1, shownThisSession: false })).toBe(false);
     }
     expect(shouldInvite({ status: "default", lastShownAt: null, now: 1, shownThisSession: false })).toBe(true);
+  });
+
+  it("iPhone fora da Tela de Início também recebe o convite (para instalar)", () => {
+    expect(shouldInvite({ status: "needs-install", lastShownAt: null, now: 1, shownThisSession: false })).toBe(true);
   });
 
   it("no máximo 1 vez a cada 7 dias e 1 vez por sessão", () => {

@@ -36,7 +36,7 @@ export function MyDevicesListView({ devices, now, onRemove }: MyDevicesListViewP
   return (
     <SectionCard
       title="Meus aparelhos"
-      description="Aparelhos que recebem seus avisos. Remover para os avisos só naquele aparelho."
+      description="Aparelhos que recebem seus avisos. Ao remover, os avisos param só naquele aparelho."
       icon={<Smartphone size={20} aria-hidden="true" />}
     >
       <ul className="divide-y divide-border-subtle">

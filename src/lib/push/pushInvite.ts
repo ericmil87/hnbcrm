@@ -23,7 +23,8 @@ export function markInviteShown(now: number): void {
 }
 
 export function shouldInvite(input: { status: string; lastShownAt: number | null; now: number; shownThisSession: boolean }): boolean {
-  if (input.status !== "default") return false;
+  // "needs-install" (iPhone fora da Tela de Início) recebe o convite para instalar o app.
+  if (input.status !== "default" && input.status !== "needs-install") return false;
   if (input.shownThisSession) return false;
   if (input.lastShownAt !== null && input.now - input.lastShownAt < PUSH_INVITE_COOLDOWN_MS) return false;
   return true;

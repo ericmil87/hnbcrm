@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 import { disablePush, enablePush, resyncPush, type PushBackend } from "./actions";
 import { readLinkedOrgs, teardownPushOnLogout } from "./subscription";
 import { closeReadDeviceNotifications } from "./readOnDevice";
@@ -7,8 +8,20 @@ import { installPushEnv, makeSub, uninstallPushEnv } from "@/test/pushEnv";
 
 const VAPID = "AQID"; // 3 bytes, só para o applicationServerKey
 
-function backend(): PushBackend & { subscribe: ReturnType<typeof vi.fn>; unsubscribe: ReturnType<typeof vi.fn> } {
-  return { subscribe: vi.fn().mockResolvedValue({}), unsubscribe: vi.fn().mockResolvedValue({ removed: true }) };
+const U = "user1";
+
+function backend() {
+  return {
+    subscribe: vi.fn().mockResolvedValue({}),
+    unsubscribe: vi.fn().mockResolvedValue({ removed: true }),
+    getMyDevices: vi.fn().mockResolvedValue([{ isCurrent: true, linkedHere: true }]),
+  } satisfies PushBackend;
+}
+
+/** Aparelho já ativado por `user1` nas orgs dadas. */
+function activated(orgs: string[], owner = U) {
+  localStorage.setItem("hnbcrm.push.linkedOrgs", JSON.stringify(orgs));
+  localStorage.setItem("hnbcrm.push.owner", owner);
 }
 
 beforeEach(() => localStorage.clear());
@@ -18,7 +31,7 @@ describe("enablePush", () => {
   it("pede a permissão, assina com userVisibleOnly e manda p256dh/auth certos ao backend", async () => {
     const env = installPushEnv({ permission: "default" });
     const b = backend();
-    expect(await enablePush(b, "org1", VAPID)).toBe("enabled");
+    expect(await enablePush(b, "org1", VAPID, U)).toBe("enabled");
     expect(env.Notification.requestPermission).toHaveBeenCalledTimes(1);
     const call = env.pushManager.subscribe.mock.calls[0] as unknown as [{ userVisibleOnly: boolean; applicationServerKey: Uint8Array }];
     expect(call[0].userVisibleOnly).toBe(true);
@@ -33,12 +46,23 @@ describe("enablePush", () => {
       }),
     );
     expect(readLinkedOrgs()).toEqual(["org1"]);
+    expect(localStorage.getItem("hnbcrm.push.owner")).toBe(U);
+  });
+
+  it("servidor recusou o vínculo: cancela a assinatura do navegador e relança", async () => {
+    const env = installPushEnv({ permission: "default" });
+    const b = backend();
+    b.subscribe.mockRejectedValue(new ConvexError("Só pessoas da equipe recebem avisos no aparelho"));
+    await expect(enablePush(b, "org1", VAPID, U)).rejects.toBeInstanceOf(ConvexError);
+    const created = (await env.pushManager.subscribe.mock.results[0].value) as { unsubscribe: ReturnType<typeof vi.fn> };
+    expect(created.unsubscribe).toHaveBeenCalled();
+    expect(readLinkedOrgs()).toEqual([]);
   });
 
   it("permissão negada não assina nem chama o backend", async () => {
     const env = installPushEnv({ permission: "default", requestResult: "denied" });
     const b = backend();
-    expect(await enablePush(b, "org1", VAPID)).toBe("denied");
+    expect(await enablePush(b, "org1", VAPID, U)).toBe("denied");
     expect(env.pushManager.subscribe).not.toHaveBeenCalled();
     expect(b.subscribe).not.toHaveBeenCalled();
   });
@@ -46,29 +70,104 @@ describe("enablePush", () => {
   it("fechar o pedido sem escolher (default) não assina", async () => {
     installPushEnv({ permission: "default", requestResult: "default" });
     const b = backend();
-    expect(await enablePush(b, "org1", VAPID)).toBe("dismissed");
+    expect(await enablePush(b, "org1", VAPID, U)).toBe("dismissed");
     expect(b.subscribe).not.toHaveBeenCalled();
   });
 
   it("sem suporte não pede nada", async () => {
     const b = backend();
-    expect(await enablePush(b, "org1", VAPID)).toBe("unsupported");
+    expect(await enablePush(b, "org1", VAPID, U)).toBe("unsupported");
   });
 });
 
 describe("resyncPush", () => {
-  it("com assinatura no navegador, vincula de novo a org ativa (idempotente)", async () => {
+  it("com assinatura no navegador, vincula de novo as orgs vinculadas e a ativa (idempotente)", async () => {
     installPushEnv({ permission: "granted", subscription: makeSub() });
+    activated(["org1"]);
     const b = backend();
-    expect(await resyncPush(b, "org2", VAPID)).toBe("synced");
-    expect(b.subscribe).toHaveBeenCalledWith(expect.objectContaining({ organizationId: "org2", p256dh: "BPkey_-", auth: "authKey_-" }));
-    expect(readLinkedOrgs()).toEqual(["org2"]);
+    expect(await resyncPush(b, "org2", VAPID, U)).toBe("synced");
+    expect(b.subscribe).toHaveBeenCalledWith(expect.objectContaining({ organizationId: "org1", p256dh: "BPkey_-", auth: "authKey_-" }));
+    expect(b.subscribe).toHaveBeenCalledWith(expect.objectContaining({ organizationId: "org2" }));
+    expect(readLinkedOrgs().sort()).toEqual(["org1", "org2"]);
+  });
+
+  it("org que o servidor recusa (sem acesso) sai das vinculadas; as outras seguem", async () => {
+    installPushEnv({ permission: "granted", subscription: makeSub() });
+    activated(["org1", "orgX"]);
+    const b = backend();
+    b.subscribe.mockImplementation(async (a: { organizationId: string }) => {
+      if (a.organizationId === "orgX") throw new ConvexError("Sem acesso");
+      return {};
+    });
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("synced");
+    expect(readLinkedOrgs()).toEqual(["org1"]);
+  });
+
+  it("erro de rede em uma org não a tira das vinculadas", async () => {
+    installPushEnv({ permission: "granted", subscription: makeSub() });
+    activated(["org1", "org2"]);
+    const b = backend();
+    b.subscribe.mockImplementation(async (a: { organizationId: string }) => {
+      if (a.organizationId === "org2") throw new Error("offline");
+      return {};
+    });
+    await resyncPush(b, "org1", VAPID, U);
+    expect(readLinkedOrgs().sort()).toEqual(["org1", "org2"]);
+  });
+
+  it("aparelho removido em Meus aparelhos (outro aparelho): cancela no navegador e não re-vincula", async () => {
+    const sub = makeSub();
+    const env = installPushEnv({ permission: "granted", subscription: sub });
+    activated(["org1"]);
+    const b = backend();
+    b.getMyDevices.mockResolvedValue([{ isCurrent: false, linkedHere: true }]);
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("removed");
+    expect(sub.unsubscribe).toHaveBeenCalled();
+    expect(b.subscribe).not.toHaveBeenCalled();
+    expect(readLinkedOrgs()).toEqual([]);
+    expect(env.Notification.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("falha ao consultar os aparelhos não conta como removido", async () => {
+    installPushEnv({ permission: "granted", subscription: makeSub() });
+    activated(["org1"]);
+    const b = backend();
+    b.getMyDevices.mockRejectedValue(new Error("offline"));
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("synced");
+  });
+
+  it("assinatura de outra pessoa (dono diferente): cancela e não re-vincula", async () => {
+    const sub = makeSub();
+    installPushEnv({ permission: "granted", subscription: sub });
+    activated(["org1"], "outraPessoa");
+    const b = backend();
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("foreign");
+    expect(sub.unsubscribe).toHaveBeenCalled();
+    expect(b.subscribe).not.toHaveBeenCalled();
+    expect(readLinkedOrgs()).toEqual([]);
+  });
+
+  it("assinatura sem dono e sem orgs vinculadas: cancela e não re-vincula", async () => {
+    const sub = makeSub();
+    installPushEnv({ permission: "granted", subscription: sub });
+    const b = backend();
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("foreign");
+    expect(sub.unsubscribe).toHaveBeenCalled();
+    expect(b.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("o mesmo dono mantém a assinatura (sessão que expirou e voltou)", async () => {
+    const sub = makeSub();
+    installPushEnv({ permission: "granted", subscription: sub });
+    activated(["org1"]);
+    expect(await resyncPush(backend(), "org1", VAPID, U)).toBe("synced");
+    expect(sub.unsubscribe).not.toHaveBeenCalled();
   });
 
   it("sem assinatura não cria uma (a pessoa pode ter desligado)", async () => {
     const env = installPushEnv({ permission: "granted", subscription: null });
     const b = backend();
-    expect(await resyncPush(b, "org1", VAPID)).toBe("idle");
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("idle");
     expect(env.pushManager.subscribe).not.toHaveBeenCalled();
     expect(b.subscribe).not.toHaveBeenCalled();
   });
@@ -78,7 +177,7 @@ describe("resyncPush", () => {
     installPushEnv({ permission: "denied", subscription: sub });
     localStorage.setItem("hnbcrm.push.linkedOrgs", JSON.stringify(["org1", "org2"]));
     const b = backend();
-    expect(await resyncPush(b, "org1", VAPID)).toBe("cleaned");
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("cleaned");
     expect(b.unsubscribe).toHaveBeenCalledTimes(2);
     expect(sub.unsubscribe).toHaveBeenCalled();
     expect(readLinkedOrgs()).toEqual([]);
@@ -89,7 +188,8 @@ describe("resyncPush", () => {
     const stale = makeSub();
     stale.options.applicationServerKey = new Uint8Array([9, 9, 9]).buffer;
     const env = installPushEnv({ permission: "granted", subscription: stale });
-    await resyncPush(backend(), "org1", VAPID);
+    activated(["org1"]);
+    await resyncPush(backend(), "org1", VAPID, U);
     expect(stale.unsubscribe).toHaveBeenCalled();
     expect(env.pushManager.subscribe).toHaveBeenCalledTimes(1);
     expect(env.Notification.requestPermission).not.toHaveBeenCalled();
@@ -127,7 +227,8 @@ describe("logout", () => {
     expect(unsubscribe).toHaveBeenCalledWith({ organizationId: "org1", endpoint: sub.endpoint });
     expect(unsubscribe).toHaveBeenCalledWith({ organizationId: "org9", endpoint: sub.endpoint });
     expect(unsubscribe).toHaveBeenCalledTimes(2);
-    expect(order).toEqual(["backend", "backend", "browser"]);
+    expect(order[0]).toBe("browser");
+    expect(order.filter((o) => o === "backend")).toHaveLength(2);
     expect(readLinkedOrgs()).toEqual([]);
   });
 

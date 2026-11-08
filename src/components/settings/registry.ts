@@ -115,9 +115,9 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     id: "device",
     group: "conta",
     label: "Este aparelho",
-    description: "Instalar o app neste celular ou computador",
+    description: "Instalar o app e receber avisos neste celular ou computador",
     icon: MonitorSmartphone,
-    keywords: ["instalar", "app", "aplicativo", "tela inicial", "iphone", "android", "pwa", "celular"],
+    keywords: ["instalar", "app", "aplicativo", "tela inicial", "iphone", "android", "pwa", "celular", "push", "avisos no aparelho", "notificações"],
     // Preferência do aparelho: sem permissão.
     Component: lazy(() => import("./ThisDevicePanel").then((m) => ({ default: m.ThisDevicePanel }))),
   },

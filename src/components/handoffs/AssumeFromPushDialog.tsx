@@ -1,6 +1,5 @@
-import { useCallback, useEffect } from "react";
+import { useCallback } from "react";
 import { useSearchParams } from "react-router";
-import { toast } from "sonner";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 
 interface AssumeFromPushDialogProps {
@@ -13,6 +12,7 @@ interface AssumeFromPushDialogProps {
 
 /**
  * Botão "Assumir" da notificação (`/app/abrir?…&acao=assumir` → `?handoff=…&acao=assumir`).
+ * Pedido ausente da fila: quem trata (aviso + limpeza de `acao=`) é o efeito do HandoffQueue.
  * O service worker não leva token: quem assume é o toque de confirmação desta tela,
  * pela mesma ação da fila.
  */
@@ -20,8 +20,6 @@ export function AssumeFromPushDialog({ handoffId, handoffs, onAccept }: AssumeFr
   const [params, setParams] = useSearchParams();
   const requested = params.get("acao") === "assumir" && !!handoffId;
   const inQueue = !!handoffId && !!handoffs?.some((h) => h._id === handoffId);
-  const gone = requested && handoffs !== undefined && !inQueue;
-
   const clear = useCallback(() => {
     setParams(
       (prev) => {
@@ -32,12 +30,6 @@ export function AssumeFromPushDialog({ handoffId, handoffs, onAccept }: AssumeFr
       { replace: true, preventScrollReset: true },
     );
   }, [setParams]);
-
-  useEffect(() => {
-    if (!gone) return;
-    toast.info("Este pedido de ajuda já foi assumido ou resolvido.");
-    clear();
-  }, [gone, clear]);
 
   if (!requested || !inQueue || !handoffId) return null;
   return (

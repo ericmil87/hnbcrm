@@ -16,7 +16,7 @@ import { stringParam } from "@/lib/searchParamState";
  * O estado é lido "na hora" por `liveRef`, porque `close` pode rodar depois de
  * um `await` com a closure de um render velho.
  */
-export function useOpenEntityParam(key: string) {
+export function useOpenEntityParam(key: string, options?: { alsoClear?: readonly string[] }) {
   const param = useSearchParamState(key, stringParam, { history: "push", preventScrollReset: true });
   const navigate = useNavigate();
   const location = useLocation();
@@ -31,6 +31,8 @@ export function useOpenEntityParam(key: string) {
   if (backPendingKey.current !== null && backPendingKey.current !== location.key) backPendingKey.current = null;
 
   const { set, expectWrite } = param;
+  // Params que só fazem sentido com o item aberto (ex.: `acao=` do push): saem na mesma escrita.
+  const alsoKey = (options?.alsoClear ?? []).join(",");
 
   const open = useCallback(
     (id: string) => {
@@ -54,9 +56,10 @@ export function useOpenEntityParam(key: string) {
       expectWrite(null);
       navigate(-1);
     } else {
-      set(null, { history: "replace" });
+      const also = alsoKey ? Object.fromEntries(alsoKey.split(",").map((k) => [k, null])) : undefined;
+      set(null, { history: "replace", ...(also ? { also } : {}) });
     }
-  }, [set, expectWrite, navigate]);
+  }, [set, expectWrite, navigate, alsoKey]);
 
   return { id: param.value, open, close };
 }

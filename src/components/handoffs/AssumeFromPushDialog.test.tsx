@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
 import { renderWithRouter } from "@/test/render";
+import { useLocation } from "react-router";
+import { useOpenEntityParam } from "@/hooks/useOpenEntityParam";
 import { AssumeFromPushDialog } from "./AssumeFromPushDialog";
+import { useCloseGoneHandoff } from "./useCloseGoneHandoff";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() } }));
 
@@ -33,10 +36,25 @@ describe("AssumeFromPushDialog", () => {
     renderWithRouter(<AssumeFromPushDialog handoffId="h1" handoffs={[{ _id: "h1" }]} onAccept={vi.fn()} />, { route: "/app/repasses?handoff=h1" });
     expect(screen.queryByText("Assumir este pedido de ajuda?")).toBeNull();
   });
+});
 
-  it("pedido que já saiu da fila avisa e não pergunta", async () => {
-    renderWithRouter(<AssumeFromPushDialog handoffId="h1" handoffs={[]} onAccept={vi.fn()} />, { route: "/app/repasses?handoff=h1&acao=assumir" });
+function Harness({ handoffs }: { handoffs: { _id: string }[] }) {
+  const param = useOpenEntityParam("handoff", { alsoClear: ["acao"] });
+  const location = useLocation();
+  const acao = new URLSearchParams(location.search).get("acao");
+  useCloseGoneHandoff({ handoffId: param.id, handoffs, acao, close: param.close });
+  return null;
+}
+
+describe("pedido que já saiu da fila (acao=assumir)", () => {
+  it("avisa e limpa handoff e acao numa escrita só", async () => {
+    const { router } = renderWithRouter(<Harness handoffs={[]} />, { route: "/app/repasses?handoff=h1&acao=assumir" });
     await waitFor(() => expect(toast.info).toHaveBeenCalled());
-    expect(screen.queryByText("Assumir este pedido de ajuda?")).toBeNull();
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+  });
+
+  it("pedido presente: não mexe na URL", () => {
+    const { router } = renderWithRouter(<Harness handoffs={[{ _id: "h1" }]} />, { route: "/app/repasses?handoff=h1&acao=assumir" });
+    expect(router.state.location.search).toBe("?handoff=h1&acao=assumir");
   });
 });

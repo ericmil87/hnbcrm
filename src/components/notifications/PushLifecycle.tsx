@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { InstallIosSheet } from "@/components/pwa/InstallIosSteps";
 import { usePushSubscription } from "@/hooks/usePushSubscription";
 import type { InboxNotification } from "@/lib/notificationInbox";
 import { listenToServiceWorker } from "@/lib/push/closeReadNotifications";
@@ -24,15 +25,16 @@ export function PushLifecycle({ organizationId }: { organizationId: Id<"organiza
   const push = usePushSubscription(organizationId);
   const navigate = useNavigate();
   const location = useLocation();
-  const { hidden, status, resync, enable } = push;
+  const { hidden, ready, status, resync, enable } = push;
+  const [installOpen, setInstallOpen] = useState(false);
 
   // Re-sync a cada abertura logada (e a cada troca de org, que remonta o AppShell).
   const syncedRef = useRef(false);
   useEffect(() => {
-    if (hidden || status === "loading" || syncedRef.current) return;
+    if (hidden || !ready || status === "loading" || syncedRef.current) return;
     syncedRef.current = true;
     void resync();
-  }, [hidden, status, resync]);
+  }, [hidden, ready, status, resync]);
 
   // Mensagens do service worker.
   const resyncRef = useRef(resync);
@@ -90,11 +92,18 @@ export function PushLifecycle({ organizationId }: { organizationId: Id<"organiza
     if (!invite) return;
     invitedRef.current = true;
     markInviteShown(Date.now());
-    toast("Quer receber isso no celular mesmo com o app fechado?", {
-      duration: 15000,
-      action: { label: "Ativar", onClick: () => void enableRef.current() },
-    });
+    if (statusRef.current === "needs-install") {
+      toast("Instale o app para receber avisos neste aparelho, mesmo com o app fechado.", {
+        duration: 15000,
+        action: { label: "Como instalar", onClick: () => setInstallOpen(true) },
+      });
+    } else {
+      toast("Quer receber isso neste aparelho mesmo com o app fechado?", {
+        duration: 15000,
+        action: { label: "Ativar", onClick: () => void enableRef.current() },
+      });
+    }
   }, [items]);
 
-  return null;
+  return <InstallIosSheet open={installOpen} onClose={() => setInstallOpen(false)} />;
 }

@@ -95,10 +95,17 @@ export function PushActivationCardView({
 }
 
 /** Container: some quando o deployment não tem push (chave VAPID nula). */
-export function PushActivationCard({ organizationId }: { organizationId: Id<"organizations"> }) {
+export function PushActivationCard({
+  organizationId,
+  hideInstall = false,
+}: {
+  organizationId: Id<"organizations">;
+  /** Em "Este aparelho" os passos de instalação já estão na própria tela. */
+  hideInstall?: boolean;
+}) {
   const push = usePushSubscription(organizationId);
   const [installOpen, setInstallOpen] = useState(false);
-  if (push.hidden) return null;
+  if (push.hidden || (hideInstall && push.status === "needs-install")) return null;
   return (
     <>
       <PushActivationCardView

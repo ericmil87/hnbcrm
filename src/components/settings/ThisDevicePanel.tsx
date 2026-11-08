@@ -66,7 +66,7 @@ export function ThisDevicePanel({ organizationId }: { organizationId: Id<"organi
           </div>
         )}
       </SectionCard>
-      <PushActivationCard organizationId={organizationId} />
+      <PushActivationCard organizationId={organizationId} hideInstall />
     </div>
   );
 }
