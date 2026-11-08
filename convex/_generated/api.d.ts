@@ -16,6 +16,7 @@ import type * as aiDiagnostics from "../aiDiagnostics.js";
 import type * as aiSettings from "../aiSettings.js";
 import type * as aiSpend from "../aiSpend.js";
 import type * as apiKeys from "../apiKeys.js";
+import type * as appVersion from "../appVersion.js";
 import type * as attendant from "../attendant.js";
 import type * as attendantAgenda from "../attendantAgenda.js";
 import type * as attendantDraft from "../attendantDraft.js";
@@ -298,6 +299,7 @@ declare const fullApi: ApiFromModules<{
   aiSettings: typeof aiSettings;
   aiSpend: typeof aiSpend;
   apiKeys: typeof apiKeys;
+  appVersion: typeof appVersion;
   attendant: typeof attendant;
   attendantAgenda: typeof attendantAgenda;
   attendantDraft: typeof attendantDraft;
