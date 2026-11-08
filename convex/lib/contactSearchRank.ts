@@ -3,6 +3,8 @@
  * (`conversations.searchConversationsByContact`).
  */
 
+import { foldForSearch } from "./searchFold";
+
 /** Termo com cara de telefone: só dígitos e pontuação de número, com 8+ dígitos. */
 export function phoneLikeDigits(term: string): string | null {
   const trimmed = term.trim();
@@ -11,12 +13,8 @@ export function phoneLikeDigits(term: string): string | null {
   return digits.length >= 8 ? digits : null;
 }
 
-function fold(text: string): string {
-  return text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-}
-
 function words(text: string): string[] {
-  return fold(text).split(/[^a-z0-9@._-]+/).filter(Boolean);
+  return foldForSearch(text).split(/[^a-z0-9@._-]+/).filter(Boolean);
 }
 
 /**

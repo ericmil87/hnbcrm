@@ -19,6 +19,7 @@
  * Nada aqui registra texto de cliente em log: só ids, status e motivo.
  */
 import { ConvexError, v } from "convex/values";
+import { withMessageSearchPatch } from "./lib/messageSearch";
 import {
   action,
   internalAction,
@@ -579,10 +580,13 @@ export const internalApplyOutbound = internalMutation({
       at: now,
     };
     const translated = !args.sameLanguage && args.translatedText ? args.translatedText : undefined;
-    await ctx.db.patch(args.messageId, {
-      ...(translated ? { content: translated, translatedText: message.content } : {}),
-      metadata: { ...(message.metadata ?? {}), translation },
-    });
+    await ctx.db.patch(
+      args.messageId,
+      withMessageSearchPatch(message, {
+        ...(translated ? { content: translated, translatedText: message.content } : {}),
+        metadata: { ...(message.metadata ?? {}), translation },
+      })
+    );
     if (translated) {
       const updated = { ...message, content: translated };
       const preview = lastMessagePatchFor(conversation, message._id, updated);

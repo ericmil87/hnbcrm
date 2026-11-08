@@ -54,6 +54,7 @@ import {
 import { isPhoneSuppressed } from "./lib/campaignAudience";
 import { buildSearchText } from "./lib/searchText";
 import { channelConfigPatchFor } from "./lib/conversationListFields";
+import { withMessageSearch } from "./lib/messageSearch";
 
 const CAMPAIGN_SOURCE_NAME = "Campanha";
 const RETRY_SOON_MS = 60 * 1000;
@@ -633,7 +634,7 @@ async function sendCore(
       }
       if (args.note) metadata.campaignNote = args.note;
 
-      const messageId = await ctx.db.insert("messages", {
+      const messageId = await ctx.db.insert("messages", withMessageSearch({
         organizationId: campaign.organizationId,
         conversationId,
         leadId,
@@ -646,7 +647,7 @@ async function sendCore(
         isInternal: false,
         metadata,
         createdAt: now,
-      });
+      }));
       await applyOutboundMessageSideEffects(ctx, {
         conversation,
         member: creator,
@@ -811,7 +812,7 @@ async function sendToGroupCore(
       }
     }
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: campaign.organizationId,
       conversationId: conversation._id,
       direction: "outbound",
@@ -827,7 +828,7 @@ async function sendToGroupCore(
         scheduled: true,
       },
       createdAt: now,
-    });
+    }));
     await applyOutboundMessageSideEffects(ctx, {
       conversation,
       member: creator,

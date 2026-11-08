@@ -106,6 +106,7 @@ import {
   shouldIncludeCurrentDateTime,
 } from "./lib/promptDateTime";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
+import { withMessageSearch } from "./lib/messageSearch";
 
 // ── Constantes de runtime (espelham as do atendente onde o contrato é o mesmo) ──
 const DEFAULT_DEBOUNCE_SECONDS = 5;
@@ -762,7 +763,7 @@ export const internalCommitGroupAiReply = internalMutation({
       return { committed: false as const, reason: "humano_respondeu" };
     }
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: conversation._id,
       direction: "outbound",
@@ -774,7 +775,7 @@ export const internalCommitGroupAiReply = internalMutation({
       ...(args.mentions && args.mentions.length > 0 ? { mentions: args.mentions } : {}),
       metadata: { agentRunId: args.agentRunId, groupAgent: true },
       createdAt: now,
-    });
+    }));
     await applyOutboundMessageSideEffects(ctx, {
       conversation,
       member: loaded.agent,
@@ -828,7 +829,7 @@ export const internalCommitGroupAiSuggestion = internalMutation({
     }
 
     const agent = await ctx.db.get(args.agentMemberId);
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: conversation._id,
       direction: "internal",
@@ -843,7 +844,7 @@ export const internalCommitGroupAiSuggestion = internalMutation({
         groupAgent: true,
       },
       createdAt: now,
-    });
+    }));
 
     await ctx.db.patch(conversation._id, {
       lastMessageAt: now,

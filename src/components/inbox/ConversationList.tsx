@@ -26,7 +26,7 @@ import {
 } from "@/components/inbox/ConversationListItem";
 import { accountFullLabel, channelLabel, type InboxChannelAccount, type InboxFilterState } from "@/lib/channelAccounts";
 import { formatDate, formatMonthValue } from "@/lib/format";
-import { inboxSearchState, searchCountLabel } from "@/lib/inboxSearch";
+import { inboxSearchState, searchCountLabel, snippetWindow } from "@/lib/inboxSearch";
 import {
   ContactSearchRow,
   SearchSectionHeader,
@@ -218,19 +218,17 @@ function SearchResults({ search }: { search: ConversationListSearch }) {
   );
 }
 
-// Trecho do resultado com o termo destacado (janela em volta do 1º match).
+// Trecho do resultado com o termo destacado (janela em volta do 1º match,
+// sem diferenciar maiúsculas nem acentos: `snippetWindow`).
 function renderSnippet(content: string, term: string) {
-  const idx = content.toLowerCase().indexOf(term.toLowerCase());
-  if (idx === -1) return content.slice(0, 90);
-  const start = Math.max(0, idx - 24);
+  const snippet = snippetWindow(content, term);
+  if (!snippet.match) return snippet.before;
   return (
     <>
-      {start > 0 ? "…" : ""}
-      {content.slice(start, idx)}
-      <mark className="bg-brand-500/30 text-text-primary rounded px-0.5">
-        {content.slice(idx, idx + term.length)}
-      </mark>
-      {content.slice(idx + term.length, idx + term.length + 60)}
+      {snippet.ellipsis ? "…" : ""}
+      {snippet.before}
+      <mark className="bg-brand-500/30 text-text-primary rounded px-0.5">{snippet.match}</mark>
+      {snippet.after}
     </>
   );
 }

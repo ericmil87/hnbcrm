@@ -28,6 +28,7 @@ import { createLeadFromGroupMemberCore } from "./groupMemberLead";
 import { assertAgentCan } from "./agentSecurity";
 import { applyOutboundMessageSideEffects } from "./outboundSideEffects";
 import { activeMemberCountOf, participantsOf } from "./groupParticipantsStore";
+import { withMessageSearch } from "./messageSearch";
 
 const GROUP_LIST_CAP = 50;
 const MEMBERS_IN_TOOL = 50;
@@ -496,7 +497,7 @@ export async function confirmGroupPendingAction(
     const text = String(pending.args.text ?? "").trim();
     if (!text) throw new Error("Mensagem vazia");
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: pending.organizationId,
       conversationId: conversation._id,
       direction: "outbound",
@@ -507,7 +508,7 @@ export async function confirmGroupPendingAction(
       isInternal: false,
       metadata: { via: "copilot" },
       createdAt: now,
-    });
+    }));
     await applyOutboundMessageSideEffects(ctx, {
       conversation,
       member,

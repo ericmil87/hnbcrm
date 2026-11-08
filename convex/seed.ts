@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { withMessageSearch } from "./lib/messageSearch";
 
 // Helper: generate a timestamp N days + hours ago
 function daysAgo(days: number, hours = 0): number {
@@ -237,7 +238,7 @@ export const seedMockData = internalMutation({
       });
 
       for (const m of msgs) {
-        await ctx.db.insert("messages", {
+        await ctx.db.insert("messages", withMessageSearch({
           organizationId,
           conversationId: convoId,
           leadId: leadIds[leadIdx],
@@ -249,7 +250,7 @@ export const seedMockData = internalMutation({
           deliveryStatus: m.direction === "outbound" ? "delivered" : undefined,
           isInternal: m.isInternal ?? false,
           createdAt: convoStart + m.minutesAfterConvoStart * 60 * 1000,
-        });
+        }));
         totalMessages++;
       }
 

@@ -11,6 +11,7 @@ import { firstResponsePatch } from "./lib/conversationTiming";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { outboundTranslationInsertFields } from "./lib/translationOps";
+import { withMessageSearch } from "./lib/messageSearch";
 
 const scheduledTranslationValidator = v.object({
   authoredText: v.string(),
@@ -216,7 +217,7 @@ export const deliver = internalMutation({
       translationFields = {};
     }
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: row.conversationId,
       leadId: conversation.leadId,
@@ -230,7 +231,7 @@ export const deliver = internalMutation({
       metadata: { scheduled: true, ...(translationFields.metadata ?? {}) },
       ...(translationFields.translatedText !== undefined ? { translatedText: translationFields.translatedText } : {}),
       createdAt: now,
-    });
+    }));
 
     await ctx.db.patch(row.conversationId, {
       lastMessageAt: now,

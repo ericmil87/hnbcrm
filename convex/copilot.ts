@@ -12,6 +12,7 @@
  * (núcleo em lib/copilotPendingActions.ts).
  */
 import { v, ConvexError } from "convex/values";
+import { searchContactsByText } from "./lib/contactTextSearch";
 import {
   query,
   mutation,
@@ -752,12 +753,7 @@ async function searchContactsTool(
   if (query.length < 2) return { error: "Busca precisa de ao menos 2 caracteres" };
   const limit = Math.min(typeof toolArgs.limit === "number" ? toolArgs.limit : 10, 25);
 
-  const contacts = await ctx.db
-    .query("contacts")
-    .withSearchIndex("search_contacts", (q) =>
-      q.search("searchText", query).eq("organizationId", organizationId)
-    )
-    .take(limit);
+  const contacts = await searchContactsByText(ctx, organizationId, query, limit);
 
   return {
     contacts: contacts.map((c: Doc<"contacts">) => ({

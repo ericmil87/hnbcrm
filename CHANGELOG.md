@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Busca sem acento
+
+- A busca de Conversas (contatos e mensagens), a pesquisa dentro da conversa e a busca de Contatos não diferenciam mais acentos nem maiúsculas: "antonio" acha "Antônio", "reboucas" acha "Rebouças" e "REBOUÇAS" também.
+- O termo aparece destacado no trecho do resultado com a grafia original, mesmo quando você digitou sem acento.
+- Vale também para o que foi dito em áudio (transcrição) e para o que a IA leu numa imagem. Mensagens antigas passam a ser achadas sem acento depois de uma atualização dos dados; até lá, continuam aparecendo quando o termo é digitado como está no texto.
+
 ### Requer atenção no celular
 
 - No celular, "Requer atenção" virou uma lista enxuta no estilo de Conversas: cada pedido ocupa duas linhas (nome e hora; motivo e resumo) e cabem de 6 a 8 na tela, mesmo em aparelhos menores.

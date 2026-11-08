@@ -412,6 +412,7 @@ describe("searchMessages kind", () => {
         // convex-test exige o campo de cada índice de busca como texto.
         transcriptText: "-",
         imageDescription: "-",
+        searchNorm: "-",
         isInternal: false,
         createdAt: 1,
       };

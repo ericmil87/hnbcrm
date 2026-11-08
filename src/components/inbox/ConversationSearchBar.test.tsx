@@ -34,6 +34,15 @@ describe("ConversationSearchBarView", () => {
     expect(screen.getByText("pix", { selector: "mark" })).toBeInTheDocument();
   });
 
+  it("destaca sem diferenciar acentos, com o texto original", () => {
+    setup({
+      text: "reboucas",
+      term: "reboucas",
+      matches: [{ _id: "m9", createdAt: 9_000, snippetText: "Moro na Rua Rebouças" }],
+    });
+    expect(screen.getByText("Rebouças", { selector: "mark" })).toBeInTheDocument();
+  });
+
   it("▲ e ▼ chamam mais antigo e mais recente", () => {
     const props = setup();
     fireEvent.click(screen.getByRole("button", { name: "Resultado mais antigo" }));

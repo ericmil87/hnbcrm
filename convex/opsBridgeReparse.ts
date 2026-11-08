@@ -23,6 +23,7 @@
  *   npx convex run opsBridgeReparse:internalReparseUnknownBridgeMessages '{"dryRun":true}'
  */
 import { v } from "convex/values";
+import { withMessageSearchPatch } from "./lib/messageSearch";
 import { internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -190,16 +191,19 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
           } else {
             const prior = target.metadata?.previousContent;
             if (!dryRun && target.content !== classified.newContent.content) {
-              await ctx.db.patch(target._id, {
-                content: classified.newContent.content,
-                metadata: {
-                  ...(target.metadata ?? {}),
-                  edited: true,
-                  editedAt: message.createdAt,
-                  previousContent:
-                    typeof prior === "string" ? prior : target.content.slice(0, EDIT_PREVIOUS_CONTENT_MAX),
-                },
-              });
+              await ctx.db.patch(
+                target._id,
+                withMessageSearchPatch(target, {
+                  content: classified.newContent.content,
+                  metadata: {
+                    ...(target.metadata ?? {}),
+                    edited: true,
+                    editedAt: message.createdAt,
+                    previousContent:
+                      typeof prior === "string" ? prior : target.content.slice(0, EDIT_PREVIOUS_CONTENT_MAX),
+                  },
+                })
+              );
             }
             out.editApplied++;
           }
@@ -234,11 +238,14 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
         nextMeta.mediaPending = true;
         nextMeta.mediaSkipped = "Mídia não baixada (mensagem reprocessada)";
       }
-      await ctx.db.patch(message._id, {
-        content: extracted.content,
-        contentType: extracted.contentType,
-        metadata: stripMediaKeyMaterial(nextMeta) as Record<string, unknown>,
-      });
+      await ctx.db.patch(
+        message._id,
+        withMessageSearchPatch(message, {
+          content: extracted.content,
+          contentType: extracted.contentType,
+          metadata: stripMediaKeyMaterial(nextMeta) as Record<string, unknown>,
+        })
+      );
       await markIfLast(message);
     }
 

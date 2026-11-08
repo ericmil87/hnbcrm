@@ -24,6 +24,7 @@ import { internalMutation, MutationCtx } from "./_generated/server";
 import { Doc, Id } from "./_generated/dataModel";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { deleteRuntime } from "./lib/conversationRuntime";
+import { withMessageSearch } from "./lib/messageSearch";
 
 function normalizePhone(p: string): string {
   return p.replace(/\D/g, "");
@@ -355,7 +356,7 @@ async function replyToCommand(
   }
 
   const now = Date.now();
-  const messageId = await ctx.db.insert("messages", {
+  const messageId = await ctx.db.insert("messages", withMessageSearch({
     organizationId: conversation.organizationId,
     conversationId,
     leadId: conversation.leadId,
@@ -367,7 +368,7 @@ async function replyToCommand(
     isInternal: false,
     metadata: { testCommand: true },
     createdAt: now,
-  });
+  }));
   await applyOutboundMessageSideEffects(ctx, {
     conversation,
     member: author,

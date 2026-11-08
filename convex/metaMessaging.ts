@@ -13,6 +13,7 @@
  * nunca persistido; nada de PSID/IGSID/mid/token/texto completos em log.
  */
 import { v, ConvexError } from "convex/values";
+import { withMessageSearchPatch } from "./lib/messageSearch";
 import {
   httpAction,
   action,
@@ -1566,14 +1567,17 @@ export const internalApplyMetaDeleted = internalMutation({
     }
 
     const metadata = scrubbedDeletedMetadata(message.metadata, now);
-    await ctx.db.patch(message._id, {
-      content: DELETED_BY_CUSTOMER_COPY,
-      contentType: "text",
-      attachments: undefined,
-      imageDescription: undefined,
-      transcriptText: undefined,
-      metadata,
-    });
+    await ctx.db.patch(
+      message._id,
+      withMessageSearchPatch(message, {
+        content: DELETED_BY_CUSTOMER_COPY,
+        contentType: "text",
+        attachments: undefined,
+        imageDescription: undefined,
+        transcriptText: undefined,
+        metadata,
+      })
+    );
     await refreshLastMessagePreviewIfLast(ctx, {
       ...message,
       content: DELETED_BY_CUSTOMER_COPY,
@@ -1620,7 +1624,7 @@ export const internalApplyMetaEdited = internalMutation({
       editedAt: now,
       editHistory: appendEditHistory(message.metadata?.editHistory, message.content, now),
     };
-    await ctx.db.patch(message._id, { content: text, metadata });
+    await ctx.db.patch(message._id, withMessageSearchPatch(message, { content: text, metadata }));
     await refreshLastMessagePreviewIfLast(ctx, { ...message, content: text, metadata });
     return message._id;
   },

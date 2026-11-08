@@ -37,6 +37,7 @@ import {
   WELCOME_SENT_TAG,
 } from "./lib/inboundLeadWelcome";
 import { channelProviderPatch } from "./lib/conversationListFields";
+import { withMessageSearch } from "./lib/messageSearch";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Board/estágio/responsável do lead novo
@@ -342,7 +343,7 @@ export const internalSendInboundLeadWelcome = internalMutation({
     }
 
     const now = Date.now();
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: args.organizationId,
       conversationId,
       leadId: lead._id,
@@ -355,7 +356,7 @@ export const internalSendInboundLeadWelcome = internalMutation({
       // `scheduled: true` = typing humanizado no bridge (mesmo dos agendados).
       metadata: { inboundWelcome: { leadId: lead._id }, scheduled: true },
       createdAt: now,
-    });
+    }));
     await applyOutboundMessageSideEffects(ctx, {
       conversation,
       member: actor,

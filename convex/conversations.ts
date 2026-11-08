@@ -1,4 +1,6 @@
 import { v, ConvexError, type Infer } from "convex/values";
+import { foldForSearch } from "./lib/searchFold";
+import { searchContactsByText } from "./lib/contactTextSearch";
 import { insertFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -75,6 +77,7 @@ import {
   rankContacts,
 } from "./lib/contactSearchRank";
 import { maybeBufferInboundForRelay } from "./lib/telegramRelay";
+import { withMessageSearch } from "./lib/messageSearch";
 
 type ConversationChannel =
   | "whatsapp"
@@ -714,8 +717,10 @@ export const getMessages = query({
         };
       }).filter(Boolean);
 
+      // `searchNorm` é só para o índice de busca: não viaja para o cliente.
+      const { searchNorm: _searchNorm, ...messageFields } = message;
       return {
-        ...message,
+        ...messageFields,
         sender: message.senderId ? senderMap.get(message.senderId) ?? null : null,
         senderContact: message.senderContactId
           ? senderContactMap.get(message.senderContactId) ?? null
@@ -773,7 +778,11 @@ export const searchMessages = query({
 
     // Busca mais que o limite exibido para o filtro de data ainda ter material.
     // Três índices: texto da mensagem, transcrição de nota de voz e leitura de
-    // imagem (o espelho de topo `imageDescription`).
+    // imagem (o espelho de topo `imageDescription`), com o termo cru.
+    // Sem acento (07/11/2026): o índice `search_norm` ainda está `staged` (deploy
+    // A); a consulta a ele entra no deploy B, depois do backfill. O trecho e a
+    // origem do match já são decididos sem acento (`foldedTerm`).
+    const foldedTerm = foldForSearch(term);
     const [contentHits, transcriptHits, imageHits] = await Promise.all([
       ctx.db
         .query("messages")
@@ -851,12 +860,18 @@ export const searchMessages = query({
       const contactName = contact
         ? `${contact.firstName ?? ""} ${contact.lastName ?? ""}`.trim()
         : groupSubject ?? "";
-      const termLower = term.toLowerCase();
-      const contentMatches = m.content.toLowerCase().includes(termLower);
+      // De onde veio o termo (o trecho mostra esse texto): comparação sem
+      // acento; o índice que achou vale quando a palavra só casou por prefixo.
+      const contentMatches = foldedIncludesAllWords(m.content, foldedTerm);
       const matchedTranscript =
-        transcriptIds.has(m._id) && !contentMatches && !!m.transcriptText;
+        !contentMatches &&
+        !!m.transcriptText &&
+        (transcriptIds.has(m._id) || foldedIncludesAllWords(m.transcriptText, foldedTerm));
       const matchedImage =
-        imageIds.has(m._id) && !contentMatches && !matchedTranscript && !!m.imageDescription;
+        !contentMatches &&
+        !matchedTranscript &&
+        !!m.imageDescription &&
+        (imageIds.has(m._id) || foldedIncludesAllWords(m.imageDescription, foldedTerm));
       return {
         _id: m._id,
         conversationId: m.conversationId,
@@ -879,6 +894,13 @@ export const searchMessages = query({
     });
   },
 });
+
+/** Toda palavra do termo (já dobrado) aparece no texto dobrado. */
+function foldedIncludesAllWords(text: string, foldedTerm: string): boolean {
+  const haystack = foldForSearch(text);
+  const words = foldedTerm.split(/\s+/).filter(Boolean);
+  return words.length > 0 && words.every((w) => haystack.includes(w));
+}
 
 /** Espelho de `ConversationThread`: transferência e rascunho da IA não são bolha. */
 function messageRenderKind(metadata: unknown): "message" | "ai_draft" | "transfer" {
@@ -947,12 +969,7 @@ export const searchConversationsByContact = query({
         exactPhone = await findContactsByPhoneCandidates(ctx, args.organizationId, normalized.phone);
       }
     }
-    const searched = await ctx.db
-      .query("contacts")
-      .withSearchIndex("search_contacts", (q) =>
-        q.search("searchText", term).eq("organizationId", args.organizationId)
-      )
-      .take(CONTACT_SEARCH_CONTACTS);
+    const searched = await searchContactsByText(ctx, args.organizationId, term, CONTACT_SEARCH_CONTACTS);
     const contacts = rankContacts(exactPhone, searched, (c) => matchesIdentity(c, term))
       .filter((c) => c.organizationId === args.organizationId)
       .slice(0, CONTACT_SEARCH_CONTACTS);
@@ -1282,7 +1299,7 @@ export const sendMessage = mutation({
       now
     );
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: args.conversationId,
       ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
@@ -1297,7 +1314,7 @@ export const sendMessage = mutation({
       ...(mentions && mentions.length > 0 ? { mentions } : {}),
       ...translationInsert.fields,
       createdAt: now,
-    });
+    }));
     if (translationInsert.untranslatedTarget) {
       await auditUntranslatedSend(ctx, {
         conversation,
@@ -1488,7 +1505,7 @@ export const forwardMessage = mutation({
     const carriesTranscript =
       source.contentType === "audio" && sourceTranscription?.status === "done";
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: target.organizationId,
       conversationId: target._id,
       leadId: target.leadId,
@@ -1508,7 +1525,7 @@ export const forwardMessage = mutation({
         ? { transcriptText: source.transcriptText }
         : {}),
       createdAt: now,
-    });
+    }));
 
     // Link the duplicated files back to the new message.
     if (attachments && attachments.length > 0) {
@@ -1726,8 +1743,9 @@ export const internalGetMessages = internalQuery({
         };
       }).filter(Boolean);
 
+      const { searchNorm: _searchNorm, ...messageFields } = message;
       return {
-        ...message,
+        ...messageFields,
         sender: message.senderId ? senderMap.get(message.senderId) ?? null : null,
         attachmentFiles,
       };
@@ -1812,7 +1830,7 @@ export async function internalSendMessageCore(
     now
   );
 
-  const messageId = await ctx.db.insert("messages", {
+  const messageId = await ctx.db.insert("messages", withMessageSearch({
     organizationId: conversation.organizationId,
     conversationId: args.conversationId,
     ...(conversation.leadId ? { leadId: conversation.leadId } : {}),
@@ -1827,7 +1845,7 @@ export async function internalSendMessageCore(
     ...(mentions && mentions.length > 0 ? { mentions } : {}),
     ...translationInsert.fields,
     createdAt: now,
-  });
+  }));
   if (translationInsert.untranslatedTarget) {
     await auditUntranslatedSend(ctx, {
       conversation,
@@ -2057,7 +2075,7 @@ export const internalReceiveMessage = internalMutation({
 
     const now = Date.now();
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: args.organizationId,
       conversationId,
       leadId: args.leadId,
@@ -2070,7 +2088,7 @@ export const internalReceiveMessage = internalMutation({
       metadata: args.metadata,
       isInternal: false,
       createdAt: now,
-    });
+    }));
 
     // Link attachment files back to this message
     if (args.attachments && args.attachments.length > 0) {
@@ -2255,7 +2273,7 @@ export const internalReceiveDeviceMessage = internalMutation({
     // nunca para o futuro (relógio do aparelho adiantado furaria a ordem).
     const sentAt = args.sentAt && args.sentAt <= now ? args.sentAt : now;
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: args.organizationId,
       conversationId,
       leadId: args.leadId,
@@ -2269,7 +2287,7 @@ export const internalReceiveDeviceMessage = internalMutation({
       deliveryStatus: "sent",
       isInternal: false,
       createdAt: sentAt,
-    });
+    }));
 
     if (args.attachments && args.attachments.length > 0) {
       await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
@@ -2502,7 +2520,7 @@ export const internalReceiveGroupMessage = internalMutation({
       sentAt
     );
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: args.organizationId,
       conversationId: conversation._id,
       direction: "inbound",
@@ -2522,7 +2540,7 @@ export const internalReceiveGroupMessage = internalMutation({
       metadata: args.metadata,
       isInternal: false,
       createdAt: sentAt,
-    });
+    }));
 
     if (args.attachments && args.attachments.length > 0) {
       await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
@@ -2686,7 +2704,7 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
     const now = Date.now();
     const sentAt = args.sentAt && args.sentAt <= now ? args.sentAt : now;
 
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: args.organizationId,
       conversationId: conversation._id,
       direction: "outbound",
@@ -2703,7 +2721,7 @@ export const internalReceiveGroupDeviceMessage = internalMutation({
       deliveryStatus: "sent",
       isInternal: false,
       createdAt: sentAt,
-    });
+    }));
 
     if (args.attachments && args.attachments.length > 0) {
       await Promise.all(args.attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
@@ -2918,7 +2936,7 @@ export const internalSendTemplate = internalMutation({
     const now = Date.now();
 
     // Best-effort rendered body — the real text lives in Meta's template definition
-    const messageId = await ctx.db.insert("messages", {
+    const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: conversation.organizationId,
       conversationId: args.conversationId,
       leadId: conversation.leadId,
@@ -2936,7 +2954,7 @@ export const internalSendTemplate = internalMutation({
         },
       },
       createdAt: now,
-    });
+    }));
 
     await ctx.db.patch(args.conversationId, {
       lastMessageAt: now,
