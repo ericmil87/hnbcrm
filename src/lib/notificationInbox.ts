@@ -1,5 +1,7 @@
 import type { Doc } from "../../convex/_generated/dataModel";
-import { PUSH_BADGE_CAP } from "../../convex/lib/webPush";
+import { PUSH_BADGE_CAP, PUSH_TEMPLATES } from "../../convex/lib/webPush";
+import { ACTIONABLE_TYPES } from "../../convex/lib/notificationPolicy";
+import { notificationTargetPath } from "../../convex/lib/notificationTargets";
 import { TAB_ROUTES } from "./routes";
 
 /** Item do feed do sino: o doc + campos derivados por `notifications.list` (D1 back). */
@@ -77,27 +79,25 @@ export function resolvedLabel(n: InboxNotification): string | null {
 
 /** Caminho interno que o item abre (`null` = nada a abrir). Mesmas regras do painel antigo + lead. */
 export function notificationHref(n: InboxNotification): string | null {
+  // Tipos com push: o destino é o MESMO do clique no aviso do aparelho (fonte única no backend).
+  if (n.type in PUSH_TEMPLATES) {
+    return notificationTargetPath(n.type, {
+      conversationId: n.conversationId,
+      handoffId: n.handoffId,
+      taskId: n.taskId,
+      data: n.data as Record<string, unknown> | undefined,
+    });
+  }
   const conv = n.conversationId ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}` : null;
   switch (n.type) {
-    case "handoff_requested":
-      return n.handoffId ? `${TAB_ROUTES.handoffs}?handoff=${n.handoffId}` : TAB_ROUTES.handoffs;
     case "handoff_resolved":
       return conv ?? TAB_ROUTES.handoffs;
-    case "ai_draft_pending":
     case "group_opportunity":
     case "group_digest":
-    case "group_mention":
       return conv;
-    case "conversation_transferred":
-    case "new_message":
-      return conv ?? TAB_ROUTES.inbox;
     case "campaign_completed":
     case "campaign_paused":
       return n.campaignId ? `${TAB_ROUTES.campaigns}?campanha=${n.campaignId}` : null;
-    case "channel_session_lost": {
-      const isMeta = Boolean((n.data as { metaConnectionId?: unknown } | undefined)?.metaConnectionId);
-      return `${TAB_ROUTES.settings}?secao=${isMeta ? "instagram" : "channels"}`;
-    }
     case "group_joined":
       return TAB_ROUTES.groups;
     case "group_post_pending":
@@ -106,8 +106,6 @@ export function notificationHref(n: InboxNotification): string | null {
     case "ai_spend_warning":
     case "ai_spend_reached":
       return `${TAB_ROUTES.settings}?secao=ai-usage`;
-    case "ai_followup_needs_human":
-      return n.taskId ? `${TAB_ROUTES.tasks}?task=${n.taskId}` : (conv ?? TAB_ROUTES.tasks);
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;
@@ -159,19 +157,13 @@ export function shouldFillPage(opts: {
 
 // ===== Chegadas em tempo real =====
 
-/** Tipos que pedem ação minha: único conjunto que vira toast/som (PLANO seção 4). */
-export const ACTIONABLE_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
-  "handoff_requested",
-  "new_message",
-  "conversation_transferred",
-  "task_comment_mention",
-  "group_mention",
-  "ai_draft_pending",
-  "task_assigned",
-  "task_due_soon",
-  "task_overdue",
-  "channel_session_lost",
-]);
+/**
+ * Tipos que viram toast/som: os ACIONÁVEIS do backend (PLANO seção 4), exceto `lead_assigned`, que fica só no sino.
+ * Derivado de `ACTIONABLE_TYPES` (convex/lib/notificationPolicy.ts): um tipo novo acionável passa a avisar sozinho.
+ */
+export const TOAST_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>(
+  ACTIONABLE_TYPES.filter((t) => t !== "lead_assigned"),
+);
 
 /** Tipos ligados a uma conversa: não avisam se ela já está aberta na tela. */
 const CONVERSATION_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
@@ -216,7 +208,7 @@ export function detectArrivals<T extends ArrivalItem>(
   for (const n of items) {
     if (n.createdAt > nextWatermark) nextWatermark = n.createdAt;
     if (n.createdAt <= watermark || n.readAt !== undefined) continue;
-    if (!ACTIONABLE_TYPES.has(n.type)) continue;
+    if (!TOAST_TYPES.has(n.type)) continue;
     if (openConversationId && n.conversationId === openConversationId && CONVERSATION_TYPES.has(n.type)) continue;
     arrivals.push(n);
   }

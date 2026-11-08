@@ -4,7 +4,7 @@
  * `NOTIFICATION_TYPE_GROUP`); aqui só rótulos e arranjo.
  */
 import { formatDateTime, formatTime } from "./format";
-import { PREFERENCE_FLAG } from "../../convex/lib/notificationPolicy";
+import { NON_PERSONAL_FLAGS, PREFERENCE_FLAG, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
 import {
   NOTIFICATION_GROUPS,
   NOTIFICATION_TYPE_GROUP,
@@ -100,7 +100,9 @@ export function buildMatrixGroups(): { group: NotificationGroup; rows: FlagRow[]
       desc: copy?.desc ?? "",
       group,
       bell: copy?.bell !== false,
-      channels: (copy?.channels ?? ALL_CHANNELS).filter((c) => c !== "email" || EMAIL_FLAGS.has(flag)),
+      channels: (copy?.channels ?? ALL_CHANNELS).filter(
+        (c) => (c !== "email" || EMAIL_FLAGS.has(flag)) && (c !== "push" || PUSH_PREFERENCE_FLAGS.includes(flag)),
+      ),
     });
   };
   for (const [type, flag] of Object.entries(PREFERENCE_FLAG)) {
@@ -193,21 +195,6 @@ export function pushAvailability(input: {
   const pushEnabled = input.featureOn && !input.killSwitch && typeof input.vapidKey === "string" && input.vapidKey.length > 0;
   return { pushEnabled, pushAvailable: pushEnabled && (input.deviceSupported || input.hasLinkedDevice) };
 }
-
-/**
- * Fora de "Só o que é comigo" nos canais externos. Espelha `NON_PERSONAL_FLAGS` de
- * convex/lib/notificationPolicy.ts (o teste confere a paridade lendo o arquivo).
- */
-export const NON_PERSONAL_FLAGS: ReadonlySet<string> = new Set([
-  "campaignCompleted",
-  "campaignPaused",
-  "groupJoined",
-  "groupPostPending",
-  "groupPostFailed",
-  "groupOpportunity",
-  "groupDigest",
-  "aiSpendAlert",
-]);
 
 /** O atalho define o valor de base de cada canal externo; qualquer célula diferente é uma escolha por tipo. */
 export function isCustomized(

@@ -1,10 +1,9 @@
 // @vitest-environment node
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { KNOWN_FLAGS } from "../../convex/lib/notificationPolicy";
+import { KNOWN_FLAGS, NON_PERSONAL_FLAGS, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
 import {
   EMAIL_FLAGS,
-  NON_PERSONAL_FLAGS,
   buildMatrixGroups,
   externalChannelsText,
   pauseScopeText,
@@ -82,12 +81,14 @@ describe("EMAIL_FLAGS", () => {
   });
 });
 
-describe("NON_PERSONAL_FLAGS", () => {
-  it("bate com a política do backend", () => {
-    const src = readFileSync("convex/lib/notificationPolicy.ts", "utf8");
-    const block = src.match(/NON_PERSONAL_FLAGS = new Set\(\[([\s\S]*?)\]\)/)?.[1] ?? "";
-    const flags = [...block.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
-    expect([...NON_PERSONAL_FLAGS].sort()).toEqual(flags);
+describe("coluna No aparelho (push)", () => {
+  const rows = buildMatrixGroups().flatMap((g) => g.rows);
+  it("só existe para flags com template de push no backend", () => {
+    for (const r of rows) {
+      expect(r.channels.includes("push"), r.flag).toBe(PUSH_PREFERENCE_FLAGS.includes(r.flag));
+    }
+    expect(rows.find((r) => r.flag === "leadAssigned")?.channels).not.toContain("push");
+    expect(rows.find((r) => r.flag === "handoffRequested")?.channels).toContain("push");
   });
 });
 
@@ -97,6 +98,10 @@ describe("isCustomized", () => {
     expect(isCustomized("all", () => true, rows)).toBe(false);
     expect(isCustomized("none", () => false, rows)).toBe(false);
     expect(isCustomized("mine", (_c, f) => !NON_PERSONAL_FLAGS.has(f), rows)).toBe(false);
+  });
+  it("célula sem canal (sem push no tipo) não conta como escolha", () => {
+    // Um valor "ligado" num canal que o tipo não tem não personaliza.
+    expect(isCustomized("none", (c, f) => (c === "push" && !PUSH_PREFERENCE_FLAGS.includes(f)) || false, rows)).toBe(false);
   });
   it("uma célula diferente do atalho é personalizado", () => {
     expect(isCustomized("all", (c, f) => !(c === "email" && f === "taskOverdue"), rows)).toBe(true);

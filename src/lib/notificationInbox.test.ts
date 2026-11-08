@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
+import { ACTIONABLE_TYPES } from "../../convex/lib/notificationPolicy";
+import { notificationTargetPath } from "../../convex/lib/notificationTargets";
 import {
+  TOAST_TYPES,
   appBadgeCount,
   bellAriaLabel,
   bellBadgeLabel,
@@ -192,5 +195,32 @@ describe("appBadgeCount", () => {
     expect(appBadgeCount(3)).toBe(3);
     expect(appBadgeCount(57)).toBe(20);
     expect(appBadgeCount(-1)).toBe(0);
+  });
+});
+
+describe("TOAST_TYPES", () => {
+  it("deriva dos acionáveis do backend, sem lead_assigned, com ai_followup_needs_human", () => {
+    expect(TOAST_TYPES.has("ai_followup_needs_human")).toBe(true);
+    expect(TOAST_TYPES.has("lead_assigned")).toBe(false);
+    expect(TOAST_TYPES.has("campaign_completed")).toBe(false);
+    for (const t of ACTIONABLE_TYPES) if (t !== "lead_assigned") expect(TOAST_TYPES.has(t), t).toBe(true);
+  });
+});
+
+describe("notificationHref usa o destino único do backend", () => {
+  it("igual a notificationTargetPath para os tipos com push", () => {
+    const cases = [
+      n({ type: "ai_draft_pending" }),
+      n({ type: "group_mention", conversationId: "c1" }),
+      n({ type: "channel_session_lost", data: { metaConnectionId: "m1" } }),
+      n({ type: "ai_followup_needs_human", taskId: "t9" }),
+      n({ type: "task_overdue" }),
+    ];
+    for (const c of cases) {
+      expect(notificationHref(c), c.type).toBe(
+        notificationTargetPath(c.type, { conversationId: c.conversationId, handoffId: c.handoffId, taskId: c.taskId, data: c.data as Record<string, unknown> | undefined }),
+      );
+    }
+    expect(notificationHref(n({ type: "ai_draft_pending" }))).toBe("/app/entrada");
   });
 });
