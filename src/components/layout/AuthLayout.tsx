@@ -24,6 +24,7 @@ import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
+import { PwaUpdateManager } from "../pwa/PwaUpdateManager";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
 import {
   CreateOrganizationForm,
@@ -419,6 +420,7 @@ export function AuthLayout() {
   return (
     <>
       <ScrollRestoration />
+      <PwaUpdateManager />
       {/* key: trocar de org remonta a área autenticada inteira — nenhum estado
           local (formulário, seleção, painel aberto) atravessa de uma org para outra */}
       <AppShell
