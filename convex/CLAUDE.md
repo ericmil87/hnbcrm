@@ -62,6 +62,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `tasks.ts` | Task CRUD (projects, labels, `assigneeIds`, subtasks, `blockedBy`); writers call `syncFollowUpForTask`; `internal*` variants serve REST/MCP |
 | `taskComments.ts` / `taskProjects.ts` / `taskLabels.ts` / `lib/taskOps.ts` | Comments / projects + columns / labels / shared cores `applyTaskCompletion`, `addTaskCommentCore` |
 | `notifications.ts` / `lib/notify.ts` | In-app notifications (bell) / `createNotification()`, `PREFERENCE_FLAG`, `inboxRepliers`; skips AI members and self |
+| `push.ts` / `pushNode.ts` / `lib/webPush.ts` / `lib/notificationChannels.ts` | Web Push (E1): `subscribe`/`unsubscribe`/`getMyDevices`/`removeDevice`/`getVapidPublicKey`, `internalDeliverPush` (mutation decides + builds payload) → `pushNode.internalSendPush` (only `web-push`/VAPID reader) → `internalRecordPushResults` (404/410 delete, 429/5xx retry ≤ 3, `pushDeliveryStats`); pure payload/headers/errors; channel ladder dispatcher (Telegram, push, e-mail safety net) |
 | `activities.ts` / `auditLogs.ts` / `dashboard.ts` / `webhooks.ts` / `webhookTrigger.ts` | Timeline / audit / dashboard / webhook CRUD + firing action |
 | `email.ts` | Resend; single exit `sendTransactionalEmail` (never throws), `dispatchNotification` (gates), `handleEmailEvent` (suppression), digest |
 | `authEmails.ts` / `authEmailTemplates.ts` / `passwordReset.ts` | Reset-code + welcome emails (outside `notificationPreferences`) / templates / OTP provider |
