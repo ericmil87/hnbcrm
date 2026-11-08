@@ -3,7 +3,7 @@ import { useLocation, useNavigate, useOutletContext } from "react-router";
 import { toast } from "sonner";
 import { Spinner } from "@/components/ui/Spinner";
 import { TAB_ROUTES } from "@/lib/routes";
-import { parseOpenLink } from "@/lib/openLink";
+import { parseOpenLink, withOpenAction } from "@/lib/openLink";
 import type { AppOutletContext } from "./AuthLayout";
 
 interface OpenLinkRedirectProps {
@@ -38,7 +38,7 @@ export function OpenLinkRedirect({ search, activeOrgId, organizationIds, selectO
       return;
     }
     if (link.org === activeOrgId) {
-      navigate(link.to, { replace: true });
+      navigate(withOpenAction(link.to, link.acao), { replace: true });
       return;
     }
     // Troca primeiro; o app remonta já na organização nova e este efeito

@@ -21,6 +21,7 @@ import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AttentionRow, type AttentionItem } from "@/components/handoffs/AttentionRow";
 import { AttentionListItem } from "@/components/handoffs/AttentionListItem";
+import { AssumeFromPushDialog } from "@/components/handoffs/AssumeFromPushDialog";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { attentionSummaryLine, pendingCountLabel } from "@/lib/attentionList";
 import {
@@ -191,6 +192,7 @@ export function HandoffQueue() {
   // 768 px com ela aberta não a remonta (rascunho de instrução e rolagem ficam).
   return (
     <>
+      <AssumeFromPushDialog handoffId={peekHandoffId} handoffs={handoffs} onAccept={handleAccept} />
       {isMobile ? (
         <div className="min-w-0 pb-safe">
           {/* O AppShell mostra "Requer atenção" num <p>: o <h1> fica para leitores de tela. */}

@@ -32,12 +32,55 @@ export function isSafeAppPath(to: string | null | undefined): to is string {
   return safeAppTarget(to) !== null;
 }
 
-export function parseOpenLink(search: string): { org: string; to: string } | null {
+/** Ação pedida por um botão do push (`&acao=assumir`): a tela do destino confirma antes de agir. */
+export type OpenLinkAction = "assumir";
+
+export function parseOpenLink(search: string): { org: string; to: string; acao?: OpenLinkAction } | null {
   const params = new URLSearchParams(search);
   const org = params.get("org");
   const to = safeAppTarget(params.get("to"));
   if (!org || !to) return null;
-  return { org, to };
+  return params.get("acao") === "assumir" ? { org, to, acao: "assumir" } : { org, to };
+}
+
+/** `to` + `acao=` na query do destino (a tela de destino lê `?acao=`). */
+export function withOpenAction(to: string, acao: OpenLinkAction | undefined): string {
+  if (!acao) return to;
+  const u = new URL(to, "https://app.invalid");
+  u.searchParams.set("acao", acao);
+  return u.pathname + u.search + u.hash;
+}
+
+/**
+ * Destino de uma mensagem do service worker (`hnb:navigate`): caminho interno `/app/…` (ou URL
+ * da mesma origem). Aceita `/app/abrir?org=&to=` (que `safeAppTarget` recusa de propósito),
+ * desde que o `to` embutido também seja seguro. Qualquer outra coisa vira `null`.
+ */
+export function safeSwNavigateTarget(url: unknown, origin: string): string | null {
+  if (typeof url !== "string" || !url) return null;
+  let path = url;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) {
+    try {
+      const u = new URL(url);
+      if (u.origin !== origin) return null;
+      path = u.pathname + u.search + u.hash;
+    } catch {
+      return null;
+    }
+  }
+  const direct = safeAppTarget(path);
+  if (direct) return direct;
+  if (!path.startsWith("/app/")) return null;
+  // eslint-disable-next-line no-control-regex
+  if (path.includes("\\") || /[\u0000-\u001f\u007f]/.test(path)) return null;
+  let u: URL;
+  try {
+    u = new URL(path, "https://app.invalid");
+  } catch {
+    return null;
+  }
+  if (u.origin !== "https://app.invalid" || u.pathname.toLowerCase() !== OPEN_ROUTE) return null;
+  return parseOpenLink(u.search) ? u.pathname + u.search : null;
 }
 
 export function buildOpenLink(org: string, to: string): string {
