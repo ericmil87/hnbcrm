@@ -30,3 +30,5 @@ Componente `@convex-dev/resend`, porta única `sendTransactionalEmail`, template
 Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadores que não existiam em nenhum outro lugar).
 
 - `lib/emailAddress.ts` — Puro: `normalizeEmail`, `hasEmailShape` (só formato — convite), `isDeliverableEmail` (formato + veto a domínio reservado/de seed), `maskEmailForLog`
+
+- `emailTemplates.ts`: TODO campo de texto é escapado (`escapeStrings`/`escapeHtml`), assunto passa por `line()` (sem quebra de linha, sem entidades) e `href` por `safeUrl` (https, localhost ou caminho `/`). Guard `emailTemplatesEscape.test.ts` renderiza cada evento do dispatcher com `<img onerror>` em todos os campos: template novo sem caso falha.
