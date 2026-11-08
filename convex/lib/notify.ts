@@ -6,6 +6,8 @@ import { internal } from "../_generated/api";
 import { modulesOf } from "./orgModules";
 import { hasTelegramTemplate } from "./telegramNotifications";
 import { notificationCopy } from "./notificationCopy";
+import { shouldDeliver, type PolicyPrefs } from "./notificationPolicy";
+import { loadMemberPrefs, orgDefaultsOf } from "./notificationPrefs";
 
 export type NotificationType =
   | "task_assigned"
@@ -31,41 +33,7 @@ export type NotificationType =
   | "new_message"
   | "lead_assigned";
 
-// Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
-// (modelo opt-out: sem linha, ou flag ausente = habilitado).
-const PREFERENCE_FLAG: Record<NotificationType, string> = {
-  task_assigned: "taskAssigned",
-  task_comment_mention: "taskCommentMention",
-  task_due_soon: "taskDueSoon",
-  task_overdue: "taskOverdue",
-  handoff_requested: "handoffRequested",
-  handoff_resolved: "handoffResolved",
-  ai_draft_pending: "aiDraftPending",
-  campaign_completed: "campaignCompleted",
-  campaign_paused: "campaignPaused",
-  group_joined: "groupJoined",
-  group_mention: "groupMention",
-  group_post_pending: "groupPostPending",
-  group_post_failed: "groupPostFailed",
-  group_opportunity: "groupOpportunity",
-  group_digest: "groupDigest",
-  // Só sino: não existe template de e-mail para este evento (`buildTemplate` é
-  // fail-closed), e nenhum caminho chama `dispatchNotification` com ele.
-  ai_followup_needs_human: "aiFollowupNeedsHuman",
-  // MVP Central — só sino (sem template de e-mail).
-  conversation_transferred: "conversationTransferred",
-  // T02 + v0.69.1 — sino e e-mail (template `channelSessionLost`).
-  channel_session_lost: "channelSessionLost",
-  // v0.69 — aviso/teto de gasto de IA (um flag só para os dois; também é o
-  // eventType do e-mail, com template `aiSpendAlert`).
-  ai_spend_warning: "aiSpendAlert",
-  ai_spend_reached: "aiSpendAlert",
-  // Telegram F1 (D20): relay agrupado — a preferência `newMessage` já existia
-  // sem emissor. Só sino + Telegram (sem template de e-mail).
-  new_message: "newMessage",
-  // B2 — sino (antes só e-mail, mesmo flag).
-  lead_assigned: "leadAssigned",
-};
+// Tipo → flag de preferência: `PREFERENCE_FLAG` mora em `lib/notificationPolicy.ts` (pura).
 
 /**
  * Agrupamento (B2): com `coalesce`, uma NÃO lida do membro com a mesma `key`
@@ -202,15 +170,10 @@ export async function createNotification(
   // B1: removido da org ou pendente de convite (sem conta) não recebe nem acumula.
   if (isMembershipRevoked(member) || !member.userId) return;
 
-  const prefs = await ctx.db
-    .query("notificationPreferences")
-    .withIndex("by_organization_and_member", (q) =>
-      q.eq("organizationId", args.organizationId).eq("teamMemberId", args.memberId)
-    )
-    .first();
-  if (prefs && (prefs as any)[PREFERENCE_FLAG[args.type]] === false) return;
-
+  const prefs = await loadMemberPrefs(ctx, args.organizationId, args.memberId);
   const now = Date.now();
+  // Sino (C1): flag antigo `false` só apaga tipos NÃO acionáveis; acionável sempre registra.
+  if (shouldDeliver({ type: args.type, channel: "bell", prefs, now }) !== "deliver") return;
   const co = args.coalesce;
   const increment = Math.max(1, Math.floor(co?.increment ?? 1));
   if (co) {
@@ -237,7 +200,7 @@ export async function createNotification(
         actorId: args.actorId,
         createdAt: now,
       });
-      if (co.telegramOnPatch) await maybeScheduleTelegram(ctx, args, existing._id, now);
+      if (co.telegramOnPatch) await maybeScheduleTelegram(ctx, args, existing._id, now, prefs);
       return;
     }
   }
@@ -262,14 +225,15 @@ export async function createNotification(
     createdAt: now,
     ...(co ? { coalesceKey: co.key } : {}),
   });
-  await maybeScheduleTelegram(ctx, args, notificationId, now);
+  await maybeScheduleTelegram(ctx, args, notificationId, now, prefs);
 }
 
 async function maybeScheduleTelegram(
   ctx: MutationCtx,
   args: { organizationId: Id<"organizations">; memberId: Id<"teamMembers">; type: NotificationType },
   notificationId: Id<"notifications">,
-  now: number
+  now: number,
+  prefs: PolicyPrefs | null
 ): Promise<void> {
   // Telegram (F1, D7): mesma porta, depois do insert — o self-skip e a
   // preferência acima já valeram. Uma leitura indexada do vínculo ativo; envio
@@ -280,10 +244,21 @@ async function maybeScheduleTelegram(
     .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", args.memberId).eq("status", "active"))
     .first();
   if (!link || link.organizationId !== args.organizationId) return;
-  // `/pausar` (mutedUntil) e o switch do relay valem só para o Telegram: o sino já gravou (B2).
-  if (link.mutedUntil !== undefined && link.mutedUntil > now) return;
+  // Switch do relay: vale só para o Telegram (o sino já gravou, B2).
   if (args.type === "new_message" && !link.prefs.relayAssignedConversations) return;
-  if (!modulesOf(await ctx.db.get(args.organizationId)).telegram) return;
+  const org = await ctx.db.get(args.organizationId);
+  if (!modulesOf(org).telegram) return;
+  // C1: política única — preferência por canal, pausa (`pausedUntil` + `mutedUntil` legado
+  // do `/pausar`) e silêncio. O sino já gravou; aqui só decide se o Telegram toca.
+  const decision = shouldDeliver({
+    type: args.type,
+    channel: "telegram",
+    prefs,
+    orgDefaults: orgDefaultsOf(org),
+    now,
+    legacyMutedUntil: link.mutedUntil,
+  });
+  if (decision !== "deliver") return;
   await ctx.scheduler.runAfter(0, internal.telegram.internalDeliverNotification, { notificationId });
 }
 
