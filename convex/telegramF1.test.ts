@@ -621,6 +621,34 @@ describe("relay (D20)", () => {
   });
 });
 
+describe("resposta da IA a pedido do próprio membro (C1)", () => {
+  test("chega mesmo com newMessage=false, preset none, silêncio ativo e pausa", async () => {
+    const s = await seedOrg({ aiOn: true });
+    await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN, { mutedUntil: Date.now() + 3600_000 });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("notificationPreferences", {
+        organizationId: s.organizationId, teamMemberId: s.adminId, invite: true, handoffRequested: true,
+        handoffResolved: true, taskOverdue: true, taskAssigned: true, leadAssigned: true, newMessage: false,
+        dailyDigest: true, preset: "none", pausedUntil: now + 3600_000,
+        quietHours: { enabled: true, start: "00:00", end: "23:59", timeZone: "UTC" },
+        createdAt: now, updatedAt: now,
+      });
+    });
+    const messageId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound",
+        senderId: s.agentId, senderType: "ai", content: "Oi Maria! Consigo 10% até sexta.", contentType: "text",
+        isInternal: false, metadata: { aiReply: { requestedVia: "telegram", instructedBy: s.adminId } }, createdAt: Date.now(),
+      });
+      return id;
+    });
+    await t.action(internal.telegram.internalRelayAiReply, { messageId });
+    expect(sends(CHAT_ADMIN)).toHaveLength(1);
+    expect(sends(CHAT_ADMIN)[0].body.text).toMatch(/^🤖 IA → /);
+  });
+});
+
 describe("opções da org (API do card)", () => {
   test("updateOrgTelegramSettings: só settings:manage; getMyLink reflete", async () => {
     const s = await seedOrg();
