@@ -6,7 +6,7 @@ import { notificationCopy } from "./notificationCopy";
 import { shouldDeliver } from "./notificationPolicy";
 import { loadMemberPrefs } from "./notificationPrefs";
 import { dispatchNotificationChannels, type EmailFallback } from "./notificationChannels";
-import { nextRenotifyState } from "./webPush";
+import { carriedRenotifyState, nextRenotifyState } from "./webPush";
 
 export type NotificationType =
   | "task_assigned"
@@ -203,11 +203,13 @@ export async function createNotification(
         // `data` do evento ATUAL (ex.: `messageIds` da última janela, que o cartão do
         // Telegram mostra) + contagem acumulada.
         // E1: `pushRenotify` = vibrar de novo (1ª vez ou ≥ 5 min do último toque).
+        // Só avança quando este patch de fato empurra (Telegram/push); patch
+        // silencioso preserva o estado (senão o relógio dos 5 min andaria sem toque).
         data: {
           ...(args.data ?? {}),
           count,
           coalescedSince: since ?? existing.createdAt,
-          ...nextRenotifyState(existing.data, now),
+          ...(co.telegramOnPatch ? nextRenotifyState(existing.data, now) : carriedRenotifyState(existing.data)),
         },
         actorId: args.actorId,
         createdAt: now,

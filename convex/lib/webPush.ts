@@ -233,6 +233,8 @@ export type PushPayload = {
     dir: "auto";
     tag: string;
     silent: false;
+    /** Ignorado onde não há suporte (Declarative/iOS: validar no E2E). */
+    renotify: boolean;
     app_badge?: number;
   };
   hnb: {
@@ -300,6 +302,7 @@ export function buildPushPayload(args: {
       dir: "auto",
       tag,
       silent: false,
+      renotify: args.renotify,
       ...(badge !== undefined ? { app_badge: badge } : {}),
     },
     hnb: {
@@ -333,6 +336,14 @@ export function nextRenotifyState(
   const last = typeof prev?.pushRenotifyAt === "number" ? prev.pushRenotifyAt : undefined;
   if (last === undefined || now - last >= PUSH_RENOTIFY_MS) return { pushRenotify: true, pushRenotifyAt: now };
   return { pushRenotify: false, pushRenotifyAt: last };
+}
+
+/** Patch silencioso: mantém o estado de renotify como estava (campos ausentes ficam ausentes). */
+export function carriedRenotifyState(prev: Record<string, unknown> | undefined): Partial<{ pushRenotify: boolean; pushRenotifyAt: number }> {
+  return {
+    ...(typeof prev?.pushRenotify === "boolean" ? { pushRenotify: prev.pushRenotify } : {}),
+    ...(typeof prev?.pushRenotifyAt === "number" ? { pushRenotifyAt: prev.pushRenotifyAt } : {}),
+  };
 }
 
 export function pushRequestOptions(type: NotificationType, tag: string): { ttlSeconds: number; urgency: PushUrgency; topic: string } | null {
