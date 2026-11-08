@@ -6,14 +6,16 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Sino agrupado e com textos novos
 
-- Mensagens novas da mesma conversa viram um aviso só no sino: "5 mensagens novas de Ana", com a mais recente na prévia, e o aviso sobe para o topo a cada mensagem. Depois de lido, a próxima mensagem abre um aviso novo. O mesmo vale para as respostas sugeridas pela IA na mesma conversa e para as menções num grupo em até 10 minutos ("3 menções a você no grupo Sementes").
+- Mensagens novas da mesma conversa viram um aviso só no sino: "5 mensagens novas de Ana", com a mais recente na prévia, e o aviso sobe para o topo a cada mensagem. Depois de lido, a próxima mensagem abre um aviso novo. O mesmo vale para as respostas sugeridas pela IA na mesma conversa (o aviso mostra a resposta pendente agora) e para as menções num grupo em até 10 minutos ("3 menções a você no grupo Sementes").
 - O aviso de mensagem nova passa a chegar no sino para quem atende a conversa mesmo sem ter vinculado o Telegram. Quem usa o Telegram continua recebendo um cartão por leva de mensagens (a cada 20 s), sem repetição.
 - "Pausar" no Telegram (/pausar) e a opção "Receber as mensagens das conversas que eu atendo" do Telegram agora valem só para o Telegram: o sino continua recebendo.
 - Lead atribuído a você agora aparece no sino (antes só por e-mail).
 - Textos do sino revistos com os nomes do app: "A IA pediu ajuda: Ana Souza", "Bruno assumiu a conversa com Ana Souza", "A IA sugeriu uma resposta para Ana Souza", "Ligar para a Ana vence às 14:30". Datas e horas seguem o fuso da organização.
 - Quando o cliente escreve em outro idioma e a tradução automática já traduziu, a prévia mostra o texto traduzido com "(traduzido do inglês)".
 - Nomes longos, emoji e textos em árabe ou hebraico são cortados sem quebrar caracteres. Telefone e e-mail não aparecem mais no texto dos avisos: quando o contato não tem nome, aparece "Contato".
-- Ao transferir a conversa para outra pessoa, os avisos de mensagem nova e de resposta sugerida dela saem das não lidas de quem a atendia. Ao trocar o responsável de uma tarefa, o aviso "atribuiu uma tarefa a você" sai das não lidas de quem deixou a tarefa.
+- O aviso de mensagem nova segue quem atende a conversa: depois de transferida, as próximas mensagens avisam a nova pessoa, não mais o dono do lead.
+- Ao transferir a conversa para outra pessoa, ou trocar o dono do lead, os avisos de mensagem nova e de resposta sugerida dela saem das não lidas de quem a atendia.
+- Cada menção num grupo continua chegando no Telegram, mesmo agrupada no sino. Ao trocar o responsável de uma tarefa, o aviso "atribuiu uma tarefa a você" sai das não lidas de quem deixou a tarefa.
 
 ### Avisos do sino que se resolvem sozinhos
 
