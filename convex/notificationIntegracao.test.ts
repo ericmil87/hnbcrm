@@ -31,7 +31,7 @@ async function seed(t: T) {
       createdAt: now,
       updatedAt: now,
     });
-    const mkMember = async (name: string, role: "admin" | "agent" | "viewer") => {
+    const mkMember = async (name: string, role: "admin" | "agent") => {
       const userId = await ctx.db.insert("users", {});
       const memberId = await ctx.db.insert("teamMembers", {
         organizationId, userId, name, role, type: "human", status: "active", createdAt: now, updatedAt: now,
@@ -83,6 +83,31 @@ async function notify(
     await createNotification(ctx, { organizationId: s.organizationId, memberId, type, title: `t ${type}`, ...extra });
   });
 }
+
+describe("2. excluir lead resolve avisos de conversa e repasse", () => {
+  test("deleteLead + cascata", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const handoffId = await t.run(async (ctx) =>
+      ctx.db.insert("handoffs", {
+        organizationId: s.organizationId, leadId: s.leadId, conversationId: s.conversationId,
+        fromMemberId: s.admin.memberId, reason: "x", suggestedActions: [], status: "pending", createdAt: Date.now(),
+      } as any)
+    );
+    await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
+    await notify(t, s, s.third.memberId, "handoff_requested", { handoffId, conversationId: s.conversationId });
+    const before = await all(t);
+    expect(before.every((n) => n.readAt === undefined)).toBe(true);
+    await asUser(t, s.admin.userId).mutation(api.leads.deleteLead, { leadId: s.leadId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const rows = await all(t);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const n of rows) {
+      expect(n.readAt).toBeDefined();
+      expect(n.data?.resolvedReason).toBe("lead_deleted");
+    }
+  });
+});
 
 describe("6. excluir tarefa resolve a menção em comentário; concluir não", () => {
   test("deleteTask x updateTask(completed)", async () => {
