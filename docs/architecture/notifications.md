@@ -48,7 +48,7 @@ Portas: `lib/webPush.ts` (pura: payload, headers, classificação de erro) e `pu
 
 ### PWA, atualização e kill switch (A1/A2)
 
-Manifest com `scope` `/app/`, SW de `vite-plugin-pwa` (`injectManifest`, `registerType: "prompt"`) sem cache de runtime (Convex e storage vão sempre à rede), atualização só em momento seguro (texto digitado bloqueia), `MIN_CLIENT_BUILD`, convite de instalação e rascunho do composer. Kill switch do SW: `PWA_KILL_SWITCH=1` num build. Detalhe: [`frontend.md`](frontend.md) (A1/A2).
+Manifest com `id` `/app/` e `scope` `/` (o login `/entrar` abre dentro do app instalado; no iOS o app instalado tem armazenamento próprio), SW registrado só em `/app/` de `vite-plugin-pwa` (`injectManifest`, `registerType: "prompt"`) sem cache de runtime (Convex e storage vão sempre à rede), atualização só em momento seguro (texto digitado bloqueia), `MIN_CLIENT_BUILD`, convite de instalação e rascunho do composer. Kill switch do SW: `PWA_KILL_SWITCH=1` num build. Detalhe: [`frontend.md`](frontend.md) (A1/A2).
 
 ## Pendências conhecidas
 
@@ -59,4 +59,3 @@ Manifest com `scope` `/app/`, SW de `vite-plugin-pwa` (`injectManifest`, `regist
 - Sessão expirada não cancela a assinatura: só o logout explícito desvincula; o aparelho segue recebendo até outra conta assinar ou o aparelho expirar (60 dias).
 - Painel de métricas do push (entregues, falhas, expiradas) não foi feito.
 - Validar no E2E, em aparelho real, `renotify` e o formato Declarative no iOS 18.4+.
-- O `scope` `/app/` do manifest deixa `/entrar` fora da janela do app instalado (trocar é mudar só `MANIFEST_SCOPE`).
