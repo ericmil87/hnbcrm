@@ -1,6 +1,6 @@
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
-import type { NotificationType } from "./notify";
+import { coalesceKeys, type NotificationType } from "./notify";
 
 /**
  * Porta única "resolvido" do sino (B1): quando o assunto de uma notificação foi
@@ -34,15 +34,31 @@ export const SCAN_MAX_PAGES = 5;
 async function scanConversationUnread(
   ctx: { db: MutationCtx["db"] },
   conversationId: Id<"conversations">,
-  opts: { match?: (n: Doc<"notifications">) => boolean; stopAtFirst?: boolean; limit?: number }
+  opts: {
+    match?: (n: Doc<"notifications">) => boolean;
+    stopAtFirst?: boolean;
+    limit?: number;
+    /** Com membro: índice por (conversa, membro) — lê só as não lidas dele. */
+    memberId?: Id<"teamMembers">;
+  }
 ): Promise<Doc<"notifications">[]> {
   // UMA leitura (o servidor só aceita uma query paginada por função; paginar
   // em laço quebraria): as mais novas primeiro, com teto.
-  const rows = await ctx.db
-    .query("notifications")
-    .withIndex("by_conversation_and_read", (q) => q.eq("conversationId", conversationId).eq("readAt", undefined))
-    .order("desc")
-    .take(Math.min(opts.limit ?? SCAN_PAGE * SCAN_MAX_PAGES, SCAN_PAGE * SCAN_MAX_PAGES));
+  const cap = Math.min(opts.limit ?? SCAN_PAGE * SCAN_MAX_PAGES, SCAN_PAGE * SCAN_MAX_PAGES);
+  const memberId = opts.memberId;
+  const rows = memberId
+    ? await ctx.db
+        .query("notifications")
+        .withIndex("by_conversation_and_member_and_read", (q) =>
+          q.eq("conversationId", conversationId).eq("memberId", memberId).eq("readAt", undefined)
+        )
+        .order("desc")
+        .take(Math.min(cap, SCAN_PAGE))
+    : await ctx.db
+        .query("notifications")
+        .withIndex("by_conversation_and_read", (q) => q.eq("conversationId", conversationId).eq("readAt", undefined))
+        .order("desc")
+        .take(cap);
   const out: Doc<"notifications">[] = [];
   for (const n of rows) {
     if (!opts.match || opts.match(n)) {
@@ -128,6 +144,7 @@ export async function resolveEntityNotifications(
       match: (n) =>
         (!args.memberId || n.memberId === args.memberId) && (!args.types || args.types.includes(n.type)),
       limit: args.scanLimit,
+      memberId: args.memberId,
     });
   } else if ("handoffId" in t) {
     rows = await db
@@ -188,11 +205,14 @@ export async function draftNotificationAlreadyPending(
     excludeMessageId?: Id<"messages">;
   }
 ): Promise<boolean> {
-  const found = await scanConversationUnread(ctx, args.conversationId, {
-    match: (n) => n.memberId === args.memberId && n.type === "ai_draft_pending",
-    stopAtFirst: true,
-  });
-  if (found.length === 0) return false;
+  // Uma leitura indexada pela chave de agrupamento do rascunho (a mesma de createNotification).
+  const found = await ctx.db
+    .query("notifications")
+    .withIndex("by_member_and_coalesce_and_read", (q) =>
+      q.eq("memberId", args.memberId).eq("coalesceKey", coalesceKeys.aiDraft(args.conversationId)).eq("readAt", undefined)
+    )
+    .first();
+  if (!found) return false;
   const recent = await ctx.db
     .query("messages")
     .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))
