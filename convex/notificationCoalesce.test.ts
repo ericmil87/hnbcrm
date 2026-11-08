@@ -15,6 +15,7 @@ import { notificationCopy } from "./lib/notificationCopy";
 import { RELAY_BUFFER_MS } from "./lib/telegramRelay";
 import { transferConversationCore } from "./lib/conversationTransfer";
 import { messageText } from "./lib/telegramContext";
+import { LEAD_REASSIGN_MAX_CONVERSATIONS, LEAD_REASSIGN_SCAN } from "./lib/notificationResolve";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -441,17 +442,79 @@ describe("review B2", () => {
     expect((await bellOf(s.seller.memberId))[0].title).toBe("2 mensagens novas de Ana");
   });
 
-  test("buffer cujo flush se perdeu não engole mensagens: vencido, recomeça", async () => {
+  test("buffer cujo flush se perdeu é assumido: as mensagens antigas entram, 1 aviso e 1 cartão", async () => {
     const s = await seed({ leadTitle: "Ana" });
-    await t.run((ctx) =>
-      ctx.db.insert("telegramRelayBuffer", {
-        organizationId: s.organizationId, conversationId: s.conversationId, memberId: s.seller.memberId, messageIds: [],
-        flushAt: Date.now() - 2 * RELAY_BUFFER_MS,
-      })
-    );
+    await link(s, s.seller);
+    await t.run(async (ctx) => {
+      const old = Date.now() - 2 * RELAY_BUFFER_MS - 1000;
+      const m = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "inbound",
+        senderType: "contact", content: "mensagem esquecida", contentType: "text", isInternal: false, createdAt: old,
+      });
+      // Sem job agendado: o flush se perdeu.
+      await ctx.db.insert("telegramRelayBuffer", {
+        organizationId: s.organizationId, conversationId: s.conversationId, memberId: s.seller.memberId, messageIds: [m],
+        flushAt: old + RELAY_BUFFER_MS,
+      });
+    });
+    await inbound(s, "oi");
+    const [adopted] = await t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect());
+    expect(adopted.messageIds).toHaveLength(2);
+    expect(adopted.flushAt).toBe(Date.now() + RELAY_BUFFER_MS);
+    await drain();
+    const bell = await bellOf(s.seller.memberId);
+    expect(bell).toHaveLength(1);
+    expect(bell[0]).toMatchObject({ title: "2 mensagens novas de Ana", body: "mensagem esquecida · oi" });
+    expect(tgSends()).toHaveLength(1);
+    expect(tgSends()[0].body.text).toContain('"mensagem esquecida"\n"oi"');
+    expect(await t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect())).toEqual([]);
+  });
+
+  test("fila de setor sem pessoa: o dono do lead que atendia continua recebendo e mantém os avisos", async () => {
+    const s = await seed({ leadTitle: "Ana" });
     await inbound(s, "oi");
     await drain();
-    expect((await bellOf(s.seller.memberId)).map((n) => n.title)).toEqual(["Mensagem nova de Ana"]);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const deptId = await ctx.db.insert("departments", {
+        organizationId: s.organizationId, name: "Financeiro", color: "#000000", memberIds: [s.other.memberId], order: 0,
+        createdAt: now, updatedAt: now,
+      });
+      const conversation = (await ctx.db.get(s.conversationId))!;
+      const actor = (await ctx.db.get(s.admin.memberId))!;
+      await transferConversationCore(ctx, { conversation, toDept: (await ctx.db.get(deptId))!, toMember: null, actor, now });
+    });
+    const [n] = await bellOf(s.seller.memberId);
+    expect(n.type).toBe("new_message");
+    expect(n.readAt).toBeUndefined();
+    await inbound(s, "e agora?");
+    await drain();
+    expect((await bellOf(s.seller.memberId))[0].title).toBe("2 mensagens novas de Ana");
+  });
+
+  test("trocar o dono do lead lê no máximo 5 conversas (e não falha com mais)", async () => {
+    expect(LEAD_REASSIGN_SCAN).toBeLessThanOrEqual(200);
+    const s = await seed({ leadTitle: "Ana" });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.conversationId, { assignedTo: undefined });
+      const now = Date.now();
+      for (let i = 0; i < 6; i++) {
+        const conv = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, leadId: s.leadId, channel: "whatsapp", status: "active",
+          messageCount: 0, createdAt: now, updatedAt: now,
+        });
+        await createNotification(ctx, {
+          organizationId: s.organizationId, memberId: s.seller.memberId, type: "new_message",
+          ...notificationCopy({ type: "new_message", contactName: "Ana", count: 1 }), conversationId: conv,
+        });
+      }
+    });
+    await t.withIdentity({ subject: `${s.admin.userId}|s1` }).mutation(api.leads.assignLead, {
+      leadId: s.leadId, assignedTo: s.other.memberId,
+    });
+    const resolved = (await bellOf(s.seller.memberId)).filter((n) => n.data?.resolvedReason === "lead_reassigned");
+    expect(resolved.length).toBeGreaterThan(0);
+    expect(resolved.length).toBeLessThanOrEqual(LEAD_REASSIGN_MAX_CONVERSATIONS);
   });
 
   test("tradução só na prévia do cartão; histórico/contexto do copiloto fica com o original", async () => {

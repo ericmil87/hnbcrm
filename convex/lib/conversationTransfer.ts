@@ -88,7 +88,11 @@ export async function transferConversationCore(
 
   // B2: quem deixou de ser o responsável não fica com "mensagem nova"/"resposta
   // sugerida" não lidas de uma conversa que não é mais dele (porta única).
-  if (conversation.assignedTo && conversation.assignedTo !== nextAssignedTo) {
+  // Exceção (re-review): fila de setor SEM pessoa e o anterior é o dono do
+  // lead → ele continua sendo quem recebe (`resolveRelayRecipient`), fica.
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  const stillRecipient = !toMember && !!lead?.assignedTo && lead.assignedTo === conversation.assignedTo;
+  if (conversation.assignedTo && conversation.assignedTo !== nextAssignedTo && !stillRecipient) {
     await resolveEntityNotifications(ctx, {
       organizationId: orgId,
       target: { conversationId: conversation._id },
@@ -101,7 +105,7 @@ export async function transferConversationCore(
 
   // Sino: a pessoa de destino; sem pessoa, os membros do setor.
   const recipients = toMember ? [toMember._id] : (toDept?.memberIds ?? []);
-  const contactName = (await getLeadRef(ctx.db, conversation.leadId))?.title;
+  const contactName = lead?.title;
   for (const memberId of recipients.slice(0, 25)) {
     await createNotification(ctx, {
       organizationId: orgId,

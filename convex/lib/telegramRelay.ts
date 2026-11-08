@@ -110,10 +110,12 @@ export async function maybeBufferInboundForRelay(
     }
   }
   // A buffer whose flush never ran (lost job) would swallow messages until
-  // retention: past its window + margin it is dropped and a fresh one starts.
+  // retention: past its window + margin it is ADOPTED (new window + a fresh
+  // flush job). Whichever flush runs first delivers everything and deletes it;
+  // the other finds null.
   if (buffer && buffer.flushAt + RELAY_BUFFER_MS < now) {
-    await ctx.db.delete(buffer._id);
-    buffer = null;
+    await ctx.db.patch(buffer._id, { flushAt: now + RELAY_BUFFER_MS });
+    await ctx.scheduler.runAfter(RELAY_BUFFER_MS, internal.telegram.internalFlushRelayBuffer, { bufferId: buffer._id });
   }
   if (buffer) {
     if (buffer.messageIds.includes(messageId)) return;
