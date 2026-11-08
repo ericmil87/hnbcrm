@@ -6,6 +6,7 @@ import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { mutationErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import {
@@ -383,9 +384,15 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
                               size="sm"
                             />
                           ) : (
-                            <span className="text-xs text-text-muted" aria-label="Não disponível neste canal">
-                              —
-                            </span>
+                            <Tooltip content={c === "email" ? "Sem e-mail para este aviso" : `Sem ${CHANNEL_LABEL[c]} para este aviso`} asInfo>
+                              <button
+                                type="button"
+                                aria-label={`${row.label}: ${c === "email" ? "sem e-mail para este aviso" : `sem ${CHANNEL_LABEL[c]} para este aviso`}`}
+                                className="min-h-11 min-w-11 text-xs text-text-muted"
+                              >
+                                —
+                              </button>
+                            </Tooltip>
                           )}
                         </div>
                       ))}

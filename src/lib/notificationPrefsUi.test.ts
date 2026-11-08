@@ -1,6 +1,8 @@
+// @vitest-environment node
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { KNOWN_FLAGS } from "../../convex/lib/notificationPolicy";
-import { buildMatrixGroups, isPaused, pausedUntilLabel, validateQuietHours, FLAG_COPY } from "./notificationPrefsUi";
+import { EMAIL_FLAGS, buildMatrixGroups, isPaused, pausedUntilLabel, validateQuietHours, FLAG_COPY } from "./notificationPrefsUi";
 
 describe("buildMatrixGroups", () => {
   it("cobre todos os flags conhecidos, sem repetir, com rótulo", () => {
@@ -44,5 +46,23 @@ describe("validateQuietHours", () => {
   it("rejeita formato inválido", () => {
     expect(validateQuietHours(true, "25:00", "08:00")).toMatch(/inválido/);
     expect(validateQuietHours(true, "21:00", "08:00")).toBeNull();
+  });
+});
+
+describe("EMAIL_FLAGS", () => {
+  it("bate com os templates de e-mail do backend", () => {
+    const src = readFileSync("convex/emailTemplates.ts", "utf8");
+    const body = src.slice(src.indexOf("function buildTemplate"));
+    const types = [...body.matchAll(/case "(\w+)":/g)].map((m) => m[1]);
+    const nonFlags = new Set(["invite", "formSubmission", "formConfirmation", "taskOverdueSummary"]);
+    const expected = types.filter((t) => !nonFlags.has(t)).sort();
+    expect([...EMAIL_FLAGS].sort()).toEqual(expected);
+  });
+  it("tipos sem template não têm coluna de e-mail", () => {
+    const rows = buildMatrixGroups().flatMap((g) => g.rows);
+    for (const f of ["aiFollowupNeedsHuman", "conversationTransferred", "campaignCompleted"]) {
+      expect(rows.find((r) => r.flag === f)?.channels).not.toContain("email");
+    }
+    expect(rows.find((r) => r.flag === "taskOverdue")?.channels).toContain("email");
   });
 });

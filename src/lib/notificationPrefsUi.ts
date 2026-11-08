@@ -24,6 +24,26 @@ export interface FlagRow {
 
 const ALL_CHANNELS: readonly MatrixChannel[] = ["email", "telegram", "push"];
 
+/**
+ * Flags com template de e-mail em `buildTemplate` (convex/emailTemplates.ts). Os demais
+ * não têm e-mail: a coluna mostra "—". O teste confere a paridade com o arquivo do backend.
+ */
+export const EMAIL_FLAGS: ReadonlySet<string> = new Set([
+  "handoffRequested",
+  "handoffResolved",
+  "taskOverdue",
+  "taskAssigned",
+  "taskCommentMention",
+  "taskDueSoon",
+  "leadAssigned",
+  "newMessage",
+  "dailyDigest",
+  "groupPostPending",
+  "groupPostFailed",
+  "aiSpendAlert",
+  "channelSessionLost",
+]);
+
 export const FLAG_COPY: Record<string, { label: string; desc: string; channels?: readonly MatrixChannel[] }> = {
   handoffRequested: { label: "Pedido de ajuda da IA", desc: "Quando a IA pede ajuda para você ou para a equipe" },
   handoffResolved: { label: "Pedido de ajuda resolvido", desc: "Quando um pedido de ajuda é assumido ou devolvido à IA" },
@@ -62,7 +82,7 @@ export function buildMatrixGroups(): { group: NotificationGroup; rows: FlagRow[]
       label: copy?.label ?? flag,
       desc: copy?.desc ?? "",
       group,
-      channels: copy?.channels ?? ALL_CHANNELS,
+      channels: (copy?.channels ?? ALL_CHANNELS).filter((c) => c !== "email" || EMAIL_FLAGS.has(flag)),
     });
   };
   for (const [type, flag] of Object.entries(PREFERENCE_FLAG)) {

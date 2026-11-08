@@ -127,6 +127,16 @@ describe("matriz", () => {
     expect(screen.getByRole("switch", { name: "Tarefa atrasada: Push" })).toBeInTheDocument();
   });
 
+  it("tipo sem template de e-mail mostra traço no lugar do interruptor", async () => {
+    setup();
+    await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
+    expect(screen.queryByRole("switch", { name: "Conversa transferida para você: E-mail" })).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Conversa transferida para você: sem e-mail para este aviso" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Conversa transferida para você: Telegram" })).toBeInTheDocument();
+  });
+
   it("não mostra a linha de convites travada", async () => {
     setup();
     await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
