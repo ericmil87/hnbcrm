@@ -55,3 +55,20 @@ export function readPlatform(): InstallPlatform {
     maxTouchPoints: navigator.maxTouchPoints,
   });
 }
+
+/** Desktop Safari (macOS): installs through File › Add to Dock. */
+export function isMacSafari(userAgent: string): boolean {
+  return /Macintosh/i.test(userAgent) && /Safari\//i.test(userAgent) && !/Chrome|Chromium|CriOS|FxiOS|Edg|OPR/i.test(userAgent);
+}
+
+export type InstallHelpKind = "installed" | "prompt" | "ios-safari" | "ios-other" | "mac-safari" | "android-menu" | "desktop-menu";
+
+/** Which help Settings › Este aparelho shows. iOS browsers other than Safari can also add via Share (iOS 16.4+). */
+export function installHelpKind(input: { platform: InstallPlatform; userAgent: string; canPrompt: boolean; installed: boolean }): InstallHelpKind {
+  if (input.installed) return "installed";
+  if (input.canPrompt) return "prompt";
+  if (input.platform === "ios") return isIosSafari(input.userAgent) ? "ios-safari" : "ios-other";
+  if (input.platform === "android") return "android-menu";
+  if (isMacSafari(input.userAgent)) return "mac-safari";
+  return "desktop-menu";
+}

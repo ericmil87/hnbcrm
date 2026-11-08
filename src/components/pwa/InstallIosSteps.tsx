@@ -3,7 +3,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 
 const STEPS: ReadonlyArray<{ icon: LucideIcon; title: string; hint: string }> = [
-  { icon: Share, title: "Toque em Compartilhar", hint: "Na barra de baixo do Safari." },
+  { icon: Share, title: "Toque em Compartilhar (no iPhone, pode estar no menu ⋯)", hint: "Procure o ícone de quadrado com seta para cima." },
   { icon: SquarePlus, title: "Escolha Adicionar à Tela de Início", hint: "Role a lista se não aparecer." },
   { icon: Smartphone, title: "Abra o HNBCRM pelo ícone", hint: "Use sempre o ícone novo da tela de início." },
 ];
@@ -29,12 +29,13 @@ export function InstallIosSteps() {
   );
 }
 
-export function InstallIosSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+/** `onDone` = "Entendi" (iOS never fires `appinstalled`, so the invite is dismissed for 30 days). */
+export function InstallIosSheet({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone?: () => void }) {
   return (
     <Modal open={open} onClose={onClose} title="Instalar no iPhone ou iPad">
       <div className="space-y-4">
         <InstallIosSteps />
-        <Button variant="secondary" size="lg" className="w-full" onClick={onClose}>
+        <Button variant="secondary" size="lg" className="w-full" onClick={onDone ?? onClose}>
           Entendi
         </Button>
       </div>

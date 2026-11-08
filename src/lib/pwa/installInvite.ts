@@ -4,6 +4,9 @@ export const INSTALL_DISMISS_MS = 30 * 24 * 60 * 60 * 1000;
 const VISITS_KEY = "hnbcrm:pwa:visits";
 const DISMISSED_KEY = "hnbcrm:pwa:installDismissedAt";
 const SESSION_KEY = "hnbcrm:pwa:visitCounted";
+const SHOWN_KEY = "hnbcrm:pwa:inviteShown";
+/** The banner stays at most this long (it also closes on route change). */
+export const INVITE_VISIBLE_MS = 20_000;
 
 export interface InviteInput {
   visits: number;
@@ -59,5 +62,22 @@ export function registerVisit(): number {
     return current + 1;
   } catch {
     return current;
+  }
+}
+
+/** The banner is shown at most once per browser session (it covers list ends on phones). */
+export function inviteShownThisSession(): boolean {
+  try {
+    return sessionStorage.getItem(SHOWN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markInviteShown(): void {
+  try {
+    sessionStorage.setItem(SHOWN_KEY, "1");
+  } catch {
+    /* storage unavailable */
   }
 }

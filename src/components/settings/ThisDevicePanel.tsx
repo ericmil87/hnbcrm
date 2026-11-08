@@ -6,10 +6,18 @@ import { SectionCard } from "@/components/ui/SectionCard";
 import { InstallIosSteps } from "@/components/pwa/InstallIosSteps";
 import { useInstallState } from "@/hooks/useInstallState";
 import { promptInstall } from "@/lib/pwa/installStore";
+import { installHelpKind } from "@/lib/pwa/platform";
+
+const HELP = {
+  "android-menu": "No Chrome, abra o menu ⋮ e toque em Instalar app (ou Adicionar à tela inicial).",
+  "mac-safari": "No Safari, use Arquivo › Adicionar ao Dock.",
+  "desktop-menu": "No Chrome ou no Edge, use o ícone de instalar na barra de endereço ou o menu ⋮ › Instalar HNBCRM.",
+} as const;
 
 /** Settings › Conta › Este aparelho: fixed entry point to install the app (never depends on the invite). */
 export function ThisDevicePanel() {
-  const { installed, canPrompt, iosManual, platform } = useInstallState();
+  const { installed, canPrompt, platform } = useInstallState();
+  const kind = installHelpKind({ platform, userAgent: navigator.userAgent, canPrompt, installed });
   const [busy, setBusy] = useState(false);
 
   const install = async () => {
@@ -28,25 +36,31 @@ export function ThisDevicePanel() {
       description="Instale o HNBCRM para abrir direto da tela inicial."
       icon={<Smartphone size={20} aria-hidden="true" />}
     >
-      {installed ? (
+      {kind === "installed" ? (
         <p className="flex items-center gap-2 text-sm text-text-primary">
           <CheckCircle2 size={18} className="text-semantic-success" aria-hidden="true" />
           App instalado
         </p>
-      ) : canPrompt ? (
+      ) : kind === "prompt" ? (
         <Button size="lg" loading={busy} onClick={install}>
           <Download size={18} aria-hidden="true" />
           Instalar app
         </Button>
-      ) : iosManual || platform === "ios" ? (
+      ) : kind === "ios-safari" || kind === "ios-other" ? (
         <div className="space-y-3">
-          {!iosManual && <p className="text-sm text-text-secondary">Abra esta página no Safari para instalar.</p>}
+          {kind === "ios-other" && (
+            <p className="text-sm text-text-secondary">
+              No iPhone, outros navegadores também adicionam pelo Compartilhar (iOS 16.4 ou mais novo). Se não aparecer, abra no Safari.
+            </p>
+          )}
           <InstallIosSteps />
+          <p className="text-caption text-text-muted">Se já instalou, abra pelo ícone na tela de início.</p>
         </div>
       ) : (
-        <p className="text-sm text-text-secondary">
-          Este navegador não oferece a instalação agora. No Chrome ou no Edge, procure o ícone de instalar na barra de endereço.
-        </p>
+        <div className="space-y-2">
+          <p className="text-sm text-text-secondary">{HELP[kind]}</p>
+          <p className="text-caption text-text-muted">Se já instalou, abra pelo ícone na tela de início.</p>
+        </div>
       )}
     </SectionCard>
   );
