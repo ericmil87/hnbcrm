@@ -3366,7 +3366,9 @@ export const markConversationRead = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversation not found");
 
-    const reader = await requirePermission(ctx, conversation.organizationId, "inbox", "view_all");
+    // `view_own` basta para resolver os avisos do PRÓPRIO leitor; o recibo de
+    // leitura e o `unreadCount` (estado da conversa inteira) exigem `view_all`.
+    const reader = await requirePermission(ctx, conversation.organizationId, "inbox", "view_own");
 
     // B1: abrir a conversa lê os avisos DELA para ESTE membro (mensagem nova,
     // transferência, rascunho) — os de outros membros ficam como estão.
@@ -3378,6 +3380,8 @@ export const markConversationRead = mutation({
       reason: "conversation_opened",
       types: ["new_message", "conversation_transferred", "ai_draft_pending"],
     });
+
+    if (!seesWholeInbox(reader)) return null;
 
     const now = Date.now();
     const lastReadAt = conversation.lastReadAt ?? 0;

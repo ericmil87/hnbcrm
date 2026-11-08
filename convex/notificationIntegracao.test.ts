@@ -148,6 +148,31 @@ describe("7/13. push no patch e relógio do renotify", () => {
   });
 });
 
+describe("4. markConversationRead com inbox:view_own", () => {
+  test("resolve os avisos do próprio leitor e não mexe no unreadCount da conversa", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(s.seller.memberId, {
+        permissions: {
+          leads: "view_own", contacts: "view", inbox: "view_own", tasks: "view_own",
+          reports: "none", team: "none", settings: "none", auditLogs: "none", apiKeys: "none",
+        },
+      } as any);
+      await ctx.db.patch(s.conversationId, { unreadCount: 3 });
+    });
+    await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
+    await notify(t, s, s.third.memberId, "new_message", { conversationId: s.conversationId });
+    await asUser(t, s.seller.userId).mutation(api.conversations.markConversationRead, { conversationId: s.conversationId });
+    const rows = await all(t);
+    expect(rows.find((n) => n.memberId === s.seller.memberId)?.readAt).toBeDefined();
+    expect(rows.find((n) => n.memberId === s.third.memberId)?.readAt).toBeUndefined();
+    const conv = await t.run((ctx) => ctx.db.get(s.conversationId));
+    expect(conv?.unreadCount).toBe(3);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
 describe("2. excluir lead resolve avisos de conversa e repasse", () => {
   test("deleteLead + cascata", async () => {
     const t = convexTest(schema, modules);
