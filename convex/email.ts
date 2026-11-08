@@ -333,7 +333,7 @@ export const internalSendOrgDigest = internalMutation({
       .withIndex("by_organization_and_status", (q) =>
         q.eq("organizationId", org._id).eq("status", "pending")
       )
-      .collect();
+      .take(DIGEST_COUNT_CAP);
     const pendingHandoffsCount = pendingHandoffs.length;
 
     // Dia sem nada para contar não vira e-mail: digest zerado todo dia é o

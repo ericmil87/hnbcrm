@@ -8,7 +8,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { createNotification } from "./lib/notify";
+import { createNotification, coalesceKeys } from "./lib/notify";
 import {
   resolveEntityNotifications,
   draftNotificationAlreadyPending,
@@ -193,7 +193,7 @@ describe("rascunho da IA", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const d1 = await draft(t, s, "pending");
-    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId });
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId, coalesce: { key: coalesceKeys.aiDraft(s.conversationId) } });
 
     const d2 = await draft(t, s, "pending");
     // não lido + outro rascunho pendente -> dedupe
@@ -222,7 +222,7 @@ describe("rascunho da IA", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     await draft(t, s, "revised");
-    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId });
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId, coalesce: { key: coalesceKeys.aiDraft(s.conversationId) } });
     const fresh = await draft(t, s, "pending");
     expect(
       await t.run((ctx) =>
@@ -354,7 +354,7 @@ describe("conversa com muitas não lidas", () => {
     for (let i = 0; i < 11; i++) {
       await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
     }
-    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId });
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId, coalesce: { key: coalesceKeys.aiDraft(s.conversationId) } });
     const fresh = await pendingDraft(t, s);
     expect(
       await t.run((ctx) =>
@@ -369,7 +369,7 @@ describe("conversa com muitas não lidas", () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const d1 = await pendingDraft(t, s);
-    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId });
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId, coalesce: { key: coalesceKeys.aiDraft(s.conversationId) } });
     await t.run(async (ctx) => {
       for (let i = 0; i < 205; i++) {
         await ctx.db.insert("notifications", {

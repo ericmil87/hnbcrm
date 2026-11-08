@@ -1,5 +1,5 @@
 import { v, ConvexError, type Infer } from "convex/values";
-import { resolveEntityNotifications } from "./lib/notificationResolve";
+import { resolveEntityNotifications, resolveRepliedNotifications } from "./lib/notificationResolve";
 import { foldForSearch } from "./lib/searchFold";
 import { searchContactsByText } from "./lib/contactTextSearch";
 import { insertFileRow } from "./lib/storageUsage";
@@ -1399,6 +1399,9 @@ export const sendMessage = mutation({
       createdAt: now,
     });
 
+    // Responder resolve os avisos de mensagem/transferência do próprio remetente.
+    await resolveRepliedNotifications(ctx, { conversation, sender: userMember, isInternal: args.isInternal });
+
     // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
     // só no audit acima.
     if (conversation.leadId) {
@@ -1931,6 +1934,9 @@ export async function internalSendMessageCore(
     severity: "low",
     createdAt: now,
   });
+
+  // Responder (Telegram, REST, MCP, Copiloto) resolve os avisos do próprio remetente humano.
+  await resolveRepliedNotifications(ctx, { conversation, sender: teamMember, isInternal: args.isInternal });
 
   // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
   // só no audit acima.
@@ -2673,6 +2679,8 @@ export const internalReceiveGroupMessage = internalMutation({
             windowMs: GROUP_MENTION_WINDOW_MS,
             render: mentionCopy,
             telegramOnPatch: true,
+            // O push só vibra de novo depois da janela de renotify (5 min).
+            pushOnlyAfterRenotifyWindow: true,
           },
         });
       }
@@ -3364,7 +3372,9 @@ export const markConversationRead = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversation not found");
 
-    const reader = await requirePermission(ctx, conversation.organizationId, "inbox", "view_all");
+    // `view_own` basta para resolver os avisos do PRÓPRIO leitor; o recibo de
+    // leitura e o `unreadCount` (estado da conversa inteira) exigem `view_all`.
+    const reader = await requirePermission(ctx, conversation.organizationId, "inbox", "view_own");
 
     // B1: abrir a conversa lê os avisos DELA para ESTE membro (mensagem nova,
     // transferência, rascunho) — os de outros membros ficam como estão.
@@ -3376,6 +3386,8 @@ export const markConversationRead = mutation({
       reason: "conversation_opened",
       types: ["new_message", "conversation_transferred", "ai_draft_pending"],
     });
+
+    if (!seesWholeInbox(reader)) return null;
 
     const now = Date.now();
     const lastReadAt = conversation.lastReadAt ?? 0;

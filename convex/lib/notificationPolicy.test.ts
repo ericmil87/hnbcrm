@@ -148,3 +148,30 @@ describe("acionáveis", () => {
     expect(flagOf("dailyDigest")).toBe("dailyDigest");
   });
 });
+
+describe("exports compartilhados com o front", () => {
+  test("PUSH_PREFERENCE_FLAGS = flags dos tipos com template de push", async () => {
+    const { PUSH_PREFERENCE_FLAGS, PREFERENCE_FLAG, NON_PERSONAL_FLAGS, ACTIONABLE_TYPES } = await import("./notificationPolicy");
+    const { PUSH_TEMPLATES, IGNORED_FOR_PUSH } = await import("./webPush");
+    const expected = new Set(
+      (Object.keys(PREFERENCE_FLAG) as (keyof typeof PREFERENCE_FLAG)[])
+        .filter((t) => !IGNORED_FOR_PUSH.has(t) && PUSH_TEMPLATES[t])
+        .map((t) => PREFERENCE_FLAG[t])
+    );
+    expect(new Set(PUSH_PREFERENCE_FLAGS)).toEqual(expected);
+    expect(PUSH_PREFERENCE_FLAGS).toContain("newMessage");
+    expect(PUSH_PREFERENCE_FLAGS).not.toContain("leadAssigned");
+    expect(NON_PERSONAL_FLAGS.has("groupDigest")).toBe(true);
+    expect(ACTIONABLE_TYPES).toContain("task_assigned");
+  });
+
+  test("notificationTargetPath: destino por tipo", async () => {
+    const { notificationTargetPath } = await import("./notificationTargets");
+    expect(notificationTargetPath("group_mention", {})).toBe("/app/grupos");
+    expect(notificationTargetPath("task_assigned", { taskId: "t1" })).toBe("/app/tarefas?task=t1");
+    expect(notificationTargetPath("new_message", { conversationId: "c1" })).toBe("/app/entrada?conversation=c1");
+    expect(notificationTargetPath("channel_session_lost", { data: { metaConnectionId: "m" } })).toBe(
+      "/app/configuracoes?secao=instagram"
+    );
+  });
+});

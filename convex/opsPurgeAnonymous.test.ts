@@ -235,6 +235,24 @@ describe("internalPurgeAnonymousOrganizations", () => {
     expect(await snapshot()).toEqual(after);
   });
 
+  test("apaga os aparelhos de push (assinatura + vínculos) do usuário órfão", async () => {
+    const anonOrg = await mkOrg("anon-push");
+    const anonUser = await mkUser("anon");
+    const member = await addMember(anonOrg, anonUser);
+    await t.run(async (ctx) => {
+      const subscriptionId = await ctx.db.insert("pushSubscriptions", {
+        userId: anonUser, endpoint: "https://fcm.googleapis.com/fcm/send/z", p256dh: "p", auth: "a", platform: "android", createdAt: 1,
+      });
+      await ctx.db.insert("pushSubscriptionMembers", { organizationId: anonOrg, teamMemberId: member, subscriptionId, createdAt: 1 });
+    });
+    await run({ dryRun: false });
+    await drain();
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("pushSubscriptions").collect()).toEqual([]);
+      expect(await ctx.db.query("pushSubscriptionMembers").collect()).toEqual([]);
+    });
+  });
+
   test("perf I/O onda 2: apaga o texto do atendente IA (agentProfileTexts) com a org", async () => {
     const anonOrg = await mkOrg("anon-texts");
     const anonUser = await mkUser("anon");

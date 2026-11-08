@@ -2364,7 +2364,9 @@ const applicationTables = {
     .index("by_meta_connection_and_read", ["metaConnectionId", "readAt"])
     // B2: a não lida do membro com a chave de agrupamento (readAt ausente),
     // uma leitura indexada por `createNotification` com `coalesce`.
-    .index("by_member_and_coalesce_and_read", ["memberId", "coalesceKey", "readAt"]),
+    .index("by_member_and_coalesce_and_read", ["memberId", "coalesceKey", "readAt"])
+    // Resolução por conversa DE UM membro (abrir a conversa): lê só as dele.
+    .index("by_conversation_and_member_and_read", ["conversationId", "memberId", "readAt"]),
 
   // D1 — "visto" do sino por membro (visto != lido): o badge conta o que chegou
   // depois de `seenAt`. Tabela própria para não regravar o doc quente do
