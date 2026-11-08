@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { resolveEntityNotifications } from "./lib/notificationResolve";
 import { query, mutation, internalQuery, internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -220,6 +221,22 @@ async function notifyNewAssignees(
       },
     });
   }
+}
+
+/** B1: tarefa excluída/concluída → avisos de prazo/atribuição dela deixam de valer (porta única). */
+async function resolveTaskNotifications(
+  ctx: MutationCtx,
+  task: Doc<"tasks">,
+  reason: string,
+  resolvedByMemberId?: Id<"teamMembers">
+): Promise<void> {
+  await resolveEntityNotifications(ctx, {
+    organizationId: task.organizationId,
+    target: { taskId: task._id },
+    resolvedByMemberId,
+    reason,
+    types: ["task_due_soon", "task_overdue", "task_assigned"],
+  });
 }
 
 /**
@@ -1731,6 +1748,7 @@ export const deleteTask = mutation({
       await ctx.db.delete(comment._id);
     }
 
+    await resolveTaskNotifications(ctx, task, "task_deleted");
     await ctx.db.delete(args.taskId);
 
     return null;
@@ -1847,6 +1865,7 @@ export const bulkUpdateTasks = mutation({
         for (const comment of comments) {
           await ctx.db.delete(comment._id);
         }
+        await resolveTaskNotifications(ctx, task, "task_deleted");
         await ctx.db.delete(task._id);
       }
     }
@@ -2397,6 +2416,7 @@ export const internalDeleteTask = internalMutation({
       await ctx.db.delete(comment._id);
     }
 
+    await resolveTaskNotifications(ctx, task, "task_deleted");
     await ctx.db.delete(args.taskId);
 
     return null;
@@ -2548,6 +2568,7 @@ export const internalBulkUpdate = internalMutation({
         for (const comment of comments) {
           await ctx.db.delete(comment._id);
         }
+        await resolveTaskNotifications(ctx, task, "task_deleted");
         await ctx.db.delete(task._id);
       }
     }

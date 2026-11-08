@@ -8,6 +8,7 @@
  * Runs inside a mutation and returns what to send/edit; the action sends
  * (`telegram.internalProcessUpdate`). Writes carry `via:"telegram"`.
  */
+import { resolveEntityNotifications } from "./notificationResolve";
 import { ConvexError, type Value } from "convex/values";
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
@@ -904,16 +905,16 @@ export async function handleTelegramPromptAnswer(
     } catch (e) {
       failWith(say(args.chatId, errorText(e)));
     }
-    // The next draft must reach Telegram: the attendant dedupes ai_draft_pending
-    // by "one UNREAD per conversation", so this member's unread ones are read now.
-    const unread = await ctx.db
-      .query("notifications")
-      .withIndex("by_member_and_read", (q) => q.eq("memberId", actor.member._id).eq("readAt", undefined))
-      .order("desc")
-      .take(50);
-    for (const n of unread) {
-      if (n.type === "ai_draft_pending" && n.conversationId === conversation._id) await ctx.db.patch(n._id, { readAt: args.now });
-    }
+    // The next draft must reach Telegram: this member's unread ones are resolved
+    // now (single door; the dedupe also requires a still-pending draft).
+    await resolveEntityNotifications(ctx, {
+      organizationId: actor.org._id,
+      target: { conversationId: conversation._id },
+      memberId: actor.member._id,
+      resolvedByMemberId: actor.member._id,
+      reason: "draft_regenerated",
+      types: ["ai_draft_pending"],
+    });
     await clearPrompt(ctx, args.chatId, args.now);
     const edits: EditOp[] = [];
     if (prompt.promptMessageId) edits.push({ chatId: args.chatId, messageId: prompt.promptMessageId, text: `🔁 Motivo: <i>${escapeHtml(quoteSnippet(text))}</i>` });

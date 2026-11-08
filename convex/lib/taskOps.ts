@@ -7,6 +7,7 @@
  * lógica em si é a MESMA de sempre — `tasks.ts` e `taskComments.ts` delegam
  * para cá, e não existe um segundo caminho de "concluir tarefa" no produto.
  */
+import { resolveEntityNotifications } from "./notificationResolve";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
@@ -301,6 +302,15 @@ export async function applyTaskCompletion(
   }
 
   await ctx.db.patch(task._id, patch);
+
+  // B1: concluída → "vence em breve"/"atrasada"/"atribuída" deixam de valer.
+  await resolveEntityNotifications(ctx, {
+    organizationId: task.organizationId,
+    target: { taskId: task._id },
+    resolvedByMemberId: actor._id,
+    reason: "task_completed",
+    types: ["task_due_soon", "task_overdue", "task_assigned"],
+  });
 
   // Recorrência: a próxima instância nasce NA MESMA transação da conclusão
   // (antes agendava a varredura inteira do cron a cada conclusão).

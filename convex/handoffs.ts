@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { resolveEntityNotifications } from "./lib/notificationResolve";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -378,6 +379,14 @@ export async function acceptHandoffCore(
     notes: args.notes,
     resolvedAt: now,
   });
+  // B1: o broadcast do pedido de ajuda vira lido para TODOS os destinatários.
+  await resolveEntityNotifications(ctx, {
+    organizationId: handoff.organizationId,
+    target: { handoffId: handoff._id },
+    resolvedByMemberId: member._id,
+    reason: "handoff_accepted",
+    types: ["handoff_requested"],
+  });
 
   const lead = await getLeadRef(ctx.db, handoff.leadId);
   if (lead) {
@@ -545,6 +554,13 @@ async function rejectHandoffCore(
     resolvedBy: member._id,
     notes: args.notes,
     resolvedAt: now,
+  });
+  await resolveEntityNotifications(ctx, {
+    organizationId: handoff.organizationId,
+    target: { handoffId: handoff._id },
+    resolvedByMemberId: member._id,
+    reason: "handoff_rejected",
+    types: ["handoff_requested"],
   });
 
   const lead = await getLeadRef(ctx.db, handoff.leadId);

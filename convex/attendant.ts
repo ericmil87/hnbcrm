@@ -15,6 +15,7 @@
  * Modo sugestão (default): a IA gera mas NÃO envia — vira rascunho interno na
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
+import { resolveEntityNotifications, draftNotificationAlreadyPending } from "./lib/notificationResolve";
 import { isSupersededByResume, latestReactiveQueueItem } from "./lib/aiStateQueue";
 import { matchesHandoffKeyword } from "./lib/handoffKeywords";
 import { insertFileRow } from "./lib/storageUsage";
@@ -2790,9 +2791,11 @@ export const internalCommitAiReply = internalMutation({
     // "pending" (ex.: item coach convertido em return_to_ai em org autopilot)
     // ficaria órfão no inbox depois de a resposta real já ter saído. "revised"
     // fica fora das métricas do gate do autopilot (não é julgamento humano).
+    let revisedAny = false;
     for (const m of recent) {
       const staleDraft = m.metadata?.aiDraft as { status?: string } | undefined;
       if (staleDraft?.status === "pending") {
+        revisedAny = true;
         await ctx.db.patch(m._id, {
           metadata: {
             ...(m.metadata ?? {}),
@@ -2804,6 +2807,16 @@ export const internalCommitAiReply = internalMutation({
           },
         });
       }
+    }
+
+    // B1: o envio direto "revisou" o rascunho pendente — o aviso dele envelhece.
+    if (revisedAny) {
+      await resolveEntityNotifications(ctx, {
+        organizationId: conversation.organizationId,
+        target: { conversationId: conversation._id },
+        reason: "draft_superseded",
+        types: ["ai_draft_pending"],
+      });
     }
 
     const messageId = await ctx.db.insert("messages", withMessageSearch({
@@ -3060,17 +3073,13 @@ export const internalCommitAiSuggestion = internalMutation({
           recipientId === args.instructedBy
             ? args.agentMemberId
             : (args.instructedBy ?? args.agentMemberId);
-        // Dedupe: uma NÃO-LIDA por conversa basta (rajadas não empilham).
-        const recentUnread = await ctx.db
-          .query("notifications")
-          .withIndex("by_member_and_read", (q) =>
-            q.eq("memberId", recipientId).eq("readAt", undefined)
-          )
-          .order("desc")
-          .take(50);
-        const alreadyNotified = recentUnread.some(
-          (n) => n.type === "ai_draft_pending" && n.conversationId === conversation._id
-        );
+        // Dedupe (B1): aviso NÃO LIDO deste membro E rascunho ainda pendente
+        // (outro que não este). Só "não lido" silenciava quem revisou no inbox.
+        const alreadyNotified = await draftNotificationAlreadyPending(ctx, {
+          memberId: recipientId,
+          conversationId: conversation._id,
+          excludeMessageId: messageId,
+        });
         if (!alreadyNotified) {
           await createNotification(ctx, {
             organizationId: conversation.organizationId,
@@ -4281,6 +4290,14 @@ export async function acceptAiDraftCore(
   if (!aiDraft || aiDraft.status !== "pending") {
     throw new Error("Rascunho já revisado");
   }
+  // B1: rascunho revisado → o aviso "aguardando revisão" deixa de valer (todos).
+  await resolveEntityNotifications(ctx, {
+    organizationId: conversation.organizationId,
+    target: { conversationId: conversation._id },
+    resolvedByMemberId: member._id,
+    reason: "draft_approved",
+    types: ["ai_draft_pending"],
+  });
 
   const finalText = (args.editedText ?? draft.content).trim();
   if (!finalText) throw new Error("Resposta vazia");
@@ -4495,6 +4512,17 @@ export async function discardAiDraftCore(
     },
   });
 
+  const draftConversation = await ctx.db.get(draft.conversationId);
+  if (draftConversation) {
+    await resolveEntityNotifications(ctx, {
+      organizationId: draftConversation.organizationId,
+      target: { conversationId: draftConversation._id },
+      resolvedByMemberId: member._id,
+      reason: "draft_discarded",
+      types: ["ai_draft_pending"],
+    });
+  }
+
   // D7: descartar o rascunho do follow-up é dizer "não é para mandar". A
   // tarefa continua PENDENTE, mas passa a ser de quem descartou — a IA não
   // tenta de novo sozinha.
@@ -4590,6 +4618,14 @@ export async function requestAiDraftCore(
     }
     const status = (source.metadata?.aiDraft as { status?: string } | undefined)?.status;
     if (status !== "pending") throw new Error("Rascunho já revisado");
+    // B1: regenerar = o aviso do rascunho antigo envelhece; o novo notifica de novo.
+    await resolveEntityNotifications(ctx, {
+      organizationId: conversation.organizationId,
+      target: { conversationId: conversation._id },
+      resolvedByMemberId: member._id,
+      reason: "draft_regenerated",
+      types: ["ai_draft_pending"],
+    });
   }
 
   // Anti duplo-clique / anti rascunho duplo: um item por vez por conversa
@@ -4776,6 +4812,13 @@ async function returnGroupConversationToAi(
       resolvedBy: memberId,
       resolvedAt: now,
     });
+    await resolveEntityNotifications(ctx, {
+      organizationId: conversation.organizationId,
+      target: { handoffId: pending._id },
+      resolvedByMemberId: memberId,
+      reason: "handoff_canceled",
+      types: ["handoff_requested"],
+    });
     await scheduleWebhookEvent(ctx, {
       organizationId: conversation.organizationId,
       event: "handoff.canceled",
@@ -4922,6 +4965,13 @@ export async function returnToAiCore(
       status: "canceled",
       resolvedBy: member._id,
       resolvedAt: now,
+    });
+    await resolveEntityNotifications(ctx, {
+      organizationId: conversation.organizationId,
+      target: { handoffId: pendingHandoff._id },
+      resolvedByMemberId: member._id,
+      reason: "handoff_canceled",
+      types: ["handoff_requested"],
     });
     await scheduleWebhookEvent(ctx, {
       organizationId: conversation.organizationId,

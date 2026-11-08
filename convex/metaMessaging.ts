@@ -110,6 +110,7 @@ import {
 import { safeEqual, parseSignedRequest } from "./lib/metaSignedRequest";
 import { fallbackMetaName, findOrCreateContactByMetaIdentity, maskExternalId } from "./lib/metaIdentity";
 import { maybeNotifyTelegramSendFailed } from "./lib/telegramRelay";
+import { resolveEntityNotifications } from "./lib/notificationResolve";
 
 // ── Constantes e validators ──
 
@@ -2656,6 +2657,15 @@ export const internalUpsertMetaConnection = internalMutation({
       connectionId = await ctx.db.insert("metaConnections", { ...fields, organizationId: args.organizationId, createdAt: now });
     }
 
+    // B1: reconectou a Página → o aviso de reautorização deixa de valer.
+    await resolveEntityNotifications(ctx, {
+      organizationId: args.organizationId,
+      target: { metaConnectionId: connectionId },
+      resolvedByMemberId: args.memberId,
+      reason: "channel_reconnected",
+      types: ["channel_session_lost"],
+    });
+
     // Audit: NOMES de campos, nunca valores (token, ids de cliente).
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
@@ -3048,6 +3058,12 @@ export const internalApplyHealthObservation = internalMutation({
       };
       await ctx.db.patch(conn._id, { ...seen, ...cleared });
       current = { ...current, ...cleared };
+      await resolveEntityNotifications(ctx, {
+        organizationId: conn.organizationId,
+        target: { metaConnectionId: conn._id },
+        reason: "channel_reconnected",
+        types: ["channel_session_lost"],
+      });
       await ctx.db.insert("auditLogs", {
         organizationId: conn.organizationId,
         entityType: "metaConnection",
