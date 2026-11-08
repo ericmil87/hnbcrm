@@ -266,6 +266,30 @@ describe("revisão do C2", () => {
     expect(screen.getByText("Personalizado")).toBeInTheDocument();
   });
 
+  it("com ajustes por tipo, trocar o atalho pede confirmação; Cancelar mantém a seleção", async () => {
+    const base = makePrefs();
+    const p = setup({
+      prefs: { ...base, channels: { ...base.channels, email: { ...base.channels.email, taskOverdue: false } } },
+    });
+    await userEvent.click(screen.getByRole("radio", { name: /Nada/ }));
+    expect(screen.getByText("Isso substitui seus ajustes por tipo. Continuar?")).toBeInTheDocument();
+    expect(p.onPreset).not.toHaveBeenCalled();
+    expect(screen.getByRole("radio", { name: /^Tudo/ })).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    expect(p.onPreset).not.toHaveBeenCalled();
+    expect(screen.getByRole("radio", { name: /^Tudo/ })).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("com ajustes por tipo, Continuar aplica o atalho (também ao reaplicar o atual)", async () => {
+    const base = makePrefs();
+    const p = setup({
+      prefs: { ...base, channels: { ...base.channels, email: { ...base.channels.email, taskOverdue: false } } },
+    });
+    await userEvent.click(screen.getByRole("radio", { name: /^Tudo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
+    await waitFor(() => expect(p.onPreset).toHaveBeenCalledWith("all"));
+  });
+
   it("sem escolhas por tipo não mostra Personalizado", () => {
     setup();
     expect(screen.queryByText("Personalizado")).toBeNull();
@@ -301,6 +325,7 @@ describe("revisão do C2", () => {
     await userEvent.click(screen.getByRole("switch", { name }));
     expect(screen.getByRole("switch", { name })).toHaveAttribute("aria-checked", "false");
     await userEvent.click(screen.getByRole("radio", { name: /^Tudo/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Continuar" }));
     await waitFor(() => expect(screen.getByRole("switch", { name })).toHaveAttribute("aria-checked", "true"));
   });
 

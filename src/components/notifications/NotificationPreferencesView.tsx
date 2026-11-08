@@ -224,6 +224,7 @@ function PresetBlock({
   const [optimistic, setOptimistic] = useState<Preset | null>(null);
   const version = useRef(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [pendingPreset, setPendingPreset] = useState<Preset | null>(null);
   const [applying, setApplying] = useState(false);
   const selected = optimistic ?? prefs.preset;
 
@@ -280,8 +281,25 @@ function PresetBlock({
       <SegmentedControl
         ariaLabel="O que você quer receber"
         value={selected}
-        onValueChange={(v) => void choose(v as Preset)}
+        onValueChange={(v) => {
+          // Com ajustes por tipo, trocar ou reaplicar o atalho os substitui: pede confirmação
+          // e a seleção visual só muda depois dela.
+          if (customized) setPendingPreset(v as Preset);
+          else void choose(v as Preset);
+        }}
         options={PRESET_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+      />
+      <ConfirmDialog
+        open={pendingPreset !== null}
+        onClose={() => setPendingPreset(null)}
+        onConfirm={() => {
+          const next = pendingPreset;
+          setPendingPreset(null);
+          if (next) void choose(next);
+        }}
+        title="Trocar o atalho?"
+        description="Isso substitui seus ajustes por tipo. Continuar?"
+        confirmLabel="Continuar"
       />
       {hint && (
         <p className="mt-2 text-xs text-text-secondary">
