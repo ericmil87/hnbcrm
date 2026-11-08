@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,6 +10,7 @@ import {
   type NotificationPreferencesViewProps,
 } from "./NotificationPreferencesView";
 import { NotificationPauseMenuView } from "./NotificationPauseMenu";
+import { NotificationPanelShell } from "./NotificationPanel";
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
@@ -230,5 +232,46 @@ describe("silêncio e prévia", () => {
     const p = setup();
     await userEvent.click(screen.getByRole("switch", { name: "Pedido de ajuda urgente fura pausa e silêncio" }));
     expect(p.onUrgentBypass).toHaveBeenCalledWith(false);
+  });
+});
+
+describe("menu de pausa dentro do painel do sino", () => {
+  function Harness({ onPause }: { onPause: (mode: string) => void }) {
+    const ref = useRef<HTMLButtonElement>(null);
+    return (
+      <header>
+        <button ref={ref} type="button">
+          sino
+        </button>
+        <NotificationPanelShell
+          open
+          onClose={vi.fn()}
+          anchor={ref}
+          hasUnread={false}
+          onMarkAllRead={vi.fn()}
+          headerExtra={<NotificationPauseMenuView pausedUntil={null} now={NOW} onPause={onPause} onResume={vi.fn()} />}
+        >
+          <p>lista</p>
+        </NotificationPanelShell>
+      </header>
+    );
+  }
+
+  it.each([true, false])("abre o menu e chama pauseFor com 1 h (celular=%s)", async (mobile) => {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: mobile,
+      media: query,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      onchange: null,
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+    const onPause = vi.fn();
+    render(<Harness onPause={onPause} />);
+    await userEvent.click(screen.getByRole("button", { name: "Pausar avisos" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Por 1 hora" }));
+    expect(onPause).toHaveBeenCalledWith("1h");
   });
 });
