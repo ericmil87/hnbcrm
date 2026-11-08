@@ -168,7 +168,7 @@ Cada fase registra o que foi decidido na época. Onde um hotfix emendou a decis�
 | `/novo` | | limpa `telegramChats.focus` e (F3) agenda `internalRotateCopilotThread` |
 | `/modo` | `md:suggest`, `md:auto` | mostra e troca o modo da assistente (F3, `handleModeCommand`) |
 | `/tour` | `ob:*` | reabre o onboarding no cartão 1, em mensagem nova (F3) |
-| `/pausar`, `⏸ Pausar` | `cmd:pausar`, `mu:1h`, `mu:tomorrow`, `mu:off` | `telegramLinks.mutedUntil` em TODOS os vínculos ativos do chat (a pessoa silencia o celular, não a org); "amanhã 8h" no fuso da org (`tomorrowAt`) |
+| `/pausar`, `⏸ Pausar` | `cmd:pausar`, `mu:1h`, `mu:tomorrow`, `mu:off` | `notificationPreferences.pausedUntil` do membro de CADA vínculo ativo do chat (a pessoa silencia o celular, não a org; C1) — `telegramLinks.mutedUntil` é só lido (compatibilidade) e limpo ao pausar/retomar. Pausa e silêncio seguram o Telegram mas não o sino; `handoff_requested` fura (urgentBypass). Política única: `lib/notificationPolicy.shouldDeliver`, usada em `createNotification` e recheck em `deliverableLink`; "amanhã 8h" no fuso da org (`tomorrowAt`) |
 | `/org` | `org:<linkId>` | `activeLinksOfChat`; o vínculo precisa ser deste chat e de membro vivo (senão é revogado pela porta de revogação). Trocar de org limpa o foco |
 | `/teclado` | | alterna `telegramChats.keyboardShown`; ligado = reply keyboard `is_persistent`/`resize_keyboard`, desligado = `remove_keyboard` |
 | `/ajuda` | | `COPY.help` lista os comandos |
