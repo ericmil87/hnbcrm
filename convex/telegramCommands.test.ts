@@ -181,6 +181,16 @@ const tap = (chatId: number, messageId: number, data: string) =>
 
 const chatOf = (chatId: number) => t.run((ctx) => ctx.db.query("telegramChats").withIndex("by_chat_id", (q) => q.eq("chatId", chatId)).first());
 const linkOf = (id: Id<"telegramLinks">) => t.run((ctx) => ctx.db.get(id));
+// C1: a pausa do `/pausar` vive no membro (`notificationPreferences.pausedUntil`), não no vínculo.
+const pausedOf = (id: Id<"telegramLinks">) =>
+  t.run(async (ctx) => {
+    const link = (await ctx.db.get(id))!;
+    const prefs = await ctx.db
+      .query("notificationPreferences")
+      .withIndex("by_organization_and_member", (q) => q.eq("organizationId", link.organizationId).eq("teamMemberId", link.teamMemberId))
+      .first();
+    return prefs?.pausedUntil ?? undefined;
+  });
 
 async function adminChat() {
   const s = await seedOrg();
@@ -491,12 +501,13 @@ describe("/pausar", () => {
     expect(datas(menu)).toEqual(["mu:1h", "mu:tomorrow", "mu:off"]);
     await tap(CHAT_ADMIN, 700, "mu:1h");
     const until = Date.now() + 3600_000;
-    expect((await linkOf(l1))?.mutedUntil).toBe(until);
-    expect((await linkOf(l2))?.mutedUntil).toBe(until);
-    expect(edits()[0].body.text).toBe("🔕 <b>Silenciado até 13:00.</b>\nRepasses urgentes continuam no CRM.");
-    await tap(CHAT_ADMIN, 700, "mu:off");
+    expect(await pausedOf(l1)).toBe(until);
+    expect(await pausedOf(l2)).toBe(until);
     expect((await linkOf(l1))?.mutedUntil).toBeUndefined();
-    expect((await linkOf(l2))?.mutedUntil).toBeUndefined();
+    expect(edits()[0].body.text).toBe("🔕 <b>Silenciado até 13:00.</b>\nO sino segue registrando; pedido de ajuda urgente ainda avisa.");
+    await tap(CHAT_ADMIN, 700, "mu:off");
+    expect(await pausedOf(l1) ?? undefined).toBeUndefined();
+    expect((await pausedOf(l2)) ?? undefined).toBeUndefined();
     expect(edits()[1].body.text).toBe("🔔 Notificações retomadas.");
   });
 
@@ -505,8 +516,8 @@ describe("/pausar", () => {
     await say(CHAT_ADMIN, "/pausar");
     await tap(CHAT_ADMIN, 700, "mu:tomorrow");
     // 2026-11-04 08:00 America/Sao_Paulo (UTC-3) = 11:00Z.
-    expect((await linkOf(linkId))?.mutedUntil).toBe(Date.UTC(2026, 10, 4, 11, 0));
-    expect(edits()[0].body.text).toBe("🔕 <b>Silenciado até amanhã 08:00.</b>\nRepasses urgentes continuam no CRM.");
+    expect(await pausedOf(linkId)).toBe(Date.UTC(2026, 10, 4, 11, 0));
+    expect(edits()[0].body.text).toBe("🔕 <b>Silenciado até amanhã 08:00.</b>\nO sino segue registrando; pedido de ajuda urgente ainda avisa.");
     await say(CHAT_ADMIN, "/repasses");
     expect(texts(CHAT_ADMIN).at(-1)).toBe("Nenhum repasse pendente 🎉");
   });

@@ -12,6 +12,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { createNotification } from "./lib/notify";
+import { patchMemberPrefs } from "./lib/notificationPrefs";
 import { maybeBufferInboundForRelay, maybeScheduleAiReplyRelay } from "./lib/telegramRelay";
 import { handleTelegramPromptAnswer } from "./lib/telegramActions";
 
@@ -254,6 +255,8 @@ describe("fan-out (D7)", () => {
   test("sem vínculo, mutado ou módulo desligado: nada é agendado nem enviado", async () => {
     const s = await seedOrg();
     await linkMember(s, s.sellerId, s.sellerUserId, CHAT_SELLER, { mutedUntil: Date.now() + 3600_000 });
+    // C1 (E3): pedido de ajuda fura a pausa por padrão; aqui o seller desligou a exceção.
+    await t.run((ctx) => patchMemberPrefs(ctx, s.organizationId, s.sellerId, { urgentBypass: false }, Date.now()));
     await seedHandoff(s, [s.adminId, s.sellerId]); // admin sem vínculo, seller mutado
     const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     expect(scheduled.filter((j) => j.name.includes("internalDeliverNotification"))).toHaveLength(0);

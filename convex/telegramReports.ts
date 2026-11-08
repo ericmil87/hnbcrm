@@ -23,6 +23,8 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { appUrl } from "./lib/appUrl";
 import { cronsDisabled } from "./lib/cronGuard";
+import { activePausedUntil } from "./lib/notificationPolicy";
+import { loadMemberPrefs } from "./lib/notificationPrefs";
 import { modulesOf } from "./lib/orgModules";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { safeTimezone } from "./lib/promptDateTime";
@@ -487,7 +489,9 @@ export const internalGetReportTarget = internalQuery({
     if (!link || link.status !== "active") return null;
     if (args.trigger === "cron") {
       if (!link.reports.enabled) return null;
-      if (link.mutedUntil !== undefined && link.mutedUntil > args.now) return null;
+      // C1: pausa do membro (`pausedUntil`) ou `mutedUntil` legado do vínculo.
+      const prefs = await loadMemberPrefs(ctx, link.organizationId, link.teamMemberId);
+      if (activePausedUntil(prefs, link.mutedUntil, args.now) !== undefined) return null;
     }
     const member = await ctx.db.get(link.teamMemberId);
     if (!member || !isLinkMemberAlive(link, member)) return null;

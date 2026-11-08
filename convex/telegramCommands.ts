@@ -16,6 +16,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { hasPermission, type PermissionCategory } from "./lib/permissions";
 import { safeTimezone } from "./lib/promptDateTime";
+import { patchMemberPrefs } from "./lib/notificationPrefs";
 import { loadCardContext } from "./lib/telegramContext";
 import { COPY } from "./lib/telegramCore";
 import { escapeHtml } from "./lib/telegramFormat";
@@ -501,8 +502,11 @@ async function onMute(ctx: MutationCtx, mode: "1h" | "tomorrow" | "off", viewer:
   const tz = safeTimezone(viewer.org.settings.timezone);
   const until = mode === "1h" ? env.now + 60 * 60 * 1000 : mode === "tomorrow" ? tomorrowAt(env.now, tz, 8) : undefined;
   // A person mutes their phone, not an org: every active link of this chat.
+  // C1: a pausa é do MEMBRO (`notificationPreferences.pausedUntil`, a mesma do app); o
+  // `mutedUntil` do vínculo só é lido por compatibilidade e é limpo aqui. Não silencia o sino.
   for (const link of await activeLinksOfChat(ctx, env.chatId)) {
-    await ctx.db.patch(link._id, { mutedUntil: until });
+    await patchMemberPrefs(ctx, link.organizationId, link.teamMemberId, { pausedUntil: until }, env.now);
+    if (link.mutedUntil !== undefined) await ctx.db.patch(link._id, { mutedUntil: undefined });
   }
   if (until === undefined) return replaceOrSay(viewer, env, CMD_COPY.unmuted);
   const when = formatWhen(until, env.now, tz);
