@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { dismissInstallInvite, readDismissedAt, readVisits, registerVisit } from "./installInvite";
-import { DRAFT_TTL_MS, clearDraft, draftKey, loadDraft, purgeExpiredDrafts, saveDraft } from "./composerDraft";
+import { DRAFT_TTL_MS, clearDraft, clearStoredDrafts, draftKey, loadDraft, purgeExpiredDrafts, saveDraft } from "./composerDraft";
 
 describe("visitas e dispensa (localStorage)", () => {
   beforeEach(() => {
@@ -38,34 +38,47 @@ describe("visitas e dispensa (localStorage)", () => {
 describe("rascunho do composer", () => {
   beforeEach(() => localStorage.clear());
   it("salva, restaura e limpa", () => {
-    expect(saveDraft("o1", "c1", "olá", 1000)).toBe(true);
-    expect(loadDraft("o1", "c1", 2000)).toBe("olá");
-    clearDraft("o1", "c1");
-    expect(loadDraft("o1", "c1", 2000)).toBe("");
+    expect(saveDraft("o1", "m1", "c1", "olá", 1000)).toBe(true);
+    expect(loadDraft("o1", "m1", "c1", 2000)).toBe("olá");
+    clearDraft("o1", "m1", "c1");
+    expect(loadDraft("o1", "m1", "c1", 2000)).toBe("");
   });
   it("texto vazio limpa", () => {
-    saveDraft("o1", "c1", "x", 1);
-    expect(saveDraft("o1", "c1", "   ", 2)).toBe(true);
-    expect(localStorage.getItem(draftKey("o1", "c1"))).toBeNull();
+    saveDraft("o1", "m1", "c1", "x", 1);
+    expect(saveDraft("o1", "m1", "c1", "   ", 2)).toBe(true);
+    expect(localStorage.getItem(draftKey("o1", "m1", "c1"))).toBeNull();
+  });
+  it("chave por membro: outra conta no mesmo aparelho não vê o rascunho", () => {
+    saveDraft("o1", "m1", "c1", "segredo", 1);
+    expect(loadDraft("o1", "m2", "c1", 2)).toBe("");
+  });
+  it("clearStoredDrafts remove todos os rascunhos e preserva o resto", () => {
+    saveDraft("o1", "m1", "c1", "a", 1);
+    saveDraft("o2", "m2", "c2", "b", 1);
+    localStorage.setItem("outra-chave", "x");
+    clearStoredDrafts();
+    expect(loadDraft("o1", "m1", "c1", 2)).toBe("");
+    expect(loadDraft("o2", "m2", "c2", 2)).toBe("");
+    expect(localStorage.getItem("outra-chave")).toBe("x");
   });
   it("chave por organização e conversa", () => {
-    saveDraft("o1", "c1", "a", 1);
-    expect(loadDraft("o2", "c1", 2)).toBe("");
-    expect(loadDraft("o1", "c2", 2)).toBe("");
+    saveDraft("o1", "m1", "c1", "a", 1);
+    expect(loadDraft("o2", "m1", "c1", 2)).toBe("");
+    expect(loadDraft("o1", "m1", "c2", 2)).toBe("");
   });
   it("expira em 7 dias e remove", () => {
-    saveDraft("o1", "c1", "a", 0);
-    expect(loadDraft("o1", "c1", DRAFT_TTL_MS)).toBe("a");
-    expect(loadDraft("o1", "c1", DRAFT_TTL_MS + 1)).toBe("");
-    expect(localStorage.getItem(draftKey("o1", "c1"))).toBeNull();
+    saveDraft("o1", "m1", "c1", "a", 0);
+    expect(loadDraft("o1", "m1", "c1", DRAFT_TTL_MS)).toBe("a");
+    expect(loadDraft("o1", "m1", "c1", DRAFT_TTL_MS + 1)).toBe("");
+    expect(localStorage.getItem(draftKey("o1", "m1", "c1"))).toBeNull();
   });
   it("limpeza remove expirados e lixo, preserva o resto", () => {
-    saveDraft("o1", "old", "a", 0);
-    saveDraft("o1", "new", "b", DRAFT_TTL_MS);
-    localStorage.setItem(draftKey("o1", "junk"), "{nope");
+    saveDraft("o1", "m1", "old", "a", 0);
+    saveDraft("o1", "m1", "new", "b", DRAFT_TTL_MS);
+    localStorage.setItem(draftKey("o1", "m1", "junk"), "{nope");
     localStorage.setItem("outra-chave", "x");
     expect(purgeExpiredDrafts(DRAFT_TTL_MS + 10)).toBe(2);
-    expect(loadDraft("o1", "new", DRAFT_TTL_MS + 10)).toBe("b");
+    expect(loadDraft("o1", "m1", "new", DRAFT_TTL_MS + 10)).toBe("b");
     expect(localStorage.getItem("outra-chave")).toBe("x");
   });
   it("storage indisponível: salvar devolve false, ler devolve vazio", () => {
@@ -75,8 +88,8 @@ describe("rascunho do composer", () => {
     const get = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
       throw new Error("denied");
     });
-    expect(saveDraft("o1", "c1", "a")).toBe(false);
-    expect(loadDraft("o1", "c1")).toBe("");
+    expect(saveDraft("o1", "m1", "c1", "a")).toBe(false);
+    expect(loadDraft("o1", "m1", "c1")).toBe("");
     expect(() => purgeExpiredDrafts()).not.toThrow();
     set.mockRestore();
     get.mockRestore();

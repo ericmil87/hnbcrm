@@ -6,14 +6,14 @@ interface StoredDraft {
   savedAt: number;
 }
 
-/** Key per organization + conversation, so a draft never crosses tenants. */
-export function draftKey(organizationId: string, conversationId: string): string {
-  return `${PREFIX}${organizationId}:${conversationId}`;
+/** Key per organization + member + conversation: a draft never crosses tenants or accounts on a shared device. */
+export function draftKey(organizationId: string, memberId: string, conversationId: string): string {
+  return `${PREFIX}${organizationId}:${memberId}:${conversationId}`;
 }
 
 /** Returns true when the text is durably stored (or there is nothing to store). Empty text clears. */
-export function saveDraft(organizationId: string, conversationId: string, text: string, now: number = Date.now()): boolean {
-  const key = draftKey(organizationId, conversationId);
+export function saveDraft(organizationId: string, memberId: string, conversationId: string, text: string, now: number = Date.now()): boolean {
+  const key = draftKey(organizationId, memberId, conversationId);
   try {
     if (text.trim() === "") {
       localStorage.removeItem(key);
@@ -27,8 +27,8 @@ export function saveDraft(organizationId: string, conversationId: string, text: 
   }
 }
 
-export function loadDraft(organizationId: string, conversationId: string, now: number = Date.now()): string {
-  const key = draftKey(organizationId, conversationId);
+export function loadDraft(organizationId: string, memberId: string, conversationId: string, now: number = Date.now()): string {
+  const key = draftKey(organizationId, memberId, conversationId);
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return "";
@@ -47,9 +47,9 @@ export function loadDraft(organizationId: string, conversationId: string, now: n
   }
 }
 
-export function clearDraft(organizationId: string, conversationId: string): void {
+export function clearDraft(organizationId: string, memberId: string, conversationId: string): void {
   try {
-    localStorage.removeItem(draftKey(organizationId, conversationId));
+    localStorage.removeItem(draftKey(organizationId, memberId, conversationId));
   } catch {
     /* ignore */
   }
@@ -81,4 +81,18 @@ export function purgeExpiredDrafts(now: number = Date.now()): number {
     /* storage unavailable */
   }
   return removed;
+}
+
+/** Sign-out / expired session: no draft is left for the next person on the device. */
+export function clearStoredDrafts(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(PREFIX)) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    /* storage unavailable */
+  }
 }
