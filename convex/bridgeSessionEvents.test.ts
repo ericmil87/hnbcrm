@@ -316,7 +316,7 @@ describe("webhook session_event", () => {
     await cancelPendingJobs(t);
   });
 
-  test("respeita a preferência de opt-out do membro", async () => {
+  test("opt-out do membro não tira o sino (acionável); só e-mail/Telegram", async () => {
     const t = convexTest(schema, modules);
     const { configId, organizationId, adminId } = await seed(t);
     await t.run(async (ctx) => {
@@ -338,7 +338,7 @@ describe("webhook session_event", () => {
       } as any);
     });
     await t.mutation(internal.channelHealth.internalRecordSessionEvent, { configId, event: "LoggedOut" });
-    expect(await notifications(t)).toHaveLength(0);
+    expect(await notifications(t)).toHaveLength(1);
     await cancelPendingJobs(t);
   });
 });

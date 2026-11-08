@@ -223,12 +223,22 @@ async function scheduledDigests() {
   );
 }
 
+// C1: o resumo sai às 08h LOCAIS da org. NOW = 15:00 UTC = 08:00 em Los Angeles (PDT).
+async function atDigestHour(organizationId: Id<"organizations">) {
+  await t.run(async (ctx) => {
+    const org = (await ctx.db.get(organizationId))!;
+    await ctx.db.patch(organizationId, { settings: { ...org.settings, timezone: "America/Los_Angeles" } });
+  });
+}
+
 describe("sendDailyDigest (contagens por range)", () => {
   test("conta leads novos, concluídas e atrasadas das últimas 24 h", async () => {
     const org = await seedOrg({ slug: "digest" });
+    await atDigestHour(org.organizationId);
     await seedDigestData(org.organizationId, org.adminId);
 
     await t.mutation(internal.email.sendDailyDigest, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers); // o job por org conta e agenda os e-mails
 
     const jobs = await scheduledDigests();
     expect(jobs).toHaveLength(1);
@@ -245,6 +255,7 @@ describe("sendDailyDigest (contagens por range)", () => {
 
   test("org sem destinatário (membro sem conta) não agenda nada", async () => {
     const org = await seedOrg({ slug: "sem-conta" });
+    await atDigestHour(org.organizationId);
     await t.run(async (ctx) => {
       await ctx.db.patch(org.adminId, { userId: undefined });
     });
@@ -256,6 +267,7 @@ describe("sendDailyDigest (contagens por range)", () => {
 
   test("com CRONS_DISABLED=1 não agenda nada", async () => {
     const org = await seedOrg({ slug: "desligado" });
+    await atDigestHour(org.organizationId);
     await seedDigestData(org.organizationId, org.adminId);
     vi.stubEnv("CRONS_DISABLED", "1");
 

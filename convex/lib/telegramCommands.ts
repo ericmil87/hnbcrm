@@ -150,7 +150,7 @@ export const CMD_COPY = {
 } as const;
 
 export function mutedText(until: string): string {
-  return `🔕 <b>Silenciado até ${until}.</b>\nRepasses urgentes continuam no CRM.`;
+  return `🔕 <b>Silenciado até ${until}.</b>\nO sino segue registrando; pedido de ajuda urgente ainda avisa.`;
 }
 
 export function pageFooter(offset: number, size = PAGE_SIZE): string {

@@ -31,8 +31,8 @@ describe("paridade de tipos de notificação", () => {
     expect(sorted(keys)).toEqual(sorted(schemaTypes));
   });
 
-  test("preferência: todo tipo tem flag em PREFERENCE_FLAG (lib/notify.ts)", () => {
-    const src = readFileSync(join(__dirname, "lib/notify.ts"), "utf8");
+  test("preferência: todo tipo tem flag em PREFERENCE_FLAG (lib/notificationPolicy.ts)", () => {
+    const src = readFileSync(join(__dirname, "lib/notificationPolicy.ts"), "utf8");
     const block = /const PREFERENCE_FLAG[^{]*\{([\s\S]*?)\n\};/.exec(src)?.[1] ?? "";
     const keys = [...block.matchAll(/^\s+([a-z_]+):/gm)].map((m) => m[1]);
     expect(sorted(keys)).toEqual(sorted(schemaTypes));

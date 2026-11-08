@@ -26,6 +26,8 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { coalesceKeys, createNotification } from "./lib/notify";
+import { shouldDeliver } from "./lib/notificationPolicy";
+import { loadMemberPrefs, orgDefaultsOf } from "./lib/notificationPrefs";
 import { messagePreview, notificationCopy } from "./lib/notificationCopy";
 import { editMessageText } from "./lib/telegramApi";
 import {
@@ -1627,16 +1629,32 @@ async function deliverableLink(
   memberId: Id<"teamMembers">,
   organizationId: Id<"organizations">,
   now: number,
-  opts: { conversationContent?: boolean } = {},
+  opts: { conversationContent?: boolean; type?: string; explicitRequest?: boolean } = {},
 ) {
   const link = await ctx.db
     .query("telegramLinks")
     .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", memberId).eq("status", "active"))
     .first();
   if (!link || link.organizationId !== organizationId) return null;
-  if (link.mutedUntil !== undefined && link.mutedUntil > now) return null;
   const member = await ctx.db.get(link.teamMemberId);
   if (!member || !isLinkMemberAlive(link, member)) return null;
+  // C1: mesma política do agendamento (pausa `pausedUntil` + `mutedUntil` legado, silêncio,
+  // preferência por canal), recheckada na entrega. O pedido de ajuda urgente fura pausa.
+  // `explicitRequest`: resposta da IA a um pedido que o próprio membro fez no bot — não passa
+  // por preferência, pausa nem silêncio (só exige vínculo ativo e membro vivo).
+  if (!opts.explicitRequest) {
+    const prefs = await loadMemberPrefs(ctx, organizationId, memberId);
+    const orgForPolicy = prefs?.preset ? null : await ctx.db.get(organizationId);
+    const decision = shouldDeliver({
+      type: opts.type ?? "new_message",
+      channel: "telegram",
+      prefs,
+      orgDefaults: orgDefaultsOf(orgForPolicy),
+      now,
+      legacyMutedUntil: link.mutedUntil,
+    });
+    if (decision !== "deliver") return null;
+  }
   // Conversation content (customer text, relay) only to whoever still has at
   // least `inbox:view_own` — same helper as the actions (review F1 #9).
   if (opts.conversationContent) {
@@ -1663,6 +1681,7 @@ export const internalGetNotificationDelivery = internalQuery({
     const n = await ctx.db.get(args.notificationId);
     if (!n) return null;
     const target = await deliverableLink(ctx, n.memberId, n.organizationId, args.now, {
+      type: n.type,
       conversationContent: n.conversationId !== undefined || n.handoffId !== undefined,
     });
     if (!target) return null;
@@ -1926,7 +1945,7 @@ export const internalGetAiRelayTargets = internalQuery({
     if (!conversation || conversation.kind === "group") return [];
     const memberId = ctx.db.normalizeId("teamMembers", marker.instructedBy);
     if (!memberId) return [];
-    const target = await deliverableLink(ctx, memberId, conversation.organizationId, args.now, { conversationContent: true });
+    const target = await deliverableLink(ctx, memberId, conversation.organizationId, args.now, { conversationContent: true, explicitRequest: true });
     if (!target) return [];
     const link = target.link;
     // Once per CRM message (a retried job must not send it twice).

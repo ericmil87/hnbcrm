@@ -12,6 +12,7 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { createNotification } from "./lib/notify";
+import { patchMemberPrefs } from "./lib/notificationPrefs";
 import { maybeBufferInboundForRelay, maybeScheduleAiReplyRelay } from "./lib/telegramRelay";
 import { handleTelegramPromptAnswer } from "./lib/telegramActions";
 
@@ -254,6 +255,8 @@ describe("fan-out (D7)", () => {
   test("sem vínculo, mutado ou módulo desligado: nada é agendado nem enviado", async () => {
     const s = await seedOrg();
     await linkMember(s, s.sellerId, s.sellerUserId, CHAT_SELLER, { mutedUntil: Date.now() + 3600_000 });
+    // C1 (E3): pedido de ajuda fura a pausa por padrão; aqui o seller desligou a exceção.
+    await t.run((ctx) => patchMemberPrefs(ctx, s.organizationId, s.sellerId, { urgentBypass: false }, Date.now()));
     await seedHandoff(s, [s.adminId, s.sellerId]); // admin sem vínculo, seller mutado
     const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
     expect(scheduled.filter((j) => j.name.includes("internalDeliverNotification"))).toHaveLength(0);
@@ -265,7 +268,7 @@ describe("fan-out (D7)", () => {
     expect(sends()).toEqual([]);
   });
 
-  test("new_message respeita notificationPreferences.newMessage = false", async () => {
+  test("new_message com newMessage = false: o sino registra, o Telegram não envia (C1)", async () => {
     const s = await seedOrg();
     await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN);
     await t.run(async (ctx) => {
@@ -281,7 +284,7 @@ describe("fan-out (D7)", () => {
       });
     });
     await drain();
-    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(1);
     expect(sends()).toEqual([]);
   });
 });
@@ -615,6 +618,34 @@ describe("relay (D20)", () => {
     // De novo para a mesma mensagem: dedupe.
     await t.action(internal.telegram.internalRelayAiReply, { messageId });
     expect(sends(CHAT_ADMIN)).toHaveLength(1);
+  });
+});
+
+describe("resposta da IA a pedido do próprio membro (C1)", () => {
+  test("chega mesmo com newMessage=false, preset none, silêncio ativo e pausa", async () => {
+    const s = await seedOrg({ aiOn: true });
+    await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN, { mutedUntil: Date.now() + 3600_000 });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("notificationPreferences", {
+        organizationId: s.organizationId, teamMemberId: s.adminId, invite: true, handoffRequested: true,
+        handoffResolved: true, taskOverdue: true, taskAssigned: true, leadAssigned: true, newMessage: false,
+        dailyDigest: true, preset: "none", pausedUntil: now + 3600_000,
+        quietHours: { enabled: true, start: "00:00", end: "23:59", timeZone: "UTC" },
+        createdAt: now, updatedAt: now,
+      });
+    });
+    const messageId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound",
+        senderId: s.agentId, senderType: "ai", content: "Oi Maria! Consigo 10% até sexta.", contentType: "text",
+        isInternal: false, metadata: { aiReply: { requestedVia: "telegram", instructedBy: s.adminId } }, createdAt: Date.now(),
+      });
+      return id;
+    });
+    await t.action(internal.telegram.internalRelayAiReply, { messageId });
+    expect(sends(CHAT_ADMIN)).toHaveLength(1);
+    expect(sends(CHAT_ADMIN)[0].body.text).toMatch(/^🤖 IA → /);
   });
 });
 

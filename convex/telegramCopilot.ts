@@ -15,6 +15,8 @@
  * runs the turn. Photo (no prompt) → vision chain → "[imagem: …]" in the turn.
  * Domain writes happen only inside the Copilot executors / lib/telegramActions.
  */
+import { activePausedUntil } from "./lib/notificationPolicy";
+import { loadMemberPrefs } from "./lib/notificationPrefs";
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -789,7 +791,9 @@ export const internalAssistantDecision = internalQuery({
       .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", n.memberId).eq("status", "active"))
       .first();
     if (!link || link.organizationId !== n.organizationId) return card;
-    if (link.mutedUntil !== undefined && link.mutedUntil > args.now) return card;
+    // C1: pausa do membro (`pausedUntil`) ou `mutedUntil` legado.
+    const mutePrefs = await loadMemberPrefs(ctx, link.organizationId, link.teamMemberId);
+    if (activePausedUntil(mutePrefs, link.mutedUntil, args.now) !== undefined) return card;
     const member = await ctx.db.get(link.teamMemberId);
     if (!member || !isLinkMemberAlive(link, member)) return card;
     const org = await ctx.db.get(n.organizationId);

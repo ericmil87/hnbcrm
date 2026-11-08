@@ -602,6 +602,26 @@ export const conversationTranslationValidator = v.object({
   candidateLang: v.optional(v.string()),
 });
 
+// C1 — preferências de aviso (por canal, pausa, silêncio) e padrões da org.
+export const notifPresetValidator = v.union(v.literal("all"), v.literal("mine"), v.literal("none"));
+// Mapa flag → bool por canal externo (o sino não entra: tipos acionáveis nunca desligam).
+// As chaves são os mesmos flags de `PREFERENCE_FLAG`, validadas na mutation.
+export const notifChannelFlagsValidator = v.object({
+  email: v.optional(v.record(v.string(), v.boolean())),
+  telegram: v.optional(v.record(v.string(), v.boolean())),
+  push: v.optional(v.record(v.string(), v.boolean())),
+});
+export const notifQuietHoursValidator = v.object({
+  enabled: v.boolean(),
+  start: v.string(), // "HH:MM"
+  end: v.string(), // "HH:MM"
+  timeZone: v.string(), // IANA
+});
+export const orgNotificationDefaultsValidator = v.object({
+  preset: notifPresetValidator,
+  hidePreviewOnLockScreen: v.optional(v.boolean()),
+});
+
 // Telegram da equipe (F0+): opções da org. Ausente = padrões (ver docs/architecture/telegram.md).
 export const orgTelegramSettingsValidator = v.object({
   protectContent: v.optional(v.boolean()), // protect_content nas mensagens do bot (D12)
@@ -714,6 +734,8 @@ const applicationTables = {
       modules: v.optional(orgModulesValidator),
       // Telegram da equipe (F0): protect_content / discreto / automático.
       telegram: v.optional(orgTelegramSettingsValidator),
+      // C1: padrões de aviso da org (preset de quem não escolheu + ocultar prévia). Ausente = "all".
+      notificationDefaults: v.optional(orgNotificationDefaultsValidator),
       // Tradução automática (F1): só age com `modules.translation === true`.
       translation: v.optional(orgTranslationSettingsValidator),
       // Org de demonstração: habilita `demoSim` e BLOQUEIA todo envio real
@@ -746,6 +768,8 @@ const applicationTables = {
         })
       ),
     }),
+    // C1: carimbo "AAAA-MM-DD" (data local da org) do último resumo diário enviado.
+    lastDailyDigestDate: v.optional(v.string()),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
       companySize: v.optional(v.string()),
@@ -2453,6 +2477,13 @@ const applicationTables = {
     channelSessionLost: v.optional(v.boolean()),
     // v0.69 — aviso/teto de gasto de IA do mês (sino + e-mail `aiSpendAlert`).
     aiSpendAlert: v.optional(v.boolean()),
+    // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
+    channels: v.optional(notifChannelFlagsValidator),
+    preset: v.optional(notifPresetValidator),
+    pausedUntil: v.optional(v.number()), // fonte única da pausa (app e /pausar do Telegram)
+    quietHours: v.optional(notifQuietHoursValidator),
+    urgentBypass: v.optional(v.boolean()), // ausente = true
+    showPreview: v.optional(v.boolean()), // ausente = true
     createdAt: v.number(),
     updatedAt: v.number(),
   })

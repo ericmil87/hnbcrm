@@ -1170,7 +1170,7 @@ describe("isolamento entre organizações", () => {
 // ===== Preferências de notificação =====
 
 describe("preferências de notificação", () => {
-  test("opt-out suprime a notificação in-app do tipo desligado", async () => {
+  test("opt-out do tipo acionável não tira o sino (só e-mail/Telegram)", async () => {
     const s = await seedOrg(t);
     const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
 
@@ -1194,13 +1194,14 @@ describe("preferências de notificação", () => {
 
     await asAdmin.mutation(api.tasks.createTask, {
       organizationId: s.organizationId,
-      title: "Sem sino para o Bruno",
+      title: "Sino segue para o Bruno",
       type: "task",
       priority: "low",
       assigneeIds: [s.bruno.memberId, s.ana.memberId],
     });
 
-    expect((await notificationsOf(t, s.bruno.memberId)).length).toBe(0);
+    // C1: tarefa atribuída é acionável — o sino sempre mostra; o flag antigo vale só para e-mail/Telegram
+    expect((await notificationsOf(t, s.bruno.memberId)).length).toBe(1);
     // Ana não tem linha de preferências: modelo opt-out mantém tudo ligado
     expect((await notificationsOf(t, s.ana.memberId)).length).toBe(1);
   });

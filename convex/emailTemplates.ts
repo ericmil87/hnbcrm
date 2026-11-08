@@ -271,6 +271,28 @@ export function buildTaskOverdueTemplate(data: {
   };
 }
 
+export function buildTaskOverdueSummaryTemplate(data: {
+  count: number;
+  tasks: { title: string; dueDate: string; taskUrl: string }[];
+  appUrl: string;
+}): TemplateResult {
+  const more = data.count - data.tasks.length;
+  return {
+    subject: `${data.count} tarefas atrasadas`,
+    html: baseTemplate({
+      preheader: `Voce tem ${data.count} tarefas atrasadas.`,
+      appUrl: data.appUrl,
+      content: `
+        ${heading("Tarefas Atrasadas")}
+        ${paragraph(`${data.count} tarefas atribuidas a voce estao atrasadas e precisam de atencao.`)}
+        ${infoTable(data.tasks.map((t) => infoRow(escapeHtml(t.title), `Vencimento: ${escapeHtml(t.dueDate)}`)).join(""))}
+        ${more > 0 ? paragraph(`e mais ${more}.`) : ""}
+        ${ctaButton("Ver Tarefas", data.tasks[0]?.taskUrl ?? data.appUrl)}
+      `,
+    }),
+  };
+}
+
 export function buildTaskAssignedTemplate(data: {
   taskTitle: string;
   dueDate?: string;
@@ -579,6 +601,8 @@ export function buildTemplate(
       return buildHandoffResolvedTemplate(data as any);
     case "taskOverdue":
       return buildTaskOverdueTemplate(data as any);
+    case "taskOverdueSummary":
+      return buildTaskOverdueSummaryTemplate(data as any);
     case "taskAssigned":
       return buildTaskAssignedTemplate(data as any);
     case "taskCommentMention":

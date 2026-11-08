@@ -4,6 +4,14 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Preferências de aviso por canal, pausa e silêncio (backend)
+
+- Cada pessoa pode escolher, por tipo de aviso, se ele chega por e-mail, Telegram (e, depois, push). O sino sempre mostra o que pede ação sua (mensagem nova, pedido de ajuda, tarefa, menção, rascunho da IA, lead atribuído, canal desconectado); as preferências controlam e-mail e Telegram. Quem tinha desligado um desses tipos na tela antiga passa a vê-lo no sino.
+- Atalhos "Tudo", "Só o que é comigo" e "Nada (só o sino)", pausa de 1 h, 4 h, até amanhã 8h ou até uma data, e horário de silêncio (ex.: 21h às 8h, no fuso de quem configura). Durante pausa ou silêncio o sino segue registrando e e-mail e Telegram seguram; pedido de ajuda da IA ainda avisa, e dá para desligar essa exceção.
+- "Pausar" do Telegram (/pausar) e a pausa do app são a mesma coisa; o aviso de confirmação agora diz que o pedido de ajuda urgente ainda avisa.
+- Administradores definem o padrão da organização (atalho inicial de quem ainda não escolheu e ocultar prévia na tela de bloqueio). Há "aplicar a todas as minhas organizações".
+- O resumo diário por e-mail sai às 8h no horário da organização (antes era um horário fixo para todas). Várias tarefas atrasadas do mesmo responsável na mesma rodada chegam em um e-mail só.
+
 ### Sino agrupado e com textos novos
 
 - Mensagens novas da mesma conversa viram um aviso só no sino: "5 mensagens novas de Ana", com a mais recente na prévia, e o aviso sobe para o topo a cada mensagem. Depois de lido, a próxima mensagem abre um aviso novo. O mesmo vale para as respostas sugeridas pela IA na mesma conversa (o aviso mostra a resposta pendente agora) e para as menções num grupo em até 10 minutos ("3 menções a você no grupo Sementes").
