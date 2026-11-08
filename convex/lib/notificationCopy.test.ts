@@ -128,7 +128,11 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
   ],
   [
     { type: "channel_session_lost", provider: "meta", channelName: "Loja / @loja", state: "reauth_required", detail: "Token expirado" },
-    { title: "Loja / @loja precisa ser reconectada", body: "Token expirado" },
+    { title: "Página Loja / @loja precisa ser reconectada", body: "Token expirado" },
+  ],
+  [
+    { type: "channel_session_lost", provider: "meta", channelName: "Página", state: "revoked" },
+    { title: "A autorização da Página foi removida" },
   ],
   [
     { type: "channel_session_lost", provider: "meta", channelName: "Loja", state: "data_access_expiring" },

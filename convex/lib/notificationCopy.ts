@@ -373,8 +373,9 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         };
       }
       const label = entity(input.channelName, "Página");
-      if (input.state === "revoked") return { title: `A autorização de ${label} foi removida`, body: bodyOf(input.detail) };
-      if (input.state === "reauth_required") return { title: `${label} precisa ser reconectada`, body: bodyOf(input.detail) };
+      const page = /^página\b/i.test(label) ? label : `Página ${label}`;
+      if (input.state === "revoked") return { title: `A autorização da ${page} foi removida`, body: bodyOf(input.detail) };
+      if (input.state === "reauth_required") return { title: `${page} precisa ser reconectada`, body: bodyOf(input.detail) };
       return { title: `Reconecte ${label} para manter o acesso`, body: "Reconecte a conta para manter o acesso às mensagens." };
     }
     case "ai_spend_warning":
