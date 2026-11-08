@@ -51,7 +51,12 @@ async function sendOne(
   try {
     const res = await fetch(details.endpoint, {
       method: details.method,
-      headers: details.headers as Record<string, string>,
+      // `TTL` vem como número do web-push; `Content-Length` fica com o fetch.
+      headers: Object.fromEntries(
+        Object.entries(details.headers)
+          .filter(([k]) => k.toLowerCase() !== "content-length")
+          .map(([k, val]) => [k, String(val)])
+      ),
       body: details.body ? new Uint8Array(details.body) : undefined,
       signal: AbortSignal.timeout(PUSH_FETCH_TIMEOUT_MS),
     });

@@ -5,7 +5,7 @@
  * assinatura que o navegador manda.
  *
  * A outra metade é `convex/pushNode.ts` ("use node"): o ÚNICO arquivo que lê
- * `VAPID_PRIVATE_KEY`/`VAPID_SUBJECT`, importa `web-push` e chama o endpoint
+ * chave privada e o assunto VAPID, importa `web-push` e chama o endpoint
  * (guard `pushPort.test.ts`). Sem ctx, sem relógio, sem rede aqui.
  *
  * Payload NUNCA leva telefone, e-mail, mídia nem URL de storage: título/corpo
