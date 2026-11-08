@@ -470,6 +470,94 @@ describe("escada: push", () => {
     expect(await stats(a.organizationId)).toEqual({ not_configured: 1 });
   });
 
+  test("VAPID inválido (assunto sem mailto:/https:): nenhuma assinatura apagada, conta `not_configured`", async () => {
+    const a = await seedOrg("a");
+    await subscribe(a, a.agent, device());
+    process.env.VAPID_SUBJECT = "ops@example.com";
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      await notify(a, a.agent, "task_assigned");
+      await notify(a, a.agent, "new_message");
+      await drain();
+      const logs = spy.mock.calls.map((c) => String(c[0])).join("\n");
+      expect(logs).toContain("pushVapidInvalid");
+      expect(logs).not.toContain("ops@example.com");
+    } finally {
+      spy.mockRestore();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await subsOf(a.agent.userId)).toHaveLength(1);
+    expect(await linksOf(a.agent.memberId)).toHaveLength(1);
+    expect(await stats(a.organizationId)).toEqual({ not_configured: 2 });
+  });
+
+  test("chave VAPID com `=`: também `not_configured`, nada apagado", async () => {
+    const a = await seedOrg("a");
+    await subscribe(a, a.agent, device());
+    process.env.VAPID_PRIVATE_KEY = `${process.env.VAPID_PRIVATE_KEY}=`;
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await notify(a, a.agent, "task_assigned");
+    await drain();
+    vi.restoreAllMocks();
+    expect(await subsOf(a.agent.userId)).toHaveLength(1);
+    expect(await stats(a.organizationId)).toEqual({ not_configured: 1 });
+  });
+
+  test("falha local ao cifrar para um aparelho: `failed`, nunca apaga", async () => {
+    const a = await seedOrg("a");
+    await subscribe(a, a.agent, device());
+    // Chave do aparelho que passa no formato mas não é ponto P-256 válido.
+    await t.run(async (ctx) => {
+      const [sub] = await ctx.db.query("pushSubscriptions").collect();
+      await ctx.db.patch(sub._id, { p256dh: "B" + "A".repeat(86) });
+    });
+    await notify(a, a.agent, "task_assigned");
+    await drain();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await subsOf(a.agent.userId)).toHaveLength(1);
+    expect(await stats(a.organizationId)).toEqual({ failed: 1 });
+  });
+
+  test("redirecionamento (3xx) não é seguido: `failed`, assinatura fica", async () => {
+    const a = await seedOrg("a");
+    await subscribe(a, a.agent, device());
+    fetchMock.mockImplementation(async () => new Response(null, { status: 302, headers: { Location: "https://169.254.169.254/" } }));
+    await notify(a, a.agent, "task_assigned");
+    await drain();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).redirect).toBe("manual");
+    expect(await subsOf(a.agent.userId)).toHaveLength(1);
+    expect(await stats(a.organizationId)).toEqual({ failed: 1 });
+  });
+
+  test("args agendados levam só ids: nada de endpoint, chave nem texto do aviso", async () => {
+    const a = await seedOrg("a");
+    const d = device();
+    await subscribe(a, a.agent, d);
+    await notify(a, a.agent, "new_message");
+    // Roda só a mutation de decisão; a action fica pendente para inspeção.
+    const [deliver] = await pendingJobs("internalDeliverPush");
+    await t.run((ctx) => ctx.scheduler.cancel(deliver._id));
+    await t.mutation(internal.push.internalDeliverPush, deliver.args[0] as never);
+    const [send] = await pendingJobs("internalSendPush");
+    const raw = JSON.stringify(send.args);
+    expect(Object.keys(send.args[0] as object).sort()).toEqual(["attempt", "notificationId", "subscriptionIds"]);
+    for (const secret of [d.endpoint, d.p256dh, d.auth, "Prévia", "Mensagem nova"]) expect(raw).not.toContain(secret);
+  });
+
+  test("lido entre a decisão e o envio: a action relê e não envia", async () => {
+    const a = await seedOrg("a");
+    await subscribe(a, a.agent, device());
+    const id = await notify(a, a.agent, "task_assigned");
+    const [deliver] = await pendingJobs("internalDeliverPush");
+    await t.run((ctx) => ctx.scheduler.cancel(deliver._id));
+    await t.mutation(internal.push.internalDeliverPush, deliver.args[0] as never);
+    await t.run((ctx) => ctx.db.patch(id!, { readAt: NOW }));
+    await drain();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await stats(a.organizationId)).toEqual({ suppressed_read: 1 });
+  });
+
   test("membro removido entre o agendamento e a entrega: não envia", async () => {
     const a = await seedOrg("a");
     await subscribe(a, a.agent, device());
@@ -500,7 +588,8 @@ describe("escada: push", () => {
     await drain();
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect([0, 1, 2].map((i) => received(i, d).payload.hnb.renotify)).toEqual([true, false, true]);
-    // Patch sem `telegramOnPatch` é silencioso.
+    // Patch sem `telegramOnPatch` é silencioso e NÃO avança o relógio do renotify.
+    vi.setSystemTime(NOW + 12 * 60_000);
     await t.run((ctx) =>
       createNotification(ctx, {
         organizationId: a.organizationId, memberId: a.agent.memberId, type: "new_message",
@@ -509,6 +598,8 @@ describe("escada: push", () => {
     );
     await drain();
     expect(fetchMock).toHaveBeenCalledTimes(3);
+    const data = await t.run(async (ctx) => (await ctx.db.query("notifications").collect())[0].data);
+    expect(data).toMatchObject({ pushRenotify: true, pushRenotifyAt: NOW + 6 * 60_000 });
   });
 });
 
@@ -563,13 +654,14 @@ describe("escada: e-mail de rede de segurança", () => {
     expect(await jobs("dispatchNotification")).toHaveLength(1);
   });
 
-  test("prazo da tarefa encurta a espera (lembrete não chega depois do vencimento)", async () => {
+  test("prazo da tarefa encurta a espera (lembrete chega antes do vencimento)", async () => {
     const a = await seedOrg("a");
     await notify(a, a.agent, "task_assigned", {
       type: "task_due_soon", email: { eventType: "taskDueSoon", templateData: {}, deadlineAt: NOW + 5 * 60_000 },
     });
     const [job] = await jobs("dispatchNotification");
-    expect(job.scheduledTime).toBe(NOW + 5 * 60_000);
+    // Vence em 5 min: espera metade (2,5 min), nunca chega no prazo.
+    expect(job.scheduledTime).toBe(NOW + 150_000);
   });
 
   test("call site real: pedido de ajuda em broadcast agenda o e-mail de reserva por destinatário", async () => {

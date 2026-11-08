@@ -8,6 +8,7 @@ import {
   IGNORED_FOR_PUSH,
   PUSH_TEMPLATES,
   buildPushPayload,
+  carriedRenotifyState,
   classifyPushStatus,
   cleanUserAgentLabel,
   hasPushTemplate,
@@ -26,6 +27,7 @@ import {
   type PushNotificationInput,
 } from "./webPush";
 import { ACTIONABLE_TYPES } from "./notificationPolicy";
+import { safetyNetDelayMs } from "./notificationChannels";
 import type { NotificationType } from "./notify";
 
 const schemaTypes = (schema.tables.notifications.validator as any).fields.type.members.map((m: any) => m.value) as NotificationType[];
@@ -80,6 +82,7 @@ describe("payload", () => {
         dir: "auto",
         tag: "conversa:conv1",
         silent: false,
+        renotify: true,
         app_badge: 3,
       },
       hnb: {
@@ -103,6 +106,7 @@ describe("payload", () => {
     expect(p.notification.body).toBeUndefined();
     expect(p.notification.title).toBe("2 mensagens novas de Ana Souza");
     expect(p.hnb.renotify).toBe(false);
+    expect(p.notification.renotify).toBe(false);
     expect(p.notification.app_badge).toBeUndefined();
   });
 
@@ -152,6 +156,8 @@ describe("renotify (1ª vez ou a cada 5 min)", () => {
     expect(soon).toEqual({ pushRenotify: false, pushRenotifyAt: t0 });
     const later = nextRenotifyState(soon, t0 + PUSH_RENOTIFY_MS);
     expect(later).toEqual({ pushRenotify: true, pushRenotifyAt: t0 + PUSH_RENOTIFY_MS });
+    expect(carriedRenotifyState(soon)).toEqual(soon);
+    expect(carriedRenotifyState(undefined)).toEqual({});
     expect(renotifyOf(undefined)).toBe(true);
     expect(renotifyOf({ pushRenotify: false })).toBe(false);
   });
@@ -215,5 +221,22 @@ describe("assinatura vinda do navegador", () => {
     expect(cleanUserAgentLabel("<b>ana@x.com</b>")).toBe("b [e-mail] /b");
     expect(cleanUserAgentLabel("x".repeat(200))!.length).toBeLessThanOrEqual(60);
     expect(cleanUserAgentLabel("   ")).toBeUndefined();
+  });
+});
+
+describe("espera do e-mail de reserva", () => {
+  const MIN = 60_000;
+  test("sem prazo: janela da classe; tipo fora da escada: 0", () => {
+    expect(safetyNetDelayMs("taskAssigned", 0)).toBe(30 * MIN);
+    expect(safetyNetDelayMs("handoffRequested", 0)).toBe(10 * MIN);
+    expect(safetyNetDelayMs("leadAssigned", 0)).toBe(0);
+  });
+  test("prazo longe: janela cheia; antecedência ≤ janela: metade do que falta; < 2 min: na hora", () => {
+    expect(safetyNetDelayMs("taskDueSoon", 0, 60 * MIN)).toBe(30 * MIN);
+    expect(safetyNetDelayMs("taskDueSoon", 0, 30 * MIN)).toBe(15 * MIN);
+    expect(safetyNetDelayMs("taskDueSoon", 0, 15 * MIN)).toBe(Math.floor(7.5 * MIN));
+    expect(safetyNetDelayMs("taskDueSoon", 0, 3 * MIN)).toBe(Math.floor(1.5 * MIN));
+    expect(safetyNetDelayMs("taskDueSoon", 0, 90_000)).toBe(0);
+    expect(safetyNetDelayMs("taskDueSoon", 0, -MIN)).toBe(0);
   });
 });
