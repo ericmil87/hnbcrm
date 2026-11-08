@@ -243,9 +243,29 @@ export function writePushOwner(userId: string): void {
   }
 }
 
-/** Esquece orgs vinculadas e dono. */
+const ENDPOINT_KEY = "hnbcrm.push.endpoint";
+
+/** Último endpoint vinculado com sucesso (distingue rotação de assinatura de aparelho removido). */
+export function readLinkedEndpoint(): string | null {
+  try {
+    return localStorage.getItem(ENDPOINT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function writeLinkedEndpoint(endpoint: string): void {
+  try {
+    localStorage.setItem(ENDPOINT_KEY, endpoint);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Esquece orgs vinculadas, dono e endpoint. */
 export function clearLinkedOrgs(): void {
   try {
+    localStorage.removeItem(ENDPOINT_KEY);
     localStorage.removeItem(OWNER_KEY);
     localStorage.removeItem(LINKED_ORGS_KEY);
   } catch {

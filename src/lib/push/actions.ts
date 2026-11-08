@@ -5,6 +5,7 @@ import {
   clearLinkedOrgs,
   getExistingSubscription,
   pushPlatformOf,
+  readLinkedEndpoint,
   readLinkedOrgs,
   readPushOwner,
   readPushSupport,
@@ -12,6 +13,7 @@ import {
   subscribeBrowser,
   unsubscribeBrowser,
   userAgentLabelOf,
+  writeLinkedEndpoint,
   writePushOwner,
   type PushPlatform,
   type SerializedSubscription,
@@ -59,6 +61,7 @@ export async function linkThisDevice(backend: PushBackend, organizationId: strin
   }
   addLinkedOrg(organizationId);
   writePushOwner(userId);
+  writeLinkedEndpoint(data.endpoint);
 }
 
 export type EnableResult = "enabled" | "denied" | "dismissed" | "unsupported";
@@ -93,7 +96,7 @@ export type ResyncResult = "synced" | "cleaned" | "foreign" | "removed" | "idle"
  *  - permissão revogada: solta tudo e limpa o rastro;
  *  - assinatura de OUTRA pessoa (dono diferente, ou sem dono e sem orgs vinculadas): cancela no navegador
  *    e NÃO re-vincula (a pessoa nova ativa por gesto);
- *  - aparelho removido em "Meus aparelhos" (a org estava vinculada e o servidor não o conhece mais):
+ *  - aparelho removido em "Meus aparelhos" (o endpoint vinculado é o atual e o servidor não o conhece mais):
  *    cancela no navegador, sem pedir permissão;
  *  - senão vincula de novo (idempotente) todas as orgs vinculadas + a ativa.
  */
@@ -121,7 +124,9 @@ export async function resyncPush(backend: PushBackend, organizationId: string, v
     return "foreign";
   }
 
-  if (linked.includes(organizationId)) {
+  // Só é "removido" o MESMO endpoint que vinculamos e que o servidor não conhece mais; endpoint diferente
+  // é rotação da assinatura (`pushsubscriptionchange`) e segue para o re-vínculo.
+  if (linked.includes(organizationId) && sub.endpoint === readLinkedEndpoint()) {
     let known = true;
     try {
       const devices = await backend.getMyDevices({ organizationId, currentEndpoint: sub.endpoint });
@@ -143,6 +148,9 @@ export async function resyncPush(backend: PushBackend, organizationId: string, v
     if (r.status === "fulfilled") addLinkedOrg(orgs[i]);
     else if (r.reason instanceof ConvexError) removeLinkedOrg(orgs[i]);
   });
-  if (readLinkedOrgs().length > 0) writePushOwner(userId);
+  if (readLinkedOrgs().length > 0) {
+    writePushOwner(userId);
+    writeLinkedEndpoint(data.endpoint);
+  }
   return "synced";
 }

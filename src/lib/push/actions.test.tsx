@@ -19,7 +19,8 @@ function backend() {
 }
 
 /** Aparelho já ativado por `user1` nas orgs dadas. */
-function activated(orgs: string[], owner = U) {
+function activated(orgs: string[], owner = U, endpoint: string | null = "https://fcm.googleapis.com/fcm/send/abc") {
+  if (endpoint) localStorage.setItem("hnbcrm.push.endpoint", endpoint);
   localStorage.setItem("hnbcrm.push.linkedOrgs", JSON.stringify(orgs));
   localStorage.setItem("hnbcrm.push.owner", owner);
 }
@@ -126,6 +127,19 @@ describe("resyncPush", () => {
     expect(b.subscribe).not.toHaveBeenCalled();
     expect(readLinkedOrgs()).toEqual([]);
     expect(env.Notification.requestPermission).not.toHaveBeenCalled();
+  });
+
+  it("rotação da assinatura (endpoint novo) com o servidor sem ele: re-vincula, não desliga", async () => {
+    const sub = makeSub("https://fcm.googleapis.com/fcm/send/NOVO");
+    installPushEnv({ permission: "granted", subscription: sub });
+    activated(["org1", "org2"], U, "https://fcm.googleapis.com/fcm/send/antigo");
+    const b = backend();
+    b.getMyDevices.mockResolvedValue([]);
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("synced");
+    expect(sub.unsubscribe).not.toHaveBeenCalled();
+    expect(b.subscribe).toHaveBeenCalledWith(expect.objectContaining({ organizationId: "org1", endpoint: sub.endpoint }));
+    expect(b.subscribe).toHaveBeenCalledWith(expect.objectContaining({ organizationId: "org2", endpoint: sub.endpoint }));
+    expect(localStorage.getItem("hnbcrm.push.endpoint")).toBe(sub.endpoint);
   });
 
   it("falha ao consultar os aparelhos não conta como removido", async () => {
