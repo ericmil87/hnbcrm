@@ -60,7 +60,7 @@ export function useNotificationArrivals<T extends ArrivalNotification>({
     if (!items) return;
     // Primeira leitura: só semeia a marca d'água, nunca avisa.
     if (watermarkRef.current === null) {
-      watermarkRef.current = seedWatermark(items, Date.now());
+      watermarkRef.current = seedWatermark(items);
       return;
     }
     const { arrivals, nextWatermark } = detectArrivals(watermarkRef.current, items, openRef.current);

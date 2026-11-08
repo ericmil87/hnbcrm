@@ -4,7 +4,6 @@ import {
   bellBadgeLabel,
   detectArrivals,
   seedWatermark,
-  WATERMARK_SLACK_MS,
   isResolved,
   itemActions,
   notificationHref,
@@ -125,9 +124,9 @@ describe("toggleRead", () => {
 describe("detectArrivals (marca d'água por createdAt)", () => {
   const item = (over: Partial<ArrivalItem>): ArrivalItem => ({ _id: "a", type: "new_message", createdAt: 100, ...over });
 
-  it("seedWatermark: máximo da janela; janela vazia usa agora menos a folga", () => {
-    expect(seedWatermark([item({ createdAt: 5 }), item({ createdAt: 9 })], 1000)).toBe(9);
-    expect(seedWatermark([], 10_000)).toBe(10_000 - WATERMARK_SLACK_MS);
+  it("seedWatermark: máximo da janela; janela vazia semeia com 0", () => {
+    expect(seedWatermark([item({ createdAt: 5 }), item({ createdAt: 9 })])).toBe(9);
+    expect(seedWatermark([])).toBe(0);
   });
 
   it("avisa só o que é mais novo que a marca, uma vez", () => {

@@ -59,9 +59,9 @@ describe("useNotificationArrivals", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
-  it("janela vazia no início semeia com 'agora': o que chega depois avisa", () => {
+  it("janela vazia no início semeia com 0: qualquer chegada real avisa", () => {
     const { rerender } = setup({ items: [] });
-    rerender({ items: [mk({ _id: "a", createdAt: Date.now() + 1000 })] });
+    rerender({ items: [mk({ _id: "a", createdAt: 5 })] });
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 

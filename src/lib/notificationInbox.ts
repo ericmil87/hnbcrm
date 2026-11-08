@@ -194,13 +194,13 @@ export interface ArrivalItem {
   conversationId?: string;
 }
 
-/** Folga ao semear com a janela vazia (relógio do aparelho x servidor). */
-export const WATERMARK_SLACK_MS = 2000;
-
-/** Marca d'água inicial: o `createdAt` mais recente da janela (vazia: agora menos a folga). */
-export function seedWatermark(items: readonly Pick<ArrivalItem, "createdAt">[], now: number): number {
-  if (items.length === 0) return now - WATERMARK_SLACK_MS;
-  return Math.max(...items.map((n) => n.createdAt));
+/**
+ * Marca d'água inicial: o `createdAt` mais recente da janela. Janela vazia
+ * semeia com 0 (nada veio antes, qualquer chegada é nova): usar o relógio do
+ * aparelho faria perder avisos se ele estiver adiantado em relação ao servidor.
+ */
+export function seedWatermark(items: readonly Pick<ArrivalItem, "createdAt">[]): number {
+  return items.length === 0 ? 0 : Math.max(...items.map((n) => n.createdAt));
 }
 
 /**
