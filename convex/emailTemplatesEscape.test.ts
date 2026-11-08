@@ -12,6 +12,7 @@ const CASES: Record<string, Record<string, unknown>> = {
   handoffRequested: { orgName: EVIL, leadTitle: EVIL, origin: "human", reason: EVIL, fromIsHuman: true, pendingLabel: EVIL, fromMemberName: EVIL, leadUrl: "https://app.test/app/x" },
   handoffResolved: { leadTitle: EVIL, status: "aceito", resolvedByName: EVIL, leadUrl: "https://app.test/app/x" },
   taskOverdue: { taskTitle: EVIL, dueDate: EVIL, leadTitle: EVIL, taskUrl: "https://app.test/app/x" },
+  taskOverdueSummary: { count: 2, tasks: [{ title: EVIL, dueDate: EVIL, taskUrl: "https://app.test/app/x" }], appUrl: "https://app.test" },
   taskAssigned: { taskTitle: EVIL, dueDate: EVIL, assignedByName: EVIL, leadTitle: EVIL, taskUrl: "https://app.test/app/x" },
   taskCommentMention: { authorName: EVIL, taskTitle: EVIL, taskId: EVIL, commentExcerpt: EVIL, appUrl: "https://app.test" },
   taskDueSoon: { taskTitle: EVIL, taskId: EVIL, dueDate: EVIL, minutesBefore: 30, appUrl: "https://app.test" },
