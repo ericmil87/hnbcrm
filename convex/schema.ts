@@ -2377,6 +2377,54 @@ const applicationTables = {
     .index("by_member", ["memberId"])
     .index("by_organization", ["organizationId"]),
 
+  // E1 — Web Push. Assinatura = APARELHO (navegador) de um usuário; o opt-in é
+  // por membership (`pushSubscriptionMembers`), então um aparelho recebe avisos
+  // de várias orgs. Endpoint/chaves só são lidos pela entrega (`push.ts` →
+  // `pushNode.ts`); nada disso entra em backup (`EXCLUDED_BACKUP_TABLES`).
+  pushSubscriptions: defineTable({
+    userId: v.id("users"),
+    endpoint: v.string(),
+    p256dh: v.string(),
+    auth: v.string(),
+    platform: v.union(v.literal("android"), v.literal("ios"), v.literal("desktop"), v.literal("other")),
+    userAgentLabel: v.optional(v.string()),
+    createdAt: v.number(),
+    // Re-sync do app (subscribe) ou entrega aceita, gravado no máximo 1×/dia.
+    // A retenção apaga a assinatura (e os vínculos) parada há mais de 60 dias.
+    lastSeenAt: v.optional(v.number()),
+  })
+    .index("by_endpoint", ["endpoint"])
+    .index("by_user", ["userId"])
+    .index("by_last_seen", ["lastSeenAt"]),
+
+  // E1 — opt-in de um aparelho numa membership (org). Sem vínculo, sem push.
+  pushSubscriptionMembers: defineTable({
+    organizationId: v.id("organizations"),
+    teamMemberId: v.id("teamMembers"),
+    subscriptionId: v.id("pushSubscriptions"),
+    createdAt: v.number(),
+  })
+    .index("by_member", ["teamMemberId"])
+    .index("by_subscription", ["subscriptionId"])
+    .index("by_organization", ["organizationId"]),
+
+  // E1 — contadores leves de entrega do push (por org/dia/tipo/resultado),
+  // fragmentados em `shard` (0–7) para não disputar um doc quente por envio.
+  // Leitura no painel do G1 soma os fragmentos.
+  pushDeliveryStats: defineTable({
+    organizationId: v.id("organizations"),
+    day: v.string(), // YYYY-MM-DD (UTC)
+    type: v.string(),
+    outcome: v.string(),
+    shard: v.number(),
+    count: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    // Prefixo (organizationId, day) serve ao painel e ao purge da org.
+    .index("by_organization_and_day_and_type_and_outcome_and_shard", ["organizationId", "day", "type", "outcome", "shard"])
+    .index("by_created_at", ["createdAt"]),
+
   // Calendar Events
   calendarEvents: defineTable({
     organizationId: v.id("organizations"),

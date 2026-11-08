@@ -20,6 +20,8 @@
  * | telegramSuggestions | sugestão por repasse (reaproveitada por 10 min) | `createdAt`  |   1 d  |
  * | telegramReconnects | tentativas de reconexão do WhatsApp (teto 3/h) | `updatedAt`  |   7 d  |
  * | telegramOrgQuota   | contador de arquivos por org/dia (só o dia corrente importa) | `_creationTime` | 7 d |
+ * | pushSubscriptions  | aparelho parado (sem abrir o app nem receber push), com os vínculos (E1) | `lastSeenAt` | 60 d |
+ * | pushDeliveryStats  | contadores de entrega do push (E1)            | `createdAt`     |  90 d  |
  *
  * As três do Telegram (F0) têm piso próprio (`RETENTION_MIN_DAYS_BY_TABLE`):
  * são registros técnicos de vida curta, não histórico de negócio.
@@ -71,6 +73,7 @@ import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { cronsDisabled } from "./lib/cronGuard";
+import { deletePushSubscription } from "./lib/pushStore";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,6 +91,8 @@ export const RETENTION_TABLES = [
   "telegramSuggestions",
   "telegramOrgQuota",
   "telegramReconnects",
+  "pushSubscriptions",
+  "pushDeliveryStats",
 ] as const;
 export type RetentionTable = (typeof RETENTION_TABLES)[number];
 
@@ -106,6 +111,8 @@ export const RETENTION_DEFAULT_DAYS: Record<RetentionTable, number> = {
   telegramSuggestions: 1,
   telegramOrgQuota: 7,
   telegramReconnects: 7,
+  pushSubscriptions: 60,
+  pushDeliveryStats: 90,
 };
 
 /** Env opcional que sobrepõe a janela padrão de cada tabela. */
@@ -123,6 +130,8 @@ export const RETENTION_ENV_DAYS: Record<RetentionTable, string> = {
   telegramSuggestions: "RETENTION_TELEGRAM_SUGGESTIONS_DAYS",
   telegramOrgQuota: "RETENTION_TELEGRAM_ORG_QUOTA_DAYS",
   telegramReconnects: "RETENTION_TELEGRAM_RECONNECTS_DAYS",
+  pushSubscriptions: "RETENTION_PUSH_SUBSCRIPTIONS_DAYS",
+  pushDeliveryStats: "RETENTION_PUSH_DELIVERY_STATS_DAYS",
 };
 
 /** Piso de qualquer janela (env ou override): um typo nunca apaga a semana. */
@@ -171,7 +180,9 @@ const tableValidator = v.union(
   v.literal("telegramAutoSteps"),
   v.literal("telegramSuggestions"),
   v.literal("telegramOrgQuota"),
-  v.literal("telegramReconnects")
+  v.literal("telegramReconnects"),
+  v.literal("pushSubscriptions"),
+  v.literal("pushDeliveryStats")
 );
 
 const overridesValidator = v.object({
@@ -188,6 +199,8 @@ const overridesValidator = v.object({
   telegramSuggestions: v.optional(v.number()),
   telegramOrgQuota: v.optional(v.number()),
   telegramReconnects: v.optional(v.number()),
+  pushSubscriptions: v.optional(v.number()),
+  pushDeliveryStats: v.optional(v.number()),
 });
 type Overrides = Partial<Record<RetentionTable, number>>;
 
@@ -334,6 +347,20 @@ function candidateRanges(db: QueryCtx["db"], table: RetentionTable, cutoff: numb
             await db.query("telegramReconnects").withIndex("by_updated_at", (q) => q.lt("updatedAt", cutoff)).take(limit)
           ).map((d) => ({ id: d._id, ts: d.updatedAt })),
       ];
+    case "pushSubscriptions":
+      return [
+        async (limit) =>
+          (
+            await db.query("pushSubscriptions").withIndex("by_last_seen", (q) => q.lt("lastSeenAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.lastSeenAt ?? d.createdAt })),
+      ];
+    case "pushDeliveryStats":
+      return [
+        async (limit) =>
+          (
+            await db.query("pushDeliveryStats").withIndex("by_created_at", (q) => q.lt("createdAt", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d.createdAt })),
+      ];
   }
 }
 
@@ -468,7 +495,11 @@ export const internalRunRetention = internalMutation({
       if (expired > 0) console.log(JSON.stringify({ event: "retention", table, unreadExpired: expired }));
     }
     const rows = await takeCandidates(ctx.db, table, cutoff, batch);
-    for (const row of rows) await ctx.db.delete(row.id);
+    for (const row of rows) {
+      // E1: assinatura sai com os vínculos (porta `deletePushSubscription`).
+      if (table === "pushSubscriptions") await deletePushSubscription(ctx, row.id as Id<"pushSubscriptions">);
+      else await ctx.db.delete(row.id);
+    }
     const deletedSoFar = deletedBefore + rows.length;
     console.log(JSON.stringify({ event: "retention", table, deleted: rows.length, cutoff, deletedSoFar }));
 
