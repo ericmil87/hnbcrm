@@ -268,7 +268,7 @@ describe("fan-out (D7)", () => {
     expect(sends()).toEqual([]);
   });
 
-  test("new_message respeita notificationPreferences.newMessage = false", async () => {
+  test("new_message com newMessage = false: o sino registra, o Telegram não envia (C1)", async () => {
     const s = await seedOrg();
     await linkMember(s, s.adminId, s.adminUserId, CHAT_ADMIN);
     await t.run(async (ctx) => {
@@ -284,7 +284,7 @@ describe("fan-out (D7)", () => {
       });
     });
     await drain();
-    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
+    expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toHaveLength(1);
     expect(sends()).toEqual([]);
   });
 });

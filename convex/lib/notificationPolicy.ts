@@ -7,7 +7,7 @@
  *
  * Modelo de preferência (aditivo, sem migração):
  *  - flags antigos (`taskAssigned`…): `false` desliga o tipo em TODOS os canais
- *    (o sino de um acionável só é preservado de quem já usa `preset`/`channels`);
+ *    (exceto o sino de tipos acionáveis, que nunca desliga);
  *  - `channels.{email,telegram,push}[flag]`: por canal; vence o flag antigo e o preset;
  *  - `preset` ("all" | "mine" | "none") do membro, senão o da org
  *    (`settings.notificationDefaults.preset`), senão "all" (= comportamento de antes);
@@ -130,12 +130,9 @@ export function channelAllows(
   orgDefaults: PolicyOrgDefaults
 ): boolean {
   const legacyOff = prefs?.[flag] === false;
-  if (channel === "bell") {
-    // Sem os campos novos, o flag antigo `false` segue apagando o sino (comportamento de antes).
-    // Quem já usa o modelo novo (`preset`/`channels`) nunca perde o sino de um acionável.
-    const migrated = prefs?.preset !== undefined || prefs?.channels !== undefined;
-    return !legacyOff || (migrated && isActionable(flag));
-  }
+  // Sino: acionável sempre registra (flag antigo vale só para os canais externos);
+  // informativo segue o flag antigo.
+  if (channel === "bell") return isActionable(flag) || !legacyOff;
   const explicit = prefs?.channels?.[channel]?.[flag];
   if (explicit !== undefined) return explicit;
   if (legacyOff) return false;

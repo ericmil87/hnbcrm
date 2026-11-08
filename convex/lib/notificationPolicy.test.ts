@@ -32,9 +32,8 @@ describe("shouldDeliver — matriz", () => {
     { name: "sem linha = tudo liga (Telegram)", type: "campaign_completed", channel: "telegram", prefs: null, want: "deliver" },
     { name: "flag antigo false desliga e-mail", type: "task_assigned", channel: "email", prefs: { taskAssigned: false }, want: "off" },
     { name: "flag antigo false desliga Telegram", type: "task_assigned", channel: "telegram", prefs: { taskAssigned: false }, want: "off" },
-    { name: "flag antigo false mantém o sino (comportamento de antes, sem campos novos)", type: "task_assigned", channel: "bell", prefs: { taskAssigned: false }, want: "off" },
-    { name: "modelo novo: flag antigo false NÃO tira o sino de acionável", type: "task_assigned", channel: "bell", prefs: { taskAssigned: false, preset: "all" }, want: "deliver" },
-    { name: "modelo novo: não acionável segue o flag no sino", type: "campaign_completed", channel: "bell", prefs: { campaignCompleted: false, preset: "all" }, want: "off" },
+    { name: "flag antigo false NÃO tira o sino de acionável (doc antigo)", type: "task_assigned", channel: "bell", prefs: { taskAssigned: false }, want: "deliver" },
+    { name: "não acionável segue o flag antigo no sino", type: "campaign_completed", channel: "bell", prefs: { campaignCompleted: false }, want: "off" },
     { name: "preset none: externos off", type: "task_assigned", channel: "telegram", prefs: { preset: "none" }, want: "off" },
     { name: "preset none: sino segue", type: "task_assigned", channel: "bell", prefs: { preset: "none" }, want: "deliver" },
     { name: "preset mine: pessoal passa", type: "task_assigned", channel: "email", prefs: { preset: "mine" }, want: "deliver" },
@@ -135,6 +134,7 @@ describe("acionáveis", () => {
       const flag = PREFERENCE_FLAG[type];
       expect(isActionable(type)).toBe(true);
       expect(channelAllows(flag, "bell", { preset: "none", [flag]: false }, null)).toBe(true);
+      expect(channelAllows(flag, "bell", { [flag]: false }, null)).toBe(true);
     }
   });
   test("flagOf converte tipo, evento e alias", () => {
