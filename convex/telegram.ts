@@ -25,7 +25,8 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
-import { createNotification } from "./lib/notify";
+import { coalesceKeys, createNotification } from "./lib/notify";
+import { messagePreview, notificationCopy } from "./lib/notificationCopy";
 import { editMessageText } from "./lib/telegramApi";
 import {
   PROMPT_EXPIRED_COPY,
@@ -38,13 +39,12 @@ import {
   type RecordSpec,
   type SendOp,
 } from "./lib/telegramActions";
-import { loadCardContext, messageText } from "./lib/telegramContext";
+import { loadCardContext } from "./lib/telegramContext";
 import {
   buildAiRelayCard,
   buildCountdownCard,
   buildNotificationCard,
   buildRecordCard,
-  channelLabel,
   formatTime,
   type CardKeyboard,
 } from "./lib/telegramNotifications";
@@ -1859,7 +1859,12 @@ export const internalSetTipsShown = internalMutation({
   },
 });
 
-/** End of the 20 s window: ONE `new_message` notification (bell + Telegram via the fan-out). */
+/**
+ * End of the 20 s window: ONE `new_message` for the member (B2: bell grouped
+ * per conversation, with or without Telegram; Telegram consumes it through the
+ * fan-out of `createNotification`, once per window). Old buffers (before B2)
+ * carry `linkId` instead of `memberId` and drain the same way.
+ */
 export const internalFlushRelayBuffer = internalMutation({
   args: { bufferId: v.id("telegramRelayBuffer") },
   returns: v.null(),
@@ -1867,31 +1872,37 @@ export const internalFlushRelayBuffer = internalMutation({
     const buffer = await ctx.db.get(args.bufferId);
     if (!buffer) return null;
     await ctx.db.delete(buffer._id);
-    const link = await ctx.db.get(buffer.linkId);
+    let memberId = buffer.memberId;
+    if (!memberId && buffer.linkId) memberId = (await ctx.db.get(buffer.linkId))?.teamMemberId;
     const conversation = await ctx.db.get(buffer.conversationId);
-    if (!link || link.status !== "active" || !conversation) return null;
-    if (!link.prefs.relayAssignedConversations) return null; // turned off during the window
+    if (!memberId || !conversation) return null;
     const now = Date.now();
     // Re-check: someone may have handed the conversation back to the AI meanwhile.
     const lead = conversation.leadId ? await ctx.db.get(conversation.leadId) : null;
     const recipient = await resolveRelayRecipient(ctx, conversation, lead, now);
-    if (!recipient || recipient._id !== link.teamMemberId) return null;
-    const lines: string[] = [];
+    if (!recipient || recipient._id !== memberId) return null;
+    const previews: string[] = [];
     for (const id of buffer.messageIds) {
       const m = await ctx.db.get(id);
-      if (m && m.conversationId === conversation._id) lines.push(await messageText(ctx.db, m));
+      if (m && m.conversationId === conversation._id) previews.push(messagePreview(m));
     }
-    if (lines.length === 0) return null;
+    if (previews.length === 0) return null;
     const more = buffer.droppedCount ?? 0;
-    if (more > 0) lines.push(`… e mais ${more} mensagens (abrir no CRM)`);
+    const inWindow = previews.length + more;
+    const preview = previews.filter(Boolean).join(" · ");
     await createNotification(ctx, {
       organizationId: buffer.organizationId,
-      memberId: link.teamMemberId,
+      memberId,
       type: "new_message",
-      title: `${lead?.title ?? "Contato"} · ${channelLabel(conversation.channel)}`,
-      body: lines.join("\n").slice(0, 1000),
+      ...notificationCopy({ type: "new_message", contactName: lead?.title, count: inWindow, preview }),
       conversationId: conversation._id,
       data: { messageIds: buffer.messageIds, ...(more > 0 ? { moreCount: more } : {}) },
+      coalesce: {
+        key: coalesceKeys.newMessage(conversation._id),
+        increment: inWindow,
+        telegramOnPatch: true, // one Telegram send per window (the window is the relay's unit)
+        render: (count) => notificationCopy({ type: "new_message", contactName: lead?.title, count, preview }),
+      },
     });
     return null;
   },

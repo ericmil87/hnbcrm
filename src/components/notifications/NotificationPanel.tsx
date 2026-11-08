@@ -23,6 +23,7 @@ import {
   WifiOff,
   Gauge,
   MessageCircle,
+  UserCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
@@ -65,6 +66,8 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   // v0.69 — gasto de IA do mês: aviso (80%) / teto atingido.
   ai_spend_warning: Gauge,
   ai_spend_reached: Gauge,
+  // B2 — lead atribuído a você.
+  lead_assigned: UserCheck,
 };
 
 const PAGE_SIZE = 15;

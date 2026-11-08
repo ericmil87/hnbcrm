@@ -21,6 +21,7 @@ import {
 import { maskDigitRuns } from "./telegramFormat";
 import { wrapUntrustedJson } from "./promptEnvelope";
 import { isSticker } from "./mediaEnrichment";
+import { translatedPreview } from "./notificationCopy";
 
 type Db = QueryCtx["db"];
 
@@ -35,8 +36,9 @@ async function firstFile(db: Db, m: Doc<"messages">): Promise<Doc<"files"> | nul
 
 export async function messageText(db: Db, m: Doc<"messages">): Promise<string> {
   const file = m.contentType === "file" ? await firstFile(db, m) : null;
+  // B2: tradução pronta da org vence o original, com "(traduzido do …)".
   return messageLineText({
-    content: m.content,
+    content: translatedPreview(m) ?? m.content,
     contentType: m.contentType,
     transcriptText: m.transcriptText,
     imageDescription: m.imageDescription,

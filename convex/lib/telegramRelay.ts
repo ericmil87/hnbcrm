@@ -4,8 +4,9 @@
  *
  * - `maybeBufferInboundForRelay`: called from `conversations.internalReceiveMessage`
  *   (single 1:1 inbound port) right after the message insert. When a human is
- *   in command of the conversation and has an active link with relay on, the
- *   message joins a 20 s buffer that becomes ONE `new_message` notification.
+ *   in command of the conversation, the message joins a 20 s buffer PER MEMBER
+ *   (B2: with or without Telegram) that becomes ONE `new_message` notification
+ *   (bell, grouped per conversation; Telegram consumes it through the fan-out).
  * - `maybeScheduleAiReplyRelay`: called from `attendant.internalCommitAiReply`
  *   right after the AI reply is committed. Schedules the relay ONLY for the
  *   reply to an instruction/regeneration asked from the bot (queue item
@@ -25,7 +26,6 @@
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
-import { modulesOf } from "./orgModules";
 import { orgAiActive } from "./agentSecurity";
 import { isMembershipRevoked } from "./auth";
 import { appUrl } from "./appUrl";
@@ -69,6 +69,13 @@ export async function resolveRelayRecipient(
   return noAttendant ? convOwner : null;
 }
 
+/**
+ * B2: buffer POR MEMBRO (o destinatário de `resolveRelayRecipient`), com ou sem
+ * Telegram. O flush gera UM `new_message` (sino, agrupado por conversa) e o
+ * Telegram consome esse mesmo aviso pelo fan-out de `createNotification`
+ * (vínculo, `/pausar` e `relayAssignedConversations` checados lá, uma vez por
+ * janela — não por mensagem).
+ */
 export async function maybeBufferInboundForRelay(
   ctx: MutationCtx,
   conversation: Doc<"conversations">,
@@ -79,18 +86,10 @@ export async function maybeBufferInboundForRelay(
   if (conversation.kind === "group") return;
   const recipient = await resolveRelayRecipient(ctx, conversation, lead, now);
   if (!recipient) return;
-  const link = await ctx.db
-    .query("telegramLinks")
-    .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", recipient._id).eq("status", "active"))
-    .first();
-  if (!link || link.organizationId !== conversation.organizationId) return;
-  if (!link.prefs.relayAssignedConversations) return;
-  if (link.mutedUntil !== undefined && link.mutedUntil > now) return;
-  if (!modulesOf(await ctx.db.get(conversation.organizationId)).telegram) return;
 
   const buffer = await ctx.db
     .query("telegramRelayBuffer")
-    .withIndex("by_conversation_and_link", (q) => q.eq("conversationId", conversation._id).eq("linkId", link._id))
+    .withIndex("by_conversation_and_member", (q) => q.eq("conversationId", conversation._id).eq("memberId", recipient._id))
     .first();
   if (buffer) {
     if (buffer.messageIds.includes(messageId)) return;
@@ -105,7 +104,7 @@ export async function maybeBufferInboundForRelay(
   const bufferId = await ctx.db.insert("telegramRelayBuffer", {
     organizationId: conversation.organizationId,
     conversationId: conversation._id,
-    linkId: link._id,
+    memberId: recipient._id,
     messageIds: [messageId],
     flushAt: now + RELAY_BUFFER_MS,
   });
