@@ -1,11 +1,12 @@
 // Single source of truth for the PWA scope. Imported by vite.config.ts (manifest), by sw.ts (routes)
 // and by the manifest test. No DOM/Vite APIs here: vite.config.ts is typechecked by tsconfig.node.json.
 //
-// Open decision (Eric): move the manifest to scope "/" and keep the SW registered with scope "/app/".
-// To switch, change MANIFEST_SCOPE (and, if wanted, MANIFEST_ID) only; SW_SCOPE stays "/app/".
+// The manifest scope is "/" so that the login page (/entrar, outside /app/) stays inside the installed
+// app window (on iOS the installed app has its own storage: the user must sign in inside it). The SW
+// itself is registered with the narrower scope "/app/" and only answers navigations under /app/.
 export const APP_BASE = "/app/";
 export const MANIFEST_ID = APP_BASE;
-export const MANIFEST_SCOPE: string = APP_BASE;
+export const MANIFEST_SCOPE: string = "/";
 export const MANIFEST_START_URL = "/app/painel?source=pwa";
 /** Scope the service worker is registered with (narrower than or equal to the manifest scope). */
 export const SW_SCOPE: string = APP_BASE;

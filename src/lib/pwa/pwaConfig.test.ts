@@ -31,7 +31,8 @@ describe("manifest", () => {
   });
   it("keeps id, scope and start_url coherent", () => {
     expect(MANIFEST_ID).toBe("/app/");
-    expect(MANIFEST_SCOPE).toBe("/app/");
+    expect(MANIFEST_SCOPE).toBe("/");
+    expect(SW_SCOPE).toBe("/app/");
     expect(MANIFEST_START_URL).toBe("/app/painel?source=pwa");
     expect(MANIFEST_START_URL.startsWith(MANIFEST_SCOPE)).toBe(true);
     // The SW scope is never wider than the manifest scope.
