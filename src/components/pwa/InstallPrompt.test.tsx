@@ -158,4 +158,23 @@ describe("InstallPrompt", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByText(TITLE)).toBeNull();
   });
+
+  it("modo conversa no celular não gasta a exibição da sessão: aparece ao sair da conversa", () => {
+    localStorage.setItem("hnbcrm:pwa:visits", "9");
+    mockMedia((q) => q.includes("max-width: 767px"));
+    const tree = (active: boolean) =>
+      renderWithRouter(
+        <ChatModeProvider value={{ active, setActive: () => {} }}>
+          <InstallPrompt />
+        </ChatModeProvider>,
+      );
+    const first = tree(true);
+    fire(installEvent());
+    expect(screen.queryByText(TITLE)).toBeNull();
+    expect(sessionStorage.getItem("hnbcrm:pwa:inviteShown")).toBeNull();
+    first.unmount();
+    tree(false);
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
+    expect(sessionStorage.getItem("hnbcrm:pwa:inviteShown")).toBe("1");
+  });
 });

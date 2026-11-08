@@ -18,6 +18,10 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, className }: ModalProps) {
+  // The element focused before the dialog opens, captured during render: a child with `autoFocus` takes the focus
+  // at commit, before any effect of the layer runs, so an effect would see the child as the "trigger".
+  const triggerRef = useRef<HTMLElement | null>(null);
+  if (open && triggerRef.current === null && document.activeElement instanceof HTMLElement) triggerRef.current = document.activeElement;
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -42,7 +46,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   // folha inferior ficava atrás da tab bar do mobile (z-30) — o botão de
   // confirmar sumia (caso real: "Excluir lead" pela conversa, 03/10/2026).
   return createPortal(
-    <ModalLayer onClose={onClose} title={title} className={className}>
+    <ModalLayer onClose={onClose} title={title} className={className} triggerRef={triggerRef}>
       {children}
     </ModalLayer>,
     document.body
@@ -55,25 +59,26 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
  * (`useKeyboardViewportBox`) e a folha/diálogo cabe nela com rolagem interna
  * (campo e botões acima do teclado).
  */
-function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "open">) {
+function ModalLayer({ onClose, title, children, className, triggerRef }: Omit<ModalProps, "open"> & { triggerRef: React.RefObject<HTMLElement | null> }) {
   const isSheet = useMediaQuery("(max-width: 639px)");
   // Toque em tela larga (iPhone deitado, iPad): o teclado cobre o diálogo centralizado também.
   const isTouch = useMediaQuery("(pointer: coarse)");
   const dialogRef = useRef<HTMLDivElement>(null);
   // Focus: into the dialog on open (unless a child already took it, e.g. autoFocus), back to the trigger on close.
   useEffect(() => {
-    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     if (dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
     return () => {
+      const trigger = triggerRef.current;
+      triggerRef.current = null;
       if (trigger && trigger.isConnected) trigger.focus({ preventScroll: true });
     };
-  }, []);
+  }, [triggerRef]);
   // Tab stays inside the dialog (events bubbling from portals outside it are ignored).
   const trapTab = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const dialog = dialogRef.current;
     if (e.key !== "Tab" || !dialog || !(e.target instanceof Node) || !dialog.contains(e.target)) return;
-    const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE));
+    const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getClientRects().length > 0);
     if (items.length === 0) {
       e.preventDefault();
       return;

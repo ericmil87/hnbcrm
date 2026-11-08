@@ -42,13 +42,16 @@ export function InstallPrompt() {
     now,
   });
 
-  // First time it can be shown in this session: open and remember.
+  // Hidden by the phone's full-screen conversation: not "shown", so it can still appear later in the session.
+  const suppressed = chatMode.active && isMobile;
+
+  // First time it can really be seen in this session: open and remember.
   useEffect(() => {
-    if (phase === "waiting" && eligible) {
+    if (phase === "waiting" && eligible && !suppressed) {
       markInviteShown();
       setPhase("open");
     }
-  }, [phase, eligible]);
+  }, [phase, eligible, suppressed]);
 
   // Auto-close after a while and on navigation.
   useEffect(() => {
@@ -85,7 +88,7 @@ export function InstallPrompt() {
     }
   };
 
-  const showBanner = phase === "open" && eligible && !(chatMode.active && isMobile);
+  const showBanner = phase === "open" && eligible && !suppressed;
 
   return (
     <>
