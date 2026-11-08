@@ -23,6 +23,84 @@ export type ResolveTarget =
 
 export const RESOLVE_BATCH = 200;
 
+export const SCAN_PAGE = 200;
+export const SCAN_MAX_PAGES = 5;
+
+/**
+ * Não lidas de uma conversa (todas as pessoas), da mais nova para a mais
+ * antiga, em até SCAN_MAX_PAGES lotes de SCAN_PAGE. `match` filtra em memória
+ * (o índice é por conversa); `stopAtFirst` para na primeira que casar.
+ */
+async function scanConversationUnread(
+  ctx: { db: MutationCtx["db"] },
+  conversationId: Id<"conversations">,
+  opts: { match?: (n: Doc<"notifications">) => boolean; stopAtFirst?: boolean }
+): Promise<Doc<"notifications">[]> {
+  const out: Doc<"notifications">[] = [];
+  let cursor: string | null = null;
+  for (let page = 0; page < SCAN_MAX_PAGES; page++) {
+    const res = await ctx.db
+      .query("notifications")
+      .withIndex("by_conversation_and_read", (q) => q.eq("conversationId", conversationId).eq("readAt", undefined))
+      .order("desc")
+      .paginate({ numItems: SCAN_PAGE, cursor });
+    for (const n of res.page) {
+      if (!opts.match || opts.match(n)) {
+        out.push(n);
+        if (opts.stopAtFirst) return out;
+      }
+    }
+    if (res.isDone) break;
+    cursor = res.continueCursor;
+  }
+  return out;
+}
+
+/** Tarefa concluída/cancelada/excluída: avisos de prazo/atribuição deixam de valer (porta única). */
+export async function resolveTaskNotifications(
+  ctx: MutationCtx,
+  task: Pick<Doc<"tasks">, "_id" | "organizationId">,
+  reason: string,
+  resolvedByMemberId?: Id<"teamMembers">
+): Promise<number> {
+  return resolveEntityNotifications(ctx, {
+    organizationId: task.organizationId,
+    target: { taskId: task._id },
+    resolvedByMemberId,
+    reason,
+    types: ["task_due_soon", "task_overdue", "task_assigned"],
+  });
+}
+
+/**
+ * Desfazer (Telegram): reabre os avisos que ESTA porta resolveu por um dos
+ * `reasons` (limpa `readAt` e `data.resolved*`). Só handoff/tarefa, `take(50)`.
+ */
+export async function reopenEntityNotifications(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    target: { handoffId: Id<"handoffs"> } | { taskId: Id<"tasks"> };
+    reasons: string[];
+  }
+): Promise<number> {
+  const t = args.target;
+  const rows =
+    "handoffId" in t
+      ? await ctx.db.query("notifications").withIndex("by_handoff_and_read", (q) => q.eq("handoffId", t.handoffId)).take(50)
+      : await ctx.db.query("notifications").withIndex("by_task_and_read", (q) => q.eq("taskId", t.taskId)).take(50);
+  let reopened = 0;
+  for (const n of rows) {
+    if (n.organizationId !== args.organizationId || n.readAt === undefined) continue;
+    const reason = n.data?.resolvedReason;
+    if (typeof reason !== "string" || !args.reasons.includes(reason)) continue;
+    const { resolvedBy: _b, resolvedAt: _a, resolvedReason: _r, ...rest } = (n.data ?? {}) as Record<string, unknown>;
+    await ctx.db.patch(n._id, { readAt: undefined, data: rest });
+    reopened++;
+  }
+  return reopened;
+}
+
 export async function resolveEntityNotifications(
   ctx: MutationCtx,
   args: {
@@ -41,19 +119,12 @@ export async function resolveEntityNotifications(
   const t = args.target;
   let rows: Doc<"notifications">[];
   if ("conversationId" in t) {
-    rows = args.memberId
-      ? await db
-          .query("notifications")
-          .withIndex("by_member_conversation_and_read", (q) =>
-            q.eq("memberId", args.memberId!).eq("conversationId", t.conversationId).eq("readAt", undefined)
-          )
-          .take(RESOLVE_BATCH)
-      : await db
-          .query("notifications")
-          .withIndex("by_conversation_and_read", (q) =>
-            q.eq("conversationId", t.conversationId).eq("readAt", undefined)
-          )
-          .take(RESOLVE_BATCH);
+    // Mais novas primeiro, em lotes, com teto: com muitas não lidas na conversa
+    // (dono que só usa o Telegram) o aviso de rascunho é o MAIS RECENTE.
+    rows = await scanConversationUnread(ctx, t.conversationId, {
+      match: (n) =>
+        (!args.memberId || n.memberId === args.memberId) && (!args.types || args.types.includes(n.type)),
+    });
   } else if ("handoffId" in t) {
     rows = await db
       .query("notifications")
@@ -113,13 +184,11 @@ export async function draftNotificationAlreadyPending(
     excludeMessageId?: Id<"messages">;
   }
 ): Promise<boolean> {
-  const unread = await ctx.db
-    .query("notifications")
-    .withIndex("by_member_conversation_and_read", (q) =>
-      q.eq("memberId", args.memberId).eq("conversationId", args.conversationId).eq("readAt", undefined)
-    )
-    .take(10);
-  if (!unread.some((n) => n.type === "ai_draft_pending")) return false;
+  const found = await scanConversationUnread(ctx, args.conversationId, {
+    match: (n) => n.memberId === args.memberId && n.type === "ai_draft_pending",
+    stopAtFirst: true,
+  });
+  if (found.length === 0) return false;
   const recent = await ctx.db
     .query("messages")
     .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", args.conversationId))

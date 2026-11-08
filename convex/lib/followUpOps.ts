@@ -14,6 +14,7 @@
  * follow-up a `scheduled` ou o escala para um humano (`needs_human`), que é o
  * que fecha o P0.2 do gap analysis ("tarefa atribuída a membro IA é cosmética").
  */
+import { resolveTaskNotifications } from "./notificationResolve";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
@@ -881,6 +882,7 @@ export async function purgeFollowUpsOfConversation(
         const task = await ctx.db.get(row.taskId);
         if (task && task.status !== "completed" && task.status !== "cancelled") {
           await ctx.db.patch(task._id, { status: "cancelled", updatedAt: Date.now() });
+          await resolveTaskNotifications(ctx, task, "task_cancelled");
           budget.left -= 1;
           const agent = await ctx.db.get(row.agentMemberId);
           if (agent) {

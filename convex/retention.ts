@@ -233,7 +233,7 @@ function candidateRanges(db: QueryCtx["db"], table: RetentionTable, cutoff: numb
             await db
               .query("notifications")
               // gt(0) exclui readAt ausente (não lida) — undefined ordena antes de números.
-              .withIndex("by_read_at", (q) => q.gt("readAt", 0).lt("readAt", cutoff))
+              .withIndex("by_read_at_and_created", (q) => q.gt("readAt", 0).lt("readAt", cutoff))
               .take(limit)
           ).map((d) => ({ id: d._id, ts: d.readAt ?? 0 })),
       ];
@@ -365,6 +365,18 @@ async function countCandidates(db: QueryCtx["db"], table: RetentionTable, cutoff
 
 /** Não lidas com mais de N dias viram lidas (B1). */
 export const UNREAD_NOTIFICATION_EXPIRE_DAYS = 30;
+/** Lotes de expiração por execução (cada um de RETENTION_BATCH_SIZE); lote cheio reagenda a tabela. */
+export const UNREAD_EXPIRE_MAX_BATCHES = 5;
+
+/** Quantas não lidas expirariam agora (até 1000), para o plano do dryRun. */
+export async function countUnreadToExpire(db: QueryCtx["db"], now: number): Promise<number> {
+  const cutoff = now - UNREAD_NOTIFICATION_EXPIRE_DAYS * DAY_MS;
+  const rows = await db
+    .query("notifications")
+    .withIndex("by_read_at_and_created", (q) => q.eq("readAt", undefined).lt("createdAt", cutoff))
+    .take(RETENTION_PREVIEW_LIMIT + 1);
+  return Math.min(rows.length, RETENTION_PREVIEW_LIMIT);
+}
 
 /**
  * Lote de `notifications` não lidas antigas → lidas. Índice
@@ -444,13 +456,15 @@ export const internalRunRetention = internalMutation({
     // B1: NÃO lidas com mais de 30 dias viram lidas (o sino não acumula pilha
     // eterna); a linha lida sai pela janela normal de 90 dias. Patch, não delete:
     // não conta no teto diário de apagamentos.
+    let expiredFull = false;
     if (table === "notifications") {
       let expired = 0;
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < UNREAD_EXPIRE_MAX_BATCHES; i++) {
         const n = await expireStaleUnreadNotifications(ctx, startedAt, RETENTION_BATCH_SIZE);
         expired += n;
         if (n < RETENTION_BATCH_SIZE) break;
       }
+      expiredFull = expired === UNREAD_EXPIRE_MAX_BATCHES * RETENTION_BATCH_SIZE;
       if (expired > 0) console.log(JSON.stringify({ event: "retention", table, unreadExpired: expired }));
     }
     const rows = await takeCandidates(ctx.db, table, cutoff, batch);
@@ -472,7 +486,8 @@ export const internalRunRetention = internalMutation({
       console.log(JSON.stringify({ event: "retention", table, status: "cap_reached", deletedSoFar, cap }));
       return { status: "cap_reached" as const, ...result };
     }
-    if (rows.length === batch) {
+    // Lote cheio de exclusões OU de expirações de não lidas: ainda há trabalho nesta tabela.
+    if (rows.length === batch || expiredFull) {
       await ctx.scheduler.runAfter(0, internal.retention.internalRunRetention, { ...common, table });
       return { status: "continuing" as const, ...result };
     }
@@ -541,6 +556,8 @@ export const internalRunRetentionNow = internalMutation({
         cutoff: v.number(),
         count: v.number(),
         truncated: v.boolean(),
+        // B1: só em `notifications` — não lidas > 30 d que viram lidas (até 1000).
+        unreadToExpire: v.optional(v.number()),
         oldest: v.array(v.object({ id: v.string(), ts: v.number() })),
       })
     ),
@@ -555,7 +572,10 @@ export const internalRunRetentionNow = internalMutation({
       const cutoff = now - days * DAY_MS;
       const counted = await countCandidates(ctx.db, table, cutoff);
       const oldest = (await oldestCandidates(ctx.db, table, cutoff, 5)).map((r) => ({ id: r.id as string, ts: r.ts }));
-      plan.push({ table, days, cutoff, ...counted, oldest });
+      plan.push({
+        table, days, cutoff, ...counted, oldest,
+        ...(table === "notifications" ? { unreadToExpire: await countUnreadToExpire(ctx.db, now) } : {}),
+      });
     }
     const disabled = retentionDisabled();
     if (dryRun || disabled) return { dryRun, disabled, plan };

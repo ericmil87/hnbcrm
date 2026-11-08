@@ -48,9 +48,26 @@ describe("call sites da porta resolveEntityNotifications", () => {
   test("excluir tarefa: todo delete de task passa por resolveTaskNotifications", () => {
     const text = src("tasks.ts");
     const deletes = text.match(/await ctx\.db\.delete\((?:args\.taskId|task\._id)\);/g) ?? [];
-    const resolves = text.match(/await resolveTaskNotifications\(ctx, task, "task_deleted"\);/g) ?? [];
+    const resolves = text.match(/await resolveTaskNotifications\(ctx, task, "task_deleted", \w+\._id\);/g) ?? [];
     expect(deletes.length).toBeGreaterThan(0);
     expect(resolves.length).toBe(deletes.length);
+  });
+
+  test("cancelar tarefa: todo patch status cancelled em tasks.ts resolve; demais sites também", () => {
+    const text = src("tasks.ts");
+    const patches = text.match(/ctx\.db\.patch\((?:args\.taskId|taskId), \{\s*status: "cancelled"/g) ?? [];
+    const resolves = text.match(/resolveTaskNotifications\(ctx, task, "task_cancelled", \w+\._id\)/g) ?? [];
+    expect(patches.length).toBe(3);
+    expect(resolves.length).toBe(patches.length);
+    for (const f of ["lib/taskOps.ts", "lib/followUpOps.ts", "attendantFollowUp.ts", "lib/telegramActions.ts"]) {
+      expect(src(f), f).toMatch(/resolveTaskNotifications\(ctx, \w+, "task_cancelled"/);
+    }
+  });
+
+  test("desfazer no Telegram reabre os avisos (repasse e tarefa)", () => {
+    const text = src("lib/telegramActions.ts");
+    expect(text).toMatch(/reopenEntityNotifications\(ctx, \{[^}]*handoffId[^}]*\}[^)]*handoff_accepted/s);
+    expect(text).toMatch(/reopenEntityNotifications\(ctx, \{[^}]*taskId[^}]*\}[^)]*task_completed/s);
   });
 
   test("reconectar canal (bridge e Meta)", () => {

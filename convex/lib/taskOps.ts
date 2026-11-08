@@ -7,7 +7,7 @@
  * lógica em si é a MESMA de sempre — `tasks.ts` e `taskComments.ts` delegam
  * para cá, e não existe um segundo caminho de "concluir tarefa" no produto.
  */
-import { resolveEntityNotifications } from "./notificationResolve";
+import { resolveEntityNotifications, resolveTaskNotifications } from "./notificationResolve";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
@@ -407,6 +407,7 @@ export async function reopenTaskCore(
     for (const next of successors) {
       if (next.status === "pending" && next.createdAt >= (task.completedAt ?? 0)) {
         await ctx.db.patch(next._id, { status: "cancelled", updatedAt: now });
+        await resolveTaskNotifications(ctx, next, "task_cancelled");
         canceled++;
       }
     }

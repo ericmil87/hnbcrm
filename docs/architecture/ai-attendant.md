@@ -84,3 +84,5 @@ Os campos são formulários controlados sem Convex (`ConfigFormProps<T>`), reuti
 Na divisão, em vez de um `settings/ai/AiOverviewPanel.tsx` monolítico, foram criados `ActivationWizardCard`, `ActivationCard` e `AttendantCard`; o `AiOverviewPanel` (fv2-19) os compõe.
 
 O chat de teste do Atendente IA (`src/components/ai/AttendantSimulator.tsx`, variantes `inline` e `modal`) chama a mesma action `simulateAttendant` do `SimulatorModal`, com sugestões de perguntas por segmento.
+
+**Aviso de rascunho (B1).** O dedupe do `ai_draft_pending` (attendant e `groupAgent`) é "aviso NÃO LIDO do membro na conversa E outro rascunho ainda pendente" (`draftNotificationAlreadyPending`, varre as não lidas da mais nova para a mais antiga, até 5 lotes de 200). Aprovar, descartar, regenerar ou o envio direto que "revisa" o rascunho resolvem o aviso antigo pela porta `resolveEntityNotifications` (toda resolução de aviso passa por ela), então o próximo rascunho volta a notificar.

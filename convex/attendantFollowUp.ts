@@ -18,6 +18,7 @@
  * o watchdog, a adoção de uma tarefa existente e a API que a tela usa.
  * O ciclo de vida compartilhado mora em `lib/followUpOps.ts`.
  */
+import { resolveTaskNotifications } from "./lib/notificationResolve";
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
 import { internalMutation, mutation, query, MutationCtx } from "./_generated/server";
@@ -211,6 +212,7 @@ async function fireCore(
       // A tarefa existia só para a IA cobrar esse evento: sem o evento ela viraria
       // uma tarefa-zumbi atribuída ao atendente, então é cancelada junto.
       await ctx.db.patch(task._id, { status: "cancelled", updatedAt: now });
+      await resolveTaskNotifications(ctx, task, "task_cancelled");
       return { ok: false, reason: "evento_passado" };
     }
   }

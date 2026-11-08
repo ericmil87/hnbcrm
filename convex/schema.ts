@@ -2317,12 +2317,11 @@ const applicationTables = {
     .index("by_member_and_read", ["memberId", "readAt"])
     .index("by_organization", ["organizationId"])
     // Retenção (perf Convex I/O, fase 4a): lidas há mais de N dias, deployment-wide.
-    .index("by_read_at", ["readAt"])
-    // B1: retenção das NÃO lidas velhas (readAt ausente + createdAt antigo).
+    // B1: um índice só para as duas pontas — lidas (`readAt` > 0, ordem por `readAt`) e
+    // NÃO lidas velhas (`readAt` ausente + `createdAt` antigo). Substitui `by_read_at`.
     .index("by_read_at_and_created", ["readAt", "createdAt"])
     // B1: porta "resolvido" — não lidas por entidade (readAt ausente = não lida).
     .index("by_conversation_and_read", ["conversationId", "readAt"])
-    .index("by_member_conversation_and_read", ["memberId", "conversationId", "readAt"])
     .index("by_handoff_and_read", ["handoffId", "readAt"])
     .index("by_task_and_read", ["taskId", "readAt"])
     .index("by_channel_config_and_read", ["channelConfigId", "readAt"])

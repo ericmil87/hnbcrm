@@ -9,7 +9,11 @@ import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { createNotification } from "./lib/notify";
-import { resolveEntityNotifications, draftNotificationAlreadyPending } from "./lib/notificationResolve";
+import {
+  resolveEntityNotifications,
+  draftNotificationAlreadyPending,
+  reopenEntityNotifications,
+} from "./lib/notificationResolve";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -179,8 +183,8 @@ describe("rascunho da IA", () => {
     return await t.run(async (ctx) =>
       ctx.db.insert("messages", {
         organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId,
-        direction: "outbound", senderId: s.admin.memberId, senderType: "ai", content: "oi",
-        contentType: "text", isInternal: false, metadata: { aiDraft: { status } }, createdAt: Date.now(),
+        direction: "internal", senderId: s.admin.memberId, senderType: "ai", content: "oi",
+        contentType: "text", isInternal: true, metadata: { aiDraft: { status } }, createdAt: Date.now(),
       } as any)
     );
   }
@@ -255,6 +259,7 @@ describe("tarefa", () => {
     rows = (await all(t)).filter((n) => n.taskId === task2);
     expect(rows[0].readAt).toBeDefined();
     expect(rows[0].data?.resolvedReason).toBe("task_deleted");
+    expect(rows[0].data?.resolvedBy).toBe(s.admin.memberId);
   });
 });
 
@@ -329,5 +334,167 @@ describe("retenção de não lidas", () => {
     expect((await get(ids.fresh))!.readAt).toBeUndefined();
     // Retenção é deployment-wide: a org B também expira (mesma regra), sem apagar nada.
     expect((await get(ids.oldB))!.readAt).toBeDefined();
+  });
+});
+
+describe("conversa com muitas não lidas", () => {
+  const pendingDraft = (t: T, s: Seed) =>
+    t.run(async (ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId,
+        direction: "internal", senderId: s.admin.memberId, senderType: "ai", content: "oi",
+        contentType: "text", isInternal: true, metadata: { aiDraft: { status: "pending" } }, createdAt: Date.now(),
+      } as any)
+    );
+
+  test("dedupe acha o ai_draft_pending recente entre 11 new_message não lidas", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await pendingDraft(t, s);
+    for (let i = 0; i < 11; i++) {
+      await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
+    }
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId });
+    const fresh = await pendingDraft(t, s);
+    expect(
+      await t.run((ctx) =>
+        draftNotificationAlreadyPending(ctx, {
+          memberId: s.seller.memberId, conversationId: s.conversationId, excludeMessageId: fresh,
+        })
+      )
+    ).toBe(true);
+  });
+
+  test("aprovar/descartar limpa o aviso mesmo com mais de 200 não lidas na conversa", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const d1 = await pendingDraft(t, s);
+    await notify(t, s, s.seller.memberId, "ai_draft_pending", { conversationId: s.conversationId });
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 205; i++) {
+        await ctx.db.insert("notifications", {
+          organizationId: s.organizationId, memberId: s.third.memberId, type: "new_message",
+          title: "x", conversationId: s.conversationId, createdAt: Date.now(),
+        });
+      }
+    });
+    await asUser(t, s.admin.userId).mutation(api.attendant.discardAiDraft, { draftMessageId: d1 });
+    const draftNotif = (await all(t)).find((n) => n.type === "ai_draft_pending")!;
+    expect(draftNotif.readAt).toBeDefined();
+    // os new_message (outro tipo) seguem não lidos
+    expect((await all(t)).filter((n) => n.type === "new_message" && n.readAt === undefined)).toHaveLength(205);
+  });
+});
+
+describe("desfazer (reabrir avisos)", () => {
+  test("handoff aceito e desfeito: avisos voltam a não lidos; outras razões e outra org ficam", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const handoffId = await t.run(async (ctx) =>
+      ctx.db.insert("handoffs", {
+        organizationId: s.organizationId, leadId: s.leadId, conversationId: s.conversationId,
+        fromMemberId: s.agentId, reason: "x", suggestedActions: [], status: "pending", createdAt: Date.now(),
+      } as any)
+    );
+    await notify(t, s, s.admin.memberId, "handoff_requested", { handoffId });
+    await notify(t, s, s.seller.memberId, "handoff_requested", { handoffId });
+    await t.run(async (ctx) => {
+      await resolveEntityNotifications(ctx, {
+        organizationId: s.organizationId, target: { handoffId }, resolvedByMemberId: s.seller.memberId,
+        reason: "handoff_accepted",
+      });
+    });
+    expect((await all(t)).every((n) => n.readAt !== undefined)).toBe(true);
+    // razão diferente não reabre
+    const other = await t.run(async (ctx) =>
+      ctx.db.insert("notifications", {
+        organizationId: s.organizationId, memberId: s.third.memberId, type: "handoff_requested", title: "z",
+        handoffId, readAt: 1, data: { resolvedReason: "handoff_rejected" }, createdAt: Date.now(),
+      })
+    );
+    const n = await t.run((ctx) =>
+      reopenEntityNotifications(ctx, {
+        organizationId: s.organizationId, target: { handoffId }, reasons: ["handoff_accepted"],
+      })
+    );
+    expect(n).toBe(2);
+    const rows = await all(t);
+    for (const r of rows.filter((x) => x._id !== other)) {
+      expect(r.readAt).toBeUndefined();
+      expect(r.data?.resolvedBy).toBeUndefined();
+      expect(r.data?.resolvedReason).toBeUndefined();
+    }
+    expect(rows.find((x) => x._id === other)!.readAt).toBe(1);
+  });
+
+  test("tarefa concluída e reaberta: aviso de atraso volta", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await notify(t, s, s.seller.memberId, "task_overdue", { taskId: s.taskId });
+    await asUser(t, s.admin.userId).mutation(api.tasks.completeTask, { taskId: s.taskId });
+    expect((await all(t))[0].readAt).toBeDefined();
+    await t.run(async (ctx) => {
+      await reopenEntityNotifications(ctx, {
+        organizationId: s.organizationId, target: { taskId: s.taskId }, reasons: ["task_completed"],
+      });
+    });
+    expect((await all(t))[0].readAt).toBeUndefined();
+  });
+});
+
+describe("tarefa cancelada", () => {
+  const mkTask = (t: T, s: Seed, title: string) =>
+    t.run(async (ctx) =>
+      ctx.db.insert("tasks", {
+        organizationId: s.organizationId, title, type: "task", status: "pending", priority: "medium",
+        assignedTo: s.seller.memberId, createdBy: s.admin.memberId, createdAt: Date.now(), updatedAt: Date.now(),
+      } as any)
+    );
+
+  test("cancelTask e bulkUpdateTasks(cancel) resolvem os avisos da tarefa", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const a = await mkTask(t, s, "A");
+    const b = await mkTask(t, s, "B");
+    await notify(t, s, s.seller.memberId, "task_overdue", { taskId: a });
+    await notify(t, s, s.seller.memberId, "task_due_soon", { taskId: b });
+    const admin = asUser(t, s.admin.userId);
+    await admin.mutation(api.tasks.cancelTask, { taskId: a });
+    await admin.mutation(api.tasks.bulkUpdateTasks, { taskIds: [b], action: "cancel" } as any);
+    const rows = await all(t);
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.readAt).toBeDefined();
+      expect(r.data?.resolvedReason).toBe("task_cancelled");
+      expect(r.data?.resolvedBy).toBe(s.admin.memberId);
+    }
+  });
+});
+
+describe("retenção: muitas não lidas", () => {
+  test("mais de 1000 a expirar reagenda a tabela; dryRun informa a contagem", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const DAY = 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 1005; i++) {
+        await ctx.db.insert("notifications", {
+          organizationId: s.organizationId, memberId: s.admin.memberId, type: "new_message", title: "x",
+          createdAt: now - 40 * DAY,
+        });
+      }
+    });
+    const plan = await t.mutation(internal.retention.internalRunRetentionNow, { table: "notifications" });
+    expect(plan.dryRun).toBe(true);
+    expect(plan.plan[0].unreadToExpire).toBe(1000);
+
+    const res = await t.mutation(internal.retention.internalRunRetention, {
+      table: "notifications", onlyTable: true, manual: true,
+    });
+    expect(res.status).toBe("continuing");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = (await all(t)).filter((n) => n.readAt === undefined);
+    expect(left).toHaveLength(0);
   });
 });

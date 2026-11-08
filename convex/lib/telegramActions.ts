@@ -8,7 +8,7 @@
  * Runs inside a mutation and returns what to send/edit; the action sends
  * (`telegram.internalProcessUpdate`). Writes carry `via:"telegram"`.
  */
-import { resolveEntityNotifications } from "./notificationResolve";
+import { resolveEntityNotifications, resolveTaskNotifications, reopenEntityNotifications } from "./notificationResolve";
 import { ConvexError, type Value } from "convex/values";
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
@@ -1306,6 +1306,14 @@ async function revertStep(ctx: MutationCtx, actor: TelegramActor, step: UndoStep
     case "accept_handoff": {
       const handoff = await getTyped(ctx, "handoffs", step.refId);
       await restoreConversation(handoff?.conversationId ?? null);
+      // B1: o repasse volta a pending -> os avisos que o aceite resolveu voltam a valer.
+      if (handoff) {
+        await reopenEntityNotifications(ctx, {
+          organizationId: actor.org._id,
+          target: { handoffId: handoff._id },
+          reasons: ["handoff_accepted"],
+        });
+      }
       return `${label}: repasse reaberto para a equipe`;
     }
     case "complete_task":
@@ -1320,6 +1328,11 @@ async function revertStep(ctx: MutationCtx, actor: TelegramActor, step: UndoStep
           ...(previousColumnId ? { previousColumnId } : {}),
           via: "telegram_auto",
         });
+        await reopenEntityNotifications(ctx, {
+          organizationId: actor.org._id,
+          target: { taskId: task._id },
+          reasons: ["task_completed"],
+        });
         return `${label}: reaberta`;
       }
       await ctx.db.patch(task._id, {
@@ -1333,6 +1346,7 @@ async function revertStep(ctx: MutationCtx, actor: TelegramActor, step: UndoStep
       if (!task || task.organizationId !== actor.org._id) return `${label}: tarefa não encontrada`;
       // Cancelled (not hard-deleted): the audit trail of what the assistant did stays.
       await ctx.db.patch(task._id, { status: "cancelled", updatedAt: now });
+      await resolveTaskNotifications(ctx, task, "task_cancelled", actor.member._id);
       return `${label}: cancelada`;
     }
     case "move_stage": {
