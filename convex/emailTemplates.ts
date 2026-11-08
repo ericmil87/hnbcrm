@@ -43,7 +43,7 @@ export function baseTemplate(opts: {
         <tr><td style="padding-top: 24px; text-align: center; color: ${TEXT_SECONDARY}; font-size: 12px; line-height: 1.5;">
           <p style="margin: 0;">HNBCRM &mdash; CRM inteligente para equipes de vendas</p>
           <p style="margin: 4px 0 0;">
-            <a href="${opts.appUrl}/app/configuracoes" style="color: ${TEXT_SECONDARY}; text-decoration: underline;">Gerenciar preferencias de email</a>
+            <a href="${safeUrl(`${opts.appUrl}/app/configuracoes`)}" style="color: ${TEXT_SECONDARY}; text-decoration: underline;">Gerenciar preferencias de email</a>
           </p>
         </td></tr>
       </table>
@@ -53,10 +53,37 @@ export function baseTemplate(opts: {
 </html>`;
 }
 
+/**
+ * URL de `href`: só `https:`, `http://localhost` ou caminho do app ("/..."). Qualquer outra
+ * coisa (`javascript:`, `data:`, `//host`) vira "#". Sempre escapada como atributo.
+ */
+export function safeUrl(url: string): string {
+  const u = String(url ?? "").trim();
+  const ok =
+    /^https:\/\//i.test(u) ||
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(u) ||
+    (u.startsWith("/") && !u.startsWith("//") && !u.startsWith("/\\"));
+  return escapeHtml(ok ? u : "#");
+}
+
+/** Assunto é texto puro (sem entidades): só tira quebras de linha (header injection). */
+export function line(text: unknown): string {
+  return String(text ?? "").replace(/[\r\n\u2028\u2029]+/g, " ").trim();
+}
+
+/** Cópia rasa com todo valor string escapado (números/booleanos passam). Use nos campos de texto. */
+export function escapeStrings<T extends object>(data: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(data)) {
+    out[k] = typeof v === "string" ? escapeHtml(v) : v;
+  }
+  return out as T;
+}
+
 export function ctaButton(label: string, url: string): string {
   return `<table cellpadding="0" cellspacing="0" role="presentation" style="margin-top: 24px;">
     <tr><td style="background-color: ${BRAND_ORANGE}; border-radius: 9999px; padding: 12px 28px;">
-      <a href="${url}" style="color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">${label}</a>
+      <a href="${safeUrl(url)}" style="color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">${escapeHtml(label)}</a>
     </td></tr>
   </table>`;
 }
@@ -114,19 +141,20 @@ export function buildInviteTemplate(data: {
   tempPassword: string;
   loginUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.loginUrl.replace(/\/entrar$/, "");
   return {
-    subject: `Voce foi convidado para ${data.orgName}`,
+    subject: `Voce foi convidado para ${line(data.orgName)}`,
     html: baseTemplate({
-      preheader: `${data.memberName}, voce foi convidado para ${data.orgName} no HNBCRM.`,
+      preheader: `${e.memberName}, voce foi convidado para ${e.orgName} no HNBCRM.`,
       appUrl,
       content: `
-        ${heading(`Bem-vindo ao ${data.orgName}!`)}
-        ${paragraph(`Ola ${data.memberName}, voce foi convidado para fazer parte da equipe <strong style="color: ${TEXT_PRIMARY};">${data.orgName}</strong> no HNBCRM.`)}
+        ${heading(`Bem-vindo ao ${e.orgName}!`)}
+        ${paragraph(`Ola ${e.memberName}, voce foi convidado para fazer parte da equipe <strong style="color: ${TEXT_PRIMARY};">${e.orgName}</strong> no HNBCRM.`)}
         ${paragraph("Use as credenciais abaixo para acessar o sistema. Voce devera trocar a senha no primeiro acesso.")}
         ${infoTable(`
-          ${infoRow("Email", data.email)}
-          ${infoRow("Senha temporaria", `<code style="background: ${BG_DARK}; padding: 2px 8px; border-radius: 4px; color: ${BRAND_ORANGE}; font-size: 14px;">${data.tempPassword}</code>`)}
+          ${infoRow("Email", e.email)}
+          ${infoRow("Senha temporaria", `<code style="background: ${BG_DARK}; padding: 2px 8px; border-radius: 4px; color: ${BRAND_ORANGE}; font-size: 14px;">${e.tempPassword}</code>`)}
         `)}
         ${ctaButton("Acessar HNBCRM", data.loginUrl)}
       `,
@@ -172,8 +200,8 @@ export function buildHandoffRequestedTemplate(data: {
   const orgLine = data.orgName ? infoRow("Empresa", escapeHtml(data.orgName)) : "";
   return {
     subject: data.pendingLabel
-      ? `Novo repasse — ${data.pendingLabel} pendentes`
-      : `Repasse solicitado: ${maskDigitRuns(data.leadTitle)}`,
+      ? `Novo repasse — ${line(data.pendingLabel)} pendentes`
+      : `Repasse solicitado: ${line(maskDigitRuns(data.leadTitle))}`,
     html: baseTemplate({
       preheader: `${data.orgName ? escapeHtml(data.orgName) + ": " : ""}repasse pendente para o lead "${title}".`,
       appUrl,
@@ -199,16 +227,17 @@ export function buildHandoffResolvedTemplate(data: {
   resolvedByName: string;
   leadUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.leadUrl.replace(/\/app\/.*$/, "");
-  const statusColor = data.status === "aceito" ? "#22c55e" : "#ef4444";
+  const statusColor = e.status === "aceito" ? "#22c55e" : "#ef4444";
   return {
-    subject: `Repasse ${data.status}: ${data.leadTitle}`,
+    subject: `Repasse ${line(data.status)}: ${line(data.leadTitle)}`,
     html: baseTemplate({
-      preheader: `Seu repasse para "${data.leadTitle}" foi ${data.status} por ${data.resolvedByName}.`,
+      preheader: `Seu repasse para "${e.leadTitle}" foi ${e.status} por ${e.resolvedByName}.`,
       appUrl,
       content: `
         ${heading("Repasse Resolvido")}
-        ${paragraph(`Seu repasse para o lead <strong style="color: ${TEXT_PRIMARY};">${data.leadTitle}</strong> foi <strong style="color: ${statusColor};">${data.status}</strong> por ${data.resolvedByName}.`)}
+        ${paragraph(`Seu repasse para o lead <strong style="color: ${TEXT_PRIMARY};">${e.leadTitle}</strong> foi <strong style="color: ${statusColor};">${e.status}</strong> por ${e.resolvedByName}.`)}
         ${ctaButton("Ver Lead", data.leadUrl)}
       `,
     }),
@@ -221,19 +250,20 @@ export function buildTaskOverdueTemplate(data: {
   leadTitle?: string;
   taskUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.taskUrl.replace(/\/app\/.*$/, "");
   return {
-    subject: `Tarefa atrasada: ${data.taskTitle}`,
+    subject: `Tarefa atrasada: ${line(data.taskTitle)}`,
     html: baseTemplate({
-      preheader: `A tarefa "${data.taskTitle}" esta atrasada.`,
+      preheader: `A tarefa "${e.taskTitle}" esta atrasada.`,
       appUrl,
       content: `
         ${heading("Tarefa Atrasada")}
         ${paragraph("Uma tarefa atribuida a voce esta atrasada e precisa de atencao.")}
         ${infoTable(`
-          ${infoRow("Tarefa", data.taskTitle)}
-          ${infoRow("Vencimento", data.dueDate)}
-          ${data.leadTitle ? infoRow("Lead", data.leadTitle) : ""}
+          ${infoRow("Tarefa", e.taskTitle)}
+          ${infoRow("Vencimento", e.dueDate)}
+          ${e.leadTitle ? infoRow("Lead", e.leadTitle) : ""}
         `)}
         ${ctaButton("Ver Tarefa", data.taskUrl)}
       `,
@@ -248,19 +278,20 @@ export function buildTaskAssignedTemplate(data: {
   leadTitle?: string;
   taskUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.taskUrl.replace(/\/app\/.*$/, "");
   return {
-    subject: `Nova tarefa atribuida: ${data.taskTitle}`,
+    subject: `Nova tarefa atribuida: ${line(data.taskTitle)}`,
     html: baseTemplate({
-      preheader: `${data.assignedByName} atribuiu a tarefa "${data.taskTitle}" a voce.`,
+      preheader: `${e.assignedByName} atribuiu a tarefa "${e.taskTitle}" a voce.`,
       appUrl,
       content: `
         ${heading("Nova Tarefa Atribuida")}
-        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${data.assignedByName}</strong> atribuiu uma tarefa a voce.`)}
+        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${e.assignedByName}</strong> atribuiu uma tarefa a voce.`)}
         ${infoTable(`
-          ${infoRow("Tarefa", data.taskTitle)}
-          ${data.dueDate ? infoRow("Vencimento", data.dueDate) : ""}
-          ${data.leadTitle ? infoRow("Lead", data.leadTitle) : ""}
+          ${infoRow("Tarefa", e.taskTitle)}
+          ${e.dueDate ? infoRow("Vencimento", e.dueDate) : ""}
+          ${e.leadTitle ? infoRow("Lead", e.leadTitle) : ""}
         `)}
         ${ctaButton("Ver Tarefa", data.taskUrl)}
       `,
@@ -276,21 +307,22 @@ export function buildTaskCommentMentionTemplate(data: {
   commentExcerpt?: string;
   appUrl?: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || resolveAppUrl();
   const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
-  const excerptBlock = data.commentExcerpt
+  const excerptBlock = e.commentExcerpt
     ? `<div style="margin-top: 16px; padding: 12px 16px; background: ${BG_DARK}; border-radius: 8px; border-left: 3px solid ${BRAND_ORANGE};">
-        <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${data.commentExcerpt}"</p>
+        <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${e.commentExcerpt}"</p>
       </div>`
     : "";
   return {
-    subject: `${data.authorName} mencionou você em um comentário`,
+    subject: `${line(data.authorName)} mencionou você em um comentário`,
     html: baseTemplate({
-      preheader: `${data.authorName} mencionou você em um comentário na tarefa "${data.taskTitle}".`,
+      preheader: `${e.authorName} mencionou você em um comentário na tarefa "${e.taskTitle}".`,
       appUrl,
       content: `
         ${heading("Você foi mencionado")}
-        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${data.authorName}</strong> mencionou você em um comentário na tarefa <strong style="color: ${TEXT_PRIMARY};">${data.taskTitle}</strong>.`)}
+        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${e.authorName}</strong> mencionou você em um comentário na tarefa <strong style="color: ${TEXT_PRIMARY};">${e.taskTitle}</strong>.`)}
         ${excerptBlock}
         ${ctaButton("Ver Tarefa", taskUrl)}
       `,
@@ -306,24 +338,25 @@ export function buildTaskDueSoonTemplate(data: {
   minutesBefore?: number;
   appUrl?: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || resolveAppUrl();
   const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
-  const leadTime = data.minutesBefore
-    ? data.minutesBefore >= 60
-      ? `${Math.round(data.minutesBefore / 60)} h`
-      : `${data.minutesBefore} min`
+  const leadTime = e.minutesBefore
+    ? e.minutesBefore >= 60
+      ? `${Math.round(e.minutesBefore / 60)} h`
+      : `${e.minutesBefore} min`
     : undefined;
   return {
-    subject: `Tarefa vence em breve: ${data.taskTitle}`,
+    subject: `Tarefa vence em breve: ${line(data.taskTitle)}`,
     html: baseTemplate({
-      preheader: `A tarefa "${data.taskTitle}" vence em ${data.dueDate}.`,
+      preheader: `A tarefa "${e.taskTitle}" vence em ${e.dueDate}.`,
       appUrl,
       content: `
         ${heading("Tarefa Vencendo em Breve")}
-        ${paragraph(`A tarefa <strong style="color: ${TEXT_PRIMARY};">${data.taskTitle}</strong> vence em breve${leadTime ? ` (lembrete de ${leadTime} antes)` : ""}.`)}
+        ${paragraph(`A tarefa <strong style="color: ${TEXT_PRIMARY};">${e.taskTitle}</strong> vence em breve${leadTime ? ` (lembrete de ${leadTime} antes)` : ""}.`)}
         ${infoTable(`
-          ${infoRow("Tarefa", data.taskTitle)}
-          ${infoRow("Vencimento", data.dueDate)}
+          ${infoRow("Tarefa", e.taskTitle)}
+          ${infoRow("Vencimento", e.dueDate)}
         `)}
         ${ctaButton("Ver Tarefa", taskUrl)}
       `,
@@ -339,20 +372,21 @@ export function buildLeadAssignedTemplate(data: {
   assignedByName: string;
   leadUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.leadUrl.replace(/\/app\/.*$/, "");
   return {
-    subject: `Lead atribuido: ${data.leadTitle}`,
+    subject: `Lead atribuido: ${line(data.leadTitle)}`,
     html: baseTemplate({
-      preheader: `${data.assignedByName} atribuiu o lead "${data.leadTitle}" a voce.`,
+      preheader: `${e.assignedByName} atribuiu o lead "${e.leadTitle}" a voce.`,
       appUrl,
       content: `
         ${heading("Lead Atribuido")}
-        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${data.assignedByName}</strong> atribuiu um lead a voce.`)}
+        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${e.assignedByName}</strong> atribuiu um lead a voce.`)}
         ${infoTable(`
-          ${infoRow("Lead", data.leadTitle)}
-          ${data.contactName ? infoRow("Contato", data.contactName) : ""}
-          ${data.value ? infoRow("Valor", data.value) : ""}
-          ${data.stage ? infoRow("Estagio", data.stage) : ""}
+          ${infoRow("Lead", e.leadTitle)}
+          ${e.contactName ? infoRow("Contato", e.contactName) : ""}
+          ${e.value ? infoRow("Valor", e.value) : ""}
+          ${e.stage ? infoRow("Estagio", e.stage) : ""}
         `)}
         ${ctaButton("Ver Lead", data.leadUrl)}
       `,
@@ -367,6 +401,7 @@ export function buildNewMessageTemplate(data: {
   senderName: string;
   conversationUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.conversationUrl.replace(/\/app\/.*$/, "");
   const channelLabels: Record<string, string> = {
     whatsapp: "WhatsApp",
@@ -376,19 +411,19 @@ export function buildNewMessageTemplate(data: {
     internal: "Interno",
   };
   return {
-    subject: `Nova mensagem em ${data.leadTitle}`,
+    subject: `Nova mensagem em ${line(data.leadTitle)}`,
     html: baseTemplate({
-      preheader: `${data.senderName} enviou uma mensagem no lead "${data.leadTitle}".`,
+      preheader: `${e.senderName} enviou uma mensagem no lead "${e.leadTitle}".`,
       appUrl,
       content: `
         ${heading("Nova Mensagem")}
-        ${paragraph(`Uma nova mensagem foi recebida no lead <strong style="color: ${TEXT_PRIMARY};">${data.leadTitle}</strong>.`)}
+        ${paragraph(`Uma nova mensagem foi recebida no lead <strong style="color: ${TEXT_PRIMARY};">${e.leadTitle}</strong>.`)}
         ${infoTable(`
-          ${infoRow("Canal", channelLabels[data.channel] ?? data.channel)}
-          ${infoRow("Remetente", data.senderName)}
+          ${infoRow("Canal", channelLabels[e.channel] ?? e.channel)}
+          ${infoRow("Remetente", e.senderName)}
         `)}
         <div style="margin-top: 16px; padding: 12px 16px; background: ${BG_DARK}; border-radius: 8px; border-left: 3px solid ${BRAND_ORANGE};">
-          <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${data.messagePreview}"</p>
+          <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${e.messagePreview}"</p>
         </div>
         ${ctaButton("Ver Conversa", data.conversationUrl)}
       `,
@@ -405,35 +440,36 @@ export function buildDailyDigestTemplate(data: {
   overdueTasksCount: number;
   appUrl: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   return {
-    subject: `Resumo diario - ${data.date}`,
+    subject: `Resumo diario - ${line(data.date)}`,
     html: baseTemplate({
-      preheader: `Resumo de ${data.orgName}: ${data.newLeadsCount} novos leads, ${data.completedTasksCount} tarefas concluidas.`,
+      preheader: `Resumo de ${e.orgName}: ${e.newLeadsCount} novos leads, ${e.completedTasksCount} tarefas concluidas.`,
       appUrl: data.appUrl,
       content: `
-        ${heading(`Resumo Diario - ${data.date}`)}
-        ${paragraph(`Aqui esta o resumo das atividades de ontem em <strong style="color: ${TEXT_PRIMARY};">${data.orgName}</strong>.`)}
+        ${heading(`Resumo Diario - ${e.date}`)}
+        ${paragraph(`Aqui esta o resumo das atividades de ontem em <strong style="color: ${TEXT_PRIMARY};">${e.orgName}</strong>.`)}
         <table cellpadding="0" cellspacing="0" role="presentation" style="width: 100%; margin-top: 16px;">
           <tr>
             <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: ${BRAND_ORANGE};">${data.newLeadsCount}</div>
+              <div style="font-size: 28px; font-weight: 700; color: ${BRAND_ORANGE};">${e.newLeadsCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Novos leads</div>
             </td>
             <td style="width: 8px;"></td>
             <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: #22c55e;">${data.completedTasksCount}</div>
+              <div style="font-size: 28px; font-weight: 700; color: #22c55e;">${e.completedTasksCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Tarefas concluidas</div>
             </td>
           </tr>
           <tr><td colspan="3" style="height: 8px;"></td></tr>
           <tr>
             <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: #eab308;">${data.pendingHandoffsCount}</div>
+              <div style="font-size: 28px; font-weight: 700; color: #eab308;">${e.pendingHandoffsCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Repasses pendentes</div>
             </td>
             <td style="width: 8px;"></td>
             <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: ${data.overdueTasksCount > 0 ? "#ef4444" : TEXT_SECONDARY};">${data.overdueTasksCount}</div>
+              <div style="font-size: 28px; font-weight: 700; color: ${e.overdueTasksCount > 0 ? "#ef4444" : TEXT_SECONDARY};">${e.overdueTasksCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Tarefas atrasadas</div>
             </td>
           </tr>
@@ -455,7 +491,7 @@ export function buildFormSubmissionTemplate(data: {
   // na caixa da equipe: sem escape, quem preenche injeta link/HTML no e-mail.
   const formName = escapeHtml(data.formName);
   return {
-    subject: `Nova submissao de formulario: ${data.formName}`,
+    subject: `Nova submissao de formulario: ${line(data.formName)}`,
     html: baseTemplate({
       preheader: `Uma nova submissao foi recebida no formulario "${formName}".`,
       appUrl,
@@ -480,10 +516,10 @@ export function buildFormConfirmationTemplate(data: {
   submittedData?: Record<string, string>;
   fieldLabels?: Record<string, string>;
 }): TemplateResult {
-  const subject = data.subject || `Confirmacao: ${data.formName}`;
+  const subject = line(data.subject) || `Confirmacao: ${line(data.formName)}`;
 
   // Replace {variable} placeholders in body
-  let bodyContent = data.body || "Obrigado por preencher o formulario. Recebemos sua submissao com sucesso.";
+  let bodyContent = escapeHtml(data.body || "Obrigado por preencher o formulario. Recebemos sua submissao com sucesso.");
   if (data.submittedData && data.fieldLabels) {
     for (const [fieldId, rawValue] of Object.entries(data.submittedData)) {
       // Valor digitado por quem preencheu: escapado, e via função de replace
@@ -491,7 +527,7 @@ export function buildFormConfirmationTemplate(data: {
       const value = escapeHtml(String(rawValue ?? ""));
       const label = data.fieldLabels[fieldId];
       if (label) {
-        bodyContent = bodyContent.replace(new RegExp(`\\{${escapeRegExp(label)}\\}`, "gi"), () => value);
+        bodyContent = bodyContent.replace(new RegExp(`\\{${escapeRegExp(escapeHtml(label))}\\}`, "gi"), () => value);
       }
       bodyContent = bodyContent.replace(new RegExp(`\\{${escapeRegExp(fieldId)}\\}`, "gi"), () => value);
     }
@@ -589,26 +625,27 @@ export function buildGroupPostPendingTemplate(data: {
   appUrl?: string;
   missedBehavior?: "skip" | "send";
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.appUrl || resolveAppUrl();
   const postUrl = `${appUrl}/app/grupos?post=${data.postId ?? ""}`;
   const missed =
-    data.missedBehavior === "send"
+    e.missedBehavior === "send"
       ? "Sem resposta até o horário, o texto vai ser publicado do jeito que está."
       : "Sem resposta até o horário, a publicação deste horário é pulada.";
   return {
-    subject: `Aprovar publicacao: ${data.postName}`,
+    subject: `Aprovar publicacao: ${line(data.postName)}`,
     html: baseTemplate({
-      preheader: `A IA escreveu a publicacao "${data.postName}" para ${data.scheduledFor}.`,
+      preheader: `A IA escreveu a publicacao "${e.postName}" para ${e.scheduledFor}.`,
       appUrl,
       content: `
         ${heading("Publicação esperando aprovação")}
-        ${paragraph(`A IA escreveu o texto da publicação <strong style="color: ${TEXT_PRIMARY};">${data.postName}</strong>. ${missed}`)}
+        ${paragraph(`A IA escreveu o texto da publicação <strong style="color: ${TEXT_PRIMARY};">${e.postName}</strong>. ${missed}`)}
         ${infoTable(`
-          ${infoRow("Publicação", data.postName)}
-          ${infoRow("Horário", data.scheduledFor)}
-          ${data.groups ? infoRow("Grupos", data.groups) : ""}
+          ${infoRow("Publicação", e.postName)}
+          ${infoRow("Horário", e.scheduledFor)}
+          ${e.groups ? infoRow("Grupos", e.groups) : ""}
         `)}
-        ${paragraph(`<em style="color: ${TEXT_SECONDARY};">${escapeHtml(data.text).slice(0, 1200)}</em>`)}
+        ${paragraph(`<em style="color: ${TEXT_SECONDARY};">${e.text.slice(0, 1200)}</em>`)}
         ${ctaButton("Revisar e aprovar", postUrl)}
       `,
     }),
@@ -621,19 +658,20 @@ export function buildGroupPostFailedTemplate(data: {
   reason: string;
   appUrl?: string;
 }): TemplateResult {
+  const e = escapeStrings(data);
   const appUrl = data.appUrl || resolveAppUrl();
   const postUrl = `${appUrl}/app/grupos?post=${data.postId ?? ""}`;
   return {
-    subject: `Publicacao interrompida: ${data.postName}`,
+    subject: `Publicacao interrompida: ${line(data.postName)}`,
     html: baseTemplate({
-      preheader: `A publicacao "${data.postName}" parou: ${data.reason}`,
+      preheader: `A publicacao "${e.postName}" parou: ${e.reason}`,
       appUrl,
       content: `
         ${heading("Publicação interrompida")}
-        ${paragraph(`A publicação <strong style="color: ${TEXT_PRIMARY};">${data.postName}</strong> não pôde continuar e foi pausada.`)}
+        ${paragraph(`A publicação <strong style="color: ${TEXT_PRIMARY};">${e.postName}</strong> não pôde continuar e foi pausada.`)}
         ${infoTable(`
-          ${infoRow("Publicação", data.postName)}
-          ${infoRow("Motivo", escapeHtml(data.reason))}
+          ${infoRow("Publicação", e.postName)}
+          ${infoRow("Motivo", e.reason)}
         `)}
         ${ctaButton("Abrir publicação", postUrl)}
       `,
@@ -669,10 +707,10 @@ export function buildAiSpendAlertTemplate(data: {
   const title = reached ? "Teto de gastos de IA atingido" : "Gasto de IA perto do teto";
   return {
     subject: reached
-      ? `Teto de gastos de IA atingido (${data.month})`
-      : `Gasto de IA em ${pct}% do teto (${data.month})`,
+      ? `Teto de gastos de IA atingido (${line(data.month)})`
+      : `Gasto de IA em ${pct}% do teto (${line(data.month)})`,
     html: baseTemplate({
-      preheader: `${escapeHtml(data.orgName)}: ${pct}% do teto mensal de IA em ${data.month}.`,
+      preheader: `${escapeHtml(data.orgName)}: ${pct}% do teto mensal de IA em ${escapeHtml(data.month)}.`,
       appUrl,
       content: `
         ${heading(title)}

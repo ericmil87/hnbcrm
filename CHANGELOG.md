@@ -4,6 +4,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Segurança
+
+- Os e-mails automáticos agora escapam o texto vindo de clientes, formulários e equipe (título do lead, prévia da mensagem, comentários, nomes), e os links dos botões só aceitam https ou caminho do app.
+
 ### Busca sem acento
 
 - A busca de Conversas (contatos e mensagens), a pesquisa dentro da conversa e a busca de Contatos não diferenciam mais acentos nem maiúsculas: "antonio" acha "Antônio", "reboucas" acha "Rebouças" e "REBOUÇAS" também.
