@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenLink, isSafeAppPath, parseOpenLink, safeAppTarget, withOpenAction } from "./openLink";
+import { buildOpenLink, parseOpenLink, safeAppTarget, withOpenAction } from "./openLink";
 
-describe("isSafeAppPath", () => {
+describe("safeAppTarget (aceita/recusa)", () => {
   it("aceita caminhos internos do app, com query", () => {
-    expect(isSafeAppPath("/app/entrada?conversation=abc")).toBe(true);
-    expect(isSafeAppPath("/app/painel?sino=1")).toBe(true);
+    expect(safeAppTarget("/app/entrada?conversation=abc")).not.toBeNull();
+    expect(safeAppTarget("/app/painel?sino=1")).not.toBeNull();
   });
   it.each([
     "//evil.com",
@@ -28,11 +28,11 @@ describe("isSafeAppPath", () => {
     "/app/x\n",
     "",
   ])("bloqueia %j", (to) => {
-    expect(isSafeAppPath(to)).toBe(false);
+    expect(safeAppTarget(to)).toBeNull();
   });
   it("null/undefined não passam", () => {
-    expect(isSafeAppPath(null)).toBe(false);
-    expect(isSafeAppPath(undefined)).toBe(false);
+    expect(safeAppTarget(null)).toBeNull();
+    expect(safeAppTarget(undefined)).toBeNull();
   });
 });
 

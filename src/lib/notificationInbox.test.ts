@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  appBadgeCount,
   bellAriaLabel,
   bellBadgeLabel,
   detectArrivals,
@@ -185,5 +186,13 @@ describe("withCountPrefix", () => {
     expect(withCountPrefix("(3) Conversas · HNBCRM", 5)).toBe("(5) Conversas · HNBCRM");
     expect(withCountPrefix("(3) Conversas · HNBCRM", 0)).toBe("Conversas · HNBCRM");
     expect(withCountPrefix("Painel", 250)).toBe("(99+) Painel");
+  });
+});
+
+describe("appBadgeCount", () => {
+  it("limita ao teto do push (20) e nunca fica negativo", () => {
+    expect(appBadgeCount(3)).toBe(3);
+    expect(appBadgeCount(57)).toBe(20);
+    expect(appBadgeCount(-1)).toBe(0);
   });
 });

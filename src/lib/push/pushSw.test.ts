@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { safeAppTarget } from "../openLink";
+import { safeAppTarget as safeAppTargetFromLink } from "../openLink";
 import {
   GENERIC_PUSH_TITLE,
   PUSH_BADGE_ICON,
@@ -18,6 +18,7 @@ import {
   SW_PUSH_RESUBSCRIBED,
   notificationClick,
   pickAppClient,
+  safeAppTarget,
   safeNotificationUrl,
 } from "./notificationClick";
 
@@ -188,7 +189,8 @@ describe("notificationClick", () => {
 });
 
 describe("safeNotificationUrl", () => {
-  it("matches safeAppTarget for inner app paths (parity with src/lib/openLink.ts)", () => {
+  it("openLink reexporta o mesmo validador (fonte única) e o aplica aos caminhos internos", () => {
+    expect(safeAppTargetFromLink).toBe(safeAppTarget);
     for (const p of ["/app/painel", "/app/x/./y?a=1#h", "/app/tarefas?task=t1", "//x", "/app/../f/x", "/app\\x", "/app/%2e%2e/f"]) {
       expect(safeNotificationUrl(p), p).toBe(safeAppTarget(p));
     }
@@ -196,7 +198,7 @@ describe("safeNotificationUrl", () => {
   it("accepts /app/abrir only with org and a safe `to`", () => {
     expect(safeNotificationUrl(OPEN)).toBe(OPEN);
     expect(safeNotificationUrl(ASSUMIR)).toBe(ASSUMIR);
-    expect(safeAppTarget(OPEN)).toBeNull(); // why the SW needs its own rule
+    expect(safeAppTarget(OPEN)).toBeNull(); // safeAppTarget recusa /app/abrir; só safeNotificationUrl o aceita
   });
 });
 

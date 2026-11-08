@@ -1,12 +1,14 @@
-import { Link, Navigate } from "react-router";
+import { Link, Navigate, useLocation } from "react-router";
 import { useConvexAuth } from "convex/react";
 import { SignInForm } from "@/SignInForm";
 import { Spinner } from "@/components/ui/Spinner";
 import { ArrowLeft } from "lucide-react";
 import { SEO } from "@/components/SEO";
+import { postLoginTarget } from "@/lib/signOutFlow";
 
 export function AuthPage() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const location = useLocation();
 
   if (isLoading) {
     return (
@@ -17,7 +19,7 @@ export function AuthPage() {
   }
 
   if (isAuthenticated) {
-    return <Navigate to="/app" replace />;
+    return <Navigate to={postLoginTarget(location.state)} replace />;
   }
 
   return (

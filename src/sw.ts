@@ -7,7 +7,7 @@ import { cleanupOutdatedCaches, createHandlerBoundToURL, precacheAndRoute } from
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { NAVIGATION_ALLOWLIST, NAVIGATION_DENYLIST, SHELL_URL } from "./lib/pwa/swRoutes";
 import { SW_NAVIGATE, SW_PUSH_RESUBSCRIBED, notificationClick } from "./lib/push/notificationClick";
-import { openFromNotification, showPushNotification } from "./lib/push/swHandlers";
+import { hasForegroundAppWindow, openFromNotification, showPushNotification } from "./lib/push/swHandlers";
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<string | { url: string; revision: string | null }>;
@@ -72,6 +72,7 @@ self.addEventListener("push", (event) => {
       show: (title, options) => self.registration.showNotification(title, options),
       supportsActions: supportsActions(),
       applyBadge: applyAppBadge,
+      appInForeground: async () => hasForegroundAppWindow(await self.clients.matchAll({ type: "window", includeUncontrolled: true }), self.location.origin),
     }),
   );
 });

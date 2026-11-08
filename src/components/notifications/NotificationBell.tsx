@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useNotificationArrivals } from "@/hooks/useNotificationArrivals";
 import { bellAriaLabel, bellBadgeLabel, notificationHref, type InboxNotification } from "@/lib/notificationInbox";
 import { isPaused } from "@/lib/notificationPrefsUi";
+import { setBellOpen, setNotificationsPaused } from "@/lib/notificationUiState";
 import { useNow } from "@/hooks/useNow";
 import { NotificationPanel } from "./NotificationPanel";
 
@@ -32,6 +33,14 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
   const myPrefs = useQuery(api.notificationPreferences.getMyEffectivePreferences, { organizationId });
   const now = useNow();
   const pausedNow = isPaused(myPrefs?.pausedUntil, now);
+
+  useEffect(() => {
+    setNotificationsPaused(pausedNow);
+  }, [pausedNow]);
+  useEffect(() => {
+    setBellOpen(open);
+    return () => setBellOpen(false);
+  }, [open]);
 
   const unseen = summary?.unseen ?? 0;
   const unread = summary?.unread ?? 0;
@@ -87,6 +96,7 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
     unreadCount: summary?.unread,
     openConversationId,
     suppressed: open,
+    paused: pausedNow,
     onOpen: openItem,
     onOpenInbox: handleOpen,
   });

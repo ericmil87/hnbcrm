@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { GENERIC_PUSH_TITLE, buildNotification } from "./buildNotification";
 import { SW_NAVIGATE_ACK_MS } from "./notificationClick";
-import { openFromNotification, showPushNotification, type OpenDeps, type WindowRef } from "./swHandlers";
+import { hasForegroundAppWindow, openFromNotification, showPushNotification, type OpenDeps, type WindowRef } from "./swHandlers";
 
 const ORIGIN = "https://hnbcrm.com";
 const URL_ = "/app/abrir?org=o1&to=%2Fapp%2Fentrada%3Fconversation%3Dc1";
@@ -96,6 +96,34 @@ describe("showPushNotification", () => {
     expect(applyBadge).toHaveBeenCalledWith(2);
   });
 
+  it("app window focused and visible → still shows, but silent", async () => {
+    const show = vi.fn(async (_t: string, _o: unknown) => {});
+    await showPushNotification(data, { show, supportsActions: true, applyBadge: async () => {}, appInForeground: async () => true });
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(show.mock.calls[0][1]).toMatchObject({ silent: true });
+  });
+
+  it("no foreground window (or the check throws) → audible", async () => {
+    const show = vi.fn(async (_t: string, _o: unknown) => {});
+    await showPushNotification(data, { show, supportsActions: true, applyBadge: async () => {}, appInForeground: async () => false });
+    expect(show.mock.calls[0][1]).toMatchObject({ silent: false });
+    await showPushNotification(data, {
+      show,
+      supportsActions: true,
+      applyBadge: async () => {},
+      appInForeground: async () => {
+        throw new Error("x");
+      },
+    });
+    expect(show.mock.calls[1][1]).toMatchObject({ silent: false });
+  });
+
+  it("silent also applies to the generic fallback", async () => {
+    const show = vi.fn<(t: string, o: unknown) => Promise<void>>().mockRejectedValueOnce(new TypeError("actions")).mockResolvedValueOnce(undefined);
+    await showPushNotification(data, { show, supportsActions: true, applyBadge: async () => {}, appInForeground: async () => true });
+    expect(show.mock.calls[1][1]).toMatchObject({ silent: true });
+  });
+
   it("first showNotification rejects → shows the generic one", async () => {
     const show = vi.fn().mockRejectedValueOnce(new TypeError("actions")).mockResolvedValueOnce(undefined);
     await showPushNotification(data, { show, supportsActions: true, applyBadge: async () => {} });
@@ -127,5 +155,17 @@ describe("buildNotification action names", () => {
       { supportsActions: true },
     );
     expect(b.options.actions).toEqual([{ action: "abrir", title: "Abrir" }]);
+  });
+});
+
+describe("hasForegroundAppWindow", () => {
+  const v = (path: string, extra = {}) => ({ url: `${ORIGIN}${path}`, focused: true, visibilityState: "visible", ...extra });
+  it("needs same origin, /app/ path, focused and visible", () => {
+    expect(hasForegroundAppWindow([v("/app/painel")], ORIGIN)).toBe(true);
+    expect(hasForegroundAppWindow([v("/app/painel", { focused: false })], ORIGIN)).toBe(false);
+    expect(hasForegroundAppWindow([v("/app/painel", { visibilityState: "hidden" })], ORIGIN)).toBe(false);
+    expect(hasForegroundAppWindow([v("/entrar")], ORIGIN)).toBe(false);
+    expect(hasForegroundAppWindow([{ url: "https://evil.com/app/x", focused: true, visibilityState: "visible" }], ORIGIN)).toBe(false);
+    expect(hasForegroundAppWindow([], ORIGIN)).toBe(false);
   });
 });

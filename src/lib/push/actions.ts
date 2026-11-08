@@ -98,6 +98,7 @@ export type ResyncResult = "synced" | "cleaned" | "foreign" | "removed" | "idle"
  *    e NÃO re-vincula (a pessoa nova ativa por gesto);
  *  - aparelho removido em "Meus aparelhos" (o endpoint vinculado é o atual e o servidor não o conhece mais):
  *    cancela no navegador, sem pedir permissão;
+ *  - sem assinatura mas com rastro desta pessoa e permissão concedida: assina de novo (sem gesto);
  *  - senão vincula de novo (idempotente) todas as orgs vinculadas + a ativa.
  */
 export async function resyncPush(backend: PushBackend, organizationId: string, vapidKey: string, userId: string): Promise<ResyncResult> {
@@ -114,10 +115,19 @@ export async function resyncPush(backend: PushBackend, organizationId: string, v
   }
   if (permission !== "granted") return "idle";
   const sub = await getExistingSubscription();
-  if (!sub) return "idle";
-
   const linked = readLinkedOrgs();
   const owner = readPushOwner();
+  if (!sub) {
+    // Assinatura perdida (limpeza do navegador, kill switch, SW reinstalado) mas a PESSOA tinha ativado aqui:
+    // a permissão já existe, então assina de novo sem gesto. "Desligar" apaga o rastro, e então fica quieto.
+    if (!hasActivationTrace(owner, linked, userId)) return "idle";
+    try {
+      const data = await subscribeBrowser(vapidKey);
+      return await relinkAll(backend, linked, organizationId, userId, data);
+    } catch {
+      return "idle"; // sem SW pronto (kill switch): tenta de novo na próxima abertura
+    }
+  }
   if ((owner && owner !== userId) || (!owner && linked.length === 0)) {
     await sub.unsubscribe().catch(() => false);
     clearLinkedOrgs();
@@ -142,6 +152,15 @@ export async function resyncPush(backend: PushBackend, organizationId: string, v
   }
 
   const data = await subscribeBrowser(vapidKey);
+  return relinkAll(backend, linked, organizationId, userId, data);
+}
+
+/** O aparelho tem rastro de uma ativação desta pessoa (dono = ela e ao menos uma org vinculada). */
+export function hasActivationTrace(owner: string | null, linked: readonly string[], userId: string): boolean {
+  return owner === userId && linked.length > 0;
+}
+
+async function relinkAll(backend: PushBackend, linked: string[], organizationId: string, userId: string, data: SerializedSubscription): Promise<ResyncResult> {
   const orgs = Array.from(new Set([...linked, organizationId]));
   const results = await Promise.allSettled(orgs.map((id) => subscribeOrg(backend, id, data)));
   results.forEach((r, i) => {

@@ -1,4 +1,5 @@
 import type { Doc } from "../../convex/_generated/dataModel";
+import { PUSH_BADGE_CAP } from "../../convex/lib/webPush";
 import { TAB_ROUTES } from "./routes";
 
 /** Item do feed do sino: o doc + campos derivados por `notifications.list` (D1 back). */
@@ -228,6 +229,11 @@ export function detectArrivals<T extends ArrivalItem>(
 }
 
 const COUNT_PREFIX = /^\(\d+\+?\)\s/;
+
+/** Contador do ícone do app instalado: mesmo teto do push (o SW grava o `app_badge` já limitado). */
+export function appBadgeCount(unread: number): number {
+  return Math.max(0, Math.min(PUSH_BADGE_CAP, Math.floor(unread)));
+}
 
 /** "(3) Conversas · HNBCRM"; sem pendências devolve o título limpo. */
 export function withCountPrefix(title: string, unread: number): string {

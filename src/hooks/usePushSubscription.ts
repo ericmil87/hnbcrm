@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { PUSH_ENABLED } from "@/lib/featureFlags";
+import { PWA_KILL_SWITCH } from "@/lib/pwa/appBuild";
 import { mutationErrorMessage } from "@/lib/errors";
 import { disablePush, enablePush, resyncPush, type PushBackend } from "@/lib/push/actions";
 import { getExistingSubscription, pushStatusOf, pushStatusWithServer, readPushSupport, type PushStatus } from "@/lib/push/subscription";
@@ -16,7 +17,7 @@ function readPermission(): NotificationPermission | "unavailable" {
 }
 
 export interface PushSubscriptionApi {
-  /** `true` sem push no deployment (chave VAPID nula) ou com o kill switch `PUSH_ENABLED` desligado. */
+  /** `true` sem push no deployment (chave VAPID nula) com o kill switch `PUSH_ENABLED` desligado ou num build com `PWA_KILL_SWITCH` (sem service worker). */
   hidden: boolean;
   /** Chave VAPID e usuário carregados: já dá para re-sincronizar. */
   ready: boolean;
@@ -26,7 +27,7 @@ export interface PushSubscriptionApi {
   error: string | null;
   busy: boolean;
   /** Pede a permissão (SÓ chamar dentro de um toque) e assina. */
-  enable: () => Promise<boolean>;
+  enable: (opts?: { toastOnError?: boolean }) => Promise<boolean>;
   disable: () => Promise<void>;
   /** Re-sincroniza a assinatura do navegador com as orgs vinculadas + a ativa (idempotente). */
   resync: () => Promise<void>;
@@ -37,7 +38,7 @@ export interface PushSubscriptionApi {
 export function usePushSubscription(organizationId: Id<"organizations">): PushSubscriptionApi {
   const vapidQuery = useQuery(api.push.getVapidPublicKey, {});
   // `PUSH_ENABLED` é o kill switch do front: desligado, nada de push (nem o re-sync).
-  const vapidKey = PUSH_ENABLED ? vapidQuery : null;
+  const vapidKey = PUSH_ENABLED && !PWA_KILL_SWITCH ? vapidQuery : null;
   const user = useQuery(api.auth.loggedInUser);
   const userId: string | undefined = user?._id;
   const convex = useConvex();
@@ -79,7 +80,7 @@ export function usePushSubscription(organizationId: Id<"organizations">): PushSu
     return () => window.removeEventListener(PUSH_CHANGED_EVENT, onChanged);
   }, [refresh]);
 
-  const enable = useCallback(async () => {
+  const enable = useCallback(async (opts?: { toastOnError?: boolean }) => {
     if (!vapidKey || !userId) return false;
     setBusy(true);
     setError(null);
@@ -93,8 +94,11 @@ export function usePushSubscription(organizationId: Id<"organizations">): PushSu
     } catch (e) {
       await refresh();
       if (aliveRef.current) {
-        setError(mutationErrorMessage(e, "Não foi possível ligar os avisos. Tente de novo."));
+        const message = mutationErrorMessage(e, "Não foi possível ligar os avisos. Tente de novo.");
+        setError(message);
         setStatus("error");
+        // O convite (toast) não tem onde mostrar o erro inline: avisa por toast.
+        if (opts?.toastOnError) toast.error(message);
       }
       return false;
     } finally {
