@@ -206,6 +206,24 @@ describe("5. responder ao cliente resolve os próprios avisos", () => {
   });
 });
 
+describe("14a. lead atribuído a si mesmo não manda e-mail", () => {
+  test("assignLead: self sem e-mail; outra pessoa com e-mail", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const emailJobs = () =>
+      t.run(async (ctx) => {
+        const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+        return jobs.filter((j) => j.name.includes("dispatchNotification")).length;
+      });
+    const admin = asUser(t, s.admin.userId);
+    await admin.mutation(api.leads.assignLead, { leadId: s.leadId, assignedTo: s.admin.memberId });
+    expect(await emailJobs()).toBe(0);
+    await admin.mutation(api.leads.assignLead, { leadId: s.leadId, assignedTo: s.seller.memberId });
+    expect(await emailJobs()).toBe(1);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
 describe("2. excluir lead resolve avisos de conversa e repasse", () => {
   test("deleteLead + cascata", async () => {
     const t = convexTest(schema, modules);
