@@ -18,6 +18,7 @@ import { Card } from "../ui/Card";
 import { Badge } from "../ui/Badge";
 import { Building2, LogOut, Plus } from "lucide-react";
 import { toast } from "sonner";
+import { useOrgNews } from "@/hooks/useOrgNews";
 import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
@@ -46,6 +47,10 @@ export type AppOutletContext = {
   /** Active UI theme and its setter (consumed by the appearance picker, fv2-15). */
   theme: UiTheme;
   setTheme: (theme: UiTheme) => void;
+  /** Organizações do usuário (rota `/app/abrir`). */
+  organizations: OrgSummary[];
+  /** Troca de organização sem mexer na URL (rota `/app/abrir`). */
+  selectOrganization: (orgId: Id<"organizations">) => void;
 };
 
 const SELECTED_ORG_KEY = "hnbcrm.selectedOrgId";
@@ -139,6 +144,8 @@ function AuthLayoutContent() {
   const activeOrg: OrgSummary | null =
     (selectedOrgId && organizations?.find((org) => org._id === selectedOrgId)) || null;
   const activeOrgId = activeOrg?._id ?? null;
+  // Novidades das outras organizações (ponto/contador no seletor de org).
+  const orgNews = useOrgNews(activeOrgId, isAuthenticated);
 
   // Última org ativa (id + nome) — para avisar quem perdeu o acesso a ela.
   const lastActiveOrgRef = useRef<OrgSummary | null>(null);
@@ -159,8 +166,8 @@ function AuthLayoutContent() {
   // `?lead=` da org anterior e trocava de volta para ela.
   const manualSwitchSearchRef = useRef<string | null>(null);
   const selectOrg = useCallback(
-    (orgId: Id<"organizations">) => {
-      if (activeOrgId && orgId !== activeOrgId) {
+    (orgId: Id<"organizations">, opts?: { keepUrl?: boolean }) => {
+      if (activeOrgId && orgId !== activeOrgId && !opts?.keepUrl) {
         manualSwitchSearchRef.current = location.search;
         navigate(pathAfterOrgSwitch(location.pathname, location.search), { replace: true });
       }
@@ -384,6 +391,7 @@ function AuthLayoutContent() {
       organizations={organizations}
       activeOrgId={activeOrgId}
       onSelectOrg={selectOrg}
+      newsByOrg={orgNews.byOrg}
       onCreated={handleOrgCreated}
       onSignOut={handleSignOut}
     />
@@ -443,7 +451,17 @@ function AuthLayoutContent() {
               <Spinner size="lg" />
             </div>
           ) : (
-            <Outlet context={{ organizationId: activeOrgId, theme, setTheme } satisfies AppOutletContext} />
+            <Outlet
+              context={
+                {
+                  organizationId: activeOrgId,
+                  theme,
+                  setTheme,
+                  organizations,
+                  selectOrganization: (orgId) => selectOrg(orgId, { keepUrl: true }),
+                } satisfies AppOutletContext
+              }
+            />
           )}
         </ErrorBoundary>
       </AppShell>

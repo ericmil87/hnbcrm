@@ -24,6 +24,8 @@ export interface PopoverProps {
   trapEscape?: boolean;
   role?: string;
   "aria-label"?: string;
+  /** `aria-modal` do diálogo (painéis que prendem o foco). */
+  "aria-modal"?: boolean;
   id?: string;
   className?: string;
   children: ReactNode;
@@ -40,6 +42,7 @@ export function Popover({
   trapEscape = true,
   role,
   "aria-label": ariaLabel,
+  "aria-modal": ariaModal,
   id,
   className,
   children,
@@ -115,6 +118,7 @@ export function Popover({
         id={id}
         role={role}
         ariaLabel={ariaLabel}
+        ariaModal={ariaModal}
         className={className}
         onDismiss={() => onOpenChange(false)}
       >
@@ -130,6 +134,7 @@ export function Popover({
       id={id}
       role={role}
       aria-label={ariaLabel}
+      aria-modal={ariaModal}
       style={{ position: "fixed", top: pos?.top ?? 0, left: pos?.left ?? 0 }}
       className={cn(
         "z-50 rounded-xl border border-border bg-surface-overlay shadow-elevated motion-safe:animate-fade-in",
@@ -154,6 +159,7 @@ function PopoverSheet({
   id,
   role,
   ariaLabel,
+  ariaModal,
   className,
   onDismiss,
   children,
@@ -162,6 +168,7 @@ function PopoverSheet({
   id?: string;
   role?: string;
   ariaLabel?: string;
+  ariaModal?: boolean;
   className?: string;
   onDismiss: () => void;
   children: ReactNode;
@@ -179,6 +186,7 @@ function PopoverSheet({
         id={id}
         role={role}
         aria-label={ariaLabel}
+        aria-modal={ariaModal}
         className={cn(
           "relative w-full max-h-[80dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-border bg-surface-overlay shadow-elevated motion-safe:animate-slide-in-up",
           // Teclado aberto: a safe-area de baixo fica atrás dele.

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/Input";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
+import { orgNewsLabel } from "@/lib/notificationInbox";
 
 /** Forma mínima de uma org da lista `getUserOrganizations` usada pela UI. */
 export interface OrgSummary {
@@ -145,6 +146,8 @@ interface OrgSwitcherModalProps {
   organizations: OrgSummary[];
   activeOrgId: Id<"organizations"> | null;
   onSelectOrg: (orgId: Id<"organizations">) => void;
+  /** Novidades (avisos novos) por organização, para o contador na lista. */
+  newsByOrg?: Record<string, number>;
   /** Chamado com o id da org recém-criada (antes de selecioná-la). */
   onCreated?: (orgId: Id<"organizations">) => void;
   onSignOut?: () => void;
@@ -163,6 +166,7 @@ function OrgSwitcherModalContent({
   organizations,
   activeOrgId,
   onSelectOrg,
+  newsByOrg,
   onCreated,
   onSignOut,
   initialMode = "list",
@@ -216,6 +220,12 @@ function OrgSwitcherModalContent({
                       </span>
                       <span className="block text-xs text-text-muted truncate">{org.slug}</span>
                     </span>
+                    {!isActive && orgNewsLabel(newsByOrg?.[org._id] ?? 0) && (
+                      <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold tabular-nums shrink-0">
+                        <span aria-hidden="true">{orgNewsLabel(newsByOrg?.[org._id] ?? 0)}</span>
+                        <span className="sr-only">{`${orgNewsLabel(newsByOrg?.[org._id] ?? 0)} novidades`}</span>
+                      </span>
+                    )}
                     <Badge variant={isActive ? "brand" : "default"}>{roleLabel(org.role)}</Badge>
                     {isActive && (
                       <Check size={18} className="text-brand-500 shrink-0" aria-label="Selecionada" />
@@ -261,6 +271,8 @@ interface OrgSwitcherTriggerProps
   extends Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, "onClick" | "type"> {
   orgName: string;
   onClick: () => void;
+  /** Novidades nas outras organizações: mostra um ponto no ícone. */
+  news?: number;
   className?: string;
 }
 
@@ -268,21 +280,24 @@ interface OrgSwitcherTriggerProps
  * Botão que mostra a org atual e abre o seletor. Na sidebar colapsada (md,
  * 64 px) vira só o ícone — o nome inteiro fica no modal, não num select espremido.
  */
-export function OrgSwitcherTrigger({ orgName, onClick, className, ...rest }: OrgSwitcherTriggerProps) {
+export function OrgSwitcherTrigger({ orgName, onClick, news = 0, className, ...rest }: OrgSwitcherTriggerProps) {
   return (
     <button
       {...rest}
       type="button"
       onClick={onClick}
-      aria-label={`Organização atual: ${orgName}. Trocar ou criar organização`}
+      aria-label={`Organização atual: ${orgName}. Trocar ou criar organização${news > 0 ? `. Há novidades em outras organizações` : ""}`}
       className={cn(
-        "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]",
+        "relative w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors min-h-[44px]",
         "text-text-secondary hover:text-text-primary hover:bg-surface-overlay",
         "focus:outline-none focus:ring-2 focus:ring-brand-500",
         className
       )}
     >
       <Building2 size={20} className="shrink-0 text-brand-500" />
+      {news > 0 && (
+        <span className="absolute left-7 top-2 h-2.5 w-2.5 rounded-full bg-brand-600 ring-2 ring-surface-base" aria-hidden="true" />
+      )}
       <span className="hidden lg:block flex-1 min-w-0 text-left truncate text-text-primary">
         {orgName}
       </span>

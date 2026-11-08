@@ -17,6 +17,7 @@ const LandingPage = lazy(() => import("./components/LandingPage").then(m => ({ d
 const AuthPage = lazy(() => import("./components/AuthPage").then(m => ({ default: m.AuthPage })));
 const DevelopersPage = lazy(() => import("./pages/DevelopersPage").then(m => ({ default: m.DevelopersPage })));
 const PlaygroundPage = lazy(() => import("./pages/PlaygroundPage").then(m => ({ default: m.PlaygroundPage })));
+const OpenLinkPage = lazy(() => import("./components/layout/OpenLinkPage").then(m => ({ default: m.OpenLinkPage })));
 const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then(m => ({ default: m.NotFoundPage })));
 
 const PublicFormPage = lazy(() => import("./pages/PublicFormPage").then(m => ({ default: m.PublicFormPage })));
@@ -71,6 +72,7 @@ const router = createBrowserRouter([
     errorElement: <RouteErrorPage />,
     children: [
       { index: true, element: <Navigate to="painel" replace /> },
+      { path: "abrir", element: <LazyRoute Component={OpenLinkPage} /> },
       { path: "painel", element: <LazyRoute Component={DashboardOverview} /> },
       { path: "pipeline", element: <LazyRoute Component={KanbanBoard} /> },
       { path: "contatos", element: <LazyRoute Component={ContactsPage} /> },

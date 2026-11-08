@@ -4,6 +4,15 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Sino como caixa de entrada (telas)
+
+- O sino agora tem abas "Não lidas" e "Todas", filtros por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" pelo número real de não lidas e "Marcar como lida/não lida" em cada aviso. Avisos já resolvidos por outra pessoa aparecem em cinza ("Assumido por Ana") e não voltam para não lidas (o app explica).
+- Ações direto no aviso: "Assumir" (pedido de ajuda), "Revisar rascunho" (abre a conversa) e "Adiar 1 h" (lembrete da tarefa).
+- A bolinha do sino mostra só o que chegou desde a última vez que você abriu o sino; os avisos não lidos continuam na lista.
+- Com o app aberto, o que pede ação (pedido de ajuda, mensagem em outra conversa, transferência, menção, rascunho, tarefa) aparece como aviso na tela com "Abrir", sem repetir e sem avisar da conversa que você já está olhando. O título da aba mostra "(3) Conversas · HNBCRM" e, no app instalado, o selo do ícone acompanha. Som de aviso opcional (botão no painel do sino, desligado por padrão, só neste aparelho).
+- Quem usa mais de uma organização vê um ponto no seletor de organização e, no sino, "Você tem 2 novidades em {organização}"; tocar troca de organização e abre o sino lá.
+- Aviso de lead atribuído abre o lead. Celular: folha com alça e botão "Fechar", rolagem infinita, tempo relativo que se atualiza, textos de clientes em qualquer idioma sem quebrar a linha, leitura por leitor de tela (diálogo, região de avisos, foco preso).
+
 ### Sino como caixa de entrada (base no servidor)
 
 - O servidor do sino passou a suportar: lista só das não lidas ou por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" em lotes (também por grupo), "Marcar como não lida", "visto" do sino para o contador de novidades e a contagem de novidades de cada organização para o seletor de organização. Itens resolvidos por outra pessoa trazem o nome de quem assumiu. Nenhuma tela mudou ainda.

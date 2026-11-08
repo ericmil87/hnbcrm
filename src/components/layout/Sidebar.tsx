@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNavBadges } from "@/hooks/useNavBadges";
+import { useOrgNews } from "@/hooks/useOrgNews";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { Id } from "../../../convex/_generated/dataModel";
 import { TAB_ROUTES, activeTabForPath, type Tab } from "@/lib/routes";
@@ -36,6 +37,8 @@ interface SidebarViewProps {
   onNavigate: (tab: Tab) => void;
   onSignOut: () => void;
   onOpenOrgSwitcher: () => void;
+  /** Avisos novos em outras organizações (ponto no seletor de org). */
+  orgNewsTotal?: number;
   onOpenAppearance: () => void;
   /** Só com o Copiloto ativo na organização; sem ele o item não aparece. */
   onOpenCopilot?: () => void;
@@ -53,6 +56,7 @@ export function SidebarView({
   onNavigate,
   onSignOut,
   onOpenOrgSwitcher,
+  orgNewsTotal,
   onOpenAppearance,
   onOpenCopilot,
   copilotKeys = copilotAriaShortcut(false),
@@ -165,7 +169,7 @@ export function SidebarView({
           )}
         {withTip(
           `Organização: ${orgName}`,
-          <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} />
+          <OrgSwitcherTrigger orgName={orgName} onClick={onOpenOrgSwitcher} news={orgNewsTotal} />
         )}
         {withTip(
           "Aparência",
@@ -219,6 +223,7 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher,
   const items = useMemo(() => visibleNavItems(can, modules), [can, modules]);
   const groups = useMemo(() => groupNavItems(items), [items]);
   const badges = useNavBadges(organizationId, items);
+  const orgNews = useOrgNews(organizationId);
 
   return (
     <>
@@ -232,6 +237,7 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher,
       onNavigate={(tab) => navigate(TAB_ROUTES[tab])}
       onSignOut={onSignOut}
       onOpenOrgSwitcher={onOpenOrgSwitcher}
+      orgNewsTotal={orgNews.total}
       onOpenAppearance={() => setAppearanceOpen(true)}
       onOpenCopilot={onOpenCopilot}
       copilotKeys={copilotAriaShortcut(detectIsMac())}
