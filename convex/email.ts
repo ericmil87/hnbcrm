@@ -7,6 +7,10 @@ import { appUrl } from "./lib/appUrl";
 import { isDeliverableEmail, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 import { isMembershipRevoked } from "./lib/auth";
 import { cronsDisabled } from "./lib/cronGuard";
+import { shouldDeliver } from "./lib/notificationPolicy";
+import { loadMemberPrefs, orgDefaultsOf } from "./lib/notificationPrefs";
+import { localDateKey, localParts } from "./lib/executiveReport";
+import { safeTimezone } from "./lib/promptDateTime";
 
 // O default do componente é `testMode: true`, e nesse modo ele LANÇA para todo
 // destinatário que não seja `@resend.dev`. Este arquivo passou meses sem desligar
@@ -97,14 +101,19 @@ export const dispatchNotification = internalMutation({
     // Removido da org não recebe mais nada dela (o vínculo acabou).
     if (isMembershipRevoked(member)) return false;
 
-    // 2. Check preferences (invite is always sent regardless of prefs)
+    // 2. Política única (C1): flag antigo, preferência por canal, preset (membro ou org),
+    // pausa e silêncio. `invite` sempre sai. Sem linha e sem padrão da org = tudo liga.
     if (args.eventType !== "invite") {
-      const prefs = await ctx.db
-        .query("notificationPreferences")
-        .withIndex("by_member", (q) => q.eq("teamMemberId", args.recipientMemberId))
-        .first();
-      // Opt-out model: no row = all enabled. Check explicit false.
-      if (prefs && (prefs as any)[args.eventType] === false) return false;
+      const prefs = await loadMemberPrefs(ctx, args.organizationId, args.recipientMemberId);
+      const org = prefs?.preset ? null : await ctx.db.get(args.organizationId);
+      const decision = shouldDeliver({
+        type: args.eventType,
+        channel: "email",
+        prefs,
+        orgDefaults: orgDefaultsOf(org),
+        now: Date.now(),
+      });
+      if (decision !== "deliver") return false;
     }
 
     // 3. Build template — eventType desconhecido não vira e-mail vazio
@@ -200,27 +209,45 @@ export const sendConfirmationEmail = internalMutation({
 
 // ── Daily digest cron handler ──
 const DIGEST_COUNT_CAP = 500;
+/** Hora LOCAL da org em que o resumo sai (antes: cron fixo 11:00 UTC = 08:00 BRT). */
+export const DIGEST_LOCAL_HOUR = 8;
+/** Orgs lidas por execução; o resto segue por cursor (uma `.paginate()` por função). */
+const DIGEST_ORG_PAGE = 100;
 
+/**
+ * Cron de hora em hora (minuto 0): só age nas orgs cuja hora local é `DIGEST_LOCAL_HOUR`
+ * e que ainda não têm o carimbo `lastDailyDigestDate` de hoje (carimbo ANTES de agendar:
+ * segunda execução na mesma hora não duplica). Custo: ler os docs das orgs 1x por hora
+ * (sem contagens fora da hora alvo).
+ */
 export const sendDailyDigest = internalMutation({
-  args: {},
+  args: { cursor: v.optional(v.union(v.string(), v.null())), now: v.optional(v.number()) },
   returns: v.null(),
-  handler: async (ctx) => {
+  handler: async (ctx, args) => {
     if (cronsDisabled()) return null;
-    const now = Date.now();
+    const now = args.now ?? Date.now();
     const oneDayAgo = now - 24 * 60 * 60 * 1000;
     const digestAppUrl = appUrl();
 
-    // Format date for subject
-    const dateStr = new Date(now).toLocaleDateString("pt-BR", {
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
+    const page = await ctx.db
+      .query("organizations")
+      .paginate({ numItems: DIGEST_ORG_PAGE, cursor: args.cursor ?? null });
 
-    // Get all organizations
-    const orgs = await ctx.db.query("organizations").collect();
+    for (const org of page.page) {
+      const tz = safeTimezone(org.settings.timezone);
+      if (localParts(now, tz).hour !== DIGEST_LOCAL_HOUR) continue;
+      const dateKey = localDateKey(now, tz);
+      if (org.lastDailyDigestDate === dateKey) continue;
+      await ctx.db.patch(org._id, { lastDailyDigestDate: dateKey });
 
-    for (const org of orgs) {
+      // Data do assunto no fuso da org
+      const dateStr = new Date(now).toLocaleDateString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        timeZone: tz,
+      });
+
       // Get human team members who haven't opted out of digest
       const members = await ctx.db
         .query("teamMembers")
@@ -309,6 +336,9 @@ export const sendDailyDigest = internalMutation({
       }
     }
 
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.email.sendDailyDigest, { cursor: page.continueCursor, now });
+    }
     return null;
   },
 });

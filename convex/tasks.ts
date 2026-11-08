@@ -2780,6 +2780,9 @@ export async function overdueReminderRanges(
   );
 }
 
+/** Tarefas listadas no e-mail-resumo de atrasadas (o resto vira "e mais N"). */
+const OVERDUE_SUMMARY_LIST_CAP = 10;
+
 // Internal: Process overdue reminders (cron de RESGATE — o lembrete de cada
 // task já é agendado por `runAfter` no create/snooze). Lê só o que está
 // vencido e ainda não disparou, por índice e no deployment inteiro: a antiga
@@ -2801,6 +2804,10 @@ export const processOverdueReminders = internalMutation({
     const overdueTasks = (await overdueReminderRanges(ctx, now)).flatMap((r) => r.docs);
     // Fuso por org (textos do sino), uma leitura por org da rodada.
     const zones = new Map<Id<"organizations">, string | undefined>();
+    const overdueByMember = new Map<
+      Id<"teamMembers">,
+      { organizationId: Id<"organizations">; tasks: { id: Id<"tasks">; title: string; dueDate: string }[] }
+    >();
 
     for (const task of overdueTasks) {
       // Snoozada (reminderTriggered:false) fica no range até o snooze vencer,
@@ -2830,17 +2837,37 @@ export const processOverdueReminders = internalMutation({
           taskId: task._id,
         });
 
-        await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-          organizationId: task.organizationId,
-          recipientMemberId: memberId,
-          eventType: "taskOverdue",
-          templateData: {
-            taskTitle: task.title,
-            dueDate: formatDate(task.dueDate) ?? "N/A",
-            taskUrl: taskDeepLink(task._id),
-          },
-        });
+        // E-mail agrupado por membro na rodada (C1): acumula aqui, envia depois do loop.
+        const bucket = overdueByMember.get(memberId) ?? { organizationId: task.organizationId, tasks: [] };
+        bucket.tasks.push({ id: task._id, title: task.title, dueDate: formatDate(task.dueDate) ?? "N/A" });
+        overdueByMember.set(memberId, bucket);
       }
+    }
+
+    // Um e-mail por membro e rodada: 1 tarefa = o e-mail de sempre; 2+ = resumo (flag `taskOverdue`).
+    for (const [memberId, bucket] of overdueByMember) {
+      const [first] = bucket.tasks;
+      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+        organizationId: bucket.organizationId,
+        recipientMemberId: memberId,
+        ...(bucket.tasks.length === 1
+          ? {
+              eventType: "taskOverdue",
+              templateData: { taskTitle: first.title, dueDate: first.dueDate, taskUrl: taskDeepLink(first.id) },
+            }
+          : {
+              eventType: "taskOverdueSummary",
+              templateData: {
+                count: bucket.tasks.length,
+                tasks: bucket.tasks.slice(0, OVERDUE_SUMMARY_LIST_CAP).map((t) => ({
+                  title: t.title,
+                  dueDate: t.dueDate,
+                  taskUrl: taskDeepLink(t.id),
+                })),
+                appUrl: appUrl(),
+              },
+            }),
+      });
     }
 
     return null;
