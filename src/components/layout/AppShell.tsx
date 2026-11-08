@@ -8,6 +8,7 @@ import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { CopilotFab } from "@/components/copilot/CopilotFab";
 import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { PushLifecycle } from "@/components/notifications/PushLifecycle";
 import { activeTabForPath } from "@/lib/routes";
 import { navItemFor, shellPageTitle } from "@/lib/nav";
 import { useOrgNews } from "@/hooks/useOrgNews";
@@ -103,6 +104,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
     <PageHeaderProvider registry={pageHeader.registry}>
     <div className="min-h-screen supports-[height:100dvh]:min-h-[100dvh] bg-surface-base">
       <InstallPrompt />
+      <PushLifecycle organizationId={organizationId} />
       {/* Desktop sidebar */}
       <Sidebar
         onSignOut={onSignOut}

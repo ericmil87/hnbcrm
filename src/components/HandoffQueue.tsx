@@ -1,6 +1,6 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useEffect, useState } from "react";
-import { useNavigate, useOutletContext } from "react-router";
+import { useLocation, useNavigate, useOutletContext } from "react-router";
 import { useQuery, useMutation } from "convex/react";
 import { CheckCircle2 } from "lucide-react";
 import { api } from "../../convex/_generated/api";
@@ -21,6 +21,8 @@ import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { HandoffPeekSlideOver, type PeekHandoff } from "@/components/handoffs/HandoffPeekSlideOver";
 import { AttentionRow, type AttentionItem } from "@/components/handoffs/AttentionRow";
 import { AttentionListItem } from "@/components/handoffs/AttentionListItem";
+import { useCloseGoneHandoff } from "@/components/handoffs/useCloseGoneHandoff";
+import { AssumeFromPushDialog } from "@/components/handoffs/AssumeFromPushDialog";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { attentionSummaryLine, pendingCountLabel } from "@/lib/attentionList";
 import {
@@ -43,9 +45,11 @@ export function HandoffQueue() {
   // abrir é push com a entrada marcada como nossa, então o gesto de voltar do
   // iPhone fecha a espiada em vez de sair da página; fechar pelo app volta a
   // essa entrada (ou faz replace num deep link).
-  const handoffParam = useOpenEntityParam("handoff");
+  const handoffParam = useOpenEntityParam("handoff", { alsoClear: ["acao"] });
   const peekHandoffId = handoffParam.id;
   const { open: openPeek, close: closePeek } = handoffParam;
+  const location = useLocation();
+  const acaoParam = new URLSearchParams(location.search).get("acao");
 
   // getHandoffs agora exige inbox:view_own no servidor — sem o skip, um membro
   // sem permissão que cole a URL derrubaria a página no ErrorBoundary genérico
@@ -86,10 +90,7 @@ export function HandoffQueue() {
 
   // A espiada é derivada da URL (sumiu o param = fechou). Um id que não está
   // na fila (resolvido por outra pessoa, inválido ou de outra org) fecha sozinho.
-  useEffect(() => {
-    if (!peekHandoffId || handoffs === undefined) return;
-    if (!handoffs.some((h: { _id: string }) => h._id === peekHandoffId)) closePeek();
-  }, [handoffs, peekHandoffId, closePeek]);
+  useCloseGoneHandoff({ handoffId: peekHandoffId, handoffs, acao: acaoParam, close: closePeek });
 
   if (!can("inbox", "view_own")) {
     return (
@@ -191,6 +192,7 @@ export function HandoffQueue() {
   // 768 px com ela aberta não a remonta (rascunho de instrução e rolagem ficam).
   return (
     <>
+      <AssumeFromPushDialog handoffId={peekHandoffId} handoffs={handoffs} onAccept={handleAccept} />
       {isMobile ? (
         <div className="min-w-0 pb-safe">
           {/* O AppShell mostra "Requer atenção" num <p>: o <h1> fica para leitores de tela. */}

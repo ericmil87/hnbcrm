@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenLink, isSafeAppPath, parseOpenLink, safeAppTarget } from "./openLink";
+import { buildOpenLink, isSafeAppPath, parseOpenLink, safeAppTarget, withOpenAction } from "./openLink";
 
 describe("isSafeAppPath", () => {
   it("aceita caminhos internos do app, com query", () => {
@@ -56,5 +56,20 @@ describe("parseOpenLink / buildOpenLink", () => {
     expect(parseOpenLink("?to=/app/painel")).toBeNull();
     expect(parseOpenLink("?org=o&to=//evil")).toBeNull();
     expect(parseOpenLink("?org=o")).toBeNull();
+  });
+});
+
+describe("acao do push e mensagens do service worker", () => {
+  it("parseOpenLink lê acao=assumir e ignora valores desconhecidos", () => {
+    expect(parseOpenLink("?org=o&to=" + encodeURIComponent("/app/repasses?handoff=h1") + "&acao=assumir")).toEqual({
+      org: "o",
+      to: "/app/repasses?handoff=h1",
+      acao: "assumir",
+    });
+    expect(parseOpenLink("?org=o&to=/app/painel&acao=apagar")).toEqual({ org: "o", to: "/app/painel" });
+  });
+  it("withOpenAction põe acao na query do destino", () => {
+    expect(withOpenAction("/app/repasses?handoff=h1", "assumir")).toBe("/app/repasses?handoff=h1&acao=assumir");
+    expect(withOpenAction("/app/repasses", undefined)).toBe("/app/repasses");
   });
 });

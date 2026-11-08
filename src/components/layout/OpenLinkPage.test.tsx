@@ -41,6 +41,13 @@ describe("/app/abrir", () => {
     expect(router.state.historyAction).toBe("REPLACE");
   });
 
+  it("acao=assumir é repassada ao destino (a tela confirma)", async () => {
+    const search = link("o1", "/app/repasses?handoff=h1") + "&acao=assumir";
+    const { router } = setup(search, "o1");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/app/repasses"));
+    expect(router.state.location.search).toBe("?handoff=h1&acao=assumir");
+  });
+
   it("outra org: troca de org primeiro e só navega depois de ela estar ativa", async () => {
     const select = vi.fn();
     const { router } = setup(link("o2", "/app/entrada?conversation=c1"), "o1", select);

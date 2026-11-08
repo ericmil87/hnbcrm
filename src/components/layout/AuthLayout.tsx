@@ -7,7 +7,7 @@ import {
   useNavigate,
   useNavigationType,
 } from "react-router";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -23,6 +23,7 @@ import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import { clearStoredDrafts } from "@/lib/pwa/composerDraft";
+import { teardownPushOnLogout } from "@/lib/push/subscription";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -110,6 +111,7 @@ function shouldShowWizard(progress: unknown, memberRole: string | undefined): bo
 
 function AuthLayoutContent() {
   const { isAuthenticated, isLoading } = useConvexAuth();
+  const convex = useConvex();
   const navigate = useNavigate();
   const location = useLocation();
   const [selectedOrgId, setSelectedOrgIdState] =
@@ -231,6 +233,8 @@ function AuthLayoutContent() {
       clearStoredTheme();
       clearStoredCopilotThreads();
       clearStoredDrafts();
+      // A assinatura de push NÃO é cancelada aqui (um "não autenticado" momentâneo, offline, não pode
+      // desligar os avisos); o re-sync da próxima pessoa logada detecta o dono diferente e a limpa.
     }
   }, [isLoading, isAuthenticated]);
   const mustChangePassword = useQuery(
@@ -332,8 +336,16 @@ function AuthLayoutContent() {
     // Toasts da sessão (ex.: "você foi adicionado…", com botão de trocar de
     // org) não podem sobrar para o próximo usuário deste navegador.
     toast.dismiss();
-    void signOut().finally(() => toast.dismiss());
-  }, [signOut]);
+    // Avisos no aparelho: desvincula o endpoint (ainda autenticado) e cancela a assinatura ANTES de
+    // encerrar a sessão, para a próxima pessoa neste navegador não receber os avisos da anterior.
+    // Melhor esforço, com prazo curto.
+    void teardownPushOnLogout({
+      unsubscribe: (args) => convex.mutation(api.push.unsubscribe, { ...args, organizationId: args.organizationId as Id<"organizations"> }),
+      extraOrgIds: activeOrgId ? [activeOrgId] : [],
+    })
+      .then(() => signOut())
+      .finally(() => toast.dismiss());
+  }, [signOut, convex, activeOrgId]);
 
   const handleOrgCreated = useCallback((orgId: Id<"organizations">) => {
     createdOrgIdsRef.current.add(orgId);

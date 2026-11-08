@@ -7,6 +7,8 @@ import { useNow } from "@/hooks/useNow";
 import { PUSH_ENABLED } from "@/lib/featureFlags";
 import { deviceTimeZone, pauseArgs, pushSupported } from "@/lib/notificationPrefsUi";
 import { TelegramCard } from "./TelegramCard";
+import { PushActivationCard } from "./PushActivationCard";
+import { MyDevicesList } from "./MyDevicesList";
 import { NotificationPreferencesView } from "./NotificationPreferencesView";
 
 interface NotificationsSectionProps {
@@ -17,6 +19,7 @@ interface NotificationsSectionProps {
 export function NotificationsSection({ organizationId }: NotificationsSectionProps) {
   const prefs = useQuery(api.notificationPreferences.getMyEffectivePreferences, { organizationId });
   const telegram = useQuery(api.telegram.getMyLink, { organizationId });
+  const vapidKey = useQuery(api.push.getVapidPublicKey, {});
   const { can } = usePermissions(organizationId);
   const now = useNow();
 
@@ -39,17 +42,20 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
   }
 
   const telegramLinked = telegram?.link?.status === "active";
+  // Coluna Push e prévia só quando o aparelho suporta E o deployment tem chave VAPID.
+  const pushAvailable = PUSH_ENABLED && typeof vapidKey === "string" && pushSupported();
 
   return (
     <div className="space-y-6">
+      <PushActivationCard organizationId={organizationId} />
       <TelegramCard organizationId={organizationId} />
       <NotificationPreferencesView
         prefs={prefs}
         now={now}
         canManageOrg={can("settings", "manage")}
         telegramLinked={telegramLinked}
-        pushAvailable={PUSH_ENABLED && pushSupported()}
-        previewEnabled={PUSH_ENABLED}
+        pushAvailable={pushAvailable}
+        previewEnabled={pushAvailable}
         deviceTimeZone={deviceTimeZone()}
         onPreset={(preset) => setPreset({ organizationId, preset })}
         onChannel={(channel, flag, enabled) => setChannelPref({ organizationId, channel, flag, enabled })}
@@ -61,6 +67,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         onApplyAll={() => applyToAllMyOrgs({ sourceOrganizationId: organizationId })}
         onOrgDefaults={(input) => setNotificationDefaults({ organizationId, ...input })}
       />
+      <MyDevicesList organizationId={organizationId} />
     </div>
   );
 }

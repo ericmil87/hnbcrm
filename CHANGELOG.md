@@ -4,6 +4,37 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Avisos no aparelho (push): ativar, aparelhos e convite
+
+- Em Configurações › Notificações (e em Este aparelho) há o cartão **Receber avisos neste aparelho**: toque em **Ativar avisos** e o navegador pede a permissão (só depois do seu toque). Ligado, mostra "Avisos ligados neste aparelho" com **Desligar**. Se estiver bloqueado, explica como reabrir (Chrome no Android, Ajustes do iPhone, ícone na barra do computador). No iPhone fora da Tela de Início, aparece "Instale o app para receber avisos" com o passo a passo.
+- **Meus aparelhos** lista onde você recebe avisos (nome do aparelho, "Este aparelho", visto há quanto tempo) e deixa **Remover** com confirmação.
+- Depois do primeiro pedido de ajuda ou mensagem atribuída com o app aberto, um aviso pergunta "Quer receber isso neste aparelho mesmo com o app fechado?" com o botão **Ativar** (no iPhone fora da Tela de Início, oferece instalar o app). Nunca aparece ao abrir o app e no máximo 1 vez a cada 7 dias.
+- Ao sair da conta, o aparelho deixa de receber os avisos da sua conta (a próxima pessoa no mesmo navegador não recebe os seus).
+- Ao abrir o app, os avisos que você já leu somem do aparelho.
+- O botão **Assumir** do aviso abre o pedido de ajuda perguntando "Assumir este pedido de ajuda?" antes de assumir.
+- A coluna **Push** das preferências e as opções de prévia na tela de bloqueio aparecem quando o aparelho suporta avisos.
+
+### Avisos no aparelho (push): o app recebe e abre
+
+- O app instalado (e o navegador no computador) passa a mostrar os avisos que o servidor manda. Tocar no aviso abre direto a conversa, o pedido de ajuda ou a tarefa, na organização certa; se o app já estiver aberto, ele só troca de tela, sem recarregar.
+- No Android e no computador, o pedido de ajuda traz os botões **Assumir** e **Abrir**. "Assumir" abre a tela para você confirmar; nada é assumido sem você ver.
+- O ícone do app mostra quantos avisos estão esperando, onde o aparelho permite.
+- Se um aviso chegar ilegível, aparece "Novidade no HNBCRM" e o toque abre o Painel (o iPhone exige que todo aviso apareça).
+
+### Instalar o app e rascunho da mensagem
+
+- A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
+- Em Configurações › Conta há a nova seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
+- O app instalado respeita o notch e a barra inferior do celular.
+- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
+
+### App instalável e atualizações sem susto
+
+- O HNBCRM agora pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas.
+- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece o aviso "Nova versão disponível" com o botão **Atualizar**; depois de atualizar, o app avisa "Atualizado".
+- Se uma versão muito antiga ficar incompatível, aparece a faixa "Atualize para continuar".
+- Se uma tela não carregar por causa de uma atualização, o app recarrega sozinho uma vez.
+
 ### Avisos no aparelho (push) e e-mail como reserva (backend)
 
 - O servidor já sabe mandar avisos para o celular e o computador (push), para quem ativar neste aparelho (a tela de ativar chega na próxima etapa). Vão por push só os avisos que pedem ação sua: pedido de ajuda, mensagem nova numa conversa sua (um aviso por leva de mensagens, não um por mensagem), conversa transferida para você, menção, resposta sugerida da IA, tarefa atribuída, vencendo ou atrasada, follow-up que voltou para a equipe e canal desconectado.

@@ -32,12 +32,23 @@ export function isSafeAppPath(to: string | null | undefined): to is string {
   return safeAppTarget(to) !== null;
 }
 
-export function parseOpenLink(search: string): { org: string; to: string } | null {
+/** Ação pedida por um botão do push (`&acao=assumir`): a tela do destino confirma antes de agir. */
+export type OpenLinkAction = "assumir";
+
+export function parseOpenLink(search: string): { org: string; to: string; acao?: OpenLinkAction } | null {
   const params = new URLSearchParams(search);
   const org = params.get("org");
   const to = safeAppTarget(params.get("to"));
   if (!org || !to) return null;
-  return { org, to };
+  return params.get("acao") === "assumir" ? { org, to, acao: "assumir" } : { org, to };
+}
+
+/** `to` + `acao=` na query do destino (a tela de destino lê `?acao=`). */
+export function withOpenAction(to: string, acao: OpenLinkAction | undefined): string {
+  if (!acao) return to;
+  const u = new URL(to, "https://app.invalid");
+  u.searchParams.set("acao", acao);
+  return u.pathname + u.search + u.hash;
 }
 
 export function buildOpenLink(org: string, to: string): string {
