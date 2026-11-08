@@ -7,45 +7,66 @@ import { api } from "../../../convex/_generated/api";
 import { Button } from "@/components/ui/Button";
 import { APP_BUILD } from "@/lib/pwa/appBuild";
 import { isBelowMinimum } from "@/lib/pwa/buildVersion";
-import { isAnyComposerDirty } from "@/lib/pwa/composerDirty";
+import { hasUnsavedInput, installTypingListener, resetTypedSignal } from "@/lib/pwa/composerDirty";
+import { claimMinReload } from "@/lib/pwa/minReload";
+import { checkForUpdate, registerAppServiceWorker } from "@/lib/pwa/register";
 import { isSafeMomentToReload } from "@/lib/pwa/safeMoment";
 import { applyWaitingUpdate, getUpdateState, subscribeUpdateState } from "@/lib/pwa/updateStore";
 import { consumeUpdatedFlag, markUpdatedReload } from "@/lib/pwa/updatedFlag";
 
 const TOAST_ID = "pwa-update";
 
+function sessionStore(): Storage | null {
+  try {
+    return window.sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Applies a new app version without friction: silently when nothing can be lost (page hidden or a route
- * change, and no composer with text), otherwise a persistent toast with "Atualizar". Below the minimum
- * build (MIN_CLIENT_BUILD) shows a bar and reloads at the next safe moment.
+ * Lives inside /app (AuthLayout) and owns the service worker lifecycle: registers it (once), applies a new
+ * version silently when nothing can be lost (page hidden or a route change, with no typing since the last
+ * navigation and no draft), otherwise a persistent toast with "Atualizar". Below the minimum build
+ * (MIN_CLIENT_BUILD) it also shows a bar. MIN_CLIENT_BUILD must only point at an already published version.
  */
 export function PwaUpdateManager() {
   const { waiting } = useSyncExternalStore(subscribeUpdateState, getUpdateState);
   const minBuild = useQuery(api.appVersion.getMinClientBuild, {});
   const belowMin = isBelowMinimum(APP_BUILD, minBuild);
   const needsUpdate = waiting || belowMin;
-  const location = useLocation();
-  const firstPath = useRef(location.pathname);
+  const { pathname } = useLocation();
+  const lastPath = useRef(pathname);
 
-  const applyNow = useCallback(() => {
-    toast.dismiss(TOAST_ID);
-    if (!applyWaitingUpdate()) {
-      markUpdatedReload();
-      window.location.reload();
-    }
+  useEffect(() => {
+    registerAppServiceWorker();
+    return installTypingListener();
   }, []);
 
-  // "Atualizado" after an update reload.
+  // "Atualizado" after an update reload that really changed the build.
   useEffect(() => {
     if (consumeUpdatedFlag()) toast("Atualizado");
   }, []);
+
+  const applyNow = useCallback(() => {
+    toast.dismiss(TOAST_ID);
+    if (applyWaitingUpdate()) return;
+    // No new worker is waiting. Below the minimum: look for one, and reload plainly at most once per value.
+    if (belowMin && minBuild) {
+      void checkForUpdate();
+      if (claimMinReload(minBuild, sessionStore())) {
+        markUpdatedReload();
+        window.location.reload();
+      }
+    }
+  }, [belowMin, minBuild]);
 
   const trySilent = useCallback(
     (routeChanged: boolean) => {
       const safe = isSafeMomentToReload({
         documentHidden: document.visibilityState === "hidden",
         routeChanged,
-        composerDirty: isAnyComposerDirty(),
+        composerDirty: hasUnsavedInput(),
       });
       if (safe) applyNow();
       return safe;
@@ -53,14 +74,22 @@ export function PwaUpdateManager() {
     [applyNow],
   );
 
-  // Update available: announce once, apply when the user hides the app.
+  // Below the minimum with no worker waiting: ask for one right away.
+  useEffect(() => {
+    if (belowMin && !waiting) void checkForUpdate();
+  }, [belowMin, waiting]);
+
+  // Update available: announce, and apply when the user hides the app.
   useEffect(() => {
     if (!needsUpdate) return;
-    if (!belowMin && !trySilent(false)) {
+    if (!trySilent(false) && waiting) {
       toast("Nova versão disponível", {
         id: TOAST_ID,
         duration: Infinity,
+        position: "top-center",
+        closeButton: true,
         action: { label: "Atualizar", onClick: applyNow },
+        actionButtonStyle: { minHeight: 44, minWidth: 44, paddingInline: 16 },
       });
     }
     const onVisibility = () => {
@@ -68,15 +97,16 @@ export function PwaUpdateManager() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [needsUpdate, belowMin, trySilent, applyNow]);
+  }, [needsUpdate, waiting, trySilent, applyNow]);
 
-  // Route change = safe moment (unless a composer holds text).
+  // Route change = safe moment. The ref follows EVERY pathname change (update pending or not): the update
+  // arriving later must not count as a navigation. Leaving a screen also drops the "typed" mark.
   useEffect(() => {
-    if (!needsUpdate) return;
-    if (location.pathname === firstPath.current) return;
-    firstPath.current = location.pathname;
-    trySilent(true);
-  }, [location.pathname, needsUpdate, trySilent]);
+    if (pathname === lastPath.current) return;
+    lastPath.current = pathname;
+    resetTypedSignal();
+    if (needsUpdate) trySilent(true);
+  }, [pathname, needsUpdate, trySilent]);
 
   if (!belowMin) return null;
   return (

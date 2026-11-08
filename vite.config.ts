@@ -15,6 +15,7 @@ const APP_BUILD = makeBuildId({ version: pkg.version, sha: process.env.VERCEL_GI
 export default defineConfig(({ mode }) => ({
   define: {
     __APP_BUILD__: JSON.stringify(APP_BUILD),
+    __PWA_KILL_SWITCH__: JSON.stringify(process.env.PWA_KILL_SWITCH === "1"),
   },
   plugins: [
     react(),

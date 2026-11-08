@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { compareBuild, isBelowMinimum, makeBuildId } from "./buildVersion";
 import { isSafeMomentToReload } from "./safeMoment";
-import { handlePreloadError, PRELOAD_GUARD_TTL_MS, PRELOAD_RELOAD_KEY } from "./preloadError";
+import { handlePreloadError, PRELOAD_RELOAD_KEY } from "./preloadError";
 import { isShellNavigation } from "./swRoutes";
 import { isAnyComposerDirty, setComposerDirty } from "./composerDirty";
-import { consumeUpdatedFlag, markUpdatedReload } from "./updatedFlag";
+import { claimMinReload, MIN_RELOAD_KEY } from "./minReload";
+import { consumeUpdatedFlag, markUpdatedReload, UPDATED_FLAG_KEY } from "./updatedFlag";
 
 function memoryStorage() {
   const m = new Map<string, string>();
@@ -64,44 +65,102 @@ describe("composerDirty registry", () => {
 });
 
 describe("handlePreloadError", () => {
-  it("reloads once and does not loop", () => {
+  const ev = () => ({ preventDefault: vi.fn() });
+
+  it("applies a waiting worker instead of a plain reload", () => {
+    const reload = vi.fn();
+    const applyWaiting = vi.fn(() => true);
+    expect(handlePreloadError(ev(), { storage: memoryStorage(), reload, build: "1", applyWaiting })).toBe(true);
+    expect(applyWaiting).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
+  });
+  it("looks for an update when nothing waits, applies it, else reloads", async () => {
+    const reload = vi.fn();
+    const applyWaiting = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
+    const checkUpdate = vi.fn(async () => true);
+    handlePreloadError(ev(), { storage: memoryStorage(), reload, build: "1", applyWaiting, checkUpdate });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(checkUpdate).toHaveBeenCalled();
+    expect(applyWaiting).toHaveBeenCalledTimes(2);
+    expect(reload).not.toHaveBeenCalled();
+
+    const reload2 = vi.fn();
+    handlePreloadError(ev(), {
+      storage: memoryStorage(),
+      reload: reload2,
+      build: "1",
+      applyWaiting: () => false,
+      checkUpdate: async () => false,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(reload2).toHaveBeenCalledTimes(1);
+  });
+  it("reloads when the update check fails", async () => {
+    const reload = vi.fn();
+    handlePreloadError(ev(), {
+      storage: memoryStorage(),
+      reload,
+      build: "1",
+      applyWaiting: () => false,
+      checkUpdate: () => Promise.reject(new Error("offline")),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+  it("is guarded once per build (no loop), but a newer build may recover again", () => {
     const storage = memoryStorage();
     const reload = vi.fn();
-    let t = 1_000_000;
-    const deps = { storage, reload, now: () => t };
-    const ev = { preventDefault: vi.fn() };
-    expect(handlePreloadError(ev, deps)).toBe(true);
+    expect(handlePreloadError(ev(), { storage, reload, build: "A" })).toBe(true);
+    expect(handlePreloadError(ev(), { storage, reload, build: "A" })).toBe(false);
     expect(reload).toHaveBeenCalledTimes(1);
-    expect(ev.preventDefault).toHaveBeenCalled();
-    t += 1000; // page reloaded and failed again right away
-    expect(handlePreloadError(ev, deps)).toBe(false);
-    expect(reload).toHaveBeenCalledTimes(1);
-    t += PRELOAD_GUARD_TTL_MS; // much later (another deploy): allowed again
-    expect(handlePreloadError(ev, deps)).toBe(true);
-    expect(storage.getItem(PRELOAD_RELOAD_KEY)).not.toBeNull();
+    expect(handlePreloadError(ev(), { storage, reload, build: "B" })).toBe(true);
+    expect(storage.getItem(PRELOAD_RELOAD_KEY)).toBe("B");
   });
   it("does not reload when storage is missing or throws", () => {
     const reload = vi.fn();
-    const ev = { preventDefault: vi.fn() };
-    expect(handlePreloadError(ev, { storage: null, reload, now: () => 1 })).toBe(false);
+    expect(handlePreloadError(ev(), { storage: null, reload, build: "1" })).toBe(false);
     const broken = {
       getItem: () => {
         throw new Error("denied");
       },
       setItem: () => {},
     };
-    expect(handlePreloadError(ev, { storage: broken, reload, now: () => 1 })).toBe(false);
+    expect(handlePreloadError(ev(), { storage: broken, reload, build: "1" })).toBe(false);
     expect(reload).not.toHaveBeenCalled();
   });
 });
 
 describe("updated flag", () => {
-  it("is consumed once", () => {
+  it("shows only when the build really changed, once", () => {
     const s = memoryStorage();
-    expect(consumeUpdatedFlag(s)).toBe(false);
-    markUpdatedReload(s);
-    expect(consumeUpdatedFlag(s)).toBe(true);
-    expect(consumeUpdatedFlag(s)).toBe(false);
+    expect(consumeUpdatedFlag(s, "B")).toBe(false);
+    markUpdatedReload(s, "A");
+    expect(consumeUpdatedFlag(s, "B")).toBe(true);
+    expect(consumeUpdatedFlag(s, "B")).toBe(false);
+    markUpdatedReload(s, "B");
+    expect(consumeUpdatedFlag(s, "B")).toBe(false);
+    expect(s.getItem(UPDATED_FLAG_KEY)).toBeNull();
+  });
+});
+
+describe("claimMinReload", () => {
+  it("allows one plain reload per min value", () => {
+    const s = memoryStorage();
+    expect(claimMinReload("0.99.0", s)).toBe(true);
+    expect(claimMinReload("0.99.0", s)).toBe(false);
+    expect(claimMinReload("1.0.0", s)).toBe(true);
+    expect(s.getItem(MIN_RELOAD_KEY)).toBe("1.0.0");
+  });
+  it("never reloads without usable storage", () => {
+    expect(claimMinReload("1", null)).toBe(false);
+    const broken = {
+      getItem: () => {
+        throw new Error("x");
+      },
+      setItem: () => {},
+    };
+    expect(claimMinReload("1", broken)).toBe(false);
   });
 });
 

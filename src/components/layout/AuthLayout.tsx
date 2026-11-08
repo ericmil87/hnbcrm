@@ -102,7 +102,7 @@ function shouldShowWizard(progress: unknown, memberRole: string | undefined): bo
   );
 }
 
-export function AuthLayout() {
+function AuthLayoutContent() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -420,7 +420,6 @@ export function AuthLayout() {
   return (
     <>
       <ScrollRestoration />
-      <PwaUpdateManager />
       {/* key: trocar de org remonta a área autenticada inteira — nenhum estado
           local (formulário, seleção, painel aberto) atravessa de uma org para outra */}
       <AppShell
@@ -548,5 +547,15 @@ function WelcomeScreen({
         </Modal>
       </div>
     </div>
+  );
+}
+
+/** Everything under /app (login redirect, org gate, password change, wizard, shell): one update manager covers all states. */
+export function AuthLayout() {
+  return (
+    <>
+      <PwaUpdateManager />
+      <AuthLayoutContent />
+    </>
   );
 }

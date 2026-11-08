@@ -11,7 +11,6 @@ import { RouteErrorPage } from "./pages/RouteErrorPage";
 import { Spinner } from "./components/ui/Spinner";
 import { ThemedToaster } from "./components/ui/ThemedToaster";
 import { installPreloadErrorHandler } from "./lib/pwa/preloadError";
-import { registerAppServiceWorker } from "./lib/pwa/register";
 
 // Páginas públicas pesadas (ex.: DevelopersPage puxa o apiRegistry) ficam fora do bundle inicial.
 const LandingPage = lazy(() => import("./components/LandingPage").then(m => ({ default: m.LandingPage })));
@@ -55,7 +54,6 @@ function LazyRoute({ Component }: { Component: React.LazyExoticComponent<() => R
 }
 
 installPreloadErrorHandler();
-registerAppServiceWorker();
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
 

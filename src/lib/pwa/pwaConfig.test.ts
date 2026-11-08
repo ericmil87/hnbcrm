@@ -93,14 +93,24 @@ describe("service worker source", () => {
     expect(sw.match(/registerRoute\(/g)).toHaveLength(1);
     expect(sw).toContain("NavigationRoute");
   });
-  it("only skips waiting on request from the page", () => {
+  it("only skips waiting inside the message listener", () => {
     expect(sw).toContain("SKIP_WAITING");
-    expect(sw).not.toMatch(/clientsClaim|self\.skipWaiting\(\);\s*\n\s*\n?\s*(precache|cleanup)/);
+    expect(sw).not.toMatch(/clientsClaim/);
+    expect(sw.match(/skipWaiting\(/g)).toHaveLength(1);
+    const listener = sw.slice(sw.indexOf('addEventListener("message"'));
+    expect(listener).toContain("skipWaiting(");
+    expect(sw.indexOf("skipWaiting(")).toBeGreaterThan(sw.indexOf('addEventListener("message"'));
+  });
+  it("registers the worker only from inside /app (never at module load of main.tsx)", () => {
+    expect(read("src/main.tsx")).not.toContain("registerAppServiceWorker");
+    expect(read("src/components/pwa/PwaUpdateManager.tsx")).toContain("registerAppServiceWorker()");
+    expect(read("src/components/layout/AuthLayout.tsx")).toContain("<PwaUpdateManager />");
   });
   it("vite config ignores compressed files, stats and the xlsx chunk and registers only prod", () => {
     const cfg = read("vite.config.ts");
     for (const g of ['"**/*.gz"', '"**/*.br"', '"stats.html"', '"**/xlsx-vendor*"']) expect(cfg).toContain(g);
     expect(cfg).toContain("__APP_BUILD__");
+    expect(cfg).toContain("__PWA_KILL_SWITCH__");
     expect(read("src/lib/pwa/register.ts")).toContain("import.meta.env.PROD");
   });
 });
