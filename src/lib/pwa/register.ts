@@ -8,6 +8,8 @@ export const UPDATE_CHECK_INTERVAL_MS = 30 * 60 * 1000;
 /** If the new worker does not take control within this time after SKIP_WAITING, reload anyway. */
 export const SKIP_WAITING_FALLBACK_MS = 3000;
 const INSTALL_WAIT_MS = 8000;
+/** Extra time (after the fallback) for a worker that is still activating. */
+export const ACTIVATION_WAIT_MS = 10_000;
 
 let started = false;
 let registration: ServiceWorkerRegistration | undefined;
@@ -52,11 +54,24 @@ export function registerAppServiceWorker(): void {
       reloadForUpdate();
     });
     wb.messageSkipWaiting();
-    // Multi-tab: another tab may already have activated the worker (no controllerchange will come here).
+    // Multi-tab or slow activation: after the grace time, if the same worker is still not active, wait for it
+    // (bounded) before reloading, so the reload does not land on the old shell.
+    const pending = registration.waiting;
     window.setTimeout(() => {
       if (reloading) return;
-      reloading = true;
-      reloadForUpdate();
+      const finish = () => {
+        if (reloading) return;
+        reloading = true;
+        reloadForUpdate();
+      };
+      if (!pending || pending.state === "activated" || pending.state === "redundant") return finish();
+      const timer = window.setTimeout(finish, ACTIVATION_WAIT_MS);
+      pending.addEventListener("statechange", () => {
+        if (pending.state === "activated" || pending.state === "redundant") {
+          window.clearTimeout(timer);
+          finish();
+        }
+      });
     }, SKIP_WAITING_FALLBACK_MS);
   };
 

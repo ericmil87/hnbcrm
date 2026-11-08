@@ -53,11 +53,13 @@ export function PwaUpdateManager() {
     if (applyWaitingUpdate()) return;
     // No new worker is waiting. Below the minimum: look for one, and reload plainly at most once per value.
     if (belowMin && minBuild) {
-      void checkForUpdate();
-      if (claimMinReload(minBuild, sessionStore())) {
-        markUpdatedReload();
-        window.location.reload();
-      }
+      void checkForUpdate().then((found) => {
+        if (found && applyWaitingUpdate()) return;
+        if (claimMinReload(minBuild, sessionStore())) {
+          markUpdatedReload();
+          window.location.reload();
+        }
+      });
     }
   }, [belowMin, minBuild]);
 
@@ -82,7 +84,8 @@ export function PwaUpdateManager() {
   // Update available: announce, and apply when the user hides the app.
   useEffect(() => {
     if (!needsUpdate) return;
-    if (!trySilent(false) && waiting) {
+    // Below the minimum the top bar already offers the action: no second prompt.
+    if (!trySilent(false) && waiting && !belowMin) {
       toast("Nova versão disponível", {
         id: TOAST_ID,
         duration: Infinity,
@@ -97,7 +100,7 @@ export function PwaUpdateManager() {
     };
     document.addEventListener("visibilitychange", onVisibility);
     return () => document.removeEventListener("visibilitychange", onVisibility);
-  }, [needsUpdate, waiting, trySilent, applyNow]);
+  }, [needsUpdate, waiting, belowMin, trySilent, applyNow]);
 
   // Route change = safe moment. The ref follows EVERY pathname change (update pending or not): the update
   // arriving later must not count as a navigation. Leaving a screen also drops the "typed" mark.
