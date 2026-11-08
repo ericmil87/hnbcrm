@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { assignableMembers } from "@/lib/teamMembers";
+import { setComposerDirty } from "@/lib/pwa/composerDirty";
 import { extractMentionIds } from "@/lib/mentions";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -345,6 +346,14 @@ export function Composer({
       toast.error("Não foi possível cancelar o agendamento.");
     }
   };
+
+  // Pending app updates never reload under unsent content (src/lib/pwa/composerDirty.ts).
+  const dirtyId = useId();
+  const hasUnsent = text.trim() !== "" || stagedFiles.length > 0;
+  useEffect(() => {
+    setComposerDirty(dirtyId, hasUnsent);
+    return () => setComposerDirty(dirtyId, false);
+  }, [dirtyId, hasUnsent]);
 
   if (!canReply) {
     return (

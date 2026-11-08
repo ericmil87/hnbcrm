@@ -24,6 +24,7 @@ import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
+import { PwaUpdateManager } from "../pwa/PwaUpdateManager";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
 import {
   CreateOrganizationForm,
@@ -101,7 +102,7 @@ function shouldShowWizard(progress: unknown, memberRole: string | undefined): bo
   );
 }
 
-export function AuthLayout() {
+function AuthLayoutContent() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -546,5 +547,15 @@ function WelcomeScreen({
         </Modal>
       </div>
     </div>
+  );
+}
+
+/** Everything under /app (login redirect, org gate, password change, wizard, shell): one update manager covers all states. */
+export function AuthLayout() {
+  return (
+    <>
+      <PwaUpdateManager />
+      <AuthLayoutContent />
+    </>
   );
 }

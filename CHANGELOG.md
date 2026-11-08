@@ -4,6 +4,13 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### App instalável e atualizações sem susto
+
+- O HNBCRM agora pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas.
+- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece o aviso "Nova versão disponível" com o botão **Atualizar**; depois de atualizar, o app avisa "Atualizado".
+- Se uma versão muito antiga ficar incompatível, aparece a faixa "Atualize para continuar".
+- Se uma tela não carregar por causa de uma atualização, o app recarrega sozinho uma vez.
+
 ### Segurança
 
 - Os e-mails automáticos agora escapam o texto vindo de clientes, formulários e equipe (título do lead, prévia da mensagem, comentários, nomes), e os links dos botões só aceitam https ou caminho do app.

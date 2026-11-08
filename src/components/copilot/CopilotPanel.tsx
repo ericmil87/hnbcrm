@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import { setComposerDirty } from "@/lib/pwa/composerDirty";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
@@ -90,6 +91,13 @@ export function CopilotPanel(props: CopilotPanelProps) {
     (cachedMessages && cachedMessages.threadId === threadId ? cachedMessages.messages : undefined);
 
   const [input, setInput] = useState("");
+  // The panel stays mounted across routes: unsent text blocks a silent app update (lib/pwa/composerDirty.ts).
+  const dirtyId = useId();
+  const hasUnsent = input.trim() !== "";
+  useEffect(() => {
+    setComposerDirty(dirtyId, hasUnsent);
+    return () => setComposerDirty(dirtyId, false);
+  }, [dirtyId, hasUnsent]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
