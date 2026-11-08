@@ -465,6 +465,11 @@ export const setChannelPref = mutation({
       args.enabled &&
       !ACTIONABLE_FLAGS.includes(args.flag) &&
       (existing as Record<string, unknown> | null)?.[args.flag] === false;
+    // Religar o flag antigo (sino) por Telegram/push não pode trazer o e-mail do tipo junto:
+    // sem escolha explícita de e-mail, ele fica desligado (como o flag antigo `false` o deixava).
+    if (reviveBell && args.channel !== "email" && channels.email?.[args.flag] === undefined) {
+      channels.email = { ...(channels.email ?? {}), [args.flag]: false };
+    }
     await patchMemberPrefs(
       ctx,
       args.organizationId,

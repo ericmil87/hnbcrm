@@ -504,6 +504,33 @@ describe("revisão do C1", () => {
     expect(await telegramJobs()).toHaveLength(1);
   });
 
+  test("religar o sino por Telegram não traz o e-mail do tipo junto; e-mail explícito é preservado", async () => {
+    const org = await seedOrg("sino-email");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("notificationPreferences", {
+        organizationId: org.organizationId, teamMemberId: org.admin.memberId, invite: true, handoffRequested: true,
+        handoffResolved: true, taskOverdue: true, taskAssigned: true, leadAssigned: true, newMessage: true,
+        dailyDigest: true, campaignCompleted: false, campaignPaused: false, createdAt: NOW, updatedAt: NOW,
+      });
+    });
+    const me = as(org.admin.userId);
+    await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "telegram", flag: "campaignCompleted", enabled: true });
+    let row = await prefsOf(org, org.admin);
+    expect(row?.campaignCompleted).toBe(true);
+    expect(row?.channels?.telegram?.campaignCompleted).toBe(true);
+    expect(row?.channels?.email?.campaignCompleted).toBe(false);
+    const eff = await me.query(api.notificationPreferences.getMyEffectivePreferences, { organizationId: org.organizationId });
+    expect(eff.channels.email.campaignCompleted).toBe(false);
+    expect(eff.channels.telegram.campaignCompleted).toBe(true);
+    expect(eff.channels.bell.campaignCompleted).toBe(true);
+    // e-mail já escolhido como ligado: o push não o sobrescreve
+    await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "email", flag: "campaignPaused", enabled: true });
+    await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "push", flag: "campaignPaused", enabled: true });
+    row = await prefsOf(org, org.admin);
+    expect(row?.channels?.email?.campaignPaused).toBe(true);
+    expect(row?.campaignPaused).toBe(true);
+  });
+
   test("setQuietHours: início igual ao fim é recusado", async () => {
     const org = await seedOrg("igual");
     await expect(
