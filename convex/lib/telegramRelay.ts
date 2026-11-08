@@ -4,8 +4,9 @@
  *
  * - `maybeBufferInboundForRelay`: called from `conversations.internalReceiveMessage`
  *   (single 1:1 inbound port) right after the message insert. When a human is
- *   in command of the conversation and has an active link with relay on, the
- *   message joins a 20 s buffer that becomes ONE `new_message` notification.
+ *   in command of the conversation, the message joins a 20 s buffer PER MEMBER
+ *   (B2: with or without Telegram) that becomes ONE `new_message` notification
+ *   (bell, grouped per conversation; Telegram consumes it through the fan-out).
  * - `maybeScheduleAiReplyRelay`: called from `attendant.internalCommitAiReply`
  *   right after the AI reply is committed. Schedules the relay ONLY for the
  *   reply to an instruction/regeneration asked from the bot (queue item
@@ -25,7 +26,6 @@
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
-import { modulesOf } from "./orgModules";
 import { orgAiActive } from "./agentSecurity";
 import { isMembershipRevoked } from "./auth";
 import { appUrl } from "./appUrl";
@@ -44,9 +44,12 @@ async function liveHuman(ctx: { db: MutationCtx["db"] }, id: Id<"teamMembers"> |
 }
 
 /**
- * Who receives the relay, or null when the AI is (or may be) in command:
- * - lead assigned to a live human → that human (the attendant's eligibility
- *   condition 6 already keeps the AI out);
+ * Who receives the relay, or null when the AI is (or may be) in command.
+ * "O aviso segue quem atende a conversa" (review B2, D20 amended):
+ * - lead assigned to a live human (human in command: the attendant's
+ *   eligibility condition 6 keeps the AI out) → the conversation's live human
+ *   `assignedTo` when there is one (a transfer moves the alert), else the lead
+ *   owner;
  * - otherwise the conversation's human `assignedTo` (Central), but only when
  *   the AI is out of command: conversation paused, or no attendant at all for
  *   the org (AI off / attendant off).
@@ -58,17 +61,26 @@ export async function resolveRelayRecipient(
   now: number,
 ): Promise<Doc<"teamMembers"> | null> {
   if (conversation.kind === "group") return null;
-  const leadOwner = await liveHuman(ctx, lead?.assignedTo, conversation.organizationId);
-  if (leadOwner) return leadOwner;
-  const convOwner = await liveHuman(ctx, conversation.assignedTo, conversation.organizationId);
+  const orgId = conversation.organizationId;
+  const convOwner = await liveHuman(ctx, conversation.assignedTo, orgId);
+  const leadOwner =
+    lead?.assignedTo && lead.assignedTo === conversation.assignedTo ? convOwner : await liveHuman(ctx, lead?.assignedTo, orgId);
+  if (leadOwner) return convOwner ?? leadOwner;
   if (!convOwner) return null;
   const paused = conversation.aiPausedUntil !== undefined && conversation.aiPausedUntil > now;
   if (paused) return convOwner;
-  const org = await ctx.db.get(conversation.organizationId);
+  const org = await ctx.db.get(orgId);
   const noAttendant = !orgAiActive(org) || org?.settings.aiConfig?.attendantEnabled === false;
   return noAttendant ? convOwner : null;
 }
 
+/**
+ * B2: buffer POR MEMBRO (o destinatário de `resolveRelayRecipient`), com ou sem
+ * Telegram. O flush gera UM `new_message` (sino, agrupado por conversa) e o
+ * Telegram consome esse mesmo aviso pelo fan-out de `createNotification`
+ * (vínculo, `/pausar` e `relayAssignedConversations` checados lá, uma vez por
+ * janela — não por mensagem).
+ */
 export async function maybeBufferInboundForRelay(
   ctx: MutationCtx,
   conversation: Doc<"conversations">,
@@ -79,19 +91,32 @@ export async function maybeBufferInboundForRelay(
   if (conversation.kind === "group") return;
   const recipient = await resolveRelayRecipient(ctx, conversation, lead, now);
   if (!recipient) return;
-  const link = await ctx.db
-    .query("telegramLinks")
-    .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", recipient._id).eq("status", "active"))
-    .first();
-  if (!link || link.organizationId !== conversation.organizationId) return;
-  if (!link.prefs.relayAssignedConversations) return;
-  if (link.mutedUntil !== undefined && link.mutedUntil > now) return;
-  if (!modulesOf(await ctx.db.get(conversation.organizationId)).telegram) return;
 
-  const buffer = await ctx.db
+  // One indexed read over the conversation's open buffers (usually 0–1): the
+  // member's own, or a pre-B2 one (`linkId`, no `memberId`) of the same member,
+  // so the deploy window does not open a 2nd buffer (and a 2nd Telegram send).
+  const open = await ctx.db
     .query("telegramRelayBuffer")
-    .withIndex("by_conversation_and_link", (q) => q.eq("conversationId", conversation._id).eq("linkId", link._id))
-    .first();
+    .withIndex("by_conversation_and_member", (q) => q.eq("conversationId", conversation._id))
+    .take(10);
+  let buffer = open.find((b) => b.memberId === recipient._id) ?? null;
+  if (!buffer) {
+    for (const b of open) {
+      if (b.memberId || !b.linkId) continue;
+      if ((await ctx.db.get(b.linkId))?.teamMemberId === recipient._id) {
+        buffer = b;
+        break;
+      }
+    }
+  }
+  // A buffer whose flush never ran (lost job) would swallow messages until
+  // retention: past its window + margin it is ADOPTED (new window + a fresh
+  // flush job). Whichever flush runs first delivers everything and deletes it;
+  // the other finds null.
+  if (buffer && buffer.flushAt + RELAY_BUFFER_MS < now) {
+    await ctx.db.patch(buffer._id, { flushAt: now + RELAY_BUFFER_MS });
+    await ctx.scheduler.runAfter(RELAY_BUFFER_MS, internal.telegram.internalFlushRelayBuffer, { bufferId: buffer._id });
+  }
   if (buffer) {
     if (buffer.messageIds.includes(messageId)) return;
     if (buffer.messageIds.length < RELAY_BUFFER_MAX_MESSAGES) {
@@ -105,7 +130,7 @@ export async function maybeBufferInboundForRelay(
   const bufferId = await ctx.db.insert("telegramRelayBuffer", {
     organizationId: conversation.organizationId,
     conversationId: conversation._id,
-    linkId: link._id,
+    memberId: recipient._id,
     messageIds: [messageId],
     flushAt: now + RELAY_BUFFER_MS,
   });

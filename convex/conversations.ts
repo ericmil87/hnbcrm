@@ -33,7 +33,8 @@ import {
   mentionsUs,
   recordParticipantFromMessage,
 } from "./lib/groupChatCore";
-import { createNotification } from "./lib/notify";
+import { coalesceKeys, createNotification, GROUP_MENTION_WINDOW_MS } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
 import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
@@ -2105,9 +2106,13 @@ export const internalReceiveMessage = internalMutation({
       );
     }
 
-    // Telegram (F1, D20): relay para quem atende com a IA fora do comando.
-    // Barato quando não se aplica (lead/conversa sem humano com vínculo ativo).
-    await maybeBufferInboundForRelay(ctx, conversation, lead, messageId, now);
+    // Sino + Telegram (D20, B2): agrupa 20 s por membro para quem atende com a
+    // IA fora do comando (com ou sem Telegram). Nunca derruba o inbound.
+    try {
+      await maybeBufferInboundForRelay(ctx, conversation, lead, messageId, now);
+    } catch (e) {
+      console.error(`[relay] buffer da mensagem nova: ${e instanceof Error ? e.name : "erro"}`);
+    }
 
     // Instagram/Messenger: primeira inbound vinda de anúncio abre a janela de
     // 7 dias (Click-to-Messenger / Click-to-Direct). WhatsApp não passa aqui.
@@ -2620,6 +2625,15 @@ export const internalReceiveGroupMessage = internalMutation({
     const config =
       args.mentions && args.mentions.length > 0 ? await ctx.db.get(args.channelConfigId) : null;
     if (mentionsUs(args.mentions, config?.bridgeLid, config?.bridgePhone) || alertKeyword) {
+      const mentionCopy = (count: number) =>
+        notificationCopy({
+          type: "group_mention",
+          groupName: group.subject,
+          senderName: args.senderName,
+          preview: args.content,
+          ...(alertKeyword ? { keyword: alertKeyword } : {}),
+          count,
+        });
       const recipients = await membersWithPermission(
         ctx,
         args.organizationId,
@@ -2631,12 +2645,18 @@ export const internalReceiveGroupMessage = internalMutation({
           organizationId: args.organizationId,
           memberId: recipient._id,
           type: "group_mention",
-          title: alertKeyword
-            ? `"${alertKeyword}" em ${group.subject}`
-            : `Mencionaram você em "${group.subject}"`,
-          body: `${args.senderName ?? "Um membro"}: ${args.content.slice(0, 120)}`,
+          ...mentionCopy(1),
           conversationId: conversation._id,
           groupChatId: group._id,
+          // B2: menções da mesma sala em 10 min (contados da primeira) viram
+          // um aviso só no sino ("3 menções…").
+          // Cada menção é um evento: vai ao Telegram mesmo agrupada no sino (review B2).
+          coalesce: {
+            key: coalesceKeys.groupMention(group._id),
+            windowMs: GROUP_MENTION_WINDOW_MS,
+            render: mentionCopy,
+            telegramOnPatch: true,
+          },
         });
       }
     }

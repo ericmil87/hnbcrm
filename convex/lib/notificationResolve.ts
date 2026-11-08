@@ -34,7 +34,7 @@ export const SCAN_MAX_PAGES = 5;
 async function scanConversationUnread(
   ctx: { db: MutationCtx["db"] },
   conversationId: Id<"conversations">,
-  opts: { match?: (n: Doc<"notifications">) => boolean; stopAtFirst?: boolean }
+  opts: { match?: (n: Doc<"notifications">) => boolean; stopAtFirst?: boolean; limit?: number }
 ): Promise<Doc<"notifications">[]> {
   // UMA leitura (o servidor só aceita uma query paginada por função; paginar
   // em laço quebraria): as mais novas primeiro, com teto.
@@ -42,7 +42,7 @@ async function scanConversationUnread(
     .query("notifications")
     .withIndex("by_conversation_and_read", (q) => q.eq("conversationId", conversationId).eq("readAt", undefined))
     .order("desc")
-    .take(SCAN_PAGE * SCAN_MAX_PAGES);
+    .take(Math.min(opts.limit ?? SCAN_PAGE * SCAN_MAX_PAGES, SCAN_PAGE * SCAN_MAX_PAGES));
   const out: Doc<"notifications">[] = [];
   for (const n of rows) {
     if (!opts.match || opts.match(n)) {
@@ -110,6 +110,8 @@ export async function resolveEntityNotifications(
     reason: string;
     /** Restringe por tipo (a leitura é por entidade; o filtro é em memória sobre ≤ RESOLVE_BATCH linhas). */
     types?: NotificationType[];
+    /** B2: teto menor de leitura no alvo conversa (caminhos que varrem várias conversas). */
+    scanLimit?: number;
   }
 ): Promise<number> {
   const db = ctx.db;
@@ -121,6 +123,7 @@ export async function resolveEntityNotifications(
     rows = await scanConversationUnread(ctx, t.conversationId, {
       match: (n) =>
         (!args.memberId || n.memberId === args.memberId) && (!args.types || args.types.includes(n.type)),
+      limit: args.scanLimit,
     });
   } else if ("handoffId" in t) {
     rows = await db
@@ -220,6 +223,50 @@ export async function markMemberNotificationsRead(
     }
     total += rows.length;
     if (rows.length < 100) break;
+  }
+  return total;
+}
+
+/**
+ * B2 (review): o dono do lead mudou → avisos de mensagem nova/resposta sugerida
+ * das conversas 1:1 do lead saem das não lidas do dono ANTERIOR. Exceção: a
+ * conversa cujo `assignedTo` próprio continua sendo ele (o aviso segue quem
+ * atende a conversa, `resolveRelayRecipient`). Teto de leitura para nunca
+ * derrubar a atribuição: até LEAD_REASSIGN_MAX_CONVERSATIONS conversas e
+ * LEAD_REASSIGN_SCAN não lidas por conversa (com o agrupamento do B2, o membro
+ * tem no máximo ~2 não lidas desses tipos por conversa).
+ */
+export const LEAD_REASSIGN_MAX_CONVERSATIONS = 5;
+export const LEAD_REASSIGN_SCAN = 200;
+
+export async function resolveLeadReassignedNotifications(
+  ctx: MutationCtx,
+  args: {
+    lead: Pick<Doc<"leads">, "_id" | "organizationId">;
+    previousOwnerId: Id<"teamMembers"> | undefined;
+    nextOwnerId: Id<"teamMembers"> | undefined;
+    resolvedByMemberId?: Id<"teamMembers">;
+  }
+): Promise<number> {
+  const prev = args.previousOwnerId;
+  if (!prev || prev === args.nextOwnerId) return 0;
+  const conversations = await ctx.db
+    .query("conversations")
+    .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.lead._id))
+    .take(LEAD_REASSIGN_MAX_CONVERSATIONS);
+  let total = 0;
+  for (const c of conversations) {
+    if (c.organizationId !== args.lead.organizationId || c.kind === "group") continue;
+    if (c.assignedTo === prev) continue;
+    total += await resolveEntityNotifications(ctx, {
+      organizationId: args.lead.organizationId,
+      target: { conversationId: c._id },
+      memberId: prev,
+      resolvedByMemberId: args.resolvedByMemberId,
+      reason: "lead_reassigned",
+      types: ["new_message", "ai_draft_pending"],
+      scanLimit: LEAD_REASSIGN_SCAN,
+    });
   }
   return total;
 }

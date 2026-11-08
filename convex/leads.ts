@@ -27,6 +27,8 @@ import {
   backfillPatchForLead,
 } from "./lib/leadStageMove";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { notifyLeadAssigned } from "./lib/notify";
+import { resolveLeadReassignedNotifications } from "./lib/notificationResolve";
 
 // Get leads for organization
 export const getLeads = query({
@@ -635,8 +637,23 @@ export const assignLead = mutation({
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
 
-    // Email notification
+    // B2 (review): o dono anterior não fica com avisos das conversas do lead.
+    await resolveLeadReassignedNotifications(ctx, {
+      lead,
+      previousOwnerId: oldAssignedTo,
+      nextOwnerId: args.assignedTo,
+      resolvedByMemberId: userMember._id,
+    });
+
+    // Sino (B2) + e-mail
     if (args.assignedTo) {
+      await notifyLeadAssigned(ctx, {
+        organizationId: lead.organizationId,
+        leadId: args.leadId,
+        leadTitle: lead.title,
+        memberId: args.assignedTo,
+        actor: userMember,
+      });
       await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
         organizationId: lead.organizationId,
         recipientMemberId: args.assignedTo,
@@ -1356,8 +1373,23 @@ export const internalAssignLead = internalMutation({
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
     });
 
-    // Email notification
+    // B2 (review): o dono anterior não fica com avisos das conversas do lead.
+    await resolveLeadReassignedNotifications(ctx, {
+      lead,
+      previousOwnerId: oldAssignedTo,
+      nextOwnerId: args.assignedTo,
+      resolvedByMemberId: teamMember._id,
+    });
+
+    // Sino (B2) + e-mail
     if (args.assignedTo) {
+      await notifyLeadAssigned(ctx, {
+        organizationId: lead.organizationId,
+        leadId: args.leadId,
+        leadTitle: lead.title,
+        memberId: args.assignedTo,
+        actor: teamMember,
+      });
       await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
         organizationId: lead.organizationId,
         recipientMemberId: args.assignedTo,

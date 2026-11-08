@@ -241,7 +241,7 @@ describe("internalHealthTick", () => {
 
     // Notificação: cópia da Página, e o status dos configs NÃO muda.
     const note = await t.run(async (ctx) => (await ctx.db.query("notifications").first())!);
-    expect(note.title).toBe("Página Página / @conta precisa ser reconectada");
+    expect(note.title).toBe("Página / @conta precisa ser reconectada");
     const configs = await t.run(async (ctx) => [await ctx.db.get(c.messengerId), await ctx.db.get(c.instagramId)]);
     expect(configs.every((cfg) => cfg?.status === "active")).toBe(true);
 

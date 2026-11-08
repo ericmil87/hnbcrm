@@ -756,7 +756,7 @@ describe("menções em comentários", () => {
     );
     expect(brunoMentions.length).toBe(1);
     expect(brunoMentions[0].taskId).toBe(taskId);
-    expect(brunoMentions[0].body).toContain("Revisar proposta");
+    expect(brunoMentions[0].title).toContain("Revisar proposta");
 
     // autor não se auto-notifica
     expect(

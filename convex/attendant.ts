@@ -16,6 +16,7 @@
  * conversa com aceitar/editar/descartar. Autopilot só via F4, com métricas.
  */
 import { resolveEntityNotifications, draftNotificationAlreadyPending } from "./lib/notificationResolve";
+import { notificationCopy } from "./lib/notificationCopy";
 import { isSupersededByResume, latestReactiveQueueItem } from "./lib/aiStateQueue";
 import { matchesHandoffKeyword } from "./lib/handoffKeywords";
 import { insertFileRow } from "./lib/storageUsage";
@@ -52,7 +53,7 @@ import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { createHandoffCore } from "./handoffs";
-import { createNotification } from "./lib/notify";
+import { coalesceKeys, createNotification } from "./lib/notify";
 import { isSticker, visionEnabledForOrg } from "./lib/mediaEnrichment";
 import { campaignContextForConversation } from "./lib/campaignContext";
 // Simulador de GRUPO (F4): o mesmo prompt que o runtime do agente de grupo usa.
@@ -3085,10 +3086,18 @@ export const internalCommitAiSuggestion = internalMutation({
             organizationId: conversation.organizationId,
             memberId: recipientId,
             type: "ai_draft_pending",
-            title: "Rascunho da IA aguardando revisão",
-            body: lead.title,
+            ...notificationCopy({ type: "ai_draft_pending", contactName: lead.title }),
             conversationId: conversation._id,
             actorId,
+            // B2: o dedupe acima decide SE avisa; o agrupamento decide inserir ×
+            // atualizar (não lida "velha" — rascunho já revisado no inbox — sobe
+            // com a contagem, e o Telegram recebe o cartão do rascunho novo).
+            coalesce: {
+              key: coalesceKeys.aiDraft(conversation._id),
+              telegramOnPatch: true,
+              // Sem contagem no texto: cada aviso é "a resposta pendente agora" (review B2).
+              render: () => notificationCopy({ type: "ai_draft_pending", contactName: lead.title }),
+            },
           });
         }
       }

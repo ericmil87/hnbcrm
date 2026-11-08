@@ -38,6 +38,7 @@ import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import { createNotification } from "./lib/notify";
+import { notificationCopy, type NotificationCopy } from "./lib/notificationCopy";
 import { isSessionLostState } from "./lib/channelHealthSignals";
 import { membersWithPermission } from "./lib/groupChatCore";
 import { orgAiActive } from "./lib/agentSecurity";
@@ -162,8 +163,7 @@ async function notifyWatchers(
   post: Doc<"groupPosts">,
   args: {
     type: "group_post_pending" | "group_post_failed";
-    title: string;
-    body?: string;
+    copy: NotificationCopy;
     emailEvent: "groupPostPending" | "groupPostFailed";
     templateData: Record<string, unknown>;
   }
@@ -173,8 +173,7 @@ async function notifyWatchers(
       organizationId: post.organizationId,
       memberId,
       type: args.type,
-      title: args.title,
-      body: args.body,
+      ...args.copy,
       groupPostId: post._id,
     });
     await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
@@ -206,8 +205,7 @@ async function failAndPause(
   });
   await notifyWatchers(ctx, fresh, {
     type: "group_post_failed",
-    title: `Publicação «${post.name}» foi pausada`,
-    body: reason,
+    copy: notificationCopy({ type: "group_post_failed", kind: "paused", postName: post.name, reason }),
     emailEvent: "groupPostFailed",
     templateData: {
       postName: post.name,
@@ -785,8 +783,12 @@ export const tick = internalMutation({
     if (okCount === 0) {
       await notifyWatchers(ctx, (await ctx.db.get(post._id))!, {
         type: "group_post_failed",
-        title: `Publicação «${post.name}» não foi enviada`,
-        body: sends.find((s) => s.error)?.error ?? "Nenhum grupo recebeu a mensagem",
+        copy: notificationCopy({
+          type: "group_post_failed",
+          kind: "not_sent",
+          postName: post.name,
+          reason: sends.find((s) => s.error)?.error ?? "Nenhum grupo recebeu a mensagem",
+        }),
         emailEvent: "groupPostFailed",
         templateData: {
           postName: post.name,
@@ -1029,8 +1031,7 @@ export const internalStorePending = internalMutation({
     });
     await notifyWatchers(ctx, (await ctx.db.get(post._id))!, {
       type: "group_post_pending",
-      title: `Aprovar publicação «${post.name}»`,
-      body: args.text.slice(0, 160),
+      copy: notificationCopy({ type: "group_post_pending", postName: post.name, preview: args.text }),
       emailEvent: "groupPostPending",
       templateData: {
         postName: post.name,
@@ -1076,8 +1077,7 @@ export const internalRecordGenerateFailure = internalMutation({
     });
     await notifyWatchers(ctx, fresh, {
       type: "group_post_failed",
-      title: `A IA não conseguiu escrever a publicação «${post.name}»`,
-      body: reason,
+      copy: notificationCopy({ type: "group_post_failed", kind: "ai_failed", postName: post.name, reason }),
       emailEvent: "groupPostFailed",
       templateData: {
         postName: post.name,

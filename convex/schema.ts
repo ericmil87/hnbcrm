@@ -2288,7 +2288,9 @@ const applicationTables = {
       v.literal("ai_spend_reached"),
       // Telegram F1 (D20) — relay agrupado (20 s) das mensagens do cliente para
       // quem está atendendo com a IA fora do comando. `data.messageIds`.
-      v.literal("new_message")
+      v.literal("new_message"),
+      // B2 — lead atribuído a você (antes só e-mail). `data.leadId`.
+      v.literal("lead_assigned")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2312,6 +2314,11 @@ const applicationTables = {
     actorId: v.optional(v.id("teamMembers")),
     readAt: v.optional(v.number()),
     createdAt: v.number(),
+    // B2 (aditivo): chave de agrupamento (`new_message:{conversationId}`,
+    // `group_mention:{chatId}`, `ai_draft_pending:{conversationId}`). Uma NÃO
+    // lida do membro com a mesma chave é atualizada (`data.count`, corpo,
+    // `createdAt`) em vez de nascer outra.
+    coalesceKey: v.optional(v.string()),
   })
     .index("by_member_and_created", ["memberId", "createdAt"])
     .index("by_member_and_read", ["memberId", "readAt"])
@@ -2325,7 +2332,10 @@ const applicationTables = {
     .index("by_handoff_and_read", ["handoffId", "readAt"])
     .index("by_task_and_read", ["taskId", "readAt"])
     .index("by_channel_config_and_read", ["channelConfigId", "readAt"])
-    .index("by_meta_connection_and_read", ["metaConnectionId", "readAt"]),
+    .index("by_meta_connection_and_read", ["metaConnectionId", "readAt"])
+    // B2: a não lida do membro com a chave de agrupamento (readAt ausente),
+    // uma leitura indexada por `createNotification` com `coalesce`.
+    .index("by_member_and_coalesce_and_read", ["memberId", "coalesceKey", "readAt"]),
 
   // Calendar Events
   calendarEvents: defineTable({
@@ -3729,16 +3739,20 @@ const applicationTables = {
 
   // Relay das mensagens do cliente (D20, F1): agrupa 20 s por conversa e
   // vínculo antes de virar UMA notificação `new_message`.
+  // B2: o buffer é POR MEMBRO (destinatário de `resolveRelayRecipient`),
+  // independente de Telegram; `linkId` só existe em docs anteriores ao B2
+  // (drenam normalmente pelo flush agendado).
   telegramRelayBuffer: defineTable({
     organizationId: v.id("organizations"),
     conversationId: v.id("conversations"),
-    linkId: v.id("telegramLinks"),
+    memberId: v.optional(v.id("teamMembers")),
+    linkId: v.optional(v.id("telegramLinks")),
     messageIds: v.array(v.id("messages")), // teto 50 por janela
     // Mensagens além do teto: viram "… e mais N mensagens (abrir no CRM)".
     droppedCount: v.optional(v.number()),
     flushAt: v.number(),
   })
-    .index("by_conversation_and_link", ["conversationId", "linkId"])
+    .index("by_conversation_and_member", ["conversationId", "memberId"])
     .index("by_flush_at", ["flushAt"]),
 
   // Modo automático (D22, F3): cada escrita que a assistente fez num turno

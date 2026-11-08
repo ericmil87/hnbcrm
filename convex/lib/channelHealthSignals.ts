@@ -12,6 +12,7 @@ import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc } from "../_generated/dataModel";
 import { createNotification } from "./notify";
+import { notificationCopy } from "./notificationCopy";
 import { pauseCampaignsForChannel } from "./campaignHooks";
 import { pausePostCore } from "./groupPostOps";
 import { isMembershipRevoked } from "./auth";
@@ -242,8 +243,7 @@ export async function emitChannelSessionLost(
       organizationId: config.organizationId,
       memberId: m._id,
       type: "channel_session_lost",
-      title: `WhatsApp "${config.displayName}" perdeu a conexão`,
-      body: args.detail,
+      ...notificationCopy({ type: "channel_session_lost", provider: "whatsapp", channelName: config.displayName, detail: args.detail }),
       channelConfigId: config._id,
       data: { channelConfigId: config._id, state: args.state },
     });
@@ -336,12 +336,6 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
 
   const pageName = conn.pageName ?? "Página";
   const label = `${pageName}${conn.igUsername ? ` / @${conn.igUsername}` : ""}`;
-  const title =
-    args.state === "revoked"
-      ? `A autorização da Página ${label} foi removida`
-      : args.state === "reauth_required"
-      ? `Página ${label} precisa ser reconectada`
-      : `Reconecte ${label} para manter o acesso`;
 
   await ctx.db.insert("auditLogs", {
     organizationId: conn.organizationId,
@@ -373,8 +367,7 @@ export async function emitChannelDegraded(ctx: MutationCtx, args: EmitChannelDeg
       organizationId: conn.organizationId,
       memberId: m._id,
       type: "channel_session_lost",
-      title,
-      body: args.state !== "data_access_expiring" ? args.detail : "Reconecte a conta para manter o acesso às mensagens.",
+      ...notificationCopy({ type: "channel_session_lost", provider: "meta", channelName: label, state: args.state, detail: args.detail }),
       metaConnectionId: conn._id,
       data: { metaConnectionId: conn._id, state: args.state },
     });

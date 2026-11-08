@@ -5,6 +5,7 @@ import { isMembershipRevoked } from "./auth";
 import { internal } from "../_generated/api";
 import { modulesOf } from "./orgModules";
 import { hasTelegramTemplate } from "./telegramNotifications";
+import { notificationCopy } from "./notificationCopy";
 
 export type NotificationType =
   | "task_assigned"
@@ -27,7 +28,8 @@ export type NotificationType =
   | "channel_session_lost"
   | "ai_spend_warning"
   | "ai_spend_reached"
-  | "new_message";
+  | "new_message"
+  | "lead_assigned";
 
 // Cada tipo de notificação in-app tem o mesmo flag da preferência de e-mail
 // (modelo opt-out: sem linha, ou flag ausente = habilitado).
@@ -61,7 +63,44 @@ const PREFERENCE_FLAG: Record<NotificationType, string> = {
   // Telegram F1 (D20): relay agrupado — a preferência `newMessage` já existia
   // sem emissor. Só sino + Telegram (sem template de e-mail).
   new_message: "newMessage",
+  // B2 — sino (antes só e-mail, mesmo flag).
+  lead_assigned: "leadAssigned",
 };
+
+/**
+ * Agrupamento (B2): com `coalesce`, uma NÃO lida do membro com a mesma `key`
+ * (e dentro de `windowMs`, contado do primeiro evento do grupo) é atualizada em
+ * vez de nascer outra: `data.count` soma `increment`, `title`/`body` vêm de
+ * `render(total)` (ou dos args), `createdAt` renova (sobe no sino).
+ *
+ * Telegram num patch: só com `telegramOnPatch` (o chamador já agrupou numa
+ * janela própria: relay de 20 s, rascunho novo para revisar). Sem isso o patch
+ * é silencioso — nunca 2 envios para a mesma janela.
+ */
+export type CoalesceOptions = {
+  key: string;
+  windowMs?: number;
+  /** Quantos eventos este aviso representa (default 1). */
+  increment?: number;
+  render?: (count: number) => { title: string; body?: string };
+  telegramOnPatch?: boolean;
+};
+
+export const coalesceKeys = {
+  newMessage: (conversationId: Id<"conversations">) => `new_message:${conversationId}`,
+  groupMention: (groupChatId: Id<"groupChats">) => `group_mention:${groupChatId}`,
+  aiDraft: (conversationId: Id<"conversations">) => `ai_draft_pending:${conversationId}`,
+};
+
+export const GROUP_MENTION_WINDOW_MS = 10 * 60 * 1000;
+
+/** Fuso da org para os textos do sino (`notificationCopy`); fallback no formatador. */
+export async function orgTimeZone(
+  ctx: { db: QueryCtx["db"] },
+  organizationId: Id<"organizations">
+): Promise<string | undefined> {
+  return (await ctx.db.get(organizationId))?.settings.timezone;
+}
 
 /**
  * Humanos não removidos (inclui `busy`: alerta de repasse é crítico) com direito de responder no inbox — o público de um aviso sem
@@ -153,6 +192,7 @@ export async function createNotification(
     /** Carga do botão de ação do item (oportunidade de grupo, digest). */
     data?: Record<string, unknown>;
     actorId?: Id<"teamMembers">;
+    coalesce?: CoalesceOptions;
   }
 ): Promise<void> {
   if (args.actorId && args.actorId === args.memberId) return;
@@ -170,12 +210,45 @@ export async function createNotification(
     .first();
   if (prefs && (prefs as any)[PREFERENCE_FLAG[args.type]] === false) return;
 
+  const now = Date.now();
+  const co = args.coalesce;
+  const increment = Math.max(1, Math.floor(co?.increment ?? 1));
+  if (co) {
+    // Uma leitura indexada: a não lida mais nova do membro com esta chave.
+    const existing = await ctx.db
+      .query("notifications")
+      .withIndex("by_member_and_coalesce_and_read", (q) =>
+        q.eq("memberId", args.memberId).eq("coalesceKey", co.key).eq("readAt", undefined)
+      )
+      .order("desc")
+      .first();
+    const since = typeof existing?.data?.coalescedSince === "number" ? existing.data.coalescedSince : existing?.createdAt;
+    const inWindow = existing && (co.windowMs === undefined || now - (since ?? 0) <= co.windowMs);
+    if (existing && existing.organizationId === args.organizationId && inWindow) {
+      const prevCount = typeof existing.data?.count === "number" ? existing.data.count : 1;
+      const count = prevCount + increment;
+      const copy = co.render ? co.render(count) : { title: args.title, body: args.body };
+      await ctx.db.patch(existing._id, {
+        title: copy.title,
+        body: copy.body,
+        // `data` do evento ATUAL (ex.: `messageIds` da última janela, que o cartão do
+        // Telegram mostra) + contagem acumulada.
+        data: { ...(args.data ?? {}), count, coalescedSince: since ?? existing.createdAt },
+        actorId: args.actorId,
+        createdAt: now,
+      });
+      if (co.telegramOnPatch) await maybeScheduleTelegram(ctx, args, existing._id, now);
+      return;
+    }
+  }
+  const copy = co?.render ? co.render(increment) : { title: args.title, body: args.body };
+
   const notificationId = await ctx.db.insert("notifications", {
     organizationId: args.organizationId,
     memberId: args.memberId,
     type: args.type,
-    title: args.title,
-    body: args.body,
+    title: copy.title,
+    body: copy.body,
     taskId: args.taskId,
     handoffId: args.handoffId,
     campaignId: args.campaignId,
@@ -183,12 +256,21 @@ export async function createNotification(
     groupChatId: args.groupChatId,
     channelConfigId: args.channelConfigId,
     metaConnectionId: args.metaConnectionId,
-    data: args.data,
+    data: co ? { ...(args.data ?? {}), count: increment, coalescedSince: now } : args.data,
     conversationId: args.conversationId,
     actorId: args.actorId,
-    createdAt: Date.now(),
+    createdAt: now,
+    ...(co ? { coalesceKey: co.key } : {}),
   });
+  await maybeScheduleTelegram(ctx, args, notificationId, now);
+}
 
+async function maybeScheduleTelegram(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; memberId: Id<"teamMembers">; type: NotificationType },
+  notificationId: Id<"notifications">,
+  now: number
+): Promise<void> {
   // Telegram (F1, D7): mesma porta, depois do insert — o self-skip e a
   // preferência acima já valeram. Uma leitura indexada do vínculo ativo; envio
   // e formatação ficam na action agendada (nada de rede numa mutation).
@@ -198,7 +280,34 @@ export async function createNotification(
     .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", args.memberId).eq("status", "active"))
     .first();
   if (!link || link.organizationId !== args.organizationId) return;
-  if (link.mutedUntil !== undefined && link.mutedUntil > Date.now()) return;
+  // `/pausar` (mutedUntil) e o switch do relay valem só para o Telegram: o sino já gravou (B2).
+  if (link.mutedUntil !== undefined && link.mutedUntil > now) return;
+  if (args.type === "new_message" && !link.prefs.relayAssignedConversations) return;
   if (!modulesOf(await ctx.db.get(args.organizationId)).telegram) return;
   await ctx.scheduler.runAfter(0, internal.telegram.internalDeliverNotification, { notificationId });
+}
+
+/**
+ * B2: lead atribuído a um membro → sino (o e-mail `leadAssigned` continua no
+ * chamador). Sem ponteiro de conversa: `data.leadId` (o clique do sino ganha
+ * destino no D1). Self-skip/IA/opt-out ficam com `createNotification`.
+ */
+export async function notifyLeadAssigned(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    leadId: Id<"leads">;
+    leadTitle: string;
+    memberId: Id<"teamMembers">;
+    actor: Pick<Doc<"teamMembers">, "_id" | "name">;
+  }
+): Promise<void> {
+  await createNotification(ctx, {
+    organizationId: args.organizationId,
+    memberId: args.memberId,
+    type: "lead_assigned",
+    ...notificationCopy({ type: "lead_assigned", leadTitle: args.leadTitle, actorName: args.actor.name }),
+    data: { leadId: args.leadId },
+    actorId: args.actor._id,
+  });
 }

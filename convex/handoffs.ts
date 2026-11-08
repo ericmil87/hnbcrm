@@ -8,6 +8,7 @@ import { requireAuth, requirePermission, isActiveMemberOf, assertAssignableMembe
 // `inboxRepliers` mudou para lib/notify: o follow-up da IA usa a MESMA regra
 // de destinatário e não pode importar deste módulo (ciclo).
 import { createNotification, inboxRepliers } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
 import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { getLeadRef } from "./lib/leadRef";
 import { botTagFor, clearBotSuspicion } from "./lib/botGuardOps";
@@ -332,8 +333,12 @@ export async function createHandoffCore(
   const notification = {
     organizationId,
     type: "handoff_requested" as const,
-    title: `Repasse pendente: ${subject}`,
-    body: args.reason,
+    ...notificationCopy({
+      type: "handoff_requested",
+      contactName: subject,
+      reason: args.reason,
+      ...(fromMember.type === "human" ? { fromHumanName: fromMember.name } : {}),
+    }),
     handoffId,
     conversationId,
     actorId: args.fromMemberId,
@@ -518,8 +523,7 @@ export async function acceptHandoffCore(
     organizationId: handoff.organizationId,
     memberId: handoff.fromMemberId,
     type: "handoff_resolved",
-    title: `Repasse aceito por ${member.name}`,
-    body: lead?.title,
+    ...notificationCopy({ type: "handoff_resolved", outcome: "accepted", actorName: member.name, contactName: lead?.title }),
     handoffId: handoff._id,
     conversationId: conversationId ?? undefined,
     actorId: member._id,
@@ -689,8 +693,7 @@ async function rejectHandoffCore(
     organizationId: handoff.organizationId,
     memberId: handoff.fromMemberId,
     type: "handoff_resolved",
-    title: `Repasse devolvido à IA por ${member.name}`,
-    body: lead?.title,
+    ...notificationCopy({ type: "handoff_resolved", outcome: "rejected", actorName: member.name, contactName: lead?.title }),
     handoffId: handoff._id,
     conversationId: handoff.conversationId,
     actorId: member._id,

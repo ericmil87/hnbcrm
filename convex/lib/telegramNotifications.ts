@@ -120,6 +120,7 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   group_post_failed: "generic",
   group_opportunity: "generic",
   group_digest: "generic",
+  lead_assigned: "generic",
 };
 
 /** Types deliberately NOT sent to Telegram (none in F1; add with a reason). */

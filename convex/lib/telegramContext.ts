@@ -21,6 +21,8 @@ import {
 import { maskDigitRuns } from "./telegramFormat";
 import { wrapUntrustedJson } from "./promptEnvelope";
 import { isSticker } from "./mediaEnrichment";
+import { translatedPreview } from "./notificationCopy";
+import { resolveTranslationSettings } from "./translationGate";
 
 type Db = QueryCtx["db"];
 
@@ -33,10 +35,19 @@ async function firstFile(db: Db, m: Doc<"messages">): Promise<Doc<"files"> | nul
   return file && file.organizationId === m.organizationId ? file : null;
 }
 
-export async function messageText(db: Db, m: Doc<"messages">): Promise<string> {
+/**
+ * One message as a text line. `preview` (card previews only: relay lines, last
+ * customer message) prefers the org's finished translation with "(traduzido
+ * do …)"; history/context for the copilot LLM keeps the original (review B2).
+ */
+export async function messageText(
+  db: Db,
+  m: Doc<"messages">,
+  preview?: { teamLanguage?: string },
+): Promise<string> {
   const file = m.contentType === "file" ? await firstFile(db, m) : null;
   return messageLineText({
-    content: m.content,
+    content: (preview ? translatedPreview(m, preview.teamLanguage) : undefined) ?? m.content,
     contentType: m.contentType,
     transcriptText: m.transcriptText,
     imageDescription: m.imageDescription,
@@ -76,6 +87,8 @@ export async function loadCardContext(
   if (!org) return null;
   const orgId = org._id;
   const n = args.notification;
+  // Card previews prefer the org's finished translation (B2).
+  const preview = { teamLanguage: resolveTranslationSettings(org).teamLanguage };
   const ctx: CardContext = {
     orgName: org.name,
     timezone: safeTimezone(org.settings.timezone),
@@ -182,7 +195,7 @@ export async function loadCardContext(
       .order("desc")
       .take(20);
     const lastInbound = recent.find((m) => m.direction === "inbound");
-    if (lastInbound) ctx.lastInbound = { text: await messageText(db, lastInbound), at: lastInbound.createdAt };
+    if (lastInbound) ctx.lastInbound = { text: await messageText(db, lastInbound, preview), at: lastInbound.createdAt };
     if (n?.type === "ai_draft_pending") {
       const draft = await pendingDraftOf(db, validConversation._id);
       if (draft) ctx.draft = { messageId: draft._id, text: draft.content };
@@ -196,7 +209,7 @@ export async function loadCardContext(
       if (typeof id !== "string") continue;
       const m = await db.get(id as Id<"messages">);
       if (!m || m.organizationId !== orgId || m.conversationId !== validConversation?._id) continue;
-      lines.push({ at: m.createdAt, author: "", text: await messageText(db, m) });
+      lines.push({ at: m.createdAt, author: "", text: await messageText(db, m, preview) });
     }
     const more = (n.data as { moreCount?: unknown }).moreCount;
     if (typeof more === "number" && more > 0) {

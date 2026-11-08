@@ -28,6 +28,7 @@ import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
 import { readAgentTexts } from "./lib/agentProfileTexts";
 import { draftNotificationAlreadyPending } from "./lib/notificationResolve";
+import { notificationCopy } from "./lib/notificationCopy";
 import {
   internalAction,
   internalMutation,
@@ -57,7 +58,7 @@ import {
 } from "./lib/aiSpend";
 import { spendBlockedNow } from "./aiSpend";
 import { createHandoffCore } from "./handoffs";
-import { createNotification } from "./lib/notify";
+import { coalesceKeys, createNotification } from "./lib/notify";
 import { visionEnabledForOrg } from "./lib/mediaEnrichment";
 import { membersWithPermission } from "./lib/groupChatCore";
 import {
@@ -880,11 +881,16 @@ export const internalCommitGroupAiSuggestion = internalMutation({
         organizationId: conversation.organizationId,
         memberId: replier._id,
         type: "ai_draft_pending",
-        title: "Rascunho da IA aguardando revisão",
-        body: group ? `Grupo "${group.subject}"` : undefined,
+        ...notificationCopy({ type: "ai_draft_pending", groupName: group?.subject ?? "Grupo" }),
         conversationId: conversation._id,
         groupChatId: args.groupChatId,
         actorId: args.agentMemberId,
+        coalesce: {
+          key: coalesceKeys.aiDraft(conversation._id),
+          telegramOnPatch: true,
+          // Sem contagem no texto (review B2).
+          render: () => notificationCopy({ type: "ai_draft_pending", groupName: group?.subject ?? "Grupo" }),
+        },
       });
     }
     return { committed: true as const, messageId };
@@ -976,13 +982,16 @@ export const internalFlagOpportunity = internalMutation({
         organizationId: args.organizationId,
         memberId: replier._id,
         type: "group_opportunity",
-        title: `${opportunityLabel(args.tipo ?? "")} em "${group.subject}"`,
-        // Telefone de TERCEIRO mascarado, como no resto do produto
-        // (`maskMemberPhone` das campanhas, `maskPhone` das tools do copiloto).
-        // A notificação fica persistida em `notifications`; o número inteiro
-        // está a um clique em "Ver membros", sob `inbox:view_all`
-        // (review de segurança nº 12).
-        body: `${participant.name ?? maskGroupPhone(participant.phone) ?? "Um membro"}: ${summary}`,
+        // B2: nem telefone mascarado no texto (pode ir à tela de bloqueio):
+        // sem nome, "Um membro". O número está a um clique em "Ver membros",
+        // sob `inbox:view_all` (review de segurança nº 12).
+        ...notificationCopy({
+          type: "group_opportunity",
+          label: opportunityLabel(args.tipo ?? ""),
+          groupName: group.subject,
+          memberName: participant.name,
+          summary,
+        }),
         conversationId: args.conversationId,
         groupChatId: args.groupChatId,
         data: {
@@ -1551,8 +1560,7 @@ export const internalNotifyDigest = internalMutation({
         organizationId: group.organizationId,
         memberId: member._id,
         type: "group_digest",
-        title: `Resumo do dia: ${group.subject}`,
-        body: args.text.slice(0, 280),
+        ...notificationCopy({ type: "group_digest", groupName: group.subject, summary: args.text }),
         conversationId: group.conversationId,
         groupChatId: group._id,
         data: { hours: 24 },
