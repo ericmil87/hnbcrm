@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
+import { clearStoredDrafts } from "@/lib/pwa/composerDraft";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
@@ -222,6 +223,7 @@ function AuthLayoutContent() {
     if (!isLoading && !isAuthenticated) {
       clearStoredTheme();
       clearStoredCopilotThreads();
+      clearStoredDrafts();
     }
   }, [isLoading, isAuthenticated]);
   const mustChangePassword = useQuery(
@@ -319,6 +321,7 @@ function AuthLayoutContent() {
     // O tema do aparelho também é da pessoa: não migra para a conta de outro usuário.
     clearStoredTheme();
     clearStoredCopilotThreads();
+    clearStoredDrafts();
     // Toasts da sessão (ex.: "você foi adicionado…", com botão de trocar de
     // org) não podem sobrar para o próximo usuário deste navegador.
     toast.dismiss();

@@ -6,6 +6,9 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { X } from "lucide-react";
 
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 interface ModalProps {
   open: boolean;
   onClose: () => void;
@@ -15,6 +18,10 @@ interface ModalProps {
 }
 
 export function Modal({ open, onClose, title, children, className }: ModalProps) {
+  // The element focused before the dialog opens, captured during render: a child with `autoFocus` takes the focus
+  // at commit, before any effect of the layer runs, so an effect would see the child as the "trigger".
+  const triggerRef = useRef<HTMLElement | null>(null);
+  if (open && triggerRef.current === null && document.activeElement instanceof HTMLElement) triggerRef.current = document.activeElement;
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -39,7 +46,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   // folha inferior ficava atrás da tab bar do mobile (z-30) — o botão de
   // confirmar sumia (caso real: "Excluir lead" pela conversa, 03/10/2026).
   return createPortal(
-    <ModalLayer onClose={onClose} title={title} className={className}>
+    <ModalLayer onClose={onClose} title={title} className={className} triggerRef={triggerRef}>
       {children}
     </ModalLayer>,
     document.body
@@ -52,11 +59,41 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
  * (`useKeyboardViewportBox`) e a folha/diálogo cabe nela com rolagem interna
  * (campo e botões acima do teclado).
  */
-function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "open">) {
+function ModalLayer({ onClose, title, children, className, triggerRef }: Omit<ModalProps, "open"> & { triggerRef: React.RefObject<HTMLElement | null> }) {
   const isSheet = useMediaQuery("(max-width: 639px)");
   // Toque em tela larga (iPhone deitado, iPad): o teclado cobre o diálogo centralizado também.
   const isTouch = useMediaQuery("(pointer: coarse)");
   const dialogRef = useRef<HTMLDivElement>(null);
+  // Focus: into the dialog on open (unless a child already took it, e.g. autoFocus), back to the trigger on close.
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus({ preventScroll: true });
+    return () => {
+      const trigger = triggerRef.current;
+      triggerRef.current = null;
+      if (trigger && trigger.isConnected) trigger.focus({ preventScroll: true });
+    };
+  }, [triggerRef]);
+  // Tab stays inside the dialog (events bubbling from portals outside it are ignored).
+  const trapTab = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const dialog = dialogRef.current;
+    if (e.key !== "Tab" || !dialog || !(e.target instanceof Node) || !dialog.contains(e.target)) return;
+    const items = Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.getClientRects().length > 0);
+    if (items.length === 0) {
+      e.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey && (active === first || active === dialog)) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && active === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  };
   const { style, keyboardOpen } = useKeyboardViewportBox(isSheet || isTouch, dialogRef);
   return (
     <div
@@ -77,7 +114,10 @@ function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "o
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
+        onKeyDown={trapTab}
         className={cn(
+          "outline-none",
           "relative z-10 w-full bg-surface-overlay border border-border",
           "max-h-[85vh] overflow-y-auto overscroll-contain",
           // Mobile: bottom sheet (cobre a tab bar; respeita a safe-area)
@@ -97,7 +137,7 @@ function ModalLayer({ onClose, title, children, className }: Omit<ModalProps, "o
             <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
+              className="inline-flex items-center justify-center p-1.5 coarse:min-h-11 coarse:min-w-11 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-raised transition-colors"
               aria-label="Fechar"
             >
               <X size={20} />

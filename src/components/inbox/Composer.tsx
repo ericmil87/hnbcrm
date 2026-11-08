@@ -5,6 +5,8 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { assignableMembers } from "@/lib/teamMembers";
 import { setComposerDirty } from "@/lib/pwa/composerDirty";
+import { useComposerDraft } from "@/components/inbox/useComposerDraft";
+import { usePermissions } from "@/hooks/usePermissions";
 import { extractMentionIds } from "@/lib/mentions";
 import { formatDateTime } from "@/lib/format";
 import {
@@ -347,7 +349,19 @@ export function Composer({
     }
   };
 
-  // Pending app updates never reload under unsent content (src/lib/pwa/composerDirty.ts).
+  // Draft per organization + member + conversation survives reload (see useComposerDraft).
+  const { member } = usePermissions(organizationId);
+  useComposerDraft({
+    organizationId,
+    conversationId,
+    memberId: member?._id,
+    text,
+    isInternal,
+    onRestore: (stored) => setText((current) => (current === "" ? stored : current)),
+  });
+
+  // Pending app updates never reload under unsent content (src/lib/pwa/composerDirty.ts). The persistent draft
+  // above only reduces the damage if a reload happens anyway; it does NOT relax this rule.
   const dirtyId = useId();
   const hasUnsent = text.trim() !== "" || stagedFiles.length > 0;
   useEffect(() => {

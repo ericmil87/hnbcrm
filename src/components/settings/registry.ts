@@ -15,6 +15,7 @@ import {
   KeyRound,
   ListChecks,
   Megaphone,
+  MonitorSmartphone,
   Network,
   Palette,
   Smartphone,
@@ -109,6 +110,16 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     Component: lazy(() =>
       import("@/components/notifications/NotificationPreferences").then((m) => ({ default: m.NotificationsSection }))
     ),
+  },
+  {
+    id: "device",
+    group: "conta",
+    label: "Este aparelho",
+    description: "Instalar o app neste celular ou computador",
+    icon: MonitorSmartphone,
+    keywords: ["instalar", "app", "aplicativo", "tela inicial", "iphone", "android", "pwa", "celular"],
+    // Preferência do aparelho: sem permissão.
+    Component: lazy(() => import("./ThisDevicePanel").then((m) => ({ default: m.ThisDevicePanel }))),
   },
   {
     id: "channels",
