@@ -4,6 +4,7 @@ import { useQuery } from "convex/react";
 import { Building2, ChevronsUpDown, Sparkles } from "lucide-react";
 import { Sidebar } from "./Sidebar";
 import { BottomTabBar } from "./BottomTabBar";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { CopilotFab } from "@/components/copilot/CopilotFab";
 import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -99,6 +100,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
     <ChatModeProvider value={chatMode}>
     <PageHeaderProvider registry={pageHeader.registry}>
     <div className="min-h-screen supports-[height:100dvh]:min-h-[100dvh] bg-surface-base">
+      <InstallPrompt />
       {/* Desktop sidebar */}
       <Sidebar
         onSignOut={onSignOut}
@@ -114,7 +116,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
       <main className="md:ml-16 lg:ml-56 transition-all duration-200">
         {/* Header — título da página + troca de org (só mobile; no desktop fica na sidebar) + sino */}
         <header className={cn(
-          "sticky top-0 z-30 h-14 md:h-16 items-center justify-between md:justify-end gap-3 px-4 md:px-6 backdrop-blur border-b border-border",
+          "sticky top-0 z-30 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] md:h-16 md:pt-0 items-center justify-between md:justify-end gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:px-6 backdrop-blur border-b border-border",
           chatModeActive ? "hidden md:flex" : "flex"
         )}>
           <div className="md:hidden flex items-center gap-1 min-w-0">
@@ -141,7 +143,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
           </div>
         </header>
 
-        <div className="min-h-[calc(100vh-3.5rem)] supports-[height:100dvh]:min-h-[calc(100dvh-3.5rem)] md:min-h-[calc(100vh-4rem)] md:supports-[height:100dvh]:min-h-[calc(100dvh-4rem)] pb-20 md:pb-0">
+        <div className="min-h-[calc(100vh-3.5rem-env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] md:min-h-[calc(100vh-4rem)] md:supports-[height:100dvh]:min-h-[calc(100dvh-4rem)] pb-20 md:pb-0">
           <div className="p-4 md:p-6">
             {children}
           </div>

@@ -47,9 +47,9 @@ describe("resolveSettingsPanel", () => {
     expect(visibleSettingsPanels(ctx([])).some((p) => p.id === "appearance")).toBe(true);
   });
 
-  it("sem permissão nenhuma só resta Aparência", () => {
+  it("sem permissão nenhuma só restam Aparência e Este aparelho", () => {
     const none = ctx([]);
-    expect(visibleSettingsPanels(none).map((p) => p.id)).toEqual(["appearance"]);
+    expect(visibleSettingsPanels(none).map((p) => p.id)).toEqual(["appearance", "device"]);
     expect(resolveSettingsPanel("general", [])).toBeNull();
   });
 
@@ -83,7 +83,7 @@ describe("groupOf / groupSettingsPanels", () => {
   it("agrupa na ordem dos grupos e omite grupos vazios", () => {
     const groups = groupSettingsPanels(visibleSettingsPanels(MEMBER));
     expect(groups.map((g) => g.id)).toEqual(["conta", "whatsapp", "atendente", "equipe", "dados", "avancado"]);
-    expect(groups[0].panels.map((p) => p.id)).toEqual(["general", "appearance", "notifications"]);
+    expect(groups[0].panels.map((p) => p.id)).toEqual(["general", "appearance", "notifications", "device"]);
     const only = groupSettingsPanels(visibleSettingsPanels(ctx([["settings", "view"]])));
     expect(only.some((g) => g.id === "equipe")).toBe(false);
   });
