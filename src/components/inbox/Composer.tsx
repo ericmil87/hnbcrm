@@ -351,15 +351,11 @@ export function Composer({
 
   // Persist the draft (debounced; empty text clears it, so sending/scheduling clears it too). Internal notes are
   // never persisted: a restored note must not come back as a customer-visible message.
-  const [draftSaved, setDraftSaved] = useState(true);
   useEffect(() => {
     if (!conversationId) return;
     const persistable = !isInternal || text.trim() === "";
-    if (!persistable) {
-      setDraftSaved(false);
-      return;
-    }
-    const id = window.setTimeout(() => setDraftSaved(saveDraft(organizationId, conversationId, text)), 400);
+    if (!persistable) return;
+    const id = window.setTimeout(() => saveDraft(organizationId, conversationId, text), 400);
     return () => window.clearTimeout(id);
   }, [organizationId, conversationId, text, isInternal]);
   // Flush on unmount (conversation switch) and on pagehide (reload/close), so the last keystrokes are not lost to the debounce.
@@ -377,10 +373,10 @@ export function Composer({
     };
   }, [organizationId, conversationId]);
 
-  // Pending app updates never reload under content that would be lost (src/lib/pwa/composerDirty.ts):
-  // staged files are never persisted, and text is only "at risk" while it is not in the saved draft.
+  // Pending app updates never reload under unsent content (src/lib/pwa/composerDirty.ts). The persistent draft
+  // above only reduces the damage if a reload happens anyway; it does NOT relax this rule.
   const dirtyId = useId();
-  const hasUnsent = stagedFiles.length > 0 || (text.trim() !== "" && (!draftSaved || !conversationId || isInternal));
+  const hasUnsent = text.trim() !== "" || stagedFiles.length > 0;
   useEffect(() => {
     setComposerDirty(dirtyId, hasUnsent);
     return () => setComposerDirty(dirtyId, false);

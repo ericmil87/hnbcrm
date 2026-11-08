@@ -9,7 +9,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
 - Em Configurações › Conta há a nova seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
 - O app instalado respeita o notch e a barra inferior do celular.
-- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas. Por isso, a atualização do app só espera quando há um arquivo anexado ainda não enviado.
+- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
 
 ### App instalável e atualizações sem susto
 
