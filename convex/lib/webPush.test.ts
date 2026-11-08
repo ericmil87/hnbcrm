@@ -205,6 +205,8 @@ describe("assinatura vinda do navegador", () => {
     expect(isAllowedPushEndpoint("https://fcm.googleapis.com.evil.com/x")).toBe(false);
     expect(isAllowedPushEndpoint("https://fcm.googleapis.com:8443/x")).toBe(false);
     expect(isAllowedPushEndpoint("https://user:pw@fcm.googleapis.com/x")).toBe(false);
+    expect(isAllowedPushEndpoint("https://:pw@fcm.googleapis.com/x")).toBe(false);
+    expect(isAllowedPushEndpoint("https://fcm.googleapis.com/x?a=b@c")).toBe(true);
     expect(isAllowedPushEndpoint("https://169.254.169.254/latest")).toBe(false);
     expect(isAllowedPushEndpoint("não é url")).toBe(false);
   });

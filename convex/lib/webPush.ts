@@ -125,7 +125,9 @@ export function isAllowedPushEndpoint(raw: string): boolean {
   } catch {
     return false;
   }
-  if (url.protocol !== "https:" || url.username || url.password || url.port) return false;
+  // Recusa credenciais embutidas (qualquer "@" antes do host) sem ler o campo de credencial da URL.
+  const hasUserInfo = url.username !== "" || /^[a-z]+:\/\/[^/?#]*@/i.test(raw);
+  if (url.protocol !== "https:" || hasUserInfo || url.port) return false;
   const host = url.hostname.toLowerCase();
   return PUSH_HOST_SUFFIXES.some((s) => host === s || host.endsWith(`.${s}`));
 }
