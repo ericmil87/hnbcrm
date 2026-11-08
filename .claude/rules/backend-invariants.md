@@ -60,6 +60,7 @@ Project-specific rules that change how code must be written. Official Convex rul
 
 ## E-mail and notifications
 - In-app notification type + preference flag are paired; e-mail only for types with a template (`buildTemplate` is fail-closed). Broadcast handoff e-mails are throttled per org (15 min).
+- Bell text (`title`/`body`) only from `notificationCopy` (`convex/lib/notificationCopy.ts`: org timezone, grapheme cuts, no phone/e-mail); a new notification type needs schema + `PREFERENCE_FLAG` + `notificationCopy` + front `TYPE_ICON` + Telegram decision (`notificationTypesParity.test.ts`). Grouping is `createNotification({coalesce})`; a patch only goes to Telegram with `telegramOnPatch` (one send per caller window).
 - `emailSuppressions` is deployment-wide on purpose. `RESEND_TEST_MODE="true"` is the only value that enables sandbox; default is real sending.
 
 ## Scheduling and crons

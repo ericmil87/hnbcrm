@@ -4,6 +4,17 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Sino agrupado e com textos novos
+
+- Mensagens novas da mesma conversa viram um aviso só no sino: "5 mensagens novas de Ana", com a mais recente na prévia, e o aviso sobe para o topo a cada mensagem. Depois de lido, a próxima mensagem abre um aviso novo. O mesmo vale para as respostas sugeridas pela IA na mesma conversa e para as menções num grupo em até 10 minutos ("3 menções a você no grupo Sementes").
+- O aviso de mensagem nova passa a chegar no sino para quem atende a conversa mesmo sem ter vinculado o Telegram. Quem usa o Telegram continua recebendo um cartão por leva de mensagens (a cada 20 s), sem repetição.
+- "Pausar" no Telegram (/pausar) e a opção "Receber as mensagens das conversas que eu atendo" do Telegram agora valem só para o Telegram: o sino continua recebendo.
+- Lead atribuído a você agora aparece no sino (antes só por e-mail).
+- Textos do sino revistos com os nomes do app: "A IA pediu ajuda: Ana Souza", "Bruno assumiu a conversa com Ana Souza", "A IA sugeriu uma resposta para Ana Souza", "Ligar para a Ana vence às 14:30". Datas e horas seguem o fuso da organização.
+- Quando o cliente escreve em outro idioma e a tradução automática já traduziu, a prévia mostra o texto traduzido com "(traduzido do inglês)".
+- Nomes longos, emoji e textos em árabe ou hebraico são cortados sem quebrar caracteres. Telefone e e-mail não aparecem mais no texto dos avisos: quando o contato não tem nome, aparece "Contato".
+- Ao transferir a conversa para outra pessoa, os avisos de mensagem nova e de resposta sugerida dela saem das não lidas de quem a atendia. Ao trocar o responsável de uma tarefa, o aviso "atribuiu uma tarefa a você" sai das não lidas de quem deixou a tarefa.
+
 ### Avisos do sino que se resolvem sozinhos
 
 - Quando o assunto de um aviso é resolvido em outro lugar, o aviso do sino passa a ficar lido sozinho: abrir a conversa (mensagem nova, transferência e rascunho daquela conversa, só os seus), assumir ou devolver um pedido de ajuda (some para todos que receberam), aprovar, descartar ou pedir outro rascunho da IA, concluir ou excluir uma tarefa (vence em breve, atrasada, atribuída) e reconectar o WhatsApp ou a Página do Instagram/Messenger.
