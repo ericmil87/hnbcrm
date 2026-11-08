@@ -636,7 +636,7 @@ export function TasksPage() {
 
       {/* Ações em massa */}
       {selectedTasks.size > 0 && canEdit && (
-        <div className="sticky top-14 md:top-16 z-10 flex items-center gap-3 p-3 bg-surface-overlay border border-border rounded-card animate-fade-in-up">
+        <div className="sticky top-[calc(3.5rem+env(safe-area-inset-top))] md:top-16 z-10 flex items-center gap-3 p-3 bg-surface-overlay border border-border rounded-card animate-fade-in-up">
           <span className="text-sm font-medium text-text-primary">
             {selectedTasks.size} selecionada{selectedTasks.size > 1 ? "s" : ""}
           </span>
