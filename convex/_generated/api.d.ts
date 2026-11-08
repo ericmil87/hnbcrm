@@ -254,6 +254,8 @@ import type * as orgModules from "../orgModules.js";
 import type * as orgSecrets from "../orgSecrets.js";
 import type * as organizations from "../organizations.js";
 import type * as passwordReset from "../passwordReset.js";
+import type * as push from "../push.js";
+import type * as pushNode from "../pushNode.js";
 import type * as quickReplies from "../quickReplies.js";
 import type * as retention from "../retention.js";
 import type * as router from "../router.js";
@@ -537,6 +539,8 @@ declare const fullApi: ApiFromModules<{
   orgSecrets: typeof orgSecrets;
   organizations: typeof organizations;
   passwordReset: typeof passwordReset;
+  push: typeof push;
+  pushNode: typeof pushNode;
   quickReplies: typeof quickReplies;
   retention: typeof retention;
   router: typeof router;

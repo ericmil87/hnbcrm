@@ -41,6 +41,10 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "taskLabels", index: "by_organization" },
   { table: "notifications", index: "by_organization" },
   { table: "notificationSeen", index: "by_organization" },
+  // E1: vínculo aparelho↔membership e contadores do push. A assinatura (por
+  // usuário, sem org) que ficar órfã sai na retenção (parada > 60 d).
+  { table: "pushSubscriptionMembers", index: "by_organization" },
+  { table: "pushDeliveryStats", index: "by_organization_and_day_and_type_and_outcome_and_shard" },
   { table: "calendarEvents", index: "by_organization" },
   { table: "savedViews", index: "by_organization" },
   { table: "onboardingProgress", index: "by_organization" },

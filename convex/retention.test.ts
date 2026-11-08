@@ -419,6 +419,9 @@ describe("preview", () => {
       telegramSuggestions: 0,
       telegramOrgQuota: 0,
       telegramReconnects: 0,
+      // Push (E1): coberto em pushDelivery.test.ts.
+      pushSubscriptions: 0,
+      pushDeliveryStats: 0,
     });
     expect(out.every((p) => p.truncated === false)).toBe(true);
     // Override de janela no preview.

@@ -7,6 +7,7 @@ import { requireAuth, isActiveMemberOf, assertAssignableMember } from "./lib/aut
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { createNotification, filterMembersOfOrg, orgTimeZone } from "./lib/notify";
+import { scheduleSafetyNetEmail } from "./lib/notificationChannels";
 import { notificationCopy } from "./lib/notificationCopy";
 import { buildTaskSearchText } from "./lib/taskSearchText";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -225,18 +226,16 @@ async function notifyNewAssignees(
       ),
       taskId: opts.task._id,
       actorId: opts.actor._id,
-    });
-
-    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-      organizationId: opts.task.organizationId,
-      recipientMemberId: memberId,
-      eventType: "taskAssigned",
-      templateData: {
-        taskTitle: opts.task.title,
-        dueDate: formatDate(opts.task.dueDate),
-        assignedByName: opts.actor.name,
-        leadTitle: undefined,
-        taskUrl: taskDeepLink(opts.task._id),
+      // E1: e-mail de reserva (+30 min, só se o aviso ainda não foi lido).
+      email: {
+        eventType: "taskAssigned",
+        templateData: {
+          taskTitle: opts.task.title,
+          dueDate: formatDate(opts.task.dueDate),
+          assignedByName: opts.actor.name,
+          leadTitle: undefined,
+          taskUrl: taskDeepLink(opts.task._id),
+        },
       },
     });
   }
@@ -2699,17 +2698,16 @@ export const triggerPreDueReminder = internalMutation({
           { timeZone: await orgTimeZone(ctx, task.organizationId), now }
         ),
         taskId: args.taskId,
-      });
-
-      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-        organizationId: task.organizationId,
-        recipientMemberId: memberId,
-        eventType: "taskDueSoon",
-        templateData: {
-          taskTitle: task.title,
-          dueDate: dueDateLabel,
-          minutesBefore: task.reminderMinutesBefore,
-          taskUrl: taskDeepLink(args.taskId),
+        // E1: e-mail de reserva (+30 min, só se não lido); com pouca antecedência espera metade do que falta até o prazo.
+        email: {
+          eventType: "taskDueSoon",
+          templateData: {
+            taskTitle: task.title,
+            dueDate: dueDateLabel,
+            minutesBefore: task.reminderMinutesBefore,
+            taskUrl: taskDeepLink(args.taskId),
+          },
+          deadlineAt: task.dueDate,
         },
       });
     }
@@ -2806,7 +2804,11 @@ export const processOverdueReminders = internalMutation({
     const zones = new Map<Id<"organizations">, string | undefined>();
     const overdueByMember = new Map<
       Id<"teamMembers">,
-      { organizationId: Id<"organizations">; tasks: { id: Id<"tasks">; title: string; dueDate: string }[] }
+      {
+        organizationId: Id<"organizations">;
+        tasks: { id: Id<"tasks">; title: string; dueDate: string }[];
+        notificationIds: Id<"notifications">[];
+      }
     >();
 
     for (const task of overdueTasks) {
@@ -2829,7 +2831,7 @@ export const processOverdueReminders = internalMutation({
       if (!zones.has(task.organizationId)) zones.set(task.organizationId, await orgTimeZone(ctx, task.organizationId));
       const tz = zones.get(task.organizationId);
       for (const memberId of readAssignees(task)) {
-        await createNotification(ctx, {
+        const notificationId = await createNotification(ctx, {
           organizationId: task.organizationId,
           memberId,
           type: "task_overdue",
@@ -2838,18 +2840,22 @@ export const processOverdueReminders = internalMutation({
         });
 
         // E-mail agrupado por membro na rodada (C1): acumula aqui, envia depois do loop.
-        const bucket = overdueByMember.get(memberId) ?? { organizationId: task.organizationId, tasks: [] };
+        const bucket = overdueByMember.get(memberId) ?? { organizationId: task.organizationId, tasks: [], notificationIds: [] };
         bucket.tasks.push({ id: task._id, title: task.title, dueDate: formatDate(task.dueDate) ?? "N/A" });
+        if (notificationId) bucket.notificationIds.push(notificationId);
         overdueByMember.set(memberId, bucket);
       }
     }
 
     // Um e-mail por membro e rodada: 1 tarefa = o e-mail de sempre; 2+ = resumo (flag `taskOverdue`).
+    // E1: rede de segurança (+30 min) — sai se ALGUM aviso de atrasada do membro ainda não foi lido.
     for (const [memberId, bucket] of overdueByMember) {
       const [first] = bucket.tasks;
-      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      await scheduleSafetyNetEmail(ctx, {
         organizationId: bucket.organizationId,
-        recipientMemberId: memberId,
+        memberId,
+        notificationIds: bucket.notificationIds,
+        now,
         ...(bucket.tasks.length === 1
           ? {
               eventType: "taskOverdue",

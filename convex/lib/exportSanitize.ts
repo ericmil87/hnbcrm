@@ -41,6 +41,11 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "notifications",
   "notificationSeen",
   "notificationPreferences",
+  // Web Push (E1): endpoint + chaves do aparelho (capacidade de enviar para
+  // ele), vínculo por membership e contadores técnicos.
+  "pushSubscriptions",
+  "pushSubscriptionMembers",
+  "pushDeliveryStats",
   "onboardingProgress",
   "scheduledMessages",
   "forms",

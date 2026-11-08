@@ -4,6 +4,14 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Avisos no aparelho (push) e e-mail como reserva (backend)
+
+- O servidor já sabe mandar avisos para o celular e o computador (push), para quem ativar neste aparelho (a tela de ativar chega na próxima etapa). Vão por push só os avisos que pedem ação sua: pedido de ajuda, mensagem nova numa conversa sua (um aviso por leva de mensagens, não um por mensagem), conversa transferida para você, menção, resposta sugerida da IA, tarefa atribuída, vencendo ou atrasada, follow-up que voltou para a equipe e canal desconectado.
+- Se você já leu o aviso (no app, no Telegram ou abrindo a conversa) antes de ele sair, o celular não toca. Pausa, horário de silêncio e a escolha por canal valem também para o push; o pedido de ajuda continua furando a pausa, como no Telegram.
+- O texto na tela de bloqueio nunca mostra telefone, e-mail nem links. Se a organização ocultou a prévia na tela de bloqueio, ou você desligou "Mostrar prévia", o aviso mostra só quem e o quê ("Mensagem nova de Ana"), sem o conteúdo.
+- Um aparelho pode receber avisos de várias organizações; nesse caso o nome da organização aparece no aviso. Ao trocar de conta no mesmo navegador, o aparelho deixa de receber os avisos da conta anterior. Quem é removido da equipe para de receber push dela na hora; aparelhos sem uso há 60 dias saem sozinhos.
+- O e-mail de pedido de ajuda, menção em tarefa e tarefa atribuída, vencendo ou atrasada virou uma rede de segurança: sai 10 minutos depois (pedido de ajuda e menção) ou 30 minutos depois (tarefas) e só se o aviso ainda não foi lido. O e-mail de lembrete de tarefa chega antes do prazo (com pouca antecedência, na metade do tempo que falta). E-mails de lead atribuído, canal desconectado e os demais continuam saindo na hora.
+
 ### Preferências de aviso e pausa (telas)
 
 - Configurações › Notificações foi refeita: atalhos "Tudo", "Só o que é comigo" e "Nada (só o sino)", e "Personalizar" com a lista de avisos por grupo e as colunas Sino, E-mail e Telegram (Telegram só com a conta vinculada). Cada toque salva sozinho ("Preferência salva") e volta atrás se der erro. Avisos que pedem uma ação sua ficam sempre no sino, e a tela explica isso. A linha travada "Convites de equipe" saiu.

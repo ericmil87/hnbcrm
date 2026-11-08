@@ -79,9 +79,23 @@ export const dispatchNotification = internalMutation({
     recipientMemberId: v.id("teamMembers"),
     eventType: v.string(),
     templateData: v.any(),
+    // E1 — rede de segurança (`lib/notificationChannels.ts`): o e-mail só sai se
+    // ALGUM destes avisos do destinatário ainda está não lido na hora do envio.
+    onlyIfUnread: v.optional(v.array(v.id("notifications"))),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
+    if (args.onlyIfUnread) {
+      let pending = false;
+      for (const id of args.onlyIfUnread.slice(0, 50)) {
+        const n = await ctx.db.get(id);
+        if (n && !n.readAt && n.memberId === args.recipientMemberId) {
+          pending = true;
+          break;
+        }
+      }
+      if (!pending) return false;
+    }
     // 1. Get recipient — skip if AI agent or no email
     const member = await ctx.db.get(args.recipientMemberId);
     if (!member || member.type !== "human" || !member.email) return false;

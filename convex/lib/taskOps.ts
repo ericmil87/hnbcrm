@@ -493,18 +493,16 @@ async function notifyMentions(
       ...notificationCopy({ type: "task_comment_mention", actorName: opts.author.name, taskTitle: opts.task.title, excerpt: opts.content }),
       taskId: opts.task._id,
       actorId: opts.author._id,
-    });
-
-    await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-      organizationId: opts.task.organizationId,
-      recipientMemberId: memberId,
-      eventType: "taskCommentMention",
-      templateData: {
-        authorName: opts.author.name,
-        taskTitle: opts.task.title,
-        taskId: opts.task._id,
-        commentExcerpt: snippet,
-        taskUrl: url,
+      // E1: e-mail de reserva (+10 min, só se a menção ainda não foi lida).
+      email: {
+        eventType: "taskCommentMention",
+        templateData: {
+          authorName: opts.author.name,
+          taskTitle: opts.task.title,
+          taskId: opts.task._id,
+          commentExcerpt: snippet,
+          taskUrl: url,
+        },
       },
     });
   }
