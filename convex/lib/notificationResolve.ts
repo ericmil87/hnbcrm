@@ -136,6 +136,7 @@ export async function resolveEntityNotifications(
 ): Promise<number> {
   const db = ctx.db;
   const t = args.target;
+  const entityCap = Math.min(args.scanLimit ?? RESOLVE_BATCH, RESOLVE_BATCH);
   let rows: Doc<"notifications">[];
   if ("conversationId" in t) {
     // Mais novas primeiro, em lotes, com teto: com muitas não lidas na conversa
@@ -150,24 +151,24 @@ export async function resolveEntityNotifications(
     rows = await db
       .query("notifications")
       .withIndex("by_handoff_and_read", (q) => q.eq("handoffId", t.handoffId).eq("readAt", undefined))
-      .take(RESOLVE_BATCH);
+      .take(entityCap);
   } else if ("taskId" in t) {
     rows = await db
       .query("notifications")
       .withIndex("by_task_and_read", (q) => q.eq("taskId", t.taskId).eq("readAt", undefined))
-      .take(RESOLVE_BATCH);
+      .take(entityCap);
   } else if ("channelId" in t) {
     rows = await db
       .query("notifications")
       .withIndex("by_channel_config_and_read", (q) => q.eq("channelConfigId", t.channelId).eq("readAt", undefined))
-      .take(RESOLVE_BATCH);
+      .take(entityCap);
   } else {
     rows = await db
       .query("notifications")
       .withIndex("by_meta_connection_and_read", (q) =>
         q.eq("metaConnectionId", t.metaConnectionId).eq("readAt", undefined)
       )
-      .take(RESOLVE_BATCH);
+      .take(entityCap);
   }
 
   const now = Date.now();

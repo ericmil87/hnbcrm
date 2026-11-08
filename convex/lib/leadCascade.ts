@@ -128,13 +128,14 @@ async function resolveBeforeDelete(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
   target: ResolveTarget,
-  budget: WriteBudget
+  budget: WriteBudget,
+  reason: string
 ): Promise<boolean> {
   while (budget.left > 0) {
     const n = await resolveEntityNotifications(ctx, {
       organizationId,
       target,
-      reason: "lead_deleted",
+      reason,
       scanLimit: Math.min(budget.left, 100),
     });
     budget.left -= n;
@@ -152,10 +153,12 @@ async function resolveBeforeDelete(
 export async function deleteConversationCascade(
   ctx: MutationCtx,
   conversationId: Id<"conversations">,
-  budget: WriteBudget
+  budget: WriteBudget,
+  /** Motivo gravado nos avisos resolvidos (cascata de lead = padrão; grupo/demo passam o seu). */
+  reason: string = "lead_deleted"
 ): Promise<boolean> {
   const conv = await ctx.db.get(conversationId);
-  if (conv && !(await resolveBeforeDelete(ctx, conv.organizationId, { conversationId }, budget))) return false;
+  if (conv && !(await resolveBeforeDelete(ctx, conv.organizationId, { conversationId }, budget, reason))) return false;
   // Follow-ups da IA PRIMEIRO: cancelar o `runAt` em voo antes de apagar a
   // conversa. Sem isto o `fire` acorda amanhã para uma conversa que não existe
   // mais — e a tarefa dele sobreviveria à cascata (ela só perde o `leadId`).
@@ -262,7 +265,7 @@ export async function cascadeLeadChildren(
       .take(Math.min(budget.left, 100));
     if (page.length === 0) break;
     for (const handoff of page) {
-      if (!(await resolveBeforeDelete(ctx, handoff.organizationId, { handoffId: handoff._id }, budget))) return false;
+      if (!(await resolveBeforeDelete(ctx, handoff.organizationId, { handoffId: handoff._id }, budget, "lead_deleted"))) return false;
       await ctx.db.delete(handoff._id);
       budget.left -= 1;
     }
