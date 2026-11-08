@@ -20,11 +20,24 @@ import { classifyPushStatus, parseRetryAfter, PUSH_FETCH_TIMEOUT_MS, type PushOu
 
 type Vapid = { subject: string; publicKey: string; privateKey: string };
 
+/**
+ * VAPID do deployment, VALIDADO uma vez antes de qualquer envio: assunto sem
+ * `mailto:`/`https:`, chave com `=` ou de tamanho errado faria
+ * `generateRequestDetails` lançar para TODA assinatura — e isso nunca pode
+ * ser tratado como problema do aparelho. Inválido = `null` (nada sai, nada é
+ * apagado). O log leva só o nome do erro (a mensagem do web-push cita o assunto).
+ */
 function vapidFromEnv(): Vapid | null {
   const subject = process.env.VAPID_SUBJECT?.trim();
   const publicKey = process.env.VAPID_PUBLIC_KEY?.trim();
   const privateKey = process.env.VAPID_PRIVATE_KEY?.trim();
   if (!subject || !publicKey || !privateKey) return null;
+  try {
+    webpush.getVapidHeaders("https://fcm.googleapis.com", subject, publicKey, privateKey, "aes128gcm");
+  } catch (e) {
+    console.error(JSON.stringify({ event: "pushVapidInvalid", error: e instanceof Error ? e.name : "unknown" }));
+    return null;
+  }
   return { subject, publicKey, privateKey };
 }
 
@@ -45,8 +58,9 @@ async function sendOne(
       { vapidDetails: vapid, TTL: opts.ttlSeconds, urgency: opts.urgency, topic: opts.topic }
     );
   } catch {
-    // Chave do aparelho corrompida/inválida: não há como cifrar para ela.
-    return { outcome: "gone" };
+    // Nunca "gone": o VAPID já foi validado, mas qualquer outra falha local de
+    // cifra não prova que a assinatura morreu (só 404/410 do serviço provam).
+    return { outcome: "failed" };
   }
   try {
     const res = await fetch(details.endpoint, {
@@ -59,6 +73,8 @@ async function sendOne(
       ),
       body: details.body ? new Uint8Array(details.body) : undefined,
       signal: AbortSignal.timeout(PUSH_FETCH_TIMEOUT_MS),
+      // Serviço de push não redireciona; um 3xx não é seguido (classifica como "failed").
+      redirect: "manual",
     });
     const outcome = classifyPushStatus(res.status);
     return outcome === "retry"
@@ -70,47 +86,49 @@ async function sendOne(
   }
 }
 
+/**
+ * Recebe SÓ ids (nada de endpoint, chave ou texto nos args agendados): alvos e
+ * payload vêm de `push.internalGetPushSendPlan` na hora do envio.
+ */
 export const internalSendPush = internalAction({
   args: {
     notificationId: v.id("notifications"),
-    organizationId: v.id("organizations"),
-    type: v.string(),
+    subscriptionIds: v.array(v.id("pushSubscriptions")),
     attempt: v.number(),
-    targets: v.array(
-      v.object({
-        subscriptionId: v.id("pushSubscriptions"),
-        endpoint: v.string(),
-        p256dh: v.string(),
-        auth: v.string(),
-      })
-    ),
-    payload: v.string(),
-    /** Mesmo aviso sem prévia, para o 413 (payload grande demais). */
-    fallbackPayload: v.optional(v.string()),
-    ttlSeconds: v.number(),
-    urgency: v.union(v.literal("very-low"), v.literal("low"), v.literal("normal"), v.literal("high")),
-    topic: v.string(),
+    /** Reenvio sem prévia (reservado; o 413 já reenvia sem prévia na mesma execução). */
+    noPreview: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
+    const plan = await ctx.runQuery(internal.push.internalGetPushSendPlan, {
+      notificationId: args.notificationId,
+      subscriptionIds: args.subscriptionIds,
+      ...(args.noPreview ? { noPreview: true } : {}),
+    });
+    if (plan.skip === "gone") return null;
     const base = {
       notificationId: args.notificationId,
-      organizationId: args.organizationId,
-      type: args.type,
+      organizationId: plan.organizationId,
+      type: plan.type,
       attempt: args.attempt,
     };
+    if (plan.skip === "read") {
+      await ctx.runMutation(internal.push.internalRecordPushResults, { ...base, results: [], suppressedRead: true });
+      return null;
+    }
     const vapid = vapidFromEnv();
     if (!vapid) {
       await ctx.runMutation(internal.push.internalRecordPushResults, { ...base, results: [], notConfigured: true });
       return null;
     }
-    const opts = { ttlSeconds: args.ttlSeconds, urgency: args.urgency, topic: args.topic };
+    const opts = { ttlSeconds: plan.ttlSeconds, urgency: plan.urgency, topic: plan.topic };
+    const fallbackPayload = plan.fallbackPayload;
     const results = await Promise.all(
-      args.targets.map(async (target) => {
-        const first = await sendOne(target, args.payload, vapid, opts);
+      plan.targets.map(async (target) => {
+        const first = await sendOne(target, plan.payload, vapid, opts);
         if (first.outcome !== "too_large") return { subscriptionId: target.subscriptionId, ...first };
-        if (!args.fallbackPayload) return { subscriptionId: target.subscriptionId, outcome: "failed" as const };
-        const second = await sendOne(target, args.fallbackPayload, vapid, opts);
+        if (!fallbackPayload) return { subscriptionId: target.subscriptionId, outcome: "failed" as const };
+        const second = await sendOne(target, fallbackPayload, vapid, opts);
         return {
           subscriptionId: target.subscriptionId,
           ...(second.outcome === "too_large" ? { outcome: "failed" as const } : second),

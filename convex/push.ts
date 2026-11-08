@@ -13,7 +13,7 @@
  * volta com o resultado (apaga 404/410, reagenda 429/5xx, contadores).
  */
 import { v, ConvexError } from "convex/values";
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, isMembershipRevoked } from "./lib/auth";
@@ -277,7 +277,7 @@ export const internalDeliverPush = internalMutation({
       .withIndex("by_member", (q) => q.eq("teamMemberId", member._id))
       .take(PUSH_MAX_DEVICES);
     const only = args.subscriptionIds ? new Set(args.subscriptionIds) : null;
-    const targets: { subscriptionId: Id<"pushSubscriptions">; endpoint: string; p256dh: string; auth: string }[] = [];
+    const subscriptionIds: Id<"pushSubscriptions">[] = [];
     for (const link of links) {
       if (link.organizationId !== n.organizationId) continue;
       if (only && !only.has(link.subscriptionId)) continue;
@@ -291,10 +291,70 @@ export const internalDeliverPush = internalMutation({
         await unlinkPushSubscriptionMember(ctx, link);
         continue;
       }
-      targets.push({ subscriptionId: sub._id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth });
+      subscriptionIds.push(sub._id);
     }
-    if (targets.length === 0) return null;
+    if (subscriptionIds.length === 0) return null;
 
+    // Só ids nos args agendados: endpoint, chaves e o texto (prévia de conversa)
+    // são lidos pela action em `internalGetPushSendPlan` na hora do envio.
+    await ctx.scheduler.runAfter(0, internal.pushNode.internalSendPush, {
+      notificationId: n._id,
+      subscriptionIds,
+      attempt: args.attempt ?? 1,
+      ...(args.noPreview ? { noPreview: true } : {}),
+    });
+    return null;
+  },
+});
+
+const sendPlanValidator = v.union(
+  v.object({ skip: v.literal("read"), organizationId: v.id("organizations"), type: v.string() }),
+  v.object({ skip: v.literal("gone") }),
+  v.object({
+    skip: v.null(),
+    organizationId: v.id("organizations"),
+    type: v.string(),
+    targets: v.array(
+      v.object({ subscriptionId: v.id("pushSubscriptions"), endpoint: v.string(), p256dh: v.string(), auth: v.string() })
+    ),
+    payload: v.string(),
+    fallbackPayload: v.union(v.string(), v.null()),
+    ttlSeconds: v.number(),
+    urgency: v.union(v.literal("very-low"), v.literal("low"), v.literal("normal"), v.literal("high")),
+    topic: v.string(),
+  })
+);
+
+/**
+ * Lido pela action no início do envio: alvos (endpoint/chaves) e payload
+ * montados aqui, nunca guardados em args de função agendada. Relê `readAt` e
+ * o membro (a política com relógio ficou na mutation que agendou).
+ */
+export const internalGetPushSendPlan = internalQuery({
+  args: {
+    notificationId: v.id("notifications"),
+    subscriptionIds: v.array(v.id("pushSubscriptions")),
+    noPreview: v.optional(v.boolean()),
+  },
+  returns: sendPlanValidator,
+  handler: async (ctx, args) => {
+    const n = await ctx.db.get(args.notificationId);
+    if (!n) return { skip: "gone" as const };
+    if (n.readAt) return { skip: "read" as const, organizationId: n.organizationId, type: n.type };
+    const options = pushRequestOptions(n.type, pushTagOf({ ...n, _id: n._id }));
+    const member = await ctx.db.get(n.memberId);
+    const org = await ctx.db.get(n.organizationId);
+    if (!options || !memberAlive(member, n.organizationId) || !org) return { skip: "gone" as const };
+    const targets: { subscriptionId: Id<"pushSubscriptions">; endpoint: string; p256dh: string; auth: string }[] = [];
+    for (const id of args.subscriptionIds.slice(0, PUSH_MAX_DEVICES)) {
+      const sub = await ctx.db.get(id);
+      if (sub && sub.userId === member.userId) {
+        targets.push({ subscriptionId: sub._id, endpoint: sub.endpoint, p256dh: sub.p256dh, auth: sub.auth });
+      }
+    }
+    if (targets.length === 0) return { skip: "gone" as const };
+
+    const prefs = await loadMemberPrefs(ctx, n.organizationId, member._id);
     const memberPrefsPreview = prefs?.showPreview ?? true;
     const orgHides = org.settings.notificationDefaults?.hidePreviewOnLockScreen === true;
     const showPreview = !args.noPreview && memberPrefsPreview && !orgHides;
@@ -307,9 +367,8 @@ export const internalDeliverPush = internalMutation({
       .withIndex("by_user", (q) => q.eq("userId", member.userId))
       .take(10);
     const multiOrg = memberships.filter((m) => !isMembershipRevoked(m)).length > 1;
-    const input = { ...n, _id: n._id as string, organizationId: n.organizationId as string };
     const common = {
-      notification: input,
+      notification: { ...n, _id: n._id as string, organizationId: n.organizationId as string },
       appBaseUrl: appUrl(),
       orgLabel: multiOrg ? truncateGraphemes(org.name, 24) : undefined,
       badge: unread.length,
@@ -317,20 +376,17 @@ export const internalDeliverPush = internalMutation({
     };
     const payload = buildPushPayload({ ...common, showPreview });
     const fallback = showPreview && payload.notification.body ? buildPushPayload({ ...common, showPreview: false }) : null;
-
-    await ctx.scheduler.runAfter(0, internal.pushNode.internalSendPush, {
-      notificationId: n._id,
+    return {
+      skip: null,
       organizationId: n.organizationId,
       type: n.type,
-      attempt: args.attempt ?? 1,
       targets,
       payload: JSON.stringify(payload),
-      ...(fallback ? { fallbackPayload: JSON.stringify(fallback) } : {}),
+      fallbackPayload: fallback ? JSON.stringify(fallback) : null,
       ttlSeconds: options.ttlSeconds,
       urgency: options.urgency,
       topic: options.topic,
-    });
-    return null;
+    };
   },
 });
 
@@ -350,8 +406,10 @@ export const internalRecordPushResults = internalMutation({
         retryAfterMs: v.optional(v.number()),
       })
     ),
-    /** Sem VAPID no deployment: nada saiu. */
+    /** Sem VAPID válido no deployment: nada saiu, nenhuma assinatura tocada. */
     notConfigured: v.optional(v.boolean()),
+    /** Lido entre o agendamento e o envio. */
+    suppressedRead: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -359,6 +417,10 @@ export const internalRecordPushResults = internalMutation({
     const base = { organizationId: args.organizationId, type: args.type, shardKey: args.notificationId, now };
     if (args.notConfigured) {
       await bumpPushStat(ctx, { ...base, outcome: "not_configured" });
+      return null;
+    }
+    if (args.suppressedRead) {
+      await bumpPushStat(ctx, { ...base, outcome: "suppressed_read" });
       return null;
     }
     const counts = new Map<string, number>();
