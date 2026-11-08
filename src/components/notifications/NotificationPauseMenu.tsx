@@ -5,9 +5,10 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNow } from "@/hooks/useNow";
 import { mutationErrorMessage } from "@/lib/errors";
-import { PAUSE_OPTIONS, isPaused, pausedUntilLabel } from "@/lib/notificationPrefsUi";
+import { PAUSE_OPTIONS, isPaused, pauseArgs, pausedUntilLabel } from "@/lib/notificationPrefsUi";
 
 interface PauseMenuViewProps {
   pausedUntil: number | null;
@@ -16,13 +17,43 @@ interface PauseMenuViewProps {
   onResume: () => void;
 }
 
-/** Menu "Pausar avisos" do cabeçalho do sino; com pausa ativa mostra "Pausado até …" e "Retomar". */
+/**
+ * Menu "Pausar avisos" do cabeçalho do sino. Pausado: no desktop mostra "Pausado até …" e
+ * "Retomar"; no celular (cabeçalho estreito) vira só o ícone, com o texto completo no menu.
+ */
 export function NotificationPauseMenuView({ pausedUntil, now, onPause, onResume }: PauseMenuViewProps) {
+  const narrow = useMediaQuery("(max-width: 767px)");
+
   if (isPaused(pausedUntil, now)) {
+    const label = pausedUntilLabel(pausedUntil, now);
+    if (narrow) {
+      return (
+        <Menu
+          ariaLabel="Avisos pausados"
+          items={[
+            { id: "status", label, onSelect: () => undefined, disabled: true },
+            { id: "resume", label: "Retomar", onSelect: onResume },
+          ]}
+          trigger={(triggerProps) => (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label={`${label}. Abrir opções`}
+              className="text-brand-500"
+              {...triggerProps}
+            >
+              <BellOff size={16} aria-hidden="true" />
+            </Button>
+          )}
+        />
+      );
+    }
     return (
       <div className="flex items-center gap-1">
         <span role="status" className="text-xs text-text-secondary">
-          {pausedUntilLabel(pausedUntil, now)}
+          {label}
         </span>
         <Button type="button" variant="ghost" size="sm" onClick={onResume}>
           Retomar
@@ -66,7 +97,9 @@ export function NotificationPauseMenu({ organizationId }: { organizationId: Id<"
     <NotificationPauseMenuView
       pausedUntil={prefs.pausedUntil}
       now={now}
-      onPause={(mode) => void run(() => pauseFor({ organizationId, mode }), "Avisos pausados")}
+      onPause={(mode) =>
+        void run(() => pauseFor({ organizationId, ...pauseArgs(mode, Date.now()) }), "Avisos pausados")
+      }
       onResume={() => void run(() => resume({ organizationId }), "Avisos retomados")}
     />
   );

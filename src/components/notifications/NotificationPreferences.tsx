@@ -5,9 +5,9 @@ import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNow } from "@/hooks/useNow";
 import { PUSH_ENABLED } from "@/lib/featureFlags";
-import { deviceTimeZone, pushSupported } from "@/lib/notificationPrefsUi";
+import { deviceTimeZone, pauseArgs, pushSupported } from "@/lib/notificationPrefsUi";
 import { TelegramCard } from "./TelegramCard";
-import { NotificationPreferencesView, type EffectivePrefs } from "./NotificationPreferencesView";
+import { NotificationPreferencesView } from "./NotificationPreferencesView";
 
 interface NotificationsSectionProps {
   organizationId: Id<"organizations">;
@@ -44,15 +44,16 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
     <div className="space-y-6">
       <TelegramCard organizationId={organizationId} />
       <NotificationPreferencesView
-        prefs={prefs as EffectivePrefs}
+        prefs={prefs}
         now={now}
         canManageOrg={can("settings", "manage")}
         telegramLinked={telegramLinked}
         pushAvailable={PUSH_ENABLED && pushSupported()}
+        previewEnabled={PUSH_ENABLED}
         deviceTimeZone={deviceTimeZone()}
         onPreset={(preset) => setPreset({ organizationId, preset })}
         onChannel={(channel, flag, enabled) => setChannelPref({ organizationId, channel, flag, enabled })}
-        onPause={(mode) => pauseFor({ organizationId, mode })}
+        onPause={(mode) => pauseFor({ organizationId, ...pauseArgs(mode, Date.now()) })}
         onResume={() => resume({ organizationId })}
         onQuietHours={(input) => setQuietHours({ organizationId, ...input })}
         onUrgentBypass={(urgentBypass) => setUrgentBypass({ organizationId, urgentBypass })}

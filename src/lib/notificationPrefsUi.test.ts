@@ -2,7 +2,19 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { KNOWN_FLAGS } from "../../convex/lib/notificationPolicy";
-import { EMAIL_FLAGS, buildMatrixGroups, isPaused, pausedUntilLabel, validateQuietHours, FLAG_COPY } from "./notificationPrefsUi";
+import {
+  EMAIL_FLAGS,
+  NON_PERSONAL_FLAGS,
+  buildMatrixGroups,
+  externalChannelsText,
+  isCustomized,
+  isPaused,
+  pauseArgs,
+  pausedUntilLabel,
+  tomorrowEightLocal,
+  validateQuietHours,
+  FLAG_COPY,
+} from "./notificationPrefsUi";
 
 describe("buildMatrixGroups", () => {
   it("cobre todos os flags conhecidos, sem repetir, com rótulo", () => {
@@ -64,5 +76,58 @@ describe("EMAIL_FLAGS", () => {
       expect(rows.find((r) => r.flag === f)?.channels).not.toContain("email");
     }
     expect(rows.find((r) => r.flag === "taskOverdue")?.channels).toContain("email");
+  });
+});
+
+describe("NON_PERSONAL_FLAGS", () => {
+  it("bate com a política do backend", () => {
+    const src = readFileSync("convex/lib/notificationPolicy.ts", "utf8");
+    const block = src.match(/NON_PERSONAL_FLAGS = new Set\(\[([\s\S]*?)\]\)/)?.[1] ?? "";
+    const flags = [...block.matchAll(/"(\w+)"/g)].map((m) => m[1]).sort();
+    expect([...NON_PERSONAL_FLAGS].sort()).toEqual(flags);
+  });
+});
+
+describe("isCustomized", () => {
+  const rows = buildMatrixGroups().flatMap((g) => g.rows);
+  it("sem escolhas por tipo não é personalizado, em cada atalho", () => {
+    expect(isCustomized("all", () => true, rows)).toBe(false);
+    expect(isCustomized("none", () => false, rows)).toBe(false);
+    expect(isCustomized("mine", (_c, f) => !NON_PERSONAL_FLAGS.has(f), rows)).toBe(false);
+  });
+  it("uma célula diferente do atalho é personalizado", () => {
+    expect(isCustomized("all", (c, f) => !(c === "email" && f === "taskOverdue"), rows)).toBe(true);
+    expect(isCustomized("none", (c, f) => c === "telegram" && f === "newMessage", rows)).toBe(true);
+  });
+});
+
+describe("pausa até amanhã 8 h no fuso do aparelho", () => {
+  const original = process.env.TZ;
+  it("muda com o fuso do aparelho", () => {
+    try {
+      const now = Date.UTC(2026, 10, 7, 15, 0);
+      process.env.TZ = "America/Sao_Paulo";
+      const sp = tomorrowEightLocal(now);
+      expect(new Date(sp).toISOString()).toBe("2026-11-08T11:00:00.000Z");
+      process.env.TZ = "Asia/Tokyo";
+      const tk = tomorrowEightLocal(now);
+      expect(new Date(tk).toISOString()).toBe("2026-11-08T23:00:00.000Z");
+      expect(sp).not.toBe(tk);
+    } finally {
+      if (original === undefined) delete process.env.TZ;
+      else process.env.TZ = original;
+    }
+  });
+  it("pauseArgs usa custom só para amanhã", () => {
+    expect(pauseArgs("1h", 0)).toEqual({ mode: "1h" });
+    expect(pauseArgs("4h", 0)).toEqual({ mode: "4h" });
+    expect(pauseArgs("tomorrow", Date.UTC(2026, 10, 7, 15, 0)).mode).toBe("custom");
+  });
+});
+
+describe("externalChannelsText", () => {
+  it("só cita push quando existir", () => {
+    expect(externalChannelsText(false)).not.toMatch(/push/);
+    expect(externalChannelsText(true)).toMatch(/push/);
   });
 });

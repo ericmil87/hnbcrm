@@ -1,51 +1,40 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { FunctionReturnType } from "convex/server";
+import { api } from "../../../convex/_generated/api";
 import { BellOff, Lock, Moon, Send, ShieldCheck } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Input } from "@/components/ui/Input";
+import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { Switch } from "@/components/ui/Switch";
-import { Tooltip } from "@/components/ui/Tooltip";
 import { mutationErrorMessage } from "@/lib/errors";
-import { cn } from "@/lib/utils";
 import {
   PAUSE_OPTIONS,
   PRESET_OPTIONS,
   buildMatrixGroups,
+  externalChannelsText,
+  isCustomized,
   isPaused,
   pausedUntilLabel,
   validateQuietHours,
   type MatrixChannel,
 } from "@/lib/notificationPrefsUi";
+import { timezoneLabel } from "@/lib/timezones";
 import { NOTIFICATION_GROUP_LABELS } from "../../../convex/lib/notificationGroups";
 
 export type Preset = "all" | "mine" | "none";
 export type PauseMode = "1h" | "4h" | "tomorrow";
 
-export interface EffectivePrefs {
-  preset: Preset;
-  presetSource: "member" | "org" | "default";
-  channels: {
-    bell: Record<string, boolean>;
-    email: Record<string, boolean>;
-    telegram: Record<string, boolean>;
-    push: Record<string, boolean>;
-  };
-  actionableFlags: string[];
-  pausedUntil: number | null;
-  quietHours: { enabled: boolean; start: string; end: string; timeZone: string };
-  urgentBypass: boolean;
-  showPreview: boolean;
-  orgHidePreview: boolean;
-  effectiveShowPreview: boolean;
-  orgDefaults: { preset: Preset | null; hidePreviewOnLockScreen: boolean };
-}
+/** Formato exato devolvido pelo servidor. */
+export type EffectivePrefs = FunctionReturnType<typeof api.notificationPreferences.getMyEffectivePreferences>;
 
 export interface QuietHoursInput {
   enabled: boolean;
-  start: string;
-  end: string;
+  start?: string;
+  end?: string;
   timeZone?: string;
 }
 
@@ -58,6 +47,11 @@ export interface NotificationPreferencesViewProps {
   telegramLinked: boolean;
   /** Aparelho com suporte e recurso ligado. */
   pushAvailable: boolean;
+  /**
+   * `PUSH_ENABLED`: só com push existem avisos no aparelho. Sem ele a prévia na tela de bloqueio
+   * não aparece e os textos de pausa/silêncio não citam push.
+   */
+  previewEnabled: boolean;
   deviceTimeZone?: string;
   onPreset: (preset: Preset) => Promise<unknown>;
   onChannel: (channel: MatrixChannel, flag: string, enabled: boolean) => Promise<unknown>;
@@ -82,9 +76,65 @@ function failToast(e: unknown) {
   toast.error(mutationErrorMessage(e, "Não foi possível salvar a preferência."));
 }
 
+/* ------------------------------------------------- palpites otimistas da matriz */
+
+/**
+ * Palpite local por célula (`canal:flag`). Cada toque ganha uma versão: o fim (sucesso ou erro)
+ * de um toque antigo não mexe no palpite de um toque mais novo.
+ */
+function useChannelOverrides(onChannel: NotificationPreferencesViewProps["onChannel"]) {
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const versions = useRef(new Map<string, number>());
+
+  const drop = useCallback((key: string) => {
+    setOverrides((p) => {
+      if (!(key in p)) return p;
+      const rest = { ...p };
+      delete rest[key];
+      return rest;
+    });
+  }, []);
+
+  const toggle = useCallback(
+    async (channel: MatrixChannel, flag: string, enabled: boolean) => {
+      const key = `${channel}:${flag}`;
+      const version = (versions.current.get(key) ?? 0) + 1;
+      versions.current.set(key, version);
+      setOverrides((p) => ({ ...p, [key]: enabled }));
+      try {
+        await onChannel(channel, flag, enabled);
+        if (versions.current.get(key) === version) drop(key);
+        savedToast();
+      } catch (e) {
+        if (versions.current.get(key) === version) drop(key);
+        failToast(e);
+      }
+    },
+    [onChannel, drop],
+  );
+
+  /** Um atalho recomeça a matriz: palpites e respostas pendentes deixam de valer. */
+  const reset = useCallback(() => {
+    for (const key of versions.current.keys()) versions.current.set(key, (versions.current.get(key) ?? 0) + 1);
+    setOverrides({});
+  }, []);
+
+  return { overrides, toggle, reset };
+}
+
 export function NotificationPreferencesView(props: NotificationPreferencesViewProps) {
   const { prefs, now, canManageOrg } = props;
   const paused = isPaused(prefs.pausedUntil, now);
+  const groups = useMemo(() => buildMatrixGroups(), []);
+  const { overrides, toggle, reset } = useChannelOverrides(props.onChannel);
+
+  const valueOf = (channel: MatrixChannel, flag: string) =>
+    overrides[`${channel}:${flag}`] ?? prefs.channels[channel]?.[flag] ?? false;
+  const customized = isCustomized(
+    prefs.preset,
+    valueOf,
+    groups.flatMap((g) => g.rows),
+  );
 
   return (
     <div className="space-y-6">
@@ -92,10 +142,10 @@ export function NotificationPreferencesView(props: NotificationPreferencesViewPr
         <PauseBlock {...props} paused={paused} />
       </Card>
       <Card>
-        <PresetBlock {...props} />
+        <PresetBlock {...props} customized={customized} onApplied={reset} />
       </Card>
       <Card>
-        <MatrixBlock {...props} />
+        <MatrixBlock {...props} groups={groups} valueOf={valueOf} onToggle={toggle} />
       </Card>
       <Card>
         <DeliveryBlock {...props} />
@@ -115,6 +165,7 @@ function PauseBlock({
   prefs,
   now,
   paused,
+  previewEnabled,
   onPause,
   onResume,
 }: NotificationPreferencesViewProps & { paused: boolean }) {
@@ -137,7 +188,7 @@ function PauseBlock({
         <h3 className="text-lg font-semibold text-text-primary">Pausar avisos</h3>
       </div>
       <p className="text-sm text-text-secondary mb-4">
-        Enquanto estiver pausado, e-mail, Telegram e push ficam em espera. O sino continua registrando tudo.
+        Enquanto estiver pausado, nada sai por {externalChannelsText(previewEnabled)}; tudo fica registrado no sino.
       </p>
       {paused && prefs.pausedUntil !== null ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -163,8 +214,15 @@ function PauseBlock({
 
 /* ----------------------------------------------------------------- atalhos */
 
-function PresetBlock({ prefs, onPreset, onApplyAll }: NotificationPreferencesViewProps) {
+function PresetBlock({
+  prefs,
+  customized,
+  onApplied,
+  onPreset,
+  onApplyAll,
+}: NotificationPreferencesViewProps & { customized: boolean; onApplied: () => void }) {
   const [optimistic, setOptimistic] = useState<Preset | null>(null);
+  const version = useRef(0);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [applying, setApplying] = useState(false);
   const selected = optimistic ?? prefs.preset;
@@ -173,19 +231,23 @@ function PresetBlock({ prefs, onPreset, onApplyAll }: NotificationPreferencesVie
     if (optimistic !== null && optimistic === prefs.preset) setOptimistic(null);
   }, [optimistic, prefs.preset]);
 
+  // Tocar no atalho já escolhido reaplica: apaga as escolhas por tipo.
   const choose = async (preset: Preset) => {
-    if (preset === selected) return;
+    const mine = ++version.current;
     setOptimistic(preset);
     try {
       await onPreset(preset);
+      onApplied();
+      if (version.current === mine) setOptimistic(null);
       savedToast();
     } catch (e) {
-      setOptimistic(null);
+      if (version.current === mine) setOptimistic(null);
       failToast(e);
     }
   };
 
   const applyAll = async () => {
+    if (applying) return;
     setApplying(true);
     try {
       const { applied, skipped } = await onApplyAll();
@@ -202,36 +264,31 @@ function PresetBlock({ prefs, onPreset, onApplyAll }: NotificationPreferencesVie
     }
   };
 
+  const hint = PRESET_OPTIONS.find((o) => o.value === selected)?.hint;
+
   return (
     <div>
-      <h3 className="text-lg font-semibold text-text-primary mb-1">O que você quer receber</h3>
+      <div className="mb-1 flex flex-wrap items-center gap-2">
+        <h3 className="text-lg font-semibold text-text-primary">O que você quer receber</h3>
+        {customized && <Badge variant="info">Personalizado</Badge>}
+      </div>
       <p className="text-sm text-text-secondary mb-4">
-        Escolha um atalho. Escolher de novo apaga os ajustes finos de "Personalizar". O sino sempre registra o que
-        precisa de você.
+        Escolha um atalho. Tocar de novo no atalho atual apaga os ajustes por tipo de "Personalizar". O sino sempre
+        registra o que precisa de você.
         {prefs.presetSource === "org" && " Hoje vale o padrão da organização."}
       </p>
-      <div role="radiogroup" aria-label="O que você quer receber" className="grid gap-2 md:grid-cols-3">
-        {PRESET_OPTIONS.map((o) => {
-          const on = selected === o.value;
-          return (
-            <button
-              key={o.value}
-              type="button"
-              role="radio"
-              aria-checked={on}
-              onClick={() => void choose(o.value)}
-              className={cn(
-                "min-h-11 rounded-card border p-3 text-left transition-colors",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
-                on ? "border-brand-500 bg-brand-500/10" : "border-border bg-surface-raised hover:bg-surface-overlay",
-              )}
-            >
-              <span className="block text-sm font-medium text-text-primary">{o.label}</span>
-              <span className="mt-0.5 block text-xs text-text-secondary">{o.hint}</span>
-            </button>
-          );
-        })}
-      </div>
+      <SegmentedControl
+        ariaLabel="O que você quer receber"
+        value={selected}
+        onValueChange={(v) => void choose(v as Preset)}
+        options={PRESET_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+      />
+      {hint && (
+        <p className="mt-2 text-xs text-text-secondary">
+          {hint}
+          {customized && " Há ajustes por tipo em “Personalizar”."}
+        </p>
+      )}
       <div className="mt-4 flex justify-end">
         <Button variant="secondary" size="sm" onClick={() => setConfirmOpen(true)}>
           Aplicar a todas as minhas organizações
@@ -251,24 +308,19 @@ function PresetBlock({ prefs, onPreset, onApplyAll }: NotificationPreferencesVie
 
 /* ------------------------------------------------------------------ matriz */
 
-function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: NotificationPreferencesViewProps) {
+function MatrixBlock({
+  prefs,
+  telegramLinked,
+  pushAvailable,
+  groups,
+  valueOf,
+  onToggle,
+}: NotificationPreferencesViewProps & {
+  groups: ReturnType<typeof buildMatrixGroups>;
+  valueOf: (channel: MatrixChannel, flag: string) => boolean;
+  onToggle: (channel: MatrixChannel, flag: string, enabled: boolean) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const groups = useMemo(() => buildMatrixGroups(), []);
-  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-
-  // Descarta o palpite local quando o servidor já concorda com ele.
-  useEffect(() => {
-    setOverrides((prev) => {
-      let changed = false;
-      const next: Record<string, boolean> = {};
-      for (const [key, value] of Object.entries(prev)) {
-        const [channel, flag] = key.split(":") as [MatrixChannel, string];
-        if (prefs.channels[channel]?.[flag] === value) changed = true;
-        else next[key] = value;
-      }
-      return changed ? next : prev;
-    });
-  }, [prefs.channels]);
 
   const columns = useMemo<MatrixChannel[]>(() => {
     const cols: MatrixChannel[] = ["email"];
@@ -277,39 +329,21 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
     return cols;
   }, [telegramLinked, pushAvailable]);
 
-  const valueOf = (channel: MatrixChannel, flag: string) =>
-    overrides[`${channel}:${flag}`] ?? prefs.channels[channel]?.[flag] ?? false;
-
-  const toggle = async (channel: MatrixChannel, flag: string, enabled: boolean) => {
-    const key = `${channel}:${flag}`;
-    setOverrides((p) => ({ ...p, [key]: enabled }));
-    try {
-      await onChannel(channel, flag, enabled);
-      savedToast();
-    } catch (e) {
-      setOverrides((p) => {
-        const { [key]: _drop, ...rest } = p;
-        return rest;
-      });
-      failToast(e);
-    }
-  };
-
-  const colClass = cn(
+  const colClass = [
     "md:grid",
     columns.length === 1 && "md:grid-cols-[minmax(0,1fr)_72px_72px]",
     columns.length === 2 && "md:grid-cols-[minmax(0,1fr)_72px_72px_72px]",
     columns.length === 3 && "md:grid-cols-[minmax(0,1fr)_72px_72px_72px_72px]",
-  );
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div>
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="text-lg font-semibold text-text-primary mb-1">Personalizar</h3>
-          <p className="text-sm text-text-secondary">
-            Escolha, tipo por tipo, onde cada aviso chega. Salva ao tocar.
-          </p>
+          <p className="text-sm text-text-secondary">Escolha, tipo por tipo, onde cada aviso chega. Salva ao tocar.</p>
         </div>
         <Button
           variant="secondary"
@@ -329,7 +363,7 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
               Conecte o Telegram no cartão acima para receber avisos por lá; a coluna aparece quando houver vínculo.
             </p>
           )}
-          <div className={cn("hidden gap-2 border-b border-border pb-2 text-xs font-medium text-text-muted", colClass)}>
+          <div className={`hidden gap-2 border-b border-border pb-2 text-xs font-medium text-text-muted ${colClass}`}>
             <span>Aviso</span>
             <span className="text-center">Sino</span>
             {columns.map((c) => (
@@ -340,10 +374,7 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
           </div>
           {groups.map(({ group, rows }) => (
             <section key={group} aria-labelledby={`matrix-${group}`}>
-              <h4
-                id={`matrix-${group}`}
-                className="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted"
-              >
+              <h4 id={`matrix-${group}`} className="mb-1 text-xs font-medium uppercase tracking-wider text-text-muted">
                 {NOTIFICATION_GROUP_LABELS[group]}
               </h4>
               <ul className="divide-y divide-border">
@@ -351,20 +382,22 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
                   const actionable = prefs.actionableFlags.includes(row.flag);
                   const bellOn = actionable || (prefs.channels.bell[row.flag] ?? true);
                   return (
-                    <li key={row.flag} className={cn("grid grid-cols-1 gap-2 py-3 md:items-center", colClass)}>
+                    <li key={row.flag} className={`grid grid-cols-1 gap-2 py-3 md:items-center ${colClass}`}>
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-text-primary">{row.label}</p>
                         <p className="text-xs text-text-secondary">{row.desc}</p>
                       </div>
                       <div className="flex items-center justify-between gap-2 md:justify-center">
                         <span className="text-xs text-text-muted md:hidden">Sino</span>
-                        {actionable ? (
-                          <span
-                            className="inline-flex min-h-11 items-center gap-1 text-xs text-text-secondary"
-                            aria-label={`${row.label}: sino sempre ligado, porque precisa de uma ação sua`}
-                          >
+                        {!row.bell ? (
+                          <NoCell text={`${row.label}: não aparece no sino`} />
+                        ) : actionable ? (
+                          <span className="inline-flex min-h-11 items-center gap-1 text-xs text-text-secondary">
                             <Lock size={14} aria-hidden="true" />
                             Sempre
+                            <span className="sr-only">
+                              {` no sino: ${row.label} precisa de uma ação sua e não pode ser desligado`}
+                            </span>
                           </span>
                         ) : (
                           <span className="inline-flex min-h-11 items-center text-xs text-text-secondary">
@@ -378,21 +411,13 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
                           {row.channels.includes(c) ? (
                             <Switch
                               checked={valueOf(c, row.flag)}
-                              onCheckedChange={(v) => void toggle(c, row.flag, v)}
+                              onCheckedChange={(v) => onToggle(c, row.flag, v)}
                               label={`${row.label}: ${CHANNEL_LABEL[c]}`}
                               hideLabel
                               size="sm"
                             />
                           ) : (
-                            <Tooltip content={c === "email" ? "Sem e-mail para este aviso" : `Sem ${CHANNEL_LABEL[c]} para este aviso`} asInfo>
-                              <button
-                                type="button"
-                                aria-label={`${row.label}: ${c === "email" ? "sem e-mail para este aviso" : `sem ${CHANNEL_LABEL[c]} para este aviso`}`}
-                                className="min-h-11 min-w-11 text-xs text-text-muted"
-                              >
-                                —
-                              </button>
-                            </Tooltip>
+                            <NoCell text={`${row.label}: sem ${c === "email" ? "e-mail" : CHANNEL_LABEL[c]} para este aviso`} />
                           )}
                         </div>
                       ))}
@@ -404,11 +429,21 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
           ))}
           <p className="text-xs text-text-muted">
             Avisos que pedem uma ação sua ficam sempre no sino. Nos demais, ligar um canal também religa o sino
-            daquele tipo.
+            daquele tipo. “—” indica que o aviso não existe naquele canal.
           </p>
         </div>
       )}
     </div>
+  );
+}
+
+/** Célula sem canal: traço visual, texto só para leitor de tela, fora da ordem do Tab. */
+function NoCell({ text }: { text: string }) {
+  return (
+    <span className="inline-flex min-h-11 min-w-11 items-center justify-center text-xs text-text-muted">
+      <span aria-hidden="true">—</span>
+      <span className="sr-only">{text}</span>
+    </span>
   );
 }
 
@@ -417,6 +452,7 @@ function MatrixBlock({ prefs, telegramLinked, pushAvailable, onChannel }: Notifi
 function DeliveryBlock({
   prefs,
   deviceTimeZone,
+  previewEnabled,
   onQuietHours,
   onUrgentBypass,
   onShowPreview,
@@ -430,18 +466,45 @@ function DeliveryBlock({
     setEnd(q.end);
   }, [q.start, q.end]);
 
-  const save = async (enabled: boolean, s: string, e: string) => {
-    const problem = validateQuietHours(enabled, s, e);
-    setError(problem);
-    if (problem) return;
+  const zone = q.enabled ? q.timeZone : (deviceTimeZone ?? q.timeZone);
+
+  const save = async (input: QuietHoursInput) => {
     try {
-      // O fuso é o do aparelho, a menos que já exista um salvo e o silêncio esteja ligado.
-      await onQuietHours({ enabled, start: s, end: e, timeZone: q.enabled ? q.timeZone : (deviceTimeZone ?? q.timeZone) });
+      await onQuietHours(input);
       savedToast();
     } catch (err) {
       setError(mutationErrorMessage(err, "Não foi possível salvar o horário de silêncio."));
     }
   };
+
+  const toggleQuiet = (enabled: boolean) => {
+    if (!enabled) {
+      // Desligar nunca depende dos campos (podem estar vazios ou inválidos).
+      setError(null);
+      void save({ enabled: false });
+      return;
+    }
+    const problem = validateQuietHours(true, start, end);
+    setError(problem);
+    if (problem) return;
+    void save({ enabled: true, start, end, timeZone: zone });
+  };
+
+  // Valida ao digitar; grava ao sair do campo (a roleta do iPhone dispara vários onChange).
+  const check = (s: string, e: string) => setError(q.enabled ? validateQuietHours(true, s, e) : null);
+  const commit = () => {
+    if (!q.enabled) return;
+    if (start === q.start && end === q.end) return;
+    const problem = validateQuietHours(true, start, end);
+    setError(problem);
+    if (problem) return;
+    void save({ enabled: true, start, end, timeZone: q.timeZone });
+  };
+
+  const [urgent, setUrgent] = useState(prefs.urgentBypass);
+  const [preview, setPreview] = useState(prefs.showPreview);
+  useEffect(() => setUrgent(prefs.urgentBypass), [prefs.urgentBypass]);
+  useEffect(() => setPreview(prefs.showPreview), [prefs.showPreview]);
 
   const simple = async (fn: () => Promise<unknown>, rollback: () => void) => {
     try {
@@ -453,11 +516,6 @@ function DeliveryBlock({
     }
   };
 
-  const [urgent, setUrgent] = useState(prefs.urgentBypass);
-  const [preview, setPreview] = useState(prefs.showPreview);
-  useEffect(() => setUrgent(prefs.urgentBypass), [prefs.urgentBypass]);
-  useEffect(() => setPreview(prefs.showPreview), [prefs.showPreview]);
-
   return (
     <div className="space-y-5">
       <div>
@@ -466,14 +524,10 @@ function DeliveryBlock({
           <h3 className="text-lg font-semibold text-text-primary">Horário de silêncio</h3>
         </div>
         <p className="text-sm text-text-secondary mb-3">
-          No horário de silêncio, e-mail, Telegram e push esperam; o sino continua registrando. Fuso:{" "}
-          {q.enabled ? q.timeZone : (deviceTimeZone ?? q.timeZone)}.
+          No horário de silêncio, nada sai por {externalChannelsText(previewEnabled)}; tudo fica registrado no sino.
+          Fuso: {timezoneLabel(zone)}.
         </p>
-        <Switch
-          checked={q.enabled}
-          onCheckedChange={(v) => void save(v, start, end)}
-          label="Silenciar em um horário"
-        />
+        <Switch checked={q.enabled} onCheckedChange={toggleQuiet} label="Silenciar em um horário" />
         <div className="mt-3 grid max-w-sm grid-cols-2 gap-3">
           <Input
             label="Início"
@@ -481,8 +535,9 @@ function DeliveryBlock({
             value={start}
             onChange={(e) => {
               setStart(e.target.value);
-              if (q.enabled) void save(true, e.target.value, end);
+              check(e.target.value, end);
             }}
+            onBlur={commit}
           />
           <Input
             label="Fim"
@@ -490,8 +545,9 @@ function DeliveryBlock({
             value={end}
             onChange={(e) => {
               setEnd(e.target.value);
-              if (q.enabled) void save(true, start, e.target.value);
+              check(start, e.target.value);
             }}
+            onBlur={commit}
           />
         </div>
         {error && (
@@ -507,48 +563,58 @@ function DeliveryBlock({
           checked={urgent}
           onCheckedChange={(v) => {
             setUrgent(v);
-            void simple(() => onUrgentBypass(v), () => setUrgent(!v));
+            void simple(
+              () => onUrgentBypass(v),
+              () => setUrgent(!v),
+            );
           }}
           label="Pedido de ajuda urgente fura pausa e silêncio"
           description="Quando a IA pede ajuda com urgência, o aviso chega mesmo pausado ou no horário de silêncio."
         />
       </div>
 
-      <div className="flex items-start gap-3">
-        <Send size={20} className="mt-0.5 shrink-0 text-brand-500" aria-hidden="true" />
-        <Switch
-          checked={prefs.orgHidePreview ? false : preview}
-          disabled={prefs.orgHidePreview}
-          onCheckedChange={(v) => {
-            setPreview(v);
-            void simple(() => onShowPreview(v), () => setPreview(!v));
-          }}
-          label="Mostrar prévia na tela de bloqueio"
-          description={
-            prefs.orgHidePreview
-              ? "A organização ocultou a prévia na tela de bloqueio; o aviso chega sem o texto da mensagem."
-              : "Desligado, o aviso chega só com o tipo, sem o texto da mensagem."
-          }
-        />
-      </div>
+      {previewEnabled && (
+        <div className="flex items-start gap-3">
+          <Send size={20} className="mt-0.5 shrink-0 text-brand-500" aria-hidden="true" />
+          <Switch
+            checked={prefs.orgHidePreview ? false : preview}
+            disabled={prefs.orgHidePreview}
+            onCheckedChange={(v) => {
+              setPreview(v);
+              void simple(
+                () => onShowPreview(v),
+                () => setPreview(!v),
+              );
+            }}
+            label="Mostrar prévia na tela de bloqueio"
+            description={
+              prefs.orgHidePreview
+                ? "A organização ocultou a prévia na tela de bloqueio; o aviso chega sem o texto da mensagem."
+                : "Vale para os avisos no aparelho. Desligado, o aviso chega só com o tipo, sem o texto da mensagem."
+            }
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 /* ----------------------------------------------------- padrões da organização */
 
-function OrgDefaultsBlock({ prefs, onOrgDefaults }: NotificationPreferencesViewProps) {
-  const [preset, setPreset] = useState<Preset>(prefs.orgDefaults.preset ?? "all");
+function OrgDefaultsBlock({ prefs, previewEnabled, onOrgDefaults }: NotificationPreferencesViewProps) {
+  // `null` = a organização ainda não escolheu; nada fica marcado até um admin escolher.
+  const [preset, setPreset] = useState<Preset | null>(prefs.orgDefaults.preset);
   const [hide, setHide] = useState(prefs.orgDefaults.hidePreviewOnLockScreen);
-  useEffect(() => setPreset(prefs.orgDefaults.preset ?? "all"), [prefs.orgDefaults.preset]);
+  useEffect(() => setPreset(prefs.orgDefaults.preset), [prefs.orgDefaults.preset]);
   useEffect(() => setHide(prefs.orgDefaults.hidePreviewOnLockScreen), [prefs.orgDefaults.hidePreviewOnLockScreen]);
 
-  const save = async (nextPreset: Preset, nextHide: boolean) => {
+  const save = async (nextPreset: Preset | null, nextHide: boolean) => {
     const before = { preset, hide };
     setPreset(nextPreset);
     setHide(nextHide);
     try {
-      await onOrgDefaults({ preset: nextPreset, hidePreviewOnLockScreen: nextHide });
+      // O servidor exige um atalho; sem escolha da organização vale "Tudo", que já é o comportamento padrão.
+      await onOrgDefaults({ preset: nextPreset ?? "all", hidePreviewOnLockScreen: nextHide });
       savedToast();
     } catch (e) {
       setPreset(before.preset);
@@ -563,34 +629,22 @@ function OrgDefaultsBlock({ prefs, onOrgDefaults }: NotificationPreferencesViewP
       <p className="text-sm text-text-secondary mb-4">
         Valem para quem ainda não escolheu o próprio atalho. Só administradores veem esta parte.
       </p>
-      <div role="radiogroup" aria-label="Atalho inicial da organização" className="grid gap-2 md:grid-cols-3">
-        {PRESET_OPTIONS.map((o) => (
-          <button
-            key={o.value}
-            type="button"
-            role="radio"
-            aria-checked={preset === o.value}
-            onClick={() => void save(o.value, hide)}
-            className={cn(
-              "min-h-11 rounded-card border p-3 text-left transition-colors",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base",
-              preset === o.value
-                ? "border-brand-500 bg-brand-500/10"
-                : "border-border bg-surface-raised hover:bg-surface-overlay",
-            )}
-          >
-            <span className="block text-sm font-medium text-text-primary">{o.label}</span>
-          </button>
-        ))}
-      </div>
-      <div className="mt-4">
-        <Switch
-          checked={hide}
-          onCheckedChange={(v) => void save(preset, v)}
-          label="Ocultar prévia na tela de bloqueio"
-          description="Os avisos de todos chegam sem o texto da mensagem, mesmo para quem ligou a prévia."
-        />
-      </div>
+      <SegmentedControl
+        ariaLabel="Atalho inicial da organização"
+        value={preset ?? ""}
+        onValueChange={(v) => void save(v as Preset, hide)}
+        options={PRESET_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+      />
+      {previewEnabled && (
+        <div className="mt-4">
+          <Switch
+            checked={hide}
+            onCheckedChange={(v) => void save(preset, v)}
+            label="Ocultar prévia na tela de bloqueio"
+            description="Vale para os avisos no aparelho de todos: chegam sem o texto da mensagem, mesmo para quem ligou a prévia."
+          />
+        </div>
+      )}
     </div>
   );
 }

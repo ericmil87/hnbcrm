@@ -20,6 +20,8 @@ export interface FlagRow {
   group: NotificationGroup;
   /** Canais externos que fazem sentido para o tipo (o resumo diário só sai por e-mail). */
   channels: readonly MatrixChannel[];
+  /** O tipo aparece no sino? (o resumo diário só sai por e-mail). */
+  bell: boolean;
 }
 
 const ALL_CHANNELS: readonly MatrixChannel[] = ["email", "telegram", "push"];
@@ -44,7 +46,10 @@ export const EMAIL_FLAGS: ReadonlySet<string> = new Set([
   "channelSessionLost",
 ]);
 
-export const FLAG_COPY: Record<string, { label: string; desc: string; channels?: readonly MatrixChannel[] }> = {
+export const FLAG_COPY: Record<
+  string,
+  { label: string; desc: string; channels?: readonly MatrixChannel[]; bell?: false }
+> = {
   handoffRequested: { label: "Pedido de ajuda da IA", desc: "Quando a IA pede ajuda para você ou para a equipe" },
   handoffResolved: { label: "Pedido de ajuda resolvido", desc: "Quando um pedido de ajuda é assumido ou devolvido à IA" },
   aiDraftPending: { label: "Resposta sugerida para revisar", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
@@ -66,7 +71,7 @@ export const FLAG_COPY: Record<string, { label: string; desc: string; channels?:
   campaignPaused: { label: "Campanha pausada por segurança", desc: "Quando um limite ou sinal de risco pausa uma campanha" },
   channelSessionLost: { label: "Canal desconectado", desc: "Quando um canal conectado perde a conexão" },
   aiSpendAlert: { label: "Gasto de IA do mês", desc: "Para administradores: perto do teto mensal ou ao atingi-lo" },
-  dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"] },
+  dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 
 /** Todas as linhas da matriz, agrupadas na ordem de `NOTIFICATION_GROUPS`. */
@@ -82,6 +87,7 @@ export function buildMatrixGroups(): { group: NotificationGroup; rows: FlagRow[]
       label: copy?.label ?? flag,
       desc: copy?.desc ?? "",
       group,
+      bell: copy?.bell !== false,
       channels: (copy?.channels ?? ALL_CHANNELS).filter((c) => c !== "email" || EMAIL_FLAGS.has(flag)),
     });
   };
@@ -150,4 +156,52 @@ export function pushSupported(): boolean {
     typeof navigator !== "undefined" &&
     "serviceWorker" in navigator
   );
+}
+
+/**
+ * Fora de "Só o que é comigo" nos canais externos. Espelha `NON_PERSONAL_FLAGS` de
+ * convex/lib/notificationPolicy.ts (o teste confere a paridade lendo o arquivo).
+ */
+export const NON_PERSONAL_FLAGS: ReadonlySet<string> = new Set([
+  "campaignCompleted",
+  "campaignPaused",
+  "groupJoined",
+  "groupPostPending",
+  "groupPostFailed",
+  "groupOpportunity",
+  "groupDigest",
+  "aiSpendAlert",
+]);
+
+/** O atalho define o valor de base de cada canal externo; qualquer célula diferente é uma escolha por tipo. */
+export function isCustomized(
+  preset: "all" | "mine" | "none",
+  value: (channel: MatrixChannel, flag: string) => boolean,
+  rows: readonly FlagRow[],
+): boolean {
+  for (const row of rows) {
+    const base = preset === "all" ? true : preset === "none" ? false : !NON_PERSONAL_FLAGS.has(row.flag);
+    for (const channel of row.channels) if (value(channel, row.flag) !== base) return true;
+  }
+  return false;
+}
+
+/** "Até amanhã 8 h" no fuso do APARELHO (o servidor usaria o fuso da organização). */
+export function tomorrowEightLocal(now: number): number {
+  const d = new Date(now);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1, 8, 0, 0, 0).getTime();
+}
+
+/** Argumentos de `pauseFor` para cada opção do menu, calculados com o relógio do aparelho. */
+export function pauseArgs(
+  mode: "1h" | "4h" | "tomorrow",
+  now: number,
+): { mode: "1h" | "4h" } | { mode: "custom"; until: number } {
+  if (mode === "tomorrow") return { mode: "custom", until: tomorrowEightLocal(now) };
+  return { mode };
+}
+
+/** Canais externos citados nos textos de pausa e silêncio (push só quando existir). */
+export function externalChannelsText(pushEnabled: boolean): string {
+  return pushEnabled ? "e-mail, Telegram ou push" : "e-mail ou Telegram";
 }
