@@ -52,6 +52,12 @@ export type CoalesceOptions = {
   increment?: number;
   render?: (count: number) => { title: string; body?: string };
   telegramOnPatch?: boolean;
+  /**
+   * Com `telegramOnPatch`: o PUSH do patch só sai se passou a janela de renotify
+   * (5 min do último toque que de fato saiu). O Telegram segue a cada patch.
+   * Usado por `group_mention` (cada menção vai ao Telegram, mas o aparelho não vibra a cada uma).
+   */
+  pushOnlyAfterRenotifyWindow?: boolean;
 };
 
 export const coalesceKeys = {
@@ -197,6 +203,21 @@ export async function createNotification(
       const prevCount = typeof existing.data?.count === "number" ? existing.data.count : 1;
       const count = prevCount + increment;
       const copy = co.render ? co.render(count) : { title: args.title, body: args.body };
+      // Renotify (E1): o relógio dos 5 min só anda quando o push de fato é agendado
+      // (pausa/silêncio/sem aparelho não contam como toque).
+      const nextRenotify = nextRenotifyState(existing.data, now);
+      const pushAllowed = !co.pushOnlyAfterRenotifyWindow || nextRenotify.pushRenotify;
+      const { pushScheduled } = await dispatchNotificationChannels(ctx, {
+        organizationId: args.organizationId,
+        memberId: args.memberId,
+        type: args.type,
+        notificationId: existing._id,
+        now,
+        prefs,
+        isPatch: true,
+        externalOnPatch: co.telegramOnPatch,
+        pushAllowed,
+      });
       await ctx.db.patch(existing._id, {
         title: copy.title,
         body: copy.body,
@@ -209,20 +230,10 @@ export async function createNotification(
           ...(args.data ?? {}),
           count,
           coalescedSince: since ?? existing.createdAt,
-          ...(co.telegramOnPatch ? nextRenotifyState(existing.data, now) : carriedRenotifyState(existing.data)),
+          ...(pushScheduled ? nextRenotify : carriedRenotifyState(existing.data)),
         },
         actorId: args.actorId,
         createdAt: now,
-      });
-      await dispatchNotificationChannels(ctx, {
-        organizationId: args.organizationId,
-        memberId: args.memberId,
-        type: args.type,
-        notificationId: existing._id,
-        now,
-        prefs,
-        isPatch: true,
-        externalOnPatch: co.telegramOnPatch,
       });
       return existing._id;
     }
@@ -243,14 +254,14 @@ export async function createNotification(
     channelConfigId: args.channelConfigId,
     metaConnectionId: args.metaConnectionId,
     data: co
-      ? { ...(args.data ?? {}), count: increment, coalescedSince: now, pushRenotify: true, pushRenotifyAt: now }
+      ? { ...(args.data ?? {}), count: increment, coalescedSince: now, pushRenotify: true }
       : args.data,
     conversationId: args.conversationId,
     actorId: args.actorId,
     createdAt: now,
     ...(co ? { coalesceKey: co.key } : {}),
   });
-  await dispatchNotificationChannels(ctx, {
+  const { pushScheduled } = await dispatchNotificationChannels(ctx, {
     organizationId: args.organizationId,
     memberId: args.memberId,
     type: args.type,
@@ -260,6 +271,11 @@ export async function createNotification(
     isPatch: false,
     email: args.email,
   });
+  // O relógio do renotify só começa quando o push de fato saiu do servidor.
+  if (co && pushScheduled) {
+    const row = await ctx.db.get(notificationId);
+    await ctx.db.patch(notificationId, { data: { ...(row?.data ?? {}), pushRenotifyAt: now } });
+  }
   return notificationId;
 }
 

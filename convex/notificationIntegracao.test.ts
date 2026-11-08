@@ -84,6 +84,70 @@ async function notify(
   });
 }
 
+async function linkDevice(t: T, s: Seed, m: { userId: Id<"users">; memberId: Id<"teamMembers"> }) {
+  await t.run(async (ctx) => {
+    const subscriptionId = await ctx.db.insert("pushSubscriptions", {
+      userId: m.userId, endpoint: "https://fcm.googleapis.com/fcm/send/x", p256dh: "p", auth: "a",
+      platform: "android", createdAt: Date.now(),
+    });
+    await ctx.db.insert("pushSubscriptionMembers", {
+      organizationId: s.organizationId, teamMemberId: m.memberId, subscriptionId, createdAt: Date.now(),
+    });
+  });
+}
+const pushJobs = (t: T) =>
+  t.run(async (ctx) => {
+    const jobs = await ctx.db.system.query("_scheduled_functions").collect();
+    return jobs.filter((j) => j.name.includes("internalDeliverPush")).length;
+  });
+const mention = (t: T, s: Seed, onlyAfterWindow: boolean) =>
+  notify(t, s, s.seller.memberId, "group_mention", {
+    conversationId: s.conversationId,
+    coalesce: { key: "group_mention:g1", telegramOnPatch: true, pushOnlyAfterRenotifyWindow: onlyAfterWindow },
+  });
+
+describe("7/13. push no patch e relógio do renotify", () => {
+  test("group_mention: patch dentro de 5 min não empurra push; depois da janela sim", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await linkDevice(t, s, s.seller);
+    await mention(t, s, true);
+    expect(await pushJobs(t)).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    await mention(t, s, true);
+    expect(await pushJobs(t)).toBe(1);
+    vi.advanceTimersByTime(5 * 60_000);
+    await mention(t, s, true);
+    expect(await pushJobs(t)).toBe(2);
+    const rows = await all(t);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].data?.count).toBe(3);
+    expect(rows[0].data?.pushRenotify).toBe(true);
+    await t.run(async (ctx) => {
+      for (const j of await ctx.db.system.query("_scheduled_functions").collect()) {
+        if (j.state.kind === "pending") await ctx.scheduler.cancel(j._id);
+      }
+    });
+    await t.finishInProgressScheduledFunctions();
+  });
+
+  test("pausa segura o push: pushRenotifyAt não avança", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await linkDevice(t, s, s.seller);
+    await t.run(async (ctx) => {
+      const { patchMemberPrefs } = await import("./lib/notificationPrefs");
+      await patchMemberPrefs(ctx, s.organizationId, s.seller.memberId, { pausedUntil: Date.now() + 3_600_000 }, Date.now());
+    });
+    await mention(t, s, false);
+    await mention(t, s, false);
+    expect(await pushJobs(t)).toBe(0);
+    const [n] = await all(t);
+    expect(n.data?.pushRenotifyAt).toBeUndefined();
+    expect(n.data?.count).toBe(2);
+  });
+});
+
 describe("2. excluir lead resolve avisos de conversa e repasse", () => {
   test("deleteLead + cascata", async () => {
     const t = convexTest(schema, modules);

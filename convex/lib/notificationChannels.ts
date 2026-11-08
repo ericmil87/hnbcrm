@@ -127,12 +127,15 @@ export async function dispatchNotificationChannels(
     isPatch: boolean;
     /** No patch, Telegram e push saem (uma vez por janela do chamador). */
     externalOnPatch?: boolean;
+    /** No patch, false = o push não sai (Telegram segue). Padrão true. */
+    pushAllowed?: boolean;
     email?: EmailFallback;
   }
-): Promise<void> {
+): Promise<{ pushScheduled: boolean }> {
+  let pushScheduled = false;
   if (!args.isPatch || args.externalOnPatch) {
     await maybeScheduleTelegram(ctx, args);
-    await maybeSchedulePush(ctx, args);
+    if (args.pushAllowed !== false) pushScheduled = await maybeSchedulePush(ctx, args);
   }
   if (!args.isPatch && args.email && isSafetyNetEmail(args.email.eventType)) {
     await scheduleSafetyNetEmail(ctx, {
@@ -143,6 +146,7 @@ export async function dispatchNotificationChannels(
       ...args.email,
     });
   }
+  return { pushScheduled };
 }
 
 async function maybeScheduleTelegram(
@@ -179,14 +183,14 @@ async function maybeScheduleTelegram(
 async function maybeSchedulePush(
   ctx: MutationCtx,
   args: Target & { notificationId: Id<"notifications">; now: number; prefs: PolicyPrefs | null }
-): Promise<void> {
-  if (!hasPushTemplate(args.type)) return;
+): Promise<boolean> {
+  if (!hasPushTemplate(args.type)) return false;
   // Gate de I/O: sem aparelho vinculado nesta membership, nada é agendado.
   const link = await ctx.db
     .query("pushSubscriptionMembers")
     .withIndex("by_member", (q) => q.eq("teamMemberId", args.memberId))
     .first();
-  if (!link || link.organizationId !== args.organizationId) return;
+  if (!link || link.organizationId !== args.organizationId) return false;
   // Padrão da org só pesa quando o membro não tem preset próprio.
   const org = args.prefs?.preset ? null : await ctx.db.get(args.organizationId);
   const decision = shouldDeliver({
@@ -196,6 +200,7 @@ async function maybeSchedulePush(
     orgDefaults: orgDefaultsOf(org),
     now: args.now,
   });
-  if (decision !== "deliver") return;
+  if (decision !== "deliver") return false;
   await ctx.scheduler.runAfter(0, internal.push.internalDeliverPush, { notificationId: args.notificationId });
+  return true;
 }

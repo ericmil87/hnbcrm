@@ -2673,6 +2673,8 @@ export const internalReceiveGroupMessage = internalMutation({
             windowMs: GROUP_MENTION_WINDOW_MS,
             render: mentionCopy,
             telegramOnPatch: true,
+            // O push só vibra de novo depois da janela de renotify (5 min).
+            pushOnlyAfterRenotifyWindow: true,
           },
         });
       }
