@@ -2698,7 +2698,7 @@ export const triggerPreDueReminder = internalMutation({
           { timeZone: await orgTimeZone(ctx, task.organizationId), now }
         ),
         taskId: args.taskId,
-        // E1: e-mail de reserva (+30 min, nunca depois do prazo; só se não lido).
+        // E1: e-mail de reserva (+30 min, só se não lido); com pouca antecedência espera metade do que falta até o prazo.
         email: {
           eventType: "taskDueSoon",
           templateData: {

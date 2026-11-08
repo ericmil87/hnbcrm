@@ -58,18 +58,28 @@ export function isSafetyNetEmail(eventType: string): boolean {
   return SAFETY_NET_EMAIL_CLASS[eventType] !== undefined;
 }
 
-/** Espera do e-mail de reserva; `deadlineAt` (ex.: prazo da tarefa) encurta, nunca negativa. */
+/** Antecedência abaixo disto: o e-mail sai na hora (metade da janela já não ajuda ninguém). */
+export const SAFETY_NET_MIN_LEAD_MS = 2 * MINUTE;
+
+/**
+ * Espera do e-mail de reserva. Com `deadlineAt` (prazo da tarefa) e
+ * antecedência ≤ janela da reserva, espera METADE do que falta (lembrete
+ * "vence em 15 min" sai em ~7 min, não no prazo); falta < 2 min = na hora.
+ */
 export function safetyNetDelayMs(eventType: string, now: number, deadlineAt?: number): number {
   const klass = SAFETY_NET_EMAIL_CLASS[eventType];
   const base = klass ? EMAIL_SAFETY_NET_MS[klass] : 0;
   if (deadlineAt === undefined) return base;
-  return Math.max(0, Math.min(base, deadlineAt - now));
+  const remaining = deadlineAt - now;
+  if (remaining > base) return base;
+  if (remaining < SAFETY_NET_MIN_LEAD_MS) return 0;
+  return Math.min(base, Math.floor(remaining / 2));
 }
 
 export type EmailFallback = {
   eventType: string;
   templateData: Record<string, unknown>;
-  /** O e-mail sai no máximo neste instante (lembrete de prazo não chega depois do prazo). */
+  /** Prazo da entidade: com pouca antecedência a espera vira metade do que falta (`safetyNetDelayMs`). */
   deadlineAt?: number;
 };
 
