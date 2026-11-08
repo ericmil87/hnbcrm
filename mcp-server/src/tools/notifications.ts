@@ -6,7 +6,7 @@ import { errorResult, successResult } from "../utils.js";
 export function registerNotificationTools(server: McpServer, client: HnbCrmClient) {
   server.tool(
     "crm_get_notification_preferences",
-    "Get the current agent's email notification preferences. Returns every flag (invite, handoffs, tasks, AI drafts, campaigns and WhatsApp groups) with its current value — absent/true means the notification is enabled (opt-out model).",
+    "Get the current agent's notification preferences. Returns every flag (invite, handoffs, tasks, AI drafts, campaigns and WhatsApp groups) with its value (true = enabled, opt-out model) plus preset ('all' | 'mine' | 'none', falls back to the organization default), channels (explicit per-channel overrides: email/telegram/push -> flag -> boolean), pausedUntil (ms timestamp or null) and quietHours. Model: the flags control the EXTERNAL channels (e-mail, Telegram, push); the in-app bell always registers actionable notifications (tasks, handoffs, messages, mentions, drafts, lead assigned, channel lost) regardless of flags. Pause and quiet hours hold external channels only.",
     {},
     { readOnlyHint: true, destructiveHint: false },
     async () => {
@@ -21,7 +21,7 @@ export function registerNotificationTools(server: McpServer, client: HnbCrmClien
 
   server.tool(
     "crm_update_notification_preferences",
-    "Update email notification preferences (e.g., disable dailyDigest for AI agents). Only provided fields are changed; omitted fields remain unchanged.",
+    "Update notification preferences (e.g., disable dailyDigest). Only provided fields are changed; omitted fields remain unchanged. The flags control the EXTERNAL channels (e-mail, Telegram, push) for that type; turning a flag off never hides actionable notifications from the in-app bell. Preset, per-channel overrides, pause and quiet hours are changed in the app, not here.",
     {
       // Conta e equipe
       invite: z.boolean().optional().describe("Convite para entrar na organização"),

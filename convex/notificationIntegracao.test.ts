@@ -224,6 +224,69 @@ describe("14a. lead atribuído a si mesmo não manda e-mail", () => {
   });
 });
 
+describe("8/9/10. preferências: REST pela porta, modelo exposto, permissões", () => {
+  test("GET expõe preset/channels/pausedUntil/quietHours; PUT escreve flags pela porta sem perder o resto", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const me = asUser(t, s.seller.userId);
+    await me.mutation(api.notificationPreferences.setChannelPref, {
+      organizationId: s.organizationId, channel: "push", flag: "newMessage", enabled: false,
+    });
+    const paused = await me.mutation(api.notificationPreferences.pauseFor, { organizationId: s.organizationId, mode: "1h" });
+    await t.mutation(internal.notificationPreferences.internalUpsertPreferences, {
+      organizationId: s.organizationId, teamMemberId: s.seller.memberId,
+      updates: { taskOverdue: false, lixo: true, dailyDigest: "x" },
+    });
+    const got = await t.query(internal.notificationPreferences.internalGetPreferences, {
+      organizationId: s.organizationId, teamMemberId: s.seller.memberId,
+    });
+    expect(got.taskOverdue).toBe(false);
+    expect(got.dailyDigest).toBe(true);
+    expect((got as Record<string, unknown>).lixo).toBeUndefined();
+    expect(got.preset).toBe("all");
+    expect(got.channels).toEqual({ push: { newMessage: false } });
+    expect(got.pausedUntil).toBe(paused.pausedUntil);
+    expect(got.quietHours.enabled).toBe(false);
+    // sem linha: padrões, mesma forma
+    const none = await t.query(internal.notificationPreferences.internalGetPreferences, {
+      organizationId: s.organizationId, teamMemberId: s.third.memberId,
+    });
+    expect(none).toMatchObject({ _exists: false, preset: "all", channels: {}, pausedUntil: null });
+  });
+
+  test("updateMyPreferences e resume usam a porta; resume sem linha não cria linha", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const me = asUser(t, s.seller.userId);
+    await me.mutation(api.notificationPreferences.resume, { organizationId: s.organizationId });
+    expect(await t.run((ctx) => ctx.db.query("notificationPreferences").collect())).toHaveLength(0);
+    await me.mutation(api.notificationPreferences.pauseFor, { organizationId: s.organizationId, mode: "4h" });
+    await me.mutation(api.notificationPreferences.updateMyPreferences, { organizationId: s.organizationId, taskAssigned: false });
+    await me.mutation(api.notificationPreferences.resume, { organizationId: s.organizationId });
+    const [row] = await t.run((ctx) => ctx.db.query("notificationPreferences").collect());
+    expect(row.pausedUntil).toBeUndefined();
+    expect(row.taskAssigned).toBe(false);
+    expect(row.newMessage).toBe(true);
+  });
+
+  test("getMemberPreferences exige team:manage", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run((ctx) =>
+      ctx.db.patch(s.third.memberId, {
+        permissions: {
+          leads: "view_own", contacts: "view", inbox: "view_own", tasks: "view_own",
+          reports: "none", team: "view", settings: "none", auditLogs: "none", apiKeys: "none",
+        },
+      } as any)
+    );
+    const args = { organizationId: s.organizationId, teamMemberId: s.seller.memberId };
+    await expect(asUser(t, s.third.userId).query(api.notificationPreferences.getMemberPreferences, args)).rejects.toThrow();
+    const r = await asUser(t, s.admin.userId).query(api.notificationPreferences.getMemberPreferences, args);
+    expect((r as Record<string, unknown>)._exists).toBe(false);
+  });
+});
+
 describe("2. excluir lead resolve avisos de conversa e repasse", () => {
   test("deleteLead + cascata", async () => {
     const t = convexTest(schema, modules);
