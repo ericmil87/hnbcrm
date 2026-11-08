@@ -10,7 +10,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Se você já leu o aviso (no app, no Telegram ou abrindo a conversa) antes de ele sair, o celular não toca. Pausa, horário de silêncio e a escolha por canal valem também para o push; o pedido de ajuda continua furando a pausa, como no Telegram.
 - O texto na tela de bloqueio nunca mostra telefone, e-mail nem links. Se a organização ocultou a prévia na tela de bloqueio, ou você desligou "Mostrar prévia", o aviso mostra só quem e o quê ("Mensagem nova de Ana"), sem o conteúdo.
 - Um aparelho pode receber avisos de várias organizações; nesse caso o nome da organização aparece no aviso. Ao trocar de conta no mesmo navegador, o aparelho deixa de receber os avisos da conta anterior. Quem é removido da equipe para de receber push dela na hora; aparelhos sem uso há 60 dias saem sozinhos.
-- O e-mail de pedido de ajuda, menção em tarefa e tarefa atribuída, vencendo ou atrasada virou uma rede de segurança: sai 10 minutos depois (pedido de ajuda e menção) ou 30 minutos depois (tarefas) e só se o aviso ainda não foi lido. O lembrete de tarefa nunca chega depois do prazo. E-mails de lead atribuído, canal desconectado e os demais continuam saindo na hora.
+- O e-mail de pedido de ajuda, menção em tarefa e tarefa atribuída, vencendo ou atrasada virou uma rede de segurança: sai 10 minutos depois (pedido de ajuda e menção) ou 30 minutos depois (tarefas) e só se o aviso ainda não foi lido. O e-mail de lembrete de tarefa chega antes do prazo (com pouca antecedência, na metade do tempo que falta). E-mails de lead atribuído, canal desconectado e os demais continuam saindo na hora.
 
 ### Preferências de aviso e pausa (telas)
 
