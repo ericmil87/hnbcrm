@@ -285,7 +285,7 @@ export function buildTaskOverdueSummaryTemplate(data: {
       content: `
         ${heading("Tarefas Atrasadas")}
         ${paragraph(`${data.count} tarefas atribuidas a voce estao atrasadas e precisam de atencao.`)}
-        ${infoTable(data.tasks.map((t) => infoRow(t.title, `Vencimento: ${t.dueDate}`)).join(""))}
+        ${infoTable(data.tasks.map((t) => infoRow(escapeHtml(t.title), `Vencimento: ${escapeHtml(t.dueDate)}`)).join(""))}
         ${more > 0 ? paragraph(`e mais ${more}.`) : ""}
         ${ctaButton("Ver Tarefas", data.tasks[0]?.taskUrl ?? data.appUrl)}
       `,

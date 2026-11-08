@@ -238,6 +238,7 @@ describe("sendDailyDigest (contagens por range)", () => {
     await seedDigestData(org.organizationId, org.adminId);
 
     await t.mutation(internal.email.sendDailyDigest, {});
+    await t.finishAllScheduledFunctions(vi.runAllTimers); // o job por org conta e agenda os e-mails
 
     const jobs = await scheduledDigests();
     expect(jobs).toHaveLength(1);

@@ -207,18 +207,20 @@ export const sendConfirmationEmail = internalMutation({
   },
 });
 
-// ── Daily digest cron handler ──
+// ── Daily digest ──
 const DIGEST_COUNT_CAP = 500;
-/** Hora LOCAL da org em que o resumo sai (antes: cron fixo 11:00 UTC = 08:00 BRT). */
+/** Janela LOCAL da org em que o resumo pode sair: a partir das 08h, até as 11h59 (recupera rodada falha). */
 export const DIGEST_LOCAL_HOUR = 8;
+export const DIGEST_LOCAL_HOUR_END = 12;
 /** Orgs lidas por execução; o resto segue por cursor (uma `.paginate()` por função). */
 const DIGEST_ORG_PAGE = 100;
 
 /**
- * Cron de hora em hora (minuto 0): só age nas orgs cuja hora local é `DIGEST_LOCAL_HOUR`
- * e que ainda não têm o carimbo `lastDailyDigestDate` de hoje (carimbo ANTES de agendar:
- * segunda execução na mesma hora não duplica). Custo: ler os docs das orgs 1x por hora
- * (sem contagens fora da hora alvo).
+ * Cron de hora em hora (minuto 0). Só SELECIONA: orgs com hora local em [08h, 12h) e
+ * sem o carimbo `lastDailyDigestDate` de hoje ganham UM job interno (`internalSendOrgDigest`),
+ * que conta e envia. O carimbo é gravado pelo job, na mesma transação do envio: se a rodada
+ * falhar, o carimbo não existe e a hora seguinte tenta de novo. Custo: ler os docs das orgs
+ * 1x/hora (paginado).
  */
 export const sendDailyDigest = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())), now: v.optional(v.number()) },
@@ -226,98 +228,117 @@ export const sendDailyDigest = internalMutation({
   handler: async (ctx, args) => {
     if (cronsDisabled()) return null;
     const now = args.now ?? Date.now();
-    const oneDayAgo = now - 24 * 60 * 60 * 1000;
-    const digestAppUrl = appUrl();
-
     const page = await ctx.db
       .query("organizations")
       .paginate({ numItems: DIGEST_ORG_PAGE, cursor: args.cursor ?? null });
 
     for (const org of page.page) {
       const tz = safeTimezone(org.settings.timezone);
-      if (localParts(now, tz).hour !== DIGEST_LOCAL_HOUR) continue;
-      const dateKey = localDateKey(now, tz);
-      if (org.lastDailyDigestDate === dateKey) continue;
-      await ctx.db.patch(org._id, { lastDailyDigestDate: dateKey });
+      const hour = localParts(now, tz).hour;
+      if (hour < DIGEST_LOCAL_HOUR || hour >= DIGEST_LOCAL_HOUR_END) continue;
+      if (org.lastDailyDigestDate === localDateKey(now, tz)) continue;
+      await ctx.scheduler.runAfter(0, internal.email.internalSendOrgDigest, { organizationId: org._id, now });
+    }
 
-      // Data do assunto no fuso da org
-      const dateStr = new Date(now).toLocaleDateString("pt-BR", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        timeZone: tz,
-      });
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.email.sendDailyDigest, { cursor: page.continueCursor, now });
+    }
+    return null;
+  },
+});
 
-      // Get human team members who haven't opted out of digest
-      const members = await ctx.db
-        .query("teamMembers")
-        .withIndex("by_organization_and_type", (q) =>
-          q.eq("organizationId", org._id).eq("type", "human")
-        )
-        .collect();
+/** Resumo de UMA org: idempotente pelo carimbo da data local; conta por range e agenda os e-mails. */
+export const internalSendOrgDigest = internalMutation({
+  args: { organizationId: v.id("organizations"), now: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) return null;
+    const now = args.now;
+    const tz = safeTimezone(org.settings.timezone);
+    const dateKey = localDateKey(now, tz);
+    if (org.lastDailyDigestDate === dateKey) return null;
+    await ctx.db.patch(org._id, { lastDailyDigestDate: dateKey });
 
-      // Só quem tem conta vinculada recebe (mesmo gate do dispatch) — filtrar
-      // aqui evita agendar dezenas de jobs no-op por dia para membros-semente.
-      const recipients = members.filter((m) => m.userId && m.email && !isMembershipRevoked(m));
-      if (recipients.length === 0) continue;
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    const digestAppUrl = appUrl();
+    const dateStr = new Date(now).toLocaleDateString("pt-BR", {
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      timeZone: tz,
+    });
 
-      // Contagens por RANGE de índice (perf Convex I/O, fase 1): antes lia os
-      // 500 leads e as 500 tarefas mais recentes da org só para contar. Teto
-      // de 500 por contagem, o mesmo de antes.
-      const recentLeads = await ctx.db
-        .query("leads")
-        .withIndex("by_organization_and_created", (q) =>
-          q.eq("organizationId", org._id).gte("createdAt", oneDayAgo)
-        )
-        .take(DIGEST_COUNT_CAP);
-      const newLeadsCount = recentLeads.filter((l) => l.archivedAt === undefined).length;
+    const members = await ctx.db
+      .query("teamMembers")
+      .withIndex("by_organization_and_type", (q) => q.eq("organizationId", org._id).eq("type", "human"))
+      .collect();
 
-      // `completedAt` é limpo ao reabrir, mas o status é conferido de novo.
-      const completedTasks = await ctx.db
+    // Só quem tem conta vinculada recebe (mesmo gate do dispatch).
+    const recipients = members.filter((m) => m.userId && m.email && !isMembershipRevoked(m));
+    if (recipients.length === 0) return null;
+
+    // Contagens por RANGE de índice (perf Convex I/O, fase 1): antes lia os
+    // 500 leads e as 500 tarefas mais recentes da org só para contar. Teto
+    // de 500 por contagem, o mesmo de antes.
+    const recentLeads = await ctx.db
+      .query("leads")
+      .withIndex("by_organization_and_created", (q) =>
+        q.eq("organizationId", org._id).gte("createdAt", oneDayAgo)
+      )
+      .take(DIGEST_COUNT_CAP);
+    const newLeadsCount = recentLeads.filter((l) => l.archivedAt === undefined).length;
+
+    // `completedAt` é limpo ao reabrir, mas o status é conferido de novo.
+    const completedTasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_organization_and_completed_at", (q) =>
+        q.eq("organizationId", org._id).gte("completedAt", oneDayAgo)
+      )
+      .take(DIGEST_COUNT_CAP);
+    const completedTasksCount = completedTasks.filter((t) => t.status === "completed").length;
+
+    // `.gt(undefined)` exclui tarefa sem prazo (undefined ordena antes de tudo).
+    let overdueTasksCount = 0;
+    for (const status of ["pending", "in_progress"] as const) {
+      const overdue = await ctx.db
         .query("tasks")
-        .withIndex("by_organization_and_completed_at", (q) =>
-          q.eq("organizationId", org._id).gte("completedAt", oneDayAgo)
+        .withIndex("by_organization_and_status_and_due_date", (q) =>
+          q
+            .eq("organizationId", org._id)
+            .eq("status", status)
+            .gt("dueDate", undefined)
+            .lt("dueDate", now)
         )
         .take(DIGEST_COUNT_CAP);
-      const completedTasksCount = completedTasks.filter((t) => t.status === "completed").length;
+      overdueTasksCount += overdue.length;
+    }
 
-      // `.gt(undefined)` exclui tarefa sem prazo (undefined ordena antes de tudo).
-      let overdueTasksCount = 0;
-      for (const status of ["pending", "in_progress"] as const) {
-        const overdue = await ctx.db
-          .query("tasks")
-          .withIndex("by_organization_and_status_and_due_date", (q) =>
-            q
-              .eq("organizationId", org._id)
-              .eq("status", status)
-              .gt("dueDate", undefined)
-              .lt("dueDate", now)
-          )
-          .take(DIGEST_COUNT_CAP);
-        overdueTasksCount += overdue.length;
-      }
+    const pendingHandoffs = await ctx.db
+      .query("handoffs")
+      .withIndex("by_organization_and_status", (q) =>
+        q.eq("organizationId", org._id).eq("status", "pending")
+      )
+      .collect();
+    const pendingHandoffsCount = pendingHandoffs.length;
 
-      const pendingHandoffs = await ctx.db
-        .query("handoffs")
-        .withIndex("by_organization_and_status", (q) =>
-          q.eq("organizationId", org._id).eq("status", "pending")
-        )
-        .collect();
-      const pendingHandoffsCount = pendingHandoffs.length;
-
-      // Dia sem nada para contar não vira e-mail: digest zerado todo dia é o
-      // que ensina o usuário a ignorar (ou denunciar) o remetente.
-      if (newLeadsCount + completedTasksCount + pendingHandoffsCount + overdueTasksCount === 0) continue;
+    // Dia sem nada para contar não vira e-mail: digest zerado todo dia é o
+    // que ensina o usuário a ignorar (ou denunciar) o remetente.
+    if (newLeadsCount + completedTasksCount + pendingHandoffsCount + overdueTasksCount === 0) return null;
 
       // Send to each eligible member
       for (const member of recipients) {
-
-        // Check if member opted out of dailyDigest
-        const prefs = await ctx.db
-          .query("notificationPreferences")
-          .withIndex("by_member", (q) => q.eq("teamMemberId", member._id))
-          .first();
-        if (prefs && prefs.dailyDigest === false) continue;
+        // Mesma política do dispatch (canal explícito, preset, pausa) antes de agendar:
+        // quem não vai receber não gera job. O digest ignora o horário de silêncio.
+        const prefs = await loadMemberPrefs(ctx, org._id, member._id);
+        const decision = shouldDeliver({
+          type: "dailyDigest",
+          channel: "email",
+          prefs,
+          orgDefaults: orgDefaultsOf(org),
+          now,
+        });
+        if (decision !== "deliver") continue;
 
         await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
           organizationId: org._id,
@@ -334,11 +355,6 @@ export const sendDailyDigest = internalMutation({
           },
         });
       }
-    }
-
-    if (!page.isDone) {
-      await ctx.scheduler.runAfter(0, internal.email.sendDailyDigest, { cursor: page.continueCursor, now });
-    }
     return null;
   },
 });
