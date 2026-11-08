@@ -26,6 +26,7 @@ import { stripAgentTexts } from "./lib/agentProfileTexts";
 import { uiThemeValidator } from "./lib/uiTheme";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { revokeTelegramLinksForMember } from "./lib/telegramLinks";
+import { revokePushLinksForMember } from "./lib/pushStore";
 
 // Role hierarchy for elevation checks: admin > manager > agent/ai
 const ROLE_RANK: Record<string, number> = { admin: 3, manager: 2, agent: 1, ai: 0 };
@@ -423,6 +424,10 @@ export const removeTeamMember = mutation({
     // Telegram (F0): o vínculo cai junto — revoga, apaga as mensagens ≤ 48 h e
     // avisa no chat. O processador também recusa membro removido (D6).
     await revokeTelegramLinksForMember(ctx, args.teamMemberId, { actorId: userMember._id });
+
+    // E1: os aparelhos dele deixam de receber push desta org (vínculos apagados;
+    // assinatura sem nenhum vínculo sai junto).
+    await revokePushLinksForMember(ctx, args.teamMemberId);
 
     // B1: o que o removido tinha por ler não reaparece numa readmissão.
     await markMemberNotificationsRead(ctx, args.teamMemberId, "member_removed");
