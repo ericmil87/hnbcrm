@@ -48,8 +48,10 @@ describe("NotificationPanelShell", () => {
     expect(document.body.contains(dialog)).toBe(true);
     expect(screen.getByRole("heading", { name: "Notificações" })).toBeInTheDocument();
     expect(screen.getByText("Pedido de ajuda")).toBeVisible();
-    // Folha inferior com fundo próprio.
+    // Folha inferior com fundo próprio, modal e com Fechar.
     expect(dialog).toHaveClass("bg-surface-overlay");
+    expect(dialog).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByRole("button", { name: "Fechar" })).toBeInTheDocument();
   });
 
   it("no desktop também usa portal e ancora com largura fixa", () => {

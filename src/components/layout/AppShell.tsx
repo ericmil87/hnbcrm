@@ -10,6 +10,7 @@ import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { activeTabForPath } from "@/lib/routes";
 import { navItemFor, shellPageTitle } from "@/lib/nav";
+import { useOrgNews } from "@/hooks/useOrgNews";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useDocumentScrollLock } from "@/hooks/useVisualViewport";
@@ -34,6 +35,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme, children }: AppShellProps) {
+  const orgNews = useOrgNews(organizationId);
   const [showMore, setShowMore] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const location = useLocation();
@@ -128,9 +130,14 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
               type="button"
               onClick={onOpenOrgSwitcher}
               className="shrink-0 inline-flex items-center justify-center gap-1 min-h-[44px] min-w-[44px] px-2 rounded-lg text-text-muted hover:bg-surface-overlay transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500"
-              aria-label={`Organização atual: ${orgName}. Trocar ou criar organização`}
+              aria-label={`Organização atual: ${orgName}. Trocar ou criar organização${orgNews.total > 0 ? ". Há novidades em outras organizações" : ""}`}
             >
-              <Building2 size={18} className="text-brand-500" aria-hidden="true" />
+              <span className="relative inline-flex">
+                <Building2 size={18} className="text-brand-500" aria-hidden="true" />
+                {orgNews.total > 0 && (
+                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-brand-600 ring-2 ring-surface-base" aria-hidden="true" />
+                )}
+              </span>
               <ChevronsUpDown size={12} aria-hidden="true" />
             </button>
           </div>
