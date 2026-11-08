@@ -2,9 +2,9 @@ import { v, ConvexError } from "convex/values";
 import { query, mutation, internalQuery } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internal } from "./_generated/api";
-import { requireAuth, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
+import { requireAuth, requirePermission, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
-import { aiConfigValidator } from "./schema";
+import { aiConfigValidator, notifPresetValidator } from "./schema";
 
 // Get user's organizations
 export const getUserOrganizations = query({
@@ -262,6 +262,46 @@ export const updateOrganization = mutation({
       createdAt: now,
     });
 
+    return null;
+  },
+});
+
+// C1 — padrões de aviso da org (preset de quem não escolheu + ocultar prévia na tela de
+// bloqueio). Exige `settings:manage`; merge em `settings`, nunca substitui o resto.
+export const setNotificationDefaults = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    preset: notifPresetValidator,
+    hidePreviewOnLockScreen: v.optional(v.boolean()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const actor = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    const before = org.settings.notificationDefaults ?? null;
+    const after = {
+      preset: args.preset,
+      hidePreviewOnLockScreen: args.hidePreviewOnLockScreen ?? before?.hidePreviewOnLockScreen ?? false,
+    };
+    const now = Date.now();
+    await ctx.db.patch(args.organizationId, {
+      settings: { ...org.settings, notificationDefaults: after },
+      updatedAt: now,
+    });
+    const changes = { before: { notificationDefaults: before }, after: { notificationDefaults: after } };
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "organization",
+      entityId: args.organizationId,
+      action: "update",
+      actorId: actor._id,
+      actorType: "human",
+      changes,
+      description: buildAuditDescription({ action: "update", entityType: "organization", changes }),
+      severity: "medium",
+      createdAt: now,
+    });
     return null;
   },
 });
