@@ -5,7 +5,8 @@ import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNow } from "@/hooks/useNow";
 import { PUSH_ENABLED } from "@/lib/featureFlags";
-import { deviceTimeZone, pauseArgs, pushSupported } from "@/lib/notificationPrefsUi";
+import { PWA_KILL_SWITCH } from "@/lib/pwa/appBuild";
+import { deviceTimeZone, pauseArgs, pushAvailability, pushSupported } from "@/lib/notificationPrefsUi";
 import { TelegramCard } from "./TelegramCard";
 import { PushActivationCard } from "./PushActivationCard";
 import { MyDevicesList } from "./MyDevicesList";
@@ -20,6 +21,10 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
   const prefs = useQuery(api.notificationPreferences.getMyEffectivePreferences, { organizationId });
   const telegram = useQuery(api.telegram.getMyLink, { organizationId });
   const vapidKey = useQuery(api.push.getVapidPublicKey, {});
+  const myDevices = useQuery(
+    api.push.getMyDevices,
+    PUSH_ENABLED && !PWA_KILL_SWITCH && typeof vapidKey === "string" ? { organizationId } : "skip",
+  );
   const { can } = usePermissions(organizationId);
   const now = useNow();
 
@@ -42,8 +47,15 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
   }
 
   const telegramLinked = telegram?.link?.status === "active";
-  // Coluna Push e prévia só quando o aparelho suporta E o deployment tem chave VAPID.
-  const pushAvailable = PUSH_ENABLED && typeof vapidKey === "string" && pushSupported();
+  // `pushEnabled`: deployment com push. `pushAvailable` (coluna Push e prévia pessoal): também exige este aparelho
+  // com suporte OU algum aparelho já vinculado.
+  const { pushEnabled, pushAvailable } = pushAvailability({
+    featureOn: PUSH_ENABLED,
+    vapidKey,
+    killSwitch: PWA_KILL_SWITCH,
+    deviceSupported: pushSupported(),
+    hasLinkedDevice: !!myDevices?.some((d) => d.linkedHere),
+  });
 
   return (
     <div className="space-y-6">
@@ -55,7 +67,7 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
         canManageOrg={can("settings", "manage")}
         telegramLinked={telegramLinked}
         pushAvailable={pushAvailable}
-        previewEnabled={pushAvailable}
+        pushEnabled={pushEnabled}
         deviceTimeZone={deviceTimeZone()}
         onPreset={(preset) => setPreset({ organizationId, preset })}
         onChannel={(channel, flag, enabled) => setChannelPref({ organizationId, channel, flag, enabled })}

@@ -50,11 +50,6 @@ export function orgNewsParts(entry: OrgNewsEntry): { prefix: string; name: strin
   return { prefix: `Você tem ${label} ${entry.unseen === 1 ? "novidade" : "novidades"} em`, name: entry.organizationName };
 }
 
-export function orgNewsSentence(entry: OrgNewsEntry): string {
-  const { prefix, name } = orgNewsParts(entry);
-  return `${prefix} ${name}`;
-}
-
 // ===== Resolvido =====
 
 export function isResolved(n: Pick<InboxNotification, "data">): boolean {

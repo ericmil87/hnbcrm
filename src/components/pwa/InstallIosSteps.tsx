@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 const STEPS: ReadonlyArray<{ icon: LucideIcon; title: string; hint: string }> = [
   { icon: Share, title: "Toque em Compartilhar (no iPhone, pode estar no menu ⋯)", hint: "Procure o ícone de quadrado com seta para cima." },
   { icon: SquarePlus, title: "Escolha Adicionar à Tela de Início", hint: "Role a lista se não aparecer." },
-  { icon: Smartphone, title: "Abra o HNBCRM pelo ícone", hint: "Use sempre o ícone novo da tela de início." },
+  { icon: Smartphone, title: "Abra o HNBCRM pelo ícone", hint: "Use sempre o ícone novo da Tela de Início." },
 ];
 
 /** The 3 manual steps of installing on iPhone/iPad; reused by the sheet and by Settings. */

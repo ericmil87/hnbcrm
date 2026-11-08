@@ -3,8 +3,18 @@ import { isIosSafari, readPlatform, readStandalone, type InstallPlatform } from 
 /** Plataforma gravada na assinatura (espelha `platformValidator` de convex/push.ts). */
 export type PushPlatform = "android" | "ios" | "desktop" | "other";
 
-export function pushPlatformOf(platform: InstallPlatform): PushPlatform {
-  return platform;
+/**
+ * Chave VAPID efetiva do front: `null` desliga o push (recurso desligado, build com kill switch do PWA
+ * ou deployment sem chave); `undefined` = ainda carregando.
+ */
+export function effectiveVapidKey(input: { featureOn: boolean; killSwitch: boolean; vapidQuery: string | null | undefined }): string | null | undefined {
+  if (!input.featureOn || input.killSwitch) return null;
+  return input.vapidQuery;
+}
+
+/** O convite (toast) não tem onde mostrar o erro inline: erro de "Ativar" vira toast só quando pedido. */
+export function shouldToastEnableError(opts?: { toastOnError?: boolean }): boolean {
+  return opts?.toastOnError === true;
 }
 
 export type PushSupport = "supported" | "needs-install" | "unsupported";

@@ -4,7 +4,6 @@ import {
   addLinkedOrg,
   clearLinkedOrgs,
   getExistingSubscription,
-  pushPlatformOf,
   readLinkedEndpoint,
   readLinkedOrgs,
   readPushOwner,
@@ -38,7 +37,7 @@ async function subscribeOrg(backend: PushBackend, organizationId: string, data: 
   await backend.subscribe({
     organizationId,
     ...data,
-    platform: pushPlatformOf(platform),
+    platform: platform,
     userAgentLabel: userAgentLabelOf(navigator.userAgent, platform),
   });
 }

@@ -7,6 +7,9 @@ import {
   NON_PERSONAL_FLAGS,
   buildMatrixGroups,
   externalChannelsText,
+  pauseScopeText,
+  presetHint,
+  pushAvailability,
   isCustomized,
   isPaused,
   pauseArgs,
@@ -126,8 +129,34 @@ describe("pausa até amanhã 8 h no fuso do aparelho", () => {
 });
 
 describe("externalChannelsText", () => {
-  it("só cita push quando existir", () => {
-    expect(externalChannelsText(false)).not.toMatch(/push/);
-    expect(externalChannelsText(true)).toMatch(/push/);
+  it("só cita avisos no aparelho quando houver push", () => {
+    expect(externalChannelsText(false)).not.toMatch(/aparelho/);
+    expect(externalChannelsText(true)).toMatch(/avisos no aparelho/);
+  });
+});
+
+describe("presetHint e pauseScopeText", () => {
+  it("o atalho Nada só cita avisos no aparelho com push", () => {
+    expect(presetHint("none", false)).toBe("Nenhum aviso por e-mail ou Telegram. Tudo continua no sino.");
+    expect(presetHint("none", true)).toContain("avisos no aparelho");
+    expect(presetHint("zzz", true)).toBeUndefined();
+  });
+  it("a pausa cita a exceção do pedido de ajuda urgente só com o bypass ligado", () => {
+    expect(pauseScopeText(false, true)).toContain("exceto pedido de ajuda urgente");
+    expect(pauseScopeText(false, false)).not.toContain("exceto");
+  });
+});
+
+describe("pushAvailability", () => {
+  const base = { featureOn: true, vapidKey: "k", killSwitch: false, deviceSupported: false, hasLinkedDevice: false };
+  it("coluna Push: aparelho com suporte OU aparelho vinculado", () => {
+    expect(pushAvailability(base)).toEqual({ pushEnabled: true, pushAvailable: false });
+    expect(pushAvailability({ ...base, deviceSupported: true }).pushAvailable).toBe(true);
+    expect(pushAvailability({ ...base, hasLinkedDevice: true }).pushAvailable).toBe(true);
+  });
+  it("kill switch, recurso desligado ou sem chave VAPID desligam tudo", () => {
+    for (const off of [{ killSwitch: true }, { featureOn: false }, { vapidKey: null }, { vapidKey: undefined }]) {
+      expect(pushAvailability({ ...base, deviceSupported: true, ...off })).toEqual({ pushEnabled: false, pushAvailable: false });
+    }
   });
 });

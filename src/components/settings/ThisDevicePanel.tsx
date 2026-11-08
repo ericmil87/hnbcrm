@@ -11,7 +11,7 @@ import { promptInstall } from "@/lib/pwa/installStore";
 import { installHelpKind } from "@/lib/pwa/platform";
 
 const HELP = {
-  "android-menu": "No Chrome, abra o menu ⋮ e toque em Instalar app (ou Adicionar à tela inicial).",
+  "android-menu": "No Chrome, abra o menu ⋮ e toque em Instalar app (ou Adicionar à Tela de Início).",
   "mac-safari": "No Safari, use Arquivo › Adicionar ao Dock.",
   "desktop-menu": "No Chrome ou no Edge, use o ícone de instalar na barra de endereço ou o menu ⋮ › Instalar HNBCRM.",
 } as const;
@@ -36,7 +36,7 @@ export function ThisDevicePanel({ organizationId }: { organizationId: Id<"organi
     <div className="space-y-6">
       <SectionCard
         title="Este aparelho"
-        description="Instale o HNBCRM para abrir direto da tela inicial."
+        description="Instale o HNBCRM para abrir direto da Tela de Início."
         icon={<Smartphone size={20} aria-hidden="true" />}
       >
         {kind === "installed" ? (
@@ -57,12 +57,12 @@ export function ThisDevicePanel({ organizationId }: { organizationId: Id<"organi
               </p>
             )}
             <InstallIosSteps />
-            <p className="text-caption text-text-muted">Se já instalou, abra pelo ícone na tela de início.</p>
+            <p className="text-caption text-text-muted">Se já instalou, abra pelo ícone na Tela de Início.</p>
           </div>
         ) : (
           <div className="space-y-2">
             <p className="text-sm text-text-secondary">{HELP[kind]}</p>
-            <p className="text-caption text-text-muted">Se já instalou, abra pelo ícone na tela de início.</p>
+            <p className="text-caption text-text-muted">Se já instalou, abra pelo ícone na Tela de Início.</p>
           </div>
         )}
       </SectionCard>

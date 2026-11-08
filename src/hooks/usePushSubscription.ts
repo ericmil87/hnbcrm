@@ -7,7 +7,7 @@ import { PUSH_ENABLED } from "@/lib/featureFlags";
 import { PWA_KILL_SWITCH } from "@/lib/pwa/appBuild";
 import { mutationErrorMessage } from "@/lib/errors";
 import { disablePush, enablePush, resyncPush, type PushBackend } from "@/lib/push/actions";
-import { getExistingSubscription, pushStatusOf, pushStatusWithServer, readPushSupport, type PushStatus } from "@/lib/push/subscription";
+import { effectiveVapidKey, getExistingSubscription, shouldToastEnableError, pushStatusOf, pushStatusWithServer, readPushSupport, type PushStatus } from "@/lib/push/subscription";
 
 /** Avisa as outras instâncias do hook (cartão, convite, lista) que o estado do aparelho mudou. */
 export const PUSH_CHANGED_EVENT = "hnb:push-changed";
@@ -38,7 +38,7 @@ export interface PushSubscriptionApi {
 export function usePushSubscription(organizationId: Id<"organizations">): PushSubscriptionApi {
   const vapidQuery = useQuery(api.push.getVapidPublicKey, {});
   // `PUSH_ENABLED` é o kill switch do front: desligado, nada de push (nem o re-sync).
-  const vapidKey = PUSH_ENABLED && !PWA_KILL_SWITCH ? vapidQuery : null;
+  const vapidKey = effectiveVapidKey({ featureOn: PUSH_ENABLED, killSwitch: PWA_KILL_SWITCH, vapidQuery });
   const user = useQuery(api.auth.loggedInUser);
   const userId: string | undefined = user?._id;
   const convex = useConvex();
@@ -98,7 +98,7 @@ export function usePushSubscription(organizationId: Id<"organizations">): PushSu
         setError(message);
         setStatus("error");
         // O convite (toast) não tem onde mostrar o erro inline: avisa por toast.
-        if (opts?.toastOnError) toast.error(message);
+        if (shouldToastEnableError(opts)) toast.error(message);
       }
       return false;
     } finally {

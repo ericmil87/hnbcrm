@@ -74,6 +74,18 @@ export const FLAG_COPY: Record<
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 
+/** Rótulo do canal na matriz. */
+export const CHANNEL_LABEL: Record<MatrixChannel, string> = { email: "E-mail", telegram: "Telegram", push: "No aparelho" };
+
+/** Prazo do e-mail de reserva (aviso sem leitura); texto fixo sob a matriz. */
+export const EMAIL_FALLBACK_NOTE =
+  "E-mail de pedido de ajuda e menção sai se o aviso continuar sem leitura por 10 min; de tarefas, 30 min.";
+
+/** Frase de pausa/silêncio: o pedido de ajuda urgente fura quando o bypass está ligado. */
+export function pauseScopeText(pushEnabled: boolean, urgentBypass: boolean): string {
+  return `nada sai por ${externalChannelsText(pushEnabled)}${urgentBypass ? ", exceto pedido de ajuda urgente" : ""}; tudo fica registrado no sino.`;
+}
+
 /** Todas as linhas da matriz, agrupadas na ordem de `NOTIFICATION_GROUPS`. */
 export function buildMatrixGroups(): { group: NotificationGroup; rows: FlagRow[] }[] {
   const byGroup = new Map<NotificationGroup, FlagRow[]>(NOTIFICATION_GROUPS.map((g) => [g, []]));
@@ -107,8 +119,14 @@ export const PRESET_OPTIONS = [
     label: "Só o que é comigo",
     hint: "Pedidos e itens seus. Avisos gerais de campanhas, grupos e gastos ficam só no sino.",
   },
-  { value: "none", label: "Nada (só o sino)", hint: "Nenhum aviso por e-mail, Telegram ou push. Tudo continua no sino." },
+  { value: "none", label: "Nada (só o sino)", hint: "Nenhum aviso por {canais}. Tudo continua no sino." },
 ] as const;
+
+/** Dica do atalho; o canal "avisos no aparelho" só é citado quando o deployment tem push. */
+export function presetHint(value: string, pushEnabled: boolean): string | undefined {
+  const hint = PRESET_OPTIONS.find((o) => o.value === value)?.hint;
+  return hint?.replace("{canais}", externalChannelsText(pushEnabled));
+}
 
 /** "Pausado até 14:00" (hoje), "até amanhã 08:00" ou "até 12/11 08:00". Usa o fuso do aparelho. */
 export function pausedUntilLabel(pausedUntil: number, now: number): string {
@@ -159,6 +177,24 @@ export function pushSupported(): boolean {
 }
 
 /**
+ * Disponibilidade do push na tela de preferências.
+ *  - `pushEnabled`: o deployment tem push (recurso ligado, chave VAPID e build sem kill switch). Decide os textos de
+ *    pausa/silêncio e o "Ocultar prévia" da organização, que vale para todos os aparelhos (não depende do aparelho do admin).
+ *  - `pushAvailable`: `pushEnabled` E este aparelho suporta OU algum aparelho da pessoa já está vinculado. Decide a coluna
+ *    Push da matriz e a prévia pessoal.
+ */
+export function pushAvailability(input: {
+  featureOn: boolean;
+  vapidKey: string | null | undefined;
+  killSwitch: boolean;
+  deviceSupported: boolean;
+  hasLinkedDevice: boolean;
+}): { pushEnabled: boolean; pushAvailable: boolean } {
+  const pushEnabled = input.featureOn && !input.killSwitch && typeof input.vapidKey === "string" && input.vapidKey.length > 0;
+  return { pushEnabled, pushAvailable: pushEnabled && (input.deviceSupported || input.hasLinkedDevice) };
+}
+
+/**
  * Fora de "Só o que é comigo" nos canais externos. Espelha `NON_PERSONAL_FLAGS` de
  * convex/lib/notificationPolicy.ts (o teste confere a paridade lendo o arquivo).
  */
@@ -201,7 +237,7 @@ export function pauseArgs(
   return { mode };
 }
 
-/** Canais externos citados nos textos de pausa e silêncio (push só quando existir). */
+/** Canais externos citados nos textos de pausa, silêncio e atalhos (avisos no aparelho só quando houver push). */
 export function externalChannelsText(pushEnabled: boolean): string {
-  return pushEnabled ? "e-mail, Telegram ou push" : "e-mail ou Telegram";
+  return pushEnabled ? "e-mail, Telegram ou avisos no aparelho" : "e-mail ou Telegram";
 }

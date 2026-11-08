@@ -3,6 +3,8 @@ import {
   blockedHelp,
   bufferToBase64Url,
   deviceDisplayName,
+  effectiveVapidKey,
+  shouldToastEnableError,
   pushStatusOf,
   pushStatusWithServer,
   pushSupportOf,
@@ -82,5 +84,24 @@ describe("pushStatusWithServer", () => {
     expect(pushStatusWithServer("subscribed", [])).toBe("default");
     expect(pushStatusWithServer("subscribed", undefined)).toBe("subscribed");
     expect(pushStatusWithServer("denied", [])).toBe("denied");
+  });
+});
+
+describe("effectiveVapidKey (kill switch x push)", () => {
+  it("kill switch ou recurso desligado => null, mesmo com chave no servidor", () => {
+    expect(effectiveVapidKey({ featureOn: true, killSwitch: true, vapidQuery: "k" })).toBeNull();
+    expect(effectiveVapidKey({ featureOn: false, killSwitch: false, vapidQuery: "k" })).toBeNull();
+  });
+  it("sem kill switch repassa a consulta (carregando, sem chave ou chave)", () => {
+    expect(effectiveVapidKey({ featureOn: true, killSwitch: false, vapidQuery: undefined })).toBeUndefined();
+    expect(effectiveVapidKey({ featureOn: true, killSwitch: false, vapidQuery: null })).toBeNull();
+    expect(effectiveVapidKey({ featureOn: true, killSwitch: false, vapidQuery: "k" })).toBe("k");
+  });
+});
+
+describe("shouldToastEnableError", () => {
+  it("só quando o chamador pede (convite)", () => {
+    expect(shouldToastEnableError()).toBe(false);
+    expect(shouldToastEnableError({ toastOnError: true })).toBe(true);
   });
 });

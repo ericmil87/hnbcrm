@@ -9,7 +9,6 @@ import {
   itemActions,
   notificationHref,
   orgNewsParts,
-  orgNewsSentence,
   otherOrgNews,
   RESOLVED_CANNOT_REOPEN,
   resolvedLabel,
@@ -49,10 +48,9 @@ describe("multi-org", () => {
     expect(otherOrgNews(undefined, "a")).toEqual([]);
   });
   it("frase com singular, plural e 20+", () => {
-    expect(orgNewsSentence({ ...list[0], unseen: 1 })).toBe("Você tem 1 novidade em Alfa");
+    expect(orgNewsParts({ ...list[0], unseen: 1 })).toEqual({ prefix: "Você tem 1 novidade em", name: "Alfa" });
     expect(orgNewsParts(list[0])).toEqual({ prefix: "Você tem 2 novidades em", name: "Alfa" });
-    expect(orgNewsSentence(list[0])).toBe("Você tem 2 novidades em Alfa");
-    expect(orgNewsSentence(list[2])).toBe("Você tem 20+ novidades em Gama");
+    expect(orgNewsParts(list[2])).toEqual({ prefix: "Você tem 20+ novidades em", name: "Gama" });
   });
 });
 
