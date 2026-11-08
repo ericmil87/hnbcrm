@@ -4,6 +4,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Sino como caixa de entrada (base no servidor)
+
+- O servidor do sino passou a suportar: lista só das não lidas ou por grupo (Atendimento, Tarefas, Grupos, Campanhas, Sistema), "Marcar todas como lidas" em lotes (também por grupo), "Marcar como não lida", "visto" do sino para o contador de novidades e a contagem de novidades de cada organização para o seletor de organização. Itens resolvidos por outra pessoa trazem o nome de quem assumiu. Nenhuma tela mudou ainda.
+- Quem só tem permissão de ver as próprias conversas (Conversas: "ver as próprias") agora vê nos contadores do menu apenas as suas conversas não lidas e os pedidos de ajuda dirigidos a você ou abertos a todos, e não mais o total da organização.
+
 ### Preferências de aviso por canal, pausa e silêncio (backend)
 
 - Cada pessoa pode escolher, por tipo de aviso, se ele chega por e-mail, Telegram (e, depois, push). O sino sempre mostra o que pede ação sua (mensagem nova, pedido de ajuda, tarefa, menção, rascunho da IA, lead atribuído, canal desconectado); as preferências controlam e-mail e Telegram. Quem tinha desligado um desses tipos na tela antiga passa a vê-lo no sino.

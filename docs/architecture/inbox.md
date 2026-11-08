@@ -66,3 +66,7 @@ O ingest 1:1 (`conversations.internalReceiveMessage`) chama `lib/telegramRelay.m
 Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadores que não existiam em nenhum outro lugar).
 
 - `transcription.ts` — Voice-note transcription via self-hosted Whisper (`transcribe` user action + `autoTranscribe` post-ingest); gate compartilhado em `lib/mediaEnrichment.ts`
+
+## Badges do menu e escopo `inbox:view_own` (D1 back)
+
+`getInboxUnreadCount` e `getPendingHandoffCount` respeitam o escopo: só quem está exatamente em `inbox:view_own` (`lib/inboxScope.seesWholeInbox`; `reply`/`view_all`/`full` veem a org) conta apenas as suas. Conversas: `conversations.assignedTo` (mesmo critério do chip "Minhas") pelo índice `by_organization_and_assigned_and_archived_and_unread`, sem ler lead (lead meu sem responsável de conversa não conta). Pedidos de ajuda: só `toMemberId === eu` (aceitar exige `inbox:reply`; broadcast fica de fora). **Pendência conhecida:** `getConversations`, `getHandoffs` e `tasks.getTaskCounts` ainda NÃO aplicam o escopo `view_own` no backend (a lista mostra mais do que o badge conta; `getTaskCounts` devolve atrasadas/hoje/sem responsável da org inteira). Se uma for apertada, as demais (inclusive `searchConversationsByContact`/`searchMessages`) precisam ir juntas.

@@ -40,6 +40,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "taskProjects", index: "by_organization" },
   { table: "taskLabels", index: "by_organization" },
   { table: "notifications", index: "by_organization" },
+  { table: "notificationSeen", index: "by_organization" },
   { table: "calendarEvents", index: "by_organization" },
   { table: "savedViews", index: "by_organization" },
   { table: "onboardingProgress", index: "by_organization" },

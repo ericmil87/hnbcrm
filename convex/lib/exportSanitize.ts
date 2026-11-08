@@ -39,6 +39,7 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "copilotMessages",
   "pendingActions",
   "notifications",
+  "notificationSeen",
   "notificationPreferences",
   "onboardingProgress",
   "scheduledMessages",
