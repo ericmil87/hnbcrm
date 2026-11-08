@@ -4,31 +4,39 @@ import { TAB_ROUTES } from "./routes";
 export const OPEN_ROUTE = "/app/abrir";
 
 /**
- * `to` só vale se for caminho interno do app: começa com `/app/`, sem `//`,
- * barra invertida, esquema ou caracteres de controle (open redirect), e não
- * aponta para a própria rota de abertura (laço).
+ * Destino seguro e normalizado (`pathname + search + hash` do URL resolvido),
+ * ou `null`. Só vale caminho interno do app: `/app/…` sem `//` no início,
+ * barra invertida, esquema ou caracteres de controle (open redirect). A regra
+ * "não aponta para a própria rota" olha o caminho já normalizado (`/app/./abrir`,
+ * `/app//abrir`, `%2e`) e ignora maiúsculas (o roteador também ignora).
  */
-export function isSafeAppPath(to: string | null | undefined): to is string {
-  if (!to || typeof to !== "string") return false;
-  if (!to.startsWith("/app/")) return false;
-  if (to.startsWith("//") || to.includes("\\") || to.includes("://")) return false;
+export function safeAppTarget(to: string | null | undefined): string | null {
+  if (!to || typeof to !== "string") return null;
+  if (!to.startsWith("/app/")) return null;
+  if (to.startsWith("//") || to.includes("\\") || to.includes("://")) return null;
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f\u007f]/.test(to)) return false;
-  if (/^\/app\/+abrir(\/|\?|#|$)/.test(to)) return false;
+  if (/[\u0000-\u001f\u007f]/.test(to)) return null;
+  let u: URL;
   try {
-    const u = new URL(to, "https://app.invalid");
-    if (u.origin !== "https://app.invalid" || !u.pathname.startsWith("/app/")) return false;
+    u = new URL(to, "https://app.invalid");
   } catch {
-    return false;
+    return null;
   }
-  return true;
+  if (u.origin !== "https://app.invalid" || !u.pathname.startsWith("/app/")) return null;
+  const collapsed = u.pathname.replace(/\/{2,}/g, "/").toLowerCase();
+  if (/^\/app\/abrir(\/|$)/.test(collapsed)) return null;
+  return u.pathname + u.search + u.hash;
+}
+
+export function isSafeAppPath(to: string | null | undefined): to is string {
+  return safeAppTarget(to) !== null;
 }
 
 export function parseOpenLink(search: string): { org: string; to: string } | null {
   const params = new URLSearchParams(search);
   const org = params.get("org");
-  const to = params.get("to");
-  if (!org || !isSafeAppPath(to)) return null;
+  const to = safeAppTarget(params.get("to"));
+  if (!org || !to) return null;
   return { org, to };
 }
 

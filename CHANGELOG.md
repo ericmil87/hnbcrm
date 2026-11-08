@@ -11,6 +11,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - A bolinha do sino mostra só o que chegou desde a última vez que você abriu o sino; os avisos não lidos continuam na lista.
 - Com o app aberto, o que pede ação (pedido de ajuda, mensagem em outra conversa, transferência, menção, rascunho, tarefa) aparece como aviso na tela com "Abrir", sem repetir e sem avisar da conversa que você já está olhando. O título da aba mostra "(3) Conversas · HNBCRM" e, no app instalado, o selo do ícone acompanha. Som de aviso opcional (botão no painel do sino, desligado por padrão, só neste aparelho).
 - Quem usa mais de uma organização vê um ponto no seletor de organização e, no sino, "Você tem 2 novidades em {organização}"; tocar troca de organização e abre o sino lá.
+- Ainda não: o ícone do canal (WhatsApp, Instagram…) em cada aviso fica para depois; por enquanto o ícone mostra o tipo do aviso. A conversa aberta dentro do painel do lead ainda gera aviso na tela.
 - Aviso de lead atribuído abre o lead. Celular: folha com alça e botão "Fechar", rolagem infinita, tempo relativo que se atualiza, textos de clientes em qualquer idioma sem quebrar a linha, leitura por leitor de tela (diálogo, região de avisos, foco preso).
 
 ### Sino como caixa de entrada (base no servidor)

@@ -8,7 +8,8 @@ import { useNotificationArrivals, type ArrivalNotification } from "./useNotifica
 
 const mk = (over: Partial<ArrivalNotification> & { _id: string }): ArrivalNotification => ({
   type: "handoff_requested",
-  createdAt: 1,
+  // ids em ordem alfabética = ordem de chegada (a < b < c ...)
+  createdAt: 1000 + over._id.charCodeAt(0),
   title: "Pedido de ajuda",
   ...over,
 });
@@ -17,6 +18,7 @@ interface Props {
   items: ArrivalNotification[] | undefined;
   unread?: number;
   open?: string | null;
+  suppressed?: boolean;
 }
 
 function setup(initial: Props) {
@@ -28,6 +30,7 @@ function setup(initial: Props) {
         items: p.items,
         unreadCount: p.unread,
         openConversationId: p.open ?? null,
+        suppressed: p.suppressed,
         onOpen,
         onOpenInbox,
       }),
@@ -56,6 +59,43 @@ describe("useNotificationArrivals", () => {
     expect(toastMock).toHaveBeenCalledTimes(1);
   });
 
+  it("janela vazia no início semeia com 'agora': o que chega depois avisa", () => {
+    const { rerender } = setup({ items: [] });
+    rerender({ items: [mk({ _id: "a", createdAt: Date.now() + 1000 })] });
+    expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("janela que desliza: itens antigos que entram não avisam", () => {
+    const { rerender } = setup({ items: [mk({ _id: "e" }), mk({ _id: "d" })] });
+    // o usuário leu os mais novos: entram na janela os antigos a, b, c
+    rerender({ items: [mk({ _id: "d" }), mk({ _id: "c" }), mk({ _id: "b" }), mk({ _id: "a" })] });
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it("markUnread de item antigo (volta ao topo da lista) não avisa", () => {
+    const { rerender } = setup({ items: [mk({ _id: "e" })] });
+    rerender({ items: [mk({ _id: "e" }), mk({ _id: "b" })] });
+    expect(toastMock).not.toHaveBeenCalled();
+  });
+
+  it("aviso agrupado renovado (mesmo id, createdAt novo) avisa de novo", () => {
+    const { rerender } = setup({ items: [mk({ _id: "a", type: "new_message" })] });
+    rerender({ items: [mk({ _id: "a", type: "new_message", createdAt: 9000 })] });
+    expect(toastMock).toHaveBeenCalledTimes(1);
+    rerender({ items: [mk({ _id: "a", type: "new_message", createdAt: 9000 })] });
+    expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("com o painel do sino aberto não avisa, e o que chegou nele não avisa depois", () => {
+    const { rerender } = setup({ items: [mk({ _id: "a" })], suppressed: false });
+    rerender({ items: [mk({ _id: "b" }), mk({ _id: "a" })], suppressed: true });
+    expect(toastMock).not.toHaveBeenCalled();
+    rerender({ items: [mk({ _id: "b" }), mk({ _id: "a" })], suppressed: false });
+    expect(toastMock).not.toHaveBeenCalled();
+    rerender({ items: [mk({ _id: "c" }), mk({ _id: "b" }), mk({ _id: "a" })], suppressed: false });
+    expect(toastMock).toHaveBeenCalledTimes(1);
+  });
+
   it("avisa o que chega depois, com Abrir, e não repete", () => {
     const { rerender, onOpen } = setup({ items: [mk({ _id: "a" })], unread: 1 });
     const fresh = mk({ _id: "b", title: "Nova transferência", type: "conversation_transferred" });
@@ -72,7 +112,7 @@ describe("useNotificationArrivals", () => {
   });
 
   it("não avisa mensagem da conversa que está aberta", () => {
-    const { rerender } = setup({ items: [], unread: 0, open: "c1" });
+    const { rerender } = setup({ items: [mk({ _id: "a" })], unread: 0, open: "c1" });
     rerender({
       items: [mk({ _id: "m", type: "new_message", conversationId: "c1" })],
       unread: 1,
@@ -81,7 +121,7 @@ describe("useNotificationArrivals", () => {
     expect(toastMock).not.toHaveBeenCalled();
     rerender({
       items: [
-        mk({ _id: "m2", type: "new_message", conversationId: "c2" }),
+        mk({ _id: "n", type: "new_message", conversationId: "c2" }),
         mk({ _id: "m", type: "new_message", conversationId: "c1" }),
       ],
       unread: 2,
@@ -91,8 +131,8 @@ describe("useNotificationArrivals", () => {
   });
 
   it("muitos de uma vez viram um aviso só", () => {
-    const { rerender, onOpenInbox } = setup({ items: [], unread: 0 });
-    rerender({ items: [1, 2, 3, 4].map((i) => mk({ _id: `x${i}` })), unread: 4 });
+    const { rerender, onOpenInbox } = setup({ items: [mk({ _id: "a" })], unread: 0 });
+    rerender({ items: ["b", "c", "d", "e"].map((id) => mk({ _id: id })), unread: 4 });
     expect(toastMock).toHaveBeenCalledTimes(1);
     const [title, opts] = toastMock.mock.calls[0] as [string, { action: { onClick: () => void } }];
     expect(title).toBe("4 novos avisos");
@@ -147,11 +187,11 @@ describe("useNotificationArrivals", () => {
       }
     }
     (window as unknown as { AudioContext: unknown }).AudioContext = FakeAudio;
-    const { rerender } = setup({ items: [], unread: 0 });
-    rerender({ items: [mk({ _id: "s1" })], unread: 1 });
+    const { rerender } = setup({ items: [mk({ _id: "a" })], unread: 0 });
+    rerender({ items: [mk({ _id: "b" }), mk({ _id: "a" })], unread: 1 });
     expect(created).toHaveLength(0);
     localStorage.setItem("hnbcrm.notifySound", "1");
-    rerender({ items: [mk({ _id: "s2" }), mk({ _id: "s1" })], unread: 2 });
+    rerender({ items: [mk({ _id: "c" }), mk({ _id: "b" }), mk({ _id: "a" })], unread: 2 });
     expect(created).toHaveLength(1);
     delete (window as unknown as Record<string, unknown>).AudioContext;
   });

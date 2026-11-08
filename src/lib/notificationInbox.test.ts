@@ -3,9 +3,12 @@ import {
   bellAriaLabel,
   bellBadgeLabel,
   detectArrivals,
+  seedWatermark,
+  WATERMARK_SLACK_MS,
   isResolved,
   itemActions,
   notificationHref,
+  orgNewsParts,
   orgNewsSentence,
   otherOrgNews,
   RESOLVED_CANNOT_REOPEN,
@@ -47,6 +50,7 @@ describe("multi-org", () => {
   });
   it("frase com singular, plural e 20+", () => {
     expect(orgNewsSentence({ ...list[0], unseen: 1 })).toBe("Você tem 1 novidade em Alfa");
+    expect(orgNewsParts(list[0])).toEqual({ prefix: "Você tem 2 novidades em", name: "Alfa" });
     expect(orgNewsSentence(list[0])).toBe("Você tem 2 novidades em Alfa");
     expect(orgNewsSentence(list[2])).toBe("Você tem 20+ novidades em Gama");
   });
@@ -118,43 +122,61 @@ describe("toggleRead", () => {
   });
 });
 
-describe("detectArrivals", () => {
-  const item = (over: Partial<ArrivalItem>): ArrivalItem => ({ _id: "a", type: "new_message", createdAt: 1, ...over });
+describe("detectArrivals (marca d'água por createdAt)", () => {
+  const item = (over: Partial<ArrivalItem>): ArrivalItem => ({ _id: "a", type: "new_message", createdAt: 100, ...over });
 
-  it("carga inicial só semeia", () => {
-    const r = detectArrivals(null, [item({})], null);
+  it("seedWatermark: máximo da janela; janela vazia usa agora menos a folga", () => {
+    expect(seedWatermark([item({ createdAt: 5 }), item({ createdAt: 9 })], 1000)).toBe(9);
+    expect(seedWatermark([], 10_000)).toBe(10_000 - WATERMARK_SLACK_MS);
+  });
+
+  it("avisa só o que é mais novo que a marca, uma vez", () => {
+    const first = detectArrivals(100, [item({ _id: "b", type: "handoff_requested", createdAt: 150 }), item({})], null);
+    expect(first.arrivals.map((a) => a._id)).toEqual(["b"]);
+    expect(first.nextWatermark).toBe(150);
+    const again = detectArrivals(first.nextWatermark, [item({ _id: "b", type: "handoff_requested", createdAt: 150 }), item({})], null);
+    expect(again.arrivals).toEqual([]);
+  });
+
+  it("janela que desliza: item antigo que entra depois de ler/marcar tudo não avisa", () => {
+    const r = detectArrivals(500, [item({ _id: "old1", createdAt: 200 }), item({ _id: "old2", createdAt: 100 })], null);
     expect(r.arrivals).toEqual([]);
-    expect(r.nextSeen.has("a:1")).toBe(true);
+    expect(r.nextWatermark).toBe(500);
   });
-  it("avisa o novo acionável uma vez só", () => {
-    const first = detectArrivals(null, [item({})], null);
-    const second = detectArrivals(first.nextSeen, [item({ _id: "b", type: "handoff_requested" }), item({})], null);
-    expect(second.arrivals.map((a) => a._id)).toEqual(["b"]);
-    const third = detectArrivals(second.nextSeen, [item({ _id: "b", type: "handoff_requested" }), item({})], null);
-    expect(third.arrivals).toEqual([]);
+
+  it("markUnread pela própria pessoa: item antigo volta não lido e não avisa", () => {
+    const r = detectArrivals(500, [item({ _id: "x", createdAt: 120, readAt: undefined })], null);
+    expect(r.arrivals).toEqual([]);
   });
-  it("aviso agrupado renovado (novo createdAt) avisa de novo", () => {
-    const seeded = detectArrivals(null, [item({})], null);
-    const r = detectArrivals(seeded.nextSeen, [item({ createdAt: 9 })], null);
+
+  it("aviso agrupado renovado (createdAt novo) avisa de novo", () => {
+    const r = detectArrivals(100, [item({ createdAt: 300 })], null);
     expect(r.arrivals).toHaveLength(1);
+    expect(r.nextWatermark).toBe(300);
   });
-  it("não avisa a conversa que está aberta, mas avisa outra", () => {
-    const seeded = detectArrivals(null, [], null);
+
+  it("não avisa a conversa aberta, mas avisa outra; a marca sobe mesmo assim", () => {
     const r = detectArrivals(
-      seeded.nextSeen,
-      [item({ _id: "x", conversationId: "c1" }), item({ _id: "y", conversationId: "c2" })],
+      0,
+      [item({ _id: "x", conversationId: "c1", createdAt: 10 }), item({ _id: "y", conversationId: "c2", createdAt: 20 })],
       "c1",
     );
     expect(r.arrivals.map((a) => a._id)).toEqual(["y"]);
+    expect(r.nextWatermark).toBe(20);
   });
-  it("ignora informativos e já lidos", () => {
-    const seeded = detectArrivals(null, [], null);
+
+  it("ignora informativos e já lidos; canal desconectado é acionável", () => {
     const r = detectArrivals(
-      seeded.nextSeen,
-      [item({ _id: "m", type: "campaign_completed" }), item({ _id: "r", readAt: 5 }), item({ _id: "l", type: "lead_assigned" })],
-      null,
+      0,
+      [
+        item({ _id: "m", type: "campaign_completed", createdAt: 5 }),
+        item({ _id: "r", readAt: 5, createdAt: 6 }),
+        item({ _id: "l", type: "lead_assigned", createdAt: 7 }),
+        item({ _id: "c", type: "channel_session_lost", createdAt: 8, conversationId: "c1" }),
+      ],
+      "c1",
     );
-    expect(r.arrivals).toEqual([]);
+    expect(r.arrivals.map((a) => a._id)).toEqual(["c"]);
   });
 });
 

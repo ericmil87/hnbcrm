@@ -48,7 +48,7 @@ describe("/app/abrir", () => {
     expect(router.state.location.pathname).toBe("/app/abrir");
   });
 
-  it.each(["//evil.com", "https://evil.com/app/x", "/\\evil.com", "/entrada"])(
+  it.each(["//evil.com", "https://evil.com/app/x", "/\\evil.com", "/entrada", "/app/./abrir", "/app//abrir"])(
     "bloqueia `to` = %s e cai no Painel sem trocar de org",
     async (to) => {
       const { router, selectOrganization } = setup(link("o2", to), "o1");

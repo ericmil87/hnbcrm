@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenLink, isSafeAppPath, parseOpenLink } from "./openLink";
+import { buildOpenLink, isSafeAppPath, parseOpenLink, safeAppTarget } from "./openLink";
 
 describe("isSafeAppPath", () => {
   it("aceita caminhos internos do app, com query", () => {
@@ -18,6 +18,12 @@ describe("isSafeAppPath", () => {
     "/app",
     "app/entrada",
     "/app/abrir?org=a&to=/app/painel",
+    "/app/./abrir",
+    "/app//abrir",
+    "/app/x/../abrir",
+    "/app/%2e/abrir?org=a",
+    "/app/ABRIR",
+    "/app/abrir/",
     "/app/../evil",
     "/app/x\n",
     "",
@@ -27,6 +33,16 @@ describe("isSafeAppPath", () => {
   it("null/undefined não passam", () => {
     expect(isSafeAppPath(null)).toBe(false);
     expect(isSafeAppPath(undefined)).toBe(false);
+  });
+});
+
+describe("safeAppTarget", () => {
+  it("devolve o caminho normalizado (pathname + search + hash)", () => {
+    expect(safeAppTarget("/app/x/./y?a=1#h")).toBe("/app/x/y?a=1#h");
+    expect(safeAppTarget("/app/tarefas?task=t1")).toBe("/app/tarefas?task=t1");
+  });
+  it("parseOpenLink entrega o destino normalizado", () => {
+    expect(parseOpenLink("?org=o&to=" + encodeURIComponent("/app/a/./b"))).toEqual({ org: "o", to: "/app/a/b" });
   });
 });
 

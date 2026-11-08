@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { detectArrivals, withCountPrefix, type ArrivalItem } from "@/lib/notificationInbox";
+import { detectArrivals, seedWatermark, withCountPrefix, type ArrivalItem } from "@/lib/notificationInbox";
 import { getSoundPref, playNotificationSound } from "@/lib/notificationSound";
 
 export interface ArrivalNotification extends ArrivalItem {
@@ -17,6 +17,8 @@ interface UseNotificationArrivalsOptions<T extends ArrivalNotification> {
   openConversationId: string | null;
   /** "Abrir" do toast. */
   onOpen: (item: T) => void;
+  /** Painel do sino aberto: a lista já está à vista, então não avisa (a marca d'água segue). */
+  suppressed?: boolean;
   /** "Abrir" do toast de resumo (vários avisos de uma vez): abre o sino. */
   onOpenInbox: () => void;
 }
@@ -38,24 +40,32 @@ export function useNotificationArrivals<T extends ArrivalNotification>({
   items,
   unreadCount,
   openConversationId,
+  suppressed = false,
   onOpen,
   onOpenInbox,
 }: UseNotificationArrivalsOptions<T>): void {
-  const seenRef = useRef<Set<string> | null>(null);
+  const watermarkRef = useRef<number | null>(null);
+  const suppressedRef = useRef(suppressed);
   const openRef = useRef(openConversationId);
   const onOpenRef = useRef(onOpen);
   const onOpenInboxRef = useRef(onOpenInbox);
   useEffect(() => {
     openRef.current = openConversationId;
+    suppressedRef.current = suppressed;
     onOpenRef.current = onOpen;
     onOpenInboxRef.current = onOpenInbox;
   });
 
   useEffect(() => {
     if (!items) return;
-    const { arrivals, nextSeen } = detectArrivals(seenRef.current, items, openRef.current);
-    seenRef.current = nextSeen;
-    if (arrivals.length === 0) return;
+    // Primeira leitura: só semeia a marca d'água, nunca avisa.
+    if (watermarkRef.current === null) {
+      watermarkRef.current = seedWatermark(items, Date.now());
+      return;
+    }
+    const { arrivals, nextWatermark } = detectArrivals(watermarkRef.current, items, openRef.current);
+    watermarkRef.current = nextWatermark;
+    if (arrivals.length === 0 || suppressedRef.current) return;
     if (arrivals.length > MAX_INDIVIDUAL_TOASTS) {
       toast(`${arrivals.length} novos avisos`, {
         action: { label: "Abrir", onClick: () => onOpenInboxRef.current() },

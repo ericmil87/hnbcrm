@@ -43,9 +43,15 @@ export function otherOrgNews(list: readonly OrgNewsEntry[] | undefined, activeOr
   return list.filter((o) => o.organizationId !== activeOrgId && o.unseen > 0);
 }
 
-export function orgNewsSentence(entry: OrgNewsEntry): string {
+/** "Você tem 2 novidades em" + nome (o nome vai à parte para ficar num `<bdi>`). */
+export function orgNewsParts(entry: OrgNewsEntry): { prefix: string; name: string } {
   const label = orgNewsLabel(entry.unseen) ?? "0";
-  return `Você tem ${label} ${entry.unseen === 1 ? "novidade" : "novidades"} em ${entry.organizationName}`;
+  return { prefix: `Você tem ${label} ${entry.unseen === 1 ? "novidade" : "novidades"} em`, name: entry.organizationName };
+}
+
+export function orgNewsSentence(entry: OrgNewsEntry): string {
+  const { prefix, name } = orgNewsParts(entry);
+  return `${prefix} ${name}`;
 }
 
 // ===== Resolvido =====
@@ -168,6 +174,7 @@ export const ACTIONABLE_TYPES: ReadonlySet<NotificationType> = new Set<Notificat
   "task_assigned",
   "task_due_soon",
   "task_overdue",
+  "channel_session_lost",
 ]);
 
 /** Tipos ligados a uma conversa: não avisam se ela já está aberta na tela. */
@@ -187,33 +194,37 @@ export interface ArrivalItem {
   conversationId?: string;
 }
 
-export function arrivalKey(n: Pick<ArrivalItem, "_id" | "createdAt">): string {
-  return `${n._id}:${n.createdAt}`;
+/** Folga ao semear com a janela vazia (relógio do aparelho x servidor). */
+export const WATERMARK_SLACK_MS = 2000;
+
+/** Marca d'água inicial: o `createdAt` mais recente da janela (vazia: agora menos a folga). */
+export function seedWatermark(items: readonly Pick<ArrivalItem, "createdAt">[], now: number): number {
+  if (items.length === 0) return now - WATERMARK_SLACK_MS;
+  return Math.max(...items.map((n) => n.createdAt));
 }
 
 /**
- * Itens que acabaram de chegar: não vistos antes, não lidos, acionáveis e que
- * não são da conversa aberta. `seen === null` = primeira leitura (carga
- * inicial): só semeia, nunca avisa. Itens renovados (aviso agrupado com novo
- * `createdAt`) contam como novos.
+ * Itens que acabaram de chegar: `createdAt` acima da marca d'água, não lidos,
+ * acionáveis e fora da conversa aberta. Pela data (e não pelo id) um item
+ * antigo que entra na janela (depois de ler tudo, ou marcado como não lido
+ * pela própria pessoa) nunca vira aviso; um aviso agrupado renovado ganha
+ * `createdAt` novo e avisa de novo. A marca sobe a cada rodada, mesmo sem aviso.
  */
 export function detectArrivals<T extends ArrivalItem>(
-  seen: ReadonlySet<string> | null,
+  watermark: number,
   items: readonly T[],
   openConversationId: string | null,
-): { arrivals: T[]; nextSeen: Set<string> } {
-  const nextSeen = new Set(seen ?? []);
+): { arrivals: T[]; nextWatermark: number } {
+  let nextWatermark = watermark;
   const arrivals: T[] = [];
   for (const n of items) {
-    const key = arrivalKey(n);
-    const isNew = seen !== null && !seen.has(key);
-    nextSeen.add(key);
-    if (!isNew || n.readAt !== undefined) continue;
+    if (n.createdAt > nextWatermark) nextWatermark = n.createdAt;
+    if (n.createdAt <= watermark || n.readAt !== undefined) continue;
     if (!ACTIONABLE_TYPES.has(n.type)) continue;
     if (openConversationId && n.conversationId === openConversationId && CONVERSATION_TYPES.has(n.type)) continue;
     arrivals.push(n);
   }
-  return { arrivals, nextSeen };
+  return { arrivals, nextWatermark };
 }
 
 const COUNT_PREFIX = /^\(\d+\+?\)\s/;

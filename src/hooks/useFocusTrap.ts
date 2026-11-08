@@ -9,10 +9,19 @@ const FOCUSABLE =
  * Tab/Shift+Tab girarem entre os controles do contêiner. (O Modal ganha o seu
  * no A2; este é o equivalente local para o painel do sino.)
  */
-export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean): void {
+export function useFocusTrap(
+  ref: RefObject<HTMLElement | null>,
+  active: boolean,
+  /** Para onde o foco volta ao fechar quando nada tinha foco ao abrir (ex.: o sino no Safari). */
+  returnTo?: RefObject<HTMLElement | null>,
+): void {
   useEffect(() => {
     const root = ref.current;
     if (!active || !root) return;
+    const previous =
+      document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+        ? document.activeElement
+        : null;
     const focusables = () => Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE));
     if (!root.contains(document.activeElement)) (focusables()[0] ?? root).focus();
     const onKey = (e: KeyboardEvent) => {
@@ -34,6 +43,15 @@ export function useFocusTrap(ref: RefObject<HTMLElement | null>, active: boolean
       }
     };
     document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [ref, active]);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      // Ao fechar por qualquer caminho: se o foco ficou perdido (no body, ou
+      // dentro do painel que some), devolve a quem abriu.
+      const current = document.activeElement;
+      if (!current || current === document.body || root.contains(current)) {
+        const target = previous?.isConnected ? previous : (returnTo?.current ?? null);
+        target?.focus();
+      }
+    };
+  }, [ref, active, returnTo]);
 }

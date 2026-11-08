@@ -53,8 +53,9 @@ import { mutationErrorMessage } from "@/lib/errors";
 import {
   itemActions,
   notificationHref,
-  orgNewsSentence,
+  orgNewsParts,
   resolvedLabel,
+  MAX_FILL_LOADS,
   shouldFillPage,
   SNOOZE_MS,
   toggleRead,
@@ -63,7 +64,7 @@ import {
   type OrgNewsEntry,
 } from "@/lib/notificationInbox";
 import { buildOpenLink, ORG_NEWS_TARGET } from "@/lib/openLink";
-import { getSoundPref, setSoundPref } from "@/lib/notificationSound";
+import { getSoundPref, playNotificationSound, setSoundPref } from "@/lib/notificationSound";
 
 type NotificationDoc = Doc<"notifications">;
 
@@ -112,6 +113,8 @@ interface NotificationPanelShellProps {
   anchor: RefObject<HTMLElement | null>;
   hasUnread: boolean;
   onMarkAllRead: () => void;
+  /** Rótulo do botão (padrão "Marcar todas como lidas"). */
+  markAllLabel?: string;
   children: ReactNode;
   /** Abas Não lidas/Todas (linha ao lado de "Marcar todas"). */
   tabs?: ReactNode;
@@ -136,6 +139,7 @@ export function NotificationPanelShell({
   anchor,
   hasUnread,
   onMarkAllRead,
+  markAllLabel,
   children,
   tabs,
   filters,
@@ -166,6 +170,8 @@ export function NotificationPanelShell({
         onClose={onClose}
         hasUnread={hasUnread}
         onMarkAllRead={onMarkAllRead}
+        markAllLabel={markAllLabel}
+        anchor={anchor}
         tabs={tabs}
         filters={filters}
         headerExtra={headerExtra}
@@ -182,14 +188,16 @@ function ShellBody({
   onClose,
   hasUnread,
   onMarkAllRead,
+  markAllLabel,
+  anchor,
   children,
   tabs,
   filters,
   headerExtra,
   liveMessage,
-}: Omit<NotificationPanelShellProps, "open" | "anchor"> & { sheet: boolean }) {
+}: Omit<NotificationPanelShellProps, "open"> & { sheet: boolean }) {
   const trapRef = useRef<HTMLDivElement>(null);
-  useFocusTrap(trapRef, true);
+  useFocusTrap(trapRef, true, anchor);
   return (
     <div ref={trapRef} tabIndex={-1} className="flex min-h-0 flex-1 flex-col outline-none">
       {sheet && <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-border-strong" aria-hidden="true" />}
@@ -213,7 +221,7 @@ function ShellBody({
           <div className="min-w-0">{tabs}</div>
           {hasUnread && (
             <Button type="button" variant="ghost" size="sm" onClick={onMarkAllRead} className="shrink-0 text-brand-500">
-              Marcar todas como lidas
+              {markAllLabel ?? "Marcar todas como lidas"}
             </Button>
           )}
         </div>
@@ -241,6 +249,8 @@ interface NotificationInboxListProps {
   onAction: (n: InboxNotification, action: InboxActionId) => void;
   onLoadMore: () => void;
   onCreateLead: (n: InboxNotification) => void;
+  /** Rolagem infinita ligada. Desligada (filtro de grupo sem achar mais), só o botão "Carregar mais". */
+  autoLoad?: boolean;
 }
 
 const ACTION_LABEL: Record<InboxActionId, string> = {
@@ -261,25 +271,38 @@ export function NotificationInboxList({
   onAction,
   onLoadMore,
   onCreateLead,
+  autoLoad = true,
 }: NotificationInboxListProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const hasObserver = typeof IntersectionObserver !== "undefined";
+  const useSentinel = hasObserver && autoLoad;
 
   // Rolagem infinita: o sentinela no fim pede a próxima página ao ficar visível.
   useEffect(() => {
     const node = sentinelRef.current;
-    if (!node || status !== "CanLoadMore" || typeof IntersectionObserver === "undefined") return;
+    if (!node || !useSentinel || status !== "CanLoadMore") return;
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((e) => e.isIntersecting)) onLoadMore();
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [status, onLoadMore, items.length]);
+  }, [status, useSentinel, onLoadMore, items.length]);
 
   if (status === "LoadingFirstPage") {
     return (
       <div className="flex justify-center py-10">
         <Spinner size="md" />
+      </div>
+    );
+  }
+
+  if (items.length === 0 && status === "CanLoadMore" && !autoLoad) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 px-6 py-10 text-center">
+        <p className="text-sm text-text-muted">Nada deste grupo nos avisos mais recentes</p>
+        <Button variant="ghost" size="sm" onClick={onLoadMore}>
+          Carregar mais
+        </Button>
       </div>
     );
   }
@@ -404,8 +427,8 @@ export function NotificationInboxList({
       </ul>
 
       {status === "CanLoadMore" && (
-        <div ref={sentinelRef} className="flex justify-center py-3">
-          {!hasObserver && (
+        <div ref={useSentinel ? sentinelRef : undefined} className="flex justify-center py-3">
+          {!useSentinel && (
             <Button variant="ghost" size="sm" onClick={onLoadMore}>
               Carregar mais
             </Button>
@@ -478,7 +501,7 @@ export function OrgNewsLines({ entries, onOpen }: { entries: readonly OrgNewsEnt
           >
             <Building2 size={14} className="shrink-0 text-brand-500" aria-hidden="true" />
             <span className="min-w-0 flex-1">
-              <bdi>{orgNewsSentence(e)}</bdi>
+              {orgNewsParts(e).prefix} <bdi>{e.organizationName}</bdi>
             </span>
           </button>
         </li>
@@ -518,7 +541,10 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
   const [group, setGroup] = useState<NotificationGroup | null>(null);
   const [sound, setSound] = useState(getSoundPref);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [live, setLive] = useState("");
+  // Anúncio para leitores de tela: o contador faz o mesmo texto ser lido de novo.
+  const [liveState, setLiveState] = useState({ text: "", n: 0 });
+  const setLive = (text: string) => setLiveState((prev) => ({ text, n: prev.n + 1 }));
+  const live = liveState.n % 2 === 0 ? liveState.text : `${liveState.text}\u00a0`;
 
   // list() usa returns: v.any() (paginado) — o cast segue o padrão de FormSubmissionsPage.tsx
   const listRef = api.notifications.list as unknown as PaginatedQueryReference;
@@ -536,17 +562,19 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
   const items = (results ?? []) as InboxNotification[];
 
   // Com grupo, as páginas podem vir curtas: continua pedindo (com teto) até encher.
-  const fillLoads = useRef(0);
+  const [fillLoads, setFillLoads] = useState(0);
   useEffect(() => {
-    fillLoads.current = 0;
+    setFillLoads(0);
   }, [tab, group, open]);
   useEffect(() => {
     if (!open) return;
-    if (shouldFillPage({ group, status, visibleCount: items.length, pageSize: PAGE_SIZE, loads: fillLoads.current })) {
-      fillLoads.current += 1;
+    if (shouldFillPage({ group, status, visibleCount: items.length, pageSize: PAGE_SIZE, loads: fillLoads })) {
+      setFillLoads((n) => n + 1);
       loadMore(PAGE_SIZE);
     }
-  }, [open, group, status, items.length, loadMore]);
+  }, [open, group, status, items.length, fillLoads, loadMore]);
+  // Sem grupo a rolagem infinita é livre; com grupo, depois do teto só o botão.
+  const autoLoad = !group || fillLoads < MAX_FILL_LOADS;
 
   const handleLoadMore = useCallback(() => loadMore(PAGE_SIZE), [loadMore]);
 
@@ -563,13 +591,8 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
   if (!open) return null;
 
   const handleOpen = async (n: InboxNotification) => {
-    if (!n.readAt) {
-      try {
-        await markRead({ organizationId, notificationId: n._id });
-      } catch {
-        // não bloqueia a navegação por causa disso
-      }
-    }
+    // Dispara e segue: a navegação não espera o "lido".
+    if (!n.readAt) void markRead({ organizationId, notificationId: n._id }).catch(() => undefined);
     onClose();
     const href = notificationHref(n);
     if (href) navigate(href);
@@ -673,6 +696,8 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
     const next = !sound;
     setSoundPref(next);
     setSound(next);
+    // Gesto do usuário: toca uma prévia (também destrava o áudio do navegador).
+    if (next) playNotificationSound();
     setLive(next ? "Som de aviso ligado" : "Som de aviso desligado");
   };
 
@@ -686,6 +711,7 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
       anchor={anchor}
       hasUnread={unreadCount > 0}
       onMarkAllRead={() => void handleMarkAllRead()}
+      markAllLabel={group ? "Marcar estas como lidas" : undefined}
       tabs={<NotificationTabs tab={tab} onTab={setTab} unreadCount={unreadCount} />}
       filters={
         <>
@@ -723,6 +749,7 @@ export function NotificationPanel({ organizationId, open, onClose, anchor, unrea
           onAction={(n, a) => void handleAction(n, a)}
           onLoadMore={handleLoadMore}
           onCreateLead={(n) => void handleCreateLead(n)}
+          autoLoad={autoLoad}
         />
       </div>
     </NotificationPanelShell>

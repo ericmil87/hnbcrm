@@ -206,3 +206,110 @@ describe("NotificationPanelShell (D1)", () => {
     expect(document.activeElement).toBe(last);
   });
 });
+
+describe("rolagem infinita e teto (autoLoad)", () => {
+  type IOCallback = (entries: { isIntersecting: boolean }[]) => void;
+
+  function installObserver() {
+    const instances: { cb: IOCallback; observed: Element[] }[] = [];
+    class FakeIO {
+      cb: IOCallback;
+      observed: Element[] = [];
+      constructor(cb: IOCallback) {
+        this.cb = cb;
+        instances.push(this);
+      }
+      observe(el: Element) {
+        this.observed.push(el);
+      }
+      disconnect() {}
+      unobserve() {}
+    }
+    (globalThis as unknown as { IntersectionObserver: unknown }).IntersectionObserver = FakeIO;
+    return instances;
+  }
+
+  it("com autoLoad o sentinela dispara loadMore ao ficar visível", () => {
+    const instances = installObserver();
+    const onLoadMore = vi.fn();
+    render(<List items={[item({})]} status="CanLoadMore" onLoadMore={onLoadMore} />);
+    expect(instances.length).toBeGreaterThan(0);
+    instances[instances.length - 1].cb([{ isIntersecting: true }]);
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: "Carregar mais" })).toBeNull();
+    delete (globalThis as unknown as Record<string, unknown>).IntersectionObserver;
+  });
+
+  it("sem autoLoad não monta o observador e mostra o botão", async () => {
+    const instances = installObserver();
+    const onLoadMore = vi.fn();
+    render(<List items={[item({})]} status="CanLoadMore" autoLoad={false} onLoadMore={onLoadMore} />);
+    expect(instances).toHaveLength(0);
+    await userEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    delete (globalThis as unknown as Record<string, unknown>).IntersectionObserver;
+  });
+
+  it("lista vazia sem autoLoad explica e oferece o botão", async () => {
+    const onLoadMore = vi.fn();
+    render(<List items={[]} status="CanLoadMore" autoLoad={false} onLoadMore={onLoadMore} />);
+    expect(screen.getByText("Nada deste grupo nos avisos mais recentes")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Carregar mais" }));
+    expect(onLoadMore).toHaveBeenCalled();
+  });
+});
+
+describe("casca: foco, rótulo e anúncios", () => {
+  it("devolve o foco ao sino ao fechar por qualquer caminho", async () => {
+    function Harness() {
+      const ref = useRef<HTMLButtonElement>(null);
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button ref={ref} type="button" onClick={() => setOpen(true)}>
+            sino
+          </button>
+          <NotificationPanelShell open={open} onClose={() => setOpen(false)} anchor={ref} hasUnread onMarkAllRead={vi.fn()}>
+            <p>conteúdo</p>
+          </NotificationPanelShell>
+        </>
+      );
+    }
+    render(<Harness />);
+    const bell = screen.getByRole("button", { name: "sino" });
+    await userEvent.click(bell);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(bell).not.toHaveFocus();
+    await userEvent.click(screen.getByRole("button", { name: "Fechar" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(bell).toHaveFocus();
+  });
+
+  it("rótulo do botão em massa muda com chip de grupo", () => {
+    function Harness({ label }: { label?: string }) {
+      const ref = useRef<HTMLButtonElement>(null);
+      return (
+        <>
+          <button ref={ref} type="button">
+            sino
+          </button>
+          <NotificationPanelShell open onClose={vi.fn()} anchor={ref} hasUnread onMarkAllRead={vi.fn()} markAllLabel={label}>
+            <p>x</p>
+          </NotificationPanelShell>
+        </>
+      );
+    }
+    const { rerender } = render(<Harness />);
+    expect(screen.getByRole("button", { name: "Marcar todas como lidas" })).toBeInTheDocument();
+    rerender(<Harness label="Marcar estas como lidas" />);
+    expect(screen.getByRole("button", { name: "Marcar estas como lidas" })).toBeInTheDocument();
+  });
+
+  it("<bdi> só no nome da organização", () => {
+    const entry = { organizationId: "o2", organizationName: "Beta", unread: 3, unseen: 3 };
+    render(<OrgNewsLines entries={[entry]} onOpen={vi.fn()} />);
+    const bdis = document.querySelectorAll("bdi");
+    expect(bdis).toHaveLength(1);
+    expect(bdis[0].textContent).toBe("Beta");
+  });
+});

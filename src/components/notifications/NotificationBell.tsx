@@ -80,6 +80,7 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
     items: arrivalItems,
     unreadCount: summary?.unread,
     openConversationId,
+    suppressed: open,
     onOpen: openItem,
     onOpenInbox: handleOpen,
   });
