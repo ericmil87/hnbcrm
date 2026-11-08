@@ -19,6 +19,8 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission, assertAssignableMember } from "./lib/auth";
 import { assertAnyModule, assertModule, getModules } from "./lib/orgModules";
 import { createNotification } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
+import { resolveEntityNotifications } from "./lib/notificationResolve";
 import { getLeadRef } from "./lib/leadRef";
 import { moveLeadToStageCore } from "./lib/leadStageMove";
 import { transferConversationCore } from "./lib/conversationTransfer";
@@ -140,13 +142,28 @@ export const assignConversation = mutation({
 
     const now = Date.now();
     await ctx.db.patch(conversation._id, { assignedTo: member?._id, updatedAt: now });
+    // B2: o responsável anterior não fica com avisos da conversa que saiu dele.
+    if (conversation.assignedTo) {
+      await resolveEntityNotifications(ctx, {
+        organizationId: orgId,
+        target: { conversationId: conversation._id },
+        memberId: conversation.assignedTo,
+        resolvedByMemberId: actor._id,
+        reason: "conversation_transferred_away",
+        types: ["new_message", "ai_draft_pending"],
+      });
+    }
     if (member && member._id !== actor._id) {
       await createNotification(ctx, {
         organizationId: orgId,
         memberId: member._id,
         type: "conversation_transferred",
-        title: `${actor.name} atribuiu uma conversa a você`,
-        body: (await getLeadRef(ctx.db, conversation.leadId))?.title,
+        ...notificationCopy({
+          type: "conversation_transferred",
+          kind: "assign",
+          actorName: actor.name,
+          contactName: (await getLeadRef(ctx.db, conversation.leadId))?.title,
+        }),
         conversationId: conversation._id,
         actorId: actor._id,
       });

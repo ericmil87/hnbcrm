@@ -10,6 +10,8 @@
 import { MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
+import { notificationCopy } from "./notificationCopy";
+import { resolveEntityNotifications } from "./notificationResolve";
 import { getLeadRef } from "./leadRef";
 import { lastMessagePatchForId } from "./conversationListFields";
 import { scheduleWebhookEvent } from "./webhookDispatch";
@@ -84,18 +86,35 @@ export async function transferConversationCore(
     ...(await lastMessagePatchForId(ctx, conversation, noteMessageId)),
   });
 
+  // B2: quem deixou de ser o responsável não fica com "mensagem nova"/"resposta
+  // sugerida" não lidas de uma conversa que não é mais dele (porta única).
+  if (conversation.assignedTo && conversation.assignedTo !== nextAssignedTo) {
+    await resolveEntityNotifications(ctx, {
+      organizationId: orgId,
+      target: { conversationId: conversation._id },
+      memberId: conversation.assignedTo,
+      resolvedByMemberId: actor._id,
+      reason: "conversation_transferred_away",
+      types: ["new_message", "ai_draft_pending"],
+    });
+  }
+
   // Sino: a pessoa de destino; sem pessoa, os membros do setor.
   const recipients = toMember ? [toMember._id] : (toDept?.memberIds ?? []);
-  const contactLabel = (await getLeadRef(ctx.db, conversation.leadId))?.title ?? "Conversa";
+  const contactName = (await getLeadRef(ctx.db, conversation.leadId))?.title;
   for (const memberId of recipients.slice(0, 25)) {
     await createNotification(ctx, {
       organizationId: orgId,
       memberId,
       type: "conversation_transferred",
-      title: toMember
-        ? `${actor.name} transferiu uma conversa para você`
-        : `${actor.name} transferiu uma conversa para o setor ${toDept?.name ?? ""}`.trim(),
-      body: note ? `${contactLabel} — ${note}` : contactLabel,
+      ...notificationCopy({
+        type: "conversation_transferred",
+        kind: "transfer",
+        actorName: actor.name,
+        contactName,
+        ...(!toMember ? { departmentName: toDept?.name ?? "o setor" } : {}),
+        ...(note ? { note } : {}),
+      }),
       conversationId: conversation._id,
       actorId: actor._id,
     });

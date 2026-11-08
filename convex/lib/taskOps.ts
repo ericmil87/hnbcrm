@@ -13,6 +13,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
 import { createNotification, filterMembersOfOrg } from "./notify";
+import { notificationCopy } from "./notificationCopy";
 import { appUrl as resolveAppUrl } from "./appUrl";
 import { scheduleWebhookEvent } from "./webhookDispatch";
 
@@ -489,8 +490,7 @@ async function notifyMentions(
       organizationId: opts.task.organizationId,
       memberId,
       type: "task_comment_mention",
-      title: `${opts.author.name} mencionou você em um comentário`,
-      body: `${opts.task.title}: ${snippet}`,
+      ...notificationCopy({ type: "task_comment_mention", actorName: opts.author.name, taskTitle: opts.task.title, excerpt: opts.content }),
       taskId: opts.task._id,
       actorId: opts.author._id,
     });

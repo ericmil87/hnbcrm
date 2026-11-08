@@ -57,6 +57,7 @@ import {
 } from "./lib/groupCopilotTools";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { notifyLeadAssigned } from "./lib/notify";
 import { resolvePeriodBound, toolTime, type ToolTime } from "./lib/copilotDates";
 import { safeTimezone } from "./lib/promptDateTime";
 import {
@@ -1529,6 +1530,7 @@ async function runWriteTool(
         payload: { leadId: lead._id, oldAssignedTo: lead.assignedTo, newAssignedTo: target._id },
       });
       if (target.type === "human") {
+        await notifyLeadAssigned(ctx, { organizationId, leadId: lead._id, leadTitle: lead.title, memberId: target._id, actor: member });
         await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
           organizationId,
           recipientMemberId: target._id,

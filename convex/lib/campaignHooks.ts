@@ -10,6 +10,7 @@ import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
+import { notificationCopy, type NotificationCopy } from "./notificationCopy";
 import { getLeadRef } from "./leadRef";
 import { scheduleWebhookEvent } from "./webhookDispatch";
 
@@ -113,7 +114,7 @@ export async function transitionRecipient(
 async function notifyCampaignWatchers(
   ctx: MutationCtx,
   campaign: Doc<"campaigns">,
-  args: { type: "campaign_completed" | "campaign_paused"; title: string; body?: string }
+  args: { type: "campaign_completed" | "campaign_paused"; copy: NotificationCopy }
 ): Promise<void> {
   const members = await ctx.db
     .query("teamMembers")
@@ -128,8 +129,7 @@ async function notifyCampaignWatchers(
       organizationId: campaign.organizationId,
       memberId,
       type: args.type,
-      title: args.title,
-      body: args.body,
+      ...args.copy,
       campaignId: campaign._id,
     });
   }
@@ -185,8 +185,7 @@ export async function pauseCampaignCore(
   if (args.automatic) {
     await notifyCampaignWatchers(ctx, campaign, {
       type: "campaign_paused",
-      title: `Campanha «${campaign.name}» pausada por segurança`,
-      body: args.reason,
+      copy: notificationCopy({ type: "campaign_paused", campaignName: campaign.name, reason: args.reason }),
     });
   }
   await scheduleWebhookEvent(ctx, {
@@ -223,8 +222,13 @@ export async function completeCampaignCore(
   });
   await notifyCampaignWatchers(ctx, campaign, {
     type: "campaign_completed",
-    title: `Campanha «${campaign.name}» concluída`,
-    body: `${campaign.stats.sent + campaign.stats.delivered + campaign.stats.read + campaign.stats.replied} enviadas · ${campaign.stats.failed} falhas · ${campaign.stats.replied} respostas`,
+    copy: notificationCopy({
+      type: "campaign_completed",
+      campaignName: campaign.name,
+      sent: campaign.stats.sent + campaign.stats.delivered + campaign.stats.read + campaign.stats.replied,
+      failed: campaign.stats.failed,
+      replied: campaign.stats.replied,
+    }),
   });
   await scheduleWebhookEvent(ctx, {
     organizationId: campaign.organizationId,

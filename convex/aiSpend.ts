@@ -19,6 +19,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
 import { isMembershipRevoked } from "./lib/auth";
 import { agentRunsRetentionCutoff } from "./retention";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
@@ -201,24 +202,16 @@ async function maybeNotifySpend(
   const capBrl = formatBrl(cap.monthlyBrl ?? 0);
   const blockMode = cap.mode === "block";
   const type = crossing.reached ? ("ai_spend_reached" as const) : ("ai_spend_warning" as const);
-  const title = crossing.reached
-    ? blockMode
-      ? "Teto de gastos de IA atingido — IA em modo rascunho"
-      : "Teto de gastos de IA atingido"
-    : `Gasto de IA em ${pct}% do teto do mês`;
-  const body = crossing.reached
-    ? blockMode
-      ? `Gasto aproximado ${costBrl} de ${capBrl}. O atendente passa a deixar rascunhos (com repasse) e os demais recursos de IA ficam suspensos até o próximo mês.`
-      : `Gasto aproximado ${costBrl} de ${capBrl}. A IA continua funcionando (modo avisar).`
-    : `Gasto aproximado ${costBrl} de ${capBrl} em ${args.month}.`;
+  const copy = crossing.reached
+    ? notificationCopy({ type: "ai_spend_reached", costBrl, capBrl, blockMode })
+    : notificationCopy({ type: "ai_spend_warning", pct, costBrl, capBrl, month: args.month });
 
   for (const admin of await spendAlertRecipients(ctx, args.organizationId)) {
     await createNotification(ctx, {
       organizationId: args.organizationId,
       memberId: admin._id,
       type,
-      title,
-      body,
+      ...copy,
       data: { month: args.month, pct },
     });
     await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {

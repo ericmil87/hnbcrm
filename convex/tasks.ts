@@ -1,12 +1,13 @@
 import { v } from "convex/values";
-import { resolveTaskNotifications } from "./lib/notificationResolve";
+import { resolveEntityNotifications, resolveTaskNotifications } from "./lib/notificationResolve";
 import { query, mutation, internalQuery, internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, isActiveMemberOf, assertAssignableMember } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
-import { createNotification, filterMembersOfOrg } from "./lib/notify";
+import { createNotification, filterMembersOfOrg, orgTimeZone } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
 import { buildTaskSearchText } from "./lib/taskSearchText";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
@@ -179,7 +180,8 @@ async function resolveSearchExtras(
   };
 }
 
-// Notifica (in-app + e-mail) só os responsáveis NOVOS, nunca o ator.
+// Notifica (in-app + e-mail) só os responsáveis NOVOS, nunca o ator. B2: quem
+// DEIXOU de ser responsável tem o `task_assigned` não lido resolvido (porta única).
 async function notifyNewAssignees(
   ctx: MutationCtx,
   opts: {
@@ -190,9 +192,24 @@ async function notifyNewAssignees(
   }
 ): Promise<void> {
   const previous = new Set(opts.previousAssignees);
+  const current = new Set(opts.assignees);
+  for (const memberId of previous) {
+    if (current.has(memberId)) continue;
+    await resolveEntityNotifications(ctx, {
+      organizationId: opts.task.organizationId,
+      target: { taskId: opts.task._id },
+      memberId,
+      resolvedByMemberId: opts.actor._id,
+      reason: "task_unassigned",
+      types: ["task_assigned"],
+    });
+  }
   // Ids podem vir do cliente (API/MCP): só notifica membros da org da task —
   // o e-mail não tem gate de org em dispatchNotification.
   const allowed = await filterMembersOfOrg(ctx, opts.task.organizationId, opts.assignees);
+  const fresh = allowed.filter((id) => !previous.has(id) && id !== opts.actor._id);
+  const timeZone = fresh.length > 0 && opts.task.dueDate ? await orgTimeZone(ctx, opts.task.organizationId) : undefined;
+  const now = Date.now();
 
   for (const memberId of allowed) {
     if (previous.has(memberId)) continue;
@@ -202,8 +219,10 @@ async function notifyNewAssignees(
       organizationId: opts.task.organizationId,
       memberId,
       type: "task_assigned",
-      title: "Nova tarefa atribuída a você",
-      body: opts.task.title,
+      ...notificationCopy(
+        { type: "task_assigned", taskTitle: opts.task.title, actorName: opts.actor.name, dueAt: opts.task.dueDate },
+        { timeZone, now }
+      ),
       taskId: opts.task._id,
       actorId: opts.actor._id,
     });
@@ -2675,8 +2694,10 @@ export const triggerPreDueReminder = internalMutation({
         organizationId: task.organizationId,
         memberId,
         type: "task_due_soon",
-        title: "Tarefa vence em breve",
-        body: `${task.title} — vence em ${dueDateLabel}`,
+        ...notificationCopy(
+          { type: "task_due_soon", taskTitle: task.title, dueAt: task.dueDate },
+          { timeZone: await orgTimeZone(ctx, task.organizationId), now }
+        ),
         taskId: args.taskId,
       });
 
@@ -2778,6 +2799,8 @@ export const processOverdueReminders = internalMutation({
     const now = Date.now();
 
     const overdueTasks = (await overdueReminderRanges(ctx, now)).flatMap((r) => r.docs);
+    // Fuso por org (textos do sino), uma leitura por org da rodada.
+    const zones = new Map<Id<"organizations">, string | undefined>();
 
     for (const task of overdueTasks) {
       // Snoozada (reminderTriggered:false) fica no range até o snooze vencer,
@@ -2796,13 +2819,14 @@ export const processOverdueReminders = internalMutation({
       });
 
       // Notificação in-app + e-mail para todos os responsáveis
+      if (!zones.has(task.organizationId)) zones.set(task.organizationId, await orgTimeZone(ctx, task.organizationId));
+      const tz = zones.get(task.organizationId);
       for (const memberId of readAssignees(task)) {
         await createNotification(ctx, {
           organizationId: task.organizationId,
           memberId,
           type: "task_overdue",
-          title: "Tarefa atrasada",
-          body: task.title,
+          ...notificationCopy({ type: "task_overdue", taskTitle: task.title, dueAt: task.dueDate }, { timeZone: tz, now }),
           taskId: task._id,
         });
 

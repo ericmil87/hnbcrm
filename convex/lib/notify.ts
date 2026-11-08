@@ -5,6 +5,7 @@ import { isMembershipRevoked } from "./auth";
 import { internal } from "../_generated/api";
 import { modulesOf } from "./orgModules";
 import { hasTelegramTemplate } from "./telegramNotifications";
+import { notificationCopy } from "./notificationCopy";
 
 export type NotificationType =
   | "task_assigned"
@@ -284,4 +285,29 @@ async function maybeScheduleTelegram(
   if (args.type === "new_message" && !link.prefs.relayAssignedConversations) return;
   if (!modulesOf(await ctx.db.get(args.organizationId)).telegram) return;
   await ctx.scheduler.runAfter(0, internal.telegram.internalDeliverNotification, { notificationId });
+}
+
+/**
+ * B2: lead atribuído a um membro → sino (o e-mail `leadAssigned` continua no
+ * chamador). Sem ponteiro de conversa: `data.leadId` (o clique do sino ganha
+ * destino no D1). Self-skip/IA/opt-out ficam com `createNotification`.
+ */
+export async function notifyLeadAssigned(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    leadId: Id<"leads">;
+    leadTitle: string;
+    memberId: Id<"teamMembers">;
+    actor: Pick<Doc<"teamMembers">, "_id" | "name">;
+  }
+): Promise<void> {
+  await createNotification(ctx, {
+    organizationId: args.organizationId,
+    memberId: args.memberId,
+    type: "lead_assigned",
+    ...notificationCopy({ type: "lead_assigned", leadTitle: args.leadTitle, actorName: args.actor.name }),
+    data: { leadId: args.leadId },
+    actorId: args.actor._id,
+  });
 }

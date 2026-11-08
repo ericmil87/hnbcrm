@@ -33,7 +33,8 @@ import {
   mentionsUs,
   recordParticipantFromMessage,
 } from "./lib/groupChatCore";
-import { createNotification } from "./lib/notify";
+import { coalesceKeys, createNotification, GROUP_MENTION_WINDOW_MS } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
 import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
@@ -2620,6 +2621,15 @@ export const internalReceiveGroupMessage = internalMutation({
     const config =
       args.mentions && args.mentions.length > 0 ? await ctx.db.get(args.channelConfigId) : null;
     if (mentionsUs(args.mentions, config?.bridgeLid, config?.bridgePhone) || alertKeyword) {
+      const mentionCopy = (count: number) =>
+        notificationCopy({
+          type: "group_mention",
+          groupName: group.subject,
+          senderName: args.senderName,
+          preview: args.content,
+          ...(alertKeyword ? { keyword: alertKeyword } : {}),
+          count,
+        });
       const recipients = await membersWithPermission(
         ctx,
         args.organizationId,
@@ -2631,12 +2641,12 @@ export const internalReceiveGroupMessage = internalMutation({
           organizationId: args.organizationId,
           memberId: recipient._id,
           type: "group_mention",
-          title: alertKeyword
-            ? `"${alertKeyword}" em ${group.subject}`
-            : `Mencionaram você em "${group.subject}"`,
-          body: `${args.senderName ?? "Um membro"}: ${args.content.slice(0, 120)}`,
+          ...mentionCopy(1),
           conversationId: conversation._id,
           groupChatId: group._id,
+          // B2: menções da mesma sala em 10 min (contados da primeira) viram
+          // um aviso só ("3 menções…"); o Telegram recebe a primeira da janela.
+          coalesce: { key: coalesceKeys.groupMention(group._id), windowMs: GROUP_MENTION_WINDOW_MS, render: mentionCopy },
         });
       }
     }

@@ -20,6 +20,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { applyTaskCompletion, addTaskCommentCore, taskDeepLink } from "./taskOps";
 import { createNotification, inboxRepliers } from "./notify";
+import { notificationCopy } from "./notificationCopy";
 import { appUrl as resolveAppUrl } from "./appUrl";
 import { scheduleWebhookEvent } from "./webhookDispatch";
 import { channelDisplayName } from "./channelTransport";
@@ -454,8 +455,11 @@ export async function resolveFollowUpOutcome(
   const notification = {
     organizationId: followUp.organizationId,
     type: "ai_followup_needs_human" as const,
-    title: "A IA não conseguiu fazer o follow-up",
-    body: `${task?.title ?? "Follow-up"} — ${reasonText ?? describeFollowUpReason("")}`,
+    ...notificationCopy({
+      type: "ai_followup_needs_human",
+      taskTitle: task?.title ?? "Follow-up",
+      reason: reasonText ?? describeFollowUpReason(""),
+    }),
     taskId: followUp.taskId,
     conversationId: followUp.conversationId,
     // Quem PROVOCOU a escalada: com `actorId` igual ao destinatário,

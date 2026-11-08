@@ -63,6 +63,7 @@ import {
   GROUP_TOPIC_CAP,
 } from "./lib/groupChatCore";
 import { createNotification } from "./lib/notify";
+import { notificationCopy } from "./lib/notificationCopy";
 import { deleteConversationCascade, newBudget } from "./lib/leadCascade";
 import { createLeadFromGroupMemberCore } from "./lib/groupMemberLead";
 import { groupMediaModeValidator, groupMediaOverrideModeValidator } from "./schema";
@@ -1873,8 +1874,7 @@ export const internalApplyJoinedGroup = internalMutation({
         organizationId: config.organizationId,
         memberId: m._id,
         type: "group_joined",
-        title: `Entrou no grupo "${parsed.subject}"`,
-        body: "Marque «Acompanhar» para as mensagens deste grupo aparecerem no inbox.",
+        ...notificationCopy({ type: "group_joined", groupName: parsed.subject }),
       });
     }
 
