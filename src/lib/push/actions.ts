@@ -120,6 +120,19 @@ export async function resyncPush(backend: PushBackend, organizationId: string, v
     // Assinatura perdida (limpeza do navegador, kill switch, SW reinstalado) mas a PESSOA tinha ativado aqui:
     // a permissão já existe, então assina de novo sem gesto. "Desligar" apaga o rastro, e então fica quieto.
     if (!hasActivationTrace(owner, linked, userId)) return "idle";
+    // Aparelho removido em "Meus aparelhos": o servidor não conhece mais o endpoint guardado. Não re-assina.
+    const storedEndpoint = readLinkedEndpoint();
+    if (storedEndpoint) {
+      try {
+        const devices = await backend.getMyDevices({ organizationId, currentEndpoint: storedEndpoint });
+        if (!devices.some((d) => d.isCurrent)) {
+          clearLinkedOrgs();
+          return "removed";
+        }
+      } catch {
+        /* sem resposta: segue re-assinando */
+      }
+    }
     try {
       const data = await subscribeBrowser(vapidKey);
       return await relinkAll(backend, linked, organizationId, userId, data);

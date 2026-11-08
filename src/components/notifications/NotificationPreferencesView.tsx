@@ -547,7 +547,7 @@ function DeliveryBlock({
           <h3 className="text-lg font-semibold text-text-primary">Horário de silêncio</h3>
         </div>
         <p className="text-sm text-text-secondary mb-3">
-          No horário de silêncio, {pauseScopeText(pushEnabled, prefs.urgentBypass)}
+          No horário de silêncio, {pauseScopeText(pushEnabled, prefs.urgentBypass)}{" "}
           Fuso: {timezoneLabel(zone)}.
         </p>
         <Switch checked={q.enabled} onCheckedChange={toggleQuiet} label="Silenciar em um horário" />

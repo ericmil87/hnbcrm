@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { createSignOutGuard, loginReturnState, postLoginTarget } from "./signOutFlow";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SIGN_OUT_TIMEOUT_MS, createSignOutGuard, withTimeout, loginReturnState, postLoginTarget } from "./signOutFlow";
 
 describe("createSignOutGuard", () => {
   it("ignora o segundo toque enquanto sai (sem duplo teardown)", async () => {
@@ -36,4 +36,26 @@ describe("postLoginTarget", () => {
       expect(postLoginTarget(state)).toBe("/app");
     },
   );
+});
+
+describe("signOut que nunca responde (offline)", () => {
+  afterEach(() => vi.useRealTimers());
+  it("estoura em 5 s, libera o guard e permite tentar de novo", async () => {
+    vi.useFakeTimers();
+    const g = createSignOutGuard();
+    const never = () => new Promise<void>(() => undefined);
+    const result = g.run(async () => {
+      await withTimeout(never(), SIGN_OUT_TIMEOUT_MS);
+    });
+    await vi.advanceTimersByTimeAsync(SIGN_OUT_TIMEOUT_MS - 1);
+    expect(g.busy).toBe(true);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await result).toBe(false);
+    expect(g.busy).toBe(false);
+    expect(await g.run(async () => undefined)).toBe(true);
+  });
+  it("resposta a tempo passa direto", async () => {
+    vi.useFakeTimers();
+    await expect(withTimeout(Promise.resolve(7), 5000)).resolves.toBe(7);
+  });
 });

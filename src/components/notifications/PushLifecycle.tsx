@@ -78,13 +78,14 @@ export function PushLifecycle({ organizationId }: { organizationId: Id<"organiza
   const scheduleInviteRef = useRef<() => void>(() => undefined);
   useEffect(() => {
     const showInvite = () => {
-      markInviteShown(Date.now());
       if (statusRef.current === "needs-install") {
+        markInviteShown(Date.now());
         toast("Instale o app para receber avisos neste aparelho, mesmo com o app fechado.", {
           duration: 15000,
           action: { label: "Como instalar", onClick: () => setInstallOpen(true) },
         });
       } else if (statusRef.current === "default") {
+        markInviteShown(Date.now());
         toast("Quer receber isso neste aparelho mesmo com o app fechado?", {
           duration: 15000,
           action: { label: "Ativar", onClick: () => void enableRef.current({ toastOnError: true }) },

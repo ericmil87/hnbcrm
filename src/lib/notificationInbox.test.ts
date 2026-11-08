@@ -224,3 +224,21 @@ describe("notificationHref usa o destino único do backend", () => {
     expect(notificationHref(n({ type: "ai_draft_pending" }))).toBe("/app/entrada");
   });
 });
+
+describe("resolvedLabel por motivo", () => {
+  const r = (reason: string) => resolvedLabel(n({ type: "task_assigned", data: { resolvedReason: reason, resolvedAt: 1 } }));
+  it.each([
+    ["task_completed", "Tarefa concluída"],
+    ["task_cancelled", "Tarefa cancelada"],
+    ["task_deleted", "Tarefa excluída"],
+    ["lead_deleted", "Lead excluído"],
+    ["conversation_deleted", "Conversa excluída"],
+    ["replied", "Você respondeu"],
+    ["channel_reconnected", "Canal reconectado"],
+  ])("%s -> %s", (reason, label) => {
+    expect(r(reason)).toBe(label);
+  });
+  it("motivo desconhecido cai em Resolvido", () => {
+    expect(r("outro")).toBe("Resolvido");
+  });
+});

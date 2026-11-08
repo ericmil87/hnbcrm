@@ -23,7 +23,7 @@ import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import { clearStoredDrafts } from "@/lib/pwa/composerDraft";
-import { createSignOutGuard, loginReturnState } from "@/lib/signOutFlow";
+import { SIGN_OUT_TIMEOUT_MS, createSignOutGuard, loginReturnState, withTimeout } from "@/lib/signOutFlow";
 import { teardownPushOnLogout } from "@/lib/push/subscription";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
@@ -350,12 +350,15 @@ function AuthLayoutContent() {
           unsubscribe: (args) => convex.mutation(api.push.unsubscribe, { ...args, organizationId: args.organizationId as Id<"organizations"> }),
           extraOrgIds: activeOrgId ? [activeOrgId] : [],
         });
-        await signOut();
+        await withTimeout(signOut(), SIGN_OUT_TIMEOUT_MS);
       })
       .then((done) => {
-        if (!done && !signOutGuardRef.current.busy) setSigningOut(false);
-      })
-      .finally(() => toast.dismiss());
+        toast.dismiss();
+        if (!done && !signOutGuardRef.current.busy) {
+          setSigningOut(false);
+          toast.error("Não foi possível sair. Tente de novo.");
+        }
+      });
   }, [signOut, convex, activeOrgId]);
 
   const handleOrgCreated = useCallback((orgId: Id<"organizations">) => {

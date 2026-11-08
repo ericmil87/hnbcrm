@@ -196,6 +196,26 @@ describe("resyncPush", () => {
     expect(b.subscribe).toHaveBeenCalledTimes(2);
   });
 
+  it("assinatura perdida e o servidor não conhece mais o aparelho (removido): limpa o rastro e não re-assina", async () => {
+    const env = installPushEnv({ permission: "granted", subscription: null });
+    activated(["org1"]);
+    const b = backend();
+    b.getMyDevices.mockResolvedValue([{ isCurrent: false, linkedHere: true }]);
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("removed");
+    expect(b.getMyDevices).toHaveBeenCalledWith({ organizationId: "org1", currentEndpoint: "https://fcm.googleapis.com/fcm/send/abc" });
+    expect(env.pushManager.subscribe).not.toHaveBeenCalled();
+    expect(readLinkedOrgs()).toEqual([]);
+  });
+
+  it("assinatura perdida e a consulta de aparelhos falha: segue re-assinando", async () => {
+    const env = installPushEnv({ permission: "granted", subscription: null });
+    activated(["org1"]);
+    const b = backend();
+    b.getMyDevices.mockRejectedValue(new Error("offline"));
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("synced");
+    expect(env.pushManager.subscribe).toHaveBeenCalledTimes(1);
+  });
+
   it("rastro de outra pessoa não re-assina", async () => {
     const env = installPushEnv({ permission: "granted", subscription: null });
     activated(["org1"], "outraPessoa");

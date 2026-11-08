@@ -33,3 +33,22 @@ export function postLoginTarget(state: unknown): string {
   const from = state && typeof state === "object" ? (state as { from?: unknown }).from : undefined;
   return safeNotificationUrl(from) ?? "/app";
 }
+
+/** Prazo do `signOut()` (offline ele pode nunca responder): estourou, o spinner de saída não pode ficar eterno. */
+export const SIGN_OUT_TIMEOUT_MS = 5000;
+
+export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timeout")), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}

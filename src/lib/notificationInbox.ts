@@ -61,6 +61,16 @@ export function isResolved(n: Pick<InboxNotification, "data">): boolean {
   return d.resolvedReason !== undefined || d.resolvedBy !== undefined;
 }
 
+/** Motivos gravados em `data.resolvedReason` (convex/lib/notificationResolve.ts e cascatas) com texto próprio. */
+const RESOLVED_REASON_LABEL: Record<string, string> = {
+  task_completed: "Tarefa concluída",
+  task_cancelled: "Tarefa cancelada",
+  task_deleted: "Tarefa excluída",
+  lead_deleted: "Lead excluído",
+  conversation_deleted: "Conversa excluída",
+  replied: "Você respondeu",
+};
+
 /** "Assumido por Ana" (pedido de ajuda) ou o motivo genérico; `null` se não está resolvido. */
 export function resolvedLabel(n: InboxNotification): string | null {
   if (!isResolved(n)) return null;
@@ -69,7 +79,8 @@ export function resolvedLabel(n: InboxNotification): string | null {
     return n.resolvedByName ? `Assumido por ${n.resolvedByName}` : "Já assumido";
   }
   if (typeof reason === "string") {
-    if (reason.includes("task") || reason.includes("complet")) return "Tarefa concluída";
+    const exact = RESOLVED_REASON_LABEL[reason];
+    if (exact) return exact;
     if (reason.includes("reconnect") || reason.includes("channel")) return "Canal reconectado";
   }
   return n.resolvedByName ? `Resolvido por ${n.resolvedByName}` : "Resolvido";
