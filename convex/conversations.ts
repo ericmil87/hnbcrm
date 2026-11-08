@@ -1,5 +1,5 @@
 import { v, ConvexError, type Infer } from "convex/values";
-import { resolveEntityNotifications } from "./lib/notificationResolve";
+import { resolveEntityNotifications, resolveRepliedNotifications } from "./lib/notificationResolve";
 import { foldForSearch } from "./lib/searchFold";
 import { searchContactsByText } from "./lib/contactTextSearch";
 import { insertFileRow } from "./lib/storageUsage";
@@ -1399,6 +1399,9 @@ export const sendMessage = mutation({
       createdAt: now,
     });
 
+    // Responder resolve os avisos de mensagem/transferência do próprio remetente.
+    await resolveRepliedNotifications(ctx, { conversation, sender: userMember, isInternal: args.isInternal });
+
     // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
     // só no audit acima.
     if (conversation.leadId) {
@@ -1931,6 +1934,9 @@ export async function internalSendMessageCore(
     severity: "low",
     createdAt: now,
   });
+
+  // Responder (Telegram, REST, MCP, Copiloto) resolve os avisos do próprio remetente humano.
+  await resolveRepliedNotifications(ctx, { conversation, sender: teamMember, isInternal: args.isInternal });
 
   // Log activity — a timeline é do LEAD; conversa de grupo (sem lead) fica
   // só no audit acima.

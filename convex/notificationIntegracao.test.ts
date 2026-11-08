@@ -173,6 +173,39 @@ describe("4. markConversationRead com inbox:view_own", () => {
   });
 });
 
+describe("5. responder ao cliente resolve os próprios avisos", () => {
+  test("internalSendMessage (Telegram/REST) e sendMessage (app); nota interna não resolve", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const mk = async () => {
+      await notify(t, s, s.seller.memberId, "new_message", { conversationId: s.conversationId });
+      await notify(t, s, s.seller.memberId, "conversation_transferred", { conversationId: s.conversationId });
+      await notify(t, s, s.third.memberId, "new_message", { conversationId: s.conversationId });
+    };
+    const unreadOf = async (memberId: Id<"teamMembers">) =>
+      (await all(t)).filter((n) => n.memberId === memberId && n.readAt === undefined).length;
+
+    await mk();
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: s.conversationId, content: "nota", isInternal: true, teamMemberId: s.seller.memberId,
+    });
+    expect(await unreadOf(s.seller.memberId)).toBe(2);
+
+    await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId: s.conversationId, content: "oi", teamMemberId: s.seller.memberId,
+    });
+    expect(await unreadOf(s.seller.memberId)).toBe(0);
+    expect(await unreadOf(s.third.memberId)).toBe(1);
+    expect((await all(t)).find((n) => n.memberId === s.seller.memberId)?.data?.resolvedReason).toBe("replied");
+
+    await asUser(t, s.third.userId).mutation(api.conversations.sendMessage, {
+      conversationId: s.conversationId, content: "oi",
+    });
+    expect(await unreadOf(s.third.memberId)).toBe(0);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
 describe("2. excluir lead resolve avisos de conversa e repasse", () => {
   test("deleteLead + cascata", async () => {
     const t = convexTest(schema, modules);

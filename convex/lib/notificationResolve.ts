@@ -192,6 +192,30 @@ export async function resolveEntityNotifications(
 }
 
 /**
+ * Quem respondeu ao cliente (app, Telegram, REST/MCP) resolveu os PRÓPRIOS
+ * `new_message` e `conversation_transferred` da conversa. Só remetente humano e
+ * resposta de verdade (nota interna não conta). Chamar das portas de envio.
+ */
+export async function resolveRepliedNotifications(
+  ctx: MutationCtx,
+  args: {
+    conversation: Pick<Doc<"conversations">, "_id" | "organizationId">;
+    sender: Pick<Doc<"teamMembers">, "_id" | "type">;
+    isInternal?: boolean;
+  }
+): Promise<number> {
+  if (args.isInternal || args.sender.type === "ai") return 0;
+  return resolveEntityNotifications(ctx, {
+    organizationId: args.conversation.organizationId,
+    target: { conversationId: args.conversation._id },
+    memberId: args.sender._id,
+    resolvedByMemberId: args.sender._id,
+    reason: "replied",
+    types: ["new_message", "conversation_transferred"],
+  });
+}
+
+/**
  * Dedupe do `ai_draft_pending`: "já existe aviso NÃO LIDO deste membro para a
  * conversa E ainda há rascunho pendente (outro que não o recém-criado)". Só
  * "não lido" silenciava para sempre quem revisou no inbox sem passar pelo sino.
