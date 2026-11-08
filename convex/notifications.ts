@@ -44,7 +44,7 @@ export const list = query({
     const member = await requireAuth(ctx, args.organizationId);
     const base = ctx.db.query("notifications");
     const result = await (args.unreadOnly === true
-      ? base.withIndex("by_member_and_read", (q) => q.eq("memberId", member._id).eq("readAt", undefined))
+      ? base.withIndex("by_member_and_read_and_created", (q) => q.eq("memberId", member._id).eq("readAt", undefined))
       : base.withIndex("by_member_and_created", (q) => q.eq("memberId", member._id))
     )
       .order("desc")
@@ -94,12 +94,13 @@ export const unreadCount = query({
   },
 });
 
-async function summaryFor(ctx: QueryCtx, memberId: Id<"teamMembers">) {
+async function summaryFor(ctx: QueryCtx, memberId: Id<"teamMembers">, cap: number = UNREAD_COUNT_CAP) {
   const [unread, seen] = await Promise.all([
     ctx.db
       .query("notifications")
-      .withIndex("by_member_and_read", (q) => q.eq("memberId", memberId).eq("readAt", undefined))
-      .take(UNREAD_COUNT_CAP),
+      .withIndex("by_member_and_read_and_created", (q) => q.eq("memberId", memberId).eq("readAt", undefined))
+      .order("desc")
+      .take(cap),
     ctx.db.query("notificationSeen").withIndex("by_member", (q) => q.eq("memberId", memberId)).first(),
   ]);
   const seenAt = seen?.seenAt ?? null;
@@ -121,10 +122,14 @@ export const unreadSummary = query({
   },
 });
 
+/** Teto por org em `unreadCountsByUser`: `unread`/`unseen` == 20 significa "20+". */
+export const ORG_COUNT_CAP = 20;
+
 /**
  * Seletor de org: uma contagem por vínculo ATIVO do usuário (sem org no
  * argumento — como `getUserOrganizations`). Só devolve id/nome da org (que o
- * usuário já vê no seletor) e as contagens das PRÓPRIAS notificações.
+ * usuário já vê no seletor) e as contagens das PRÓPRIAS notificações, com teto
+ * de 20 por org (valor 20 = "20+").
  */
 export const unreadCountsByUser = query({
   args: {},
@@ -147,7 +152,7 @@ export const unreadCountsByUser = query({
       seen.add(m.organizationId);
       const org = await ctx.db.get(m.organizationId);
       if (!org) continue;
-      const sum = await summaryFor(ctx, m._id);
+      const sum = await summaryFor(ctx, m._id, ORG_COUNT_CAP);
       out.push({ organizationId: org._id, organizationName: org.name, unread: sum.unread, unseen: sum.unseen });
     }
     return out;
@@ -178,7 +183,7 @@ export const markRead = mutation({
 /**
  * Devolve uma notificação do próprio membro a "não lida". Item já RESOLVIDO
  * (`data.resolvedReason`/`resolvedBy`: outra pessoa assumiu, tarefa concluída,
- * canal reconectado) não volta: viraria pendência falsa. Retorna `true` quando
+ * canal reconectado; exceto `expired_unread`) não volta: viraria pendência falsa. Retorna `true` quando
  * reabriu; `false` se já estava não lida ou está resolvida.
  */
 export const markUnread = mutation({
@@ -191,7 +196,10 @@ export const markUnread = mutation({
       throw new Error("Notificação não encontrada");
     }
     if (notification.readAt === undefined) return false;
-    if (notification.data?.resolvedReason !== undefined || notification.data?.resolvedBy !== undefined) return false;
+    // Resolvido por alguém/algo não volta; só o encerramento por tempo (retenção
+    // de 30 dias, `expired_unread`) pode ser reaberto.
+    const resolved = notification.data?.resolvedReason !== undefined || notification.data?.resolvedBy !== undefined;
+    if (resolved && notification.data?.resolvedReason !== "expired_unread") return false;
     await ctx.db.patch(args.notificationId, { readAt: undefined });
     return true;
   },
@@ -201,7 +209,8 @@ async function markBatch(
   ctx: MutationCtx,
   memberId: Id<"teamMembers">,
   group: NotificationGroup | undefined,
-  cutoff: number
+  cutoff: number,
+  clickedAt: number
 ) {
   // Cursor por `_creationTime` (campo final implícito do índice): linhas já
   // lidas saem do índice; as de outro grupo ficam e o cursor anda por cima delas.
@@ -216,6 +225,8 @@ async function markBatch(
   const now = Date.now();
   for (const n of rows) {
     if (types && !types.has(n.type)) continue;
+    // Aviso agrupado renovado DEPOIS do clique é novidade: não some.
+    if (n.createdAt > clickedAt) continue;
     await ctx.db.patch(n._id, { readAt: now });
   }
   if (rows.length === MARK_ALL_READ_BATCH) {
@@ -223,6 +234,7 @@ async function markBatch(
       memberId,
       group,
       cutoff: rows[rows.length - 1]._creationTime,
+      clickedAt,
     });
   }
 }
@@ -238,18 +250,19 @@ export const markAllRead = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const member = await requireAuth(ctx, args.organizationId);
-    await markBatch(ctx, member._id, args.group, Date.now() + 1);
+    const clickedAt = Date.now();
+    await markBatch(ctx, member._id, args.group, clickedAt + 1, clickedAt);
     return null;
   },
 });
 
 export const internalMarkAllReadBatch = internalMutation({
-  args: { memberId: v.id("teamMembers"), group: v.optional(groupValidator), cutoff: v.number() },
+  args: { memberId: v.id("teamMembers"), group: v.optional(groupValidator), cutoff: v.number(), clickedAt: v.number() },
   returns: v.null(),
   handler: async (ctx, args) => {
     const member = await ctx.db.get(args.memberId);
     if (!member || isMembershipRevoked(member)) return null;
-    await markBatch(ctx, args.memberId, args.group, args.cutoff);
+    await markBatch(ctx, args.memberId, args.group, args.cutoff, args.clickedAt);
     return null;
   },
 });

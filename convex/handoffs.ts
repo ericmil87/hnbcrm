@@ -784,7 +784,8 @@ export const getPendingHandoffCount = query({
         q.eq("organizationId", args.organizationId).eq("status", "pending")
       )
       .take(500);
-    // D1: `inbox:view_own` conta só os repasses dirigidos a mim ou broadcast.
+    // D1: `inbox:view_own` não aceita pedido (exige `inbox:reply`): conta só os
+    // dirigidos a mim, sem os broadcast.
     if (seesWholeInbox(me)) return pending.length;
     return pending.filter((h) => isMyHandoff(h, me._id)).length;
   },

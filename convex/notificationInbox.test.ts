@@ -181,7 +181,7 @@ describe("markAllRead em lotes", () => {
       const now = Date.now();
       for (let i = 0; i < n; i++) {
         await ctx.db.insert("notifications", {
-          organizationId: s.orgA, memberId, type: type as any, title: "x", createdAt: now + i,
+          organizationId: s.orgA, memberId, type: type as any, title: "x", createdAt: now - 1_000_000 + i,
         });
       }
     });
@@ -294,16 +294,18 @@ describe("badges do menu com inbox:view_own", () => {
     const mine = await mkLead(s.own.memberId);
     const others = await mkLead(s.bob.memberId);
     const viaConv = await mkLead(s.bob.memberId);
-    await mkConv(mine, 2); // lead meu, sem responsável de conversa
+    await mkConv(mine, 2); // lead meu, mas sem responsável de conversa: não é "Minhas"
     await mkConv(others, 7); // lead do Bob
     await mkConv(viaConv, 4, s.own.memberId); // responsável da conversa sou eu
+    const archived = await mkConv(viaConv, 9, s.own.memberId);
+    await t.run(async (ctx) => ctx.db.patch(archived, { archivedAt: Date.now() }));
     const q = (u: Id<"users">) => asUser(t, u).query(api.conversations.getInboxUnreadCount, { organizationId: s.orgA });
-    expect(await q(s.own.userId)).toBe(6);
+    expect(await q(s.own.userId)).toBe(4);
     expect(await q(s.ana.userId)).toBe(13);
     expect(await q(s.bob.userId)).toBe(13); // agent padrão (reply) vê a org
   });
 
-  test("repasses: view_own conta dirigidos a mim + broadcast, não os de outros", async () => {
+  test("repasses: view_own conta só os dirigidos a mim (broadcast e de outros ficam fora)", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const lead = await helpersFor(t, s).mkLead();
@@ -319,7 +321,87 @@ describe("badges do menu com inbox:view_own", () => {
       await mk(s.bob.memberId);
     });
     const q = (u: Id<"users">) => asUser(t, u).query(api.handoffs.getPendingHandoffCount, { organizationId: s.orgA });
-    expect(await q(s.own.userId)).toBe(2);
+    expect(await q(s.own.userId)).toBe(1);
     expect(await q(s.ana.userId)).toBe(3);
+  });
+});
+
+describe("D1 correções do review", () => {
+  test("unseen olha as mais NOVAS: 101 antigas + 1 nova após markSeen => unseen 1", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const a = asUser(t, s.ana.userId);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 101; i++) {
+        await ctx.db.insert("notifications", { organizationId: s.orgA, memberId: s.ana.memberId, type: "task_assigned", title: "x", createdAt: 1000 + i });
+      }
+    });
+    vi.setSystemTime(Date.now() + 5000);
+    await a.mutation(api.notifications.markSeen, { organizationId: s.orgA });
+    vi.setSystemTime(Date.now() + 5000);
+    await notify(t, s.orgA, s.ana.memberId, "task_overdue");
+    expect(await a.query(api.notifications.unreadSummary, { organizationId: s.orgA })).toMatchObject({ unread: 100, unseen: 1 });
+  });
+
+  test("unreadOnly: item agrupado renovado sobe ao topo", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const a = asUser(t, s.ana.userId);
+    await notify(t, s.orgA, s.ana.memberId, "task_assigned");
+    vi.setSystemTime(Date.now() + 1000);
+    await notify(t, s.orgA, s.ana.memberId, "campaign_paused");
+    const old = (await t.run(async (ctx) => ctx.db.query("notifications").collect())).find((n) => n.type === "task_assigned")!;
+    vi.setSystemTime(Date.now() + 1000);
+    await t.run(async (ctx) => ctx.db.patch(old._id, { createdAt: Date.now() })); // renovado pelo B2
+    const r = await a.query(api.notifications.list, { organizationId: s.orgA, paginationOpts: page, unreadOnly: true });
+    expect(r.page.map((n: any) => n.type)).toEqual(["task_assigned", "campaign_paused"]);
+  });
+
+  test("markAllRead não apaga aviso renovado depois do clique (nem em lote seguinte)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < MARK_ALL_READ_BATCH + 5; i++) {
+        await ctx.db.insert("notifications", { organizationId: s.orgA, memberId: s.ana.memberId, type: "task_assigned", title: "x", createdAt: 1 + i });
+      }
+    });
+    const last = (await t.run(async (ctx) => ctx.db.query("notifications").order("asc").first()))!;
+    await t.run(async (ctx) => ctx.db.patch(last._id, { createdAt: Date.now() + 60_000 })); // "do futuro" = depois do clique
+    await asUser(t, s.ana.userId).mutation(api.notifications.markAllRead, { organizationId: s.orgA });
+    await drain(t);
+    expect(await unreadOf(t, s.ana.memberId)).toBe(1);
+  });
+
+  test("unreadCountsByUser tem teto 20 por org", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 30; i++) {
+        await ctx.db.insert("notifications", { organizationId: s.orgA, memberId: s.ana.memberId, type: "task_assigned", title: "x", createdAt: 1 + i });
+      }
+    });
+    const r = await asUser(t, s.ana.userId).query(api.notifications.unreadCountsByUser, {});
+    expect(r.find((x) => x.organizationId === s.orgA)).toMatchObject({ unread: 20, unseen: 20 });
+  });
+
+  test("markUnread reabre expired_unread, mas não outros resolvidos", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ids = await t.run(async (ctx) => {
+      const mk = (reason: string) =>
+        ctx.db.insert("notifications", {
+          organizationId: s.orgA, memberId: s.ana.memberId, type: "task_overdue", title: "x", createdAt: 1, readAt: 2,
+          data: { resolvedAt: 2, resolvedReason: reason },
+        });
+      return { exp: await mk("expired_unread"), done: await mk("task_completed") };
+    });
+    const a = asUser(t, s.ana.userId);
+    expect(await a.mutation(api.notifications.markUnread, { organizationId: s.orgA, notificationId: ids.exp })).toBe(true);
+    expect(await a.mutation(api.notifications.markUnread, { organizationId: s.orgA, notificationId: ids.done })).toBe(false);
+  });
+
+  test("purge de organização inclui notificationSeen", async () => {
+    const src = (await import("node:fs")).readFileSync(new URL("./opsPurge.ts", import.meta.url), "utf8");
+    expect(src).toContain('table: "notificationSeen"');
   });
 });

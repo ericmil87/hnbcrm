@@ -7,7 +7,7 @@ import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
-import { seesWholeInbox, isMyConversation, INBOX_UNREAD_OWN_SCAN_CAP } from "./lib/inboxScope";
+import { seesWholeInbox } from "./lib/inboxScope";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
@@ -584,9 +584,22 @@ export const getInboxUnreadCount = query({
   returns: v.number(),
   handler: async (ctx, args) => {
     const me = await requirePermission(ctx, args.organizationId, "inbox", "view_own");
-    // D1: quem só tem `inbox:view_own` conta apenas as conversas suas (não
-    // vaza o volume da org). Quem vê tudo mantém a soma da org.
-    const wholeOrg = seesWholeInbox(me);
+    // D1: quem só tem `inbox:view_own` conta apenas as conversas de que é
+    // responsável (`conversations.assignedTo`, o mesmo critério do chip "Minhas"),
+    // por índice e sem ler lead. Quem vê tudo mantém a soma da org.
+    if (!seesWholeInbox(me)) {
+      const mine = await ctx.db
+        .query("conversations")
+        .withIndex("by_organization_and_assigned_and_archived_and_unread", (q) =>
+          q
+            .eq("organizationId", args.organizationId)
+            .eq("assignedTo", me._id)
+            .eq("archivedAt", undefined)
+            .gt("unreadCount", 0)
+        )
+        .take(INBOX_UNREAD_SCAN_CAP);
+      return mine.reduce((sum, c) => sum + (c.unreadCount ?? 0), 0);
+    }
     const unreadConversations = await ctx.db
       .query("conversations")
       .withIndex("by_organization_and_archived_and_unread", (q) =>
@@ -595,14 +608,10 @@ export const getInboxUnreadCount = query({
           .eq("archivedAt", undefined)
           .gt("unreadCount", 0)
       )
-      .take(wholeOrg ? INBOX_UNREAD_SCAN_CAP : INBOX_UNREAD_OWN_SCAN_CAP);
-    let total = 0;
-    for (const c of unreadConversations) {
-      if (c.archivedAt) continue;
-      if (!wholeOrg && !(await isMyConversation(ctx, c, me._id))) continue;
-      total += c.unreadCount ?? 0;
-    }
-    return total;
+      .take(INBOX_UNREAD_SCAN_CAP);
+    return unreadConversations
+      .filter((c) => !c.archivedAt)
+      .reduce((sum, c) => sum + (c.unreadCount ?? 0), 0);
   },
 });
 

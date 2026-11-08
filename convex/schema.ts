@@ -1512,7 +1512,9 @@ const applicationTables = {
     // REST (F5): `GET /conversations?channelConfigId=` e `?channel=` paginam por `_creationTime`
     // sem pós-filtro (o cursor da rota é por criação; os índices acima ordenam por última mensagem).
     .index("by_organization_and_channel_config", ["organizationId", "channelConfigId"])
-    .index("by_organization_and_channel", ["organizationId", "channel"]),
+    .index("by_organization_and_channel", ["organizationId", "channel"])
+    // D1: badge do inbox de quem só vê as próprias (responsável da conversa).
+    .index("by_organization_and_assigned_and_archived_and_unread", ["organizationId", "assignedTo", "archivedAt", "unreadCount"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa
@@ -2346,6 +2348,9 @@ const applicationTables = {
   })
     .index("by_member_and_created", ["memberId", "createdAt"])
     .index("by_member_and_read", ["memberId", "readAt"])
+    // D1: não lidas do membro da mais NOVA para a mais antiga pelo `createdAt`
+    // (que o agrupamento do B2 renova), para o badge/aba "Não lidas".
+    .index("by_member_and_read_and_created", ["memberId", "readAt", "createdAt"])
     .index("by_organization", ["organizationId"])
     // Retenção (perf Convex I/O, fase 4a): lidas há mais de N dias, deployment-wide.
     // B1: um índice só para as duas pontas — lidas (`readAt` > 0, ordem por `readAt`) e
@@ -2368,7 +2373,9 @@ const applicationTables = {
     organizationId: v.id("organizations"),
     memberId: v.id("teamMembers"),
     seenAt: v.number(),
-  }).index("by_member", ["memberId"]),
+  })
+    .index("by_member", ["memberId"])
+    .index("by_organization", ["organizationId"]),
 
   // Calendar Events
   calendarEvents: defineTable({
