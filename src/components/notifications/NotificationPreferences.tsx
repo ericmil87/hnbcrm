@@ -1,70 +1,34 @@
-import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
-import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
-import { Switch } from "@/components/ui/Switch";
 import { Spinner } from "@/components/ui/Spinner";
-import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { Bell } from "lucide-react";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useNow } from "@/hooks/useNow";
+import { PUSH_ENABLED } from "@/lib/featureFlags";
+import { deviceTimeZone, pushSupported } from "@/lib/notificationPrefsUi";
 import { TelegramCard } from "./TelegramCard";
-
-const NOTIFICATION_EVENTS = [
-  { key: "invite", label: "Convites de equipe", desc: "Quando você é convidado para uma organização", alwaysOn: true },
-  { key: "handoffRequested", label: "Pedido de ajuda da IA", desc: "Quando a IA pede ajuda para você ou para a equipe (no sino e por e-mail)" },
-  { key: "handoffResolved", label: "Pedido de ajuda resolvido", desc: "Quando um pedido de ajuda é assumido ou devolvido à IA" },
-  { key: "aiDraftPending", label: "Resposta sugerida aguardando revisão", desc: "Quando a IA deixa uma resposta para você revisar em um lead seu" },
-  { key: "campaignCompleted", label: "Campanha concluída", desc: "Quando uma campanha de WhatsApp termina de enviar" },
-  { key: "campaignPaused", label: "Campanha pausada por segurança", desc: "Quando um limite ou sinal de risco pausa uma campanha automaticamente" },
-  { key: "taskOverdue", label: "Tarefa atrasada", desc: "Quando uma tarefa atribuída a você está atrasada" },
-  { key: "taskAssigned", label: "Tarefa atribuída", desc: "Quando uma tarefa é atribuída a você" },
-  { key: "taskCommentMention", label: "Menção em comentário de tarefa", desc: "Quando alguém te menciona em um comentário de tarefa" },
-  { key: "taskDueSoon", label: "Lembrete antecipado de tarefa (vence em breve)", desc: "Quando uma tarefa atribuída a você está prestes a vencer" },
-  { key: "leadAssigned", label: "Lead atribuído", desc: "Quando um lead é atribuído a você" },
-  { key: "aiFollowupNeedsHuman", label: "Follow-up da IA precisa de você", desc: "Quando a IA não consegue executar sozinha um follow-up que ela mesma agendou" },
-  { key: "conversationTransferred", label: "Conversa transferida para você", desc: "Quando uma conversa é transferida para você ou para o seu departamento" },
-  { key: "channelSessionLost", label: "Canal desconectado", desc: "Avisa quando um canal conectado perde a conexão" },
-  { key: "aiSpendAlert", label: "Gasto de IA do mês", desc: "Para administradores: quando o gasto de IA chega perto do teto mensal em R$ ou o atinge (no sino e por e-mail, uma vez por mês)" },
-  { key: "newMessage", label: "Novas mensagens nas conversas que eu atendo", desc: "Agrupadas; chegam no sino e no Telegram quando a IA não está no comando" },
-  { key: "dailyDigest", label: "Resumo diário", desc: "Resumo das atividades do dia anterior, enviado às 08:00" },
-] as const;
-
-const GROUP_NOTIFICATION_EVENTS = [
-  { key: "groupJoined", label: "Entrou em um grupo", desc: "Quando o número do WhatsApp passa a fazer parte de um grupo novo" },
-  { key: "groupMention", label: "Menção em grupo", desc: "Quando alguém menciona o número da empresa em um grupo acompanhado" },
-  { key: "groupPostPending", label: "Publicação aguardando aprovação", desc: "Quando a IA gera o texto de uma publicação programada e ele precisa da sua aprovação" },
-  { key: "groupPostFailed", label: "Falha em publicação programada", desc: "Quando uma publicação programada não consegue enviar" },
-  { key: "groupOpportunity", label: "Oportunidade detectada em grupo", desc: "Quando o radar da IA vê uma possível oportunidade de negócio em um grupo" },
-  { key: "groupDigest", label: "Resumo diário do grupo", desc: "Resumo do que aconteceu nos grupos acompanhados" },
-] as const;
-
-const ALL_NOTIFICATION_EVENTS = [...NOTIFICATION_EVENTS, ...GROUP_NOTIFICATION_EVENTS];
-
-type PreferenceKey = typeof ALL_NOTIFICATION_EVENTS[number]["key"];
+import { NotificationPreferencesView, type EffectivePrefs } from "./NotificationPreferencesView";
 
 interface NotificationsSectionProps {
   organizationId: Id<"organizations">;
 }
 
+/** Configurações › Notificações: Telegram + preferências com salvamento a cada toque. */
 export function NotificationsSection({ organizationId }: NotificationsSectionProps) {
-  const prefs = useQuery(api.notificationPreferences.getMyPreferences, { organizationId });
-  const updatePrefs = useMutation(api.notificationPreferences.updateMyPreferences);
+  const prefs = useQuery(api.notificationPreferences.getMyEffectivePreferences, { organizationId });
+  const telegram = useQuery(api.telegram.getMyLink, { organizationId });
+  const { can } = usePermissions(organizationId);
+  const now = useNow();
 
-  const [localPrefs, setLocalPrefs] = useState<Record<PreferenceKey, boolean> | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  // Sync from server
-  useEffect(() => {
-    if (prefs && !localPrefs) {
-      const initial: Record<string, boolean> = {};
-      for (const event of ALL_NOTIFICATION_EVENTS) {
-        initial[event.key] = (prefs as any)[event.key] ?? true;
-      }
-      setLocalPrefs(initial as Record<PreferenceKey, boolean>);
-    }
-  }, [prefs, localPrefs]);
+  const setPreset = useMutation(api.notificationPreferences.setPreset);
+  const setChannelPref = useMutation(api.notificationPreferences.setChannelPref);
+  const pauseFor = useMutation(api.notificationPreferences.pauseFor);
+  const resume = useMutation(api.notificationPreferences.resume);
+  const setQuietHours = useMutation(api.notificationPreferences.setQuietHours);
+  const setUrgentBypass = useMutation(api.notificationPreferences.setUrgentBypass);
+  const setShowPreview = useMutation(api.notificationPreferences.setShowPreview);
+  const applyToAllMyOrgs = useMutation(api.notificationPreferences.applyToAllMyOrgs);
+  const setNotificationDefaults = useMutation(api.organizations.setNotificationDefaults);
 
   if (prefs === undefined) {
     return (
@@ -74,112 +38,28 @@ export function NotificationsSection({ organizationId }: NotificationsSectionPro
     );
   }
 
-  if (!localPrefs) return null;
-
-  const renderEventRow = (event: (typeof ALL_NOTIFICATION_EVENTS)[number]) => {
-    const isOn = localPrefs[event.key];
-    const isAlwaysOn = "alwaysOn" in event && event.alwaysOn;
-
-    return (
-      <div
-        key={event.key}
-        className="grid grid-cols-1 md:grid-cols-[1fr_80px] gap-2 md:gap-4 py-4 items-center"
-      >
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-text-primary">{event.label}</span>
-            {isAlwaysOn && (
-              <span className="text-caption px-1.5 py-0.5 rounded bg-surface-overlay text-text-muted">
-                Sempre ativo
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-text-secondary mt-0.5">{event.desc}</p>
-        </div>
-
-        <div className="flex md:justify-center">
-          <Switch
-            checked={isOn}
-            onCheckedChange={() => handleToggle(event.key)}
-            label={`Notificação por e-mail: ${event.label}`}
-            hideLabel
-            disabled={isAlwaysOn}
-          />
-        </div>
-      </div>
-    );
-  };
-
-  const isDirty = ALL_NOTIFICATION_EVENTS.some(
-    (event) => localPrefs[event.key] !== ((prefs as any)[event.key] ?? true)
-  );
-
-  const handleToggle = (key: PreferenceKey) => {
-    setLocalPrefs((prev) => prev ? { ...prev, [key]: !prev[key] } : prev);
-  };
-
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await updatePrefs({
-        organizationId,
-        ...localPrefs,
-      });
-      toast.success("Preferências salvas");
-    } catch {
-      toast.error("Não foi possível salvar preferências.");
-    } finally {
-      setSaving(false);
-    }
-  };
+  const telegramLinked = telegram?.link?.status === "active";
 
   return (
     <div className="space-y-6">
-    <TelegramCard organizationId={organizationId} />
-    <Card>
-      <div className="p-6">
-        <div className="flex items-center gap-3 mb-1">
-          <Bell size={20} className="text-brand-500" />
-          <h3 className="text-lg font-semibold text-text-primary">Preferências de notificação por e-mail</h3>
-        </div>
-        <p className="text-sm text-text-secondary mb-6">
-          Escolha quais eventos devem gerar notificações por email.
-        </p>
-
-        {/* Header row — desktop only */}
-        <div className="hidden md:grid grid-cols-[1fr_80px] gap-4 pb-3 border-b border-border mb-2">
-          <span className="text-xs font-medium text-text-muted uppercase tracking-wider">Evento</span>
-          <span className="text-xs font-medium text-text-muted uppercase tracking-wider text-center">E-mail</span>
-        </div>
-
-        {/* Event rows */}
-        <div className="divide-y divide-border">
-          {NOTIFICATION_EVENTS.map(renderEventRow)}
-        </div>
-
-        {/* Grupos de WhatsApp */}
-        <div className="pt-4 mt-2 border-t border-border">
-          <span className="text-xs font-medium text-text-muted uppercase tracking-wider">
-            Grupos de WhatsApp
-          </span>
-          <div className="divide-y divide-border">
-            {GROUP_NOTIFICATION_EVENTS.map(renderEventRow)}
-          </div>
-        </div>
-
-        {/* Save button */}
-        <div className="flex justify-end pt-4 mt-2 border-t border-border">
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleSave}
-            disabled={!isDirty || saving}
-          >
-            {saving ? "Salvando..." : "Salvar alterações"}
-          </Button>
-        </div>
-      </div>
-    </Card>
+      <TelegramCard organizationId={organizationId} />
+      <NotificationPreferencesView
+        prefs={prefs as EffectivePrefs}
+        now={now}
+        canManageOrg={can("settings", "manage")}
+        telegramLinked={telegramLinked}
+        pushAvailable={PUSH_ENABLED && pushSupported()}
+        deviceTimeZone={deviceTimeZone()}
+        onPreset={(preset) => setPreset({ organizationId, preset })}
+        onChannel={(channel, flag, enabled) => setChannelPref({ organizationId, channel, flag, enabled })}
+        onPause={(mode) => pauseFor({ organizationId, mode })}
+        onResume={() => resume({ organizationId })}
+        onQuietHours={(input) => setQuietHours({ organizationId, ...input })}
+        onUrgentBypass={(urgentBypass) => setUrgentBypass({ organizationId, urgentBypass })}
+        onShowPreview={(showPreview) => setShowPreview({ organizationId, showPreview })}
+        onApplyAll={() => applyToAllMyOrgs({ sourceOrganizationId: organizationId })}
+        onOrgDefaults={(input) => setNotificationDefaults({ organizationId, ...input })}
+      />
     </div>
   );
 }

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
-import { Bell } from "lucide-react";
+import { Bell, BellOff } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { cn } from "@/lib/utils";
 import { useNotificationArrivals } from "@/hooks/useNotificationArrivals";
 import { bellAriaLabel, bellBadgeLabel, notificationHref, type InboxNotification } from "@/lib/notificationInbox";
+import { isPaused } from "@/lib/notificationPrefsUi";
+import { useNow } from "@/hooks/useNow";
 import { NotificationPanel } from "./NotificationPanel";
 
 interface NotificationBellProps {
@@ -26,6 +28,10 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
   const summary = useQuery(api.notifications.unreadSummary, { organizationId });
   const markSeen = useMutation(api.notifications.markSeen);
   const markRead = useMutation(api.notifications.markRead);
+
+  const myPrefs = useQuery(api.notificationPreferences.getMyEffectivePreferences, { organizationId });
+  const now = useNow();
+  const pausedNow = isPaused(myPrefs?.pausedUntil, now);
 
   const unseen = summary?.unseen ?? 0;
   const unread = summary?.unread ?? 0;
@@ -97,11 +103,11 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
           "focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base",
           open && "text-text-primary bg-surface-overlay"
         )}
-        aria-label={bellAriaLabel(unseen, unread)}
+        aria-label={`${bellAriaLabel(unseen, unread)}${pausedNow ? ", avisos pausados" : ""}`}
         aria-expanded={open}
         aria-haspopup="dialog"
       >
-        <Bell size={20} />
+        {pausedNow ? <BellOff size={20} /> : <Bell size={20} />}
         {badgeLabel && (
           <span
             className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
