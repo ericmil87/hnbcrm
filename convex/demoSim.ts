@@ -1272,7 +1272,7 @@ export const internalResetDemo = internalMutation({
         .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
         .first();
       if (!conversation) break;
-      if (!(await deleteConversationCascade(ctx, conversation._id, budget))) done = false;
+      if (!(await deleteConversationCascade(ctx, conversation._id, budget, "demo_reset"))) done = false;
     }
 
     const plain: Array<(n: number) => Promise<{ _id: Id<any> }[]>> = [

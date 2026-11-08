@@ -16,6 +16,7 @@
  *  - `urgentBypass` (padrão true): pedido de ajuda da IA fura pausa e silêncio.
  */
 import type { NotificationType } from "./notify";
+import { PUSH_TEMPLATES } from "./webPush";
 
 export type NotifChannel = "bell" | "email" | "telegram" | "push";
 export type ExternalChannel = Exclude<NotifChannel, "bell">;
@@ -96,7 +97,7 @@ export const ACTIONABLE_FLAGS: readonly string[] = Array.from(
 );
 
 /** Fora de "Só o que é comigo" nos canais externos (informativo/administrativo). */
-const NON_PERSONAL_FLAGS = new Set([
+export const NON_PERSONAL_FLAGS = new Set([
   "campaignCompleted",
   "campaignPaused",
   "groupJoined",
@@ -106,6 +107,14 @@ const NON_PERSONAL_FLAGS = new Set([
   "groupDigest",
   "aiSpendAlert",
 ]);
+
+/**
+ * Flags de preferência cujo tipo tem template de push (o que o app mostra no
+ * canal "Push"). Derivado de `PUSH_TEMPLATES` × `PREFERENCE_FLAG`.
+ */
+export const PUSH_PREFERENCE_FLAGS: readonly string[] = Array.from(
+  new Set((Object.keys(PUSH_TEMPLATES) as NotificationType[]).map((t) => PREFERENCE_FLAG[t]))
+);
 
 /** Furam pausa e silêncio quando `urgentBypass !== false` (E3). */
 const URGENT_FLAGS = new Set(["handoffRequested"]);

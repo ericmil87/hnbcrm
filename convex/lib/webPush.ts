@@ -13,6 +13,7 @@
  * trechos por `scrubPii`) e passam de novo por `scrubPii` aqui.
  */
 import type { NotificationType } from "./notify";
+import { notificationTargetPath } from "./notificationTargets";
 import { scrubPii, truncateGraphemes, BODY_MAX } from "./notificationCopy";
 
 // ---------------------------------------------------------------------------
@@ -168,29 +169,11 @@ export type PushNotificationInput = {
 };
 
 /**
- * Caminho dentro do app (mesmas rotas do clique do sino em
- * `src/components/notifications/NotificationPanel.tsx`).
+ * Caminho dentro do app. Fonte única: `notificationTargetPath`
+ * (`lib/notificationTargets.ts`), também usada pelo clique do sino no front.
  */
 export function pushTargetPath(n: PushNotificationInput): string {
-  const conversation = n.conversationId ? `/app/entrada?conversation=${n.conversationId}` : null;
-  switch (n.type) {
-    case "handoff_requested":
-      return n.handoffId ? `/app/repasses?handoff=${n.handoffId}` : (conversation ?? "/app/repasses");
-    case "new_message":
-    case "conversation_transferred":
-    case "ai_draft_pending":
-      return conversation ?? "/app/entrada";
-    case "group_mention":
-      return conversation ?? "/app/grupos";
-    case "channel_session_lost": {
-      const isMeta = Boolean(n.metaConnectionId ?? n.data?.metaConnectionId);
-      return `/app/configuracoes?secao=${isMeta ? "instagram" : "channels"}`;
-    }
-    case "ai_followup_needs_human":
-      return n.taskId ? `/app/tarefas?task=${n.taskId}` : (conversation ?? "/app/tarefas");
-    default:
-      return n.taskId ? `/app/tarefas?task=${n.taskId}` : (conversation ?? "/app/painel");
-  }
+  return notificationTargetPath(n.type, n);
 }
 
 /**

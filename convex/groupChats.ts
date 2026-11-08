@@ -2308,7 +2308,7 @@ export const internalCascadeDeleteChannelGroups = internalMutation({
       if (group.conversationId) {
         const conversation = await ctx.db.get(group.conversationId);
         if (conversation) {
-          if (!(await deleteConversationCascade(ctx, conversation._id, budget))) break;
+          if (!(await deleteConversationCascade(ctx, conversation._id, budget, "conversation_deleted"))) break;
         }
       }
       // Fase 4d: membros e linha do tempo moram em tabelas próprias. Cada

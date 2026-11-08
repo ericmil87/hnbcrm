@@ -94,7 +94,9 @@ Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.m
 ## PWA, push e avisos
 - O service worker (`src/sw.ts`) não cacheia Convex nem storage e não faz rede; todo `push` termina em `event.waitUntil(showNotification(...))` (iOS revoga a permissão se não mostrar) e todo handler usa `waitUntil` (`lib/push/pushSw.test.ts`).
 - Atualização do app só em momento seguro (`isSafeMomentToReload`): texto digitado ou rascunho registrado em `lib/pwa/composerDirty.ts` bloqueia; composer persiste o rascunho (`useComposerDraft`, nota interna nunca). `MIN_CLIENT_BUILD` só aponta para versão já publicada.
-- `PUSH_ENABLED` (`lib/featureFlags.ts`) é o kill switch de UI do push; `PWA_KILL_SWITCH=1` no build derruba o SW.
+- `PUSH_ENABLED` (`lib/featureFlags.ts`) é o kill switch de UI do push; `PWA_KILL_SWITCH=1` no build derruba o SW e também esconde o push (`hidden`). Ao reverter o kill switch o app re-assina sozinho na próxima abertura se havia rastro da pessoa e a permissão segue concedida.
+- O validador de links é um só: `safeAppTarget`/`safeNotificationUrl` em `lib/push/notificationClick.ts` (sem imports; `lib/openLink.ts` reexporta). Destino de aviso: `notificationTargetPath` e flags (`NON_PERSONAL_FLAGS`, `PUSH_PREFERENCE_FLAGS`, `ACTIONABLE_TYPES`) vêm de `convex/lib`, nunca copiados.
+- Pausa ativa cala toast e som de chegada; o convite do push espera silêncio e nunca aparece com o sino aberto ou pausa.
 - `/app/abrir?org=&to=` é a única entrada de deep link externo (push, e-mail); o destino passa por `safeAppTarget`.
 
 ## Tradução automática (v0.80)

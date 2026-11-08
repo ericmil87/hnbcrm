@@ -103,7 +103,7 @@ export function InstallPrompt() {
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium text-text-primary">Instale o HNBCRM</p>
-            <p className="text-caption text-text-muted">Abra direto da tela inicial, como um app.</p>
+            <p className="text-caption text-text-muted">Abra direto da Tela de Início, como um app.</p>
           </div>
           <Button size="sm" onClick={install}>
             Instalar app

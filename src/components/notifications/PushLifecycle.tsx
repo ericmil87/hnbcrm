@@ -7,6 +7,7 @@ import type { Id } from "../../../convex/_generated/dataModel";
 import { InstallIosSheet } from "@/components/pwa/InstallIosSteps";
 import { usePushSubscription } from "@/hooks/usePushSubscription";
 import type { InboxNotification } from "@/lib/notificationInbox";
+import { getNotificationUiState, inviteWaitMs } from "@/lib/notificationUiState";
 import { listenToServiceWorker } from "@/lib/push/closeReadNotifications";
 import { markInviteShown, planInvite, readInviteAt } from "@/lib/push/pushInvite";
 import { closeReadDeviceNotifications } from "@/lib/push/readOnDevice";
@@ -72,6 +73,41 @@ export function PushLifecycle({ organizationId }: { organizationId: Id<"organiza
   const statusRef = useRef(status);
   const enableRef = useRef(enable);
   const openConversationRef = useRef<string | null>(null);
+  const pendingInviteRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleInviteRef = useRef<() => void>(() => undefined);
+  useEffect(() => {
+    const showInvite = () => {
+      if (statusRef.current === "needs-install") {
+        markInviteShown(Date.now());
+        toast("Instale o app para receber avisos neste aparelho, mesmo com o app fechado.", {
+          duration: 15000,
+          action: { label: "Como instalar", onClick: () => setInstallOpen(true) },
+        });
+      } else if (statusRef.current === "default") {
+        markInviteShown(Date.now());
+        toast("Quer receber isso neste aparelho mesmo com o app fechado?", {
+          duration: 15000,
+          action: { label: "Ativar", onClick: () => void enableRef.current({ toastOnError: true }) },
+        });
+      }
+    };
+    // O convite espera um silêncio sem toasts de chegada e nunca aparece com o sino aberto ou a pausa ativa.
+    const schedule = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        timerRef.current = null;
+        if (!pendingInviteRef.current) return;
+        if (inviteWaitMs({ ...getNotificationUiState(), now: Date.now() }) > 0) return schedule();
+        pendingInviteRef.current = false;
+        showInvite();
+      }, inviteWaitMs({ ...getNotificationUiState(), now: Date.now() }));
+    };
+    scheduleInviteRef.current = schedule;
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
   useEffect(() => {
     statusRef.current = status;
     enableRef.current = enable;
@@ -91,18 +127,8 @@ export function PushLifecycle({ organizationId }: { organizationId: Id<"organiza
     watermarkRef.current = nextWatermark;
     if (!invite) return;
     invitedRef.current = true;
-    markInviteShown(Date.now());
-    if (statusRef.current === "needs-install") {
-      toast("Instale o app para receber avisos neste aparelho, mesmo com o app fechado.", {
-        duration: 15000,
-        action: { label: "Como instalar", onClick: () => setInstallOpen(true) },
-      });
-    } else {
-      toast("Quer receber isso neste aparelho mesmo com o app fechado?", {
-        duration: 15000,
-        action: { label: "Ativar", onClick: () => void enableRef.current() },
-      });
-    }
+    pendingInviteRef.current = true;
+    scheduleInviteRef.current();
   }, [items]);
 
   return <InstallIosSheet open={installOpen} onClose={() => setInstallOpen(false)} />;

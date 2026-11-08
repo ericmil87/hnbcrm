@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import { ACTIONABLE_TYPES } from "../../convex/lib/notificationPolicy";
+import { notificationTargetPath } from "../../convex/lib/notificationTargets";
 import {
+  TOAST_TYPES,
+  appBadgeCount,
   bellAriaLabel,
   bellBadgeLabel,
   detectArrivals,
@@ -8,7 +12,6 @@ import {
   itemActions,
   notificationHref,
   orgNewsParts,
-  orgNewsSentence,
   otherOrgNews,
   RESOLVED_CANNOT_REOPEN,
   resolvedLabel,
@@ -48,10 +51,9 @@ describe("multi-org", () => {
     expect(otherOrgNews(undefined, "a")).toEqual([]);
   });
   it("frase com singular, plural e 20+", () => {
-    expect(orgNewsSentence({ ...list[0], unseen: 1 })).toBe("Você tem 1 novidade em Alfa");
+    expect(orgNewsParts({ ...list[0], unseen: 1 })).toEqual({ prefix: "Você tem 1 novidade em", name: "Alfa" });
     expect(orgNewsParts(list[0])).toEqual({ prefix: "Você tem 2 novidades em", name: "Alfa" });
-    expect(orgNewsSentence(list[0])).toBe("Você tem 2 novidades em Alfa");
-    expect(orgNewsSentence(list[2])).toBe("Você tem 20+ novidades em Gama");
+    expect(orgNewsParts(list[2])).toEqual({ prefix: "Você tem 20+ novidades em", name: "Gama" });
   });
 });
 
@@ -185,5 +187,58 @@ describe("withCountPrefix", () => {
     expect(withCountPrefix("(3) Conversas · HNBCRM", 5)).toBe("(5) Conversas · HNBCRM");
     expect(withCountPrefix("(3) Conversas · HNBCRM", 0)).toBe("Conversas · HNBCRM");
     expect(withCountPrefix("Painel", 250)).toBe("(99+) Painel");
+  });
+});
+
+describe("appBadgeCount", () => {
+  it("limita ao teto do push (20) e nunca fica negativo", () => {
+    expect(appBadgeCount(3)).toBe(3);
+    expect(appBadgeCount(57)).toBe(20);
+    expect(appBadgeCount(-1)).toBe(0);
+  });
+});
+
+describe("TOAST_TYPES", () => {
+  it("deriva dos acionáveis do backend, sem lead_assigned, com ai_followup_needs_human", () => {
+    expect(TOAST_TYPES.has("ai_followup_needs_human")).toBe(true);
+    expect(TOAST_TYPES.has("lead_assigned")).toBe(false);
+    expect(TOAST_TYPES.has("campaign_completed")).toBe(false);
+    for (const t of ACTIONABLE_TYPES) if (t !== "lead_assigned") expect(TOAST_TYPES.has(t), t).toBe(true);
+  });
+});
+
+describe("notificationHref usa o destino único do backend", () => {
+  it("igual a notificationTargetPath para os tipos com push", () => {
+    const cases = [
+      n({ type: "ai_draft_pending" }),
+      n({ type: "group_mention", conversationId: "c1" }),
+      n({ type: "channel_session_lost", data: { metaConnectionId: "m1" } }),
+      n({ type: "ai_followup_needs_human", taskId: "t9" }),
+      n({ type: "task_overdue" }),
+    ];
+    for (const c of cases) {
+      expect(notificationHref(c), c.type).toBe(
+        notificationTargetPath(c.type, { conversationId: c.conversationId, handoffId: c.handoffId, taskId: c.taskId, data: c.data as Record<string, unknown> | undefined }),
+      );
+    }
+    expect(notificationHref(n({ type: "ai_draft_pending" }))).toBe("/app/entrada");
+  });
+});
+
+describe("resolvedLabel por motivo", () => {
+  const r = (reason: string) => resolvedLabel(n({ type: "task_assigned", data: { resolvedReason: reason, resolvedAt: 1 } }));
+  it.each([
+    ["task_completed", "Tarefa concluída"],
+    ["task_cancelled", "Tarefa cancelada"],
+    ["task_deleted", "Tarefa excluída"],
+    ["lead_deleted", "Lead excluído"],
+    ["conversation_deleted", "Conversa excluída"],
+    ["replied", "Você respondeu"],
+    ["channel_reconnected", "Canal reconectado"],
+  ])("%s -> %s", (reason, label) => {
+    expect(r(reason)).toBe(label);
+  });
+  it("motivo desconhecido cai em Resolvido", () => {
+    expect(r("outro")).toBe("Resolvido");
   });
 });

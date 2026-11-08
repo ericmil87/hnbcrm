@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
-import { disablePush, enablePush, resyncPush, type PushBackend } from "./actions";
+import { disablePush, enablePush, hasActivationTrace, resyncPush, type PushBackend } from "./actions";
 import { readLinkedOrgs, teardownPushOnLogout } from "./subscription";
 import { closeReadDeviceNotifications } from "./readOnDevice";
 import { listenToServiceWorker } from "./closeReadNotifications";
@@ -178,12 +178,67 @@ describe("resyncPush", () => {
     expect(sub.unsubscribe).not.toHaveBeenCalled();
   });
 
-  it("sem assinatura não cria uma (a pessoa pode ter desligado)", async () => {
+  it("sem assinatura e sem rastro não cria uma", async () => {
     const env = installPushEnv({ permission: "granted", subscription: null });
     const b = backend();
     expect(await resyncPush(b, "org1", VAPID, U)).toBe("idle");
     expect(env.pushManager.subscribe).not.toHaveBeenCalled();
     expect(b.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("assinatura perdida com rastro da pessoa: assina de novo e re-vincula, sem pedir permissão", async () => {
+    const env = installPushEnv({ permission: "granted", subscription: null });
+    activated(["org1", "org2"]);
+    const b = backend();
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("synced");
+    expect(env.pushManager.subscribe).toHaveBeenCalledTimes(1);
+    expect(env.Notification.requestPermission).not.toHaveBeenCalled();
+    expect(b.subscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it("assinatura perdida e o servidor não conhece mais o aparelho (removido): limpa o rastro e não re-assina", async () => {
+    const env = installPushEnv({ permission: "granted", subscription: null });
+    activated(["org1"]);
+    const b = backend();
+    b.getMyDevices.mockResolvedValue([{ isCurrent: false, linkedHere: true }]);
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("removed");
+    expect(b.getMyDevices).toHaveBeenCalledWith({ organizationId: "org1", currentEndpoint: "https://fcm.googleapis.com/fcm/send/abc" });
+    expect(env.pushManager.subscribe).not.toHaveBeenCalled();
+    expect(readLinkedOrgs()).toEqual([]);
+  });
+
+  it("assinatura perdida e a consulta de aparelhos falha: segue re-assinando", async () => {
+    const env = installPushEnv({ permission: "granted", subscription: null });
+    activated(["org1"]);
+    const b = backend();
+    b.getMyDevices.mockRejectedValue(new Error("offline"));
+    expect(await resyncPush(b, "org1", VAPID, U)).toBe("synced");
+    expect(env.pushManager.subscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it("rastro de outra pessoa não re-assina", async () => {
+    const env = installPushEnv({ permission: "granted", subscription: null });
+    activated(["org1"], "outraPessoa");
+    expect(await resyncPush(backend(), "org1", VAPID, U)).toBe("idle");
+    expect(env.pushManager.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("depois de Desligar (rastro apagado) não volta sozinho", async () => {
+    const sub = makeSub();
+    const env = installPushEnv({ permission: "granted", subscription: sub });
+    activated(["org1"]);
+    await disablePush(backend(), "org1");
+    env.pushManager.subscribe.mockClear();
+    env.pushManager.getSubscription.mockResolvedValue(null); // o navegador já não tem a assinatura
+    expect(await resyncPush(backend(), "org1", VAPID, U)).toBe("idle");
+    expect(env.pushManager.subscribe).not.toHaveBeenCalled();
+  });
+
+  it("hasActivationTrace exige dono = pessoa e orgs vinculadas", () => {
+    expect(hasActivationTrace(U, ["o"], U)).toBe(true);
+    expect(hasActivationTrace(U, [], U)).toBe(false);
+    expect(hasActivationTrace(null, ["o"], U)).toBe(false);
+    expect(hasActivationTrace("x", ["o"], U)).toBe(false);
   });
 
   it("permissão revogada: desvincula as orgs, cancela a assinatura e limpa o rastro", async () => {

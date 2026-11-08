@@ -13,6 +13,7 @@ import { internalMutation, MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { deletePushSubscription } from "./lib/pushStore";
 
 const BATCH = 250;
 
@@ -226,6 +227,9 @@ async function deleteUserAuthData(ctx: MutationCtx, userId: Id<"users">) {
     for (const c of codes) await ctx.db.delete(c._id);
     await ctx.db.delete(a._id);
   }
+  // Aparelhos do usuário (assinatura + vínculos por org) pela porta única.
+  const devices = await ctx.db.query("pushSubscriptions").withIndex("by_user", (q) => q.eq("userId", userId)).take(50);
+  for (const d of devices) await deletePushSubscription(ctx, d._id);
   await ctx.db.delete(userId);
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { detectArrivals, seedWatermark, withCountPrefix, type ArrivalItem } from "@/lib/notificationInbox";
+import { appBadgeCount, detectArrivals, seedWatermark, withCountPrefix, type ArrivalItem } from "@/lib/notificationInbox";
+import { markArrivalToast, shouldAnnounceArrival } from "@/lib/notificationUiState";
 import { getSoundPref, playNotificationSound } from "@/lib/notificationSound";
 
 export interface ArrivalNotification extends ArrivalItem {
@@ -19,6 +20,8 @@ interface UseNotificationArrivalsOptions<T extends ArrivalNotification> {
   onOpen: (item: T) => void;
   /** Painel do sino aberto: a lista já está à vista, então não avisa (a marca d'água segue). */
   suppressed?: boolean;
+  /** Pausa de avisos ativa: sem toast e sem som (o sino segue registrando e a marca d'água avança). */
+  paused?: boolean;
   /** "Abrir" do toast de resumo (vários avisos de uma vez): abre o sino. */
   onOpenInbox: () => void;
 }
@@ -41,17 +44,20 @@ export function useNotificationArrivals<T extends ArrivalNotification>({
   unreadCount,
   openConversationId,
   suppressed = false,
+  paused = false,
   onOpen,
   onOpenInbox,
 }: UseNotificationArrivalsOptions<T>): void {
   const watermarkRef = useRef<number | null>(null);
   const suppressedRef = useRef(suppressed);
+  const pausedRef = useRef(paused);
   const openRef = useRef(openConversationId);
   const onOpenRef = useRef(onOpen);
   const onOpenInboxRef = useRef(onOpenInbox);
   useEffect(() => {
     openRef.current = openConversationId;
     suppressedRef.current = suppressed;
+    pausedRef.current = paused;
     onOpenRef.current = onOpen;
     onOpenInboxRef.current = onOpenInbox;
   });
@@ -65,7 +71,8 @@ export function useNotificationArrivals<T extends ArrivalNotification>({
     }
     const { arrivals, nextWatermark } = detectArrivals(watermarkRef.current, items, openRef.current);
     watermarkRef.current = nextWatermark;
-    if (arrivals.length === 0 || suppressedRef.current) return;
+    if (arrivals.length === 0 || !shouldAnnounceArrival({ paused: pausedRef.current, suppressed: suppressedRef.current })) return;
+    markArrivalToast(Date.now());
     if (arrivals.length > MAX_INDIVIDUAL_TOASTS) {
       toast(`${arrivals.length} novos avisos`, {
         action: { label: "Abrir", onClick: () => onOpenInboxRef.current() },
@@ -104,7 +111,7 @@ export function useNotificationArrivals<T extends ArrivalNotification>({
     const nav = typeof navigator === "undefined" ? undefined : (navigator as BadgeNavigator);
     if (!nav) return;
     try {
-      if (count > 0) void nav.setAppBadge?.(count)?.catch(() => undefined);
+      if (count > 0) void nav.setAppBadge?.(appBadgeCount(count))?.catch(() => undefined);
       else void nav.clearAppBadge?.()?.catch(() => undefined);
     } catch {
       // sem suporte: segue só com o título

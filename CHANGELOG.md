@@ -2,6 +2,28 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado]
+
+### Avisos mais certos
+
+- Concluir ou cancelar uma tarefa pelo quadro, pelo seletor de status ou pelo calendário agora também limpa os avisos dela do sino, e o e-mail de lembrete não sai mais para tarefa já concluída. Excluir uma tarefa limpa também a menção em comentário.
+- Excluir um lead limpa os avisos das conversas e dos pedidos de ajuda dele.
+- Responder ao cliente (pelo app, pelo Telegram ou pela API) marca como lidos os seus avisos de mensagem nova e de conversa transferida. Quem só vê as próprias conversas também tem os avisos limpos ao abrir uma conversa.
+- Várias menções seguidas num grupo continuam chegando no Telegram, mas o celular só vibra de novo depois de 5 minutos; pausa e silêncio não contam como vibração.
+- Atribuir um lead a si mesmo não envia mais e-mail.
+- A API de preferências de notificação (e o MCP) agora mostra também o atalho, as escolhas por canal, a pausa e o silêncio, e as descrições explicam o modelo atual.
+- Ao excluir uma conta, os aparelhos com avisos no celular dela também são removidos.
+
+### Notificações e push: ajustes de integração (front)
+
+- Se o aparelho perde a assinatura de avisos (limpeza do navegador, app reinstalado, kill switch revertido) mas a permissão continua concedida, o app assina de novo sozinho na próxima abertura; "Desligar" continua desligando de vez.
+- Build com o kill switch do PWA agora também esconde os avisos no aparelho.
+- "Ativar" no convite mostra o erro quando falha. O convite espera alguns segundos sem outros avisos e não aparece com o sino aberto ou a pausa ativa; com a pausa ativa não há toast nem som de chegada.
+- Sessão expirada: depois de entrar de novo você volta para onde estava (inclusive links abertos pelo aviso).
+- Com o app aberto e em foco, o aviso do sistema chega sem som para não duplicar o toast.
+- Preferências: coluna "No aparelho" só nos avisos que têm esse canal; "Ocultar prévia" da organização não depende do aparelho do administrador; nota sobre o e-mail de reserva; textos "avisos no aparelho" e "Tela de Início" padronizados; a pausa cita a exceção do pedido de ajuda urgente.
+- O selo do ícone do app segue o mesmo teto (20) do aviso no aparelho. Sair mostra uma tela de espera e não repete o encerramento.
+
 ## [0.79.0] - 2026-11-08
 
 ### App instalável e atualizações sem susto

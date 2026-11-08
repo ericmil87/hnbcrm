@@ -654,7 +654,8 @@ export const assignLead = mutation({
         memberId: args.assignedTo,
         actor: userMember,
       });
-      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      // Auto-atribuição: o sino já pula e o e-mail também.
+      if (args.assignedTo !== userMember._id) await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
         organizationId: lead.organizationId,
         recipientMemberId: args.assignedTo,
         eventType: "leadAssigned",
@@ -1390,7 +1391,8 @@ export const internalAssignLead = internalMutation({
         memberId: args.assignedTo,
         actor: teamMember,
       });
-      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
+      // Auto-atribuição: o sino já pula e o e-mail também.
+      if (args.assignedTo !== teamMember._id) await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
         organizationId: lead.organizationId,
         recipientMemberId: args.assignedTo,
         eventType: "leadAssigned",

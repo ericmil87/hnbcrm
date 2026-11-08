@@ -15,7 +15,10 @@ import {
   PAUSE_OPTIONS,
   PRESET_OPTIONS,
   buildMatrixGroups,
-  externalChannelsText,
+  CHANNEL_LABEL,
+  EMAIL_FALLBACK_NOTE,
+  pauseScopeText,
+  presetHint,
   isCustomized,
   isPaused,
   pausedUntilLabel,
@@ -45,13 +48,13 @@ export interface NotificationPreferencesViewProps {
   canManageOrg: boolean;
   /** Membro com Telegram vinculado (a coluna Telegram só existe então). */
   telegramLinked: boolean;
-  /** Aparelho com suporte e recurso ligado. */
+  /** Coluna Push e prévia pessoal: deployment com push E (este aparelho suporta OU há aparelho vinculado). */
   pushAvailable: boolean;
   /**
-   * `PUSH_ENABLED`: só com push existem avisos no aparelho. Sem ele a prévia na tela de bloqueio
-   * não aparece e os textos de pausa/silêncio não citam push.
+   * Deployment com push (recurso ligado, chave VAPID, sem kill switch). Sem ele os textos de pausa/silêncio não
+   * citam avisos no aparelho; com ele o admin vê "Ocultar prévia" mesmo que o próprio aparelho não suporte.
    */
-  previewEnabled: boolean;
+  pushEnabled: boolean;
   deviceTimeZone?: string;
   onPreset: (preset: Preset) => Promise<unknown>;
   onChannel: (channel: MatrixChannel, flag: string, enabled: boolean) => Promise<unknown>;
@@ -65,7 +68,6 @@ export interface NotificationPreferencesViewProps {
 }
 
 const SAVED_TOAST_ID = "notification-pref-saved";
-const CHANNEL_LABEL: Record<MatrixChannel, string> = { email: "E-mail", telegram: "Telegram", push: "Push" };
 
 /** Toast único: cliques rápidos trocam o mesmo toast em vez de empilhar. */
 function savedToast() {
@@ -165,7 +167,7 @@ function PauseBlock({
   prefs,
   now,
   paused,
-  previewEnabled,
+  pushEnabled,
   onPause,
   onResume,
 }: NotificationPreferencesViewProps & { paused: boolean }) {
@@ -188,7 +190,7 @@ function PauseBlock({
         <h3 className="text-lg font-semibold text-text-primary">Pausar avisos</h3>
       </div>
       <p className="text-sm text-text-secondary mb-4">
-        Enquanto estiver pausado, nada sai por {externalChannelsText(previewEnabled)}; tudo fica registrado no sino.
+        Enquanto estiver pausado, {pauseScopeText(pushEnabled, prefs.urgentBypass)}
       </p>
       {paused && prefs.pausedUntil !== null ? (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -216,6 +218,7 @@ function PauseBlock({
 
 function PresetBlock({
   prefs,
+  pushEnabled,
   customized,
   onApplied,
   onPreset,
@@ -265,7 +268,7 @@ function PresetBlock({
     }
   };
 
-  const hint = PRESET_OPTIONS.find((o) => o.value === selected)?.hint;
+  const hint = presetHint(selected, pushEnabled);
 
   return (
     <div>
@@ -435,7 +438,7 @@ function MatrixBlock({
                               size="sm"
                             />
                           ) : (
-                            <NoCell text={`${row.label}: sem ${c === "email" ? "e-mail" : CHANNEL_LABEL[c]} para este aviso`} />
+                            <NoCell text={`${row.label}: sem ${c === "email" ? "e-mail" : c === "push" ? "avisos no aparelho" : CHANNEL_LABEL[c]} para este aviso`} />
                           )}
                         </div>
                       ))}
@@ -449,6 +452,7 @@ function MatrixBlock({
             Avisos que pedem uma ação sua ficam sempre no sino. Nos demais, ligar um canal também religa o sino
             daquele tipo. “—” indica que o aviso não existe naquele canal.
           </p>
+          <p className="text-xs text-text-muted">{EMAIL_FALLBACK_NOTE}</p>
         </div>
       )}
     </div>
@@ -470,7 +474,8 @@ function NoCell({ text }: { text: string }) {
 function DeliveryBlock({
   prefs,
   deviceTimeZone,
-  previewEnabled,
+  pushEnabled,
+  pushAvailable,
   onQuietHours,
   onUrgentBypass,
   onShowPreview,
@@ -542,7 +547,7 @@ function DeliveryBlock({
           <h3 className="text-lg font-semibold text-text-primary">Horário de silêncio</h3>
         </div>
         <p className="text-sm text-text-secondary mb-3">
-          No horário de silêncio, nada sai por {externalChannelsText(previewEnabled)}; tudo fica registrado no sino.
+          No horário de silêncio, {pauseScopeText(pushEnabled, prefs.urgentBypass)}{" "}
           Fuso: {timezoneLabel(zone)}.
         </p>
         <Switch checked={q.enabled} onCheckedChange={toggleQuiet} label="Silenciar em um horário" />
@@ -591,7 +596,7 @@ function DeliveryBlock({
         />
       </div>
 
-      {previewEnabled && (
+      {pushAvailable && (
         <div className="flex items-start gap-3">
           <Send size={20} className="mt-0.5 shrink-0 text-brand-500" aria-hidden="true" />
           <Switch
@@ -619,7 +624,7 @@ function DeliveryBlock({
 
 /* ----------------------------------------------------- padrões da organização */
 
-function OrgDefaultsBlock({ prefs, previewEnabled, onOrgDefaults }: NotificationPreferencesViewProps) {
+function OrgDefaultsBlock({ prefs, pushEnabled, onOrgDefaults }: NotificationPreferencesViewProps) {
   // `null` = a organização ainda não escolheu; nada fica marcado até um admin escolher.
   const [preset, setPreset] = useState<Preset | null>(prefs.orgDefaults.preset);
   const [hide, setHide] = useState(prefs.orgDefaults.hidePreviewOnLockScreen);
@@ -653,7 +658,7 @@ function OrgDefaultsBlock({ prefs, previewEnabled, onOrgDefaults }: Notification
         onValueChange={(v) => void save(v as Preset, hide)}
         options={PRESET_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
       />
-      {previewEnabled && (
+      {pushEnabled && (
         <div className="mt-4">
           <Switch
             checked={hide}

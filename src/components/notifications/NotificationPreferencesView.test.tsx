@@ -43,7 +43,7 @@ function setup(over: Partial<NotificationPreferencesViewProps> = {}) {
     canManageOrg: false,
     telegramLinked: true,
     pushAvailable: false,
-    previewEnabled: true,
+    pushEnabled: true,
     onPreset: ok(),
     onChannel: ok(),
     onPause: ok(),
@@ -126,7 +126,7 @@ describe("matriz", () => {
   it("Push oculto com a flag desligada; Telegram só com vínculo", async () => {
     setup({ telegramLinked: false, pushAvailable: false });
     await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
-    expect(screen.queryByRole("switch", { name: /: Push$/ })).toBeNull();
+    expect(screen.queryByRole("switch", { name: /: No aparelho$/ })).toBeNull();
     expect(screen.queryByRole("switch", { name: /: Telegram$/ })).toBeNull();
     expect(screen.getByRole("switch", { name: "Tarefa atrasada: E-mail" })).toBeInTheDocument();
   });
@@ -134,7 +134,7 @@ describe("matriz", () => {
   it("Push aparece quando disponível", async () => {
     setup({ pushAvailable: true });
     await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
-    expect(screen.getByRole("switch", { name: "Tarefa atrasada: Push" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Tarefa atrasada: No aparelho" })).toBeInTheDocument();
   });
 
   it("tipo sem template de e-mail mostra traço no lugar do interruptor", async () => {
@@ -230,7 +230,7 @@ describe("silêncio e prévia", () => {
   });
 
   it("prévia desabilitada com explicação quando a organização oculta", () => {
-    setup({ prefs: makePrefs({ orgHidePreview: true, effectiveShowPreview: false }) });
+    setup({ pushAvailable: true, prefs: makePrefs({ orgHidePreview: true, effectiveShowPreview: false }) });
     const sw = screen.getByRole("switch", { name: "Mostrar prévia na tela de bloqueio" });
     expect(sw).toBeDisabled();
     expect(screen.getByText(/A organização ocultou a prévia/)).toBeInTheDocument();
@@ -336,16 +336,33 @@ describe("revisão do C2", () => {
   });
 
   it("sem push ligado: sem prévia (usuário e organização) e sem citar push", () => {
-    setup({ previewEnabled: false, canManageOrg: true });
+    setup({ pushEnabled: false, pushAvailable: false, canManageOrg: true });
     expect(screen.queryByRole("switch", { name: /prévia na tela de bloqueio/ })).toBeNull();
     // pausa e silêncio
-    expect(screen.getAllByText(/nada sai por e-mail ou Telegram; tudo fica registrado no sino/)).toHaveLength(2);
+    expect(screen.getAllByText(/nada sai por e-mail ou Telegram, exceto pedido de ajuda urgente; tudo fica registrado no sino/)).toHaveLength(2);
     expect(document.body.textContent).not.toMatch(/push/i);
   });
 
-  it("com push ligado a prévia vale para os avisos no aparelho", () => {
-    setup({ previewEnabled: true });
+  it("com push disponível a prévia vale para os avisos no aparelho", () => {
+    setup({ pushEnabled: true, pushAvailable: true });
     expect(screen.getByText(/Vale para os avisos no aparelho/)).toBeInTheDocument();
+  });
+
+  it("aparelho do admin sem suporte: sem prévia pessoal, mas 'Ocultar prévia' da organização aparece", () => {
+    setup({ pushEnabled: true, pushAvailable: false, canManageOrg: true });
+    expect(screen.queryByRole("switch", { name: "Mostrar prévia na tela de bloqueio" })).toBeNull();
+    expect(screen.getByRole("switch", { name: "Ocultar prévia na tela de bloqueio" })).toBeInTheDocument();
+  });
+
+  it("pausa com pedido urgente ligado cita a exceção; sem push o atalho Nada não cita avisos no aparelho", () => {
+    setup({ pushEnabled: false, pushAvailable: false, prefs: makePrefs({ urgentBypass: true }) });
+    expect(screen.getAllByText(/exceto pedido de ajuda urgente/)).toHaveLength(2);
+  });
+
+  it("a nota do e-mail de reserva aparece sob a matriz", async () => {
+    setup();
+    await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
+    expect(screen.getByText(/de tarefas, 30 min\./)).toBeInTheDocument();
   });
 
   it("desligar o silêncio com campos vazios chama só enabled:false, sem erro", async () => {

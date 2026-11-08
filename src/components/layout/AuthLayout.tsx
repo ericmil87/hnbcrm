@@ -23,6 +23,7 @@ import { useUiTheme } from "@/hooks/useUiTheme";
 import { clearStoredTheme } from "@/lib/themeDom";
 import { clearStoredCopilotThreads } from "@/lib/copilotThreadStorage";
 import { clearStoredDrafts } from "@/lib/pwa/composerDraft";
+import { SIGN_OUT_TIMEOUT_MS, createSignOutGuard, loginReturnState, withTimeout } from "@/lib/signOutFlow";
 import { teardownPushOnLogout } from "@/lib/push/subscription";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
@@ -118,6 +119,8 @@ function AuthLayoutContent() {
     useState<Id<"organizations"> | null>(readStoredOrgId);
   const [switcherMode, setSwitcherMode] = useState<"list" | "create" | null>(null);
   const { signOut } = useAuthActions();
+  const signOutGuardRef = useRef(createSignOutGuard());
+  const [signingOut, setSigningOut] = useState(false);
 
   const setSelectedOrgId = useCallback((orgId: Id<"organizations"> | null) => {
     try {
@@ -323,6 +326,7 @@ function AuthLayoutContent() {
   }, [knownEntityOrg, navigationType, activeOrgId, organizations]);
 
   const handleSignOut = useCallback(() => {
+    if (signOutGuardRef.current.busy) return;
     setSwitcherMode(null);
     // Esquece a org escolhida: o próximo usuário deste navegador não pode
     // cair na org do anterior (caso também seja membro dela).
@@ -339,24 +343,40 @@ function AuthLayoutContent() {
     // Avisos no aparelho: desvincula o endpoint (ainda autenticado) e cancela a assinatura ANTES de
     // encerrar a sessão, para a próxima pessoa neste navegador não receber os avisos da anterior.
     // Melhor esforço, com prazo curto.
-    void teardownPushOnLogout({
-      unsubscribe: (args) => convex.mutation(api.push.unsubscribe, { ...args, organizationId: args.organizationId as Id<"organizations"> }),
-      extraOrgIds: activeOrgId ? [activeOrgId] : [],
-    })
-      .then(() => signOut())
-      .finally(() => toast.dismiss());
+    setSigningOut(true);
+    void signOutGuardRef.current
+      .run(async () => {
+        await teardownPushOnLogout({
+          unsubscribe: (args) => convex.mutation(api.push.unsubscribe, { ...args, organizationId: args.organizationId as Id<"organizations"> }),
+          extraOrgIds: activeOrgId ? [activeOrgId] : [],
+        });
+        await withTimeout(signOut(), SIGN_OUT_TIMEOUT_MS);
+      })
+      .then((done) => {
+        toast.dismiss();
+        if (!done && !signOutGuardRef.current.busy) {
+          setSigningOut(false);
+          toast.error("Não foi possível sair. Tente de novo.");
+        }
+      });
   }, [signOut, convex, activeOrgId]);
 
   const handleOrgCreated = useCallback((orgId: Id<"organizations">) => {
     createdOrgIdsRef.current.add(orgId);
   }, []);
 
-  if (isLoading) {
+  if (isLoading || (signingOut && isAuthenticated)) {
     return <FullScreenSpinner />;
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/entrar" replace />;
+    return (
+      <Navigate
+        to="/entrar"
+        replace
+        state={loginReturnState(location.pathname, location.search, location.hash, signOutGuardRef.current.busy)}
+      />
+    );
   }
 
   if (loggedInUser === undefined || organizations === undefined || mustChangePassword === undefined) {

@@ -1,4 +1,7 @@
 import type { Doc } from "../../convex/_generated/dataModel";
+import { PUSH_BADGE_CAP, PUSH_TEMPLATES } from "../../convex/lib/webPush";
+import { ACTIONABLE_TYPES } from "../../convex/lib/notificationPolicy";
+import { notificationTargetPath } from "../../convex/lib/notificationTargets";
 import { TAB_ROUTES } from "./routes";
 
 /** Item do feed do sino: o doc + campos derivados por `notifications.list` (D1 back). */
@@ -49,11 +52,6 @@ export function orgNewsParts(entry: OrgNewsEntry): { prefix: string; name: strin
   return { prefix: `Você tem ${label} ${entry.unseen === 1 ? "novidade" : "novidades"} em`, name: entry.organizationName };
 }
 
-export function orgNewsSentence(entry: OrgNewsEntry): string {
-  const { prefix, name } = orgNewsParts(entry);
-  return `${prefix} ${name}`;
-}
-
 // ===== Resolvido =====
 
 export function isResolved(n: Pick<InboxNotification, "data">): boolean {
@@ -63,6 +61,16 @@ export function isResolved(n: Pick<InboxNotification, "data">): boolean {
   return d.resolvedReason !== undefined || d.resolvedBy !== undefined;
 }
 
+/** Motivos gravados em `data.resolvedReason` (convex/lib/notificationResolve.ts e cascatas) com texto próprio. */
+const RESOLVED_REASON_LABEL: Record<string, string> = {
+  task_completed: "Tarefa concluída",
+  task_cancelled: "Tarefa cancelada",
+  task_deleted: "Tarefa excluída",
+  lead_deleted: "Lead excluído",
+  conversation_deleted: "Conversa excluída",
+  replied: "Você respondeu",
+};
+
 /** "Assumido por Ana" (pedido de ajuda) ou o motivo genérico; `null` se não está resolvido. */
 export function resolvedLabel(n: InboxNotification): string | null {
   if (!isResolved(n)) return null;
@@ -71,7 +79,8 @@ export function resolvedLabel(n: InboxNotification): string | null {
     return n.resolvedByName ? `Assumido por ${n.resolvedByName}` : "Já assumido";
   }
   if (typeof reason === "string") {
-    if (reason.includes("task") || reason.includes("complet")) return "Tarefa concluída";
+    const exact = RESOLVED_REASON_LABEL[reason];
+    if (exact) return exact;
     if (reason.includes("reconnect") || reason.includes("channel")) return "Canal reconectado";
   }
   return n.resolvedByName ? `Resolvido por ${n.resolvedByName}` : "Resolvido";
@@ -81,27 +90,25 @@ export function resolvedLabel(n: InboxNotification): string | null {
 
 /** Caminho interno que o item abre (`null` = nada a abrir). Mesmas regras do painel antigo + lead. */
 export function notificationHref(n: InboxNotification): string | null {
+  // Tipos com push: o destino é o MESMO do clique no aviso do aparelho (fonte única no backend).
+  if (n.type in PUSH_TEMPLATES) {
+    return notificationTargetPath(n.type, {
+      conversationId: n.conversationId,
+      handoffId: n.handoffId,
+      taskId: n.taskId,
+      data: n.data as Record<string, unknown> | undefined,
+    });
+  }
   const conv = n.conversationId ? `${TAB_ROUTES.inbox}?conversation=${n.conversationId}` : null;
   switch (n.type) {
-    case "handoff_requested":
-      return n.handoffId ? `${TAB_ROUTES.handoffs}?handoff=${n.handoffId}` : TAB_ROUTES.handoffs;
     case "handoff_resolved":
       return conv ?? TAB_ROUTES.handoffs;
-    case "ai_draft_pending":
     case "group_opportunity":
     case "group_digest":
-    case "group_mention":
       return conv;
-    case "conversation_transferred":
-    case "new_message":
-      return conv ?? TAB_ROUTES.inbox;
     case "campaign_completed":
     case "campaign_paused":
       return n.campaignId ? `${TAB_ROUTES.campaigns}?campanha=${n.campaignId}` : null;
-    case "channel_session_lost": {
-      const isMeta = Boolean((n.data as { metaConnectionId?: unknown } | undefined)?.metaConnectionId);
-      return `${TAB_ROUTES.settings}?secao=${isMeta ? "instagram" : "channels"}`;
-    }
     case "group_joined":
       return TAB_ROUTES.groups;
     case "group_post_pending":
@@ -110,8 +117,6 @@ export function notificationHref(n: InboxNotification): string | null {
     case "ai_spend_warning":
     case "ai_spend_reached":
       return `${TAB_ROUTES.settings}?secao=ai-usage`;
-    case "ai_followup_needs_human":
-      return n.taskId ? `${TAB_ROUTES.tasks}?task=${n.taskId}` : (conv ?? TAB_ROUTES.tasks);
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;
@@ -163,19 +168,13 @@ export function shouldFillPage(opts: {
 
 // ===== Chegadas em tempo real =====
 
-/** Tipos que pedem ação minha: único conjunto que vira toast/som (PLANO seção 4). */
-export const ACTIONABLE_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
-  "handoff_requested",
-  "new_message",
-  "conversation_transferred",
-  "task_comment_mention",
-  "group_mention",
-  "ai_draft_pending",
-  "task_assigned",
-  "task_due_soon",
-  "task_overdue",
-  "channel_session_lost",
-]);
+/**
+ * Tipos que viram toast/som: os ACIONÁVEIS do backend (PLANO seção 4), exceto `lead_assigned`, que fica só no sino.
+ * Derivado de `ACTIONABLE_TYPES` (convex/lib/notificationPolicy.ts): um tipo novo acionável passa a avisar sozinho.
+ */
+export const TOAST_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>(
+  ACTIONABLE_TYPES.filter((t) => t !== "lead_assigned"),
+);
 
 /** Tipos ligados a uma conversa: não avisam se ela já está aberta na tela. */
 const CONVERSATION_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>([
@@ -220,7 +219,7 @@ export function detectArrivals<T extends ArrivalItem>(
   for (const n of items) {
     if (n.createdAt > nextWatermark) nextWatermark = n.createdAt;
     if (n.createdAt <= watermark || n.readAt !== undefined) continue;
-    if (!ACTIONABLE_TYPES.has(n.type)) continue;
+    if (!TOAST_TYPES.has(n.type)) continue;
     if (openConversationId && n.conversationId === openConversationId && CONVERSATION_TYPES.has(n.type)) continue;
     arrivals.push(n);
   }
@@ -228,6 +227,11 @@ export function detectArrivals<T extends ArrivalItem>(
 }
 
 const COUNT_PREFIX = /^\(\d+\+?\)\s/;
+
+/** Contador do ícone do app instalado: mesmo teto do push (o SW grava o `app_badge` já limitado). */
+export function appBadgeCount(unread: number): number {
+  return Math.max(0, Math.min(PUSH_BADGE_CAP, Math.floor(unread)));
+}
 
 /** "(3) Conversas · HNBCRM"; sem pendências devolve o título limpo. */
 export function withCountPrefix(title: string, unread: number): string {

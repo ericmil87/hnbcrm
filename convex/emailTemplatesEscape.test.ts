@@ -17,7 +17,6 @@ const CASES: Record<string, Record<string, unknown>> = {
   taskCommentMention: { authorName: EVIL, taskTitle: EVIL, taskId: EVIL, commentExcerpt: EVIL, appUrl: "https://app.test" },
   taskDueSoon: { taskTitle: EVIL, taskId: EVIL, dueDate: EVIL, minutesBefore: 30, appUrl: "https://app.test" },
   leadAssigned: { leadTitle: EVIL, value: EVIL, stage: EVIL, contactName: EVIL, assignedByName: EVIL, leadUrl: "https://app.test/app/x" },
-  newMessage: { leadTitle: EVIL, messagePreview: EVIL, channel: EVIL, senderName: EVIL, conversationUrl: "https://app.test/app/x" },
   dailyDigest: { date: EVIL, orgName: EVIL, newLeadsCount: 1, completedTasksCount: 1, pendingHandoffsCount: 1, overdueTasksCount: 1, appUrl: "https://app.test" },
   formSubmission: { formName: EVIL, contactEmail: EVIL, contactName: EVIL, leadUrl: "https://app.test/app/x" },
   formConfirmation: { formName: EVIL, subject: EVIL, body: `${EVIL} {Nome}`, submittedData: { f1: EVIL }, fieldLabels: { f1: "Nome" } },
@@ -47,7 +46,7 @@ describe("emailTemplates: escape de HTML", () => {
   });
 
   it("assunto não tem quebra de linha", () => {
-    const { subject } = T.buildTemplate("newMessage", { ...CASES.newMessage, leadTitle: EVIL_MULTI });
+    const { subject } = T.buildTemplate("leadAssigned", { ...CASES.leadAssigned, leadTitle: EVIL_MULTI });
     expect(subject).not.toMatch(/[\r\n]/);
   });
 

@@ -7,7 +7,24 @@ export type ShowPushDeps = {
   show: (title: string, options: BuiltNotificationOptions) => Promise<void>;
   supportsActions: boolean;
   applyBadge: (count: number | undefined) => Promise<void>;
+  /**
+   * `true` when an app window is focused and visible right now: the page already announces the arrival
+   * (toast/sound), so the system notification still shows (iOS requires it) but silent.
+   */
+  appInForeground?: () => Promise<boolean>;
 };
+
+/** An open window of this origin under `/app/` that the person is looking at. */
+export function hasForegroundAppWindow(windows: readonly { url: string; focused?: boolean; visibilityState?: string }[], origin: string): boolean {
+  return windows.some((c) => {
+    try {
+      const u = new URL(c.url);
+      return u.origin === origin && u.pathname.startsWith("/app/") && c.focused === true && c.visibilityState === "visible";
+    } catch {
+      return false;
+    }
+  });
+}
 
 /** Always shows ONE notification (iOS rule): builder errors or a rejected option → the generic one. */
 export async function showPushNotification(data: { json(): unknown } | null | undefined, deps: ShowPushDeps): Promise<void> {
@@ -17,11 +34,17 @@ export async function showPushNotification(data: { json(): unknown } | null | un
   } catch {
     /* keep the generic one */
   }
+  let silent = false;
   try {
-    await deps.show(built.title, built.options);
+    silent = deps.appInForeground ? await deps.appInForeground() : false;
+  } catch {
+    /* unknown: stay audible */
+  }
+  try {
+    await deps.show(built.title, silent ? { ...built.options, silent: true } : built.options);
   } catch {
     const g = genericNotification();
-    await deps.show(g.title, g.options);
+    await deps.show(g.title, silent ? { ...g.options, silent: true } : g.options);
   }
   try {
     await deps.applyBadge(built.appBadge);
