@@ -4,6 +4,27 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Avisos no aparelho (push): o app recebe e abre
+
+- O app instalado (e o navegador no computador) passa a mostrar os avisos que o servidor manda. Tocar no aviso abre direto a conversa, o pedido de ajuda ou a tarefa, na organização certa; se o app já estiver aberto, ele só troca de tela, sem recarregar.
+- No Android e no computador, o pedido de ajuda traz os botões **Assumir** e **Abrir**. "Assumir" abre a tela para você confirmar; nada é assumido sem você ver.
+- O ícone do app mostra quantos avisos estão esperando, onde o aparelho permite.
+- Se um aviso chegar ilegível, aparece "Novidade no HNBCRM" e o toque abre o Painel (o iPhone exige que todo aviso apareça).
+
+### Instalar o app e rascunho da mensagem
+
+- A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
+- Em Configurações › Conta há a nova seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
+- O app instalado respeita o notch e a barra inferior do celular.
+- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
+
+### App instalável e atualizações sem susto
+
+- O HNBCRM agora pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas.
+- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece o aviso "Nova versão disponível" com o botão **Atualizar**; depois de atualizar, o app avisa "Atualizado".
+- Se uma versão muito antiga ficar incompatível, aparece a faixa "Atualize para continuar".
+- Se uma tela não carregar por causa de uma atualização, o app recarrega sozinho uma vez.
+
 ### Avisos no aparelho (push) e e-mail como reserva (backend)
 
 - O servidor já sabe mandar avisos para o celular e o computador (push), para quem ativar neste aparelho (a tela de ativar chega na próxima etapa). Vão por push só os avisos que pedem ação sua: pedido de ajuda, mensagem nova numa conversa sua (um aviso por leva de mensagens, não um por mensagem), conversa transferida para você, menção, resposta sugerida da IA, tarefa atribuída, vencendo ou atrasada, follow-up que voltou para a equipe e canal desconectado.
