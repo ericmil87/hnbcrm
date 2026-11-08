@@ -20,7 +20,16 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 // Default preferences — all notifications enabled (opt-out model)
 const DEFAULTS = PREF_DEFAULTS;
 
-// Get current member's notification preferences
+/** Só os flags booleanos conhecidos de PREF_DEFAULTS (ignora o resto do corpo). */
+function onlyBooleanFlags(input: Record<string, unknown>): Partial<Record<keyof typeof PREF_DEFAULTS, boolean>> {
+  const out: Partial<Record<keyof typeof PREF_DEFAULTS, boolean>> = {};
+  for (const key of Object.keys(PREF_DEFAULTS) as (keyof typeof PREF_DEFAULTS)[]) {
+    if (typeof input[key] === "boolean") out[key] = input[key] as boolean;
+  }
+  return out;
+}
+
+/** @deprecated v0.79 — remover após 15/11/2026 (clientes antigos em cache). Use `getMyEffectivePreferences`. */
 export const getMyPreferences = query({
   args: { organizationId: v.id("organizations") },
   returns: v.any(),
@@ -68,7 +77,7 @@ export const getMyPreferences = query({
   },
 });
 
-// Update current member's notification preferences (upsert)
+/** @deprecated v0.79 — remover após 15/11/2026 (clientes antigos em cache). Use `setChannelPref`/`setPreset`. */
 export const updateMyPreferences = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -99,68 +108,14 @@ export const updateMyPreferences = mutation({
   returns: v.null(),
   handler: async (ctx, args) => {
     const userMember = await requireAuth(ctx, args.organizationId);
-    const now = Date.now();
-
-    const existing = await ctx.db
-      .query("notificationPreferences")
-      .withIndex("by_organization_and_member", (q) =>
-        q.eq("organizationId", args.organizationId).eq("teamMemberId", userMember._id)
-      )
-      .first();
-
-    const updates = {
-      invite: args.invite ?? existing?.invite ?? DEFAULTS.invite,
-      handoffRequested: args.handoffRequested ?? existing?.handoffRequested ?? DEFAULTS.handoffRequested,
-      handoffResolved: args.handoffResolved ?? existing?.handoffResolved ?? DEFAULTS.handoffResolved,
-      taskOverdue: args.taskOverdue ?? existing?.taskOverdue ?? DEFAULTS.taskOverdue,
-      taskAssigned: args.taskAssigned ?? existing?.taskAssigned ?? DEFAULTS.taskAssigned,
-      leadAssigned: args.leadAssigned ?? existing?.leadAssigned ?? DEFAULTS.leadAssigned,
-      newMessage: args.newMessage ?? existing?.newMessage ?? DEFAULTS.newMessage,
-      dailyDigest: args.dailyDigest ?? existing?.dailyDigest ?? DEFAULTS.dailyDigest,
-      taskCommentMention:
-        args.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
-      taskDueSoon: args.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
-      aiDraftPending: args.aiDraftPending ?? existing?.aiDraftPending ?? DEFAULTS.aiDraftPending,
-      campaignCompleted:
-        args.campaignCompleted ?? existing?.campaignCompleted ?? DEFAULTS.campaignCompleted,
-      campaignPaused: args.campaignPaused ?? existing?.campaignPaused ?? DEFAULTS.campaignPaused,
-      groupJoined: args.groupJoined ?? existing?.groupJoined ?? DEFAULTS.groupJoined,
-      groupMention: args.groupMention ?? existing?.groupMention ?? DEFAULTS.groupMention,
-      groupPostPending:
-        args.groupPostPending ?? existing?.groupPostPending ?? DEFAULTS.groupPostPending,
-      groupPostFailed:
-        args.groupPostFailed ?? existing?.groupPostFailed ?? DEFAULTS.groupPostFailed,
-      groupOpportunity:
-        args.groupOpportunity ?? existing?.groupOpportunity ?? DEFAULTS.groupOpportunity,
-      groupDigest: args.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
-      aiFollowupNeedsHuman:
-        args.aiFollowupNeedsHuman ?? existing?.aiFollowupNeedsHuman ?? DEFAULTS.aiFollowupNeedsHuman,
-      conversationTransferred:
-        args.conversationTransferred ??
-        existing?.conversationTransferred ??
-        DEFAULTS.conversationTransferred,
-      channelSessionLost:
-        args.channelSessionLost ?? existing?.channelSessionLost ?? DEFAULTS.channelSessionLost,
-      aiSpendAlert: args.aiSpendAlert ?? existing?.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
-    };
-
-    if (existing) {
-      await ctx.db.patch(existing._id, { ...updates, updatedAt: now });
-    } else {
-      await ctx.db.insert("notificationPreferences", {
-        organizationId: args.organizationId,
-        teamMemberId: userMember._id,
-        ...updates,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
+    // Porta única de escrita: só os flags enviados (o resto fica como está).
+    const { organizationId: _org, ...flags } = args;
+    await patchMemberPrefs(ctx, args.organizationId, userMember._id, onlyBooleanFlags(flags), Date.now());
     return null;
   },
 });
 
-// Get any member's preferences (admin/team:view access)
+/** @deprecated v0.79 — remover após 15/11/2026 (sem uso no app). Exige `team:manage`. */
 export const getMemberPreferences = query({
   args: {
     organizationId: v.id("organizations"),
@@ -168,7 +123,7 @@ export const getMemberPreferences = query({
   },
   returns: v.any(),
   handler: async (ctx, args) => {
-    await requirePermission(ctx, args.organizationId, "team", "view");
+    await requirePermission(ctx, args.organizationId, "team", "manage");
 
     const prefs = await ctx.db
       .query("notificationPreferences")
@@ -223,8 +178,24 @@ export const internalGetPreferences = internalQuery({
       )
       .first();
 
+    const org = await ctx.db.get(args.organizationId);
+    const orgPreset = orgDefaultsOf(org)?.preset;
+    const defaultQuietHours = {
+      enabled: false,
+      start: DEFAULT_QUIET_START,
+      end: DEFAULT_QUIET_END,
+      timeZone: safeTimezone(org?.settings.timezone),
+    };
+
     if (!prefs) {
-      return { ...DEFAULTS, _exists: false };
+      return {
+        ...DEFAULTS,
+        preset: orgPreset ?? "all",
+        channels: {},
+        pausedUntil: null,
+        quietHours: defaultQuietHours,
+        _exists: false,
+      };
     }
 
     return {
@@ -251,6 +222,11 @@ export const internalGetPreferences = internalQuery({
       conversationTransferred: prefs.conversationTransferred ?? DEFAULTS.conversationTransferred,
       channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
       aiSpendAlert: prefs.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
+      // Modelo atual (aditivo): flags = canais externos; o sino de tipo acionável registra sempre.
+      preset: prefs.preset ?? orgPreset ?? "all",
+      channels: prefs.channels ?? {},
+      pausedUntil: prefs.pausedUntil ?? null,
+      quietHours: prefs.quietHours ?? defaultQuietHours,
       _exists: true,
     };
   },
@@ -265,67 +241,8 @@ export const internalUpsertPreferences = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const now = Date.now();
-    const existing = await ctx.db
-      .query("notificationPreferences")
-      .withIndex("by_organization_and_member", (q) =>
-        q.eq("organizationId", args.organizationId).eq("teamMemberId", args.teamMemberId)
-      )
-      .first();
-
-    const merged = {
-      invite: args.updates.invite ?? existing?.invite ?? DEFAULTS.invite,
-      handoffRequested: args.updates.handoffRequested ?? existing?.handoffRequested ?? DEFAULTS.handoffRequested,
-      handoffResolved: args.updates.handoffResolved ?? existing?.handoffResolved ?? DEFAULTS.handoffResolved,
-      taskOverdue: args.updates.taskOverdue ?? existing?.taskOverdue ?? DEFAULTS.taskOverdue,
-      taskAssigned: args.updates.taskAssigned ?? existing?.taskAssigned ?? DEFAULTS.taskAssigned,
-      leadAssigned: args.updates.leadAssigned ?? existing?.leadAssigned ?? DEFAULTS.leadAssigned,
-      newMessage: args.updates.newMessage ?? existing?.newMessage ?? DEFAULTS.newMessage,
-      dailyDigest: args.updates.dailyDigest ?? existing?.dailyDigest ?? DEFAULTS.dailyDigest,
-      taskCommentMention:
-        args.updates.taskCommentMention ?? existing?.taskCommentMention ?? DEFAULTS.taskCommentMention,
-      taskDueSoon: args.updates.taskDueSoon ?? existing?.taskDueSoon ?? DEFAULTS.taskDueSoon,
-      aiDraftPending: args.updates.aiDraftPending ?? existing?.aiDraftPending ?? DEFAULTS.aiDraftPending,
-      campaignCompleted:
-        args.updates.campaignCompleted ?? existing?.campaignCompleted ?? DEFAULTS.campaignCompleted,
-      campaignPaused: args.updates.campaignPaused ?? existing?.campaignPaused ?? DEFAULTS.campaignPaused,
-      groupJoined: args.updates.groupJoined ?? existing?.groupJoined ?? DEFAULTS.groupJoined,
-      groupMention: args.updates.groupMention ?? existing?.groupMention ?? DEFAULTS.groupMention,
-      groupPostPending:
-        args.updates.groupPostPending ?? existing?.groupPostPending ?? DEFAULTS.groupPostPending,
-      groupPostFailed:
-        args.updates.groupPostFailed ?? existing?.groupPostFailed ?? DEFAULTS.groupPostFailed,
-      groupOpportunity:
-        args.updates.groupOpportunity ?? existing?.groupOpportunity ?? DEFAULTS.groupOpportunity,
-      groupDigest: args.updates.groupDigest ?? existing?.groupDigest ?? DEFAULTS.groupDigest,
-      aiFollowupNeedsHuman:
-        args.updates.aiFollowupNeedsHuman ??
-        existing?.aiFollowupNeedsHuman ??
-        DEFAULTS.aiFollowupNeedsHuman,
-      conversationTransferred:
-        args.updates.conversationTransferred ??
-        existing?.conversationTransferred ??
-        DEFAULTS.conversationTransferred,
-      channelSessionLost:
-        args.updates.channelSessionLost ??
-        existing?.channelSessionLost ??
-        DEFAULTS.channelSessionLost,
-      aiSpendAlert:
-        args.updates.aiSpendAlert ?? existing?.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
-    };
-
-    if (existing) {
-      await ctx.db.patch(existing._id, { ...merged, updatedAt: now });
-    } else {
-      await ctx.db.insert("notificationPreferences", {
-        organizationId: args.organizationId,
-        teamMemberId: args.teamMemberId,
-        ...merged,
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
+    // REST/MCP: mesma porta de escrita do app; só flags booleanos conhecidos entram.
+    await patchMemberPrefs(ctx, args.organizationId, args.teamMemberId, onlyBooleanFlags(args.updates ?? {}), Date.now());
     return null;
   },
 });
@@ -517,7 +434,7 @@ export const resume = mutation({
     const member = await requireAuth(ctx, args.organizationId);
     const existing = await loadMemberPrefs(ctx, args.organizationId, member._id);
     if (existing?.pausedUntil !== undefined) {
-      await ctx.db.patch(existing._id, { pausedUntil: undefined, updatedAt: Date.now() });
+      await patchMemberPrefs(ctx, args.organizationId, member._id, { pausedUntil: undefined }, Date.now());
     }
     const link = await ctx.db
       .query("telegramLinks")

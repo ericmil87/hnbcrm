@@ -38,7 +38,6 @@ export const EMAIL_FLAGS: ReadonlySet<string> = new Set([
   "taskCommentMention",
   "taskDueSoon",
   "leadAssigned",
-  "newMessage",
   "dailyDigest",
   "groupPostPending",
   "groupPostFailed",

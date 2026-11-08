@@ -97,7 +97,7 @@ export const ACTIONABLE_FLAGS: readonly string[] = Array.from(
 );
 
 /** Fora de "Só o que é comigo" nos canais externos (informativo/administrativo). */
-export const NON_PERSONAL_FLAGS: ReadonlySet<string> = new Set([
+export const NON_PERSONAL_FLAGS = new Set([
   "campaignCompleted",
   "campaignPaused",
   "groupJoined",

@@ -416,43 +416,6 @@ export function buildLeadAssignedTemplate(data: {
   };
 }
 
-export function buildNewMessageTemplate(data: {
-  leadTitle: string;
-  messagePreview: string;
-  channel: string;
-  senderName: string;
-  conversationUrl: string;
-}): TemplateResult {
-  const e = escapeStrings(data);
-  const appUrl = data.conversationUrl.replace(/\/app\/.*$/, "");
-  const channelLabels: Record<string, string> = {
-    whatsapp: "WhatsApp",
-    telegram: "Telegram",
-    email: "Email",
-    webchat: "Webchat",
-    internal: "Interno",
-  };
-  return {
-    subject: `Nova mensagem em ${line(data.leadTitle)}`,
-    html: baseTemplate({
-      preheader: `${e.senderName} enviou uma mensagem no lead "${e.leadTitle}".`,
-      appUrl,
-      content: `
-        ${heading("Nova Mensagem")}
-        ${paragraph(`Uma nova mensagem foi recebida no lead <strong style="color: ${TEXT_PRIMARY};">${e.leadTitle}</strong>.`)}
-        ${infoTable(`
-          ${infoRow("Canal", channelLabels[e.channel] ?? e.channel)}
-          ${infoRow("Remetente", e.senderName)}
-        `)}
-        <div style="margin-top: 16px; padding: 12px 16px; background: ${BG_DARK}; border-radius: 8px; border-left: 3px solid ${BRAND_ORANGE};">
-          <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${e.messagePreview}"</p>
-        </div>
-        ${ctaButton("Ver Conversa", data.conversationUrl)}
-      `,
-    }),
-  };
-}
-
 export function buildDailyDigestTemplate(data: {
   date: string;
   orgName: string;
@@ -611,8 +574,6 @@ export function buildTemplate(
       return buildTaskDueSoonTemplate(data as any);
     case "leadAssigned":
       return buildLeadAssignedTemplate(data as any);
-    case "newMessage":
-      return buildNewMessageTemplate(data as any);
     case "dailyDigest":
       return buildDailyDigestTemplate(data as any);
     case "formSubmission":
