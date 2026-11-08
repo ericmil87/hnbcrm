@@ -51,25 +51,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Depois do primeiro pedido de ajuda ou mensagem atribuída com o app aberto, um aviso pergunta "Quer receber isso neste aparelho mesmo com o app fechado?" com o botão **Ativar**. Nunca aparece ao abrir o app e no máximo 1 vez a cada 7 dias.
 - Para quem já usa: o e-mail de pedido de ajuda, menção em tarefa e tarefa atribuída, vencendo ou atrasada agora é uma rede de segurança. Sai 10 minutos depois (pedido de ajuda e menção) ou 30 minutos depois (tarefas) e só se o aviso ainda não foi lido. O lembrete "vence em breve" chega antes do prazo (com pouca antecedência, na metade do tempo que falta). E-mails de lead atribuído, canal desconectado e os demais continuam saindo na hora.
 
-## [Não lançado]
-
-### Instalar o app e rascunho da mensagem
-
-- A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
-- Em Configurações › Conta há a nova seção **Este aparelho**, que sempre permite instalar (ou mostra "App instalado").
-- O app instalado respeita o notch e a barra inferior do celular.
-- O texto que você está digitando numa conversa agora fica guardado neste aparelho por 7 dias e volta se a página recarregar ou você sair e voltar. Notas internas não são guardadas.
-
-### App instalável e atualizações sem susto
-
-- O HNBCRM agora pode ser instalado no celular e no computador (Adicionar à Tela de Início / Instalar app), com ícone próprio e atalhos para Conversas, Requer atenção e Tarefas.
-- Quando sai uma versão nova, o app se atualiza sozinho num momento seguro (ao sair da tela ou trocar de página, sem texto digitado na conversa). Se não der, aparece o aviso "Nova versão disponível" com o botão **Atualizar**; depois de atualizar, o app avisa "Atualizado".
-- Se uma versão muito antiga ficar incompatível, aparece a faixa "Atualize para continuar".
-- Se uma tela não carregar por causa de uma atualização, o app recarrega sozinho uma vez.
-
 ### Segurança
 
 - Os e-mails automáticos agora escapam o texto vindo de clientes, formulários e equipe (título do lead, prévia da mensagem, comentários, nomes), e os links dos botões só aceitam https ou caminho do app.
+
+## [Não lançado]
 
 ### Busca sem acento
 
