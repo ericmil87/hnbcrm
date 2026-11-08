@@ -307,14 +307,11 @@ export async function createHandoffCore(
     if (previous && now - previous.createdAt < HANDOFF_EMAIL_THROTTLE_MS) sendEmail = false;
     if (pending.length > 1) pendingLabel = pending.length >= 20 ? "20+" : String(pending.length);
   }
-  if (sendEmail) {
-    const emailRecipients = broadcast ? broadcast.map((m) => m._id) : [args.toMemberId!];
-    const org = emailRecipients.length > 0 ? await ctx.db.get(organizationId) : null;
-    for (const recipientId of emailRecipients) {
-      if (recipientId === args.fromMemberId) continue;
-      await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
-        organizationId,
-        recipientMemberId: recipientId,
+  // E1: o e-mail virou REDE DE SEGURANÇA (+10 min, só se o aviso ainda não foi
+  // lido) e sai pela escada de `createNotification` (`lib/notificationChannels.ts`).
+  const org = sendEmail ? await ctx.db.get(organizationId) : null;
+  const email = sendEmail
+    ? {
         eventType: "handoffRequested",
         templateData: {
           orgName: org?.name,
@@ -326,9 +323,8 @@ export async function createHandoffCore(
           fromMemberName: fromMember.name,
           leadUrl: `${APP_URL()}/app/repasses?handoff=${handoffId}`,
         },
-      });
-    }
-  }
+      }
+    : undefined;
   // Notificação in-app (sempre, sem throttle). createNotification já pula
   // membros IA, o próprio ator e quem fez opt-out.
   const notification = {
@@ -346,10 +342,10 @@ export async function createHandoffCore(
   };
   if (broadcast) {
     for (const replier of broadcast) {
-      await createNotification(ctx, { ...notification, memberId: replier._id });
+      await createNotification(ctx, { ...notification, memberId: replier._id, email });
     }
   } else {
-    await createNotification(ctx, { ...notification, memberId: args.toMemberId! });
+    await createNotification(ctx, { ...notification, memberId: args.toMemberId!, email });
   }
 
   return handoffId;

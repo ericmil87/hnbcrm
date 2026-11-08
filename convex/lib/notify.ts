@@ -2,12 +2,11 @@ import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { resolvePermissions, hasPermission, type Role } from "./permissions";
 import { isMembershipRevoked } from "./auth";
-import { internal } from "../_generated/api";
-import { modulesOf } from "./orgModules";
-import { hasTelegramTemplate } from "./telegramNotifications";
 import { notificationCopy } from "./notificationCopy";
-import { shouldDeliver, type PolicyPrefs } from "./notificationPolicy";
-import { loadMemberPrefs, orgDefaultsOf } from "./notificationPrefs";
+import { shouldDeliver } from "./notificationPolicy";
+import { loadMemberPrefs } from "./notificationPrefs";
+import { dispatchNotificationChannels, type EmailFallback } from "./notificationChannels";
+import { nextRenotifyState } from "./webPush";
 
 export type NotificationType =
   | "task_assigned"
@@ -41,9 +40,10 @@ export type NotificationType =
  * vez de nascer outra: `data.count` soma `increment`, `title`/`body` vêm de
  * `render(total)` (ou dos args), `createdAt` renova (sobe no sino).
  *
- * Telegram num patch: só com `telegramOnPatch` (o chamador já agrupou numa
- * janela própria: relay de 20 s, rascunho novo para revisar). Sem isso o patch
- * é silencioso — nunca 2 envios para a mesma janela.
+ * Telegram e push (E1) num patch: só com `telegramOnPatch` (o chamador já
+ * agrupou numa janela própria: relay de 20 s, rascunho novo para revisar). Sem
+ * isso o patch é silencioso — nunca 2 envios para a mesma janela. O nome ficou
+ * do B2; vale para os dois canais "que tocam".
  */
 export type CoalesceOptions = {
   key: string;
@@ -139,6 +139,10 @@ export async function filterMembersOfOrg(
  * - Não notifica o próprio ator (actorId === memberId vira no-op).
  * - Membro removido (`isMembershipRevoked`) ou sem `userId` é recusado (B1).
  * - Respeita `notificationPreferences` do destinatário (opt-out: flag === false pula).
+ * - Depois de gravar, a escada de canais (`lib/notificationChannels.ts`): Telegram,
+ *   push e o e-mail de reserva (`email`, só para os tipos de rede de segurança).
+ *
+ * Devolve o id do aviso gravado/atualizado, ou null quando nada foi gravado.
  */
 export async function createNotification(
   ctx: MutationCtx,
@@ -161,19 +165,21 @@ export async function createNotification(
     data?: Record<string, unknown>;
     actorId?: Id<"teamMembers">;
     coalesce?: CoalesceOptions;
+    /** E1: e-mail de reserva (+10/+30 min, só se ainda não lido). Ignorado num patch. */
+    email?: EmailFallback;
   }
-): Promise<void> {
-  if (args.actorId && args.actorId === args.memberId) return;
+): Promise<Id<"notifications"> | null> {
+  if (args.actorId && args.actorId === args.memberId) return null;
   const member = await ctx.db.get(args.memberId);
-  if (!member || member.type !== "human") return;
-  if (member.organizationId !== args.organizationId) return;
+  if (!member || member.type !== "human") return null;
+  if (member.organizationId !== args.organizationId) return null;
   // B1: removido da org ou pendente de convite (sem conta) não recebe nem acumula.
-  if (isMembershipRevoked(member) || !member.userId) return;
+  if (isMembershipRevoked(member) || !member.userId) return null;
 
   const prefs = await loadMemberPrefs(ctx, args.organizationId, args.memberId);
   const now = Date.now();
   // Sino (C1): flag antigo `false` só apaga tipos NÃO acionáveis; acionável sempre registra.
-  if (shouldDeliver({ type: args.type, channel: "bell", prefs, now }) !== "deliver") return;
+  if (shouldDeliver({ type: args.type, channel: "bell", prefs, now }) !== "deliver") return null;
   const co = args.coalesce;
   const increment = Math.max(1, Math.floor(co?.increment ?? 1));
   if (co) {
@@ -196,12 +202,27 @@ export async function createNotification(
         body: copy.body,
         // `data` do evento ATUAL (ex.: `messageIds` da última janela, que o cartão do
         // Telegram mostra) + contagem acumulada.
-        data: { ...(args.data ?? {}), count, coalescedSince: since ?? existing.createdAt },
+        // E1: `pushRenotify` = vibrar de novo (1ª vez ou ≥ 5 min do último toque).
+        data: {
+          ...(args.data ?? {}),
+          count,
+          coalescedSince: since ?? existing.createdAt,
+          ...nextRenotifyState(existing.data, now),
+        },
         actorId: args.actorId,
         createdAt: now,
       });
-      if (co.telegramOnPatch) await maybeScheduleTelegram(ctx, args, existing._id, now, prefs);
-      return;
+      await dispatchNotificationChannels(ctx, {
+        organizationId: args.organizationId,
+        memberId: args.memberId,
+        type: args.type,
+        notificationId: existing._id,
+        now,
+        prefs,
+        isPatch: true,
+        externalOnPatch: co.telegramOnPatch,
+      });
+      return existing._id;
     }
   }
   const copy = co?.render ? co.render(increment) : { title: args.title, body: args.body };
@@ -219,47 +240,25 @@ export async function createNotification(
     groupChatId: args.groupChatId,
     channelConfigId: args.channelConfigId,
     metaConnectionId: args.metaConnectionId,
-    data: co ? { ...(args.data ?? {}), count: increment, coalescedSince: now } : args.data,
+    data: co
+      ? { ...(args.data ?? {}), count: increment, coalescedSince: now, pushRenotify: true, pushRenotifyAt: now }
+      : args.data,
     conversationId: args.conversationId,
     actorId: args.actorId,
     createdAt: now,
     ...(co ? { coalesceKey: co.key } : {}),
   });
-  await maybeScheduleTelegram(ctx, args, notificationId, now, prefs);
-}
-
-async function maybeScheduleTelegram(
-  ctx: MutationCtx,
-  args: { organizationId: Id<"organizations">; memberId: Id<"teamMembers">; type: NotificationType },
-  notificationId: Id<"notifications">,
-  now: number,
-  prefs: PolicyPrefs | null
-): Promise<void> {
-  // Telegram (F1, D7): mesma porta, depois do insert — o self-skip e a
-  // preferência acima já valeram. Uma leitura indexada do vínculo ativo; envio
-  // e formatação ficam na action agendada (nada de rede numa mutation).
-  if (!hasTelegramTemplate(args.type)) return;
-  const link = await ctx.db
-    .query("telegramLinks")
-    .withIndex("by_member_and_status", (q) => q.eq("teamMemberId", args.memberId).eq("status", "active"))
-    .first();
-  if (!link || link.organizationId !== args.organizationId) return;
-  // Switch do relay: vale só para o Telegram (o sino já gravou, B2).
-  if (args.type === "new_message" && !link.prefs.relayAssignedConversations) return;
-  const org = await ctx.db.get(args.organizationId);
-  if (!modulesOf(org).telegram) return;
-  // C1: política única — preferência por canal, pausa (`pausedUntil` + `mutedUntil` legado
-  // do `/pausar`) e silêncio. O sino já gravou; aqui só decide se o Telegram toca.
-  const decision = shouldDeliver({
+  await dispatchNotificationChannels(ctx, {
+    organizationId: args.organizationId,
+    memberId: args.memberId,
     type: args.type,
-    channel: "telegram",
-    prefs,
-    orgDefaults: orgDefaultsOf(org),
+    notificationId,
     now,
-    legacyMutedUntil: link.mutedUntil,
+    prefs,
+    isPatch: false,
+    email: args.email,
   });
-  if (decision !== "deliver") return;
-  await ctx.scheduler.runAfter(0, internal.telegram.internalDeliverNotification, { notificationId });
+  return notificationId;
 }
 
 /**
