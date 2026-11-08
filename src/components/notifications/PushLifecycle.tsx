@@ -6,7 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { usePushSubscription } from "@/hooks/usePushSubscription";
 import type { InboxNotification } from "@/lib/notificationInbox";
-import { safeSwNavigateTarget } from "@/lib/openLink";
+import { listenToServiceWorker } from "@/lib/push/closeReadNotifications";
 import { markInviteShown, planInvite, readInviteAt } from "@/lib/push/pushInvite";
 import { closeReadDeviceNotifications } from "@/lib/push/readOnDevice";
 
@@ -43,18 +43,10 @@ export function PushLifecycle({ organizationId }: { organizationId: Id<"organiza
   });
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as { type?: unknown; url?: unknown } | null;
-      if (!data || typeof data.type !== "string") return;
-      if (data.type === "hnb:navigate") {
-        const target = safeSwNavigateTarget(data.url, window.location.origin);
-        if (target) navigateRef.current(target);
-      } else if (data.type === "hnb:push-resubscribed") {
-        void resyncRef.current();
-      }
-    };
-    navigator.serviceWorker.addEventListener("message", onMessage);
-    return () => navigator.serviceWorker.removeEventListener("message", onMessage);
+    return listenToServiceWorker(navigator.serviceWorker, {
+      onNavigate: (url) => navigateRef.current(url),
+      onResubscribed: () => void resyncRef.current(),
+    });
   }, []);
 
   const summary = useQuery(api.notifications.unreadSummary, hidden ? "skip" : { organizationId });

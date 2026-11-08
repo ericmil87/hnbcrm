@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOpenLink, isSafeAppPath, parseOpenLink, safeAppTarget, safeSwNavigateTarget, withOpenAction } from "./openLink";
+import { buildOpenLink, isSafeAppPath, parseOpenLink, safeAppTarget, withOpenAction } from "./openLink";
 
 describe("isSafeAppPath", () => {
   it("aceita caminhos internos do app, com query", () => {
@@ -72,17 +72,4 @@ describe("acao do push e mensagens do service worker", () => {
     expect(withOpenAction("/app/repasses?handoff=h1", "assumir")).toBe("/app/repasses?handoff=h1&acao=assumir");
     expect(withOpenAction("/app/repasses", undefined)).toBe("/app/repasses");
   });
-  it("safeSwNavigateTarget aceita /app/abrir válido e URL absoluta da mesma origem", () => {
-    const o = "https://hnbcrm.com";
-    const open = buildOpenLink("org1", "/app/entrada?conversation=c1");
-    expect(safeSwNavigateTarget(open, o)).toBe(open);
-    expect(safeSwNavigateTarget(o + open, o)).toBe(open);
-    expect(safeSwNavigateTarget("/app/tarefas?task=t1", o)).toBe("/app/tarefas?task=t1");
-  });
-  it.each(["https://evil.com/app/painel", "//evil.com", "/entrar", "javascript:alert(1)", "/app/abrir?org=o&to=//evil", "/app/abrir", "", 42, null])(
-    "safeSwNavigateTarget recusa %s",
-    (u) => {
-      expect(safeSwNavigateTarget(u, "https://hnbcrm.com")).toBeNull();
-    },
-  );
 });

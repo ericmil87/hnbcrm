@@ -4,6 +4,16 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Avisos no aparelho (push): ativar, aparelhos e convite
+
+- Em Configurações › Notificações (e em Este aparelho) há o cartão **Receber avisos neste aparelho**: toque em **Ativar avisos** e o navegador pede a permissão (só depois do seu toque). Ligado, mostra "Avisos ligados neste aparelho" com **Desligar**. Se estiver bloqueado, explica como reabrir (Chrome no Android, Ajustes do iPhone, ícone na barra do computador). No iPhone fora da Tela de Início, aparece "Instale o app para receber avisos" com o passo a passo.
+- **Meus aparelhos** lista onde você recebe avisos (nome do aparelho, "Este aparelho", visto há quanto tempo) e deixa **Remover** com confirmação.
+- Depois do primeiro pedido de ajuda ou mensagem atribuída com o app aberto, um aviso pergunta "Quer receber isso no celular mesmo com o app fechado?" com o botão **Ativar**. Nunca aparece ao abrir o app e no máximo 1 vez a cada 7 dias.
+- Ao sair da conta, o aparelho deixa de receber os avisos da sua conta (a próxima pessoa no mesmo navegador não recebe os seus).
+- Ao abrir o app, os avisos que você já leu somem do aparelho.
+- O botão **Assumir** do aviso abre o pedido de ajuda perguntando "Assumir este pedido de ajuda?" antes de assumir.
+- A coluna **Push** das preferências e as opções de prévia na tela de bloqueio aparecem quando o aparelho suporta avisos.
+
 ### Avisos no aparelho (push): o app recebe e abre
 
 - O app instalado (e o navegador no computador) passa a mostrar os avisos que o servidor manda. Tocar no aviso abre direto a conversa, o pedido de ajuda ou a tarefa, na organização certa; se o app já estiver aberto, ele só troca de tela, sem recarregar.

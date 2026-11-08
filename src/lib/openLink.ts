@@ -51,38 +51,6 @@ export function withOpenAction(to: string, acao: OpenLinkAction | undefined): st
   return u.pathname + u.search + u.hash;
 }
 
-/**
- * Destino de uma mensagem do service worker (`hnb:navigate`): caminho interno `/app/…` (ou URL
- * da mesma origem). Aceita `/app/abrir?org=&to=` (que `safeAppTarget` recusa de propósito),
- * desde que o `to` embutido também seja seguro. Qualquer outra coisa vira `null`.
- */
-export function safeSwNavigateTarget(url: unknown, origin: string): string | null {
-  if (typeof url !== "string" || !url) return null;
-  let path = url;
-  if (/^[a-z][a-z0-9+.-]*:/i.test(url)) {
-    try {
-      const u = new URL(url);
-      if (u.origin !== origin) return null;
-      path = u.pathname + u.search + u.hash;
-    } catch {
-      return null;
-    }
-  }
-  const direct = safeAppTarget(path);
-  if (direct) return direct;
-  if (!path.startsWith("/app/")) return null;
-  // eslint-disable-next-line no-control-regex
-  if (path.includes("\\") || /[\u0000-\u001f\u007f]/.test(path)) return null;
-  let u: URL;
-  try {
-    u = new URL(path, "https://app.invalid");
-  } catch {
-    return null;
-  }
-  if (u.origin !== "https://app.invalid" || u.pathname.toLowerCase() !== OPEN_ROUTE) return null;
-  return parseOpenLink(u.search) ? u.pathname + u.search : null;
-}
-
 export function buildOpenLink(org: string, to: string): string {
   return `${OPEN_ROUTE}?${new URLSearchParams({ org, to }).toString()}`;
 }

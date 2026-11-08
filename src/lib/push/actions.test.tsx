@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { disablePush, enablePush, resyncPush, type PushBackend } from "./actions";
 import { readLinkedOrgs, teardownPushOnLogout } from "./subscription";
 import { closeReadDeviceNotifications } from "./readOnDevice";
+import { listenToServiceWorker } from "./closeReadNotifications";
 import { installPushEnv, makeSub, uninstallPushEnv } from "@/test/pushEnv";
 
 const VAPID = "AQID"; // 3 bytes, só para o applicationServerKey
@@ -142,6 +143,22 @@ describe("logout", () => {
     const unsubscribe = vi.fn();
     await expect(teardownPushOnLogout({ unsubscribe, extraOrgIds: ["org1"] })).resolves.toBeUndefined();
     expect(unsubscribe).not.toHaveBeenCalled();
+  });
+});
+
+describe("mensagens do service worker", () => {
+  it("hnb:navigate leva ao destino validado (com acao=assumir) e descarta URL externa", () => {
+    const env = installPushEnv({ permission: "granted" });
+    const onNavigate = vi.fn();
+    const onResubscribed = vi.fn();
+    listenToServiceWorker(env.serviceWorker as never, { onNavigate, onResubscribed });
+    const url = "/app/abrir?org=o1&to=" + encodeURIComponent("/app/repasses?handoff=h1") + "&acao=assumir";
+    env.emit({ type: "hnb:navigate", url });
+    env.emit({ type: "hnb:navigate", url: "https://evil.com/app/painel" });
+    env.emit({ type: "hnb:push-resubscribed" });
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith(url);
+    expect(onResubscribed).toHaveBeenCalledTimes(1);
   });
 });
 

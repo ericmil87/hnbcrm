@@ -1,3 +1,4 @@
+import { closeReadNotifications } from "./closeReadNotifications";
 import { getPushRegistration } from "./subscription";
 
 /** Fecha, no aparelho, os avisos que já foram lidos (abrir o app / ler em outro lugar). */
@@ -47,9 +48,10 @@ export async function closeReadDeviceNotifications(opts: {
     const reg = await getPushRegistration(3000);
     if (!reg || typeof reg.getNotifications !== "function") return 0;
     const shown = await reg.getNotifications();
-    const toClose = selectReadNotifications(shown, opts);
-    toClose.forEach((n) => n.close());
-    return toClose.length;
+    const ids = selectReadNotifications(shown, opts)
+      .map((n) => identityOf(n.data).notificationId)
+      .filter((id): id is string => !!id);
+    return await closeReadNotifications(reg, { notificationIds: ids });
   } catch {
     return 0;
   }

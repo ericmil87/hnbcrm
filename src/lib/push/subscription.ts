@@ -59,7 +59,7 @@ export function blockedHelp(platform: InstallPlatform, userAgent = ""): string {
   if (platform === "ios") return "No iPhone, abra Ajustes › Notificações › HNBCRM e ative Permitir notificações.";
   if (platform === "android") return "No Chrome, toque no cadeado ao lado do endereço › Permissões › Notificações e escolha Permitir.";
   if (/Firefox/i.test(userAgent)) return "Clique no cadeado na barra de endereço, remova o bloqueio de Notificações e recarregue a página.";
-  return "Clique no ícone à esquerda do endereço (cadeado ou ajustes), em Notificações escolha Permitir e recarregue a página.";
+  return "Clique no ícone na barra de endereço (cadeado ou ajustes), em Notificações escolha Permitir e recarregue a página.";
 }
 
 /** Nome amigável do aparelho para "Meus aparelhos" (sem versão nem dado pessoal). */
