@@ -2106,9 +2106,13 @@ export const internalReceiveMessage = internalMutation({
       );
     }
 
-    // Telegram (F1, D20): relay para quem atende com a IA fora do comando.
-    // Barato quando não se aplica (lead/conversa sem humano com vínculo ativo).
-    await maybeBufferInboundForRelay(ctx, conversation, lead, messageId, now);
+    // Sino + Telegram (D20, B2): agrupa 20 s por membro para quem atende com a
+    // IA fora do comando (com ou sem Telegram). Nunca derruba o inbound.
+    try {
+      await maybeBufferInboundForRelay(ctx, conversation, lead, messageId, now);
+    } catch (e) {
+      console.error(`[relay] buffer da mensagem nova: ${e instanceof Error ? e.name : "erro"}`);
+    }
 
     // Instagram/Messenger: primeira inbound vinda de anúncio abre a janela de
     // 7 dias (Click-to-Messenger / Click-to-Direct). WhatsApp não passa aqui.
@@ -2645,8 +2649,14 @@ export const internalReceiveGroupMessage = internalMutation({
           conversationId: conversation._id,
           groupChatId: group._id,
           // B2: menções da mesma sala em 10 min (contados da primeira) viram
-          // um aviso só ("3 menções…"); o Telegram recebe a primeira da janela.
-          coalesce: { key: coalesceKeys.groupMention(group._id), windowMs: GROUP_MENTION_WINDOW_MS, render: mentionCopy },
+          // um aviso só no sino ("3 menções…").
+          // Cada menção é um evento: vai ao Telegram mesmo agrupada no sino (review B2).
+          coalesce: {
+            key: coalesceKeys.groupMention(group._id),
+            windowMs: GROUP_MENTION_WINDOW_MS,
+            render: mentionCopy,
+            telegramOnPatch: true,
+          },
         });
       }
     }

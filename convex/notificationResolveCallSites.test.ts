@@ -99,6 +99,17 @@ describe("call sites da porta resolveEntityNotifications", () => {
     expect(text.slice(i, i + 2000)).toMatch(/resolveEntityNotifications\([\s\S]*conversation_transferred_away/);
   });
 
+  test("B2: trocar o dono do lead resolve os avisos do dono anterior (3 portas)", () => {
+    const leads = src("leads.ts");
+    expect(leads.match(/await resolveLeadReassignedNotifications\(ctx, \{/g) ?? []).toHaveLength(2);
+    expect(leads.match(/eventType: "leadAssigned"/g) ?? []).toHaveLength(2);
+    const copilot = src("copilot.ts");
+    expect(copilot.match(/await resolveLeadReassignedNotifications\(ctx, \{/g) ?? []).toHaveLength(1);
+    expect(bodyOf("lib/notificationResolve.ts", "resolveLeadReassignedNotifications")).toMatch(
+      /resolveEntityNotifications\([\s\S]*lead_reassigned/
+    );
+  });
+
   test("B2: trocar responsável de tarefa resolve o task_assigned de quem saiu", () => {
     const body = bodyOf("tasks.ts", "notifyNewAssignees");
     expect(body).toMatch(/resolveEntityNotifications\([\s\S]*task_unassigned[\s\S]*task_assigned/);

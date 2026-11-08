@@ -78,3 +78,22 @@ describe("guard: texto do sino só pelo formatador", () => {
     expect(missing).toEqual([]);
   });
 });
+
+describe("guard: agrupamentos (review B2)", () => {
+  const src = (rel: string) => readFileSync(join(__dirname, rel), "utf8");
+  test("resposta sugerida agrupada não põe contagem no texto (attendant e groupAgent)", () => {
+    for (const f of ["attendant.ts", "groupAgent.ts"]) {
+      const text = src(f);
+      const i = text.indexOf("coalesceKeys.aiDraft(");
+      expect(i, f).toBeGreaterThan(-1);
+      const block = text.slice(i, i + 500);
+      expect(block, f).toMatch(/render: \(\) => notificationCopy\(/);
+      expect(block, f).not.toMatch(/count \}\)/);
+    }
+  });
+  test("menção em grupo vai ao Telegram a cada evento (telegramOnPatch)", () => {
+    const text = src("conversations.ts");
+    const i = text.indexOf("coalesceKeys.groupMention(");
+    expect(text.slice(i, i + 300)).toMatch(/telegramOnPatch: true/);
+  });
+});

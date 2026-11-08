@@ -888,7 +888,8 @@ export const internalCommitGroupAiSuggestion = internalMutation({
         coalesce: {
           key: coalesceKeys.aiDraft(conversation._id),
           telegramOnPatch: true,
-          render: (count) => notificationCopy({ type: "ai_draft_pending", groupName: group?.subject ?? "Grupo", count }),
+          // Sem contagem no texto (review B2).
+          render: () => notificationCopy({ type: "ai_draft_pending", groupName: group?.subject ?? "Grupo" }),
         },
       });
     }

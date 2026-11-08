@@ -44,9 +44,12 @@ async function liveHuman(ctx: { db: MutationCtx["db"] }, id: Id<"teamMembers"> |
 }
 
 /**
- * Who receives the relay, or null when the AI is (or may be) in command:
- * - lead assigned to a live human → that human (the attendant's eligibility
- *   condition 6 already keeps the AI out);
+ * Who receives the relay, or null when the AI is (or may be) in command.
+ * "O aviso segue quem atende a conversa" (review B2, D20 amended):
+ * - lead assigned to a live human (human in command: the attendant's
+ *   eligibility condition 6 keeps the AI out) → the conversation's live human
+ *   `assignedTo` when there is one (a transfer moves the alert), else the lead
+ *   owner;
  * - otherwise the conversation's human `assignedTo` (Central), but only when
  *   the AI is out of command: conversation paused, or no attendant at all for
  *   the org (AI off / attendant off).
@@ -58,13 +61,15 @@ export async function resolveRelayRecipient(
   now: number,
 ): Promise<Doc<"teamMembers"> | null> {
   if (conversation.kind === "group") return null;
-  const leadOwner = await liveHuman(ctx, lead?.assignedTo, conversation.organizationId);
-  if (leadOwner) return leadOwner;
-  const convOwner = await liveHuman(ctx, conversation.assignedTo, conversation.organizationId);
+  const orgId = conversation.organizationId;
+  const convOwner = await liveHuman(ctx, conversation.assignedTo, orgId);
+  const leadOwner =
+    lead?.assignedTo && lead.assignedTo === conversation.assignedTo ? convOwner : await liveHuman(ctx, lead?.assignedTo, orgId);
+  if (leadOwner) return convOwner ?? leadOwner;
   if (!convOwner) return null;
   const paused = conversation.aiPausedUntil !== undefined && conversation.aiPausedUntil > now;
   if (paused) return convOwner;
-  const org = await ctx.db.get(conversation.organizationId);
+  const org = await ctx.db.get(orgId);
   const noAttendant = !orgAiActive(org) || org?.settings.aiConfig?.attendantEnabled === false;
   return noAttendant ? convOwner : null;
 }
@@ -87,10 +92,29 @@ export async function maybeBufferInboundForRelay(
   const recipient = await resolveRelayRecipient(ctx, conversation, lead, now);
   if (!recipient) return;
 
-  const buffer = await ctx.db
+  // One indexed read over the conversation's open buffers (usually 0–1): the
+  // member's own, or a pre-B2 one (`linkId`, no `memberId`) of the same member,
+  // so the deploy window does not open a 2nd buffer (and a 2nd Telegram send).
+  const open = await ctx.db
     .query("telegramRelayBuffer")
-    .withIndex("by_conversation_and_member", (q) => q.eq("conversationId", conversation._id).eq("memberId", recipient._id))
-    .first();
+    .withIndex("by_conversation_and_member", (q) => q.eq("conversationId", conversation._id))
+    .take(10);
+  let buffer = open.find((b) => b.memberId === recipient._id) ?? null;
+  if (!buffer) {
+    for (const b of open) {
+      if (b.memberId || !b.linkId) continue;
+      if ((await ctx.db.get(b.linkId))?.teamMemberId === recipient._id) {
+        buffer = b;
+        break;
+      }
+    }
+  }
+  // A buffer whose flush never ran (lost job) would swallow messages until
+  // retention: past its window + margin it is dropped and a fresh one starts.
+  if (buffer && buffer.flushAt + RELAY_BUFFER_MS < now) {
+    await ctx.db.delete(buffer._id);
+    buffer = null;
+  }
   if (buffer) {
     if (buffer.messageIds.includes(messageId)) return;
     if (buffer.messageIds.length < RELAY_BUFFER_MAX_MESSAGES) {

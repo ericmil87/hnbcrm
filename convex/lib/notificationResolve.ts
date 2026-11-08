@@ -223,3 +223,40 @@ export async function markMemberNotificationsRead(
   }
   return total;
 }
+
+/**
+ * B2 (review): o dono do lead mudou → avisos de mensagem nova/resposta sugerida
+ * das conversas 1:1 do lead saem das não lidas do dono ANTERIOR. Exceção: a
+ * conversa cujo `assignedTo` próprio continua sendo ele (o aviso segue quem
+ * atende a conversa, `resolveRelayRecipient`). Até 20 conversas do lead.
+ */
+export async function resolveLeadReassignedNotifications(
+  ctx: MutationCtx,
+  args: {
+    lead: Pick<Doc<"leads">, "_id" | "organizationId">;
+    previousOwnerId: Id<"teamMembers"> | undefined;
+    nextOwnerId: Id<"teamMembers"> | undefined;
+    resolvedByMemberId?: Id<"teamMembers">;
+  }
+): Promise<number> {
+  const prev = args.previousOwnerId;
+  if (!prev || prev === args.nextOwnerId) return 0;
+  const conversations = await ctx.db
+    .query("conversations")
+    .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.lead._id))
+    .take(20);
+  let total = 0;
+  for (const c of conversations) {
+    if (c.organizationId !== args.lead.organizationId || c.kind === "group") continue;
+    if (c.assignedTo === prev) continue;
+    total += await resolveEntityNotifications(ctx, {
+      organizationId: args.lead.organizationId,
+      target: { conversationId: c._id },
+      memberId: prev,
+      resolvedByMemberId: args.resolvedByMemberId,
+      reason: "lead_reassigned",
+      types: ["new_message", "ai_draft_pending"],
+    });
+  }
+  return total;
+}

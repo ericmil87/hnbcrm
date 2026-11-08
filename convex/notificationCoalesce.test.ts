@@ -14,6 +14,7 @@ import { coalesceKeys, createNotification, GROUP_MENTION_WINDOW_MS } from "./lib
 import { notificationCopy } from "./lib/notificationCopy";
 import { RELAY_BUFFER_MS } from "./lib/telegramRelay";
 import { transferConversationCore } from "./lib/conversationTransfer";
+import { messageText } from "./lib/telegramContext";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -259,7 +260,7 @@ describe("new_message por membro, agrupado", () => {
 });
 
 describe("group_mention: janela de 10 min", () => {
-  test("menções na janela agrupam (sem 2º Telegram); depois da janela nasce outra", async () => {
+  test("menções na janela agrupam no sino, mas cada uma vai ao Telegram; depois da janela nasce outra", async () => {
     const s = await seed();
     await link(s, s.seller);
     const groupChatId = await t.run((ctx) =>
@@ -275,7 +276,7 @@ describe("group_mention: janela de 10 min", () => {
         await createNotification(ctx, {
           organizationId: s.organizationId, memberId: s.seller.memberId, type: "group_mention", ...render(1),
           groupChatId,
-          coalesce: { key: coalesceKeys.groupMention(groupChatId), windowMs: GROUP_MENTION_WINDOW_MS, render },
+          coalesce: { key: coalesceKeys.groupMention(groupChatId), windowMs: GROUP_MENTION_WINDOW_MS, render, telegramOnPatch: true },
         });
       });
     await mention();
@@ -287,14 +288,14 @@ describe("group_mention: janela de 10 min", () => {
     let bell = await bellOf(s.seller.memberId);
     expect(bell).toHaveLength(1);
     expect(bell[0].title).toBe("3 menções a você no grupo Sementes");
-    expect(tgSends()).toHaveLength(1);
+    expect(tgSends()).toHaveLength(3);
     vi.advanceTimersByTime(2 * 60_000); // 11 min da primeira
     await mention();
     await drain();
     bell = await bellOf(s.seller.memberId);
     expect(bell).toHaveLength(2);
     expect(bell[0].title).toBe("Mencionaram você no grupo Sementes");
-    expect(tgSends()).toHaveLength(2);
+    expect(tgSends()).toHaveLength(4);
   });
 });
 
@@ -350,5 +351,123 @@ describe("transferências resolvem avisos de quem saiu", () => {
     expect(resolved.readAt).toBeDefined();
     expect(resolved.data?.resolvedReason).toBe("task_unassigned");
     expect((await bellOf(s.other.memberId))[0].readAt).toBeUndefined();
+  });
+});
+
+describe("review B2", () => {
+  test("o aviso segue quem atende a conversa: A dono do lead e da conversa, transfere para B → avisa B", async () => {
+    const s = await seed({ leadTitle: "Ana" });
+    await t.run(async (ctx) => {
+      const conversation = (await ctx.db.get(s.conversationId))!;
+      const actor = (await ctx.db.get(s.seller.memberId))!;
+      const toMember = (await ctx.db.get(s.other.memberId))!;
+      await transferConversationCore(ctx, { conversation, toDept: null, toMember, actor, now: Date.now() });
+    });
+    await inbound(s, "oi?");
+    await drain();
+    expect((await bellOf(s.other.memberId)).map((n) => n.type)).toContain("new_message");
+    expect((await bellOf(s.seller.memberId)).map((n) => n.type)).not.toContain("new_message");
+  });
+
+  test("trocar o dono do lead resolve os avisos do dono anterior, exceto na conversa ainda atribuída a ele", async () => {
+    const s = await seed({ leadTitle: "Ana" });
+    await t.run((ctx) => ctx.db.patch(s.conversationId, { assignedTo: undefined }));
+    await inbound(s, "oi");
+    await drain();
+    // Uma 2ª conversa do lead ainda atribuída ao dono anterior: fica não lida.
+    const kept = await t.run(async (ctx) => {
+      const now = Date.now();
+      const conv = await ctx.db.insert("conversations", {
+        organizationId: s.organizationId, leadId: s.leadId, channel: "instagram", status: "active",
+        assignedTo: s.seller.memberId, messageCount: 0, createdAt: now, updatedAt: now,
+      });
+      await createNotification(ctx, {
+        organizationId: s.organizationId, memberId: s.seller.memberId, type: "new_message",
+        ...notificationCopy({ type: "new_message", contactName: "Ana", count: 1 }), conversationId: conv,
+      });
+      return conv;
+    });
+    await t.withIdentity({ subject: `${s.admin.userId}|s1` }).mutation(api.leads.assignLead, {
+      leadId: s.leadId, assignedTo: s.other.memberId,
+    });
+    const seller = await bellOf(s.seller.memberId);
+    const byConv = (id: Id<"conversations">) => seller.find((n) => n.conversationId === id)!;
+    expect(byConv(s.conversationId).readAt).toBeDefined();
+    expect(byConv(s.conversationId).data?.resolvedReason).toBe("lead_reassigned");
+    expect(byConv(kept).readAt).toBeUndefined();
+  });
+
+  test("resposta sugerida agrupada não mostra contagem no texto", async () => {
+    const s = await seed({ leadTitle: "Ana" });
+    const draft = () =>
+      t.run((ctx) =>
+        createNotification(ctx, {
+          organizationId: s.organizationId, memberId: s.seller.memberId, type: "ai_draft_pending",
+          ...notificationCopy({ type: "ai_draft_pending", contactName: "Ana" }), conversationId: s.conversationId,
+          coalesce: {
+            key: coalesceKeys.aiDraft(s.conversationId),
+            telegramOnPatch: true,
+            render: () => notificationCopy({ type: "ai_draft_pending", contactName: "Ana" }),
+          },
+        })
+      );
+    await draft();
+    await draft();
+    const bell = await bellOf(s.seller.memberId);
+    expect(bell).toHaveLength(1);
+    expect(bell[0].title).toBe("A IA sugeriu uma resposta para Ana");
+  });
+
+  test("buffer antigo (linkId) da mesma conversa e membro é reaproveitado no deploy: 1 envio ao Telegram", async () => {
+    const s = await seed({ leadTitle: "Ana" });
+    const linkId = await link(s, s.seller);
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const m = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "inbound",
+        senderType: "contact", content: "antes", contentType: "text", isInternal: false, createdAt: now,
+      });
+      const bufferId = await ctx.db.insert("telegramRelayBuffer", {
+        organizationId: s.organizationId, conversationId: s.conversationId, linkId, messageIds: [m], flushAt: now + RELAY_BUFFER_MS,
+      });
+      await ctx.scheduler.runAfter(RELAY_BUFFER_MS, internal.telegram.internalFlushRelayBuffer, { bufferId });
+    });
+    await inbound(s, "depois");
+    const buffers = await t.run((ctx) => ctx.db.query("telegramRelayBuffer").collect());
+    expect(buffers).toHaveLength(1);
+    expect(buffers[0].messageIds).toHaveLength(2);
+    await drain();
+    expect(tgSends()).toHaveLength(1);
+    expect((await bellOf(s.seller.memberId))[0].title).toBe("2 mensagens novas de Ana");
+  });
+
+  test("buffer cujo flush se perdeu não engole mensagens: vencido, recomeça", async () => {
+    const s = await seed({ leadTitle: "Ana" });
+    await t.run((ctx) =>
+      ctx.db.insert("telegramRelayBuffer", {
+        organizationId: s.organizationId, conversationId: s.conversationId, memberId: s.seller.memberId, messageIds: [],
+        flushAt: Date.now() - 2 * RELAY_BUFFER_MS,
+      })
+    );
+    await inbound(s, "oi");
+    await drain();
+    expect((await bellOf(s.seller.memberId)).map((n) => n.title)).toEqual(["Mensagem nova de Ana"]);
+  });
+
+  test("tradução só na prévia do cartão; histórico/contexto do copiloto fica com o original", async () => {
+    const s = await seed({ leadTitle: "John" });
+    await t.run(async (ctx) => {
+      const id = await ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "inbound",
+        senderType: "contact", content: "How much is it?", translatedText: "Quanto custa?", contentType: "text",
+        isInternal: false, metadata: { translation: { status: "done", role: "inbound", sourceLang: "en", targetLang: "pt-BR", at: 1 } },
+        createdAt: Date.now(),
+      });
+      const m = (await ctx.db.get(id))!;
+      expect(await messageText(ctx.db, m)).toBe("How much is it?");
+      expect(await messageText(ctx.db, m, {})).toBe("Quanto custa? (traduzido do inglês)");
+      // Equipe que fala inglês: sem sufixo (a org define o idioma da equipe).
+      expect(await messageText(ctx.db, m, { teamLanguage: "en" })).toBe("Quanto custa?");
+    });
   });
 });

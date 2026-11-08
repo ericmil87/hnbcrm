@@ -58,6 +58,7 @@ import {
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { notifyLeadAssigned } from "./lib/notify";
+import { resolveLeadReassignedNotifications } from "./lib/notificationResolve";
 import { resolvePeriodBound, toolTime, type ToolTime } from "./lib/copilotDates";
 import { safeTimezone } from "./lib/promptDateTime";
 import {
@@ -1505,6 +1506,13 @@ async function runWriteTool(
       }
 
       await ctx.db.patch(lead._id, { assignedTo: target._id, lastActivityAt: now, updatedAt: now });
+      // B2 (review): o dono anterior não fica com avisos das conversas do lead.
+      await resolveLeadReassignedNotifications(ctx, {
+        lead,
+        previousOwnerId: lead.assignedTo,
+        nextOwnerId: target._id,
+        resolvedByMemberId: member._id,
+      });
       await audit({
         entityType: "lead",
         entityId: lead._id,

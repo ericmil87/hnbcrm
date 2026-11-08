@@ -2,7 +2,7 @@
  * Formatador ÚNICO de título/corpo das notificações do sino (B2).
  *
  * Todo `createNotification` monta `title`/`body` por aqui (guard
- * `notificationCopyCallSites.test.ts`). Regras:
+ * `notificationTypesParity.test.ts`). Regras:
  * - PT-BR com o vocabulário do app (`src/lib/vocab.ts`: "pedido de ajuda",
  *   "Resposta sugerida", "Conversas"), sem aspas misturadas.
  * - Datas/horas no FUSO DA ORG (`settings.timezone`; inválido/ausente =
@@ -222,15 +222,20 @@ function languageLower(code: string): string {
  * (`metadata.translation.status === "done"` + `translatedText`) com
  * "(traduzido do inglês)"; senão o original. Mídia vira rótulo curto.
  */
-export function translatedPreview(m: Pick<PreviewMessage, "translatedText" | "metadata">): string | undefined {
+export function translatedPreview(
+  m: Pick<PreviewMessage, "translatedText" | "metadata">,
+  /** Idioma da equipe da org (`resolveTranslationSettings(org).teamLanguage`); ausente = pt-BR. */
+  teamLanguage?: string
+): string | undefined {
   const t = m.metadata?.translation as { status?: string; sourceLang?: string } | undefined;
   if (t?.status !== "done" || !m.translatedText?.trim()) return undefined;
-  const lang = t.sourceLang && !sameLanguage(t.sourceLang, DEFAULT_TEAM_LANGUAGE) ? t.sourceLang : undefined;
+  const team = teamLanguage || DEFAULT_TEAM_LANGUAGE;
+  const lang = t.sourceLang && !sameLanguage(t.sourceLang, team) ? t.sourceLang : undefined;
   return lang ? `${m.translatedText.trim()} (traduzido do ${languageLower(lang)})` : m.translatedText.trim();
 }
 
-export function messagePreview(m: PreviewMessage): string {
-  const translated = translatedPreview(m);
+export function messagePreview(m: PreviewMessage, teamLanguage?: string): string {
+  const translated = translatedPreview(m, teamLanguage);
   if (translated) return translated;
   const text = m.content?.trim() ?? "";
   switch (m.contentType) {

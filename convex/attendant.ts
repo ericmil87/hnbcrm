@@ -3095,7 +3095,8 @@ export const internalCommitAiSuggestion = internalMutation({
             coalesce: {
               key: coalesceKeys.aiDraft(conversation._id),
               telegramOnPatch: true,
-              render: (count) => notificationCopy({ type: "ai_draft_pending", contactName: lead.title, count }),
+              // Sem contagem no texto: cada aviso é "a resposta pendente agora" (review B2).
+              render: () => notificationCopy({ type: "ai_draft_pending", contactName: lead.title }),
             },
           });
         }

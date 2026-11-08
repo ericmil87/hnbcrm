@@ -28,6 +28,7 @@ import {
 } from "./lib/leadStageMove";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { notifyLeadAssigned } from "./lib/notify";
+import { resolveLeadReassignedNotifications } from "./lib/notificationResolve";
 
 // Get leads for organization
 export const getLeads = query({
@@ -634,6 +635,14 @@ export const assignLead = mutation({
       organizationId: lead.organizationId,
       event: "lead.assigned",
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
+    });
+
+    // B2 (review): o dono anterior não fica com avisos das conversas do lead.
+    await resolveLeadReassignedNotifications(ctx, {
+      lead,
+      previousOwnerId: oldAssignedTo,
+      nextOwnerId: args.assignedTo,
+      resolvedByMemberId: userMember._id,
     });
 
     // Sino (B2) + e-mail
@@ -1362,6 +1371,14 @@ export const internalAssignLead = internalMutation({
       organizationId: lead.organizationId,
       event: "lead.assigned",
       payload: { leadId: args.leadId, oldAssignedTo, newAssignedTo: args.assignedTo },
+    });
+
+    // B2 (review): o dono anterior não fica com avisos das conversas do lead.
+    await resolveLeadReassignedNotifications(ctx, {
+      lead,
+      previousOwnerId: oldAssignedTo,
+      nextOwnerId: args.assignedTo,
+      resolvedByMemberId: teamMember._id,
     });
 
     // Sino (B2) + e-mail
