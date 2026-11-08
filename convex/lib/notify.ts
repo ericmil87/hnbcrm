@@ -130,6 +130,7 @@ export async function filterMembersOfOrg(
  * - O membro TEM que ser da organização da notificação (isolamento multi-tenant).
  * - Só notifica membros humanos (o sino é da UI; membros IA não têm feed — P0.2 fora de escopo).
  * - Não notifica o próprio ator (actorId === memberId vira no-op).
+ * - Membro removido (`isMembershipRevoked`) ou sem `userId` é recusado (B1).
  * - Respeita `notificationPreferences` do destinatário (opt-out: flag === false pula).
  */
 export async function createNotification(
@@ -146,6 +147,9 @@ export async function createNotification(
     campaignId?: Id<"campaigns">;
     groupPostId?: Id<"groupPosts">;
     groupChatId?: Id<"groupChats">;
+    /** B1: canal de origem (aviso de sessão perdida) — índice da porta "resolvido". */
+    channelConfigId?: Id<"channelConfigs">;
+    metaConnectionId?: Id<"metaConnections">;
     /** Carga do botão de ação do item (oportunidade de grupo, digest). */
     data?: Record<string, unknown>;
     actorId?: Id<"teamMembers">;
@@ -155,6 +159,8 @@ export async function createNotification(
   const member = await ctx.db.get(args.memberId);
   if (!member || member.type !== "human") return;
   if (member.organizationId !== args.organizationId) return;
+  // B1: removido da org ou pendente de convite (sem conta) não recebe nem acumula.
+  if (isMembershipRevoked(member) || !member.userId) return;
 
   const prefs = await ctx.db
     .query("notificationPreferences")
@@ -175,6 +181,8 @@ export async function createNotification(
     campaignId: args.campaignId,
     groupPostId: args.groupPostId,
     groupChatId: args.groupChatId,
+    channelConfigId: args.channelConfigId,
+    metaConnectionId: args.metaConnectionId,
     data: args.data,
     conversationId: args.conversationId,
     actorId: args.actorId,

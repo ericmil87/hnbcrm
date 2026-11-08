@@ -27,6 +27,7 @@
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
 import { readAgentTexts } from "./lib/agentProfileTexts";
+import { draftNotificationAlreadyPending } from "./lib/notificationResolve";
 import {
   internalAction,
   internalMutation,
@@ -865,17 +866,13 @@ export const internalCommitGroupAiSuggestion = internalMutation({
       "inbox",
       "reply"
     )) {
-      const unread = await ctx.db
-        .query("notifications")
-        .withIndex("by_member_and_read", (q) =>
-          q.eq("memberId", replier._id).eq("readAt", undefined)
-        )
-        .order("desc")
-        .take(50);
+      // Dedupe (B1): aviso NÃO LIDO E rascunho ainda pendente (outro que não este).
       if (
-        unread.some(
-          (n) => n.type === "ai_draft_pending" && n.conversationId === conversation._id
-        )
+        await draftNotificationAlreadyPending(ctx, {
+          memberId: replier._id,
+          conversationId: conversation._id,
+          excludeMessageId: messageId,
+        })
       ) {
         continue;
       }

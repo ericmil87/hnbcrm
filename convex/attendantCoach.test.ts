@@ -818,7 +818,7 @@ describe("notificação ai_draft_pending", () => {
     expect(pendingNotifs[0].memberId).toBe(seed.sellerId);
     expect(pendingNotifs[0].conversationId).toBe(seed.conversationId);
 
-    // Segundo rascunho com a notificação anterior ainda NÃO LIDA → dedupe.
+    // Regenerar (B1): o aviso do rascunho antigo é resolvido e o novo avisa de novo.
     vi.useFakeTimers();
     const [firstDraft] = await draftsOf(t, seed);
     await asAdmin.mutation(api.attendant.requestAiDraft, {
@@ -843,13 +843,15 @@ describe("notificação ai_draft_pending", () => {
       drafts.map((d) => (d.metadata!.aiDraft as { status: string }).status).sort()
     ).toEqual(["pending", "revised"]);
 
-    // ...mas a notificação não empilhou (a anterior segue não-lida).
+    // ...e fica UMA não lida (a do rascunho antigo foi resolvida, não empilhou).
     pendingNotifs = await t.run(async (ctx) =>
       (await ctx.db.query("notifications").collect()).filter(
         (n) => n.type === "ai_draft_pending"
       )
     );
-    expect(pendingNotifs).toHaveLength(1); // dedupado
+    expect(pendingNotifs).toHaveLength(2);
+    expect(pendingNotifs.filter((n) => n.readAt === undefined)).toHaveLength(1);
+    expect(pendingNotifs.filter((n) => n.readAt !== undefined)[0].data?.resolvedReason).toBe("draft_regenerated");
   });
 });
 

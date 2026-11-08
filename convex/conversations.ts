@@ -1,4 +1,5 @@
 import { v, ConvexError, type Infer } from "convex/values";
+import { resolveEntityNotifications } from "./lib/notificationResolve";
 import { foldForSearch } from "./lib/searchFold";
 import { searchContactsByText } from "./lib/contactTextSearch";
 import { insertFileRow } from "./lib/storageUsage";
@@ -3326,7 +3327,18 @@ export const markConversationRead = mutation({
     const conversation = await ctx.db.get(args.conversationId);
     if (!conversation) throw new Error("Conversation not found");
 
-    await requirePermission(ctx, conversation.organizationId, "inbox", "view_all");
+    const reader = await requirePermission(ctx, conversation.organizationId, "inbox", "view_all");
+
+    // B1: abrir a conversa lê os avisos DELA para ESTE membro (mensagem nova,
+    // transferência, rascunho) — os de outros membros ficam como estão.
+    await resolveEntityNotifications(ctx, {
+      organizationId: conversation.organizationId,
+      target: { conversationId: args.conversationId },
+      memberId: reader._id,
+      resolvedByMemberId: reader._id,
+      reason: "conversation_opened",
+      types: ["new_message", "conversation_transferred", "ai_draft_pending"],
+    });
 
     const now = Date.now();
     const lastReadAt = conversation.lastReadAt ?? 0;

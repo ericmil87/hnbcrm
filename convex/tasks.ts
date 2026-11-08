@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { resolveTaskNotifications } from "./lib/notificationResolve";
 import { query, mutation, internalQuery, internalMutation, type QueryCtx, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
@@ -1565,6 +1566,7 @@ export const cancelTask = mutation({
       status: "cancelled",
       updatedAt: now,
     });
+    await resolveTaskNotifications(ctx, task, "task_cancelled", userMember._id);
 
     // Log audit entry
     await ctx.db.insert("auditLogs", {
@@ -1731,6 +1733,7 @@ export const deleteTask = mutation({
       await ctx.db.delete(comment._id);
     }
 
+    await resolveTaskNotifications(ctx, task, "task_deleted", userMember._id);
     await ctx.db.delete(args.taskId);
 
     return null;
@@ -1822,6 +1825,7 @@ export const bulkUpdateTasks = mutation({
         await applyCompletion(ctx, task, userMember, now);
       } else if (args.action === "cancel") {
         await ctx.db.patch(taskId, { status: "cancelled", updatedAt: now });
+        await resolveTaskNotifications(ctx, task, "task_cancelled", userMember._id);
         await syncFollowUpForTask(ctx, taskId);
       } else if (args.action === "assign") {
         await ctx.db.patch(taskId, {
@@ -1847,6 +1851,7 @@ export const bulkUpdateTasks = mutation({
         for (const comment of comments) {
           await ctx.db.delete(comment._id);
         }
+        await resolveTaskNotifications(ctx, task, "task_deleted", userMember._id);
         await ctx.db.delete(task._id);
       }
     }
@@ -2397,6 +2402,7 @@ export const internalDeleteTask = internalMutation({
       await ctx.db.delete(comment._id);
     }
 
+    await resolveTaskNotifications(ctx, task, "task_deleted", teamMember._id);
     await ctx.db.delete(args.taskId);
 
     return null;
@@ -2520,6 +2526,7 @@ export const internalBulkUpdate = internalMutation({
         await applyCompletion(ctx, task, teamMember, now);
       } else if (args.action === "cancel") {
         await ctx.db.patch(taskId, { status: "cancelled", updatedAt: now });
+        await resolveTaskNotifications(ctx, task, "task_cancelled", teamMember._id);
         await syncFollowUpForTask(ctx, taskId);
       } else if (args.action === "assign") {
         const assignees = args.assignedTo
@@ -2548,6 +2555,7 @@ export const internalBulkUpdate = internalMutation({
         for (const comment of comments) {
           await ctx.db.delete(comment._id);
         }
+        await resolveTaskNotifications(ctx, task, "task_deleted", teamMember._id);
         await ctx.db.delete(task._id);
       }
     }

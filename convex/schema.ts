@@ -2300,6 +2300,11 @@ const applicationTables = {
     campaignId: v.optional(v.id("campaigns")),
     groupPostId: v.optional(v.id("groupPosts")),
     groupChatId: v.optional(v.id("groupChats")),
+    // B1 (aditivo): canal de origem do aviso de sessão perdida, para a porta
+    // `resolveEntityNotifications` achar por índice. Avisos antigos só têm o id
+    // em `data.channelConfigId` / `data.metaConnectionId` (sem índice).
+    channelConfigId: v.optional(v.id("channelConfigs")),
+    metaConnectionId: v.optional(v.id("metaConnections")),
     // Carga extra do item do sino (F4): `participantKey` e `suggestedDm` da
     // oportunidade, `hours` do digest. Nunca é instrução — é só o que o botão
     // da notificação precisa para agir.
@@ -2312,7 +2317,15 @@ const applicationTables = {
     .index("by_member_and_read", ["memberId", "readAt"])
     .index("by_organization", ["organizationId"])
     // Retenção (perf Convex I/O, fase 4a): lidas há mais de N dias, deployment-wide.
-    .index("by_read_at", ["readAt"]),
+    // B1: um índice só para as duas pontas — lidas (`readAt` > 0, ordem por `readAt`) e
+    // NÃO lidas velhas (`readAt` ausente + `createdAt` antigo). Substitui `by_read_at`.
+    .index("by_read_at_and_created", ["readAt", "createdAt"])
+    // B1: porta "resolvido" — não lidas por entidade (readAt ausente = não lida).
+    .index("by_conversation_and_read", ["conversationId", "readAt"])
+    .index("by_handoff_and_read", ["handoffId", "readAt"])
+    .index("by_task_and_read", ["taskId", "readAt"])
+    .index("by_channel_config_and_read", ["channelConfigId", "readAt"])
+    .index("by_meta_connection_and_read", ["metaConnectionId", "readAt"]),
 
   // Calendar Events
   calendarEvents: defineTable({

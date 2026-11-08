@@ -38,6 +38,7 @@ export { bridgeFetchJson };
 import { pauseCampaignsForChannel } from "./lib/campaignHooks";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
 import { deleteFileRow } from "./lib/storageUsage";
+import { resolveEntityNotifications } from "./lib/notificationResolve";
 import {
   buildBridgeConnectRequest,
   buildBridgeHmacConfigRequest,
@@ -1945,6 +1946,16 @@ export const internalRecordHealthCheck = internalMutation({
       ] as const) {
         if (config[key] !== undefined) patch[key] = undefined;
       }
+    }
+    // B1: sessão voltou → o aviso "perdeu a conexão" deixa de valer (lido, com motivo).
+    // Só se um alerta foi emitido (o tick de 15 min não paga leitura à toa).
+    if (connected && config.bridgeSessionAlertedAt !== undefined) {
+      await resolveEntityNotifications(ctx, {
+        organizationId: config.organizationId,
+        target: { channelId: args.configId },
+        reason: "channel_reconnected",
+        types: ["channel_session_lost"],
+      });
     }
     const observableChange = Object.keys(patch).length > 0;
     // "testado em …" do card: com mudança, carimba junto; sem mudança, só

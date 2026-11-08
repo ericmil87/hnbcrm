@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Avisos do sino que se resolvem sozinhos
+
+- Quando o assunto de um aviso é resolvido em outro lugar, o aviso do sino passa a ficar lido sozinho: abrir a conversa (mensagem nova, transferência e rascunho daquela conversa, só os seus), assumir ou devolver um pedido de ajuda (some para todos que receberam), aprovar, descartar ou pedir outro rascunho da IA, concluir ou excluir uma tarefa (vence em breve, atrasada, atribuída) e reconectar o WhatsApp ou a Página do Instagram/Messenger.
+- O aviso "Rascunho da IA aguardando revisão" não deixa mais de aparecer depois que você revisa um rascunho direto na conversa: o próximo rascunho avisa de novo.
+- Quem foi removido da equipe, ou ainda não aceitou o convite, deixa de receber avisos; o que estava por ler dele não reaparece se voltar. Avisos não lidos há mais de 30 dias passam a ficar lidos.
+
 ### Instalar o app e rascunho da mensagem
 
 - A partir do 3º acesso aparece um convite para instalar o HNBCRM: no Android e no computador, o botão **Instalar app**; no iPhone e no iPad (Safari), uma folha com 3 passos (Compartilhar, Adicionar à Tela de Início, abrir pelo ícone). Se você dispensar, ele só volta depois de 30 dias, e nunca aparece dentro do app instalado.
