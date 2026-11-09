@@ -279,6 +279,9 @@ describe("revisão B1: backfill sem audit, cliente restrito, limites das ops", (
     const res = await t.mutation(internal.opsBilling.internalBackfillLegacy, { dryRun: false });
     expect(res.changed).toBe(1);
     expect((await getOrg(t, a))?.billing?.status).toBe("legacy");
+    // Sem noticeAt explícito: nenhuma data de aviso é inventada.
+    expect((await getOrg(t, a))?.billing?.legacyNoticeAt).toBeUndefined();
+    expect((await getOrg(t, a))?.billing?.legacyUntil).toBeUndefined();
     expect(await audits(t, a)).toHaveLength(0);
   });
 

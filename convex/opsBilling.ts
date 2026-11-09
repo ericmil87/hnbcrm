@@ -201,7 +201,8 @@ export const internalGrantCredits = internalMutation({
 });
 
 /**
- * Orgs sem `billing` viram `legacy` (sem plano). Com `noticeAt` informado, orgs que já
+ * Orgs sem `billing` viram `legacy` (sem plano). `legacyNoticeAt`/`legacyUntil` só são
+ * gravados com `noticeAt` EXPLÍCITO; sem ele fica só `{status:"legacy"}`. Com `noticeAt`, orgs que já
  * são `legacy` mas sem `legacyNoticeAt` (as criadas pelo cadastro novo) também recebem
  * a data do aviso. SEM audit por org (`audit:"none"` na porta): o Histórico de cada org
  * não pode mostrar uma linha de billing antes do aviso; a contagem sai no retorno.
@@ -253,7 +254,13 @@ export const internalBackfillLegacy = internalMutation({
       void _u;
       await applySubscriptionChange(ctx, {
         organizationId: org._id,
-        patch: { billing: { ...base, status: "legacy", legacyNoticeAt: noticeAt, legacyUntil } },
+        // Sem `noticeAt` explícito grava só `{status:"legacy"}`: o aviso dos 60 dias é uma
+        // decisão de data do operador, nunca um padrão "agora".
+        patch: {
+          billing: fillNotice
+            ? { ...base, status: "legacy", legacyNoticeAt: noticeAt, legacyUntil }
+            : { ...base, status: "legacy" },
+        },
         source: "ops",
         reason: "internalBackfillLegacy",
         audit: "none",
