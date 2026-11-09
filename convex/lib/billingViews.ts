@@ -7,6 +7,7 @@ import type { Doc } from "../_generated/dataModel";
 import { resolveEntitlements, type Entitlements } from "./entitlements";
 import { GATED_MODULES, PLANS, lowestPlanWithModule, type BillingStatus, type GatedModule, type PlanKey } from "./plans";
 import { monthlyPriceBrl } from "./billingMath";
+import { maskDigitRuns } from "./telegramFormat";
 
 export type OrgForBilling = Pick<Doc<"organizations">, "settings" | "billing">;
 
@@ -98,6 +99,17 @@ export function initialsOf(name: string | undefined | null): string {
     .slice(0, 3)
     .map((p) => `${p[0]!.toUpperCase()}.`)
     .join(" ");
+}
+
+/**
+ * Nome de contato seguro para o extrato: o campo livre (nome do contato ou título do
+ * lead) pode ser um telefone ou e-mail. E-mail vira "Contato"; sequências de dígitos
+ * são mascaradas (`maskDigitRuns`).
+ */
+export function safeContactName(raw: string | undefined | null): string {
+  const name = (raw ?? "").trim();
+  if (!name || name.includes("@")) return "Contato";
+  return maskDigitRuns(name).trim() || "Contato";
 }
 
 /** Valida o teto do excedente informado pelo cliente (R$ inteiro, 1..100000). */

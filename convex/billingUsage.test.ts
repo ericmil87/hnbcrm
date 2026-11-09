@@ -70,7 +70,7 @@ const ACTIVE: Billing = {
 describe("getMyEntitlements", () => {
   test("legacy: limits null, tudo liberado, sem plano", async () => {
     const s = await seedOrg("legacy-org");
-    const e = await as(s.agent.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    const e = (await as(s.agent.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId }))!;
     expect(e).toMatchObject({ mode: "legacy", planId: null, planLabel: null, limits: null, readOnly: false });
     expect(Object.values(e.features).every(Boolean)).toBe(true);
     expect(e.minPlanFor.central).toBe("empresa");
@@ -79,7 +79,7 @@ describe("getMyEntitlements", () => {
 
   test("agente vê plano e limites, mas nunca preço, priceLock nem teto", async () => {
     const s = await seedOrg("paid-org", { ...ACTIVE, overage: { enabled: true, capBrl: 200, updatedAt: 1 } });
-    const agent = await as(s.agent.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    const agent = (await as(s.agent.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId }))!;
     expect(agent).toMatchObject({
       mode: "active",
       planId: "profissional",
@@ -91,20 +91,20 @@ describe("getMyEntitlements", () => {
     expect(JSON.stringify(agent)).not.toContain("priceLock");
     expect(agent.features).toMatchObject({ groups: true, central: false });
 
-    const admin = await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    const admin = (await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId }))!;
     expect(admin.overage.capBrl).toBe(200);
     expect(admin.pricing).toEqual({ listMonthlyBrl: 497, priceLock: { kind: "frozen", monthlyBrl: 300 } });
   });
 
   test("teste, read_only e canceled", async () => {
     const trial = await seedOrg("trial-org", { plan: "essencial", status: "trial", trialEndsAt: 123, updatedAt: 1 });
-    const e = await as(trial.admin.userId).query(api.billing.getMyEntitlements, { organizationId: trial.organizationId });
+    const e = (await as(trial.admin.userId).query(api.billing.getMyEntitlements, { organizationId: trial.organizationId }))!;
     expect(e).toMatchObject({ mode: "trial", planId: "profissional", trialEndsAt: 123, readOnly: false });
     expect(e.limits?.attendances).toBe(300);
     expect(e.pricing?.listMonthlyBrl).toBeNull();
 
     const ro = await seedOrg("ro-org", { plan: "escala", status: "read_only", updatedAt: 1 });
-    const r = await as(ro.admin.userId).query(api.billing.getMyEntitlements, { organizationId: ro.organizationId });
+    const r = (await as(ro.admin.userId).query(api.billing.getMyEntitlements, { organizationId: ro.organizationId }))!;
     expect(r).toMatchObject({ mode: "read_only", readOnly: true, planId: "escala" });
     // O que o plano dá segue visível (read_only não "some" com os módulos).
     expect(r.features.groups).toBe(true);
@@ -113,7 +113,9 @@ describe("getMyEntitlements", () => {
   test("não-membro e outra org não leem", async () => {
     const a = await seedOrg("org-a", ACTIVE);
     const b = await seedOrg("org-b", ACTIVE);
-    await expect(as(b.admin.userId).query(api.billing.getMyEntitlements, { organizationId: a.organizationId })).rejects.toThrow();
+    // Não-membro (outra org) recebe null, sem lançar (deep links entre orgs).
+    expect(await as(b.admin.userId).query(api.billing.getMyEntitlements, { organizationId: a.organizationId })).toBeNull();
+    expect(await t.query(api.billing.getMyEntitlements, { organizationId: a.organizationId })).toBeNull();
   });
 });
 
@@ -279,7 +281,14 @@ describe("listAttendances", () => {
         updatedAt: now,
       } as never);
       await ctx.db.insert("aiAttendances", { organizationId: s.organizationId, month: MONTH, contactKey: String(contactId), conversationId, firstAt: now, billing: "overage", unitPriceBrlCents: 49 });
-      await ctx.db.insert("aiAttendances", { organizationId: s.organizationId, month: MONTH, contactKey: "chave-solta", conversationId, firstAt: now, billing: "included" });
+      await ctx.db.insert("aiAttendances", { organizationId: s.organizationId, month: MONTH, contactKey: "chave-solta", conversationId, firstAt: now + 1, billing: "included" });
+      // Lead sem contato cujo título é um telefone / um e-mail: nunca sai cru.
+      const board = await ctx.db.insert("boards", { organizationId: s.organizationId, name: "B", color: "#000", isDefault: true, order: 0, createdAt: now, updatedAt: now });
+      const stage = await ctx.db.insert("stages", { organizationId: s.organizationId, boardId: board, name: "S", color: "#000", order: 0, isClosedWon: false, isClosedLost: false, createdAt: now, updatedAt: now });
+      for (const [title, at] of [["5585999990002", now + 2], ["fulano@exemplo.com.br", now + 3]] as const) {
+        const leadId = await ctx.db.insert("leads", { organizationId: s.organizationId, title, boardId: board, stageId: stage, value: 0, currency: "BRL", priority: "medium", temperature: "cold", tags: [], customFields: {}, conversationStatus: "active", lastActivityAt: now, createdAt: now, updatedAt: now });
+        await ctx.db.insert("aiAttendances", { organizationId: s.organizationId, month: MONTH, contactKey: String(leadId), conversationId, firstAt: at, billing: "legacy" });
+      }
     });
   }
 
@@ -288,7 +297,13 @@ describe("listAttendances", () => {
     await seedLedger(s);
     const opts = { numItems: 10, cursor: null };
     const admin = await as(s.admin.userId).query(api.billing.listAttendances, { organizationId: s.organizationId, month: MONTH, paginationOpts: opts });
-    expect(admin.page).toHaveLength(2);
+    expect(admin.page).toHaveLength(4);
+    // Ordem cronológica decrescente (índice por firstAt).
+    expect(admin.page.map((r) => r.firstAt)).toEqual([...admin.page.map((r) => r.firstAt)].sort((x, y) => y - x));
+    const labels = admin.page.map((r) => r.contactLabel);
+    expect(labels).toContain("Contato"); // e-mail no título
+    expect(labels.some((l) => l.includes("5585999990002"))).toBe(false); // telefone mascarado
+    expect(labels.some((l) => l.includes("@"))).toBe(false);
     const maria = admin.page.find((r) => r.billing === "overage")!;
     expect(maria).toMatchObject({ contactLabel: "Maria Silva", unitPriceBrlCents: 49 });
     const raw = JSON.stringify(admin);
@@ -327,7 +342,7 @@ describe("setOverage", () => {
     expect(org?.billing).toMatchObject({ status: "active", plan: "profissional", overage: { enabled: true, capBrl: 250, updatedBy: s.admin.memberId } });
     const log = (await audits(s.organizationId)).find((a) => a.metadata?.kind === "billing");
     expect(log).toMatchObject({ severity: "high", actorId: s.admin.memberId, metadata: { source: "customer" } });
-    const ent = await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    const ent = (await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId }))!;
     expect(ent.overage).toEqual({ enabled: true, capBrl: 250 });
     // Desligar sem informar o teto mantém o anterior.
     const off = await as(s.admin.userId).mutation(api.billing.setOverage, { organizationId: s.organizationId, enabled: false });

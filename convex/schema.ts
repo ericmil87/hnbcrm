@@ -3135,7 +3135,9 @@ const applicationTables = {
     unitPriceBrlCents: v.optional(v.number()),
   })
     .index("by_organization_and_month_and_contact", ["organizationId", "month", "contactKey"])
-    .index("by_organization_and_month_and_billing", ["organizationId", "month", "billing"]),
+    .index("by_organization_and_month_and_billing", ["organizationId", "month", "billing"])
+    // Extrato em ordem cronológica (sem filtro de classe).
+    .index("by_organization_and_month_and_firstAt", ["organizationId", "month", "firstAt"]),
 
   // Billing (B2): medidores que não são de IA (separado de `aiUsageMonthly`, patchado por
   // run: o tick de campanha não disputa o mesmo doc no OCC). Só `lib/usageMeter` escreve.
