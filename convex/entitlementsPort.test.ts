@@ -1,9 +1,9 @@
 /**
  * Teste de BUILD da porta de entitlements (billing B1).
  *
- *  (a) Só `lib/entitlementsOps.ts` e `opsBilling.ts` escrevem `billing` em
- *      `organizations` e inserem em `orgSubscriptions`. Outro caminho deixa o
- *      plano (e o rastro de audit `high`) fora da porta de transição.
+ *  (a) Só `lib/entitlementsOps.ts` e `opsBilling.ts` escrevem `billing` (qualquer
+ *      patch/replace/insert que traga `billing`, em qualquer tabela) e só a porta
+ *      cita a tabela `orgSubscriptions`.
  *  (b) Convite de membro NUNCA importa entitlements: usuários ilimitados por contrato.
  *  (c) `exports.ts` NUNCA importa entitlements: exportação é sempre liberada.
  *
@@ -16,6 +16,15 @@ import path from "node:path";
 
 const CONVEX_DIR = __dirname;
 const PORT_FILES = new Set(["lib/entitlementsOps.ts", "opsBilling.ts"]);
+// Arquivos que podem CITAR a tabela `orgSubscriptions`: a porta, o schema, o `billing.ts`
+// do B3 (só leitura) e as listas de classificação (purge LGPD e backup), que só a NOMEIAM.
+const SUBSCRIPTION_FILES = new Set([
+  "lib/entitlementsOps.ts",
+  "schema.ts",
+  "billing.ts",
+  "opsPurge.ts",
+  "lib/exportSanitize.ts",
+]);
 
 function sliceBalanced(src: string, openIdx: number): string {
   let depth = 0;
@@ -30,19 +39,56 @@ function sliceBalanced(src: string, openIdx: number): string {
   return src.slice(openIdx);
 }
 
-/** Linhas de escritas que gravam `billing` numa org ou inserem em `orgSubscriptions`. */
+/** Esvazia o conteúdo de strings (um `"billing"` em texto de audit não é a chave). */
+function stripStrings(code: string): string {
+  return code.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`/g, '""');
+}
+
+/** O identificador foi montado com `billing` antes (declaração, `X.billing =` ou `X["billing"] =`)? */
+function builtWithBilling(src: string, ident: string): boolean {
+  const declared = new RegExp(`(?:const|let)\\s+${ident}\\b[^;]*?\\bbilling\\b`);
+  const dot = new RegExp(`\\b${ident}\\.billing\\s*=`);
+  const bracket = new RegExp(`\\b${ident}\\[\\s*["']billing["']\\s*\\]\\s*=`);
+  return declared.test(src) || dot.test(src) || bracket.test(src);
+}
+
+/**
+ * Linhas de escritas (`patch`/`replace`/`insert`) que gravam `billing` (chave, shorthand ou
+ * objeto montado antes), sem exigir o nome do alvo, ou que inserem em `orgSubscriptions`.
+ */
 export function findBillingWrites(src: string): number[] {
   const lines: number[] = [];
   const re = /\.(?:patch|replace|insert)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
+    const raw = sliceBalanced(src, m.index + m[0].length - 1);
     // `initialOrgBilling(now)` é o único valor de `billing` permitido no insert de organizations.
-    const call = sliceBalanced(src, m.index + m[0].length - 1).replace(/\bbilling\s*:\s*initialOrgBilling\s*\([^)]*\)/g, "");
-    const orgTarget = /"organizations"|\borganizationId\b|\borgId\b|\borg\._id\b/.test(call.split(",")[0] ?? "");
-    const writesBilling = /\bbilling\b/.test(call) && orgTarget;
-    const subscriptionInsert = /^\(\s*["']orgSubscriptions["']/.test(call);
-    if (writesBilling || subscriptionInsert) lines.push(src.slice(0, m.index).split("\n").length);
+    const call = raw.replace(/\bbilling\s*:\s*initialOrgBilling\s*\([^)]*\)/g, "");
+    const code = stripStrings(call);
+    const direct = /\bbilling\b/.test(code);
+    const second = /^\(\s*[^,()]+(?:\([^)]*\))?[^,()]*,\s*([A-Za-z_$][\w$]*)\s*\)$/.exec(code.trim());
+    const indirect = second ? builtWithBilling(src.slice(0, m.index), second[1]) : false;
+    const subscriptionInsert = /^\(\s*["']orgSubscriptions["']/.test(raw);
+    if (direct || indirect || subscriptionInsert) lines.push(src.slice(0, m.index).split("\n").length);
   }
+  return lines;
+}
+
+/** Linhas que citam a tabela `orgSubscriptions` (literal entre aspas). */
+export function findSubscriptionCitations(src: string): number[] {
+  const lines: number[] = [];
+  src.split("\n").forEach((line, i) => {
+    if (/["']orgSubscriptions["']/.test(line)) lines.push(i + 1);
+  });
+  return lines;
+}
+
+/** Linhas com `insert("<table>"` (escrita direta numa tabela de medição). */
+export function findTableInserts(src: string, table: string): number[] {
+  const lines: number[] = [];
+  const re = new RegExp(`\\.insert\\s*\\(\\s*["']${table}["']`, "g");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) lines.push(src.slice(0, m.index).split("\n").length);
   return lines;
 }
 
@@ -78,6 +124,14 @@ describe("heurística (auto-teste)", () => {
     expect(findBillingWrites(`await ctx.db.insert("organizations", { name, billing: { status: "active" } })`)).toHaveLength(1);
   });
 
+  test("pega shorthand sem nome de alvo e objeto montado antes", () => {
+    expect(findBillingWrites(`await ctx.db.patch(o._id, { billing })`)).toHaveLength(1);
+    expect(findBillingWrites(`await ctx.db.replace(doc._id, { ...doc, billing: next })`)).toHaveLength(1);
+    expect(findBillingWrites(`const patchObj = { name, billing: x };\nawait ctx.db.patch(id, patchObj);`)).toHaveLength(1);
+    expect(findBillingWrites(`const upd: any = {};\nupd["billing"] = b;\nawait ctx.db.patch(id, upd);`)).toHaveLength(1);
+    expect(findBillingWrites(`const upd = { name };\nawait ctx.db.patch(id, upd);`)).toHaveLength(0);
+  });
+
   test("permite só o helper initialOrgBilling no insert de organizations", () => {
     expect(findBillingWrites(`await ctx.db.insert("organizations", { name, billing: initialOrgBilling(now) })`)).toHaveLength(0);
   });
@@ -85,8 +139,12 @@ describe("heurística (auto-teste)", () => {
   test("não confunde outras escritas nem leituras", () => {
     expect(findBillingWrites(`await ctx.db.patch(args.organizationId, { settings: merged })`)).toHaveLength(0);
     expect(findBillingWrites(`await ctx.db.insert("auditLogs", { organizationId, metadata: { kind: "billing" } })`)).toHaveLength(0);
-    expect(findBillingWrites(`await ctx.db.patch(lead._id, { billing: 1 })`)).toHaveLength(0);
     expect(findBillingWrites(`const s = await ctx.db.query("orgSubscriptions").first()`)).toHaveLength(0);
+  });
+
+  test("citação da tabela orgSubscriptions é detectada", () => {
+    expect(findSubscriptionCitations(`await ctx.db.query("orgSubscriptions").first()`)).toEqual([1]);
+    expect(findSubscriptionCitations(`const x = "orgSubscriptionsX"`)).toEqual([]);
   });
 
   test("import de entitlements é detectado", () => {
@@ -106,6 +164,36 @@ describe("porta única de escrita do plano", () => {
       for (const line of findBillingWrites(readFileSync(abs, "utf8"))) violations.push(`${r}:${line}`);
     }
     expect(violations, "Grave o plano só por applySubscriptionChange (convex/lib/entitlementsOps.ts)").toEqual([]);
+  });
+
+  test("só a porta (schema e billing.ts de leitura) cita a tabela orgSubscriptions", () => {
+    const violations: string[] = [];
+    for (const abs of walk(CONVEX_DIR)) {
+      const r = rel(abs);
+      if (SUBSCRIPTION_FILES.has(r)) continue;
+      for (const line of findSubscriptionCitations(readFileSync(abs, "utf8"))) violations.push(`${r}:${line}`);
+    }
+    expect(violations, "orgSubscriptions só é escrita por lib/entitlementsOps.ts").toEqual([]);
+  });
+
+  test('audit:"none" só no backfill (opsBilling) e na própria porta', () => {
+    const offenders: string[] = [];
+    for (const abs of walk(CONVEX_DIR)) {
+      const r = rel(abs);
+      if (PORT_FILES.has(r)) continue;
+      if (/audit:\s*["']none["']/.test(readFileSync(abs, "utf8"))) offenders.push(r);
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test("tabelas de billing entram na purge LGPD e fora do backup", () => {
+    const purge = read("opsPurge.ts");
+    const sanitize = read("lib/exportSanitize.ts");
+    for (const table of ["orgSubscriptions", "usageCredits"]) {
+      expect(purge).toContain(`table: "${table}"`);
+      expect(sanitize).toContain(`"${table}"`);
+    }
+    expect(sanitize).toContain('"organizations.billing"');
   });
 
   test("createOrganization grava legacy explícito pelo helper da porta", () => {

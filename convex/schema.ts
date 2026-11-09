@@ -3070,10 +3070,14 @@ const applicationTables = {
     billingProvider: v.optional(v.union(v.literal("manual"), v.literal("asaas"))),
     providerCustomerId: v.optional(v.string()),
     providerSubscriptionId: v.optional(v.string()),
-    pendingPlanChange: v.optional(v.string()),
+    pendingPlanChange: v.optional(
+      v.object({
+        plan: v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa")),
+        at: v.number(),
+      })
+    ),
     billingEmail: v.optional(v.string()),
     billingDocument: v.optional(v.string()),
-    partnerId: v.optional(v.string()),
     legacyNoticeAt: v.optional(v.number()),
     legacyUntil: v.optional(v.number()),
     trialUsedByUserId: v.optional(v.id("users")),

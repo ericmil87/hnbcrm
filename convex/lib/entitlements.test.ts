@@ -30,6 +30,12 @@ describe("resolveEntitlements", () => {
     expect(noPlan).toMatchObject({ gated: false, plan: null, status: "legacy" });
   });
 
+  test("fail-open: status diferente de legacy sem plano fica sem gate", () => {
+    const e = resolveEntitlements({ settings: settings as never, billing: { status: "active", updatedAt: 0 } }, NOW);
+    expect(e).toMatchObject({ gated: false, status: "active" });
+    expect(e.limits.aiAttendances).toBe(Infinity);
+  });
+
   test("trial válido = Profissional com 300 atendimentos", () => {
     const e = resolveEntitlements(org({ plan: "essencial", status: "trial", trialEndsAt: NOW + DAY }), NOW);
     expect(e.plan).toBe("profissional");

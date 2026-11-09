@@ -31,13 +31,18 @@ export function monthlyPriceBrl(plan: PlanKey, opts: PriceOpts = {}): number {
   return total;
 }
 
-/** Equivalente mensal do anual (paga 10 meses), arredondado ao real. */
-export function annualMonthlyBrl(plan: PlanKey, opts: PriceOpts = {}): number {
+/**
+ * Equivalente mensal do anual (paga 10 meses), arredondado ao real. O Empresa NÃO tem
+ * anual de tabela (contrato negociado): devolve `null`.
+ */
+export function annualMonthlyBrl(plan: PlanKey, opts: PriceOpts = {}): number | null {
+  if (plan === "empresa") return null;
   return Math.round((monthlyPriceBrl(plan, opts) * ANNUAL_MONTHS_CHARGED) / 12);
 }
 
-/** Total do anual (10 × mensal de tabela). */
-export function annualTotalBrl(plan: PlanKey, opts: PriceOpts = {}): number {
+/** Total do anual (10 × mensal de tabela). `null` no Empresa (ver `annualMonthlyBrl`). */
+export function annualTotalBrl(plan: PlanKey, opts: PriceOpts = {}): number | null {
+  if (plan === "empresa") return null;
   return monthlyPriceBrl(plan, opts) * ANNUAL_MONTHS_CHARGED;
 }
 
@@ -90,7 +95,15 @@ export function estimateInvoice(args: {
   const extraChannelsBrl = nonNeg(args.extraChannels) * EXTRA_CHANNEL_BRL;
   const groupsAddonBrl = args.groupsAddon === true && def.groupsAddonMax !== undefined ? GROUPS_ADDON_BRL : 0;
   const listBrl = planBrl + extraChannelsBrl + groupsAddonBrl;
-  const recurringBrl = applyPriceLock(listBrl, args.priceLock, args.now);
+  // `monthlyBrl` do priceLock substitui SÓ o preço base do plano; canal extra e add-on
+  // somam por cima. O desconto (`discountPct`) incide sobre o total recorrente.
+  const lock = args.priceLock;
+  const lockedBase = applyPriceLock(planBrl, lock ? { kind: lock.kind, monthlyBrl: lock.monthlyBrl, until: lock.until } : null, args.now);
+  const recurringBrl = applyPriceLock(
+    lockedBase + extraChannelsBrl + groupsAddonBrl,
+    lock ? { kind: lock.kind, discountPct: lock.discountPct, until: lock.until } : null,
+    args.now
+  );
   const overageBrl = Math.round(nonNeg(args.overageAttendances) * overageUnitCents(args.plan, args.byo === true)) / 100;
   return {
     planBrl,

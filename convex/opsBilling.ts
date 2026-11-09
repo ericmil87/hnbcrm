@@ -10,7 +10,7 @@ import { internal } from "./_generated/api";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
 import { orgBillingValidator } from "./schema";
-import { applySubscriptionChange, type OrgBillingInput } from "./lib/entitlementsOps";
+import { applySubscriptionChange, validateBillingChange, type OrgBillingInput } from "./lib/entitlementsOps";
 import { resolveEntitlements } from "./lib/entitlements";
 import { MODULE_GATE, type GatedModule } from "./lib/plans";
 import { monthKeyUtc } from "./lib/aiSpend";
@@ -27,6 +27,9 @@ function assertInt(name: string, n: number, min: number, max: number) {
     throw new ConvexError(`${name} deve ser um inteiro entre ${min} e ${max}`);
   }
 }
+
+const OVERRIDE_MAX = 10_000_000;
+const PRICE_LOCK_MAX_BRL = 1_000_000;
 
 /** Módulos ligados na org que ficariam fora do plano (avisa; NUNCA desliga). */
 function modulesOutsidePlan(org: Doc<"organizations">, next: OrgBillingInput, now: number): string[] {
@@ -54,6 +57,8 @@ export const internalSetOrgPlan = internalMutation({
     overrides: orgBillingValidator.fields.overrides,
     priceLock: orgBillingValidator.fields.priceLock,
     trialEndsAt: v.optional(v.number()),
+    /** Permite `trialEndsAt` no passado (teste vencido de propósito). */
+    force: v.optional(v.boolean()),
     dryRun: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -80,11 +85,29 @@ export const internalSetOrgPlan = internalMutation({
     if (args.addons?.groups === true && args.plan !== "essencial") {
       throw new ConvexError("O add-on Grupos só existe no Essencial");
     }
-    if (args.status === "trial" && args.trialEndsAt === undefined && org.billing?.trialEndsAt === undefined) {
-      throw new ConvexError("Status trial exige trialEndsAt");
+    if (args.status === "trial") {
+      const trialEndsAt = args.trialEndsAt ?? org.billing?.trialEndsAt;
+      if (trialEndsAt === undefined) throw new ConvexError("Status trial exige trialEndsAt");
+      if (trialEndsAt <= now && args.force !== true) {
+        throw new ConvexError("trialEndsAt deve estar no futuro (use force para um teste já vencido)");
+      }
     }
-    if (args.priceLock?.discountPct !== undefined && !(args.priceLock.discountPct >= 0 && args.priceLock.discountPct <= 100)) {
-      throw new ConvexError("discountPct deve estar entre 0 e 100");
+    const ov = args.overrides;
+    if (ov) {
+      if (ov.aiAttendances !== undefined) assertInt("overrides.aiAttendances", ov.aiAttendances, 0, OVERRIDE_MAX);
+      if (ov.campaignSends !== undefined) assertInt("overrides.campaignSends", ov.campaignSends, 0, OVERRIDE_MAX);
+      if (ov.channels !== undefined) assertInt("overrides.channels", ov.channels, 0, 1000);
+      if (ov.groupsWithAi !== undefined) assertInt("overrides.groupsWithAi", ov.groupsWithAi, 0, 1000);
+    }
+    if (args.priceLock) {
+      if (args.priceLock.monthlyBrl !== undefined) {
+        assertInt("priceLock.monthlyBrl", args.priceLock.monthlyBrl, 0, PRICE_LOCK_MAX_BRL);
+      }
+      if (args.priceLock.discountPct !== undefined) {
+        if (!(args.priceLock.discountPct >= 0 && args.priceLock.discountPct <= 100)) {
+          throw new ConvexError("discountPct deve estar entre 0 e 100");
+        }
+      }
     }
 
     const { updatedAt: _u, ...current } = org.billing ?? ({ updatedAt: 0 } as { updatedAt: number });
@@ -102,6 +125,9 @@ export const internalSetOrgPlan = internalMutation({
     } as OrgBillingInput;
     if (args.plan !== "empresa") delete next.units;
     if (args.plan !== "essencial" && next.addons) next.addons = { ...next.addons, groups: undefined };
+
+    // A MESMA validação da porta, antes do dry run: ele não aprova o que a porta recusa.
+    validateBillingChange(org.billing ?? null, next, "ops");
 
     const outOfPlanModules = modulesOutsidePlan(org, next, now);
     if (dryRun) {
@@ -174,18 +200,27 @@ export const internalGrantCredits = internalMutation({
   },
 });
 
+/**
+ * Orgs sem `billing` viram `legacy` (sem plano). Com `noticeAt` informado, orgs que já
+ * são `legacy` mas sem `legacyNoticeAt` (as criadas pelo cadastro novo) também recebem
+ * a data do aviso. SEM audit por org (`audit:"none"` na porta): o Histórico de cada org
+ * não pode mostrar uma linha de billing antes do aviso; a contagem sai no retorno.
+ */
 export const internalBackfillLegacy = internalMutation({
   args: {
     cursor: v.optional(v.union(v.string(), v.null())),
     pageSize: v.optional(v.number()),
     /** Data do aviso dos 60 dias (epoch ms). Padrão: agora, fixado na 1ª página. */
     noticeAt: v.optional(v.number()),
+    /** Uso interno do reagendamento: preencher o aviso em orgs legacy sem data. */
+    fillNotice: v.optional(v.boolean()),
     dryRun: v.optional(v.boolean()),
   },
   returns: v.object({
     dryRun: v.boolean(),
     scanned: v.number(),
     changed: v.number(),
+    noticeFilled: v.number(),
     skipped: v.number(),
     noticeAt: v.number(),
     legacyUntil: v.number(),
@@ -195,26 +230,33 @@ export const internalBackfillLegacy = internalMutation({
   handler: async (ctx, args) => {
     const dryRun = args.dryRun !== false;
     const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 100), 1), 150);
+    const fillNotice = args.fillNotice ?? args.noticeAt !== undefined;
     const noticeAt = args.noticeAt ?? Date.now();
     assertInt("noticeAt", noticeAt, 0, 8_640_000_000_000_000);
     const legacyUntil = noticeAt + LEGACY_NOTICE_DAYS * DAY_MS;
     const page = await ctx.db.query("organizations").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
     let changed = 0;
+    let noticeFilled = 0;
     let skipped = 0;
     for (const org of page.page) {
-      if (org.billing) {
+      const current = org.billing;
+      const needsLegacy = !current;
+      const needsNotice = fillNotice && current?.status === "legacy" && current.legacyNoticeAt === undefined;
+      if (!needsLegacy && !needsNotice) {
         skipped++;
         continue;
       }
-      changed++;
+      if (needsLegacy) changed++;
+      else noticeFilled++;
       if (dryRun) continue;
+      const { updatedAt: _u, ...base } = current ?? { updatedAt: 0 };
+      void _u;
       await applySubscriptionChange(ctx, {
         organizationId: org._id,
-        patch: {
-          billing: { status: "legacy", legacyNoticeAt: noticeAt, legacyUntil },
-        },
+        patch: { billing: { ...base, status: "legacy", legacyNoticeAt: noticeAt, legacyUntil } },
         source: "ops",
         reason: "internalBackfillLegacy",
+        audit: "none",
       });
     }
     if (!dryRun && !page.isDone) {
@@ -222,6 +264,7 @@ export const internalBackfillLegacy = internalMutation({
         cursor: page.continueCursor,
         pageSize,
         noticeAt,
+        fillNotice,
         dryRun: false,
       });
     }
@@ -229,6 +272,7 @@ export const internalBackfillLegacy = internalMutation({
       dryRun,
       scanned: page.page.length,
       changed,
+      noticeFilled,
       skipped,
       noticeAt,
       legacyUntil,
@@ -243,8 +287,8 @@ export const internalBillingReport = internalQuery({
   args: {
     cursor: v.optional(v.union(v.string(), v.null())),
     pageSize: v.optional(v.number()),
-    /** Só para teste/ops avulsa; sem ele usa o relógio (query não assinada por cliente). */
-    now: v.optional(v.number()),
+    /** Obrigatório: query não lê o relógio. Quem roda passa `Date.now()`. */
+    now: v.number(),
   },
   returns: v.object({
     month: v.string(),
@@ -268,7 +312,7 @@ export const internalBillingReport = internalQuery({
     continueCursor: v.string(),
   }),
   handler: async (ctx, args) => {
-    const now = args.now ?? Date.now();
+    const now = args.now;
     const month = monthKeyUtc(now);
     const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 50), 1), 100);
     const page = await ctx.db.query("organizations").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
@@ -279,10 +323,16 @@ export const internalBillingReport = internalQuery({
         .query("aiUsageMonthly")
         .withIndex("by_organization_and_month", (q) => q.eq("organizationId", org._id).eq("month", month))
         .unique();
-      const channels = await ctx.db
+      // Itera o índice (sem `take` + filtro, que subconta org com muitos canais);
+      // o teto é só uma trava de segurança de leitura.
+      let activeChannels = 0;
+      let seen = 0;
+      for await (const c of ctx.db
         .query("channelConfigs")
-        .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
-        .take(50);
+        .withIndex("by_organization", (q) => q.eq("organizationId", org._id))) {
+        if (c.status !== "disabled") activeChannels++;
+        if (++seen >= 500) break;
+      }
       const trialEndsAt = org.billing?.status === "trial" ? org.billing.trialEndsAt : undefined;
       const days = trialEndsAt === undefined ? null : Math.ceil((trialEndsAt - now) / DAY_MS);
       rows.push({
@@ -292,7 +342,7 @@ export const internalBillingReport = internalQuery({
         plan: org.billing?.plan ?? null,
         units: org.billing?.units ?? null,
         extraChannels: org.billing?.extraChannels ?? 0,
-        activeChannels: channels.filter((c) => c.status !== "disabled").length,
+        activeChannels,
         aiConversationsThisMonth: usage?.conversations ?? 0,
         aiAttendancesLimit: Number.isFinite(ent.limits.aiAttendances) ? ent.limits.aiAttendances : null,
         trialEndsInDays: days,

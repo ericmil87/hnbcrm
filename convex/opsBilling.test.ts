@@ -237,7 +237,12 @@ describe("porta de transições", () => {
       const org = await ctx.db.get(id);
       const { updatedAt: _u, ...cur } = org!.billing!;
       void _u;
-      await applySubscriptionChange(ctx, { organizationId: id, patch: { billing: { ...cur, extraChannels: 1 } }, source: "customer", reason: "extra" });
+      await applySubscriptionChange(ctx, {
+        organizationId: id,
+        patch: { billing: { ...cur, overage: { enabled: true, capBrl: 50, updatedAt: 1 } } },
+        source: "customer",
+        reason: "extra",
+      });
     });
     const logs = (await audits(t, id)).filter((a) => a.metadata?.reason === "extra");
     expect(logs[0].severity).toBe("medium");
@@ -253,6 +258,7 @@ describe("internalBillingReport", () => {
       plan: "profissional",
       status: "trial",
       trialEndsAt: now + 3 * 86_400_000,
+      force: true,
       dryRun: false,
     });
     const legacy = await seedOrg(t, "Org Sem Plano");
@@ -264,5 +270,107 @@ describe("internalBillingReport", () => {
     const none = res.rows.find((r) => r.organizationId === legacy)!;
     expect(none).toMatchObject({ status: "none", plan: null, aiAttendancesLimit: null });
     expect(JSON.stringify(res)).not.toMatch(/@|email|phone/i);
+  });
+});
+
+describe("revisão B1: backfill sem audit, cliente restrito, limites das ops", () => {
+  test("backfill legacy não grava audit por org e devolve a contagem", async () => {
+    const a = await seedOrg(t, "Org Q1");
+    const res = await t.mutation(internal.opsBilling.internalBackfillLegacy, { dryRun: false });
+    expect(res.changed).toBe(1);
+    expect((await getOrg(t, a))?.billing?.status).toBe("legacy");
+    expect(await audits(t, a)).toHaveLength(0);
+  });
+
+  test("com noticeAt, preenche orgs legacy sem aviso (cadastro novo); sem noticeAt, não", async () => {
+    const created = await seedOrg(t, "Org Q2", { billing: { status: "legacy", updatedAt: 1 } });
+    const noticed = await seedOrg(t, "Org Q3", { billing: { status: "legacy", legacyNoticeAt: 5, legacyUntil: 9, updatedAt: 1 } });
+    const plain = await t.mutation(internal.opsBilling.internalBackfillLegacy, { dryRun: false });
+    expect(plain).toMatchObject({ changed: 0, noticeFilled: 0 });
+    expect((await getOrg(t, created))?.billing?.legacyNoticeAt).toBeUndefined();
+    const dry = await t.mutation(internal.opsBilling.internalBackfillLegacy, { noticeAt: 1_700_000_000_000 });
+    expect(dry.noticeFilled).toBe(1);
+    expect((await getOrg(t, created))?.billing?.legacyNoticeAt).toBeUndefined();
+    const real = await t.mutation(internal.opsBilling.internalBackfillLegacy, { noticeAt: 1_700_000_000_000, dryRun: false });
+    expect(real.noticeFilled).toBe(1);
+    expect((await getOrg(t, created))?.billing).toMatchObject({ status: "legacy", legacyNoticeAt: 1_700_000_000_000 });
+    expect((await getOrg(t, noticed))?.billing?.legacyNoticeAt).toBe(5);
+    expect(await audits(t, created)).toHaveLength(0);
+  });
+
+  test("source customer só muda overage: autodesbloqueio falha", async () => {
+    const id = await seedOrg(t, "Org Q4");
+    await t.mutation(internal.opsBilling.internalSetOrgPlan, {
+      organizationId: id,
+      plan: "profissional",
+      status: "read_only",
+      dryRun: false,
+    });
+    const attempt = async (mut: (cur: Record<string, unknown>) => Record<string, unknown>) =>
+      errorData(
+        t.run(async (ctx) => {
+          const org = await ctx.db.get(id);
+          const { updatedAt: _u, ...cur } = org!.billing!;
+          void _u;
+          return await applySubscriptionChange(ctx, {
+            organizationId: id,
+            patch: { billing: mut(cur) as never },
+            source: "customer",
+            reason: "x",
+          });
+        })
+      );
+    expect((await attempt((c) => ({ ...c, status: "active" }))).code).toBe("customer_forbidden");
+    expect((await attempt((c) => ({ ...c, plan: "empresa", units: 99 }))).code).toBe("customer_forbidden");
+    expect((await attempt((c) => ({ ...c, overrides: { aiAttendances: 999999 } }))).code).toBe("customer_forbidden");
+    expect((await attempt((c) => ({ ...c, extraChannels: 50, addons: { groups: true } }))).code).toBe("customer_forbidden");
+    expect((await getOrg(t, id))?.billing).toMatchObject({ status: "read_only", plan: "profissional" });
+    // overage passa
+    await t.run(async (ctx) => {
+      const org = await ctx.db.get(id);
+      const { updatedAt: _u, ...cur } = org!.billing!;
+      void _u;
+      await applySubscriptionChange(ctx, {
+        organizationId: id,
+        patch: { billing: { ...cur, overage: { enabled: true, capBrl: 10, updatedAt: 1 } } },
+        source: "customer",
+        reason: "overage",
+      });
+    });
+    expect((await getOrg(t, id))?.billing?.overage?.capBrl).toBe(10);
+    // e o cliente nunca toca orgSubscriptions
+    expect(
+      (await errorData(t.run((ctx) => applySubscriptionChange(ctx, { organizationId: id, patch: { subscription: { paymentStatus: "ok" } }, source: "customer", reason: "x" })))).code
+    ).toBe("customer_forbidden");
+  });
+
+  test("limites numéricos, trial no passado e dry run com a validação da porta", async () => {
+    const id = await seedOrg(t, "Org Q5");
+    const base = { organizationId: id, plan: "profissional" as const, status: "active" as const };
+    for (const bad of [
+      { overrides: { aiAttendances: -1 } },
+      { overrides: { channels: 1.5 } },
+      { overrides: { campaignSends: 99_999_999 } },
+      { priceLock: { kind: "frozen" as const, monthlyBrl: 29.9 } },
+      { priceLock: { kind: "founder" as const, discountPct: 120 } },
+    ]) {
+      await expect(t.mutation(internal.opsBilling.internalSetOrgPlan, { ...base, ...bad })).rejects.toThrow();
+    }
+    await expect(
+      t.mutation(internal.opsBilling.internalSetOrgPlan, { ...base, status: "trial", trialEndsAt: Date.now() - 1000 })
+    ).rejects.toThrow(/futuro/);
+    await t.mutation(internal.opsBilling.internalSetOrgPlan, { ...base, status: "trial", trialEndsAt: Date.now() - 1000, force: true });
+    // dry run recusa o que a porta recusa (status sem plano não chega aqui; transição: ops sempre pode)
+    const ok = await t.mutation(internal.opsBilling.internalSetOrgPlan, { ...base, overrides: { aiAttendances: 500 } });
+    expect(ok.dryRun).toBe(true);
+  });
+
+  test("none→legacy pela porta com audit completo nunca é high", async () => {
+    const id = await seedOrg(t, "Org Q6");
+    await t.run((ctx) =>
+      applySubscriptionChange(ctx, { organizationId: id, patch: { billing: { status: "legacy" } }, source: "ops", reason: "x" })
+    );
+    const log = (await audits(t, id)).find((a) => a.metadata?.reason === "x");
+    expect(log?.severity).toBe("medium");
   });
 });

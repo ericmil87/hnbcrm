@@ -8,6 +8,8 @@
  *  - `past_due` é igual a `active`; NUNCA vira `read_only` sozinho (só `source:"ops"`).
  *  - `read_only` automático (cron/webhook) só a partir de `trial`.
  *  - Só `ops` tira uma org de `legacy`.
+ *  - `source:"customer"` só mexe em `overage`: status, plano, unidades, canais extra,
+ *    add-ons e overrides são intocáveis por quem é o cliente (anti-autodesbloqueio).
  *  - Transição inválida lança `ConvexError({ code: "invalid_transition", from, to, source })`
  *    ANTES de gravar qualquer coisa (o webhook marca o evento como ignorado).
  */
@@ -22,14 +24,14 @@ export type OrgBilling = NonNullable<Doc<"organizations">["billing"]>;
 /** `updatedAt` é da porta; quem chama não o informa. */
 export type OrgBillingInput = Omit<OrgBilling, "updatedAt">;
 
+export type SubscriptionPatch = Partial<
+  Omit<Doc<"orgSubscriptions">, "_id" | "_creationTime" | "organizationId" | "createdAt" | "updatedAt">
+>;
+
 /** `billing` de uma org recém-criada: legacy explícito (sem gate), sem plano. Único valor permitido no insert de `organizations`. */
 export function initialOrgBilling(now: number): OrgBilling {
   return { status: "legacy", updatedAt: now };
 }
-
-export type SubscriptionPatch = Partial<
-  Omit<Doc<"orgSubscriptions">, "_id" | "_creationTime" | "organizationId" | "createdAt" | "updatedAt">
->;
 
 /** Decide se a mudança de status é permitida. Pura. */
 export function validateTransition(
@@ -39,10 +41,69 @@ export function validateTransition(
 ): { ok: true } | { ok: false } {
   if (from === to) return { ok: true };
   if (source === "ops") return { ok: true };
+  if (source === "customer") return { ok: false };
   if (from === "legacy" || from === undefined) return { ok: false };
   if (to === "read_only" && from !== "trial") return { ok: false };
   if (to === "legacy") return { ok: false };
   return { ok: true };
+}
+
+/** JSON estável (chaves ordenadas, sem `undefined`) para comparar campos do `billing`. */
+function stable(value: unknown): string {
+  if (value === undefined) return "null";
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, v]) => v !== undefined)
+    .sort(([a], [b]) => a.localeCompare(b));
+  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${stable(v)}`).join(",")}}`;
+}
+
+/**
+ * Campos que o cliente NÃO pode mudar. Tudo menos `overage` e `updatedAt` (carimbo da
+ * porta). Uma chave nova em `billing` nasce protegida por padrão.
+ */
+export function customerForbiddenChanges(before: OrgBilling | null, next: OrgBillingInput): string[] {
+  if (!before) return ["billing"];
+  const keys = new Set([...Object.keys(before), ...Object.keys(next)]);
+  const changed: string[] = [];
+  for (const key of keys) {
+    if (key === "overage" || key === "updatedAt") continue;
+    const a = (before as Record<string, unknown>)[key];
+    const b = (next as Record<string, unknown>)[key];
+    if (stable(a) !== stable(b)) changed.push(key);
+  }
+  return changed;
+}
+
+/**
+ * Validação da mudança de `billing`, sem escrever. A porta chama antes de gravar e
+ * o dry run das ops chama a MESMA função (o dry run não pode aprovar o que a porta recusa).
+ */
+export function validateBillingChange(
+  before: OrgBilling | null,
+  next: OrgBillingInput,
+  source: BillingSource
+): void {
+  if (next.status !== "legacy" && !next.plan) {
+    throw new ConvexError("Informe o plano: só o status legacy pode ficar sem plano");
+  }
+  if (source === "customer") {
+    const forbidden = customerForbiddenChanges(before, next);
+    if (forbidden.length > 0) {
+      throw new ConvexError({ code: "customer_forbidden", fields: forbidden, source });
+    }
+    return;
+  }
+  const verdict = validateTransition(before?.status, next.status, source);
+  if (!verdict.ok) {
+    throw new ConvexError({
+      code: "invalid_transition",
+      from: before?.status ?? "none",
+      to: next.status,
+      source,
+    });
+  }
 }
 
 /** Snapshot para audit: `Id` já é string; remove `undefined` (Convex não aceita). */
@@ -63,6 +124,12 @@ export async function applySubscriptionChange(
      */
     reason: string;
     actor?: Id<"teamMembers">;
+    /**
+     * `"none"` NÃO grava audit. Só para a transição none→legacy do backfill (um audit por
+     * org apareceria no Histórico de toda org antes do aviso de 60 dias e quebra a regra
+     * "ops nunca gravam audit por linha"). Qualquer outro uso é bug: o guard confere.
+     */
+    audit?: "full" | "none";
   }
 ): Promise<{ before: OrgBilling | null; after: OrgBilling | null }> {
   const org = await ctx.db.get(args.organizationId);
@@ -70,21 +137,13 @@ export async function applySubscriptionChange(
   const before = org.billing ?? null;
   const now = Date.now();
 
+  if (args.source === "customer" && args.patch.subscription) {
+    throw new ConvexError({ code: "customer_forbidden", fields: ["subscription"], source: args.source });
+  }
+
   let after: OrgBilling | null = before;
   if (args.patch.billing) {
-    const to = args.patch.billing.status;
-    if (to !== "legacy" && !args.patch.billing.plan) {
-      throw new ConvexError("Informe o plano: só o status legacy pode ficar sem plano");
-    }
-    const verdict = validateTransition(before?.status, to, args.source);
-    if (!verdict.ok) {
-      throw new ConvexError({
-        code: "invalid_transition",
-        from: before?.status ?? "none",
-        to,
-        source: args.source,
-      });
-    }
+    validateBillingChange(before, args.patch.billing, args.source);
     after = { ...args.patch.billing, updatedAt: now };
     await ctx.db.patch(args.organizationId, { billing: after });
   }
@@ -106,7 +165,11 @@ export async function applySubscriptionChange(
     }
   }
 
+  if (args.audit === "none") return { before, after };
+
   const planOrStatusChanged = before?.plan !== after?.plan || before?.status !== after?.status;
+  // none→legacy nunca é `high` (não é uma decisão de plano, é o estado padrão).
+  const toLegacyFromNone = !before && after?.status === "legacy";
   await ctx.db.insert("auditLogs", {
     organizationId: args.organizationId,
     entityType: "organization",
@@ -124,7 +187,7 @@ export async function applySubscriptionChange(
     description: planOrStatusChanged
       ? `Plano da organização: ${before?.plan ?? "sem plano"}/${before?.status ?? "none"} para ${after?.plan ?? "sem plano"}/${after?.status ?? "none"}`
       : "Ajuste de cobrança da organização",
-    severity: planOrStatusChanged ? "high" : "medium",
+    severity: planOrStatusChanged && !toLegacyFromNone ? "high" : "medium",
     createdAt: now,
   });
 

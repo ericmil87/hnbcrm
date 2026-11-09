@@ -44,6 +44,9 @@ const allModules = (value: boolean): Record<GatedModule, boolean> =>
 
 export function resolveEntitlements(org: OrgForEntitlements | null | undefined, now: number): Entitlements {
   const billing = org?.billing;
+  // Fail-open deliberado: status diferente de legacy SEM plano nunca deveria existir (a porta
+  // recusa), mas se existir (dado antigo, escrita fora da porta) a org fica sem gate em vez
+  // de perder acesso por um documento malformado.
   if (!billing || billing.status === "legacy" || !billing.plan) {
     return {
       gated: false,

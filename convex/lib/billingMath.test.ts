@@ -32,6 +32,10 @@ describe("anual", () => {
     expect(annualMonthlyBrl("escala")).toBe(831);
     expect(annualTotalBrl("profissional")).toBe(4970);
   });
+  test("Empresa não tem anual de tabela", () => {
+    expect(annualMonthlyBrl("empresa", { units: 4 })).toBeNull();
+    expect(annualTotalBrl("empresa", { units: 4 })).toBeNull();
+  });
 });
 
 describe("applyPriceLock", () => {
@@ -62,6 +66,12 @@ describe("estimateInvoice", () => {
     expect(e.recurringBrl).toBe(300);
     expect(e.overageBrl).toBe(2.9);
     expect(e.totalBrl).toBe(302.9);
+  });
+  test("priceLock.monthlyBrl substitui só o base; extras somam por cima; desconto no total", () => {
+    const e = estimateInvoice({ plan: "escala", extraChannels: 2, priceLock: { kind: "frozen", monthlyBrl: 800 }, now: NOW });
+    expect(e.recurringBrl).toBe(958);
+    const f = estimateInvoice({ plan: "essencial", groupsAddon: true, priceLock: { kind: "founder", discountPct: 30 }, now: NOW });
+    expect(f.recurringBrl).toBe(207.2);
   });
   test("Empresa 4 unidades", () => {
     expect(estimateInvoice({ plan: "empresa", units: 4, now: NOW }).totalBrl).toBe(3050);
