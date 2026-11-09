@@ -130,6 +130,8 @@ export async function applySubscriptionChange(
      * "ops nunca gravam audit por linha"). Qualquer outro uso é bug: o guard confere.
      */
     audit?: "full" | "none";
+    /** Força a severidade do audit (ex.: `high` no teto do excedente, que é dinheiro). */
+    severity?: "medium" | "high";
   }
 ): Promise<{ before: OrgBilling | null; after: OrgBilling | null }> {
   const org = await ctx.db.get(args.organizationId);
@@ -187,7 +189,7 @@ export async function applySubscriptionChange(
     description: planOrStatusChanged
       ? `Plano da organização: ${before?.plan ?? "sem plano"}/${before?.status ?? "none"} para ${after?.plan ?? "sem plano"}/${after?.status ?? "none"}`
       : "Ajuste de cobrança da organização",
-    severity: planOrStatusChanged && !toLegacyFromNone ? "high" : "medium",
+    severity: args.severity ?? (planOrStatusChanged && !toLegacyFromNone ? "high" : "medium"),
     createdAt: now,
   });
 

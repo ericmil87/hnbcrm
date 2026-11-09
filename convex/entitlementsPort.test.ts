@@ -205,6 +205,12 @@ describe("porta única de escrita do plano", () => {
     expect(sanitize).toContain('"organizations.billing"');
   });
 
+  test("billing.ts (queries de uso e setOverage) não escreve direto: tudo passa pela porta", () => {
+    const src = read("billing.ts");
+    expect(src).not.toMatch(/\.(?:patch|replace|insert|delete)\s*\(/);
+    expect(src).toContain("applySubscriptionChange(");
+  });
+
   test("createOrganization grava legacy explícito pelo helper da porta", () => {
     const src = read("organizations.ts");
     expect(src).toMatch(/billing:\s*initialOrgBilling\(now\)/);
