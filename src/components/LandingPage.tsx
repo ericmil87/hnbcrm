@@ -42,6 +42,9 @@ import { OrganizationStructuredData } from "@/components/StructuredData";
 import { useInView } from "@/hooks/useInView";
 import { OpenSourceSection } from "@/components/landing/OpenSourceSection";
 import { Footer } from "@/components/landing/Footer";
+import { PricingSection } from "@/components/landing/pricing/PricingSection";
+import { CTA_LABEL } from "@/components/landing/pricing/pricingCopy";
+import { PLANS, TRIAL } from "../../convex/lib/plans";
 
 export function LandingPage() {
   const [showFloatingCta, setShowFloatingCta] = useState(false);
@@ -125,7 +128,7 @@ export function LandingPage() {
         <div className="flex-1 flex flex-col items-center justify-center px-4 text-center">
           <div className="max-w-4xl mx-auto space-y-6 md:space-y-8">
             <div className="animate-fade-in">
-              <Badge variant="brand">Beta Aberto — 100% Grátis</Badge>
+              <Badge variant="brand">Teste {TRIAL.days} dias, sem cartão</Badge>
             </div>
 
             <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight animate-fade-in-up">
@@ -142,7 +145,7 @@ export function LandingPage() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in-up [animation-delay:200ms]">
               <Link to="/entrar">
                 <Button variant="primary" size="lg" className="shadow-glow min-h-[44px]">
-                  Começar Grátis
+                  {CTA_LABEL}
                 </Button>
               </Link>
               <a
@@ -158,7 +161,7 @@ export function LandingPage() {
             </div>
 
             <p className="text-sm text-text-muted animate-fade-in-up [animation-delay:300ms]">
-              Sem cartão de crédito. Sem limite de tempo.
+              Sem cartão de crédito. {TRIAL.days} dias do plano {PLANS[TRIAL.plan].label}.
             </p>
           </div>
         </div>
@@ -175,9 +178,9 @@ export function LandingPage() {
               ? "opacity-100 translate-y-0"
               : "opacity-0 translate-y-4 pointer-events-none"
           )}
-          aria-label="Começar Grátis"
+          aria-label={CTA_LABEL}
         >
-          Começar Grátis
+          {CTA_LABEL}
         </button>
       </Link>
 
@@ -676,204 +679,6 @@ function HowItWorksSection() {
   );
 }
 
-function PricingSection() {
-  const { ref, isInView } = useInView({ threshold: 0.1 });
-
-  return (
-    <section
-      id="precos"
-      ref={ref}
-      className="py-16 md:py-24"
-      aria-labelledby="pricing-heading"
-    >
-      <div className="max-w-5xl mx-auto px-4">
-        <div className="text-center mb-12 md:mb-16">
-          <h2
-            id="pricing-heading"
-            className={cn(
-              "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
-            )}
-          >
-            Preços simples e transparentes
-          </h2>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {/* Starter Plan */}
-          <Card
-            className={cn(
-              "p-8",
-              isInView && "animate-fade-in-up [animation-delay:0ms]"
-            )}
-          >
-            <div className="mb-6">
-              <h3 className="text-xl font-semibold text-text-primary mb-2">
-                Starter
-              </h3>
-              <div className="mb-2">
-                <span className="text-3xl font-bold text-text-primary">
-                  Grátis
-                </span>
-              </div>
-              <p className="text-sm text-text-secondary">para sempre</p>
-            </div>
-
-            <ul className="space-y-3 mb-8">
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Até 3 usuários</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">1 pipeline</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">100 leads</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Caixa de entrada</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Contatos</span>
-              </li>
-            </ul>
-
-            <Link to="/entrar" className="block">
-              <Button variant="secondary" className="w-full min-h-[44px]">
-                Começar Grátis
-              </Button>
-            </Link>
-          </Card>
-
-          {/* Pro Plan (Highlighted) */}
-          <Card
-            className={cn(
-              "p-8 border-brand-500 shadow-glow relative",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
-            )}
-          >
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2">
-              <Badge variant="brand">Recomendado</Badge>
-            </div>
-
-            <div className="mb-6">
-              <h3 className="text-xl font-semibold text-text-primary mb-2">
-                Pro
-              </h3>
-              <div className="mb-2">
-                <div className="text-text-muted line-through text-sm mb-1">
-                  R$ 97/mês
-                </div>
-                <span className="text-3xl font-bold text-brand-500">
-                  Grátis no Beta
-                </span>
-              </div>
-            </div>
-
-            <ul className="space-y-3 mb-8">
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Usuários ilimitados</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Pipelines ilimitados</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Leads ilimitados</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Repasses IA ↔ Humano</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Tradução automática de conversas</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">API REST + Webhooks</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Auditoria completa</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Campos personalizados</span>
-              </li>
-            </ul>
-
-            <Link to="/entrar" className="block">
-              <Button variant="primary" className="w-full min-h-[44px]">
-                Começar Grátis
-              </Button>
-            </Link>
-          </Card>
-
-          {/* Enterprise Plan */}
-          <Card
-            className={cn(
-              "p-8",
-              isInView && "animate-fade-in-up [animation-delay:200ms]"
-            )}
-          >
-            <div className="mb-6">
-              <h3 className="text-xl font-semibold text-text-primary mb-2">
-                Enterprise
-              </h3>
-              <div className="mb-2">
-                <div className="text-text-muted line-through text-sm mb-1">
-                  R$ 297/mês
-                </div>
-                <span className="text-3xl font-bold text-brand-500">
-                  Grátis no Beta
-                </span>
-              </div>
-            </div>
-
-            <ul className="space-y-3 mb-8">
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Tudo do Pro</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Servidor MCP</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary flex items-center gap-2">
-                  Automações <Badge variant="warning">Em Breve</Badge>
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">IA Copiloto & Atendente</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <Check className="text-brand-500 flex-shrink-0 mt-0.5" size={18} />
-                <span className="text-text-secondary">Suporte prioritário</span>
-              </li>
-            </ul>
-
-            <Link to="/entrar" className="block">
-              <Button variant="secondary" className="w-full min-h-[44px]">
-                Começar Grátis
-              </Button>
-            </Link>
-          </Card>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function CTASection() {
   const { ref, isInView } = useInView({ threshold: 0.1 });
 
@@ -904,7 +709,7 @@ function CTASection() {
         <div className={cn(isInView && "animate-fade-in-up [animation-delay:200ms]")}>
           <Link to="/entrar">
             <Button variant="primary" size="lg" className="min-h-[44px]">
-              Criar Conta Grátis
+              {CTA_LABEL}
             </Button>
           </Link>
           <p className="mt-4 text-sm text-text-muted">
