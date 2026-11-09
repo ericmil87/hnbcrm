@@ -1,4 +1,5 @@
 import { NotificationPauseMenu } from "./NotificationPauseMenu";
+import { channelIcon, channelLabel } from "@/lib/channelAccounts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import { useLocation, useNavigate } from "react-router";
@@ -100,6 +101,17 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   // B2 — lead atribuído a você.
   lead_assigned: UserCheck,
 };
+
+/** Canal gravado pelo servidor em `data.channel` nos avisos de conversa; ausente nos antigos. */
+function noticeChannel(n: Pick<InboxNotification, "data">): string | null {
+  const c = (n.data as { channel?: unknown } | undefined)?.channel;
+  return typeof c === "string" && c ? c : null;
+}
+
+function ChannelBadgeIcon({ channel }: { channel: string }) {
+  const ChannelIcon = channelIcon(channel);
+  return <ChannelIcon size={10} aria-hidden="true" />;
+}
 
 const PAGE_SIZE = 15;
 
@@ -331,6 +343,7 @@ export function NotificationInboxList({
       <ul className="divide-y divide-border">
         {items.map((n) => {
           const Icon = TYPE_ICON[n.type] ?? Bell;
+          const channel = noticeChannel(n);
           const unread = !n.readAt;
           const resolved = resolvedLabel(n);
           const actions = itemActions(n).filter((a) => a !== "assume" || canAssume);
@@ -346,14 +359,25 @@ export function NotificationInboxList({
                   unread && !resolved && "bg-brand-500/5",
                 )}
               >
-                <span
-                  className={cn(
-                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                    unread && !resolved ? "bg-brand-500/10 text-brand-500" : "bg-surface-raised text-text-muted",
+                <span className="relative shrink-0">
+                  <span
+                    className={cn(
+                      "flex h-8 w-8 items-center justify-center rounded-full",
+                      unread && !resolved ? "bg-brand-500/10 text-brand-500" : "bg-surface-raised text-text-muted",
+                    )}
+                    aria-hidden="true"
+                  >
+                    <Icon size={15} />
+                  </span>
+                  {channel && (
+                    <span
+                      role="img"
+                      aria-label={channelLabel(channel)}
+                      className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-surface text-text-secondary"
+                    >
+                      <ChannelBadgeIcon channel={channel} />
+                    </span>
                   )}
-                  aria-hidden="true"
-                >
-                  <Icon size={15} />
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-start gap-1.5">

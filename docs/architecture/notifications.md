@@ -65,7 +65,7 @@ Manifest com `id` `/app/` e `scope` `/` (o login `/entrar` abre dentro do app in
 - `triggerReminder` (lembrete disparado à mão) não gera aviso no sino.
 - Follow-up da IA atribuído ao dono humano da tarefa não gera `task_assigned`.
 
-- Canal como ícone em cada aviso: o doc da notificação não traz o canal; hoje o ícone é o do tipo.
+- Canal como ícone (feito): o servidor grava `data.channel` nos avisos de conversa e o item do sino mostra um selo de canto (`channelIcon`/`channelLabel` de `lib/channelAccounts`, `role="img"` com o nome do canal). Avisos antigos e não-conversa seguem só com o ícone do tipo.
 - A conversa aberta no detalhe do lead (`?lead=`) ainda gera toast: só `?conversation=` em `/app/entrada` conta como aberta.
 - `getConversations`, `getHandoffs` e `tasks.getTaskCounts` não aplicam o escopo `view_own` no backend (a lista mostra mais do que o badge conta). Se uma for apertada, as demais (inclusive buscas) vão juntas.
 - E-mail de reserva desligado para `new_message`, transferência e menção em grupo (o template `newMessage` legado foi removido).
