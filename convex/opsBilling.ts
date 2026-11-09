@@ -7,13 +7,15 @@
  */
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery } from "./_generated/server";
-import type { Doc } from "./_generated/dataModel";
+import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { orgBillingValidator } from "./schema";
 import { applySubscriptionChange, validateBillingChange, type OrgBillingInput } from "./lib/entitlementsOps";
 import { resolveEntitlements } from "./lib/entitlements";
 import { MODULE_GATE, type GatedModule } from "./lib/plans";
-import { monthKeyUtc } from "./lib/aiSpend";
+import { isValidMonthKey, monthKeyUtc, monthStartUtcMs, nextMonthStartUtcMs } from "./lib/aiSpend";
+import { contactKeyOf, getOrgUsageMonthly, recordAttendance, totalAttendances } from "./lib/attendanceLedger";
+import { agentRunsRetentionCutoff } from "./retention";
 import { maskDigitRuns } from "./lib/telegramFormat";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -350,7 +352,7 @@ export const internalBillingReport = internalQuery({
         units: org.billing?.units ?? null,
         extraChannels: org.billing?.extraChannels ?? 0,
         activeChannels,
-        aiConversationsThisMonth: usage?.conversations ?? 0,
+        aiConversationsThisMonth: totalAttendances(usage, await getOrgUsageMonthly(ctx, org._id, month)),
         aiAttendancesLimit: Number.isFinite(ent.limits.aiAttendances) ? ent.limits.aiAttendances : null,
         trialEndsInDays: days,
         trialEndingSoon: days !== null && days <= 7,
@@ -358,5 +360,252 @@ export const internalBillingReport = internalQuery({
       });
     }
     return { month, rows, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+const BACKFILL_ORG_SCAN = 1000;
+const COST_AUDIT_SCAN = 2000;
+
+/**
+ * Percorre runs `attendant` TERMINADAS COM SUCESSO e conta (ou grava, com `record`) o
+ * contato distinto de cada uma que ainda não tem linha no mês. Run com erro/abortada não
+ * vira atendimento (B4).
+ */
+async function scanAttendantRuns(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; month: string; runs: Doc<"agentRuns">[]; record: boolean }
+): Promise<{ newContacts: number; inserted: number }> {
+  let newContacts = 0;
+  let inserted = 0;
+  const seen = new Set<string>();
+  for (const run of args.runs) {
+    if (run.kind !== "attendant" || run.status !== "done" || !run.conversationId || !run.leadId) continue;
+    const lead = await ctx.db.get(run.leadId);
+    if (!lead || lead.organizationId !== args.organizationId) continue;
+    const contactKey = contactKeyOf(lead);
+    if (seen.has(contactKey)) continue;
+    seen.add(contactKey);
+    const existing = await ctx.db
+      .query("aiAttendances")
+      .withIndex("by_organization_and_month_and_contact", (q) =>
+        q.eq("organizationId", args.organizationId).eq("month", args.month).eq("contactKey", contactKey)
+      )
+      .first();
+    if (existing) continue;
+    newContacts++;
+    if (!args.record) continue;
+    const res = await recordAttendance(ctx, {
+      organizationId: args.organizationId,
+      month: args.month,
+      contactKey,
+      conversationId: run.conversationId,
+      firstAt: run.startedAt,
+      billing: "legacy",
+      mode: "backfill",
+    });
+    if (res.inserted) inserted++;
+  }
+  return { newContacts, inserted };
+}
+
+/**
+ * Recria o livro `aiAttendances` de um mês a partir de `agentRuns` (kind `attendant`
+ * que TERMINARAM bem: run com erro/abortada não vira atendimento, B4). Modo `backfill`:
+ * insere a linha com classe `legacy` e NÃO incrementa o contador (A1: ele já foi
+ * alimentado pelo claim antigo/`internalBackfillMonthlyUsage`). Idempotente.
+ *
+ * Aproximação: uma run `done` que decidiu "nada a enviar" (follow-up) também vira linha;
+ * o livro só é cobrado a partir do B6, e o dry run mostra os números antes.
+ *
+ * Sem `organizationId`: pagina as ORGS por `cursor`/`pageSize`. O dry run devolve
+ * `perOrg` (contatos novos por org, lendo até ${BACKFILL_ORG_SCAN} runs de cada; `truncated`
+ * avisa quando passou disso); a run real agenda uma execução por org da página e a
+ * próxima página de orgs.
+ */
+export const internalBackfillAttendances = internalMutation({
+  args: {
+    month: v.string(),
+    organizationId: v.optional(v.id("organizations")),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    month: v.string(),
+    organizationId: v.union(v.id("organizations"), v.null()),
+    scannedRuns: v.number(),
+    newContacts: v.number(),
+    inserted: v.number(),
+    scheduled: v.number(),
+    perOrg: v.array(
+      v.object({ organizationId: v.id("organizations"), newContacts: v.number(), truncated: v.boolean() })
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    warning: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    if (!isValidMonthKey(args.month)) throw new ConvexError("Mês inválido (use AAAA-MM)");
+    const start = monthStartUtcMs(args.month);
+    const end = nextMonthStartUtcMs(args.month);
+    const cutoff = agentRunsRetentionCutoff(Date.now());
+    const warning =
+      start < cutoff
+        ? `As runs de ${args.month} podem já ter sido apagadas pela retenção de agentRuns: o livro sairia incompleto.`
+        : null;
+    if (warning && !dryRun) throw new ConvexError(`Backfill recusado: ${warning}`);
+
+    if (!args.organizationId) {
+      const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 20), 1), 50);
+      const orgPage = await ctx.db.query("organizations").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+      const perOrg: { organizationId: Id<"organizations">; newContacts: number; truncated: boolean }[] = [];
+      let totalNew = 0;
+      for (const org of orgPage.page) {
+        if (dryRun) {
+          const runs = await ctx.db
+            .query("agentRuns")
+            .withIndex("by_organization_and_started", (q) =>
+              q.eq("organizationId", org._id).gte("startedAt", start).lt("startedAt", end)
+            )
+            .take(BACKFILL_ORG_SCAN + 1);
+          const truncated = runs.length > BACKFILL_ORG_SCAN;
+          const { newContacts } = await scanAttendantRuns(ctx, {
+            organizationId: org._id,
+            month: args.month,
+            runs: truncated ? runs.slice(0, BACKFILL_ORG_SCAN) : runs,
+            record: false,
+          });
+          totalNew += newContacts;
+          perOrg.push({ organizationId: org._id, newContacts, truncated });
+        } else {
+          await ctx.scheduler.runAfter(0, internal.opsBilling.internalBackfillAttendances, {
+            month: args.month,
+            organizationId: org._id,
+            dryRun: false,
+          });
+        }
+      }
+      if (!dryRun && !orgPage.isDone) {
+        await ctx.scheduler.runAfter(0, internal.opsBilling.internalBackfillAttendances, {
+          month: args.month,
+          cursor: orgPage.continueCursor,
+          pageSize,
+          dryRun: false,
+        });
+      }
+      return {
+        dryRun,
+        month: args.month,
+        organizationId: null,
+        scannedRuns: 0,
+        newContacts: totalNew,
+        inserted: 0,
+        scheduled: dryRun ? 0 : orgPage.page.length,
+        perOrg,
+        isDone: orgPage.isDone,
+        continueCursor: orgPage.isDone ? null : orgPage.continueCursor,
+        warning,
+      };
+    }
+
+    const organizationId = args.organizationId;
+    const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 150), 1), 200);
+    const page = await ctx.db
+      .query("agentRuns")
+      .withIndex("by_organization_and_started", (q) =>
+        q.eq("organizationId", organizationId).gte("startedAt", start).lt("startedAt", end)
+      )
+      .paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+    const { newContacts, inserted } = await scanAttendantRuns(ctx, {
+      organizationId,
+      month: args.month,
+      runs: page.page,
+      record: !dryRun,
+    });
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.opsBilling.internalBackfillAttendances, {
+        month: args.month,
+        organizationId,
+        cursor: page.continueCursor,
+        pageSize,
+        dryRun: false,
+      });
+    }
+    return {
+      dryRun,
+      month: args.month,
+      organizationId,
+      scannedRuns: page.page.length,
+      newContacts,
+      inserted,
+      scheduled: 0,
+      perOrg: [],
+      isDone: page.isDone,
+      continueCursor: page.isDone ? null : page.continueCursor,
+      warning,
+    };
+  },
+});
+
+/**
+ * Só leitura: runs concluídas com custo 0 ou ausente, por tipo e provedor, nos últimos
+ * `sinceDays` (≤ 30). Mostra onde o custo some (ex.: provedor que não manda `usage` no
+ * stream). Pagina por org; sem texto, e-mail ou telefone na saída.
+ */
+export const internalCostAudit = internalQuery({
+  args: {
+    sinceDays: v.optional(v.number()),
+    /** Obrigatório: query não lê o relógio. */
+    now: v.number(),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    sinceDays: v.number(),
+    rows: v.array(
+      v.object({
+        kind: v.string(),
+        provider: v.string(),
+        finishedRuns: v.number(),
+        zeroCostRuns: v.number(),
+        noTokensRuns: v.number(),
+      })
+    ),
+    /** Orgs desta página com mais runs que o teto de leitura (a contagem delas está cortada). */
+    truncatedOrgs: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const sinceDays = args.sinceDays ?? 30;
+    assertInt("sinceDays", sinceDays, 1, 30);
+    const since = args.now - sinceDays * DAY_MS;
+    const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 25), 1), 50);
+    const page = await ctx.db.query("organizations").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+    const agg = new Map<string, { kind: string; provider: string; finishedRuns: number; zeroCostRuns: number; noTokensRuns: number }>();
+    let truncatedOrgs = 0;
+    for (const org of page.page) {
+      const runs = await ctx.db
+        .query("agentRuns")
+        .withIndex("by_organization_and_started", (q) => q.eq("organizationId", org._id).gte("startedAt", since))
+        .take(COST_AUDIT_SCAN + 1);
+      if (runs.length > COST_AUDIT_SCAN) {
+        truncatedOrgs++;
+        runs.length = COST_AUDIT_SCAN;
+      }
+      for (const run of runs) {
+        if (run.finishedAt === undefined || run.status === "running") continue;
+        const provider = run.provider ?? "desconhecido";
+        const key = `${run.kind}|${provider}`;
+        const row = agg.get(key) ?? { kind: run.kind, provider, finishedRuns: 0, zeroCostRuns: 0, noTokensRuns: 0 };
+        row.finishedRuns++;
+        if (!run.costUsdEstimate) row.zeroCostRuns++;
+        if (!run.promptTokens && !run.completionTokens) row.noTokensRuns++;
+        agg.set(key, row);
+      }
+    }
+    return { sinceDays, rows: [...agg.values()], truncatedOrgs, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });

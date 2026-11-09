@@ -6,7 +6,7 @@
  *    escrita de custo) — incrementa `aiUsageMonthly` na MESMA transação e
  *    dispara os avisos de 80%/100% uma vez por mês;
  *  - os gates: `attendantBudgetGate` + `onAttendantRunStarted` (atendente 1 a
- *    1, chamados no claim) e `internalSpendGate` (demais produtos, nas actions);
+ *    1, chamados no claim; o atendimento é contado no commit, `lib/attendanceLedger`) e `internalSpendGate` (demais produtos, nas actions);
  *  - o repasse `ai_budget` (nunca silêncio: estourou, uma pessoa é chamada);
  *  - a op de backfill do contador.
  *
@@ -19,6 +19,15 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
+import {
+  BILLING_LEDGER_START_MONTH,
+  contactKeyOf,
+  findAttendance,
+  getOrgUsageMonthly,
+  recordAttendance,
+  totalAttendances,
+} from "./lib/attendanceLedger";
+import { resolveEntitlements } from "./lib/entitlements";
 import { notificationCopy } from "./lib/notificationCopy";
 import { isMembershipRevoked } from "./lib/auth";
 import { agentRunsRetentionCutoff } from "./retention";
@@ -252,12 +261,20 @@ export type AttendantBudgetGate = {
   skipReason: string | null;
   /** Teto em R$ estourado em `block`: o turno sai como RASCUNHO. */
   forceSuggest: boolean;
-  /** A conversa ainda não foi atendida neste mês (conta no contador). */
+  /**
+   * O contato ainda não foi atendido neste mês (B2: quem conta é o COMMIT da
+   * resposta/rascunho, via `recordAttendance`; o claim só decide o gate).
+   */
   countConversation: boolean;
   month: string;
+  /** Classe gravada em `agentRuns.billingClass`: "legacy" sem gate, "included" com gate (B6 classifica de verdade). */
+  billingClass: "legacy" | "included";
 };
 
-/** Já houve run do atendente nesta conversa desde o início do mês? */
+/**
+ * Já houve run do atendente nesta conversa desde o início do mês? Só conta run
+ * TERMINADA com sucesso (`done`): erro, abortada e em andamento não são atendimento.
+ */
 async function conversationServedThisMonth(
   ctx: { db: Db },
   conversationId: Id<"conversations">,
@@ -270,7 +287,7 @@ async function conversationServedThisMonth(
       q.eq("conversationId", conversationId).gte("_creationTime", monthStart)
     );
   for await (const run of runs) {
-    if (run.kind === "attendant" && run._id !== excludeRunId) return true;
+    if (run.kind === "attendant" && run.status === "done" && run._id !== excludeRunId) return true;
   }
   return false;
 }
@@ -338,10 +355,36 @@ export async function attendantBudgetGate(
   const month = monthKeyUtc(args.now);
   const monthStart = monthStartUtcMs(month);
   const usage = await getMonthlyUsageDoc(ctx, args.org._id, month);
-  const served = await conversationServedThisMonth(ctx, args.conversation._id, monthStart);
+  const meter = await getOrgUsageMonthly(ctx, args.org._id, month);
+
+  // "Contato já atendido no mês?" = linha no livro (contato, não conversa: o mesmo
+  // contato no WhatsApp e no Instagram conta 1). SEM linha, SEMPRE consulta a salvaguarda
+  // por conversa (independe da data do deploy: o código antigo já incrementou no claim
+  // as conversas atendidas antes dele) e, se ela confirma, grava a linha em modo
+  // `backfill` sem incrementar. O custo extra é só para contato sem linha no mês.
+  const contactKey = args.lead ? contactKeyOf(args.lead) : null;
+  let served = false;
+  if (contactKey) {
+    served = (await findAttendance(ctx, args.org._id, month, contactKey)) !== null;
+  }
+  if (!served) {
+    served = await conversationServedThisMonth(ctx, args.conversation._id, monthStart);
+    if (served && contactKey) {
+      await recordAttendance(ctx, {
+        organizationId: args.org._id,
+        month,
+        contactKey,
+        conversationId: args.conversation._id,
+        firstAt: args.now,
+        billing: "legacy",
+        mode: "backfill",
+      });
+    }
+  }
+  const billingClass = resolveEntitlements(args.org, args.now).gated ? ("included" as const) : ("legacy" as const);
 
   const budget = args.org.settings.aiConfig?.monthlyConversationBudget;
-  if (budget !== undefined && budget > 0 && !served && (usage?.conversations ?? 0) >= budget) {
+  if (budget !== undefined && budget > 0 && !served && totalAttendances(usage, meter) >= budget) {
     // Só o turno do CLIENTE chama gente: no coach/devolução o humano já está
     // ali, e o follow-up escala pela própria tarefa (`releaseFollowUpFromQueue`).
     if (args.item.origin === undefined && args.lead) {
@@ -354,7 +397,7 @@ export async function attendantBudgetGate(
         oncePerMonth: false,
       });
     }
-    return { skipReason: "budget_mensal", forceSuggest: false, countConversation: false, month };
+    return { skipReason: "budget_mensal", forceSuggest: false, countConversation: false, month, billingClass };
   }
 
   const cap = resolveSpendCap(args.org.settings.aiConfig?.spendCap);
@@ -364,13 +407,15 @@ export async function attendantBudgetGate(
     forceSuggest: evaluation.blocked,
     countConversation: !served,
     month,
+    billingClass,
   };
 }
 
 /**
  * Depois que o claim inseriu a run (ponto sem volta — sem defer de pacing/lock
- * no caminho): conta a conversa no mês e, com o teto em R$ estourado em
- * `block`, abre o repasse `ai_budget` (1×/mês por lead). Abrir antes do lock
+ * no caminho): com o teto em R$ estourado em `block`, abre o repasse
+ * `ai_budget` (1×/mês por lead). A contagem do atendimento NÃO é mais feita
+ * aqui: sai no commit da resposta/rascunho (B2). Abrir antes do lock
  * faria o re-claim cair em `handoff_pendente` e o rascunho nunca sair.
  */
 export async function onAttendantRunStarted(
@@ -385,25 +430,6 @@ export async function onAttendantRunStarted(
     now: number;
   }
 ): Promise<void> {
-  if (args.gate.countConversation) {
-    const usage = await getMonthlyUsageDoc(ctx, args.org._id, args.gate.month);
-    if (usage) {
-      await ctx.db.patch(usage._id, {
-        conversations: (usage.conversations ?? 0) + 1,
-        updatedAt: args.now,
-      });
-    } else {
-      await ctx.db.insert("aiUsageMonthly", {
-        organizationId: args.org._id,
-        month: args.gate.month,
-        costUsdMicros: 0,
-        runs: 0,
-        conversations: 1,
-        byKind: {},
-        updatedAt: args.now,
-      });
-    }
-  }
   if (args.gate.forceSuggest && args.item.origin === undefined) {
     await openBudgetHandoff(ctx, {
       lead: args.lead,
@@ -471,12 +497,19 @@ const BACKFILL_MAX_RUNS = 8000;
  * continua devolvendo o plano, com `warning`. E o backfill NUNCA reduz um doc
  * existente: cada número gravado fica com o maior entre o gravado e o
  * recalculado.
+ *
+ * Billing (A1): num mês que já tem linha de `aiAttendances` da org, ou a partir de
+ * `BILLING_LEDGER_START_MONTH` (o que vier primeiro), o livro é a fonte de
+ * `conversations` (contatos). Este backfill NÃO toca mais esse campo nesses meses (nem
+ * o infla pelo número de conversas): o valor existente fica como está.
+ * `ledgerStartMonth` existe só para teste.
  */
 export const internalBackfillMonthlyUsage = internalMutation({
   args: {
     organizationId: v.optional(v.id("organizations")),
     month: v.string(),
     dryRun: v.optional(v.boolean()),
+    ledgerStartMonth: v.optional(v.string()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -557,11 +590,21 @@ export const internalBackfillMonthlyUsage = internalMutation({
     }
 
     const existing = await getMonthlyUsageDoc(ctx, organizationId, args.month);
+    // Mês "do livro": já tem linha de atendimento da org, ou é >= à constante (o que vier primeiro).
+    const hasLedgerRows =
+      (await ctx.db
+        .query("aiAttendances")
+        .withIndex("by_organization_and_month_and_contact", (q) =>
+          q.eq("organizationId", organizationId).eq("month", args.month)
+        )
+        .first()) !== null;
+    const ledgerMonth = hasLedgerRows || args.month >= (args.ledgerStartMonth ?? BILLING_LEDGER_START_MONTH);
     const computed = {
       costUsdMicros,
       runs: finished,
       estimatedRuns,
-      conversations: conversations.size,
+      // Mês do livro: o contador de contatos é do `recordAttendance`, não deste recálculo.
+      conversations: ledgerMonth ? (existing?.conversations ?? 0) : conversations.size,
       promptTokens,
       completionTokens,
       cachedPromptTokens,
