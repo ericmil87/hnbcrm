@@ -36,6 +36,9 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   // provedor) e pacotes pré-pagos. Não são dados de negócio da org para restaurar.
   "orgSubscriptions",
   "usageCredits",
+  // Billing (B2): extrato de atendimentos IA (derivado de `agentRuns`) e medidor de envios.
+  "aiAttendances",
+  "orgUsageMonthly",
   // Contador agregado de armazenamento (onda 2 de I/O) — derivado de `files`.
   "orgStorageUsage",
   "agentEvals",

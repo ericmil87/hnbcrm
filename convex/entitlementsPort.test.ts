@@ -16,6 +16,9 @@ import path from "node:path";
 
 const CONVEX_DIR = __dirname;
 const PORT_FILES = new Set(["lib/entitlementsOps.ts", "opsBilling.ts"]);
+// `aiAttendances.billing` é a CLASSE do atendimento (included/credit/...), não o plano da org:
+// o livro grava essa coluna. O teste abaixo garante que ele não escreve em `organizations`.
+const LEDGER_FILE = "lib/attendanceLedger.ts";
 // Arquivos que podem CITAR a tabela `orgSubscriptions`: a porta, o schema, o `billing.ts`
 // do B3 (só leitura) e as listas de classificação (purge LGPD e backup), que só a NOMEIAM.
 const SUBSCRIPTION_FILES = new Set([
@@ -160,10 +163,16 @@ describe("porta única de escrita do plano", () => {
     const violations: string[] = [];
     for (const abs of walk(CONVEX_DIR)) {
       const r = rel(abs);
-      if (PORT_FILES.has(r)) continue;
+      if (PORT_FILES.has(r) || r === LEDGER_FILE) continue;
       for (const line of findBillingWrites(readFileSync(abs, "utf8"))) violations.push(`${r}:${line}`);
     }
     expect(violations, "Grave o plano só por applySubscriptionChange (convex/lib/entitlementsOps.ts)").toEqual([]);
+  });
+
+  test("o livro (attendanceLedger) só escreve em aiAttendances e orgUsageMonthly, nunca na org", () => {
+    const src = read(LEDGER_FILE);
+    expect(src).not.toMatch(/\.(?:patch|replace)\s*\(\s*[\w.]*organizationId\b/);
+    expect(src).not.toMatch(/insert\(\s*["']organizations["']/);
   });
 
   test("só a porta (schema e billing.ts de leitura) cita a tabela orgSubscriptions", () => {
@@ -189,7 +198,7 @@ describe("porta única de escrita do plano", () => {
   test("tabelas de billing entram na purge LGPD e fora do backup", () => {
     const purge = read("opsPurge.ts");
     const sanitize = read("lib/exportSanitize.ts");
-    for (const table of ["orgSubscriptions", "usageCredits"]) {
+    for (const table of ["orgSubscriptions", "usageCredits", "aiAttendances", "orgUsageMonthly"]) {
       expect(purge).toContain(`table: "${table}"`);
       expect(sanitize).toContain(`"${table}"`);
     }
@@ -203,6 +212,40 @@ describe("porta única de escrita do plano", () => {
 
   test("controle positivo: a porta é detectada pela heurística", () => {
     expect(findBillingWrites(read("lib/entitlementsOps.ts")).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("medição: portas únicas de escrita (B2)", () => {
+  // Quem pode inserir em cada tabela de medição. `orgUsageMonthly` tem dois donos: o
+  // medidor de envios (usageMeter) e o livro de atendimentos (attendanceLedger), que mantém
+  // os contadores de IA lá para não disputar o doc de custo (`aiUsageMonthly`).
+  const OWNERS: Array<[table: string, owners: string[]]> = [
+    ["aiAttendances", ["lib/attendanceLedger.ts"]],
+    ["orgUsageMonthly", ["lib/usageMeter.ts", "lib/attendanceLedger.ts"]],
+  ];
+
+  test("auto-teste da heurística", () => {
+    expect(findTableInserts(`await ctx.db.insert("aiAttendances", { a: 1 })`, "aiAttendances")).toHaveLength(1);
+    expect(findTableInserts(`await ctx.db.insert(\n  'orgUsageMonthly',\n {})`, "orgUsageMonthly")).toHaveLength(1);
+    expect(findTableInserts(`await ctx.db.insert("auditLogs", {})`, "aiAttendances")).toHaveLength(0);
+  });
+
+  for (const [table, owners] of OWNERS) {
+    test(`só ${owners.join(" e ")} inserem em ${table}`, () => {
+      const violations: string[] = [];
+      for (const abs of walk(CONVEX_DIR)) {
+        const r = rel(abs);
+        if (owners.includes(r)) continue;
+        for (const line of findTableInserts(readFileSync(abs, "utf8"), table)) violations.push(`${r}:${line}`);
+      }
+      expect(violations).toEqual([]);
+      for (const owner of owners) expect(findTableInserts(read(owner), table).length).toBeGreaterThanOrEqual(1);
+    });
+  }
+
+  test("o commit do atendente não escreve em aiUsageMonthly (doc quente do custo)", () => {
+    const src = read("lib/attendanceLedger.ts");
+    expect(src).not.toMatch(/\.(?:query|insert)\(\s*["']aiUsageMonthly["']/);
   });
 });
 

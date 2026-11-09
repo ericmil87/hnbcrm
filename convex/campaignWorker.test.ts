@@ -173,6 +173,12 @@ describe("envio de ponta a ponta (bridge)", () => {
     expect(notifs.some((n) => n.type === "campaign_completed" && n.campaignId === id)).toBe(true);
     const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", ana.leadId!)).collect());
     expect(acts.some((a) => /campanha «Bridge camp» enviada/.test(a.content ?? ""))).toBe(true);
+
+    // Billing (B2): só os 2 envios de fato feitos entram no medidor do mês (o pulado não).
+    const meter = await t.run((ctx) => ctx.db.query("orgUsageMonthly").withIndex("by_organization_and_month", (q) => q.eq("organizationId", s.organizationId).eq("month", "2026-09")).unique());
+    expect(meter?.campaignSends).toBe(2);
+    expect(rows.filter((r) => r.meteredMonth === "2026-09")).toHaveLength(2);
+    expect(skipped.meteredMonth).toBeUndefined();
   });
 
   test("canal com token que não decifra: destinatário vira failed em vez de ficar queued para sempre", { timeout: 60_000 }, async () => {
