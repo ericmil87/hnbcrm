@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não lançado]
 
+### Medição de uso da IA mais justa (base dos planos novos)
+
+- O número de atendimentos da IA no mês passa a contar **pessoas distintas** atendidas, e não conversas: quem fala com você pelo WhatsApp e pelo Instagram conta uma vez só. Uma resposta que falhou não conta mais; conta quando a IA de fato respondeu ou deixou um rascunho. O limite mensal de conversas que você define continua valendo e, com essa conta, só pode ser alcançado mais tarde, nunca antes.
+- Quando o provedor de IA não informa o consumo de uma resposta, o custo do mês passa a usar uma estimativa conservadora em vez de zero. Isso deixa o teto de gastos mais fiel.
+- Os envios de campanha passam a ser contados por mês (cada destinatário conta uma vez, mesmo com nova tentativa).
+
 ### Avisos mais certos
 
 - Os avisos de conversa no sino mostram um pequeno selo com o canal (WhatsApp, Instagram ou Messenger) junto ao ícone; avisos antigos continuam como antes.
