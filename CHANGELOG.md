@@ -6,6 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Avisos mais certos
 
+- Os avisos de conversa no sino mostram um pequeno selo com o canal (WhatsApp, Instagram ou Messenger) junto ao ícone; avisos antigos continuam como antes.
 - Concluir ou cancelar uma tarefa pelo quadro, pelo seletor de status ou pelo calendário agora também limpa os avisos dela do sino, e o e-mail de lembrete não sai mais para tarefa já concluída. Excluir uma tarefa limpa também a menção em comentário.
 - Excluir um lead limpa os avisos das conversas e dos pedidos de ajuda dele.
 - Responder ao cliente (pelo app, pelo Telegram ou pela API) marca como lidos os seus avisos de mensagem nova e de conversa transferida. Quem só vê as próprias conversas também tem os avisos limpos ao abrir uma conversa.
