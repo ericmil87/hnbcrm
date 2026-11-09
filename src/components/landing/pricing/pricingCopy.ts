@@ -1,0 +1,125 @@
+/**
+ * Textos PT-BR da seção de preços. Números do catálogo (planos, canal extra,
+ * add-on, pacote, teste) entram por parâmetro: nada de valor digitado aqui,
+ * exceto o que não existe no catálogo (reembolso, reativação do bridge).
+ */
+import { formatCount, formatMoney } from "@/lib/format";
+import { EXTRA_CHANNEL_BRL, GROUPS_ADDON_BRL, PACK, PLANS, TRIAL } from "../../../../convex/lib/plans";
+
+/** Fora do catálogo; vem do documento de decisão (revisar com o jurídico). */
+export const BRIDGE_REACTIVATION_BRL = 190;
+export const REFUND_DAYS = 7;
+
+export const PLAN_AUDIENCE: Record<keyof typeof PLANS, string> = {
+  essencial: "Corretor, terapeuta, consultório e autônomo",
+  profissional: "Clínica, equipe comercial, startup, escola e espaço de eventos",
+  escala: "Imobiliária com um número por corretor e rede de 2 a 3 clínicas",
+  empresa: "Redes multiunidade, hotéis, venues e sociedades anônimas",
+};
+
+export const PLAN_SUPPORT: Record<keyof typeof PLANS, string> = {
+  essencial: "Suporte por e-mail",
+  profissional: "Suporte por e-mail e WhatsApp",
+  escala: "Suporte prioritário",
+  empresa: "Gerente de conta, contrato, SLA e nota fiscal",
+};
+
+export const NOT_CHARGED: readonly string[] = [
+  "Usuários e assentos: a equipe inteira, em qualquer plano",
+  "Conversas só da equipe: não contam como atendimento IA",
+  "Grupos, campanhas e Copiloto: não contam como atendimento IA",
+  "Mensagens, contatos, funis e leads sem limite",
+  "Exportação dos seus dados: sempre liberada",
+];
+
+export const THIRD_PARTY_POINTS: readonly string[] = [
+  "Se você usar a API oficial da Meta, a Meta cobra direto de você, sem margem nossa.",
+  "Se usar a sua chave de IA própria, o provedor cobra direto de você, e o excedente do plano fica mais barato.",
+  "O canal por QR code está incluído no plano.",
+];
+
+export const DEFINITIONS: readonly { term: string; text: string }[] = [
+  { term: "Canal", text: "Um número de WhatsApp, uma conta de Instagram ou de Messenger conectada." },
+  {
+    term: "Atendimento IA",
+    text: "Um contato que a IA atendeu no mês. O mesmo contato falando vinte vezes conta um.",
+  },
+  { term: "Envio de campanha", text: "Uma mensagem de campanha enviada a um contato." },
+  { term: "Unidade", text: "Uma filial, casa ou hotel da rede, no plano Empresa." },
+];
+
+export function addonLines(): { title: string; price: string; detail: string }[] {
+  return [
+    {
+      title: "Canal extra",
+      price: `${formatMoney(EXTRA_CHANNEL_BRL, "BRL", { fractionDigits: 0 })}/mês`,
+      detail: "Para passar da quantidade de canais do plano.",
+    },
+    {
+      title: "Add-on Grupos (só Essencial)",
+      price: `${formatMoney(GROUPS_ADDON_BRL, "BRL", { fractionDigits: 0 })}/mês`,
+      detail: `Até ${PLANS.essencial.groupsAddonMax} grupos com IA e publicações agendadas. Do Profissional em diante já vem incluso.`,
+    },
+    {
+      title: `Pacote de ${formatCount(PACK.attendances)} atendimentos`,
+      price: formatMoney(PACK.brl, "BRL", { fractionDigits: 0 }),
+      detail: `Vale por ${PACK.months} meses. Alternativa ao excedente.`,
+    },
+    {
+      title: "Reativação do número por QR code",
+      price: formatMoney(BRIDGE_REACTIVATION_BRL, "BRL", { fractionDigits: 0 }),
+      detail: "Depois de um banimento. A primeira do ano é grátis.",
+    },
+  ];
+}
+
+export function faqItems(): { question: string; answer: string }[] {
+  return [
+    {
+      question: "O que é um atendimento IA?",
+      answer:
+        "Um contato que a IA atendeu no mês (respondeu ou rascunhou). Se ela falar dez vezes com a mesma pessoa no mês, conta um. Conversa só da equipe, grupos e campanhas não contam.",
+    },
+    { question: "Quantos usuários posso ter?", answer: "Quantos quiser, em qualquer plano pago." },
+    {
+      question: "O que acontece quando a franquia acaba?",
+      answer:
+        "A IA passa a sugerir respostas e a sua equipe envia. Não cobramos nada a mais. Se quiser que ela continue sozinha, você liga o excedente e escolhe um teto em reais.",
+    },
+    {
+      question: "Posso ser cobrado sem querer?",
+      answer:
+        "Não. O excedente vem desligado. Você recebe aviso em 80% e 100% e vê o uso do mês em tempo real.",
+    },
+    {
+      question: "Como funciona o teste?",
+      answer: `${TRIAL.days} dias do plano ${PLANS[TRIAL.plan].label}, sem cartão, com ${formatCount(TRIAL.aiAttendances)} atendimentos IA. No fim, a conta fica em só leitura e você exporta o que quiser; nada é apagado.`,
+    },
+    {
+      question: "E se eu não pagar?",
+      answer: "A conta fica em só leitura. Os dados continuam disponíveis para exportação.",
+    },
+    {
+      question: "Posso cancelar?",
+      answer: `Quando quiser, pelo painel. Mensal sem fidelidade. Nos ${REFUND_DAYS} primeiros dias depois de pagar, devolvemos o valor.`,
+    },
+    {
+      question: "O preço aumenta?",
+      answer:
+        "O preço fica travado por 12 meses. Depois, só com aviso de 60 dias e com direito de cancelar.",
+    },
+    {
+      question: "Quanto custa o WhatsApp?",
+      answer:
+        "O canal por QR code está incluído no plano. Se você usar a API oficial da Meta, a Meta cobra direto de você, sem margem nossa. O mesmo vale para a sua chave de IA própria.",
+    },
+    {
+      question: "O número pode ser banido?",
+      answer: `O QR code usa uma conexão não oficial e há risco de banimento do número. Explicamos o risco antes de ligar e recomendamos a API oficial para operações críticas. Oferecemos reativação (${formatMoney(BRIDGE_REACTIVATION_BRL, "BRL", { fractionDigits: 0 })}, a primeira do ano é grátis).`,
+    },
+    { question: "Emitem nota fiscal?", answer: "Sim (NFS-e), em todos os planos." },
+  ];
+}
+
+export const CTA_LABEL = `Testar ${TRIAL.days} dias grátis`;
+export const CTA_NOTE = "Sem cartão de crédito.";
