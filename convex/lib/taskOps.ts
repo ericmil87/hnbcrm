@@ -12,7 +12,7 @@ import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
-import { createNotification, filterMembersOfOrg } from "./notify";
+import { createNotification, filterMembersOfOrg, orgTimeZone } from "./notify";
 import { notificationCopy } from "./notificationCopy";
 import { appUrl as resolveAppUrl } from "./appUrl";
 import { scheduleWebhookEvent } from "./webhookDispatch";
@@ -24,6 +24,68 @@ const MENTION_EXCERPT_LENGTH = 240;
 
 export function taskDeepLink(taskId: Id<"tasks">): string {
   return `${resolveAppUrl()}/app/tarefas?task=${taskId}`;
+}
+
+// ── Aviso de atribuição (porta única, usada por tasks.ts e pelo follow-up da IA) ──
+
+// Notifica (in-app + e-mail) só os responsáveis NOVOS, nunca o ator. B2: quem
+// DEIXOU de ser responsável tem o `task_assigned` não lido resolvido (porta única).
+export async function notifyNewAssignees(
+  ctx: MutationCtx,
+  opts: {
+    task: { _id: Id<"tasks">; title: string; dueDate?: number; organizationId: Id<"organizations"> };
+    assignees: Id<"teamMembers">[];
+    previousAssignees: Id<"teamMembers">[];
+    actor: Doc<"teamMembers">;
+  }
+): Promise<void> {
+  const previous = new Set(opts.previousAssignees);
+  const current = new Set(opts.assignees);
+  for (const memberId of previous) {
+    if (current.has(memberId)) continue;
+    await resolveEntityNotifications(ctx, {
+      organizationId: opts.task.organizationId,
+      target: { taskId: opts.task._id },
+      memberId,
+      resolvedByMemberId: opts.actor._id,
+      reason: "task_unassigned",
+      types: ["task_assigned"],
+    });
+  }
+  // Ids podem vir do cliente (API/MCP): só notifica membros da org da task —
+  // o e-mail não tem gate de org em dispatchNotification.
+  const allowed = await filterMembersOfOrg(ctx, opts.task.organizationId, opts.assignees);
+  const fresh = allowed.filter((id) => !previous.has(id) && id !== opts.actor._id);
+  const timeZone = fresh.length > 0 && opts.task.dueDate ? await orgTimeZone(ctx, opts.task.organizationId) : undefined;
+  const now = Date.now();
+
+  for (const memberId of allowed) {
+    if (previous.has(memberId)) continue;
+    if (memberId === opts.actor._id) continue;
+
+    await createNotification(ctx, {
+      organizationId: opts.task.organizationId,
+      memberId,
+      type: "task_assigned",
+      ...notificationCopy(
+        { type: "task_assigned", taskTitle: opts.task.title, actorName: opts.actor.name, dueAt: opts.task.dueDate },
+        { timeZone, now }
+      ),
+      taskId: opts.task._id,
+      actorId: opts.actor._id,
+      // E1: e-mail de reserva (+30 min, só se o aviso ainda não foi lido).
+      email: {
+        eventType: "taskAssigned",
+        templateData: {
+          taskTitle: opts.task.title,
+          dueDate: opts.task.dueDate ? new Date(opts.task.dueDate).toLocaleDateString("pt-BR") : undefined,
+          assignedByName: opts.actor.name,
+          leadTitle: undefined,
+          taskUrl: taskDeepLink(opts.task._id),
+        },
+      },
+    });
+  }
 }
 
 // ── Colunas do kanban ──

@@ -169,6 +169,12 @@ export async function createNotification(
     metaConnectionId?: Id<"metaConnections">;
     /** Carga do botão de ação do item (oportunidade de grupo, digest). */
     data?: Record<string, unknown>;
+    /**
+     * Canal da conversa do aviso (`conversation.channel` no momento da criação):
+     * vai para `data.channel` (contrato com o front: ícone do canal). Quem já tem a
+     * conversa carregada passa; a porta nunca lê a conversa só para isso.
+     */
+    channel?: string;
     actorId?: Id<"teamMembers">;
     coalesce?: CoalesceOptions;
     /** E1: e-mail de reserva (+10/+30 min, só se ainda não lido). Ignorado num patch. */
@@ -228,6 +234,12 @@ export async function createNotification(
         // silencioso preserva o estado (senão o relógio dos 5 min andaria sem toque).
         data: {
           ...(args.data ?? {}),
+          // O canal acompanha o aviso: o do evento atual, senão o já gravado.
+          ...(args.channel !== undefined
+            ? { channel: args.channel }
+            : typeof existing.data?.channel === "string"
+              ? { channel: existing.data.channel }
+              : {}),
           count,
           coalescedSince: since ?? existing.createdAt,
           ...(pushScheduled ? nextRenotify : carriedRenotifyState(existing.data)),
@@ -254,8 +266,16 @@ export async function createNotification(
     channelConfigId: args.channelConfigId,
     metaConnectionId: args.metaConnectionId,
     data: co
-      ? { ...(args.data ?? {}), count: increment, coalescedSince: now, pushRenotify: true }
-      : args.data,
+      ? {
+          ...(args.data ?? {}),
+          ...(args.channel !== undefined ? { channel: args.channel } : {}),
+          count: increment,
+          coalescedSince: now,
+          pushRenotify: true,
+        }
+      : args.channel !== undefined
+        ? { ...(args.data ?? {}), channel: args.channel }
+        : args.data,
     conversationId: args.conversationId,
     actorId: args.actorId,
     createdAt: now,

@@ -115,6 +115,7 @@ import {
   yieldFollowUpItemToReactiveTurn,
 } from "./lib/followUpOps";
 import { buildTaskSearchText } from "./lib/taskSearchText";
+import { notifyNewAssignees } from "./lib/taskOps";
 import { DEFAULT_AGENDA_HEADER, AgendaEvent, isAllowedImageUrl } from "./lib/externalAgenda";
 import { prepareAgendaImageFile, runConsultarAgenda } from "./attendantAgenda";
 import {
@@ -2159,6 +2160,17 @@ export async function executeAttendantToolCore(
           updatedAt: now,
         });
 
+        // Follow-up da equipe atribuído ao dono humano: mesmo aviso "tarefa atribuída"
+        // das demais criações (porta única; nunca vai para o membro IA).
+        if (assignedTo && assignedTo !== agent._id) {
+          await notifyNewAssignees(ctx, {
+            task: { _id: taskId, title, dueDate: effectiveDueAt, organizationId: args.organizationId },
+            assignees: [assignedTo],
+            previousAssignees: [],
+            actor: agent,
+          });
+        }
+
         let followUpId: Id<"aiFollowUps"> | null = null;
         if (aiExecutes) {
           const chainIndex = await computeChainIndex(
@@ -3088,6 +3100,7 @@ export const internalCommitAiSuggestion = internalMutation({
             type: "ai_draft_pending",
             ...notificationCopy({ type: "ai_draft_pending", contactName: lead.title }),
             conversationId: conversation._id,
+            channel: conversation.channel,
             actorId,
             // B2: o dedupe acima decide SE avisa; o agrupamento decide inserir ×
             // atualizar (não lida "velha" — rascunho já revisado no inbox — sobe

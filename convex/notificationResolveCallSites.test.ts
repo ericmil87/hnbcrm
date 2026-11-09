@@ -119,7 +119,7 @@ describe("call sites da porta resolveEntityNotifications", () => {
   });
 
   test("B2: trocar responsável de tarefa resolve o task_assigned de quem saiu", () => {
-    const body = bodyOf("tasks.ts", "notifyNewAssignees");
+    const body = bodyOf("lib/taskOps.ts", "notifyNewAssignees");
     expect(body).toMatch(/resolveEntityNotifications\([\s\S]*task_unassigned[\s\S]*task_assigned/);
   });
 

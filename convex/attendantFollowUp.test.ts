@@ -484,6 +484,24 @@ describe("tool scheduleFollowUp v2", () => {
     expect((await tasksOf(t))[0].assignedTo).toBe(seed.adminId);
   });
 
+  test('executor "team" avisa o dono humano com task_assigned (nunca a IA)', async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, { leadOwner: "human" });
+    await armDefault(t, seed, { executor: "team" });
+    const rows = (await notificationsOf(t)).filter((n) => n.type === "task_assigned");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].memberId).toBe(seed.adminId);
+    expect(rows[0].taskId).toBe((await tasksOf(t))[0]._id);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test('executor "team" sem dono humano não gera task_assigned', async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t);
+    await armDefault(t, seed, { executor: "team" });
+    expect((await notificationsOf(t)).filter((n) => n.type === "task_assigned")).toHaveLength(0);
+  });
+
   test('mode "off": comportamento da v1 (tarefa comum), sem aiFollowUps', async () => {
     const t = setup();
     const seed = await seedFollowUpOrg(t, { followUps: { mode: "off" } });

@@ -165,6 +165,7 @@ export const assignConversation = mutation({
           contactName: (await getLeadRef(ctx.db, conversation.leadId))?.title,
         }),
         conversationId: conversation._id,
+        channel: conversation.channel,
         actorId: actor._id,
       });
     }

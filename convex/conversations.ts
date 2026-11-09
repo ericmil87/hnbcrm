@@ -2670,6 +2670,7 @@ export const internalReceiveGroupMessage = internalMutation({
           type: "group_mention",
           ...mentionCopy(1),
           conversationId: conversation._id,
+          channel: conversation.channel,
           groupChatId: group._id,
           // B2: menções da mesma sala em 10 min (contados da primeira) viram
           // um aviso só no sino ("3 menções…").

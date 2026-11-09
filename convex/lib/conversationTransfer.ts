@@ -120,6 +120,7 @@ export async function transferConversationCore(
         ...(note ? { note } : {}),
       }),
       conversationId: conversation._id,
+      channel: conversation.channel,
       actorId: actor._id,
     });
   }

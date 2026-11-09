@@ -25,6 +25,7 @@ import {
   readTaskAssignees as readAssignees,
   scheduleDueReminder,
   schedulePreDueReminder,
+  notifyNewAssignees,
 } from "./lib/taskOps";
 import {
   assertNoActiveFollowUpForRecurrence,
@@ -179,66 +180,6 @@ async function resolveSearchExtras(
     labelNames: labels.filter((l): l is Doc<"taskLabels"> => l != null).map((l) => l.name),
     projectName: project?.name,
   };
-}
-
-// Notifica (in-app + e-mail) só os responsáveis NOVOS, nunca o ator. B2: quem
-// DEIXOU de ser responsável tem o `task_assigned` não lido resolvido (porta única).
-async function notifyNewAssignees(
-  ctx: MutationCtx,
-  opts: {
-    task: { _id: Id<"tasks">; title: string; dueDate?: number; organizationId: Id<"organizations"> };
-    assignees: Id<"teamMembers">[];
-    previousAssignees: Id<"teamMembers">[];
-    actor: Doc<"teamMembers">;
-  }
-): Promise<void> {
-  const previous = new Set(opts.previousAssignees);
-  const current = new Set(opts.assignees);
-  for (const memberId of previous) {
-    if (current.has(memberId)) continue;
-    await resolveEntityNotifications(ctx, {
-      organizationId: opts.task.organizationId,
-      target: { taskId: opts.task._id },
-      memberId,
-      resolvedByMemberId: opts.actor._id,
-      reason: "task_unassigned",
-      types: ["task_assigned"],
-    });
-  }
-  // Ids podem vir do cliente (API/MCP): só notifica membros da org da task —
-  // o e-mail não tem gate de org em dispatchNotification.
-  const allowed = await filterMembersOfOrg(ctx, opts.task.organizationId, opts.assignees);
-  const fresh = allowed.filter((id) => !previous.has(id) && id !== opts.actor._id);
-  const timeZone = fresh.length > 0 && opts.task.dueDate ? await orgTimeZone(ctx, opts.task.organizationId) : undefined;
-  const now = Date.now();
-
-  for (const memberId of allowed) {
-    if (previous.has(memberId)) continue;
-    if (memberId === opts.actor._id) continue;
-
-    await createNotification(ctx, {
-      organizationId: opts.task.organizationId,
-      memberId,
-      type: "task_assigned",
-      ...notificationCopy(
-        { type: "task_assigned", taskTitle: opts.task.title, actorName: opts.actor.name, dueAt: opts.task.dueDate },
-        { timeZone, now }
-      ),
-      taskId: opts.task._id,
-      actorId: opts.actor._id,
-      // E1: e-mail de reserva (+30 min, só se o aviso ainda não foi lido).
-      email: {
-        eventType: "taskAssigned",
-        templateData: {
-          taskTitle: opts.task.title,
-          dueDate: formatDate(opts.task.dueDate),
-          assignedByName: opts.actor.name,
-          leadTitle: undefined,
-          taskUrl: taskDeepLink(opts.task._id),
-        },
-      },
-    });
-  }
 }
 
 /**
@@ -2621,6 +2562,41 @@ export const internalBulkUpdate = internalMutation({
 // Tolerância do disparo: o scheduler pode acordar alguns ms antes do prazo.
 const REMINDER_EARLY_TOLERANCE_MS = 60_000;
 
+/** `triggerReminder`: "vence agora" para cada responsável humano vivo (sem duplicar o aviso antecipado não lido). */
+async function notifyReminderDue(ctx: MutationCtx, task: Doc<"tasks">, now: number): Promise<void> {
+  const assignees = [...new Set(readAssignees(task))];
+  if (assignees.length === 0) return;
+  const unreadDue = task.preDueReminderSentAt
+    ? await ctx.db
+        .query("notifications")
+        .withIndex("by_task_and_read", (q) => q.eq("taskId", task._id).eq("readAt", undefined))
+        .take(50)
+    : [];
+  const alreadyWarned = new Set(unreadDue.filter((n) => n.type === "task_due_soon").map((n) => n.memberId));
+  const copy = notificationCopy({ type: "task_due_soon", taskTitle: task.title, dueAt: task.dueDate, dueNow: true });
+  for (const memberId of assignees) {
+    if (alreadyWarned.has(memberId)) continue;
+    // createNotification recusa IA, removido e sem conta.
+    await createNotification(ctx, {
+      organizationId: task.organizationId,
+      memberId,
+      type: "task_due_soon",
+      ...copy,
+      taskId: task._id,
+      email: {
+        eventType: "taskDueSoon",
+        templateData: {
+          taskTitle: task.title,
+          dueDate: formatDate(task.dueDate) ?? "N/A",
+          minutesBefore: 0,
+          taskUrl: taskDeepLink(task._id),
+        },
+        deadlineAt: task.dueDate,
+      },
+    });
+  }
+}
+
 // Internal: Trigger reminder (idempotent)
 export const triggerReminder = internalMutation({
   args: { taskId: v.id("tasks") },
@@ -2659,6 +2635,11 @@ export const triggerReminder = internalMutation({
         createdAt: now,
       });
     }
+
+    // Aviso (sino + push/Telegram/e-mail conforme a política) aos responsáveis vivos:
+    // reusa `task_due_soon` ("vence agora"). Se o lembrete antecipado ("vence em X
+    // min") ainda está não lido, ele já avisou: não duplica.
+    await notifyReminderDue(ctx, task, now);
 
     // Fire webhook
     await scheduleWebhookEvent(ctx, {
