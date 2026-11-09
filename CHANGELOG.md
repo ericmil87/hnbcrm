@@ -16,7 +16,6 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Ao excluir uma conta, os aparelhos com avisos no celular dela também são removidos.
 - O lembrete de tarefa agora avisa os responsáveis na hora do prazo ("Tarefa vence agora"), no sino e nos outros canais conforme as preferências. Se o aviso antecipado ainda não foi lido, ele não é repetido.
 - Quando a IA agenda um follow-up para a equipe, o dono do lead recebe o aviso de tarefa atribuída.
-- Os avisos de uma conversa agora guardam o canal (WhatsApp, Instagram, Messenger), para o app mostrar o ícone certo.
 
 ### Notificações e push: ajustes de integração (front)
 
