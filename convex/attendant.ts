@@ -3730,7 +3730,10 @@ export const internalProcessQueueItem = internalAction({
         }
         requestCount += 1;
         usedProvider = resp.usedRoute.providerId;
-        addUsage(usage, resp.usage, resp.usedRoute, context.model);
+        addUsage(usage, resp.usage, resp.usedRoute, context.model, {
+          inputChars: JSON.stringify(messages).length,
+          outputChars: JSON.stringify(resp.message).length,
+        });
 
         if (resp.finishReason === "content_filter") {
           throw new Error("content_filter: resposta bloqueada pelo provider");

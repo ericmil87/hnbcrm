@@ -60,6 +60,15 @@ export function estimateRunCost(args: {
   return { costUsd, costEstimated: !known || price.estimated === true };
 }
 
+/** Caracteres por token usados quando o provedor não devolve `usage` (conservador: tokeniza mais). */
+export const CHARS_PER_TOKEN_ESTIMATE = 3.5;
+
+/** Estimativa de tokens a partir de caracteres (teto: arredonda para cima). */
+export function estimateUsageFromChars(args: { inputChars: number; outputChars: number }): NormalizedUsage {
+  const toTokens = (chars: number) => Math.ceil(Math.max(0, chars) / CHARS_PER_TOKEN_ESTIMATE);
+  return { promptTokens: toTokens(args.inputChars), completionTokens: toTokens(args.outputChars) };
+}
+
 /** Acumulador de uma run com várias chamadas (rodadas de tool, fallover, retry). */
 export interface UsageTotals {
   promptTokens: number;
@@ -91,9 +100,24 @@ export function addUsage(
   totals: UsageTotals,
   usage: NormalizedUsage | undefined | null,
   route?: { canonicalModel?: string; providerId?: string } | null,
-  fallbackModel?: string | null
+  fallbackModel?: string | null,
+  /**
+   * Tamanho em caracteres do que foi enviado/recebido. Quando a resposta CONCLUIU sem
+   * `usage` (provedor que não manda no stream), soma uma estimativa conservadora em vez
+   * de 0 ("nunca 0"): `costEstimated` fica true. Com `usage`, é ignorado.
+   */
+  charsFallback?: { inputChars: number; outputChars: number } | null
 ): UsageTotals {
-  if (!usage) return totals;
+  if (!usage) {
+    if (charsFallback) usage = estimateUsageFromChars(charsFallback);
+    else return totals;
+    const estimated = estimateRunCost({ model: route?.canonicalModel ?? fallbackModel, provider: route?.providerId, usage });
+    totals.promptTokens += usage.promptTokens ?? 0;
+    totals.completionTokens += usage.completionTokens ?? 0;
+    totals.costUsd += estimated.costUsd;
+    totals.costEstimated = true;
+    return totals;
+  }
   totals.promptTokens += usage.promptTokens ?? 0;
   totals.completionTokens += usage.completionTokens ?? 0;
   totals.cachedPromptTokens += usage.cachedPromptTokens ?? 0;

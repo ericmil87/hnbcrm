@@ -423,7 +423,12 @@ async function runVisionAttempts(attempts: ResolvedRoute[], dataUri: string): Pr
 
       // Quem atendeu DE FATO: o OpenRouter devolve o provedor upstream no body.
       // Sem isso, a falha de 14/09 ficou sem culpado identificável.
-      addUsage(usage, resp.usage, resp.usedRoute, attempt.canonicalModel);
+      addUsage(usage, resp.usage, resp.usedRoute, attempt.canonicalModel, {
+        // A imagem vai em base64 (não conta em caracteres): ~5 mil caracteres ≈ 1,4 mil tokens
+        // de imagem, mais o texto do prompt.
+        inputChars: VISION_USER_PROMPT.length + 5000,
+        outputChars: JSON.stringify(resp.message).length,
+      });
       const upstream = upstreamProviderOf(resp.raw);
       const parsed = parseVisionJson(resp.message.content);
       if (!parsed || !parsed.descricao.trim()) {

@@ -17,6 +17,7 @@ import {
   DEFAULT_SPEND_WARN_PCT,
   DEFAULT_USD_BRL_RATE,
   addUsage,
+  estimateUsageFromChars,
   estimateRunCost,
   evaluateSpend,
   finishRunCostFields,
@@ -223,5 +224,39 @@ describe("avaliação e cruzamento de limiares", () => {
     expect(spendCrossings({ costUsdMicros: 10_500_000, cap, warnedAt: 1 })).toEqual({ warn: false, reached: true });
     expect(spendCrossings({ costUsdMicros: 11_000_000, cap, warnedAt: 1, reachedAt: 2 })).toEqual({ warn: false, reached: false });
     expect(spendCrossings({ costUsdMicros: 20_000_000, cap })).toEqual({ warn: false, reached: true });
+  });
+});
+
+describe("addUsage sem usage (estimativa por caracteres)", () => {
+  test("resposta concluída sem usage soma estimativa conservadora e marca como estimada", () => {
+    const totals = addUsage(
+      newUsageTotals(),
+      undefined,
+      { canonicalModel: "deepseek-v4-flash", providerId: "openrouter" },
+      null,
+      { inputChars: 3500, outputChars: 350 }
+    );
+    expect(totals.promptTokens).toBe(1000);
+    expect(totals.completionTokens).toBe(100);
+    expect(totals.costUsd).toBeGreaterThan(0);
+    expect(totals.costEstimated).toBe(true);
+  });
+
+  test("sem fallback de caracteres continua 0 (comportamento antigo); com usage o fallback é ignorado", () => {
+    expect(addUsage(newUsageTotals(), undefined, null, "deepseek-v4-flash").costUsd).toBe(0);
+    const real = addUsage(
+      newUsageTotals(),
+      { promptTokens: 10, completionTokens: 5 },
+      { canonicalModel: "deepseek-v4-flash", providerId: "openrouter" },
+      null,
+      { inputChars: 999999, outputChars: 999999 }
+    );
+    expect(real.promptTokens).toBe(10);
+    expect(real.completionTokens).toBe(5);
+  });
+
+  test("estimateUsageFromChars arredonda para cima a 3,5 caracteres por token", () => {
+    expect(estimateUsageFromChars({ inputChars: 7, outputChars: 1 })).toEqual({ promptTokens: 2, completionTokens: 1 });
+    expect(estimateUsageFromChars({ inputChars: 0, outputChars: -4 })).toEqual({ promptTokens: 0, completionTokens: 0 });
   });
 });

@@ -303,7 +303,10 @@ async function translateWithLlm(
         },
         { timeoutMs: LLM_TRANSLATION_TIMEOUT_MS }
       );
-      addUsage(usage, res.usage, res.usedRoute, canonicalModel);
+      addUsage(usage, res.usage, res.usedRoute, canonicalModel, {
+        inputChars: system.length + userContent.length,
+        outputChars: JSON.stringify(res.message).length,
+      });
       provider = res.usedRoute.providerId;
       model = res.usedRoute.canonicalModel;
       if (res.finishReason === "length") {

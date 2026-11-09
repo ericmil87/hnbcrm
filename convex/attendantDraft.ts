@@ -152,7 +152,10 @@ export const generateAttendantDraft = action({
         },
         { timeoutMs: DRAFT_TIMEOUT_MS },
       );
-      addUsage(usage, resp.usage, resp.usedRoute, model);
+      addUsage(usage, resp.usage, resp.usedRoute, model, {
+        inputChars: prompt.system.length + prompt.user.length,
+        outputChars: JSON.stringify(resp.message).length,
+      });
       const draft = parseAttendantDraft(resp.message.content ?? "", template, business);
       if (resp.finishReason === "length") {
         draft.warnings.push("A resposta da IA foi cortada; revise o texto.");

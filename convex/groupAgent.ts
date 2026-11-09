@@ -1104,7 +1104,10 @@ export const internalProcessGroupTurn = internalAction({
         });
         requestCount += 1;
         usedProvider = resp.usedRoute.providerId;
-        addUsage(usage, resp.usage, resp.usedRoute, context.model);
+        addUsage(usage, resp.usage, resp.usedRoute, context.model, {
+          inputChars: JSON.stringify(messages).length,
+          outputChars: JSON.stringify(resp.message).length,
+        });
         if (resp.finishReason === "content_filter") {
           throw new Error("content_filter: resposta bloqueada pelo provider");
         }
@@ -1479,7 +1482,13 @@ export const internalGenerateSummary = internalAction({
           provider: resp.usedRoute.providerId,
           model: setup.model,
           requestCount: 1,
-          ...finishRunCostFields(addUsage(newUsageTotals(), resp.usage, resp.usedRoute, setup.model)),
+          ...finishRunCostFields(
+            addUsage(newUsageTotals(), resp.usage, resp.usedRoute, setup.model, {
+              // Prompt de sistema fixo (~3 mil caracteres) + as mensagens enviadas.
+              inputChars: JSON.stringify(setup.history).length + 3000,
+              outputChars: JSON.stringify(resp.message).length,
+            })
+          ),
         });
       }
       return { text, at: Date.now(), hours, error: null };
@@ -1830,7 +1839,13 @@ export const internalRadar = internalAction({
         provider: resp.usedRoute.providerId,
         model: setup.model,
         requestCount: 1,
-        ...finishRunCostFields(addUsage(newUsageTotals(), resp.usage, resp.usedRoute, setup.model)),
+        ...finishRunCostFields(
+          addUsage(newUsageTotals(), resp.usage, resp.usedRoute, setup.model, {
+            // Prompt de sistema fixo (~2 mil caracteres) + os candidatos enviados.
+            inputChars: JSON.stringify(setup.candidates).length + 2000,
+            outputChars: JSON.stringify(resp.message).length,
+          })
+        ),
       });
     } catch (e) {
       if (runId) {

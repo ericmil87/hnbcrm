@@ -1283,7 +1283,10 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
         { timeoutMs: GENERATE_TIMEOUT_MS }
       );
       lastFinishReason = resp.finishReason;
-      addUsage(usage, resp.usage, resp.usedRoute, setup.model);
+      addUsage(usage, resp.usage, resp.usedRoute, setup.model, {
+        inputChars: prompt.system.length + prompt.user.length + (nudge ? nudge.length : 0),
+        outputChars: JSON.stringify(resp.message).length,
+      });
       text = resp.finishReason === "length" ? "" : cleanGeneratedPost(resp.message.content, maxChars);
       // Checa o bruto (sem o bloco <think> completo, que a limpeza já tira) E
       // o limpo: o corte por tamanho do limpo poderia esconder uma tag tardia.
