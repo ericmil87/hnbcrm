@@ -1915,6 +1915,7 @@ export const internalFlushRelayBuffer = internalMutation({
       type: "new_message",
       ...notificationCopy({ type: "new_message", contactName: lead?.title, count: inWindow, preview }),
       conversationId: conversation._id,
+      channel: conversation.channel,
       data: { messageIds: buffer.messageIds, ...(more > 0 ? { moreCount: more } : {}) },
       coalesce: {
         key: coalesceKeys.newMessage(conversation._id),

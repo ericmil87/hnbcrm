@@ -883,6 +883,7 @@ export const internalCommitGroupAiSuggestion = internalMutation({
         type: "ai_draft_pending",
         ...notificationCopy({ type: "ai_draft_pending", groupName: group?.subject ?? "Grupo" }),
         conversationId: conversation._id,
+        channel: conversation.channel,
         groupChatId: args.groupChatId,
         actorId: args.agentMemberId,
         coalesce: {

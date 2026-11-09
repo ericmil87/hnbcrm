@@ -6,6 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Avisos mais certos
 
+- Os avisos de conversa no sino mostram um pequeno selo com o canal (WhatsApp, Instagram ou Messenger) junto ao ícone; avisos antigos continuam como antes.
 - Concluir ou cancelar uma tarefa pelo quadro, pelo seletor de status ou pelo calendário agora também limpa os avisos dela do sino, e o e-mail de lembrete não sai mais para tarefa já concluída. Excluir uma tarefa limpa também a menção em comentário.
 - Excluir um lead limpa os avisos das conversas e dos pedidos de ajuda dele.
 - Responder ao cliente (pelo app, pelo Telegram ou pela API) marca como lidos os seus avisos de mensagem nova e de conversa transferida. Quem só vê as próprias conversas também tem os avisos limpos ao abrir uma conversa.
@@ -13,6 +14,8 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - Atribuir um lead a si mesmo não envia mais e-mail.
 - A API de preferências de notificação (e o MCP) agora mostra também o atalho, as escolhas por canal, a pausa e o silêncio, e as descrições explicam o modelo atual.
 - Ao excluir uma conta, os aparelhos com avisos no celular dela também são removidos.
+- O lembrete de tarefa agora avisa os responsáveis na hora do prazo ("Tarefa vence agora"), no sino e nos outros canais conforme as preferências. Se o aviso antecipado ainda não foi lido, ele não é repetido.
+- Quando a IA agenda um follow-up para a equipe, o dono do lead recebe o aviso de tarefa atribuída.
 
 ### Notificações e push: ajustes de integração (front)
 

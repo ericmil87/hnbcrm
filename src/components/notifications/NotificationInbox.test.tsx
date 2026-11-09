@@ -313,3 +313,28 @@ describe("casca: foco, rótulo e anúncios", () => {
     expect(bdis[0].textContent).toBe("Beta");
   });
 });
+
+describe("NotificationInboxList: canal como ícone", () => {
+  it("mostra o selo do canal quando o aviso traz data.channel", () => {
+    render(<List items={[item({ data: { channel: "instagram" } })]} />);
+    expect(screen.getByRole("img", { name: "Instagram" })).toBeInTheDocument();
+  });
+
+  it("nomeia WhatsApp e Messenger", () => {
+    render(
+      <List
+        items={[
+          item({ _id: "a", data: { channel: "whatsapp" } }),
+          item({ _id: "b", data: { channel: "messenger" } }),
+        ]}
+      />,
+    );
+    expect(screen.getByRole("img", { name: "WhatsApp" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Messenger" })).toBeInTheDocument();
+  });
+
+  it("não muda nada sem data.channel", () => {
+    render(<List items={[item({}), item({ _id: "n2", data: { leadId: "l1" } })]} />);
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+});

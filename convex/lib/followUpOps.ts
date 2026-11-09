@@ -452,6 +452,8 @@ export async function resolveFollowUpOutcome(
     }
   }
 
+  const notificationConversation =
+    reasonConversation ?? (await ctx.db.get(followUp.conversationId));
   const notification = {
     organizationId: followUp.organizationId,
     type: "ai_followup_needs_human" as const,
@@ -462,6 +464,7 @@ export async function resolveFollowUpOutcome(
     }),
     taskId: followUp.taskId,
     conversationId: followUp.conversationId,
+    channel: notificationConversation?.channel,
     // Quem PROVOCOU a escalada: com `actorId` igual ao destinatário,
     // `createNotification` vira no-op — quem acabou de assumir a conversa não
     // precisa de um aviso sobre a própria ação.

@@ -60,12 +60,14 @@ Manifest com `id` `/app/` e `scope` `/` (o login `/entrar` abre dentro do app in
 - Obsoletas (mantidas para clientes em cache; remover após 15/11/2026): `notificationPreferences.getMyPreferences`, `updateMyPreferences`, `getMemberPreferences` (agora exige `team:manage`) e `notifications.unreadCount`. O template de e-mail `newMessage` foi removido (nada o usava).
 - `auto-atribuir` um lead não manda e-mail `leadAssigned` (o sino já pulava). A purga de usuário apaga os aparelhos de push pela porta `deletePushSubscription`.
 
+- **`data.channel`**: todo aviso ligado a uma conversa que o chamador já tem carregada grava `data.channel` = `conversation.channel` no momento da criação (`createNotification({channel})`; a porta nunca lê a conversa). Valores: `whatsapp`, `instagram`, `messenger` (e os demais de `conversations.channel`). Tipos: `new_message`, `conversation_transferred`, `ai_draft_pending` (1:1 e grupo), `handoff_requested`, `group_mention`, `ai_followup_needs_human`. No patch de coalescência o canal do evento vale, senão o gravado é mantido. Os repasses/follow-ups (caminho frio) fazem uma leitura da conversa quando ela ainda não estava carregada.
+- **Lembrete de tarefa** (`tasks.triggerReminder`, disparo no prazo): reusa `task_due_soon` com o texto "{tarefa} vence agora" (`dueNow` em `notificationCopy`), para `assignedTo` + `assigneeIds` sem repetir, só humanos vivos (a porta recusa IA/removido), sem e-mail de reserva (o template de "vence em breve" não serve ao prazo). Lembrete adiado ("Adiar", mais de 5 min depois do prazo) vira "Lembrete: {tarefa}" (`snoozed`) e ignora o dedupe. Se o aviso antecipado (`triggerPreDueReminder`) do membro ainda está não lido, não duplica; se já foi lido, o "vence agora" sai. Concluir/cancelar/excluir resolve (`task_due_soon` está nos tipos resolvidos).
+- **Follow-up da IA para a equipe** (`attendant.ts`, tool `scheduleFollowUp` com dono humano): avisa `task_assigned` pela mesma porta `notifyNewAssignees` (agora em `lib/taskOps.ts`), ator = membro IA; nunca para a IA.
+
 ## Pendências conhecidas
 
-- `triggerReminder` (lembrete disparado à mão) não gera aviso no sino.
-- Follow-up da IA atribuído ao dono humano da tarefa não gera `task_assigned`.
-
-- Canal como ícone em cada aviso: o doc da notificação não traz o canal; hoje o ícone é o do tipo.
+- `scheduleFollowUp` com executor "team" não deduplica por título (a IA pode criar tarefas repetidas para a equipe; o executor "ai" deduplica).
+- `group_opportunity`, `group_digest` e `handoff_resolved` (com conversa) ainda não gravam `data.channel` (sem selo de canal no sino).
 - A conversa aberta no detalhe do lead (`?lead=`) ainda gera toast: só `?conversation=` em `/app/entrada` conta como aberta.
 - `getConversations`, `getHandoffs` e `tasks.getTaskCounts` não aplicam o escopo `view_own` no backend (a lista mostra mais do que o badge conta). Se uma for apertada, as demais (inclusive buscas) vão juntas.
 - E-mail de reserva desligado para `new_message`, transferência e menção em grupo (o template `newMessage` legado foi removido).

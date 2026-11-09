@@ -484,6 +484,49 @@ describe("tool scheduleFollowUp v2", () => {
     expect((await tasksOf(t))[0].assignedTo).toBe(seed.adminId);
   });
 
+  test('executor "team" avisa o dono humano com task_assigned (nunca a IA)', async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, { leadOwner: "human" });
+    await armDefault(t, seed, { executor: "team" });
+    const rows = (await notificationsOf(t)).filter((n) => n.type === "task_assigned");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].memberId).toBe(seed.adminId);
+    expect(rows[0].taskId).toBe((await tasksOf(t))[0]._id);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test('quem aprovou o card é o responsável: sem task_assigned; mode "off": sem aviso novo', async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t, { leadOwner: "human" });
+    await t.run(async (ctx) => {
+      const { executeAttendantToolCore } = await import("./attendant");
+      await executeAttendantToolCore(ctx, {
+        name: "scheduleFollowUp",
+        argsJson: JSON.stringify({ title: "X", dueAtLocal: "2026-09-22T09:00", executor: "team" }),
+        organizationId: seed.organizationId,
+        agentMemberId: seed.agentId,
+        conversationId: seed.conversationId,
+        leadId: seed.leadId,
+        approvedBy: seed.adminId,
+      });
+    });
+    expect((await tasksOf(t))).toHaveLength(1);
+    expect((await notificationsOf(t)).filter((n) => n.type === "task_assigned")).toHaveLength(0);
+
+    const t2 = setup();
+    const seed2 = await seedFollowUpOrg(t2, { leadOwner: "human", followUps: { mode: "off" } });
+    await armDefault(t2, seed2);
+    expect(await tasksOf(t2)).toHaveLength(1);
+    expect((await notificationsOf(t2)).filter((n) => n.type === "task_assigned")).toHaveLength(0);
+  });
+
+  test('executor "team" sem dono humano não gera task_assigned', async () => {
+    const t = setup();
+    const seed = await seedFollowUpOrg(t);
+    await armDefault(t, seed, { executor: "team" });
+    expect((await notificationsOf(t)).filter((n) => n.type === "task_assigned")).toHaveLength(0);
+  });
+
   test('mode "off": comportamento da v1 (tarefa comum), sem aiFollowUps', async () => {
     const t = setup();
     const seed = await seedFollowUpOrg(t, { followUps: { mode: "off" } });

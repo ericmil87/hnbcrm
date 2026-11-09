@@ -154,6 +154,7 @@ export async function createHandoffCore(
   // (defesa em profundidade: hoje só o runtime do atendente passa o campo, mas
   // um caller futuro não pode virar escrita cross-tenant no accept).
   let conversationId = args.conversationId;
+  let validatedChannel: string | undefined;
   if (conversationId) {
     const conv = await ctx.db.get(conversationId);
     if (
@@ -162,6 +163,8 @@ export async function createHandoffCore(
       (args.leadId ? conv.leadId !== args.leadId : conv.kind !== "group")
     ) {
       conversationId = undefined;
+    } else {
+      validatedChannel = conv.channel;
     }
   }
   conversationId =
@@ -338,6 +341,13 @@ export async function createHandoffCore(
     }),
     handoffId,
     conversationId,
+    // Canal do aviso: a conversa já validada acima; só relê no caminho do fallback por lead.
+    channel:
+      validatedChannel && conversationId === args.conversationId
+        ? validatedChannel
+        : conversationId
+          ? (await ctx.db.get(conversationId))?.channel
+          : undefined,
     actorId: args.fromMemberId,
   };
   if (broadcast) {
