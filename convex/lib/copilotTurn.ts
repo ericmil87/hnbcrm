@@ -401,6 +401,7 @@ export async function runCopilotTurn(
               maxTokens: 2000,
               extraBody: route.extraBody,
             });
+            let gotUsage = false;
             for await (const delta of generator) {
               streamed = true;
               usedProvider = route.providerId;
@@ -412,7 +413,18 @@ export async function runCopilotTurn(
               }
               if (delta.toolCallDeltas) rawToolDeltas.push(...delta.toolCallDeltas);
               if (delta.finishReason) finish = delta.finishReason;
-              if (delta.usage) addUsage(usage, delta.usage, route, canonicalModel);
+              if (delta.usage) {
+                gotUsage = true;
+                addUsage(usage, delta.usage, route, canonicalModel);
+              }
+            }
+            // Stream concluído sem `usage` (provedor que não manda): estimativa conservadora
+            // por caracteres, marcada como estimada, em vez de custo 0.
+            if (!gotUsage) {
+              addUsage(usage, undefined, route, canonicalModel, {
+                inputChars: JSON.stringify(messages).length,
+                outputChars: contentBuffer.length + JSON.stringify(rawToolDeltas).length,
+              });
             }
             break routeLoop; // stream completou nesta rota
           } catch (e) {
