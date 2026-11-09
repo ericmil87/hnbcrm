@@ -167,6 +167,8 @@ export async function recordCommittedAttendance(
     billing: run?.billingClass ?? "legacy",
     origin: humanRequest ? "human_request" : "ai",
     ...(run?.unitPriceBrlCents !== undefined ? { unitPriceBrlCents: run.unitPriceBrlCents } : {}),
-    mode: "live",
+    // Run iniciada pelo claim ANTIGO (sem `billingClass`) e comprometida pelo código novo (em
+    // voo no deploy): o contador antigo já a contou no claim, então só grava a linha.
+    mode: run?.billingClass === undefined ? "backfill" : "live",
   });
 }
