@@ -577,15 +577,47 @@ describe("origem do atendimento (D14) e OCC", () => {
   });
 });
 
-describe("salvaguarda considera só runs concluídas (done)", () => {
-  test("run antiga com erro não faz a conversa virar 'já atendida'", async () => {
+describe("salvaguarda: só runs PRÉ-B2 (billingClass ausente), de qualquer status", () => {
+  const preDeployCounter = (s: Seed) =>
+    t.run((ctx) =>
+      ctx.db.insert("aiUsageMonthly", { organizationId: s.organizationId, month: MONTH, costUsdMicros: 0, runs: 1, conversations: 1, byKind: {}, updatedAt: Date.now() })
+    );
+
+  test("(a) pré-deploy com run em erro (o claim antigo contou) + contato volta = 1 no total", async () => {
     const s = await seed();
-    await seedRuns(s, [{ lead: s.a1, status: "error" }]);
+    await seedRuns(s, [{ lead: s.a1, status: "error" }]); // sem billingClass = claim antigo
+    await preDeployCounter(s);
     const c = await claim(s, s.a1, "r1");
-    expect(await ledger(s.organizationId)).toHaveLength(0); // nada de linha backfill no claim
     const ctxA = (c.res as { context: { agentRunId: Id<"agentRuns"> } }).context;
+    expect(await ledger(s.organizationId)).toHaveLength(1); // linha backfill no claim
     await commitSuggestion(s, s.a1, c.item, "r1", ctxA.agentRunId);
-    expect(await attended(s.organizationId)).toBe(1); // contou ao vivo no commit
+    expect(await attended(s.organizationId)).toBe(1); // congelado 1 + livro 0
+    expect((await meterOf(s.organizationId))?.aiAttendances ?? 0).toBe(0);
+  });
+
+  test("(b) pós-deploy: run sem commit (bot/silêncio/recusa) não serve de salvaguarda; a resposta depois conta 1", async () => {
+    const s = await seed();
+    const first = await claim(s, s.a1, "r1");
+    expect(first.res.kind).toBe("run");
+    await release(s.a1, first.item._id); // a run nova terminou sem commit
+    const second = await claim(s, s.a1, "r2");
+    expect(await ledger(s.organizationId)).toHaveLength(0); // a run nova NÃO virou "já atendida"
+    const ctxB = (second.res as { context: { agentRunId: Id<"agentRuns"> } }).context;
+    await commitSuggestion(s, s.a1, second.item, "r2", ctxB.agentRunId);
+    expect(await attended(s.organizationId)).toBe(1);
+    expect((await meterOf(s.organizationId))?.aiAttendances).toBe(1);
+  });
+
+  test("(c) run em voo no deploy (claim antigo, commit novo): grava a linha sem incrementar", async () => {
+    const s = await seed();
+    await preDeployCounter(s); // o claim antigo já contou esta conversa
+    const c = await claim(s, s.a1, "r1");
+    const ctxA = (c.res as { context: { agentRunId: Id<"agentRuns"> } }).context;
+    await t.run((ctx) => ctx.db.patch(ctxA.agentRunId, { billingClass: undefined }));
+    // Sem a run nova como salvaguarda e sem linha, o commit decide: run sem classe = backfill.
+    await commitSuggestion(s, s.a1, c.item, "r1", ctxA.agentRunId);
+    expect(await ledger(s.organizationId)).toHaveLength(1);
+    expect(await attended(s.organizationId)).toBe(1); // sem +1
   });
 });
 

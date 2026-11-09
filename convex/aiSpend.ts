@@ -272,8 +272,13 @@ export type AttendantBudgetGate = {
 };
 
 /**
- * Já houve run do atendente nesta conversa desde o início do mês? Só conta run
- * TERMINADA com sucesso (`done`): erro, abortada e em andamento não são atendimento.
+ * Salvaguarda do mês da virada: esta conversa foi contada pelo CÓDIGO ANTIGO?
+ * O claim antigo incrementava o contador em toda run, de qualquer status, então só
+ * runs PRÉ-B2 servem (`billingClass === undefined`, de qualquer status). Run nova
+ * (com `billingClass`) nunca serve de salvaguarda: quem conta agora é o commit.
+ * Consequência: contato cuja run nova não gerou commit (bot, silêncio, recusa,
+ * erro) deixa de ser "atendido" para o `monthlyConversationBudget`, e o teto
+ * dispara mais tarde no agregado (nunca mais cedo).
  */
 async function conversationServedThisMonth(
   ctx: { db: Db },
@@ -287,7 +292,7 @@ async function conversationServedThisMonth(
       q.eq("conversationId", conversationId).gte("_creationTime", monthStart)
     );
   for await (const run of runs) {
-    if (run.kind === "attendant" && run.status === "done" && run._id !== excludeRunId) return true;
+    if (run.kind === "attendant" && run.billingClass === undefined && run._id !== excludeRunId) return true;
   }
   return false;
 }
