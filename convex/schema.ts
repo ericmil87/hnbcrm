@@ -111,6 +111,57 @@ const productRoutingValidator = v.object({
   model: v.optional(v.string()),
 });
 
+// ── Billing (B1): retrato do plano que os gates leem. Fora de `settings` para que
+// `updateOrganization`/`completeWizard` (MERGE de settings) nunca o sobrescrevam.
+// Ausente = legacy implícito, sem gate nenhum. Só `lib/entitlementsOps` e
+// `opsBilling` escrevem (entitlementsPort.test.ts). Sem notas internas aqui:
+// o doc da org é devolvido aos membros. Docs: temp/ plano 01 §1.1.
+export const orgBillingValidator = v.object({
+  // Opcional: `legacy` não tem plano. Os demais status exigem plano (validado pela porta).
+  plan: v.optional(v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"))),
+  status: v.union(
+    v.literal("trial"),
+    v.literal("active"),
+    v.literal("past_due"),
+    v.literal("read_only"),
+    v.literal("canceled"),
+    v.literal("legacy")
+  ),
+  trialEndsAt: v.optional(v.number()),
+  periodStart: v.optional(v.number()),
+  units: v.optional(v.number()),
+  extraChannels: v.optional(v.number()),
+  addons: v.optional(v.object({ groups: v.optional(v.boolean()) })),
+  overage: v.optional(
+    v.object({
+      enabled: v.boolean(),
+      capBrl: v.number(),
+      updatedAt: v.number(),
+      updatedBy: v.optional(v.id("teamMembers")),
+    })
+  ),
+  overrides: v.optional(
+    v.object({
+      aiAttendances: v.optional(v.number()),
+      channels: v.optional(v.number()),
+      campaignSends: v.optional(v.number()),
+      groupsWithAi: v.optional(v.number()),
+    })
+  ),
+  priceLock: v.optional(
+    v.object({
+      kind: v.union(v.literal("founder"), v.literal("frozen")),
+      monthlyBrl: v.optional(v.number()),
+      discountPct: v.optional(v.number()),
+      until: v.optional(v.number()),
+    })
+  ),
+  legacyNoticeAt: v.optional(v.number()),
+  legacyUntil: v.optional(v.number()),
+  trialUsedByUserId: v.optional(v.id("users")),
+  updatedAt: v.number(),
+});
+
 const providerConfigValidator = v.object({
   mode: v.union(v.literal("platform"), v.literal("byo")),
   byo: v.optional(
@@ -768,6 +819,8 @@ const applicationTables = {
         })
       ),
     }),
+    // Billing (B1): plano gravado na org. Ausente = legacy, sem gate. Ver orgBillingValidator.
+    billing: v.optional(orgBillingValidator),
     // C1: carimbo "AAAA-MM-DD" (data local da org) do último resumo diário enviado.
     lastDailyDigestDate: v.optional(v.string()),
     onboardingMeta: v.optional(v.object({
@@ -2988,6 +3041,67 @@ const applicationTables = {
     reachedAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_organization_and_month", ["organizationId", "month"]),
+
+  // Billing (B1): dados comerciais (1 por org). PII (documento, e-mail) e ids de
+  // provedor NUNCA vão para `organizations`. Só o servidor lê; só a porta
+  // `applySubscriptionChange` escreve. Valores em centavos inteiros.
+  orgSubscriptions: defineTable({
+    organizationId: v.id("organizations"),
+    billingCycle: v.optional(v.union(v.literal("monthly"), v.literal("yearly"), v.literal("quarterly"))),
+    basePriceCents: v.optional(v.number()),
+    priceLockedUntil: v.optional(v.number()),
+    discount: v.optional(
+      v.object({
+        kind: v.union(v.literal("founder"), v.literal("ambassador_referral"), v.literal("commercial")),
+        pct: v.number(),
+        until: v.optional(v.number()),
+      })
+    ),
+    addons: v.optional(
+      v.object({
+        extraChannels: v.optional(v.number()),
+        groupsAddon: v.optional(v.boolean()),
+        units: v.optional(v.number()),
+      })
+    ),
+    overageUnitPriceCents: v.optional(v.number()),
+    paymentStatus: v.optional(v.union(v.literal("ok"), v.literal("pending"), v.literal("overdue"))),
+    graceUntil: v.optional(v.number()),
+    billingProvider: v.optional(v.union(v.literal("manual"), v.literal("asaas"))),
+    providerCustomerId: v.optional(v.string()),
+    providerSubscriptionId: v.optional(v.string()),
+    pendingPlanChange: v.optional(
+      v.object({
+        plan: v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa")),
+        at: v.number(),
+      })
+    ),
+    billingEmail: v.optional(v.string()),
+    billingDocument: v.optional(v.string()),
+    legacyNoticeAt: v.optional(v.number()),
+    legacyUntil: v.optional(v.number()),
+    trialUsedByUserId: v.optional(v.id("users")),
+    currentPeriodStart: v.optional(v.number()),
+    currentPeriodEnd: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_provider_subscription", ["providerSubscriptionId"])
+    .index("by_payment_status", ["paymentStatus"]),
+
+  // Billing (B1): pacotes pré-pagos (R$ 390 = 1.000 atendimentos, 12 meses), FIFO por
+  // `expiresAt`. B1 só tem o writer de ops (`internalGrantCredits`); consumo vem no B6.
+  usageCredits: defineTable({
+    organizationId: v.id("organizations"),
+    kind: v.literal("ai_attendances"),
+    granted: v.number(),
+    consumed: v.number(),
+    expiresAt: v.number(),
+    source: v.union(v.literal("pack"), v.literal("courtesy"), v.literal("migration")),
+    createdAt: v.number(),
+    createdBy: v.optional(v.string()),
+  }).index("by_organization_and_expires", ["organizationId", "expiresAt"]),
 
   // Fila de respostas do atendente. O gatilho de ingest ENFILEIRA aqui (nunca
   // runAfter(0) direto na inferência) — pacing por-org + debounce + backoff.

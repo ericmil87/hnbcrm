@@ -32,6 +32,10 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "agentRuns",
   // Contador mensal de uso/custo de IA (v0.69) — derivado de `agentRuns`.
   "aiUsageMonthly",
+  // Billing (B1): dados comerciais da assinatura (CPF/CNPJ, e-mail de cobrança, ids do
+  // provedor) e pacotes pré-pagos. Não são dados de negócio da org para restaurar.
+  "orgSubscriptions",
+  "usageCredits",
   // Contador agregado de armazenamento (onda 2 de I/O) — derivado de `files`.
   "orgStorageUsage",
   "agentEvals",
@@ -111,6 +115,8 @@ export const DENY_PATHS: readonly string[] = [
   "teamMembers.userId",
   // Rota BYO de LLM: aponta para a chave cifrada em `orgSecrets`.
   "organizations.settings.aiConfig.providerConfig.byo",
+  // Plano gravado na org (billing): restaurar um backup não pode trazer plano/priceLock.
+  "organizations.billing",
   // Estado do worker de campanha (id de scheduled function + token do tick):
   // sem valor fora do deployment e o token já cai no padrão `token`.
   "campaigns.schedulerFnId",

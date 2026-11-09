@@ -58,6 +58,9 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "webhooks", index: "by_organization" },
   { table: "agentRuns", index: "by_organization_and_started" },
   { table: "aiUsageMonthly", index: "by_organization_and_month" },
+  // Billing (B1): comercial (PII: documento, e-mail) e pacotes pré-pagos. LGPD: sai com a org.
+  { table: "orgSubscriptions", index: "by_organization" },
+  { table: "usageCredits", index: "by_organization_and_expires" },
   { table: "orgStorageUsage", index: "by_organization" },
   { table: "aiReplyQueue", index: "by_organization_and_status" },
   { table: "aiFollowUps", index: "by_organization_and_status" },
