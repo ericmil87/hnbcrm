@@ -54,8 +54,6 @@ export const internalSetOrgPlan = internalMutation({
     overrides: orgBillingValidator.fields.overrides,
     priceLock: orgBillingValidator.fields.priceLock,
     trialEndsAt: v.optional(v.number()),
-    /** Nota interna: vai só para auditLogs.metadata. */
-    note: v.optional(v.string()),
     dryRun: v.optional(v.boolean()),
   },
   returns: v.object({
@@ -120,7 +118,6 @@ export const internalSetOrgPlan = internalMutation({
       patch: { billing: next },
       source: "ops",
       reason: "internalSetOrgPlan",
-      note: args.note,
     });
     return { dryRun, applied: true, before: res.before, after: res.after!, outOfPlanModules };
   },
@@ -211,11 +208,10 @@ export const internalBackfillLegacy = internalMutation({
       }
       changed++;
       if (dryRun) continue;
-      // `plan` é obrigatório no validator; em legacy é inerte (nenhum gate lê).
       await applySubscriptionChange(ctx, {
         organizationId: org._id,
         patch: {
-          billing: { plan: "profissional", status: "legacy", legacyNoticeAt: noticeAt, legacyUntil },
+          billing: { status: "legacy", legacyNoticeAt: noticeAt, legacyUntil },
         },
         source: "ops",
         reason: "internalBackfillLegacy",

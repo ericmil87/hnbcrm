@@ -36,7 +36,8 @@ export function findBillingWrites(src: string): number[] {
   const re = /\.(?:patch|replace|insert)\s*\(/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
-    const call = sliceBalanced(src, m.index + m[0].length - 1);
+    // `initialOrgBilling(now)` é o único valor de `billing` permitido no insert de organizations.
+    const call = sliceBalanced(src, m.index + m[0].length - 1).replace(/\bbilling\s*:\s*initialOrgBilling\s*\([^)]*\)/g, "");
     const orgTarget = /"organizations"|\borganizationId\b|\borgId\b|\borg\._id\b/.test(call.split(",")[0] ?? "");
     const writesBilling = /\bbilling\b/.test(call) && orgTarget;
     const subscriptionInsert = /^\(\s*["']orgSubscriptions["']/.test(call);
@@ -74,6 +75,11 @@ describe("heurística (auto-teste)", () => {
     expect(findBillingWrites(`await ctx.db.patch(orgId, { settings: s, billing })`)).toHaveLength(1);
     expect(findBillingWrites(`await ctx.db.insert("orgSubscriptions", { organizationId })`)).toHaveLength(1);
     expect(findBillingWrites(`await ctx.db.insert("organizations", { name, billing: b })`)).toHaveLength(1);
+    expect(findBillingWrites(`await ctx.db.insert("organizations", { name, billing: { status: "active" } })`)).toHaveLength(1);
+  });
+
+  test("permite só o helper initialOrgBilling no insert de organizations", () => {
+    expect(findBillingWrites(`await ctx.db.insert("organizations", { name, billing: initialOrgBilling(now) })`)).toHaveLength(0);
   });
 
   test("não confunde outras escritas nem leituras", () => {
@@ -100,6 +106,11 @@ describe("porta única de escrita do plano", () => {
       for (const line of findBillingWrites(readFileSync(abs, "utf8"))) violations.push(`${r}:${line}`);
     }
     expect(violations, "Grave o plano só por applySubscriptionChange (convex/lib/entitlementsOps.ts)").toEqual([]);
+  });
+
+  test("createOrganization grava legacy explícito pelo helper da porta", () => {
+    const src = read("organizations.ts");
+    expect(src).toMatch(/billing:\s*initialOrgBilling\(now\)/);
   });
 
   test("controle positivo: a porta é detectada pela heurística", () => {

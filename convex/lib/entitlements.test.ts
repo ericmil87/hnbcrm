@@ -25,6 +25,9 @@ describe("resolveEntitlements", () => {
       expect(checkChannelSlot(e, 999)).toEqual({ ok: true });
     }
     expect(resolveEntitlements(null, NOW).gated).toBe(false);
+    // legacy sem plano (formato do backfill e do cadastro)
+    const noPlan = resolveEntitlements({ settings: settings as never, billing: { status: "legacy", updatedAt: 0 } }, NOW);
+    expect(noPlan).toMatchObject({ gated: false, plan: null, status: "legacy" });
   });
 
   test("trial válido = Profissional com 300 atendimentos", () => {

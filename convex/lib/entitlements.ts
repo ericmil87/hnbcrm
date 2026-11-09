@@ -44,11 +44,11 @@ const allModules = (value: boolean): Record<GatedModule, boolean> =>
 
 export function resolveEntitlements(org: OrgForEntitlements | null | undefined, now: number): Entitlements {
   const billing = org?.billing;
-  if (!billing || billing.status === "legacy") {
+  if (!billing || billing.status === "legacy" || !billing.plan) {
     return {
       gated: false,
       plan: billing?.plan ?? null,
-      status: billing ? "legacy" : "none",
+      status: billing ? billing.status : "none",
       limits: { channels: Infinity, aiAttendances: Infinity, campaignSends: Infinity, groupsWithAi: Infinity },
       modules: allModules(true),
       overage: { enabled: false, capBrlCents: 0, unitBrlCents: 0 },

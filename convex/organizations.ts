@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 import { requireAuth, requirePermission, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator, notifPresetValidator } from "./schema";
+import { initialOrgBilling } from "./lib/entitlementsOps";
 
 // Get user's organizations
 export const getUserOrganizations = query({
@@ -29,9 +30,12 @@ export const getUserOrganizations = query({
         const org = await ctx.db.get(member.organizationId);
         // `invited`: o vínculo nasceu de convite (quem criou a org não tem
         // `invitedBy`) — o front só anuncia "você foi adicionado" nesse caso.
-        return org
-          ? { ...org, role: member.role, type: member.type, invited: member.invitedBy !== undefined }
-          : null;
+        // `billing` fica de fora: o doc vai a qualquer membro (inclusive agente).
+        // O plano sai só por query filtrada (B3).
+        if (!org) return null;
+        const { billing: _billing, ...publicOrg } = org;
+        void _billing;
+        return { ...publicOrg, role: member.role, type: member.type, invited: member.invitedBy !== undefined };
       })
     );
 
@@ -81,6 +85,8 @@ export const createOrganization = mutation({
           handoffThreshold: 0.8,
         },
       },
+      // Legacy explícito (sem gate): o comportamento é o de sempre.
+      billing: initialOrgBilling(now),
       createdAt: now,
       updatedAt: now,
     });

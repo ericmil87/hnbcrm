@@ -117,7 +117,8 @@ const productRoutingValidator = v.object({
 // `opsBilling` escrevem (entitlementsPort.test.ts). Sem notas internas aqui:
 // o doc da org é devolvido aos membros. Docs: temp/ plano 01 §1.1.
 export const orgBillingValidator = v.object({
-  plan: v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa")),
+  // Opcional: `legacy` não tem plano. Os demais status exigem plano (validado pela porta).
+  plan: v.optional(v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"))),
   status: v.union(
     v.literal("trial"),
     v.literal("active"),

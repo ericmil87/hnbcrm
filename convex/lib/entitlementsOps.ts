@@ -22,6 +22,11 @@ export type OrgBilling = NonNullable<Doc<"organizations">["billing"]>;
 /** `updatedAt` é da porta; quem chama não o informa. */
 export type OrgBillingInput = Omit<OrgBilling, "updatedAt">;
 
+/** `billing` de uma org recém-criada: legacy explícito (sem gate), sem plano. Único valor permitido no insert de `organizations`. */
+export function initialOrgBilling(now: number): OrgBilling {
+  return { status: "legacy", updatedAt: now };
+}
+
 export type SubscriptionPatch = Partial<
   Omit<Doc<"orgSubscriptions">, "_id" | "_creationTime" | "organizationId" | "createdAt" | "updatedAt">
 >;
@@ -52,10 +57,12 @@ export async function applySubscriptionChange(
     organizationId: Id<"organizations">;
     patch: { billing?: OrgBillingInput; subscription?: SubscriptionPatch };
     source: BillingSource;
+    /**
+     * Motivo da mudança. Vai para `auditLogs.metadata.reason`, que os admins da
+     * org leem no Histórico: NÃO existe nota interna ali, não escreva segredo.
+     */
     reason: string;
     actor?: Id<"teamMembers">;
-    /** Nota interna: vai SÓ para `auditLogs.metadata`, nunca para o doc da org. */
-    note?: string;
   }
 ): Promise<{ before: OrgBilling | null; after: OrgBilling | null }> {
   const org = await ctx.db.get(args.organizationId);
@@ -66,6 +73,9 @@ export async function applySubscriptionChange(
   let after: OrgBilling | null = before;
   if (args.patch.billing) {
     const to = args.patch.billing.status;
+    if (to !== "legacy" && !args.patch.billing.plan) {
+      throw new ConvexError("Informe o plano: só o status legacy pode ficar sem plano");
+    }
     const verdict = validateTransition(before?.status, to, args.source);
     if (!verdict.ok) {
       throw new ConvexError({
@@ -109,7 +119,6 @@ export async function applySubscriptionChange(
       kind: "billing",
       source: args.source,
       reason: args.reason,
-      ...(args.note ? { note: args.note } : {}),
       ...(args.patch.subscription ? { subscriptionFields: Object.keys(args.patch.subscription) } : {}),
     },
     description: planOrStatusChanged

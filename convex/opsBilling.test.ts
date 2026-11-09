@@ -59,7 +59,7 @@ describe("internalSetOrgPlan", () => {
     expect(await audits(t, id)).toHaveLength(0);
   });
 
-  test("grava com audit high (before/after + nota só no audit)", async () => {
+  test("grava com audit high (before/after, source e reason)", async () => {
     const id = await seedOrg(t, "Org B");
     const res = await t.mutation(internal.opsBilling.internalSetOrgPlan, {
       organizationId: id,
@@ -67,16 +67,14 @@ describe("internalSetOrgPlan", () => {
       status: "active",
       addons: { groups: true },
       priceLock: { kind: "founder", discountPct: 30 },
-      note: "negociado com o cliente",
       dryRun: false,
     });
     expect(res.applied).toBe(true);
     const org = await getOrg(t, id);
     expect(org?.billing).toMatchObject({ plan: "essencial", status: "active", addons: { groups: true } });
-    expect(JSON.stringify(org)).not.toContain("negociado");
     const log = (await audits(t, id)).filter((a) => a.metadata?.kind === "billing");
     expect(log).toHaveLength(1);
-    expect(log[0]).toMatchObject({ severity: "high", entityType: "organization", metadata: { note: "negociado com o cliente", source: "ops" } });
+    expect(log[0]).toMatchObject({ severity: "high", entityType: "organization", metadata: { reason: "internalSetOrgPlan", source: "ops" } });
     expect(log[0].changes?.after).toMatchObject({ plan: "essencial" });
     expect(log[0].changes?.before).toBeUndefined();
   });
@@ -140,6 +138,7 @@ describe("internalBackfillLegacy", () => {
     expect(first).toMatchObject({ changed: 1, skipped: 1 });
     const billing = (await getOrg(t, a))?.billing;
     expect(billing).toMatchObject({ status: "legacy", legacyNoticeAt: noticeAt, legacyUntil: noticeAt + 60 * 86_400_000 });
+    expect(billing?.plan).toBeUndefined();
     expect((await getOrg(t, paid))?.billing).toMatchObject({ plan: "escala", status: "active" });
     const stamp = billing?.updatedAt;
     const second = await t.mutation(internal.opsBilling.internalBackfillLegacy, { noticeAt: noticeAt + 5, dryRun: false });
@@ -196,6 +195,19 @@ describe("porta de transições", () => {
     expect((await getOrg(t, pd))?.billing?.status).toBe("past_due");
     await t.run((ctx) => setBillingStatus(ctx, { organizationId: pd, status: "read_only", source: "ops", reason: "manual" }));
     expect((await getOrg(t, pd))?.billing?.status).toBe("read_only");
+  });
+
+  test("status que não é legacy exige plano (mensagem PT-BR, nada gravado)", async () => {
+    const id = await seedOrg(t, "Org SemPlano");
+    await t.mutation(internal.opsBilling.internalBackfillLegacy, { noticeAt: 1_700_000_000_000, dryRun: false });
+    const err = t.run((ctx) =>
+      applySubscriptionChange(ctx, { organizationId: id, patch: { billing: { status: "active" } }, source: "ops", reason: "x" })
+    );
+    await expect(err).rejects.toThrow(/plano/);
+    expect((await getOrg(t, id))?.billing?.status).toBe("legacy");
+    await t.run((ctx) =>
+      applySubscriptionChange(ctx, { organizationId: id, patch: { billing: { status: "legacy" } }, source: "ops", reason: "ok" })
+    );
   });
 
   test("webhook não tira org de legacy; transição inválida não grava nada", async () => {
