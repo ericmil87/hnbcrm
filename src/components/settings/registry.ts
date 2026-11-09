@@ -18,6 +18,7 @@ import {
   MonitorSmartphone,
   Network,
   Palette,
+  Receipt,
   Smartphone,
   Users,
   Database,
@@ -27,6 +28,7 @@ import {
 import type { PermissionCategory } from "../../../convex/lib/permissions";
 import { computeAnyEnabled, type OrgModules } from "@/hooks/useOrgModules";
 import { VOCAB } from "@/lib/vocab";
+import { isBillingPanelVisible, type BillingMode } from "@/lib/billingPanel";
 import type { Id } from "../../../convex/_generated/dataModel";
 
 export type SettingsGroupId = "conta" | "whatsapp" | "atendente" | "equipe" | "dados" | "avancado";
@@ -50,6 +52,7 @@ export interface SettingsPanelDef {
   visible?: (ctx: {
     can: (category: PermissionCategory, level: string) => boolean;
     modules: OrgModules;
+    billingMode?: BillingMode | null;
   }) => boolean;
   /** Painel renderizado; lazy para não carregar o que não foi aberto. */
   Component?: LazyExoticComponent<ComponentType<SettingsPanelProps>>;
@@ -98,6 +101,18 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     keywords: ["tema", "escuro", "claro", "whatsapp", "cores", "aparência"],
     // Preferência pessoal: sem permissão (agentes sem settings:view usam a sidebar / "Mais").
     Component: lazy(() => import("./AppearancePanel").then((m) => ({ default: m.AppearancePanel }))),
+  },
+  {
+    // Só para org com plano gravado: org legada (sem plano) não vê nada novo.
+    id: "billing",
+    group: "conta",
+    label: VOCAB.billing.name,
+    description: "Plano atual, uso do mês, estimativa da fatura e excedente",
+    icon: Receipt,
+    keywords: ["plano", "fatura", "uso", "excedente", "atendimentos", "cobrança", "teto", "limite", "teste", "assinatura", "créditos"],
+    permission: view,
+    visible: ({ billingMode }) => isBillingPanelVisible(billingMode),
+    Component: lazy(() => import("./billing/BillingPanel").then((m) => ({ default: m.BillingPanel }))),
   },
   {
     id: "notifications",

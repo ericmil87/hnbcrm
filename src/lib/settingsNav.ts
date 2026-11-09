@@ -1,11 +1,14 @@
 import type { PermissionCategory } from "../../convex/lib/permissions";
 import type { OrgModules } from "@/hooks/useOrgModules";
+import type { BillingMode } from "@/lib/billingPanel";
 import { SETTINGS_GROUPS, SETTINGS_PANELS, type SettingsGroupId, type SettingsPanelDef } from "@/components/settings/registry";
 
 /** O que a visibilidade de um painel pode consultar. */
 export interface SettingsCtx {
   can: (category: PermissionCategory, level: string) => boolean;
   modules: OrgModules;
+  /** Modo do plano da org (`getMyEntitlements`); `undefined` = ainda carregando. */
+  billingMode?: BillingMode | null;
 }
 
 /** Parte de um painel que a navegação usa (o registro completo acrescenta ícone e componente). */

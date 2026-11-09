@@ -60,6 +60,7 @@ export const VOCAB = {
   guardrails: "Limite de respostas seguidas",
   modelAi: "Modelo de IA",
   apiKeys: "Chaves de integração",
+  billing: { name: "Uso e fatura" },
   webhooks: { name: "Webhooks", hint: "avisos automáticos para outros sistemas" },
   agenda: { nav: "Agenda", title: "Agenda", empty: { title: "Nada na agenda", hint: "Crie um evento ou uma tarefa com data para ver tudo aqui." } },
   dashboard: { nav: "Painel", title: "Painel", empty: { title: "Seu painel ainda está vazio", hint: "Quando chegarem conversas e leads, os números aparecem aqui." } },

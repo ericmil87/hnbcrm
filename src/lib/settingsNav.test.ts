@@ -116,3 +116,23 @@ describe("resolveSettingsPanelState", () => {
     expect(r).toMatchObject({ panel: null, denied: true });
   });
 });
+
+describe("painel billing (Uso e fatura)", () => {
+  const withMode = (c: SettingsCtx, billingMode: SettingsCtx["billingMode"]): SettingsCtx => ({ ...c, billingMode });
+  const ids = (c: SettingsCtx) => visibleSettingsPanels(c).map((p) => p.id);
+
+  it("fica no grupo da conta e só aparece com plano", () => {
+    expect(SETTINGS_PANELS.find((p) => p.id === "billing")?.group).toBe("conta");
+    expect(ids(withMode(ADMIN, "active"))).toContain("billing");
+    expect(ids(withMode(ADMIN, "trial"))).toContain("billing");
+    expect(ids(withMode(ADMIN, "read_only"))).toContain("billing");
+  });
+  it("org legada e carregando não veem", () => {
+    expect(ids(withMode(ADMIN, "legacy"))).not.toContain("billing");
+    expect(ids(withMode(ADMIN, undefined))).not.toContain("billing");
+    expect(ids(ADMIN)).not.toContain("billing");
+  });
+  it("sem settings:view não vê", () => {
+    expect(ids(withMode(ctx([]), "active"))).not.toContain("billing");
+  });
+});
