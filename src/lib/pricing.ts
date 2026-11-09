@@ -118,7 +118,8 @@ export function priceForPlan(plan: PlanKey, input: PricingInput): PricingOption 
 
   const opts = { units, extraChannels, groupsAddon };
   const listBrl = monthlyPriceBrl(plan, opts);
-  const recurringBrl = input.cycle === "annual" ? annualMonthlyBrl(plan, opts) : listBrl;
+  // Empresa não tem anual de tabela (contrato anual ou trimestral negociado): cai no mensal.
+  const recurringBrl = input.cycle === "annual" ? (annualMonthlyBrl(plan, opts) ?? listBrl) : listBrl;
 
   const lines: PricingLine[] = [
     {
