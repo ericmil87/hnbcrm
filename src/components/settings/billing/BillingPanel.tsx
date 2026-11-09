@@ -114,13 +114,11 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
   const summary = useQuery(api.billing.getUsageSummary, hasPlan ? { organizationId, month, now } : "skip");
   const channelUsage = useQuery(api.billing.getChannelAndGroupUsage, hasPlan ? { organizationId } : "skip");
   const history = useQuery(api.billing.getUsageHistory, hasPlan ? { organizationId } : "skip");
-  const orgs = useQuery(api.organizations.getUserOrganizations);
-  const orgName = (orgs as { _id: string; name: string }[] | undefined)?.find((o) => o._id === organizationId)?.name ?? null;
 
   const overage = useOverageControl(organizationId, summary, entitlements?.mode, canManage);
   const changePlanHref = useMemo(
-    () => changePlanMailto(orgName, entitlements?.planLabel ?? null),
-    [orgName, entitlements?.planLabel],
+    () => changePlanMailto(null, entitlements?.planLabel ?? null),
+    [entitlements?.planLabel],
   );
 
   return (
