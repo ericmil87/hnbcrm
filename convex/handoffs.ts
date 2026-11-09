@@ -157,13 +157,14 @@ export async function createHandoffCore(
   let validatedChannel: string | undefined;
   if (conversationId) {
     const conv = await ctx.db.get(conversationId);
-    validatedChannel = conv?.channel;
     if (
       !conv ||
       conv.organizationId !== organizationId ||
       (args.leadId ? conv.leadId !== args.leadId : conv.kind !== "group")
     ) {
       conversationId = undefined;
+    } else {
+      validatedChannel = conv.channel;
     }
   }
   conversationId =

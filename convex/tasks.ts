@@ -2561,21 +2561,36 @@ export const internalBulkUpdate = internalMutation({
 
 // Tolerância do disparo: o scheduler pode acordar alguns ms antes do prazo.
 const REMINDER_EARLY_TOLERANCE_MS = 60_000;
+// Até aqui depois do prazo o lembrete ainda é "vence agora"; além disso é lembrete adiado.
+const REMINDER_DUE_NOW_WINDOW_MS = 5 * 60_000;
 
 /** `triggerReminder`: "vence agora" para cada responsável humano vivo (sem duplicar o aviso antecipado não lido). */
 async function notifyReminderDue(ctx: MutationCtx, task: Doc<"tasks">, now: number): Promise<void> {
   const assignees = [...new Set(readAssignees(task))];
   if (assignees.length === 0) return;
-  const unreadDue = task.preDueReminderSentAt
-    ? await ctx.db
-        .query("notifications")
-        .withIndex("by_task_and_read", (q) => q.eq("taskId", task._id).eq("readAt", undefined))
-        .take(50)
-    : [];
+  // Adiado ("Adiar" reagenda para `snoozedUntil`): já passou do prazo, então não é "vence agora"
+  // e o aviso antecipado antigo não vale como dedupe.
+  const snoozed = task.dueDate != null && now - task.dueDate > REMINDER_DUE_NOW_WINDOW_MS;
+  // Não lidos da tarefa, do mais novo ao mais antigo (o pré-aviso é mais novo que a
+  // atribuição). Teto 100: por tarefa há poucos não lidos (atribuição, prazo, atraso, menções).
+  const unreadDue =
+    task.preDueReminderSentAt && !snoozed
+      ? await ctx.db
+          .query("notifications")
+          .withIndex("by_task_and_read", (q) => q.eq("taskId", task._id).eq("readAt", undefined))
+          .order("desc")
+          .take(100)
+      : [];
   const alreadyWarned = new Set(unreadDue.filter((n) => n.type === "task_due_soon").map((n) => n.memberId));
-  const copy = notificationCopy({ type: "task_due_soon", taskTitle: task.title, dueAt: task.dueDate, dueNow: true });
+  const copy = notificationCopy({
+    type: "task_due_soon",
+    taskTitle: task.title,
+    dueAt: task.dueDate,
+    ...(snoozed ? { snoozed: true } : { dueNow: true }),
+  });
   for (const memberId of assignees) {
     if (alreadyWarned.has(memberId)) continue;
+    // Sem e-mail de reserva: o template de "vence em breve" não serve para o lembrete no prazo.
     // createNotification recusa IA, removido e sem conta.
     await createNotification(ctx, {
       organizationId: task.organizationId,
@@ -2583,16 +2598,6 @@ async function notifyReminderDue(ctx: MutationCtx, task: Doc<"tasks">, now: numb
       type: "task_due_soon",
       ...copy,
       taskId: task._id,
-      email: {
-        eventType: "taskDueSoon",
-        templateData: {
-          taskTitle: task.title,
-          dueDate: formatDate(task.dueDate) ?? "N/A",
-          minutesBefore: 0,
-          taskUrl: taskDeepLink(task._id),
-        },
-        deadlineAt: task.dueDate,
-      },
     });
   }
 }

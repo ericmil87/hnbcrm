@@ -2162,7 +2162,13 @@ export async function executeAttendantToolCore(
 
         // Follow-up da equipe atribuído ao dono humano: mesmo aviso "tarefa atribuída"
         // das demais criações (porta única; nunca vai para o membro IA).
-        if (assignedTo && assignedTo !== agent._id) {
+        // Não avisa quem aprovou o card (já sabe) e `mode:"off"` mantém a v1 (sem aviso novo).
+        if (
+          assignedTo &&
+          assignedTo !== agent._id &&
+          settings.mode !== "off" &&
+          args.approvedBy !== assignedTo
+        ) {
           await notifyNewAssignees(ctx, {
             task: { _id: taskId, title, dueDate: effectiveDueAt, organizationId: args.organizationId },
             assignees: [assignedTo],

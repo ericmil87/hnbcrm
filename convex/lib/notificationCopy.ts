@@ -29,7 +29,7 @@ export type NotificationCopy = { title: string; body?: string };
 export type CopyInput =
   | { type: "task_assigned"; taskTitle: string; actorName?: string; dueAt?: number }
   | { type: "task_comment_mention"; taskTitle: string; actorName: string; excerpt: string }
-  | { type: "task_due_soon"; taskTitle: string; dueAt?: number; /** Lembrete disparado no prazo: "vence agora". */ dueNow?: boolean }
+  | { type: "task_due_soon"; taskTitle: string; dueAt?: number; /** Lembrete disparado no prazo: "vence agora". */ dueNow?: boolean; /** Lembrete adiado ("Adiar") já depois do prazo: "Lembrete: {tarefa}". */ snoozed?: boolean }
   | { type: "task_overdue"; taskTitle: string; dueAt?: number }
   | { type: "handoff_requested"; contactName?: string; reason?: string; fromHumanName?: string }
   | { type: "handoff_resolved"; contactName?: string; actorName: string; outcome: "accepted" | "rejected" }
@@ -276,7 +276,9 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
     case "task_due_soon": {
       const task = entity(input.taskTitle, "Tarefa");
       return {
-        title: input.dueNow
+        title: input.snoozed
+          ? `Lembrete: ${task}`
+          : input.dueNow
           ? `${task} vence agora`
           : input.dueAt
             ? `${task} vence ${whenLabel(input.dueAt, opts)}`

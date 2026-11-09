@@ -187,6 +187,54 @@ describe("triggerReminder avisa os responsáveis", () => {
   });
 });
 
+describe("triggerReminder adiado e e-mail", () => {
+  test("lembrete adiado depois do prazo: 'Lembrete: ...', sem dedupe pelo pré-aviso, sem e-mail agendado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const now = Date.now();
+    const taskId = await t.run(async (ctx) =>
+      ctx.db.insert("tasks", {
+        organizationId: s.organizationId, title: "Ligar", type: "reminder", status: "pending", priority: "medium",
+        dueDate: now - 3 * 60 * 60_000, assignedTo: s.seller.memberId, assigneeIds: [s.seller.memberId],
+        preDueReminderSentAt: now - 4 * 60 * 60_000, createdBy: s.admin.memberId, createdAt: now, updatedAt: now,
+      } as any)
+    );
+    await t.run(async (ctx) => {
+      await createNotification(ctx, {
+        organizationId: s.organizationId, memberId: s.seller.memberId, type: "task_due_soon", title: "antigo", taskId,
+      });
+    });
+    await t.mutation(internal.tasks.triggerReminder, { taskId });
+    const rows = await all(t);
+    expect(rows).toHaveLength(2);
+    expect(rows.some((r) => r.title === "Lembrete: Ligar")).toBe(true);
+    const jobs = await t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter((j) => j.name.includes("dispatchNotification"))
+    );
+    expect(jobs).toHaveLength(0);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+
+  test("no prazo não agenda e-mail imediato", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const now = Date.now();
+    const taskId = await t.run(async (ctx) =>
+      ctx.db.insert("tasks", {
+        organizationId: s.organizationId, title: "Ligar", type: "reminder", status: "pending", priority: "medium",
+        dueDate: now, assignedTo: s.seller.memberId, assigneeIds: [s.seller.memberId],
+        createdBy: s.admin.memberId, createdAt: now, updatedAt: now,
+      } as any)
+    );
+    await t.mutation(internal.tasks.triggerReminder, { taskId });
+    const jobs = await t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect()).filter((j) => j.name.includes("dispatchNotification"))
+    );
+    expect(jobs).toHaveLength(0);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  });
+});
+
 describe("copy", () => {
   test("dueNow", () => {
     expect(notificationCopy({ type: "task_due_soon", taskTitle: "Ligar", dueAt: 1, dueNow: true }).title).toBe("Ligar vence agora");
