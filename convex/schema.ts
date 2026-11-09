@@ -116,6 +116,15 @@ const productRoutingValidator = v.object({
 // Ausente = legacy implícito, sem gate nenhum. Só `lib/entitlementsOps` e
 // `opsBilling` escrevem (entitlementsPort.test.ts). Sem notas internas aqui:
 // o doc da org é devolvido aos membros. Docs: temp/ plano 01 §1.1.
+// Classe de cobrança de um atendimento IA (livro `aiAttendances` e `agentRuns.billingClass`).
+export const attendanceBillingValidator = v.union(
+  v.literal("included"),
+  v.literal("credit"),
+  v.literal("overage"),
+  v.literal("suggest_only"),
+  v.literal("legacy")
+);
+
 export const orgBillingValidator = v.object({
   // Opcional: `legacy` não tem plano. Os demais status exigem plano (validado pela porta).
   plan: v.optional(v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"))),
@@ -2952,6 +2961,10 @@ const applicationTables = {
   // messages/copilotMessages; não duplicamos conteúdo aqui.
   agentRuns: defineTable({
     organizationId: v.id("organizations"),
+    // Billing (B2): classe decidida no CLAIM (o commit usa esta, não reavalia). B2 grava só
+    // "legacy" (org sem gate) ou "included" (gated); a classificação real vem no B6.
+    billingClass: v.optional(attendanceBillingValidator),
+    unitPriceBrlCents: v.optional(v.number()),
     // Atendente: o teamMember IA. Copiloto: o teamMember HUMANO que comandou.
     // Opcional desde a tradução automática (D7): a run de `kind:"translation"`
     // de uma inbound não tem dono (org sem atendente IA) — fica a conversa.
@@ -3039,6 +3052,9 @@ const applicationTables = {
     byKind: v.record(v.string(), v.object({ runs: v.number(), costUsdMicros: v.number() })),
     warnedAt: v.optional(v.number()),
     reachedAt: v.optional(v.number()),
+    // Billing (B2): `conversations` fica CONGELADO com o que o código antigo contou (claim);
+    // os atendimentos novos (por contato) e as classes vivem em `orgUsageMonthly`, doc que
+    // `recordRunUsage` não toca (os commits do atendente não disputam o OCC com `finishRun`).
     updatedAt: v.number(),
   }).index("by_organization_and_month", ["organizationId", "month"]),
 
@@ -3102,6 +3118,48 @@ const applicationTables = {
     createdAt: v.number(),
     createdBy: v.optional(v.string()),
   }).index("by_organization_and_expires", ["organizationId", "expiresAt"]),
+
+  // Billing (B2): livro de atendimentos IA, 1 linha por (org, mês, contato). Dedupe exata
+  // de "contato distinto" e extrato da fatura. Só `lib/attendanceLedger.recordAttendance` insere.
+  aiAttendances: defineTable({
+    organizationId: v.id("organizations"),
+    month: v.string(), // "AAAA-MM" UTC (mesma régua do aiUsageMonthly)
+    contactKey: v.string(), // String(lead.contactId ?? lead._id)
+    conversationId: v.id("conversations"), // a 1ª conversa que gerou o atendimento
+    firstAt: v.number(),
+    billing: attendanceBillingValidator,
+    // Quem pediu o turno que gerou o atendimento: `ai` (cliente escreveu / follow-up) ou
+    // `human_request` (coach, devolver à IA, "pedir rascunho"). Alimenta a regra D14 (B6).
+    origin: v.optional(v.union(v.literal("ai"), v.literal("human_request"))),
+    creditId: v.optional(v.id("usageCredits")),
+    unitPriceBrlCents: v.optional(v.number()),
+  })
+    .index("by_organization_and_month_and_contact", ["organizationId", "month", "contactKey"])
+    .index("by_organization_and_month_and_billing", ["organizationId", "month", "billing"]),
+
+  // Billing (B2): medidores que não são de IA (separado de `aiUsageMonthly`, patchado por
+  // run: o tick de campanha não disputa o mesmo doc no OCC). Só `lib/usageMeter` escreve.
+  orgUsageMonthly: defineTable({
+    organizationId: v.id("organizations"),
+    month: v.string(),
+    campaignSends: v.number(),
+    campaignWarnedAt: v.optional(v.number()),
+    campaignReachedAt: v.optional(v.number()),
+    // Atendimentos IA do mês (contatos distintos, `recordAttendance` live) e classes. O total
+    // que o teto `monthlyConversationBudget` e o painel usam é
+    // `aiUsageMonthly.conversations + aiAttendances` (o primeiro está congelado).
+    aiAttendances: v.optional(v.number()),
+    attendancesIncluded: v.optional(v.number()),
+    attendancesCredit: v.optional(v.number()),
+    attendancesOverage: v.optional(v.number()),
+    attendancesSuggestOnly: v.optional(v.number()),
+    overageBrlCents: v.optional(v.number()),
+    // Avisos de FRANQUIA (separados de warnedAt/reachedAt do spendCap em aiUsageMonthly).
+    planWarnedAt: v.optional(v.number()),
+    planReachedAt: v.optional(v.number()),
+    overageCapReachedAt: v.optional(v.number()),
+    updatedAt: v.number(),
+  }).index("by_organization_and_month", ["organizationId", "month"]),
 
   // Fila de respostas do atendente. O gatilho de ingest ENFILEIRA aqui (nunca
   // runAfter(0) direto na inferência) — pacing por-org + debounce + backoff.
@@ -3409,6 +3467,9 @@ const applicationTables = {
     variantIndex: v.optional(v.number()),
     attempts: v.number(),
     scheduledFor: v.optional(v.number()), // retry 131049 (+24h)
+    // Billing (B2): mês ("AAAA-MM") em que este destinatário já entrou no medidor de
+    // envios. O retry 131049 regride para `pending` e reenvia; sem isto contaria 2×.
+    meteredMonth: v.optional(v.string()),
     errorCode: v.optional(v.number()),
     lastError: v.optional(v.string()),
     skipReason: v.optional(v.string()),

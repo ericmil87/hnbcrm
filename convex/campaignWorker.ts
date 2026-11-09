@@ -55,6 +55,7 @@ import { isPhoneSuppressed } from "./lib/campaignAudience";
 import { buildSearchText } from "./lib/searchText";
 import { channelConfigPatchFor } from "./lib/conversationListFields";
 import { withMessageSearch } from "./lib/messageSearch";
+import { bumpCampaignSends } from "./lib/usageMeter";
 
 const CAMPAIGN_SOURCE_NAME = "Campanha";
 const RETRY_SOON_MS = 60 * 1000;
@@ -648,6 +649,8 @@ async function sendCore(
         metadata,
         createdAt: now,
       }));
+      // Billing (B2): 1 envio no medidor do mês, 1× por destinatário (retry 131049 não recontará).
+      await bumpCampaignSends(ctx, { organizationId: campaign.organizationId, recipientId: recipient._id, now });
       await applyOutboundMessageSideEffects(ctx, {
         conversation,
         member: creator,
@@ -829,6 +832,8 @@ async function sendToGroupCore(
       },
       createdAt: now,
     }));
+    // Billing (B2): a sala conta 1 envio (não um por membro), 1× por destinatário.
+    await bumpCampaignSends(ctx, { organizationId: campaign.organizationId, recipientId: recipient._id, now });
     await applyOutboundMessageSideEffects(ctx, {
       conversation,
       member: creator,
