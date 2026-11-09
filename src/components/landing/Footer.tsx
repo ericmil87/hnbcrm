@@ -55,7 +55,7 @@ export function Footer() {
             <h4 className="text-sm font-semibold text-text-primary">Produto</h4>
             <div className="flex flex-col gap-2">
               <InternalLink to="/#funcionalidades">Funcionalidades</InternalLink>
-              <InternalLink to="/#precos">Preços</InternalLink>
+              <InternalLink to="/precos">Preços</InternalLink>
               <ExtLink href={`${GITHUB_URL}/blob/main/ROADMAP.md`}>Roadmap</ExtLink>
               <InternalLink to="/entrar">Entrar</InternalLink>
             </div>

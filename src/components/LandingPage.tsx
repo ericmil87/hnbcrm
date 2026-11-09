@@ -102,6 +102,11 @@ export function LandingPage() {
               >
                 <Github size={20} />
               </a>
+              <Link to="/precos">
+                <Button variant="ghost" size="sm">
+                  Preços
+                </Button>
+              </Link>
               <Link to="/developers">
                 <Button variant="ghost" size="sm">
                   Developers

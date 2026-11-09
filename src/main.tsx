@@ -43,6 +43,7 @@ const FormAnalyticsPage = lazy(() => import("./components/forms/FormAnalyticsPag
 const CampaignsPage = lazy(() => import("./components/CampaignsPage").then(m => ({ default: m.CampaignsPage })));
 const GroupsPage = lazy(() => import("./components/groups/GroupsPage").then(m => ({ default: m.GroupsPage })));
 const CentralPage = lazy(() => import("./components/central/CentralPage").then(m => ({ default: m.CentralPage })));
+const PricingPage = lazy(() => import("./pages/PricingPage").then(m => ({ default: m.PricingPage })));
 const FormExperimentPage = lazy(() => import("./components/forms/FormExperimentPage").then(m => ({ default: m.FormExperimentPage })));
 
 // Wrapper component for Suspense boundaries
@@ -62,6 +63,7 @@ const router = createBrowserRouter([
   { path: "/", element: <LazyRoute Component={LandingPage} />, errorElement: <RouteErrorPage /> },
   { path: "/developers", element: <LazyRoute Component={DevelopersPage} />, errorElement: <RouteErrorPage /> },
   { path: "/developers/playground", element: <LazyRoute Component={PlaygroundPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/precos", element: <LazyRoute Component={PricingPage} />, errorElement: <RouteErrorPage /> },
   { path: "/entrar", element: <LazyRoute Component={AuthPage} />, errorElement: <RouteErrorPage /> },
   { path: "/termos", element: <LazyRoute Component={TermsPage} />, errorElement: <RouteErrorPage /> },
   { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} />, errorElement: <RouteErrorPage /> },
