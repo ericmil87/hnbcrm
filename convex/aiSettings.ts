@@ -51,6 +51,7 @@ import {
 } from "./lib/attendantConfigOps";
 // Custo de IA + teto em R$ (v0.69, T04).
 import { getMonthlyUsageDoc } from "./aiSpend";
+import { getOrgUsageMonthly, totalAttendances } from "./lib/attendanceLedger";
 import {
   evaluateSpend,
   isValidMonthKey,
@@ -1038,7 +1039,8 @@ export const getAiUsage = query({
     const evaluation = evaluateSpend(costUsdMicros, cap);
     return {
       month,
-      conversationsThisMonth: usage?.conversations ?? 0,
+      // Congelado (código antigo) + atendimentos por contato do livro (B2).
+      conversationsThisMonth: totalAttendances(usage, await getOrgUsageMonthly(ctx, args.organizationId, month)),
       runsThisMonth: usage?.runs ?? 0,
       costUsdEstimate: costUsdMicros / 1_000_000,
       costUsdMicros,

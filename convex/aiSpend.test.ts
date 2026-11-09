@@ -16,6 +16,7 @@ import { api, internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { clearRuntimeField } from "./lib/conversationRuntime";
+import { recordCommittedAttendance } from "./lib/attendanceLedger";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -218,6 +219,18 @@ async function usageDoc(t: TestConvex<typeof schema>, organizationId: Id<"organi
       )
       .unique()
   );
+}
+
+/** Atendimentos do mês como o teto os vê: `conversations` (congelado) + livro (B2). */
+async function attendedTotal(t: TestConvex<typeof schema>, organizationId: Id<"organizations">) {
+  const usage = await usageDoc(t, organizationId);
+  const meter = await t.run(async (ctx) =>
+    ctx.db
+      .query("orgUsageMonthly")
+      .withIndex("by_organization_and_month", (q) => q.eq("organizationId", organizationId).eq("month", MONTH))
+      .unique()
+  );
+  return (usage?.conversations ?? 0) + (meter?.aiAttendances ?? 0);
 }
 
 async function setCounter(
@@ -592,10 +605,19 @@ describe("monthlyConversationBudget (teto por conversas)", () => {
 
     // 1ª conversa: cabe no teto e passa a contar.
     const first = await inboundAndSettle(t, seed, seed.a);
-    expect(
-      (await t.mutation(internal.attendant.internalClaimForProcessing, { queueItemId: first._id, runId: "r1" })).kind
-    ).toBe("run");
-    expect((await usageDoc(t, seed.organizationId))!.conversations).toBe(1);
+    const firstClaim = await t.mutation(internal.attendant.internalClaimForProcessing, { queueItemId: first._id, runId: "r1" });
+    expect(firstClaim.kind).toBe("run");
+    // B2: o claim NÃO conta mais; quem conta é o commit (resposta/rascunho persistidos).
+    expect(await attendedTotal(t, seed.organizationId)).toBe(0);
+    await t.run(async (ctx) => {
+      await recordCommittedAttendance(ctx, {
+        conversation: (await ctx.db.get(seed.a.conversationId))!,
+        lead: await ctx.db.get(seed.a.leadId),
+        agentRunId: (firstClaim as { context: { agentRunId: Id<"agentRuns"> } }).context.agentRunId,
+        now: Date.now(),
+      });
+    });
+    expect(await attendedTotal(t, seed.organizationId)).toBe(1);
 
     // Mesma conversa de novo: já atendida no mês → passa e não conta outra vez.
     await t.run(async (ctx) => {
@@ -606,7 +628,7 @@ describe("monthlyConversationBudget (teto por conversas)", () => {
     expect(
       (await t.mutation(internal.attendant.internalClaimForProcessing, { queueItemId: again._id, runId: "r2" })).kind
     ).toBe("run");
-    expect((await usageDoc(t, seed.organizationId))!.conversations).toBe(1);
+    expect(await attendedTotal(t, seed.organizationId)).toBe(1);
 
     // Conversa B: estoura.
     const other = await inboundAndSettle(t, seed, seed.b);

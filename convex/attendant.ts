@@ -127,6 +127,7 @@ import {
 import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGuardOps";
 // ── Custo de IA + tetos do mês (v0.69, T04) — a lógica mora fora daqui ──
 import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
+import { recordCommittedAttendance } from "./lib/attendanceLedger";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
@@ -1459,6 +1460,8 @@ export const internalClaimForProcessing = internalMutation({
       leadId: lead!._id,
       triggerMessageId: item.triggerMessageId,
       ...(humanInitiated ? { humanInitiated: true } : {}),
+      // Billing (B2): a classe decidida aqui é a que o commit grava no livro.
+      billingClass: budgetGate.billingClass,
       // Run PROATIVA: fica fora do gate do autopilot (um rascunho de follow-up
       // descartado não é a IA errando uma resposta a cliente).
       ...(isFollowUpTurn ? { proactive: true } : {}),
@@ -2891,6 +2894,9 @@ export const internalCommitAiReply = internalMutation({
       await bumpFollowUpChannelCounter(ctx, conversation, now);
     }
 
+    // Billing (B2): a resposta saiu, então o contato conta no mês (1× por contato).
+    await recordCommittedAttendance(ctx, { conversation, lead, agentRunId: args.agentRunId, queueItemId: args.queueItemId, now });
+
     await ctx.db.patch(args.queueItemId, { status: "done", updatedAt: now });
     await clearOwnedAiTurnLock(ctx, conversation._id);
     return { committed: true as const, messageId };
@@ -3121,6 +3127,9 @@ export const internalCommitAiSuggestion = internalMutation({
         }
       }
     }
+
+    // Billing (B2): o rascunho também é atendimento (conta 1× por contato no mês).
+    await recordCommittedAttendance(ctx, { conversation, lead, agentRunId: args.agentRunId, queueItemId: args.queueItemId, now });
 
     return { committed: true as const, messageId };
   },
