@@ -1,4 +1,5 @@
 import { Suspense, useMemo, useState } from "react";
+import { useQuery } from "convex/react";
 import { Navigate, useLocation, useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { AlertTriangle, Lock, SearchX, ShieldAlert } from "lucide-react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
@@ -17,6 +18,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { groupOf, groupSettingsPanels, resolveSettingsPanelState, visibleSettingsPanels } from "@/lib/settingsNav";
 import { searchSettingsPanels } from "@/lib/settingsSearch";
 import { VOCAB } from "@/lib/vocab";
+import { api } from "../../convex/_generated/api";
 
 /** Painel que falhou ao abrir (ex.: pedaço lazy não carregou): só ele quebra, o resto da tela segue. */
 function PanelError() {
@@ -59,7 +61,12 @@ export function Settings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState("");
 
-  const visible = useMemo(() => visibleSettingsPanels({ can, modules }), [can, modules]);
+  // Leve (só o doc da org): decide se "Uso e fatura" aparece (org sem plano não vê).
+  const entitlements = useQuery(api.billing.getMyEntitlements, can("settings", "view") ? { organizationId } : "skip");
+  const entitlementsLoading = can("settings", "view") && entitlements === undefined;
+  const billingMode = entitlements?.mode;
+
+  const visible = useMemo(() => visibleSettingsPanels({ can, modules, billingMode }), [can, modules, billingMode]);
   // Param desconhecido: lista (celular) ou `general` (desktop), sem erro.
   const { panel: resolved, denied, requested } = resolveSettingsPanelState(searchParams.get("secao"), visible);
   const active =
@@ -92,7 +99,7 @@ export function Settings() {
   if (active?.href) return <Navigate to={active.href} replace />;
 
   // Módulos ainda carregando: `central` pareceria invisível e cairia noutro painel por um instante.
-  if (modulesLoading) {
+  if (modulesLoading || entitlementsLoading) {
     return (
       <div className="space-y-4">
         <PageHeader title={VOCAB.settings.title} />

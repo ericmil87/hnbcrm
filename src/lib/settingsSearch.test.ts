@@ -55,3 +55,12 @@ describe("searchSettingsPanels", () => {
     }
   });
 });
+
+describe("busca do painel billing", () => {
+  it("acha por fatura, plano e excedente", () => {
+    const billing = SETTINGS_PANELS.filter((p) => p.id === "billing");
+    for (const q of ["fatura", "plano", "excedente", "Uso e fatura"]) {
+      expect(searchSettingsPanels(billing, q).map((p) => p.id)).toEqual(["billing"]);
+    }
+  });
+});
