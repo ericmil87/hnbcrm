@@ -12,14 +12,15 @@ import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
 import { mutation, query } from "./_generated/server";
 import type { Doc } from "./_generated/dataModel";
-import { requireAccountWithEmail, requireAuth, requirePermission } from "./lib/auth";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
 import { applySubscriptionChange } from "./lib/entitlementsOps";
 import { attendanceBillingValidator } from "./schema";
 import { isValidMonthKey, monthStartUtcMs, nextMonthStartUtcMs } from "./lib/aiSpend";
 import { totalAttendances } from "./lib/attendanceLedger";
 
-import { buildMyEntitlements, initialsOf, isValidOverageCap, resolvePlanView } from "./lib/billingViews";
+import { buildMyEntitlements, initialsOf, isValidOverageCap, resolvePlanView, safeContactName } from "./lib/billingViews";
 import { estimateInvoice } from "./lib/billingMath";
 
 const planKeyValidator = v.union(
@@ -68,7 +69,8 @@ const SCAN_CAP = 1000;
 
 export const getMyEntitlements = query({
   args: { organizationId: v.id("organizations") },
-  returns: v.object({
+  // `null` para quem não é membro ativo (o front depende disso em deep links entre orgs).
+  returns: v.union(v.null(), v.object({
     mode: modeValidator,
     planId: v.union(planKeyValidator, v.null()),
     planLabel: v.union(v.string(), v.null()),
@@ -92,9 +94,12 @@ export const getMyEntitlements = query({
         priceLock: v.union(priceLockValidator, v.null()),
       })
     ),
-  }),
+  })),
   handler: async (ctx, args) => {
-    const member = await requireAuth(ctx, args.organizationId);
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const member = await getActiveMembership(ctx, args.organizationId, userId);
+    if (!member) return null;
     const perms = resolvePermissions(member.role as Role, member.permissions as never);
     const org = await ctx.db.get(args.organizationId);
     return buildMyEntitlements(org, hasPermission(perms, "settings", "view"));
@@ -387,7 +392,7 @@ export const listAttendances = query({
           .paginate(args.paginationOpts)
       : await ctx.db
           .query("aiAttendances")
-          .withIndex("by_organization_and_month_and_contact", (q) =>
+          .withIndex("by_organization_and_month_and_firstAt", (q) =>
             q.eq("organizationId", args.organizationId).eq("month", args.month)
           )
           .order("desc")
@@ -405,11 +410,12 @@ export const listAttendances = query({
         } else {
           const leadId = ctx.db.normalizeId("leads", row.contactKey);
           const lead = leadId ? await ctx.db.get(leadId) : null;
+          // O título do lead sem contato pode ser telefone/e-mail: passa pelo filtro abaixo.
           if (lead && lead.organizationId === args.organizationId) name = lead.title;
         }
         return {
           id: row._id,
-          contactLabel: canSeeNames ? (name ?? "Contato") : initialsOf(name),
+          contactLabel: canSeeNames ? safeContactName(name) : initialsOf(name),
           billing: row.billing,
           firstAt: row.firstAt,
           unitPriceBrlCents: row.unitPriceBrlCents ?? null,
