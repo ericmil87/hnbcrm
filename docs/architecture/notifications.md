@@ -67,7 +67,7 @@ Manifest com `id` `/app/` e `scope` `/` (o login `/entrar` abre dentro do app in
 ## Pendências conhecidas
 
 <<<<<<< HEAD
-- Canal como ícone: o backend já grava `data.channel` (ver acima); falta o front usá-lo. `group_opportunity`, `group_digest` e `handoff_resolved` (com conversa) ainda não gravam o canal.
+- `group_opportunity`, `group_digest` e `handoff_resolved` (com conversa) ainda não gravam `data.channel` (sem selo de canal no sino).
 =======
 - `triggerReminder` (lembrete disparado à mão) não gera aviso no sino.
 - Follow-up da IA atribuído ao dono humano da tarefa não gera `task_assigned`.

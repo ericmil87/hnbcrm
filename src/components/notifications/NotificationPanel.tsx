@@ -373,7 +373,7 @@ export function NotificationInboxList({
                     <span
                       role="img"
                       aria-label={channelLabel(channel)}
-                      className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-surface text-text-secondary"
+                      className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-surface-overlay text-text-secondary"
                     >
                       <ChannelBadgeIcon channel={channel} />
                     </span>
