@@ -46,7 +46,7 @@ export function AttendancesStatementView({ month, rows, status, onLoadMore }: At
   }
   return (
     <div className="space-y-3">
-      <table className="w-full text-left text-sm">
+      <div className="overflow-x-auto"><table className="min-w-[28rem] w-full text-left text-sm">
         <caption className="sr-only">Atendimentos IA do mês</caption>
         <thead>
           <tr className="text-caption text-text-muted">
@@ -70,7 +70,7 @@ export function AttendancesStatementView({ month, rows, status, onLoadMore }: At
             </tr>
           ))}
         </tbody>
-      </table>
+      </table></div>
       {status !== "Exhausted" && (
         <Button variant="secondary" loading={status === "LoadingMore"} onClick={onLoadMore}>
           Carregar mais

@@ -215,7 +215,7 @@ export function UsageHistoryCard({ history }: { history: UsageHistory | undefine
       ) : history.length === 0 ? (
         <p className="text-sm text-text-secondary">O histórico aparece depois do primeiro mês completo.</p>
       ) : (
-        <table className="w-full text-left text-sm">
+        <div className="overflow-x-auto"><table className="min-w-[28rem] w-full text-left text-sm">
           <caption className="sr-only">Uso dos últimos meses</caption>
           <thead>
             <tr className="text-caption text-text-muted">
@@ -235,7 +235,7 @@ export function UsageHistoryCard({ history }: { history: UsageHistory | undefine
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </SectionCard>
   );
