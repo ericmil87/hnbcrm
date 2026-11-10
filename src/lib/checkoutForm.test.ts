@@ -9,6 +9,7 @@ import {
   isCheckoutReady,
   isPaymentProcessingMessage,
   priceSourceNote,
+  summaryFromPreview,
   paymentNotice,
   toCheckoutArgs,
   validateCheckoutForm,
@@ -106,6 +107,26 @@ describe("recusa em processamento e origem do preço", () => {
     expect(priceSourceNote("price_lock")).toBe("Preço especial da sua conta aplicado nesta fatura.");
     expect(priceSourceNote("table")).toBeNull();
     expect(priceSourceNote(undefined)).toBeNull();
+  });
+});
+
+describe("prévia do servidor", () => {
+  const lines = [{ id: "plan", label: "Plano Profissional", amountBrl: 497 }];
+  it("mensal", () => {
+    const r = summaryFromPreview({ chargeBrl: 497, listBrl: 497, monthlyBrl: 497, priceSource: "table", lines, cycleMonths: 1 });
+    expect(r.summary).toEqual({ monthlyBrl: 497, listMonthlyBrl: 497, chargeBrl: 497, yearly: null, lockApplied: false });
+    expect(r.lines).toEqual(lines);
+    expect(r.refusal).toBeNull();
+  });
+  it("anual com preço combinado: lista do ciclo vira lista mensal", () => {
+    const r = summaryFromPreview({ chargeBrl: 3479, listBrl: 4970, monthlyBrl: 347.9, priceSource: "price_lock", lines, cycleMonths: 10 });
+    expect(r.summary?.listMonthlyBrl).toBe(497);
+    expect(r.summary?.yearly).toEqual({ paidMonths: 10, freeMonths: 2 });
+    expect(r.summary?.lockApplied).toBe(true);
+  });
+  it("recusa vira aviso e some o valor", () => {
+    const r = summaryFromPreview({ chargeBrl: null, listBrl: null, monthlyBrl: null, priceSource: null, lines: [], cycleMonths: 1, refusal: "Sua conta já tem um plano ativo." });
+    expect(r).toEqual({ summary: null, lines: [], refusal: "Sua conta já tem um plano ativo." });
   });
 });
 
