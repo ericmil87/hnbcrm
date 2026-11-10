@@ -620,6 +620,7 @@ const FOLLOW_UP_REASONS: Record<string, string> = {
   outro_app_controla: "outro app controla a conversa",
   // ── Fila do atendente ──
   budget_mensal: "o teto mensal de conversas com IA foi atingido",
+  plano_inativo: "a conta está em modo leitura (sem plano ativo)",
   conversa_removida: "a conversa não existe mais",
   nao_pendente: "o turno da IA já havia sido processado",
   lock_perdido: "outro turno da IA assumiu a conversa",

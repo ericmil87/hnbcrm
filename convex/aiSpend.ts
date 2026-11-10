@@ -38,6 +38,8 @@ import { hasPermission, resolvePermissions, type Role } from "./lib/permissions"
 import {
   SPEND_CAP_BLOCKED_MESSAGE,
   SPEND_CAP_REASON,
+  READ_ONLY_REASON,
+  READ_ONLY_AI_MESSAGE,
   estimateRunCost,
   evaluateSpend,
   formatBrl,
@@ -478,26 +480,44 @@ export async function onAttendantRunStarted(
  * na action) — query nunca lê o relógio.
  */
 export const internalSpendGate = internalQuery({
-  args: { organizationId: v.id("organizations"), month: v.string() },
-  returns: v.object({ blocked: v.boolean(), reason: v.union(v.string(), v.null()) }),
+  args: {
+    organizationId: v.id("organizations"),
+    month: v.string(),
+    /** Relógio do chamador (action): decide teste vencido. Ausente = só o status gravado. */
+    now: v.optional(v.number()),
+  },
+  returns: v.object({
+    blocked: v.boolean(),
+    reason: v.union(v.string(), v.null()),
+    /** true quando o bloqueio é do plano (modo leitura), não do teto em R$. */
+    readOnly: v.boolean(),
+  }),
   handler: async (ctx, args) => {
     const org = await ctx.db.get(args.organizationId);
-    if (!org || !isValidMonthKey(args.month)) return { blocked: false, reason: null };
+    if (!org || !isValidMonthKey(args.month)) return { blocked: false, reason: null, readOnly: false };
+    // Modo leitura (B7): teste vencido, read_only e canceled não rodam IA.
+    if (!resolveEntitlements(org, args.now ?? monthStartUtcMs(args.month)).aiAllowed) {
+      return { blocked: true, reason: READ_ONLY_REASON, readOnly: true };
+    }
     const status = await spendStatusFor(ctx, org, args.month);
     return status.blocked
-      ? { blocked: true, reason: SPEND_CAP_REASON }
-      : { blocked: false, reason: null };
+      ? { blocked: true, reason: SPEND_CAP_REASON, readOnly: false }
+      : { blocked: false, reason: null, readOnly: false };
   },
 });
 
-export { SPEND_CAP_BLOCKED_MESSAGE, SPEND_CAP_REASON };
+export { SPEND_CAP_BLOCKED_MESSAGE, SPEND_CAP_REASON, READ_ONLY_REASON, READ_ONLY_AI_MESSAGE };
 
-/** Teto em R$ estourado em `block`, lido dentro de uma mutation (agente de grupo). */
+/**
+ * IA suspensa agora, lido dentro de uma mutation (agente de grupo): modo leitura
+ * (plano) OU teto em R$ estourado em `block`.
+ */
 export async function spendBlockedNow(
   ctx: { db: Db },
   org: Doc<"organizations">,
   now: number
 ): Promise<boolean> {
+  if (!resolveEntitlements(org, now).aiAllowed) return true;
   return (await spendStatusFor(ctx, org, monthKeyUtc(now))).blocked;
 }
 

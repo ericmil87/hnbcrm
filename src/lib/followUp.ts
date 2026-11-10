@@ -71,6 +71,7 @@ export const FOLLOW_UP_REASON_LABELS: Record<string, string> = {
   rascunho_ja_revisado: "o rascunho já tinha sido revisado",
   aguardando_transcricao: "aguardando a transcrição de um áudio",
   budget_mensal: "o limite mensal de conversas foi atingido",
+  plano_inativo: "a conta está em modo leitura (sem plano ativo)",
   lock_perdido: "outro turno assumiu a conversa",
   humano_respondeu: "um humano respondeu na conversa",
   cliente_falou: "o cliente escreveu antes da hora do follow-up",

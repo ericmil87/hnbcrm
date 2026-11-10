@@ -20,6 +20,7 @@ export const AI_STATE_REASON_LABELS: Record<AiStateReasonCode, string> = {
   conversa_removida: "conversa removida",
   budget_mensal: "limite mensal de conversas atingido — repasse aberto para a equipe",
   teto_de_gastos: "teto de gastos de IA do mês atingido — suspensa até o próximo mês",
+  plano_inativo: "conta em modo leitura — a IA volta quando houver um plano ativo",
   rascunho_ja_revisado: "o rascunho já foi revisado por uma pessoa",
   humano_respondeu: "uma pessoa da equipe respondeu primeiro",
   cliente_falou: "o cliente escreveu enquanto a IA preparava a resposta",

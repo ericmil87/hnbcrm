@@ -3,6 +3,7 @@ import { query, mutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { getActiveMembership } from "./lib/auth";
+import { assertPlanWritable } from "./lib/readOnly";
 
 // Get webhooks for organization (admin only)
 export const getWebhooks = query({
@@ -46,6 +47,7 @@ export const createWebhook = mutation({
     if (!userMember || userMember.role !== "admin") {
       throw new Error("Not authorized");
     }
+    await assertPlanWritable(ctx, args.organizationId, "criar webhooks");
 
     const now = Date.now();
 

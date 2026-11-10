@@ -359,5 +359,8 @@ export function formatBrl(value: number): string {
 
 /** Motivo legível quando o teto em `block` suspende um produto. */
 export const SPEND_CAP_REASON = "teto_de_gastos";
+/** Org em modo leitura (teste vencido, `read_only`, `canceled`): a IA para (B7). */
+export const READ_ONLY_REASON = "plano_inativo";
+export const READ_ONLY_AI_MESSAGE = "Conta em modo leitura: assine um plano para voltar a usar a IA.";
 export const SPEND_CAP_BLOCKED_MESSAGE =
   "Teto de gastos de IA do mês atingido — suspenso até o próximo mês (Configurações → IA)";

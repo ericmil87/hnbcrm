@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { requirePermission, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
+import { assertPlanWritable } from "./lib/readOnly";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { batchGet } from "./lib/batchGet";
 
@@ -193,6 +194,8 @@ export const insertApiKey = internalMutation({
   },
   returns: v.id("apiKeys"),
   handler: async (ctx, args) => {
+    // Modo leitura (B7): não cria chave nova (as existentes seguem; a REST de escrita é outro gate).
+    await assertPlanWritable(ctx, args.organizationId, "criar chaves de API");
     // Chave de A amarrada a membro de B herdaria o papel de B e poria um
     // actorId de fora nos logs de A.
     const member = await ctx.db.get(args.teamMemberId);

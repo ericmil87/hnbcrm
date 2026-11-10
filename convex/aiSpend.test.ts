@@ -562,13 +562,13 @@ describe("atendente 1 a 1 com teto em R$ em `block`", () => {
       organizationId: seed.organizationId,
       month: MONTH,
     });
-    expect(gate).toEqual({ blocked: false, reason: null });
+    expect(gate).toEqual({ blocked: false, reason: null, readOnly: false });
     await setCounter(t, seed.organizationId, { costUsdMicros: 10_000_000 });
     gate = await t.query(internal.aiSpend.internalSpendGate, {
       organizationId: seed.organizationId,
       month: MONTH,
     });
-    expect(gate).toEqual({ blocked: true, reason: "teto_de_gastos" });
+    expect(gate).toEqual({ blocked: true, reason: "teto_de_gastos", readOnly: false });
     // Outro mês: zera.
     gate = await t.query(internal.aiSpend.internalSpendGate, {
       organizationId: seed.organizationId,

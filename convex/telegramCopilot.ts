@@ -81,6 +81,8 @@ export const THINKING_TEXT = "Pensando…";
 export const COPILOT_COPY = {
   aiOff: (org: string) => `🤖 A IA não está ativada na ${escapeHtml(org)}. Um admin ativa em Configurações › Atendente IA.`,
   copilotOff: (org: string) => `🤖 O Copiloto está desligado na ${escapeHtml(org)}. Um admin liga em Configurações › Atendente IA.`,
+  readOnly: (org: string) =>
+    `🔒 A ${escapeHtml(org)} está em modo leitura. Notificações e botões continuam; o Copiloto volta quando houver um plano ativo.`,
   spendCap: (org: string) =>
     `💸 A ${escapeHtml(org)} atingiu o teto de gastos de IA do mês. Notificações e botões continuam; o Copiloto e o modo automático voltam quando o teto for ajustado.`,
   noRoute: "⚠️ Nenhum provedor de IA disponível agora. Tente de novo em instantes.",
@@ -498,12 +500,12 @@ async function prepareSession(
     await say({ chatId: target.chatId, text, keyboard: settingsButton("ai") });
     return null;
   }
-  const gate: { blocked: boolean } = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+  const gate: { blocked: boolean; readOnly: boolean } = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
     organizationId: target.organizationId,
-    month: monthKeyUtc(Date.now()),
+    month: monthKeyUtc(Date.now()), now: Date.now(),
   });
   if (gate.blocked) {
-    await say({ chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
+    await say({ chatId: target.chatId, text: gate.readOnly ? COPILOT_COPY.readOnly(target.orgName) : COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
     return null;
   }
   try {
@@ -754,12 +756,12 @@ async function promptVoiceGate(ctx: ActionCtx, target: RunTarget): Promise<boole
     await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.aiOff(target.orgName), keyboard: settingsButton("ai") });
     return false;
   }
-  const gate: { blocked: boolean } = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+  const gate: { blocked: boolean; readOnly: boolean } = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
     organizationId: target.organizationId,
-    month: monthKeyUtc(Date.now()),
+    month: monthKeyUtc(Date.now()), now: Date.now(),
   });
   if (gate.blocked) {
-    await send(ctx, { chatId: target.chatId, text: COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
+    await send(ctx, { chatId: target.chatId, text: gate.readOnly ? COPILOT_COPY.readOnly(target.orgName) : COPILOT_COPY.spendCap(target.orgName), keyboard: settingsButton("ai-usage") });
     return false;
   }
   return true;

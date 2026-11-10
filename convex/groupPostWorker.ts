@@ -46,6 +46,7 @@ import { chatWithFallback, withReasoningEffort } from "./lib/llm";
 // Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import {
   SPEND_CAP_BLOCKED_MESSAGE,
+  READ_ONLY_AI_MESSAGE,
   addUsage,
   finishRunCostFields,
   monthKeyUtc,
@@ -1193,9 +1194,9 @@ async function generatePostText(ctx: ActionCtx, setup: GenerateSetup): Promise<G
   // com o motivo legível (o caminho de erro da publicação já avisa a equipe).
   const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
     organizationId: setup.organizationId,
-    month: monthKeyUtc(Date.now()),
+    month: monthKeyUtc(Date.now()), now: Date.now(),
   });
-  if (spendGate.blocked) return { ok: false, error: SPEND_CAP_BLOCKED_MESSAGE };
+  if (spendGate.blocked) return { ok: false, error: spendGate.readOnly ? READ_ONLY_AI_MESSAGE : SPEND_CAP_BLOCKED_MESSAGE };
 
   let routes;
   try {

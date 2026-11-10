@@ -16,6 +16,7 @@ import {
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
+import { assertPlanWritable } from "./lib/readOnly";
 import { patchChannelTranscriptionCore } from "./lib/attendantConfigOps";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
@@ -1543,6 +1544,7 @@ export const internalInsertConfig = internalMutation({
       if (existingInstance) throw new Error("Esta instância do bridge já está conectada");
     }
 
+    await assertPlanWritable(ctx, args.organizationId, "criar canais");
     const now = Date.now();
     const configId = await ctx.db.insert("channelConfigs", {
       organizationId: args.organizationId,

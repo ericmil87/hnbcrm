@@ -641,3 +641,45 @@ describe("internalBackfillAttendances sem org", () => {
     expect(await ledger(s1.organizationId)).toHaveLength(0);
   });
 });
+
+describe("modo leitura no claim (B7): plano_inativo, sem repasse", () => {
+  const handoffs = (organizationId: Id<"organizations">) =>
+    t.run((ctx) =>
+      ctx.db
+        .query("handoffs")
+        .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+        .collect()
+    );
+
+  test.each([
+    ["read_only", { plan: "profissional", status: "read_only", updatedAt: 1 }],
+    ["canceled", { plan: "essencial", status: "canceled", updatedAt: 1 }],
+    ["teste vencido", { plan: "profissional", status: "trial", trialEndsAt: Date.UTC(2026, 9, 1), updatedAt: 1 }],
+  ] as const)("%s: skip plano_inativo, sem run e sem repasse (mesmo com o teto de conversas estourado)", async (_label, billing) => {
+    const s = await seed(1, billing as Doc<"organizations">["billing"]);
+    // Teto de conversas já estourado: no modo leitura o gate nem é consultado (nada de repasse).
+    await t.run((ctx) =>
+      ctx.db.insert("aiUsageMonthly", { organizationId: s.organizationId, month: MONTH, costUsdMicros: 0, runs: 0, conversations: 5, byKind: {}, updatedAt: 1 })
+    );
+    const c = await claim(s, s.b, "r1");
+    expect(c.res).toEqual({ kind: "skip", reason: "plano_inativo" });
+    const item = await t.run((ctx) => ctx.db.get(c.item._id));
+    expect(item).toMatchObject({ status: "skipped", error: "plano_inativo" });
+    expect(await handoffs(s.organizationId)).toHaveLength(0);
+    expect(await t.run((ctx) => ctx.db.query("agentRuns").collect())).toHaveLength(0);
+  });
+
+  test("teste válido, active, past_due e legacy seguem atendendo", async () => {
+    for (const billing of [
+      { plan: "profissional", status: "trial", trialEndsAt: Date.UTC(2026, 10, 30), updatedAt: 1 },
+      { plan: "profissional", status: "active", updatedAt: 1 },
+      { plan: "profissional", status: "past_due", updatedAt: 1 },
+      { status: "legacy", updatedAt: 1 },
+      undefined,
+    ] as Array<Doc<"organizations">["billing"]>) {
+      const s = await seed(undefined, billing);
+      const c = await claim(s, s.a1, "r1");
+      expect(c.res.kind, JSON.stringify(billing)).toBe("run");
+    }
+  });
+});

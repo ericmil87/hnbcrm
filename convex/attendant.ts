@@ -128,6 +128,7 @@ import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGu
 // ── Custo de IA + tetos do mês (v0.69, T04) — a lógica mora fora daqui ──
 import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
 import { recordCommittedAttendance } from "./lib/attendanceLedger";
+import { resolveEntitlements } from "./lib/entitlements";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
@@ -1394,6 +1395,15 @@ export const internalClaimForProcessing = internalMutation({
         );
         return { kind: "requeued" as const, reason: "aguardando_transcricao" };
       }
+    }
+
+    // Modo leitura (B7): teste vencido, `read_only` e `canceled` não rodam IA. ANTES do
+    // budget gate (que abre repasse) e SEM repasse: o aviso ao cliente da org é o banner, não
+    // um repasse por conversa (revisão M13). Vale também para follow-up (mesmo claim).
+    if (!resolveEntitlements(org!, now).aiAllowed) {
+      await ctx.db.patch(item._id, { status: "skipped", error: "plano_inativo", updatedAt: now });
+      await releaseFollowUpFromQueue(ctx, item, "plano_inativo");
+      return { kind: "skip" as const, reason: "plano_inativo" };
     }
 
     // Tetos do mês (v0.69, convex/aiSpend.ts): conversas (`budget_mensal`, que

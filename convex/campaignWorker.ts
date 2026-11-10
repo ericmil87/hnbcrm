@@ -62,6 +62,7 @@ import { resolveEntitlements } from "./lib/entitlements";
 import { getOrgUsageMonthly } from "./lib/attendanceLedger";
 import { monthKeyUtc, monthStartUtcMs } from "./lib/aiSpend";
 import { PLAN_QUOTA_PAUSE_CODE, resumePlanQuotaCampaign } from "./lib/campaignHooks";
+import { outboundBlockedFor } from "./lib/readOnly";
 
 const CAMPAIGN_SOURCE_NAME = "Campanha";
 const RETRY_SOON_MS = 60 * 1000;
@@ -182,6 +183,18 @@ export const tick = internalMutation({
     // (pause/reagendamento dentro do tick cancelariam a própria execução).
     await ctx.db.patch(guarded._id, { schedulerFnId: undefined });
     const campaign = (await ctx.db.get(guarded._id))!;
+
+    // Modo leitura (B7): ANTES de reservar destinatário. Pausa reversível com código de plano;
+    // o que já foi enfileirado/enviado fica como está e nada é derrubado.
+    if (outboundBlockedFor(await ctx.db.get(campaign.organizationId), now)) {
+      await pauseCampaignCore(ctx, campaign, {
+        reason: "Conta em modo leitura: assine um plano para retomar o envio",
+        automatic: true,
+        now,
+        code: "plan_read_only",
+      });
+      return null;
+    }
 
     const config = await ctx.db.get(campaign.channelConfigId);
     if (!config || config.status !== "active" || config.channel !== "whatsapp") {
