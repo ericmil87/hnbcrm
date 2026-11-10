@@ -52,6 +52,8 @@ describe("cadastro em teste (B7a)", () => {
     const id = await as(u).mutation(api.organizations.createOrganization, { name: "C", slug: "c-trial" });
     const org = await getOrg(id);
     expect(org?.billing).toMatchObject({ status: "trial", plan: "profissional", trialEndsAt: NOW + 30 * DAY, periodStart: NOW });
+    // Mesma regra da porta ao abrir período: baseline dos baldes (0 em org nova), sem varredura do livro.
+    expect(org?.billing?.periodBaseline).toEqual({ month: "2026-11", total: 0 });
     expect(await grants()).toEqual([expect.objectContaining({ userId: u, organizationId: id, startedAt: NOW, endsAt: NOW + 30 * DAY })]);
     const ent = resolveEntitlements(org, NOW + DAY);
     expect(ent).toMatchObject({ gated: true, plan: "profissional", aiAllowed: true, outboundAllowed: true });
@@ -178,7 +180,10 @@ describe("internalBillingTick", () => {
     expect(await t.mutation(internal.billingCron.internalBillingTick, {})).toMatchObject({ noticesSent: 1 });
     expect(await stamps()).toEqual([7, 3, 1]);
     expect(await t.mutation(internal.billingCron.internalBillingTick, {})).toMatchObject({ noticesSent: 0 });
-    expect(await auditsOf(id)).toHaveLength(0); // carimbo não é decisão: sem audit
+    // O carimbo (porta, audit none) não deixa audit de billing; só o aviso grava o seu (plan_notice).
+    const audits = await auditsOf(id);
+    expect(audits.filter((x) => x.metadata?.kind === "billing")).toHaveLength(0);
+    expect(audits.filter((x) => x.metadata?.kind === "plan_notice").map((x) => x.metadata?.type)).toEqual(["trial_ending", "trial_ending", "trial_ending"]);
     expect((await getOrg(id))?.billing?.status).toBe("trial");
   });
 
