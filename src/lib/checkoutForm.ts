@@ -145,6 +145,18 @@ export function invoiceStatusTone(s: InvoiceStatus): "success" | "warning" | "er
   return "default";
 }
 
+/** A recusa "Recebemos um pagamento e ele está sendo processado…" é aviso, não erro. */
+export function isPaymentProcessingMessage(message: string): boolean {
+  return message.startsWith("Recebemos um pagamento");
+}
+
+export type PriceSource = "price_lock" | "table";
+
+/** Nota sobre a origem do preço da fatura criada (só quando não é a tabela). */
+export function priceSourceNote(source: PriceSource | null | undefined): string | null {
+  return source === "price_lock" ? "Preço especial da sua conta aplicado nesta fatura." : null;
+}
+
 export interface SubscriptionLike {
   paymentStatus: "ok" | "pending" | "overdue" | null;
   hasSubscription: boolean;

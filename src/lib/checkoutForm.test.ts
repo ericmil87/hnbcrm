@@ -7,6 +7,8 @@ import {
   formatCpfCnpj,
   invoiceStatusLabel,
   isCheckoutReady,
+  isPaymentProcessingMessage,
+  priceSourceNote,
   paymentNotice,
   toCheckoutArgs,
   validateCheckoutForm,
@@ -92,6 +94,18 @@ describe("resumo do valor pelo catálogo", () => {
     expect(s?.monthlyBrl).toBeCloseTo(137.9, 5);
     expect(s?.listMonthlyBrl).toBe(197);
     expect(s?.lockApplied).toBe(true);
+  });
+});
+
+describe("recusa em processamento e origem do preço", () => {
+  it("pagamento em processamento é aviso", () => {
+    expect(isPaymentProcessingMessage("Recebemos um pagamento e ele está sendo processado; aguarde alguns minutos.")).toBe(true);
+    expect(isPaymentProcessingMessage("CPF ou CNPJ inválido.")).toBe(false);
+  });
+  it("preço especial só quando veio da trava", () => {
+    expect(priceSourceNote("price_lock")).toBe("Preço especial da sua conta aplicado nesta fatura.");
+    expect(priceSourceNote("table")).toBeNull();
+    expect(priceSourceNote(undefined)).toBeNull();
   });
 });
 

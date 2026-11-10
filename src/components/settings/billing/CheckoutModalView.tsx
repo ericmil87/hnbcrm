@@ -14,12 +14,12 @@ import {
   type CheckoutSummary,
 } from "@/lib/checkoutForm";
 import { formatMoney } from "@/lib/format";
+import { LEGAL_ENTITY } from "@/lib/legalEntity";
 import { cn } from "@/lib/utils";
 import { GROUPS_ADDON_BRL, PLANS } from "../../../../convex/lib/plans";
 
-export const SALES_EMAIL = "contato@hnbcrm.com";
-export const PAYMENT_NOTE =
-  "Pagamento por Pix, boleto ou cartão na página segura do Asaas. A nota fiscal sai em nome da INOVAWAY LTDA após a confirmação.";
+export const SALES_EMAIL = LEGAL_ENTITY.email;
+export const PAYMENT_NOTE = `Pagamento por Pix, boleto ou cartão na página segura do Asaas. A nota fiscal sai em nome da ${LEGAL_ENTITY.name} após a confirmação.`;
 
 const brl = (v: number) => formatMoney(v, "BRL", { fractionDigits: v % 1 === 0 ? 0 : 2 });
 
@@ -39,6 +39,10 @@ export interface CheckoutModalViewProps {
   summary: CheckoutSummary | null;
   submitting: boolean;
   serverError: string | null;
+  /** Aviso (não é erro): ex.: pagamento recebido e em processamento. */
+  notice: string | null;
+  /** Fatura criada: nota sobre o preço (ex.: preço especial da conta). */
+  priceNote: string | null;
   /** Depois de criada: link da 1ª fatura (a aba pode ter sido bloqueada). */
   invoiceUrl: string | null;
   created: boolean;
@@ -67,6 +71,7 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
           ) : (
             <p className="text-sm text-text-secondary">O link da fatura vai aparecer em "Faturas" daqui a pouco.</p>
           )}
+          {p.priceNote && <p className="text-sm text-text-secondary">{p.priceNote}</p>}
           <p className="text-caption text-text-muted">{PAYMENT_NOTE}</p>
           <Button variant="secondary" onClick={p.onClose}>
             Fechar
@@ -187,6 +192,11 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             </div>
           )}
 
+          {p.notice && (
+            <p role="status" className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 text-sm text-text-primary">
+              {p.notice}
+            </p>
+          )}
           {p.serverError && (
             <p role="alert" className="text-sm text-semantic-error">
               {p.serverError}
