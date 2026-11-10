@@ -9,7 +9,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Fim do beta gratuito para novos cadastros.** Quem cria uma organização agora entra pelo teste de 30 dias e depois escolhe um plano.
 - **Quatro planos: Essencial, Profissional, Escala e Empresa.** Todos com usuários ilimitados; o preço depende dos atendimentos da IA e dos canais conectados. Veja os valores em [/precos](https://hnbcrm.com/precos).
 - **Teste de 30 dias do plano Profissional, sem cartão.** Inclui 300 atendimentos da IA e vale um teste por pessoa.
-- **Modo leitura ao fim do teste.** A conta fica em modo leitura: nada é apagado, as mensagens que chegam continuam sendo gravadas e a exportação dos dados segue liberada. A equipe vê tudo, mas não envia mensagens nem cria registros até a contratação de um plano.
+- **Modo leitura ao fim do teste.** A conta fica em modo leitura: nada é apagado, as mensagens que chegam continuam sendo gravadas e a exportação dos dados segue liberada. A equipe vê tudo, mas não envia mensagens nem conecta canais ou integrações novas até a contratação de um plano.
 - **Quando a franquia acaba.** A IA passa a sugerir respostas e a sua equipe envia. O excedente só é cobrado se o administrador ligar, e sempre com um teto em reais.
 - **Avisos em 80% e 100%** dos atendimentos da IA do mês, para ninguém ser pego de surpresa.
 - **Nova tela "Uso e fatura"** em Configurações, para quem tem plano: plano atual, uso do mês, estimativa da fatura, créditos, histórico, extrato dos atendimentos e o controle do excedente com teto.
