@@ -156,10 +156,11 @@ export function summaryFromPreview(p: PreviewLike): ServerSummary {
   };
 }
 
+/** Dados de cobrança já informados pela org; cada campo pode faltar. */
 export interface CheckoutPrefill {
-  billingName: string;
-  billingEmail: string;
-  document: string;
+  billingName: string | null;
+  billingEmail: string | null;
+  document: string | null;
 }
 
 /** Pré-preenche só os campos vazios (o que o usuário já digitou fica); documento com máscara. */
@@ -167,9 +168,9 @@ export function applyPrefill(form: CheckoutForm, prefill: CheckoutPrefill | null
   if (!prefill) return form;
   return {
     ...form,
-    billingName: form.billingName.trim() === "" ? prefill.billingName : form.billingName,
-    document: onlyDigits(form.document) === "" ? formatCpfCnpj(prefill.document) : form.document,
-    billingEmail: form.billingEmail.trim() === "" ? prefill.billingEmail : form.billingEmail,
+    billingName: form.billingName.trim() === "" ? (prefill.billingName ?? form.billingName) : form.billingName,
+    document: onlyDigits(form.document) === "" && prefill.document ? formatCpfCnpj(prefill.document) : form.document,
+    billingEmail: form.billingEmail.trim() === "" ? (prefill.billingEmail ?? form.billingEmail) : form.billingEmail,
   };
 }
 
