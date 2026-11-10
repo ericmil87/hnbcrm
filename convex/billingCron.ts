@@ -6,7 +6,10 @@
  *  - Teste a vencer: avisos `trial_ending` em D-7, D-3 e D-1, carimbados em
  *    `billing.trialNotices` pela porta (audit none: é carimbo, não decisão). Cruzar vários
  *    limiares de uma vez (cron parado) manda só o mais próximo e carimba todos.
- *  - NUNCA toca `active`, `past_due`, `legacy` nem `canceled`: o cron só age em `trial`.
+ *  - Ciclo de vida self-service (só `active`/`past_due` com assinatura): `cancelAt` vencido leva a
+ *    org a `canceled` (só leitura, exportação liberada) e avisa; `scheduledChange.effectiveAt`
+ *    vencido aplica a troca (downgrade) pela porta e avisa.
+ *  - Fora isso NUNCA toca `active`, `past_due`, `legacy` nem `canceled`: o resto só age em `trial`.
  *
  * Paginado por cursor (cada execução ~50 orgs); a página seguinte se agenda sozinha.
  */
@@ -18,6 +21,8 @@ import { applySubscriptionChange, setBillingStatus } from "./lib/entitlementsOps
 import { notifyBillingAdmins } from "./lib/billingNotify";
 import { pauseCampaignCore } from "./lib/campaignHooks";
 import { repriceAfterLockExpiry } from "./lib/lockExpiry";
+import { lockAfterPlanChange } from "./lib/planChange";
+import { PLANS } from "./lib/plans";
 import { READ_ONLY_STALE_MS, expireScheduled } from "./scheduledMessages";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -94,6 +99,71 @@ export async function rearmScheduledMessagesForOrg(
   return rearmed;
 }
 
+/**
+ * Aplica, pela porta, o que o cliente agendou e já venceu: cancelamento (`cancelAt`) ou troca de
+ * plano (`scheduledChange`). Devolve true se mudou algo. Idempotente: depois de aplicado o campo some
+ * (troca) ou o status deixa de ser `active`/`past_due` (cancelamento).
+ */
+async function applyDueLifecycle(ctx: MutationCtx, org: Doc<"organizations">, now: number): Promise<boolean> {
+  const sub = await ctx.db
+    .query("orgSubscriptions")
+    .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+    .first();
+  if (!sub || !org.billing) return false;
+  if (sub.cancelAt !== undefined && sub.cancelAt <= now) {
+    await setBillingStatus(ctx, {
+      organizationId: org._id,
+      status: "canceled",
+      source: "cron",
+      reason: "Cancelamento agendado chegou ao fim do ciclo",
+    });
+    await pauseCampaignsForReadOnly(ctx, org._id, now);
+    await notifyBillingAdmins(ctx, {
+      organizationId: org._id,
+      type: "plan_canceled",
+      data: {},
+      dedupeKey: `plan_canceled:${org._id}:${sub.cancelAt}`,
+    });
+    return true;
+  }
+  const change = sub.scheduledChange;
+  if (change && change.effectiveAt <= now) {
+    const { updatedAt: _u, ...current } = org.billing;
+    void _u;
+    const groups = change.plan === "essencial" && change.groupsAddon === true;
+    const addons =
+      change.plan === "essencial"
+        ? { ...(current.addons ?? {}), groups }
+        : current.addons
+          ? { ...current.addons, groups: undefined }
+          : undefined;
+    const priceLock = lockAfterPlanChange(current.priceLock, current.plan, change.plan);
+    await applySubscriptionChange(ctx, {
+      organizationId: org._id,
+      patch: {
+        billing: { ...current, plan: change.plan, ...(addons ? { addons } : {}), priceLock },
+        subscription: {
+          billingCycle: change.cycle,
+          chargeCents: change.chargeCents,
+          basePriceCents: Math.round(change.chargeCents / (change.cycle === "yearly" ? 10 : 1)),
+          addons: { groupsAddon: groups, extraChannels: sub.addons?.extraChannels ?? current.extraChannels ?? 0 },
+          scheduledChange: undefined,
+        },
+      },
+      source: "cron",
+      reason: "Troca de plano agendada aplicada no fim do ciclo",
+    });
+    await notifyBillingAdmins(ctx, {
+      organizationId: org._id,
+      type: "plan_changed",
+      data: { planLabel: PLANS[change.plan].label },
+      dedupeKey: `plan_changed:${org._id}:${change.effectiveAt}`,
+    });
+    return true;
+  }
+  return false;
+}
+
 export const internalBillingTick = internalMutation({
   args: { cursor: v.optional(v.union(v.string(), v.null())) },
   returns: v.object({
@@ -102,6 +172,7 @@ export const internalBillingTick = internalMutation({
     noticesSent: v.number(),
     campaignsPaused: v.number(),
     repricing: v.number(),
+    lifecycle: v.number(),
     isDone: v.boolean(),
   }),
   handler: async (ctx, args) => {
@@ -111,8 +182,15 @@ export const internalBillingTick = internalMutation({
     let noticesSent = 0;
     let campaignsPaused = 0;
     let repricing = 0;
+    let lifecycle = 0;
     for (const org of page.page) {
       const billing = org.billing;
+      if (billing && (billing.status === "active" || billing.status === "past_due")) {
+        if (await applyDueLifecycle(ctx, org, now)) {
+          lifecycle++;
+          continue;
+        }
+      }
       // Fim da trava/desconto (só quem tem assinatura no Asaas e paga): reprecifica para a tabela.
       if (billing?.priceLock?.until !== undefined && billing.priceLock.until <= now) {
         const sub = await ctx.db
@@ -171,6 +249,6 @@ export const internalBillingTick = internalMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.billingCron.internalBillingTick, { cursor: page.continueCursor });
     }
-    return { scanned: page.page.length, expired, noticesSent, campaignsPaused, repricing, isDone: page.isDone };
+    return { scanned: page.page.length, expired, noticesSent, campaignsPaused, repricing, lifecycle, isDone: page.isDone };
   },
 });
