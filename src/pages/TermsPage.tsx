@@ -26,7 +26,7 @@ export function TermsPage() {
     <>
       <SEO
         title="Termos de Uso e Assinatura"
-        description="Termos de Uso e Assinatura do HNBCRM: planos, atendimentos de IA, excedente, teste, cancelamento, reembolso de 7 dias, só leitura, WhatsApp não oficial e proteção de dados."
+        description="Termos de Uso e Assinatura do HNBCRM: planos, atendimentos de IA, excedente, teste, troca de plano, cancelamento, reembolso de 7 dias, só leitura, WhatsApp não oficial e proteção de dados."
         keywords="termos de uso, termos de assinatura, hnbcrm, planos, reembolso, whatsapp, saas"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
@@ -403,23 +403,37 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="cancelamento" title="10. Cancelamento e reembolso">
+            <LegalSection id="cancelamento" title="10. Troca de plano, cancelamento e reembolso">
+              <p id="troca-de-plano">
+                <span className="text-text-primary font-medium">Troca de plano.</span> Você troca de plano
+                pelo painel "Uso e fatura". No upgrade, cobramos hoje o valor cheio do novo plano e um novo
+                ciclo começa hoje, sem crédito proporcional dos dias restantes do ciclo atual; o plano muda
+                quando o pagamento for confirmado. No downgrade, a troca vale a partir da próxima renovação
+                e, até lá, você continua no plano atual. Dá para desfazer um downgrade agendado antes da
+                data.
+              </p>
               <p>
-                Você pode cancelar a qualquer momento, sem multa e sem fidelidade, escrevendo para{" "}
+                <span className="text-text-primary font-medium">Cancelamento.</span> Você pode cancelar a
+                qualquer momento pelo painel "Uso e fatura", sem multa e sem fidelidade. A assinatura não é
+                renovada e o acesso vale até o fim do período já pago; depois a conta passa para modo
+                leitura, com a exportação dos dados liberada. Antes do fim do período você pode reativar a
+                assinatura, sem cobrança no ato. Se preferir, também atendemos pedidos de cancelamento por
+                e-mail, em{" "}
                 <a
                   href={`mailto:${LEGAL_ENTITY.email}`}
                   className="text-brand-400 hover:text-brand-300 transition-colors"
                 >
                   {LEGAL_ENTITY.email}
                 </a>
-                . O acesso vale até o fim do período já pago. Podemos encerrar o serviço por violação
-                destes Termos, abuso, fraude ou exigência legal, com aviso prévio de 30 dias, salvo nos
-                casos graves.
+                . Podemos encerrar o serviço por violação destes Termos, abuso, fraude ou exigência legal,
+                com aviso prévio de 30 dias, salvo nos casos graves.
               </p>
               <p id="reembolso">
                 <span className="text-text-primary font-medium">Reembolso de 7 dias.</span> Para todos os
                 clientes, devolvemos o valor integral do primeiro pagamento se você pedir em até 7 dias
-                corridos depois dele, sem precisar explicar o motivo, pelo mesmo meio de pagamento. Ficam
+                corridos depois dele, sem precisar explicar o motivo. O pedido é feito pelo painel e o
+                reembolso é automático, pelo mesmo meio de pagamento; ao pedir, a conta passa para modo
+                leitura. As renovações não são reembolsáveis, salvo exigência legal. Ficam
                 fora dessa garantia serviços de implantação já executados a seu pedido, atendimentos extras
                 já consumidos e taxas de terceiros (Meta, provedor de IA). O serviço é contratado para uso
                 profissional; essa garantia é uma liberalidade nossa e, quando o Código de Defesa do

@@ -110,7 +110,7 @@ export function faqItems(): { question: string; answer: string }[] {
     },
     {
       question: "Posso cancelar?",
-      answer: `Quando quiser, por e-mail para ${LEGAL_ENTITY.email}, sem multa. Vale até o fim do período já pago. Nos ${REFUND_DAYS} primeiros dias depois do primeiro pagamento, devolvemos o valor.`,
+      answer: `Quando quiser, pelo painel Uso e fatura, sem multa. A assinatura não renova e o acesso vale até o fim do período já pago. Nos ${REFUND_DAYS} primeiros dias depois do primeiro pagamento, você pede o reembolso integral pelo painel. Se preferir, escreva para ${LEGAL_ENTITY.email}.`,
     },
     {
       question: "O preço aumenta?",
