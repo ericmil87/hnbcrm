@@ -21,6 +21,7 @@ import {
   PLAN_SUPPORT,
   THIRD_PARTY_POINTS,
   addonLines,
+  extraChannelsLimitText,
   faqItems,
 } from "./pricingCopy";
 
@@ -208,7 +209,7 @@ export function PricingSection({ variant = "section" }: PricingSectionProps) {
             ))}
           </div>
           <p className="mt-3 text-caption text-text-muted tabular-nums">
-            Canal extra: {brl0(EXTRA_CHANNEL_BRL)} por mês cada.
+            Canal extra: {brl0(EXTRA_CHANNEL_BRL)} por mês cada. {extraChannelsLimitText()}
           </p>
         </div>
 

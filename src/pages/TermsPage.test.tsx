@@ -50,6 +50,7 @@ describe("TermsPage", () => {
       "nunca como excedente",
       "Mudanças não materiais",
       "ao clicar em aceitar",
+      "comporta até 2 canais extras",
       "foro",
     ]) {
       expect(t, needle).toContain(needle);

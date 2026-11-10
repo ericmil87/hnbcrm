@@ -40,6 +40,11 @@ describe("PricingSection", () => {
     }
   });
 
+  it("avulsos citam o teto de canais extras por plano", () => {
+    renderWithRouter(<PricingSection />);
+    expect(screen.getAllByText(/Essencial: até 2 canais extras; Profissional: até 3/).length).toBeGreaterThan(0);
+  });
+
   it("tem os blocos de transparencia, avulsos e FAQ", () => {
     renderWithRouter(<PricingSection />);
     expect(screen.getByText("O que não cobramos")).toBeTruthy();
