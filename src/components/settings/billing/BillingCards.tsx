@@ -38,6 +38,8 @@ interface PlanSummaryCardProps {
   action: ReactNode;
   /** Fatura pendente/vencida mais recente com link (`openInvoiceUrl`); sem ela, sem botão. */
   openInvoiceUrl?: string | null;
+  /** Próxima cobrança, cancelamento/mudança agendados e ações (container). */
+  management?: ReactNode;
 }
 
 function OpenInvoiceButton({ url }: { url: string }) {
@@ -54,7 +56,7 @@ function OpenInvoiceButton({ url }: { url: string }) {
   );
 }
 
-export function PlanSummaryCard({ entitlements, now, action, openInvoiceUrl = null }: PlanSummaryCardProps) {
+export function PlanSummaryCard({ entitlements, now, action, openInvoiceUrl = null, management = null }: PlanSummaryCardProps) {
   const rawPayment = paymentNotice(entitlements.subscription);
   // Em atraso o aviso do status já cobre; não repete.
   const payment = rawPayment && entitlements.mode === "past_due" && rawPayment.tone === "error" ? null : rawPayment;
@@ -118,6 +120,7 @@ export function PlanSummaryCard({ entitlements, now, action, openInvoiceUrl = nu
             </div>
           </div>
         )}
+        {management}
         {action}
       </div>
     </SectionCard>

@@ -16,6 +16,10 @@ export interface BillingPanelViewProps {
   channelUsage: ChannelAndGroupUsage | undefined;
   history: UsageHistory | undefined;
   now: number;
+  /** Gestão da assinatura no cartão do plano (container). */
+  management?: ReactNode;
+  /** Dados de cobrança (container; só para quem gerencia). */
+  billingDetails?: ReactNode;
   /** Link da fatura pendente/vencida mais recente (container). */
   openInvoiceUrl?: string | null;
   /** Botão de assinar/trocar plano (container). */
@@ -63,7 +67,7 @@ export function BillingPanelView(p: BillingPanelViewProps) {
   }
   return (
     <div className="space-y-4">
-      <PlanSummaryCard entitlements={p.entitlements} now={p.now} action={p.planAction} openInvoiceUrl={p.openInvoiceUrl} />
+      <PlanSummaryCard entitlements={p.entitlements} now={p.now} action={p.planAction} openInvoiceUrl={p.openInvoiceUrl} management={p.management} />
       {p.summary === undefined ? (
         <LoadingCards />
       ) : (
@@ -73,6 +77,7 @@ export function BillingPanelView(p: BillingPanelViewProps) {
             <InvoiceEstimateCard summary={p.summary} planLabel={p.entitlements.planLabel} mode={p.entitlements.mode} />
           </div>
           <OverageCardView {...p.overage} />
+          {p.billingDetails}
           {p.invoices}
           <CreditsCard summary={p.summary} now={p.now} />
           <UsageHistoryCard history={p.history} />
