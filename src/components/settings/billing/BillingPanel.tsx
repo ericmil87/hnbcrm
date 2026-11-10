@@ -16,6 +16,9 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { AttendancesStatement } from "./AttendancesStatement";
 import { InvoicesCard } from "./InvoicesCard";
 import { PlanCheckout } from "./PlanCheckout";
+import { BillingDetailsCard } from "./BillingDetailsCard";
+import { SubscriptionManagement } from "./SubscriptionManagement";
+import { firstPaidAmountBrl } from "@/lib/subscriptionManagement";
 import { BillingPanelView } from "./BillingPanelView";
 import type { OverageCardViewProps } from "./OverageCard";
 import type { UsageSummary } from "./billingTypes";
@@ -126,9 +129,22 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
       mode={entitlements.mode}
       hasSubscription={entitlements.subscription?.hasSubscription === true}
       planLabel={entitlements.planLabel}
+      planId={entitlements.planId}
+      currentCycle={entitlements.subscription?.billingCycle === "quarterly" ? null : (entitlements.subscription?.billingCycle ?? null)}
       priceLock={entitlements.pricing?.priceLock ?? null}
       canManage={canManage}
       now={now}
+    />
+  ) : null;
+
+  const management = entitlements ? (
+    <SubscriptionManagement
+      organizationId={organizationId}
+      sub={entitlements.subscription}
+      mode={entitlements.mode}
+      canManage={canManage}
+      now={now}
+      refundAmountBrl={firstPaidAmountBrl(invoices)}
     />
   ) : null;
 
@@ -141,6 +157,8 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
       history={history}
       now={now}
       openInvoiceUrl={openInvoiceUrl(invoices)}
+      management={management}
+      billingDetails={canManage && entitlements?.subscription?.hasSubscription === true ? <BillingDetailsCard organizationId={organizationId} /> : null}
       planAction={planAction}
       invoices={<InvoicesCard organizationId={organizationId} />}
       overage={overage}

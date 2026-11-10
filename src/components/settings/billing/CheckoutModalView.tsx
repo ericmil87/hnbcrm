@@ -43,6 +43,8 @@ export interface ChangePlanContext {
   currentCycle: SubscriptionCycle;
   /** Início do downgrade (próxima renovação), se o servidor informar. */
   effectiveAt: number | null;
+  /** Upgrade/downgrade decidido pelo servidor (`previewCheckout` modo troca); vence a regra local. */
+  selectedKind?: ChangeKind | null;
 }
 
 export interface CheckoutModalViewProps {
@@ -80,7 +82,7 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
   const change = p.change;
   const kindFor = (plan: PlanKey): ChangeKind | null =>
     change ? planChangeKind({ plan: change.currentPlan, cycle: change.currentCycle }, { plan, cycle: p.form.cycle }) : null;
-  const selectedKind = kindFor(p.form.plan);
+  const selectedKind = change ? (change.selectedKind ?? kindFor(p.form.plan)) : null;
   const notice = change && selectedKind ? changeNotice(selectedKind, { chargeBrl: p.summary?.chargeBrl ?? null, effectiveAt: change.effectiveAt }) : null;
   const title = p.created ? "Fatura criada" : change ? "Trocar plano" : "Assinar plano";
   return (
