@@ -29,6 +29,7 @@ import {
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission, requireAccountWithEmail } from "./lib/auth";
+import { assertPlanWritable } from "./lib/readOnly";
 import { assertModule, isDemoOrg, modulesOf } from "./lib/orgModules";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { appUrl } from "./lib/appUrl";
@@ -2751,6 +2752,8 @@ export const internalUpsertMetaChannelConfigs = internalMutation({
         });
         configId = existing._id;
       } else {
+        // Modo leitura (B7): reconectar um canal existente passa; criar um novo não.
+        await assertPlanWritable(ctx, args.organizationId, "criar canais");
         configId = await ctx.db.insert("channelConfigs", {
           organizationId: args.organizationId,
           channel,

@@ -77,6 +77,7 @@ import { ChatMessage } from "./lib/llm/types";
 // Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import {
   SPEND_CAP_BLOCKED_MESSAGE,
+  READ_ONLY_AI_MESSAGE,
   addUsage,
   finishRunCostFields,
   monthKeyUtc,
@@ -261,10 +262,10 @@ async function runVision(
   // ser repetido depois.
   const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
     organizationId: message.organizationId,
-    month: monthKeyUtc(Date.now()),
+    month: monthKeyUtc(Date.now()), now: Date.now(),
   });
   if (spendGate.blocked) {
-    return await fail(ctx, message.messageId, SPEND_CAP_BLOCKED_MESSAGE);
+    return await fail(ctx, message.messageId, spendGate.readOnly ? READ_ONLY_AI_MESSAGE : SPEND_CAP_BLOCKED_MESSAGE);
   }
   if (!SUPPORTED_MIME.includes(message.mimeType.toLowerCase())) {
     return await fail(ctx, message.messageId, `Formato não suportado para leitura (${message.mimeType})`);
@@ -492,11 +493,11 @@ export const internalDescribeImageForCopilot = internalAction({
     if (!gate.visionOn) return failed("A leitura de imagens está desligada nesta organização (Configurações → IA)");
     if (args.size > MAX_IMAGE_BYTES) return failed("Imagem maior que 5MB — não lida");
     if (!SUPPORTED_MIME.includes(args.mimeType.toLowerCase())) return failed(`Formato não suportado para leitura (${args.mimeType})`);
-    const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+    const spendGate: { blocked: boolean; readOnly: boolean } = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
       organizationId: args.organizationId,
-      month: monthKeyUtc(Date.now()),
+      month: monthKeyUtc(Date.now()), now: Date.now(),
     });
-    if (spendGate.blocked) return failed(SPEND_CAP_BLOCKED_MESSAGE);
+    if (spendGate.blocked) return failed(spendGate.readOnly ? READ_ONLY_AI_MESSAGE : SPEND_CAP_BLOCKED_MESSAGE);
     let attempts: ResolvedRoute[];
     try {
       attempts = await buildVisionAttempts(ctx, {

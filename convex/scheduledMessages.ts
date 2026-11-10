@@ -12,6 +12,10 @@ import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { outboundTranslationInsertFields } from "./lib/translationOps";
 import { withMessageSearch } from "./lib/messageSearch";
+import { assertOutboundAllowed, outboundBlockedFor } from "./lib/readOnly";
+
+/** Em modo leitura a agendada é reavaliada a cada 6 h (pending, nunca failed). */
+export const READ_ONLY_RECHECK_MS = 6 * 60 * 60 * 1000;
 
 const scheduledTranslationValidator = v.object({
   authoredText: v.string(),
@@ -48,6 +52,8 @@ export const schedule = mutation({
       "inbox",
       "reply"
     );
+    // Modo leitura (B7): não cria envio novo (o que já estava agendado fica pending).
+    await assertOutboundAllowed(ctx, conversation.organizationId);
     // Sala de grupo: mesmas guardas do envio imediato. Agendar para uma sala
     // que já não é acompanhada seria publicar nela dias depois, sem ninguém
     // olhando (review de correção nº 2).
@@ -165,6 +171,17 @@ export const deliver = internalMutation({
   handler: async (ctx, args) => {
     const row = await ctx.db.get(args.scheduledMessageId);
     if (!row || row.status !== "pending") return null;
+
+    // Modo leitura (B7): a agendada NÃO vira `failed` nem sai. Fica `pending` e é
+    // reagendada para depois; quando o plano voltar, a próxima tentativa entrega (já vencida,
+    // sai na hora). Mensagem de cliente nunca é descartada por mudança de plano.
+    if (outboundBlockedFor(await ctx.db.get(row.organizationId), Date.now())) {
+      const fnId = await ctx.scheduler.runAfter(READ_ONLY_RECHECK_MS, internal.scheduledMessages.deliver, {
+        scheduledMessageId: args.scheduledMessageId,
+      });
+      await ctx.db.patch(args.scheduledMessageId, { scheduledFunctionId: fnId as string });
+      return null;
+    }
 
     const conversation = await ctx.db.get(row.conversationId);
     const member = await ctx.db.get(row.createdBy);

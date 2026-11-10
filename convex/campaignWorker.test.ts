@@ -607,3 +607,51 @@ describe("checagem de número com gateway que só devolve LID (10/10/2026)", () 
     });
   });
 });
+
+describe("modo leitura do plano (B7)", () => {
+  test("o tick em modo leitura pausa com plan_read_only ANTES de reservar destinatário; retomar só com o plano de volta", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    const mock = bridgeFetchMock();
+    vi.stubGlobal("fetch", mock.fn);
+    const id = await launchedBridge(t, s, [{ phone: "11 99999-0001" }, { phone: "11 99999-0002" }]);
+    const launched = (await t.run((ctx) => ctx.db.get(id)))!;
+    await t.run((ctx) => ctx.db.patch(s.organizationId, { billing: { plan: "profissional", status: "read_only", updatedAt: 1 } }));
+
+    await t.mutation(internal.campaignWorker.tick, { campaignId: id, tickToken: launched.tickToken! });
+    const campaign = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(campaign.status).toBe("paused");
+    expect(campaign.pauseCode).toBe("plan_read_only");
+    expect(campaign.pausedReason).toMatch(/modo leitura/);
+    // Nenhum destinatário foi reservado e nada saiu pela rede.
+    const rows = await recipients(t, id);
+    expect(rows.every((r) => r.status === "pending")).toBe(true);
+    expect(mock.calls.filter((c) => c.url.includes("/chat/send/"))).toHaveLength(0);
+
+    // Retomar em modo leitura é recusado; com o plano de volta o cliente retoma e o código limpa.
+    await expect(asUser(t, s.adminUserId).mutation(api.campaigns.resumeCampaign, { campaignId: id })).rejects.toThrow(/modo leitura/);
+    await t.run((ctx) => ctx.db.patch(s.organizationId, { billing: { plan: "profissional", status: "active", updatedAt: 2 } }));
+    await asUser(t, s.adminUserId).mutation(api.campaigns.resumeCampaign, { campaignId: id });
+    const resumed = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(resumed.status).toBe("running");
+    expect(resumed.pauseCode).toBeUndefined();
+  });
+
+  test("lançar campanha em modo leitura é recusado; org legacy lança normalmente", async () => {
+    const t = setup();
+    const s = await seed(t);
+    vi.stubGlobal("fetch", bridgeFetchMock().fn);
+    const asAdmin = asUser(t, s.adminUserId);
+    const id = await asAdmin.mutation(api.campaigns.createCampaign, {
+      organizationId: s.organizationId, name: "Camp", channelConfigId: s.bridgeConfigId,
+      content: variants, audience: { source: "manual", targetStageId: s.stage2Id, targetBoardId: s.boardId, targetTags: ["campanha"] },
+      safety: { checkNumbersFirst: false },
+    });
+    await asAdmin.mutation(api.campaigns.addManualRecipients, { campaignId: id, entries: [{ phone: "11 99999-0003" }] });
+    await t.run((ctx) => ctx.db.patch(s.organizationId, { billing: { plan: "profissional", status: "canceled", updatedAt: 1 } }));
+    await expect(asAdmin.mutation(api.campaigns.launchCampaign, { campaignId: id, consentAck: true, bridgeRiskAck: true })).rejects.toThrow(/modo leitura/);
+    await t.run((ctx) => ctx.db.patch(s.organizationId, { billing: { status: "legacy", updatedAt: 2 } }));
+    await asAdmin.mutation(api.campaigns.launchCampaign, { campaignId: id, consentAck: true, bridgeRiskAck: true });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("running");
+  });
+});

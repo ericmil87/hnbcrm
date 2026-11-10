@@ -7,6 +7,7 @@ import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
+import { assertOutboundAllowed } from "./lib/readOnly";
 import { seesWholeInbox } from "./lib/inboxScope";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
@@ -1315,6 +1316,8 @@ export const sendMessage = mutation({
     if (!conversation) throw new Error("Conversation not found");
 
     const userMember = await requireAuth(ctx, conversation.organizationId);
+    // Modo leitura (B7): nota interna segue liberada; envio ao cliente não.
+    if (!args.isInternal) await assertOutboundAllowed(ctx, conversation.organizationId);
     // Sala de grupo: as MESMAS guardas de `POST /api/v1/groups/send`
     // (acompanhado, não saímos, grupos ligados no número).
     await assertGroupConversationSendable(ctx, conversation);
@@ -1864,6 +1867,8 @@ export async function internalSendMessageCore(
     throw new Error("Membro não pertence à organização da conversa");
   }
 
+  // Modo leitura (B7): vale para o app, a REST e o Telegram (mesmo núcleo).
+  if (!args.isInternal) await assertOutboundAllowed(ctx, conversation.organizationId);
   // Sala de grupo: mesmas guardas do caminho do app e da rota REST de grupo.
   await assertGroupConversationSendable(ctx, conversation);
   const notOnWhatsappAcked = args.isInternal
@@ -2993,6 +2998,7 @@ export const internalSendTemplate = internalMutation({
     if (teamMember.organizationId !== conversation.organizationId) {
       throw new Error("Membro não pertence à organização da conversa");
     }
+    await assertOutboundAllowed(ctx, conversation.organizationId);
     if (conversation.channel !== "whatsapp") {
       if (conversation.channel === "instagram" || conversation.channel === "messenger") {
         throw new ConvexError("Instagram e Messenger não permitem iniciar conversa nem templates; a pessoa precisa escrever primeiro.");

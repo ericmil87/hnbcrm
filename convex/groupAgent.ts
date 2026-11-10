@@ -50,6 +50,7 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 // Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import {
   SPEND_CAP_BLOCKED_MESSAGE,
+  READ_ONLY_AI_MESSAGE,
   SPEND_CAP_REASON,
   addUsage,
   finishRunCostFields,
@@ -1418,10 +1419,10 @@ export const internalGenerateSummary = internalAction({
     // Teto de gastos em R$ em `block` (v0.69): resumo suspenso até virar o mês.
     const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
       organizationId: setup.organizationId,
-      month: monthKeyUtc(Date.now()),
+      month: monthKeyUtc(Date.now()), now: Date.now(),
     });
     if (spendGate.blocked) {
-      return { text: null, at: null, hours, error: SPEND_CAP_BLOCKED_MESSAGE };
+      return { text: null, at: null, hours, error: spendGate.readOnly ? READ_ONLY_AI_MESSAGE : SPEND_CAP_BLOCKED_MESSAGE };
     }
 
     let runId: Id<"agentRuns"> | null = null;
@@ -1772,7 +1773,7 @@ export const internalRadar = internalAction({
       (
         await ctx.runQuery(internal.aiSpend.internalSpendGate, {
           organizationId: setup.organizationId,
-          month: monthKeyUtc(Date.now()),
+          month: monthKeyUtc(Date.now()), now: Date.now(),
         })
       ).blocked;
     if (!setup || setup.candidates.length === 0 || spendBlocked) {

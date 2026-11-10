@@ -187,6 +187,9 @@ export const orgBillingValidator = v.object({
     })
   ),
   trialUsedByUserId: v.optional(v.id("users")),
+  // Avisos de fim de teste já enviados, em dias restantes (7, 3, 1): carimbo idempotente do
+  // cron `internalBillingTick` (cada limiar sai no máximo 1 vez).
+  trialNotices: v.optional(v.array(v.number())),
   updatedAt: v.number(),
 });
 

@@ -39,6 +39,7 @@ import { internal } from "./_generated/api";
 import { getModules } from "./lib/orgModules";
 import { Doc, Id } from "./_generated/dataModel";
 import { isMembershipRevoked, requireAuth, requirePermission } from "./lib/auth";
+import { assertOutboundAllowed } from "./lib/readOnly";
 import { permissionsValidator } from "./schema";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { configProvider } from "./channelConfigs";
@@ -978,6 +979,8 @@ async function startConversationCore(
     const member = actor.member;
     const actorType = member.type === "ai" ? "ai" : "human";
     const now = Date.now();
+    // Modo leitura (B7): não abre conversa nova nem reabre uma para enviar.
+    await assertOutboundAllowed(ctx, args.organizationId, now);
 
     // 1. Canal
     const channel = await ctx.db.get(args.channelConfigId);

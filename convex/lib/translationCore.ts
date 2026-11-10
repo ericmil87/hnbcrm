@@ -17,7 +17,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { chatWithFallback, withoutReasoning, ResolvedRoute } from "./llm";
 import { sanitizeLlmError } from "./llm/sanitize";
 import { resolveProductRoutes, OrgProviderConfig } from "./agentRoutes";
-import { addUsage, finishRunCostFields, monthKeyUtc, newUsageTotals, SPEND_CAP_BLOCKED_MESSAGE } from "./aiSpend";
+import { addUsage, finishRunCostFields, monthKeyUtc, newUsageTotals, SPEND_CAP_BLOCKED_MESSAGE, READ_ONLY_AI_MESSAGE } from "./aiSpend";
 import { detectLeakedModelMarkup } from "./llmOutputGuard";
 import { wrapUntrusted } from "./promptEnvelope";
 import {
@@ -251,9 +251,9 @@ async function translateWithLlm(
 ): Promise<EngineAttempt> {
   const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
     organizationId: args.org._id,
-    month: monthKeyUtc(Date.now()),
+    month: monthKeyUtc(Date.now()), now: Date.now(),
   });
-  if (spendGate.blocked) return { ok: false, error: SPEND_CAP_BLOCKED_MESSAGE };
+  if (spendGate.blocked) return { ok: false, error: spendGate.readOnly ? READ_ONLY_AI_MESSAGE : SPEND_CAP_BLOCKED_MESSAGE };
 
   const providerConfig = (args.org.settings.aiConfig?.providerConfig ?? null) as OrgProviderConfig | null;
   let routes: ResolvedRoute[];

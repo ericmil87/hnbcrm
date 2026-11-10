@@ -24,7 +24,7 @@ import { Id } from "./_generated/dataModel";
 import { ResolvedRoute } from "./lib/llm";
 import { buildSetupContextBlock } from "./lib/onboardingSetupContext";
 // Custo por modelo + teto de gastos em R$ (v0.69, T04).
-import { SPEND_CAP_BLOCKED_MESSAGE, monthKeyUtc } from "./lib/aiSpend";
+import { SPEND_CAP_BLOCKED_MESSAGE, READ_ONLY_AI_MESSAGE, monthKeyUtc } from "./lib/aiSpend";
 import {
   CopilotSession,
   resolveCopilotRoutes,
@@ -110,10 +110,10 @@ export const copilotStream = httpAction(async (ctx, request) => {
   // com o motivo na tela (403 legível — nunca silêncio).
   const spendGate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
     organizationId,
-    month: monthKeyUtc(Date.now()),
+    month: monthKeyUtc(Date.now()), now: Date.now(),
   });
   if (spendGate.blocked) {
-    return new Response(JSON.stringify({ error: SPEND_CAP_BLOCKED_MESSAGE }), {
+    return new Response(JSON.stringify({ error: spendGate.readOnly ? READ_ONLY_AI_MESSAGE : SPEND_CAP_BLOCKED_MESSAGE }), {
       status: 403,
       headers: { "Content-Type": "application/json", ...corsHeaders },
     });

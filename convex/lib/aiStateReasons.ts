@@ -31,6 +31,8 @@ export const AI_STATE_REASON_CODES = [
   "budget_mensal",
   // teto de gastos em R$ em `block` (v0.69, convex/aiSpend.ts) — agente de grupo
   "teto_de_gastos",
+  // plano: teste vencido, `read_only` ou `canceled` (B7); sem repasse (M13)
+  "plano_inativo",
   "rascunho_ja_revisado",
   "humano_respondeu",
   "cliente_falou",

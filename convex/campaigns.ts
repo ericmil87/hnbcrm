@@ -21,6 +21,7 @@ import {
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission, requireAccountWithEmail } from "./lib/auth";
+import { assertOutboundAllowed } from "./lib/readOnly";
 import { authorizeCampaigns, viaMeta, type InternalActorArgs } from "./lib/campaignAuth";
 import { configProvider } from "./channelConfigs";
 import {
@@ -1983,6 +1984,8 @@ export async function launchCampaignHandler(ctx: MutationCtx, args: LaunchCampai
     const campaign = await getCampaignInOrg(ctx, args.campaignId);
     const member = await authorize(ctx, campaign.organizationId, "full", args.actorMemberId);
     if (campaign.status !== "draft") throw new ConvexError("Só rascunhos podem ser lançados");
+    // Modo leitura (B7): nenhum disparo novo (app e REST passam por este handler).
+    await assertOutboundAllowed(ctx, campaign.organizationId);
     const config = await getChannelInOrg(ctx, campaign.channelConfigId, campaign.organizationId);
     const provider = configProvider(config);
     const now = Date.now();
@@ -2346,6 +2349,8 @@ export async function resumeCampaignHandler(ctx: MutationCtx, args: ResumeCampai
     if (campaign.status !== "paused") throw new ConvexError("A campanha não está pausada");
     const config = await getChannelInOrg(ctx, campaign.channelConfigId, campaign.organizationId);
     if (config.status !== "active") throw new ConvexError("O canal não está ativo");
+    // Modo leitura (B7): só retoma quando o plano voltar (a pausa `plan_read_only` fica até lá).
+    await assertOutboundAllowed(ctx, campaign.organizationId);
     const now = Date.now();
     await ctx.db.patch(campaign._id, {
       status: "running",
