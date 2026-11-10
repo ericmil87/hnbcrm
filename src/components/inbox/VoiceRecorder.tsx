@@ -5,6 +5,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Mic, Trash2, Square, Send, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { SendDeferredError } from "@/lib/messageDelivery";
 import { cn } from "@/lib/utils";
 import { AudioPlayer } from "./AudioPlayer";
 import type { UploadedFile } from "@/components/ui/FileUploadButton";
@@ -57,6 +58,7 @@ export function VoiceRecorder({
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const blobRef = useRef<Blob | null>(null);
+  const uploadedRef = useRef<{ blob: Blob; file: UploadedFile } | null>(null);
   const extRef = useRef<string>("webm");
   const timerRef = useRef<number | null>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -169,27 +171,35 @@ export function VoiceRecorder({
       const mimeType = blob.type || (ext === "ogg" ? "audio/ogg" : "audio/webm");
       const name = `nota-de-voz-${Date.now()}.${ext}`;
 
-      const uploadUrl = await generateUploadUrl({ organizationId });
-      const response = await fetch(uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": mimeType },
-        body: blob,
-      });
-      if (!response.ok) throw new Error("upload failed");
-      const { storageId } = await response.json();
+      // Reenvio da mesma gravação (ex.: depois de cancelar um diálogo): reusa o arquivo já enviado.
+      let file = uploadedRef.current?.blob === blob ? uploadedRef.current.file : null;
+      if (!file) {
+        const uploadUrl = await generateUploadUrl({ organizationId });
+        const response = await fetch(uploadUrl, {
+          method: "POST",
+          headers: { "Content-Type": mimeType },
+          body: blob,
+        });
+        if (!response.ok) throw new Error("upload failed");
+        const { storageId } = await response.json();
 
-      const fileId = await saveFile({
-        organizationId,
-        storageId,
-        name,
-        mimeType,
-        size: blob.size,
-        fileType: "message_attachment",
-      });
+        const fileId = await saveFile({
+          organizationId,
+          storageId,
+          name,
+          mimeType,
+          size: blob.size,
+          fileType: "message_attachment",
+        });
+        file = { fileId, name, mimeType, size: blob.size };
+        uploadedRef.current = { blob, file };
+      }
 
-      await onRecorded({ fileId, name, mimeType, size: blob.size });
+      await onRecorded(file);
       resetToIdle();
     } catch (err) {
+      // O envio ficou pendente de um diálogo de confirmação: a gravação continua na prévia.
+      if (err instanceof SendDeferredError) return;
       console.error("Não foi possível enviar a nota de voz.", err);
       toast.error("Não foi possível enviar a nota de voz.");
     } finally {

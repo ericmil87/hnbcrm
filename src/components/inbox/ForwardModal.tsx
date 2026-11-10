@@ -7,6 +7,8 @@ import { Search, Forward, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { useNotOnWhatsappAck } from "./useNotOnWhatsappAck";
 import { ChannelOriginBadge } from "./ChannelOriginBadge";
 import { Avatar } from "@/components/ui/Avatar";
 import { Spinner } from "@/components/ui/Spinner";
@@ -33,6 +35,7 @@ export function ForwardModal({
 }: ForwardModalProps) {
   const [search, setSearch] = useState("");
   const [sendingTo, setSendingTo] = useState<string | null>(null);
+  const { intercept, dialogProps: ackDialogProps } = useNotOnWhatsappAck();
   // Só alimenta um rótulo derivado; o modal re-renderiza ao abrir/buscar.
   const now = Date.now();
   const { accounts, byId } = useInboxChannelAccounts(open ? organizationId : null);
@@ -64,24 +67,29 @@ export function ForwardModal({
     });
   }, [conversations, currentConversationId, search]);
 
-  const handleForward = async (targetConversationId: string) => {
+  const handleForward = async (targetConversationId: string, notOnWhatsappAck = false) => {
     if (!message || sendingTo) return;
     setSendingTo(targetConversationId);
     try {
       await forwardMessage({
         messageId: message._id as Id<"messages">,
         targetConversationId: targetConversationId as Id<"conversations">,
+        ...(notOnWhatsappAck ? { notOnWhatsappAck: true } : {}),
       });
       toast.success("Mensagem encaminhada");
       onClose();
-    } catch {
-      toast.error("Não foi possível encaminhar a mensagem.");
+    } catch (error) {
+      // Destino sem WhatsApp: pede o aceite (a lista de destinos continua aberta).
+      if (!intercept(error, () => void handleForward(targetConversationId, true))) {
+        toast.error("Não foi possível encaminhar a mensagem.");
+      }
     } finally {
       setSendingTo(null);
     }
   };
 
   return (
+    <>
     <Modal open={open} onClose={onClose} title="Encaminhar mensagem">
       <div className="flex flex-col gap-3">
         <div className="relative">
@@ -163,5 +171,7 @@ export function ForwardModal({
         </div>
       </div>
     </Modal>
+    <ConfirmDialog {...ackDialogProps} />
+    </>
   );
 }

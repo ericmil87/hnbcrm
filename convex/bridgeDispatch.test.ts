@@ -263,7 +263,7 @@ describe("internalDispatchMessage — bridge provider", () => {
     expect(String(message!.metadata!.deliveryError)).toContain("session not connected");
   });
 
-  test("network error → failed message", async () => {
+  test("network error → transient: fica pendente com retry agendado (backoff), não falha de cara", async () => {
     const t = setup();
     const { aiMemberId, conversationId } = await seedBridge(t);
     const messageId = await send(t, conversationId, aiMemberId);
@@ -273,8 +273,9 @@ describe("internalDispatchMessage — bridge provider", () => {
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
     const message = await t.run(async (ctx) => ctx.db.get(messageId));
-    expect(message!.deliveryStatus).toBe("failed");
-    expect(String(message!.metadata!.deliveryError)).toContain("ECONNREFUSED");
+    expect(message!.deliveryStatus).toBeUndefined();
+    expect(message!.metadata!.bridgeRetry).toMatchObject({ kind: "transient", attempt: 1 });
+    expect(String((message!.metadata!.bridgeRetry as { lastError: string }).lastError)).toContain("ECONNREFUSED");
   });
 
   test("media contentType with no attachment → failed, no gateway call", async () => {

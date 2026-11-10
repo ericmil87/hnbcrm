@@ -14,6 +14,7 @@ import {
   internalAction,
   internalMutation,
   internalQuery,
+  type MutationCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
@@ -31,7 +32,7 @@ import {
 import { configProvider } from "./channelConfigs";
 import { configTransport } from "./lib/channelTransport";
 import { resolveConversationChannelConfig } from "./lib/channelResolve";
-import { claimChannelSlot } from "./lib/whatsappDispatch";
+import { claimChannelSlot, rescheduleWhatsappDispatch } from "./lib/whatsappDispatch";
 import {
   BridgeQuote,
   BridgeSendRequest,
@@ -54,6 +55,30 @@ import { getLeadRef } from "./lib/leadRef";
 import { isDemoOrg } from "./lib/orgModules";
 import { inboundRouteChannelValidator, toInboundRouteChannel } from "./lib/bridgeSnapshot";
 import { maybeNotifyTelegramSendFailed } from "./lib/telegramRelay";
+import {
+  NOT_ON_WHATSAPP_BLOCKED_ERROR,
+  NOT_ON_WHATSAPP_DELIVERY_ERROR,
+  NUMBER_CHECK_UNAVAILABLE_ERROR,
+  bridgeRetryPlan,
+  classifyBridgeSendError,
+  isPreSendHttpRejection,
+  type BridgeErrorKind,
+} from "./lib/bridgeSendError";
+import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
+import {
+  applyCanonicalNumberToContact,
+  contactOfConversation,
+  digitsOf,
+  clearNotFoundFails,
+  conversationIsBridge,
+  isAutomatedSendBlocked,
+  isMarkedNotOnWhatsapp,
+  isOptedOutAnySpelling,
+  isSpellingOfSameNumber,
+  recordNotFoundFail,
+  reserveWhatsappLookup,
+  setWhatsappCheck,
+} from "./lib/whatsappCheck";
 
 const GRAPH_API_BASE = "https://graph.facebook.com/v23.0";
 const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // skip larger media, keep a note
@@ -365,6 +390,15 @@ export const internalGetDispatchContext = internalQuery({
       conversation,
       config,
       toPhone,
+      // Só o que o dispatch precisa para o gate "sem WhatsApp" (lib/whatsappCheck).
+      contact: contact
+        ? {
+            phone: contact.phone,
+            whatsappNumber: contact.whatsappNumber,
+            whatsappCheck: contact.whatsappCheck,
+            whatsappFails: contact.whatsappFails,
+          }
+        : null,
       isGroup,
       // Org de demonstração: o dispatch NUNCA sai para a rede (settings.demoMode).
       demoMode: await isDemoOrg(ctx, message.organizationId),
@@ -466,6 +500,8 @@ async function dispatchViaBridge(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId,
       detail: "Templates são exclusivos da WhatsApp Cloud API oficial — não disponível no canal bridge",
+      errorKind: "permanent",
+      preSend: true,
     });
     return;
   }
@@ -474,6 +510,8 @@ async function dispatchViaBridge(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId,
       detail: "Contato sem número de telefone — não é possível enviar via WhatsApp",
+      errorKind: "permanent",
+      preSend: true,
     });
     return;
   }
@@ -482,6 +520,8 @@ async function dispatchViaBridge(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId,
       detail: "Configuração bridge incompleta — reconfigure o canal em Configurações → Canais",
+      errorKind: "permanent",
+      preSend: true,
     });
     return;
   }
@@ -493,6 +533,8 @@ async function dispatchViaBridge(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId,
       detail: "Não foi possível ler o token do canal bridge — reconecte o número em Configurações → Canais",
+      errorKind: "permanent",
+      preSend: true,
     });
     return;
   }
@@ -553,6 +595,7 @@ async function sendViaBridge(
     attachmentFiles: any[];
     isGroup?: boolean;
     quoteParticipantJid?: string | null;
+    typingDelayMs?: number;
   },
   token: string,
   // Marcado logo antes do POST de envio: o chamador fecha a presença só então.
@@ -601,6 +644,8 @@ async function sendViaBridge(
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId,
         detail: "Mensagem de mídia sem anexo — nada para enviar",
+      errorKind: "permanent",
+      preSend: true,
       });
       return;
     }
@@ -609,6 +654,8 @@ async function sendViaBridge(
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId,
         detail: "Anexo muito grande para o WhatsApp (limite de 25MB)",
+      errorKind: "permanent",
+      preSend: true,
       });
       return;
     }
@@ -617,6 +664,8 @@ async function sendViaBridge(
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId,
         detail: "Anexo indisponível no armazenamento",
+        errorKind: "permanent",
+        preSend: true,
       });
       return;
     }
@@ -679,9 +728,16 @@ async function sendViaBridge(
     });
     body = await response.json().catch(() => ({}));
   } catch (e) {
-    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+    const detail = e instanceof Error ? e.message : "Falha de rede ao enviar pelo bridge";
+    await handleBridgeSendFailure(ctx, {
       messageId,
-      detail: e instanceof Error ? e.message : "Falha de rede ao enviar pelo bridge",
+      config,
+      token,
+      toPhone,
+      isGroup: args.isGroup === true,
+      typingDelayMs: args.typingDelayMs,
+      detail,
+      kind: classifyBridgeSendError({ error: detail, network: true }),
     });
     return;
   }
@@ -696,11 +752,85 @@ async function sendViaBridge(
       ...(note ? { note } : {}),
     });
   } else {
-    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+    await handleBridgeSendFailure(ctx, {
       messageId,
+      config,
+      token,
+      toPhone,
+      isGroup: args.isGroup === true,
+      typingDelayMs: args.typingDelayMs,
       detail: `Falha no envio pelo bridge: ${result.error}`,
+      kind: classifyBridgeSendError({ error: result.error, status: response.status }),
+      preSend: isPreSendHttpRejection(response.status),
     });
   }
+}
+
+/**
+ * Falha de envio do bridge: classifica → decide (retry com backoff / self-heal do
+ * número / falha) numa mutation só, e quando o veredito é `selfheal` pergunta ao
+ * gateway (UMA vez por mensagem) qual grafia do número existe no WhatsApp.
+ * Nunca reenvia por conta própria: quem reenvia é o reagendamento da mutation,
+ * pelo mesmo pacing do envio original.
+ */
+async function handleBridgeSendFailure(
+  ctx: ActionCtx,
+  a: {
+    messageId: Id<"messages">;
+    config: any;
+    token: string;
+    toPhone: string;
+    isGroup: boolean;
+    typingDelayMs?: number;
+    detail: string;
+    kind: BridgeErrorKind;
+    preSend?: boolean;
+  }
+): Promise<void> {
+  const verdict = await ctx.runMutation(internal.whatsapp.internalDecideBridgeFailure, {
+    messageId: a.messageId,
+    kind: a.kind,
+    detail: a.detail,
+    isGroup: a.isGroup,
+    ...(a.typingDelayMs ? { typingDelayMs: a.typingDelayMs } : {}),
+    ...(a.preSend ? { preSend: true } : {}),
+  });
+  if (verdict !== "selfheal") return;
+
+  const phone = digitsOf(a.toPhone);
+  let result:
+    | { status: "on_whatsapp"; canonicalPhone: string }
+    | { status: "not_on_whatsapp" }
+    | { status: "check_failed"; error: string };
+  if (!/^\d{8,15}$/.test(phone)) {
+    result = { status: "check_failed", error: "Número fora do formato" };
+  } else {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const res = await checkBridgeNumber({
+        baseUrl: a.config.bridgeBaseUrl,
+        token: a.token,
+        phone,
+        signal: controller.signal,
+      });
+      result = !res.ok
+        ? { status: "check_failed", error: res.error }
+        : res.onWhatsapp
+          ? { status: "on_whatsapp", canonicalPhone: res.canonicalPhone }
+          : { status: "not_on_whatsapp" };
+    } catch (e) {
+      result = { status: "check_failed", error: e instanceof Error ? e.message.slice(0, 200) : "Erro de rede" };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  await ctx.runMutation(internal.whatsapp.internalApplyBridgeSelfHeal, {
+    messageId: a.messageId,
+    failedPhone: phone,
+    result,
+    ...(a.typingDelayMs ? { typingDelayMs: a.typingDelayMs } : {}),
+  });
 }
 
 // Internal: dispatch one outbound message to the Graph API
@@ -724,6 +854,8 @@ export const internalDispatchMessage = internalAction({
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId: args.messageId,
         detail: `Falha inesperada no envio: ${detail}`,
+        // Pode ter saído antes da exceção: o reenvio exige aceite (lib/bridgeSendError).
+        errorKind: "ambiguous",
         onlyIfUndispatched: true,
       });
     }
@@ -756,11 +888,35 @@ async function dispatchMessage(
     return null;
   }
 
+  // GATE ÚNICO dos envios automáticos (IA, follow-up, agendada, boas-vindas,
+  // campanha): contato que o gateway já disse NÃO ter WhatsApp, para o número
+  // atual, não recebe nada — sem rede. Só passa com o aceite explícito de um
+  // humano (`metadata.notOnWhatsappAck`, gravado pelo envio manual). Falha
+  // visível (atividade + gancho de cada caminho), nunca silenciosa.
+  if (
+    !isGroup &&
+    context.contact &&
+    // Marcador/contador são do BRIDGE: um envio pela Meta não é bloqueado por eles.
+    config?.channel === "whatsapp" &&
+    configProvider(config) === "bridge" &&
+    isAutomatedSendBlocked(context.contact, toPhone) &&
+    !message.metadata?.notOnWhatsappAck
+  ) {
+    await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+      messageId: args.messageId,
+      detail: NOT_ON_WHATSAPP_BLOCKED_ERROR,
+      errorKind: "recipient_not_found",
+      preSend: true,
+    });
+    return null;
+  }
+
   if (!config || config.status !== "active") {
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId: args.messageId,
       detail:
         "Nenhum número de WhatsApp ativo conectado para esta organização — configure em Configurações → Canais",
+      preSend: true,
     });
     return null;
   }
@@ -789,6 +945,7 @@ async function dispatchMessage(
       messageId: args.messageId,
       detail:
         "Conversa de grupo só pode ser enviada pelo canal bridge — a API oficial da Meta ainda não está disponível para grupos neste CRM",
+      preSend: true,
     });
     return null;
   }
@@ -799,6 +956,7 @@ async function dispatchMessage(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId: args.messageId,
       detail: "Configuração Meta incompleta — reconfigure o canal em Configurações → Canais",
+      preSend: true,
     });
     return null;
   }
@@ -806,6 +964,7 @@ async function dispatchMessage(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId: args.messageId,
       detail: "Contato sem número de telefone — não é possível enviar via WhatsApp",
+      preSend: true,
     });
     return null;
   }
@@ -829,6 +988,7 @@ async function dispatchMessage(
       await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
         messageId: args.messageId,
         detail: "Anexo indisponível no armazenamento",
+        preSend: true,
       });
       return null;
     }
@@ -865,6 +1025,7 @@ async function dispatchMessage(
     await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
       messageId: args.messageId,
       detail: "Não foi possível ler o token de acesso da Meta — reconfigure o canal em Configurações → Canais",
+      preSend: true,
     });
     return null;
   }
@@ -951,6 +1112,9 @@ async function dispatchMessage(
       messageId: args.messageId,
       errorCode: code,
       detail,
+      // Só HTTP 4xx prova que a Graph API recusou antes de enviar (códigos
+      // genéricos vêm com 5xx, onde a não-entrega não está provada).
+      ...(isPreSendHttpRejection(response.status) ? { preSend: true } : {}),
     });
   }
 
@@ -981,6 +1145,14 @@ export const internalMarkDispatched = internalMutation({
         deliveryStatus: "sent",
       });
     }
+    // Gateway aceitou: o número existe, zera o contador de `recipient_not_found`.
+    const sentMessage = await ctx.db.get(args.messageId);
+    const sentConversation = sentMessage ? await ctx.db.get(sentMessage.conversationId) : null;
+    const sentContact =
+      sentConversation && (await conversationIsBridge(ctx, sentConversation))
+        ? await contactOfConversation(ctx, sentConversation)
+        : null;
+    if (sentContact?.whatsappFails) await clearNotFoundFails(ctx, sentContact._id);
     // Campanhas: destinatário → sent (no-op fora de campanha)
     await applyCampaignDeliveryUpdate(ctx, { messageId: args.messageId, status: "sent" });
     // Follow-up da IA: commit ≠ entregue. A tarefa só conclui AQUI, quando o
@@ -1011,61 +1183,337 @@ export const internalMarkDemoDelivered = internalMutation({
   },
 });
 
+const errorKindValidator = v.union(
+  v.literal("recipient_not_found"),
+  v.literal("transient"),
+  v.literal("rate_limited"),
+  v.literal("session"),
+  v.literal("permanent"),
+  v.literal("ambiguous")
+);
+
+/**
+ * Núcleo de "envio falhou" (compartilhado por `internalMarkDispatchFailed` e
+ * pelas decisões do bridge). `errorKind` (bridge) vai para
+ * `metadata.deliveryErrorKind` ao lado de `deliveryError`; `extraMetadata` carrega
+ * o resultado da checagem de número. O estado de retry em andamento
+ * (`bridgeRetry`) some: a falha agora é definitiva.
+ */
+async function markDispatchFailedCore(
+  ctx: MutationCtx,
+  args: {
+    messageId: Id<"messages">;
+    errorCode?: number;
+    detail: string;
+    errorKind?: BridgeErrorKind;
+    preSend?: boolean;
+    extraMetadata?: Record<string, unknown>;
+    onlyIfUndispatched?: boolean;
+  }
+): Promise<void> {
+  const message = await ctx.db.get(args.messageId);
+  if (!message) return;
+  if (args.onlyIfUndispatched && (message.externalId || message.deliveryStatus)) return;
+
+  const {
+    bridgeRetry: _retry,
+    deliveryPreSend: _pre,
+    deliveryErrorKind: _kind,
+    deliveryErrorCode: _code,
+    ...restMeta
+  } = (message.metadata ?? {}) as Record<string, unknown>;
+  await ctx.db.patch(args.messageId, {
+    deliveryStatus: "failed",
+    metadata: {
+      ...restMeta,
+      deliveryError: args.detail,
+      ...(args.errorCode ? { deliveryErrorCode: args.errorCode } : {}),
+      ...(args.errorKind ? { deliveryErrorKind: args.errorKind } : {}),
+      ...(args.preSend ? { deliveryPreSend: true } : {}),
+      ...(args.extraMetadata ?? {}),
+    },
+  });
+
+  if (message.leadId) {
+    await ctx.db.insert("activities", {
+      organizationId: message.organizationId,
+      leadId: message.leadId,
+      type: "note",
+      actorType: "system",
+      content: `Falha ao enviar mensagem no WhatsApp: ${args.detail}`,
+      metadata: { conversationId: message.conversationId, messageId: args.messageId },
+      createdAt: Date.now(),
+    });
+  }
+  // Campanhas: mapa de erros (131049 retry 24h, 131050 opt-out, 131048/132015 pausa…)
+  await applyCampaignDeliveryUpdate(ctx, {
+    messageId: args.messageId,
+    status: "failed",
+    errorCode: args.errorCode,
+    errorDetail: args.detail,
+  });
+  // Follow-up da IA: envio recusado NÃO conclui a tarefa — ela volta para a
+  // equipe com o motivo (no-op fora de follow-up).
+  await applyFollowUpDeliveryUpdate(ctx, {
+    messageId: args.messageId,
+    ok: false,
+    detail: args.detail,
+  });
+  // Boas-vindas do lead inbound (v0.64): falha de entrega DEFINITIVA (depois dos
+  // retries/self-heal do bridge) abre UM repasse humano (no-op fora de boas-vindas).
+  await applyInboundWelcomeDeliveryFailure(ctx, {
+    messageId: args.messageId,
+    detail: args.detail,
+    // "Sem WhatsApp" no texto do repasse só quando o gateway confirmou; checagem
+    // indisponível não afirma isso.
+    ...(args.errorKind && args.extraMetadata?.numberCheck !== "unavailable" &&
+      args.extraMetadata?.numberCheck !== "inconclusive"
+      ? { errorKind: args.errorKind }
+      : {}),
+  });
+  // Telegram (F4): resposta mandada pelo bot → o cartão vira "✗ Falhou" e a cota volta.
+  await maybeNotifyTelegramSendFailed(ctx, message, args.detail);
+}
+
 // Internal: record a failed dispatch (visible in Inbox via deliveryStatus + activity)
 export const internalMarkDispatchFailed = internalMutation({
   args: {
     messageId: v.id("messages"),
     errorCode: v.optional(v.number()),
     detail: v.string(),
+    // Classe do erro do bridge (lib/bridgeSendError); ausente = Meta/legado.
+    errorKind: v.optional(errorKindValidator),
+    // A falha é PROVADAMENTE anterior ao envio (recusa local, HTTP 4xx): o reenvio
+    // manual não pede o aceite de "pode já ter sido entregue".
+    preSend: v.optional(v.boolean()),
     // Rede de segurança do dispatch: nunca rebaixa uma mensagem que já saiu.
     onlyIfUndispatched: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const message = await ctx.db.get(args.messageId);
-    if (!message) return null;
-    if (args.onlyIfUndispatched && (message.externalId || message.deliveryStatus)) return null;
-
-    await ctx.db.patch(args.messageId, {
-      deliveryStatus: "failed",
-      metadata: {
-        ...(message.metadata ?? {}),
-        deliveryError: args.detail,
-        ...(args.errorCode ? { deliveryErrorCode: args.errorCode } : {}),
-      },
-    });
-
-    if (message.leadId) {
-      await ctx.db.insert("activities", {
-        organizationId: message.organizationId,
-        leadId: message.leadId,
-        type: "note",
-        actorType: "system",
-        content: `Falha ao enviar mensagem no WhatsApp: ${args.detail}`,
-        metadata: { conversationId: message.conversationId, messageId: args.messageId },
-        createdAt: Date.now(),
-      });
-    }
-    // Campanhas: mapa de erros (131049 retry 24h, 131050 opt-out, 131048/132015 pausa…)
-    await applyCampaignDeliveryUpdate(ctx, {
-      messageId: args.messageId,
-      status: "failed",
-      errorCode: args.errorCode,
-      errorDetail: args.detail,
-    });
-    // Follow-up da IA: envio recusado NÃO conclui a tarefa — ela volta para a
-    // equipe com o motivo (no-op fora de follow-up).
-    await applyFollowUpDeliveryUpdate(ctx, {
-      messageId: args.messageId,
-      ok: false,
-      detail: args.detail,
-    });
-    // Boas-vindas do lead inbound (v0.64): falha de entrega abre UM repasse
-    // humano, sem retry (no-op fora de boas-vindas).
-    await applyInboundWelcomeDeliveryFailure(ctx, { messageId: args.messageId, detail: args.detail });
-    // Telegram (F4): resposta mandada pelo bot → o cartão vira "✗ Falhou" e a cota volta.
-    await maybeNotifyTelegramSendFailed(ctx, message, args.detail);
+    await markDispatchFailedCore(ctx, args);
     return null;
+  },
+});
+
+/**
+ * Veredito de uma falha de envio do bridge (action → mutation, atômico):
+ * - `recipient_not_found` 1:1 e ainda sem self-heal → `selfheal` (a action pergunta
+ *   ao gateway; o marcador `selfHealAt` é gravado AQUI, então nenhuma falha
+ *   futura da mesma mensagem repete a checagem — nunca há laço);
+ * - `transient` (até 3 envios no total) e UM `rate_limited` → reagenda pelo
+ *   pacing do canal e devolve `retry` (a mensagem segue sem `deliveryStatus`);
+ * - o resto (sessão, permanente, desconhecido, teto) → falha definitiva.
+ */
+export const internalDecideBridgeFailure = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    kind: errorKindValidator,
+    detail: v.string(),
+    isGroup: v.optional(v.boolean()),
+    typingDelayMs: v.optional(v.number()),
+    // A falha foi um HTTP 4xx do gateway (antes do envio).
+    preSend: v.optional(v.boolean()),
+  },
+  returns: v.union(v.literal("retry"), v.literal("failed"), v.literal("selfheal")),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    // Já terminal (action duplicada): não rebaixa nem reagenda.
+    if (!message || message.externalId || message.deliveryStatus) return "failed" as const;
+    const meta = (message.metadata ?? {}) as Record<string, any>;
+    const attempts = ((meta.bridgeAttempts as number | undefined) ?? 0) + 1;
+
+    if (args.kind === "recipient_not_found" && args.isGroup !== true) {
+      // Resposta REAL do gateway (`no LID found`): é a única coisa que conta para o
+      // contador de falhas seguidas (falha recusada pelo gate local não conta).
+      const countConversation = await ctx.db.get(message.conversationId);
+      const countContact = countConversation ? await contactOfConversation(ctx, countConversation) : null;
+      if (countContact) await recordNotFoundFail(ctx, countContact._id, Date.now());
+      if (meta.selfHealAt) {
+        await markDispatchFailedCore(ctx, {
+          messageId: args.messageId,
+          detail: NOT_ON_WHATSAPP_DELIVERY_ERROR,
+          errorKind: "recipient_not_found",
+          extraMetadata: { bridgeAttempts: attempts },
+        });
+        return "failed" as const;
+      }
+      // Orçamento de consultas POR CONTATO: mensagem enviada com aceite a contato
+      // já marcado, ou várias mensagens falhas do mesmo contato, não geram uma
+      // rodada de lookups cada.
+      const conversation = await ctx.db.get(message.conversationId);
+      const contact = conversation ? await contactOfConversation(ctx, conversation) : null;
+      const now = Date.now();
+      // Só o marcador `not_on_whatsapp` (resposta do gateway às duas grafias) dispensa a
+      // consulta; com o contador em 2+ e nada marcado, a consulta é justamente o que
+      // pode consertar o contato — vale quando o orçamento do contato tem vaga.
+      if (contact && isMarkedNotOnWhatsapp(contact)) {
+        await markDispatchFailedCore(ctx, {
+          messageId: args.messageId,
+          detail: NOT_ON_WHATSAPP_DELIVERY_ERROR,
+          errorKind: "recipient_not_found",
+          extraMetadata: { bridgeAttempts: attempts, selfHealAt: now, numberCheck: "not_on_whatsapp" },
+        });
+        return "failed" as const;
+      }
+      const reservation = contact ? await reserveWhatsappLookup(ctx, contact._id, now) : null;
+      if (!reservation || !reservation.ok) {
+        await markDispatchFailedCore(ctx, {
+          messageId: args.messageId,
+          detail: NUMBER_CHECK_UNAVAILABLE_ERROR,
+          errorKind: "recipient_not_found",
+          extraMetadata: { bridgeAttempts: attempts, selfHealAt: now, numberCheck: "unavailable" },
+        });
+        return "failed" as const;
+      }
+      await ctx.db.patch(args.messageId, {
+        metadata: { ...meta, bridgeAttempts: attempts, selfHealAt: now },
+      });
+      return "selfheal" as const;
+    }
+
+    const plan = bridgeRetryPlan(args.kind, attempts, meta.bridgeRateRetried === true);
+    const conversation = plan.retry ? await ctx.db.get(message.conversationId) : null;
+    if (plan.retry && conversation) {
+      const now = Date.now();
+      // `nextAt` = o horário REAL agendado (o pacing do canal pode empurrar muito
+      // além de `now + delay`); a janela de graça do op de travadas parte dele.
+      const scheduledIn = await rescheduleWhatsappDispatch(ctx, conversation, args.messageId, {
+        delayMs: plan.delayMs,
+        ...(args.typingDelayMs ? { typingDelayMs: args.typingDelayMs } : {}),
+        floorChannel: args.kind === "rate_limited",
+      });
+      await ctx.db.patch(args.messageId, {
+        metadata: {
+          ...meta,
+          bridgeAttempts: attempts,
+          ...(args.kind === "rate_limited" ? { bridgeRateRetried: true } : {}),
+          bridgeRetry: {
+            kind: args.kind,
+            attempt: attempts,
+            nextAt: now + scheduledIn,
+            lastError: args.detail.slice(0, 200),
+          },
+        },
+      });
+      return "retry" as const;
+    }
+
+    const retriedBefore = attempts > 1;
+    await markDispatchFailedCore(ctx, {
+      messageId: args.messageId,
+      detail: retriedBefore ? `${args.detail} (tentativas esgotadas)` : args.detail,
+      errorKind: args.kind,
+      ...(args.preSend ? { preSend: true } : {}),
+      extraMetadata: { bridgeAttempts: attempts },
+    });
+    return "failed" as const;
+  },
+});
+
+/**
+ * Resultado da checagem do self-heal. Outra grafia confirmada → corrige o
+ * contato (mesma regra da Nova conversa) e reagenda a MESMA mensagem uma vez,
+ * pelo pacing; não está no WhatsApp (ou a grafia confirmada é a que acabou de
+ * falhar) → marcador no contato + falha, sem reenvio; checagem indisponível →
+ * falha como está (a classe continua `recipient_not_found`: o "Tentar de novo"
+ * manual refaz a checagem antes de qualquer reenvio).
+ */
+export const internalApplyBridgeSelfHeal = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    failedPhone: v.string(),
+    result: v.union(
+      v.object({ status: v.literal("on_whatsapp"), canonicalPhone: v.string() }),
+      v.object({ status: v.literal("not_on_whatsapp") }),
+      v.object({ status: v.literal("check_failed"), error: v.string() })
+    ),
+    typingDelayMs: v.optional(v.number()),
+  },
+  returns: v.union(v.literal("corrected"), v.literal("failed")),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.externalId || message.deliveryStatus) return "failed" as const;
+    const conversation = await ctx.db.get(message.conversationId);
+    const contact = conversation ? await contactOfConversation(ctx, conversation) : null;
+    const now = Date.now();
+    const failedDigits = digitsOf(args.failedPhone);
+
+    if (args.result.status === "check_failed") {
+      await markDispatchFailedCore(ctx, {
+        messageId: args.messageId,
+        detail: NUMBER_CHECK_UNAVAILABLE_ERROR,
+        errorKind: "recipient_not_found",
+        extraMetadata: { numberCheck: "unavailable" },
+      });
+      return "failed" as const;
+    }
+
+    // Resposta que NÃO prova nada: outra grafia fora dos candidatos do número
+    // perguntado (mapa de LID errado) ou "o gateway diz que ESTE número existe"
+    // enquanto o envio disse `no LID found`. Falha sem reescrever e sem marcar.
+    if (
+      args.result.status === "on_whatsapp" &&
+      (!isSpellingOfSameNumber(failedDigits, args.result.canonicalPhone) || args.result.canonicalPhone === failedDigits)
+    ) {
+      await markDispatchFailedCore(ctx, {
+        messageId: args.messageId,
+        detail: NUMBER_CHECK_UNAVAILABLE_ERROR,
+        errorKind: "recipient_not_found",
+        extraMetadata: { numberCheck: "inconclusive" },
+      });
+      return "failed" as const;
+    }
+
+    if (
+      args.result.status === "on_whatsapp" &&
+      conversation &&
+      contact &&
+      // O número do contato ainda é o que falhou (não foi editado no meio).
+      digitsOf(contact.whatsappNumber ?? contact.phone) === failedDigits
+    ) {
+      // Opt-out guardado na grafia REAL (palavra-chave grava o JID cru): antes a
+      // falha do envio protegia; agora o reenvio checa todas as grafias.
+      if (await isOptedOutAnySpelling(ctx, message.organizationId, args.result.canonicalPhone)) {
+        await markDispatchFailedCore(ctx, {
+          messageId: args.messageId,
+          detail: "Este número pediu para não receber mensagens (opt-out) — reenvio cancelado",
+          errorKind: "permanent",
+          preSend: true,
+          extraMetadata: { numberCheck: "opt_out" },
+        });
+        return "failed" as const;
+      }
+      await applyCanonicalNumberToContact(ctx, contact, args.result.canonicalPhone, {
+        now,
+        via: "bridge_self_heal",
+        ...(message.leadId ? { leadId: message.leadId } : {}),
+      });
+      await ctx.db.patch(args.messageId, {
+        metadata: {
+          ...(message.metadata ?? {}),
+          numberCheck: "corrected",
+          selfHealCorrectedAt: now,
+        },
+      });
+      await rescheduleWhatsappDispatch(ctx, conversation, args.messageId, {
+        delayMs: 0,
+        ...(args.typingDelayMs ? { typingDelayMs: args.typingDelayMs } : {}),
+      });
+      return "corrected" as const;
+    }
+
+    // Só chega aqui "não está no WhatsApp" (ou número editado/contato ausente).
+    if (args.result.status === "not_on_whatsapp" && contact) {
+      await setWhatsappCheck(ctx, contact._id, "not_on_whatsapp", now, failedDigits);
+    }
+    await markDispatchFailedCore(ctx, {
+      messageId: args.messageId,
+      detail: args.result.status === "not_on_whatsapp" ? NOT_ON_WHATSAPP_DELIVERY_ERROR : NUMBER_CHECK_UNAVAILABLE_ERROR,
+      errorKind: "recipient_not_found",
+      extraMetadata: { numberCheck: args.result.status === "not_on_whatsapp" ? "not_on_whatsapp" : "unavailable" },
+    });
+    return "failed" as const;
   },
 });
 

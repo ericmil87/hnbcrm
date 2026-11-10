@@ -17,6 +17,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `quickReplies.ts` / `scheduledMessages.ts` | "/" shortcuts in the composer / scheduled sends via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channels (meta\|bridge), encrypted creds, health checks, provisioning, number exclusivity (`claimBridgePhone`) |
 | `whatsapp.ts` | Meta ingress (`/webhooks/whatsapp`) + outbound dispatch by provider; pacing-aware retry; channel freeze on 131048 |
+| `messageRetry.ts` / `opsBridgeNumbers.ts` | "Tentar novamente" manual (`retryFailedMessage`, check do número antes de reenviar, teto 3) / ops de reparo de números `no LID found` (`dryRun` padrão, não reenvia); `lib/bridgeSendError.ts` classifica erros de envio, `lib/whatsappCheck.ts` é a porta do marcador `contacts.whatsappCheck` |
 | `bridge.ts` | Bridge ingress (`POST /webhooks/bridge`, HMAC via `WA_BRIDGE_HMAC_SECRET`); `fromMe` → `internalReceiveDeviceMessage`; device history actions |
 | `lib/bridgeParse.ts` / `bridgeSend.ts` / `bridgeMedia.ts` | Pure wuzapi adapters: parser+HMAC, send, media (`sanitizeBridgeMediaMeta`, `stripMediaKeyMaterial`) |
 | `lib/bridgeSession.ts` / `bridgeHistory.ts` | QR/status/provisioning/logout, `BRIDGE_WEBHOOK_EVENTS` (single event list) / pure `data_json` history adapter |

@@ -67,12 +67,40 @@ export function registerConversationTools(
         .regex(/^(auto|off|[a-z]{2,3}(-[A-Za-z]{2,4})?)$/, 'Use "auto", "off" or a language code such as es, en, pt-BR')
         .optional()
         .describe('Translation of the outgoing text: "auto", "off" or a language code (es, en, pt-BR...). Default: the conversation\'s behaviour'),
+      notOnWhatsappAck: z
+        .boolean()
+        .optional()
+        .describe("Set to true ONLY after a human confirmed messaging a contact the WhatsApp gateway said is NOT on WhatsApp (audited as high severity). A human must confirm: the server REFUSES this flag when the API key belongs to an AI member"),
     },
     async (args) => {
-      const result = await client.post("/api/v1/conversations/send", args);
-      return {
-        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-      };
+      try {
+        const result = await client.post("/api/v1/conversations/send", args);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        };
+      } catch (e) {
+        if (e instanceof HnbCrmApiError && e.status === 409 && e.body?.notOnWhatsapp) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    notOnWhatsapp: true,
+                    error: e.message,
+                    nextStep:
+                      "The WhatsApp gateway said this number is not on WhatsApp, so the message was NOT sent. Ask a human to confirm before retrying with notOnWhatsappAck: true — an API key of an AI member is refused when it sets it.",
+                  },
+                  null,
+                  2
+                ),
+              },
+            ],
+          };
+        }
+        throw e;
+      }
     }
   );
   server.tool(

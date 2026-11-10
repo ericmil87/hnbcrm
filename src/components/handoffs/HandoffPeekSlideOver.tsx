@@ -6,6 +6,7 @@ import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
@@ -13,6 +14,8 @@ import { getAiDraft, AiInstructionPopover } from "@/components/inbox/AiDraftCard
 import type { InboxMessage } from "@/components/inbox/types";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
+import { useRetryDelivery } from "@/components/inbox/useRetryDelivery";
+import { usePermissions } from "@/hooks/usePermissions";
 import { VOCAB } from "@/lib/vocab";
 
 // Últimas mensagens exibidas no peek — contexto suficiente para decidir sem
@@ -148,6 +151,10 @@ export function HandoffPeekSlideOver({
   // Transcrever é leitura assistida (não fala com o cliente): fica disponível
   // no peek para dar sentido a um áudio antes de decidir sobre o repasse.
   const transcribe = useAction(api.transcription.transcribe);
+  // Tentar novamente uma entrega que falhou não exige assumir a conversa: só `inbox:reply`.
+  const { can } = usePermissions(organizationId);
+  const canRetryDelivery = can("inbox", "reply");
+  const { retryDelivery, retryingIds, ackDialogProps: retryAckDialogProps } = useRetryDelivery();
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());
   // Ler a imagem é a mesma leitura assistida do áudio — só que paga por imagem,
   // então depende do AND do D10: IA ativa na org E leitura de imagens ligada.
@@ -216,6 +223,7 @@ export function HandoffPeekSlideOver({
   });
 
   return (
+    <>
     <SlideOver
       open
       onClose={onClose}
@@ -382,6 +390,8 @@ export function HandoffPeekSlideOver({
                   onTranscribe={(m) => void handleTranscribe(m)}
                   onDescribeImage={(m) => void handleDescribeImage(m)}
                   onJumpToMessage={() => {}}
+                  onRetryDelivery={canRetryDelivery ? (m) => void retryDelivery(m) : undefined}
+                  retryingDelivery={retryingIds.has(message._id)}
                 />
               );
             })}
@@ -489,5 +499,7 @@ export function HandoffPeekSlideOver({
       </div>
       </div>
     </SlideOver>
+    <ConfirmDialog {...retryAckDialogProps} />
+    </>
   );
 }

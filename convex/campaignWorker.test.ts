@@ -138,6 +138,8 @@ describe("envio de ponta a ponta (bridge)", () => {
     expect(ana.isNewContact).toBe(true);
 
     const contact = (await t.run((ctx) => ctx.db.get(ana.contactId!)))!;
+    // Checagem OK → marcador "verified" para o número que o dispatch lê.
+    expect(contact.whatsappCheck).toMatchObject({ phone: "5511999990001", status: "verified" });
     expect(contact.firstName).toBe("Ana");
     expect(contact.lastName).toBe("Lima");
     const lead = (await t.run((ctx) => ctx.db.get(ana.leadId!)))!;
@@ -456,6 +458,75 @@ describe("Meta template", () => {
       components: [{ type: "body", parameters: [{ type: "text", text: "Carla" }, { type: "text", text: "10%" }] }],
     });
     expect(send?.body.to).toBe("5511999990009");
+  });
+});
+
+describe("mensagem de campanha e 'Tentar novamente'", () => {
+  test("a bolha de um destinatário de campanha não é reenviável (a campanha reenvia sozinha)", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    vi.stubGlobal("fetch", bridgeFetchMock().fn);
+    const id = await launchedBridge(t, s, [{ phone: "11 99999-0001" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const row = (await recipients(t, id))[0];
+    // sem o rastro em metadata: só o índice `campaignRecipients.by_message` identifica
+    await t.run(async (ctx) => {
+      const m = (await ctx.db.get(row.messageId!))!;
+      const { campaign: _c, ...meta } = (m.metadata ?? {}) as Record<string, unknown>;
+      await ctx.db.patch(m._id, { externalId: undefined, deliveryStatus: "failed", metadata: { ...meta, deliveryErrorKind: "transient" } });
+    });
+    const r = await asUser(t, s.adminUserId).action(api.messageRetry.retryFailedMessage, { messageId: row.messageId! });
+    expect(r).toMatchObject({ ok: false, reason: "not_sendable" });
+    expect((r as { message: string }).message).toContain("campanha");
+  });
+});
+
+describe("campanha não rearma o contador de `no LID`", () => {
+  test("contato com 2 falhas seguidas: o gateway confirma o MESMO número, o contador fica e a mensagem para no gate com motivo visível", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    const contactId = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId, firstName: "Dead", phone: "5511999990001", whatsappNumber: "5511999990001",
+        whatsappFails: { phone: "5511999990001", count: 2, at: Date.now() }, tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    const mock = bridgeFetchMock();
+    vi.stubGlobal("fetch", mock.fn);
+    const id = await launchedBridge(t, s, [{ phone: "11 99999-0001" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const row = (await recipients(t, id))[0];
+    const contact = (await t.run((ctx) => ctx.db.get(contactId)))!;
+    expect(contact.whatsappFails?.count).toBe(2);
+    expect(contact.whatsappCheck).toBeUndefined();
+    expect(mock.calls.filter((c) => c.url.includes("/chat/send/text"))).toHaveLength(0);
+    const message = (await t.run((ctx) => ctx.db.get(row.messageId!)))!;
+    expect(message.deliveryStatus).toBe("failed");
+    expect(String(message.metadata?.deliveryError)).toContain("bloqueado");
+  });
+});
+
+describe("marcador `sem WhatsApp` (lib/whatsappCheck)", () => {
+  test("destinatário que o gateway recusa marca o contato JÁ existente (sem criar contato)", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    const existing = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId, firstName: "Sem Zap", phone: "5511999990003", tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    const mock = bridgeFetchMock({ notOnWhatsapp: ["5511999990003"] });
+    vi.stubGlobal("fetch", mock.fn);
+    const id = await launchedBridge(t, s, [{ phone: "11 99999-0003" }, { phone: "11 99999-0777" }]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const rows = await recipients(t, id);
+    expect(rows.find((r) => r.phone === "5511999990003")!.skipReason).toBe("not_on_whatsapp");
+    const marked = (await t.run((ctx) => ctx.db.get(existing)))!;
+    expect(marked.whatsappCheck).toMatchObject({ phone: "5511999990003", status: "not_on_whatsapp" });
+    // Só o contato que existia + o do número válido: nada de contato novo para o recusado.
+    const all = await t.run((ctx) => ctx.db.query("contacts").collect());
+    expect(all.filter((c) => c.phone === "5511999990003")).toHaveLength(1);
   });
 });
 

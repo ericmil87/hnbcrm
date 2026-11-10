@@ -13,6 +13,8 @@
  * Idempotência: cada agendamento carrega um `tickToken`; um tick cujo token
  * não bate com o da campanha é um zumbi (pause/resume no meio) e sai.
  */
+import { phoneLookupCandidates } from "./lib/phone";
+import { contactNumberWasChecked, isOptedOutAnySpelling, setWhatsappCheck } from "./lib/whatsappCheck";
 import { v } from "convex/values";
 import { internalMutation, internalAction, internalQuery, MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -20,7 +22,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { configProvider } from "./channelConfigs";
 import { decryptSecret } from "./lib/secretCrypto";
 import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
-import { findOrCreateContactByPhone, ensureLeadForContact } from "./lib/inboundRouting";
+import { findOrCreateContactByPhone, ensureLeadForContact, findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import { getOrCreateConversation } from "./conversations";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
 import {
@@ -223,7 +225,7 @@ export const tick = internalMutation({
 
     // Supressão (pode ter entrado depois do snapshot). NÃO se aplica a uma SALA:
     // o "telefone" dela é o JID, e opt-out de grupo é parar de acompanhar (D13).
-    if (!recipient.groupChatId && (await isPhoneSuppressed(ctx, campaign.organizationId, recipient.phone))) {
+    if (!recipient.groupChatId && (await isOptedOutAnySpelling(ctx, campaign.organizationId, recipient.phone))) {
       await transitionRecipient(ctx, recipient, "opted_out", { skipReason: "suppressed" }, { now, force: true });
       const fresh = (await ctx.db.get(campaign._id))!;
       await scheduleCampaignTick(ctx, fresh, now, now);
@@ -344,6 +346,8 @@ export const checkNumberAndSend = internalAction({
     });
     if (!context) return null;
     let onWhatsapp = true;
+    // Gateway confirmou o número (checagem OK, não "enviado sem confirmar").
+    let verified = false;
     let note: string | undefined;
     // Número canônico segundo o WhatsApp (o JID). No Brasil, números antigos
     // existem SEM o 9º dígito no WhatsApp mesmo tendo o 9 no celular — se a
@@ -367,6 +371,7 @@ export const checkNumberAndSend = internalAction({
         note = `checagem indisponível (${res.error}) — enviado sem confirmar`;
       } else {
         onWhatsapp = res.onWhatsapp;
+        verified = res.onWhatsapp;
         if (res.onWhatsapp && res.canonicalPhone !== context.phone) canonicalPhone = res.canonicalPhone;
       }
     } catch (e) {
@@ -381,6 +386,7 @@ export const checkNumberAndSend = internalAction({
       onWhatsapp,
       note,
       canonicalPhone,
+      ...(verified ? { verified: true } : {}),
     });
     return null;
   },
@@ -434,6 +440,7 @@ export const sendToRecipient = internalMutation({
     onWhatsapp: v.boolean(),
     note: v.optional(v.string()),
     canonicalPhone: v.optional(v.string()),
+    verified: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -451,6 +458,7 @@ async function sendCore(
     onWhatsapp: boolean;
     note?: string;
     canonicalPhone?: string;
+    verified?: boolean;
   }
 ): Promise<void> {
   {
@@ -489,6 +497,20 @@ async function sendCore(
     };
 
     if (!args.onWhatsapp) {
+      // Marca o(s) contato(s) existente(s): o gate do dispatch passa a barrar
+      // envio automático a este número (lib/whatsappCheck). Nunca cria contato.
+      const marked = new Set<Id<"contacts">>();
+      if (recipient.contactId) marked.add(recipient.contactId);
+      for (const candidate of phoneLookupCandidates(recipient.phone)) {
+        for (const row of await findContactsByPhoneCandidates(ctx, campaign.organizationId, candidate)) marked.add(row._id);
+      }
+      for (const id of marked) {
+        const c = await ctx.db.get(id);
+        // Só o contato cujo número atual É o que foi perguntado ao gateway.
+        if (c && c.organizationId === campaign.organizationId && contactNumberWasChecked(c, recipient.phone)) {
+          await setWhatsappCheck(ctx, id, "not_on_whatsapp", now);
+        }
+      }
       await transitionRecipient(ctx, recipient, "skipped", { skipReason: "not_on_whatsapp" }, { now, force: true });
       await scheduleNext();
       return;
@@ -523,6 +545,9 @@ async function sendCore(
           lastName: nameParts.slice(1).join(" ") || undefined,
         }));
       const contact = (await ctx.db.get(contactId))!;
+      // Checagem OK: marca "verificado" só se o número que o dispatch vai ler é
+      // o confirmado (a campanha não reescreve `whatsappNumber`).
+      if (args.verified) await setWhatsappCheck(ctx, contactId, "verified", now, recipient.phone);
       // e-mail/empresa do CSV enriquecem um contato vazio
       const patch: Partial<Doc<"contacts">> = {};
       if (!contact.email && recipient.vars?.email) patch.email = recipient.vars.email;

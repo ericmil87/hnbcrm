@@ -8,6 +8,7 @@
  * Runs inside a mutation and returns what to send/edit; the action sends
  * (`telegram.internalProcessUpdate`). Writes carry `via:"telegram"`.
  */
+import { NOT_ON_WHATSAPP_SEND_PREFIX } from "./whatsappCheck";
 import { resolveEntityNotifications, resolveTaskNotifications, reopenEntityNotifications } from "./notificationResolve";
 import { ConvexError, type Value } from "convex/values";
 import { MutationCtx } from "../_generated/server";
@@ -207,6 +208,11 @@ function errorText(e: unknown): string {
   // ConvexError carries data; plain Error carries a PT-BR message from the port.
   const data = (e as { data?: unknown })?.data;
   const msg = typeof data === "string" ? data : raw.replace(/^Uncaught (Convex)?Error:\s*/, "");
+  // Número marcado "sem WhatsApp": o aceite só existe no app; no Telegram a mensagem
+  // não sai e o texto não carrega o prefixo técnico `NOT_ON_WHATSAPP:`.
+  if (msg.includes(NOT_ON_WHATSAPP_SEND_PREFIX)) {
+    return "⚠️ Este número não está no WhatsApp (verificado pelo gateway). A mensagem não foi enviada — confirme o número do contato no app.";
+  }
   return `⚠️ ${escapeHtml(msg || "Não foi possível concluir a ação.")}`;
 }
 

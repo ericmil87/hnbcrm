@@ -15,11 +15,12 @@
  *
  * Núcleo puro (template, escolha da mensagem, regra) em `lib/inboundLeadWelcome.ts`.
  */
-import { v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { v, type Infer } from "convex/values";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { normalizeCampaignPhone } from "./lib/phone";
+import { normalizeCampaignPhone, phoneLookupCandidates } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { isPhoneSuppressed } from "./lib/campaignAudience";
 import { isSessionLostState } from "./lib/channelHealthSignals";
@@ -38,6 +39,24 @@ import {
 } from "./lib/inboundLeadWelcome";
 import { channelProviderPatch } from "./lib/conversationListFields";
 import { withMessageSearch } from "./lib/messageSearch";
+import { decryptSecret } from "./lib/secretCrypto";
+import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
+import {
+  applyCanonicalNumberToContact,
+  currentSendDigits,
+  isMarkedNotOnWhatsapp,
+  isRecentlyVerified,
+  isSpellingOfSameNumber,
+  contactNumberWasChecked,
+  reserveWhatsappLookup,
+  setWhatsappCheck,
+} from "./lib/whatsappCheck";
+import { createHandoffCore } from "./handoffs";
+import {
+  WELCOME_NO_WHATSAPP_ACTIONS,
+  WELCOME_NO_WHATSAPP_REASON,
+  WELCOME_NO_WHATSAPP_SUMMARY,
+} from "./lib/inboundLeadWelcomeHooks";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Board/estágio/responsável do lead novo
@@ -191,7 +210,7 @@ export const internalWelcomeAppliesTo = internalQuery({
  * conversa real é pior que nenhuma.
  */
 async function contactAlreadyOnWhatsapp(
-  ctx: MutationCtx,
+  ctx: QueryCtx | MutationCtx,
   organizationId: Id<"organizations">,
   contactId: Id<"contacts">
 ): Promise<boolean> {
@@ -243,73 +262,231 @@ type WelcomeResult = {
   conversationId?: Id<"conversations">;
 };
 
+const welcomeResultValidator = v.object({
+  sent: v.boolean(),
+  reason: v.optional(v.string()),
+  messageId: v.optional(v.id("messages")),
+  conversationId: v.optional(v.id("conversations")),
+});
+
+/** A rota `inbound/lead` responde de forma síncrona (`welcomeQueued`): a checagem é curta. */
+const WELCOME_CHECK_TIMEOUT_MS = 4000;
+
+const welcomeArgs = {
+  organizationId: v.id("organizations"),
+  leadId: v.id("leads"),
+  contactId: v.id("contacts"),
+  actorMemberId: v.id("teamMembers"),
+};
+
+/**
+ * Resposta do gateway à checagem do número (feita pela action
+ * `internalRunInboundLeadWelcome`, nunca na mutation). Ausente ou `unavailable`
+ * = não deu para confirmar: segue como antes e o dispatch (retry/self-heal)
+ * resolve.
+ */
+const numberCheckValidator = v.union(
+  v.object({ status: v.literal("on_whatsapp"), canonicalPhone: v.string() }),
+  v.object({ status: v.literal("not_on_whatsapp") }),
+  v.object({ status: v.literal("unavailable") })
+);
+
+type WelcomeGuardOk = {
+  ok: true;
+  org: Doc<"organizations">;
+  welcome: NonNullable<Doc<"organizations">["settings"]["inboundLeadWelcome"]>;
+  lead: Doc<"leads">;
+  contact: Doc<"contacts">;
+  actor: Doc<"teamMembers">;
+  config: Doc<"channelConfigs">;
+  phone: string;
+  bridge: boolean;
+};
+type WelcomeGuardSkip = { ok: false; reason: string; note?: string };
+
+/**
+ * Cadeia de guardas das boas-vindas, SÓ LEITURA (a query de pré-checagem e a
+ * mutation usam a mesma): o mesmo motivo de skip em qualquer dos dois lados, e
+ * a action não gasta rede com quem a mutation vai pular de qualquer jeito.
+ */
+async function welcomeGuards(
+  ctx: QueryCtx | MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    leadId: Id<"leads">;
+    contactId: Id<"contacts">;
+    actorMemberId: Id<"teamMembers">;
+  }
+): Promise<WelcomeGuardOk | WelcomeGuardSkip> {
+  const skip = (reason: string, note?: string): WelcomeGuardSkip => ({ ok: false, reason, ...(note ? { note } : {}) });
+
+  const org = await ctx.db.get(args.organizationId);
+  const welcome = org?.settings.inboundLeadWelcome;
+  if (!org || !welcome || welcome.enabled !== true) return skip("desligado");
+
+  const lead = await ctx.db.get(args.leadId);
+  const contact = await ctx.db.get(args.contactId);
+  const actor = await ctx.db.get(args.actorMemberId);
+  if (
+    !lead ||
+    lead.organizationId !== args.organizationId ||
+    !contact ||
+    contact.organizationId !== args.organizationId ||
+    lead.contactId !== contact._id ||
+    !actor ||
+    actor.organizationId !== args.organizationId
+  ) {
+    return skip("referencia_invalida");
+  }
+
+  // Canal: da org, WhatsApp, ativo.
+  const config = await ctx.db.get(welcome.channelConfigId);
+  if (!config || config.organizationId !== args.organizationId || config.channel !== "whatsapp") {
+    return skip("canal_invalido");
+  }
+  if (config.status !== "active") return skip("canal_inativo");
+
+  const rawPhone = contact.whatsappNumber ?? contact.phone;
+  const phone = rawPhone ? normalizeCampaignPhone(rawPhone, resolveDefaultCountry(org.settings)) : null;
+  if (!phone?.ok) return skip("sem_telefone");
+
+  if (!shouldSendWelcome(welcome, { hasPhone: true, tags: lead.tags })) {
+    return skip("sem_tag_exigida");
+  }
+
+  // Opt-out em QUALQUER grafia BR do número (12 e 13 dígitos).
+  for (const candidate of phoneLookupCandidates(phone.phone)) {
+    if (await isPhoneSuppressed(ctx, args.organizationId, candidate)) {
+      return skip("opt_out", "Boas-vindas automáticas puladas: opt-out (o número pediu para não ser contatado).");
+    }
+  }
+
+  const bridge = config.channel === "whatsapp" && configProvider(config) === "bridge";
+  if (bridge && (isSessionLostState(config.bridgeSessionState) || config.bridgeSessionState === "disconnected")) {
+    return skip("canal_desconectado", "Boas-vindas automáticas não enviadas: o número de WhatsApp está desconectado.");
+  }
+
+  if (await contactAlreadyOnWhatsapp(ctx, args.organizationId, contact._id)) {
+    return skip("ja_contatado");
+  }
+
+  return { ok: true, org, welcome, lead, contact, actor, config, phone: phone.phone, bridge };
+}
+
+/**
+ * Pré-checagem (query): precisa perguntar ao gateway? Só em canal bridge, com
+ * todas as guardas passando e sem marcador "verificado" recente para o número.
+ */
+export const internalWelcomePrecheckPlan = internalMutation({
+  args: { ...welcomeArgs, now: v.number() },
+  returns: v.union(
+    v.object({ needsCheck: v.literal(false) }),
+    v.object({
+      needsCheck: v.literal(true),
+      phone: v.string(),
+      baseUrl: v.string(),
+      tokenEncrypted: v.string(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const { now, ...rest } = args;
+    const g = await welcomeGuards(ctx, rest);
+    if (!g.ok || !g.bridge) return { needsCheck: false as const };
+    if (!g.config.bridgeBaseUrl || !g.config.bridgeTokenEncrypted) return { needsCheck: false as const };
+    if (isRecentlyVerified(g.contact, now)) return { needsCheck: false as const };
+    // Já marcado "sem WhatsApp" para este número: a mutation recusa sem consultar.
+    if (isMarkedNotOnWhatsapp(g.contact)) return { needsCheck: false as const };
+    // Orçamento de consultas por contato (compartilhado com self-heal e retry):
+    // sem vaga, segue como "checagem indisponível" (o dispatch resolve).
+    const reservation = await reserveWhatsappLookup(ctx, g.contact._id, now);
+    if (!reservation.ok) return { needsCheck: false as const };
+    return {
+      needsCheck: true as const,
+      phone: g.phone,
+      baseUrl: g.config.bridgeBaseUrl,
+      tokenEncrypted: g.config.bridgeTokenEncrypted,
+    };
+  },
+});
+
+/**
+ * Porta das boas-vindas para a rota `POST /api/v1/inbound/lead`: pré-checa o
+ * número no gateway (bridge, no máximo UMA chamada de checagem por boas-vindas)
+ * e entrega o veredito à mutation. Nunca lança por problema do gateway.
+ */
+export const internalRunInboundLeadWelcome = internalAction({
+  args: welcomeArgs,
+  returns: welcomeResultValidator,
+  handler: async (ctx, args): Promise<WelcomeResult> => {
+    let numberCheck: Infer<typeof numberCheckValidator> | undefined;
+    let checkedPhone: string | undefined;
+    try {
+      const plan = await ctx.runMutation(internal.inboundLeadWelcome.internalWelcomePrecheckPlan, {
+        ...args,
+        now: Date.now(),
+      });
+      if (plan.needsCheck) {
+        checkedPhone = plan.phone;
+        const controller = new AbortController();
+        // Curto: a rota do site espera esta resposta (HTTP síncrono).
+        const timer = setTimeout(() => controller.abort(), WELCOME_CHECK_TIMEOUT_MS);
+        try {
+          const token = await decryptSecret(plan.tokenEncrypted);
+          const res = await checkBridgeNumber({
+            baseUrl: plan.baseUrl,
+            token,
+            phone: plan.phone,
+            signal: controller.signal,
+          });
+          numberCheck = !res.ok
+            ? { status: "unavailable" }
+            : res.onWhatsapp
+              ? { status: "on_whatsapp", canonicalPhone: res.canonicalPhone }
+              : { status: "not_on_whatsapp" };
+        } catch {
+          numberCheck = { status: "unavailable" };
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+    } catch (e) {
+      console.warn("[inboundWelcome] pré-checagem falhou:", e instanceof Error ? e.message : e);
+      numberCheck = { status: "unavailable" };
+    }
+    return await ctx.runMutation(internal.inboundLeadWelcome.internalSendInboundLeadWelcome, {
+      ...args,
+      ...(numberCheck ? { numberCheck } : {}),
+      ...(checkedPhone ? { checkedPhone } : {}),
+    });
+  },
+});
+
 export const internalSendInboundLeadWelcome = internalMutation({
   args: {
-    organizationId: v.id("organizations"),
-    leadId: v.id("leads"),
-    contactId: v.id("contacts"),
-    actorMemberId: v.id("teamMembers"),
+    ...welcomeArgs,
+    numberCheck: v.optional(numberCheckValidator),
+    // Número que a action perguntou ao gateway: se o contato mudou de número desde
+    // então, a resposta não vale (não marca nem reescreve um número que ninguém checou).
+    checkedPhone: v.optional(v.string()),
   },
-  returns: v.object({
-    sent: v.boolean(),
-    reason: v.optional(v.string()),
-    messageId: v.optional(v.id("messages")),
-    conversationId: v.optional(v.id("conversations")),
-  }),
+  returns: welcomeResultValidator,
   handler: async (ctx, args): Promise<WelcomeResult> => {
+    const { numberCheck: givenCheck, checkedPhone, ...guardArgs } = args;
+    const g = await welcomeGuards(ctx, guardArgs);
+    if (!g.ok) {
+      if (g.note) {
+        const lead = await ctx.db.get(args.leadId);
+        if (lead && lead.organizationId === args.organizationId) await noteOnLead(ctx, lead, g.note);
+      }
+      return { sent: false, reason: g.reason };
+    }
+    const { welcome, lead, contact, actor, config, bridge } = g;
+    // Marcador ainda válido para o número atual = sem consulta (formulário
+    // repetido não repete a checagem): trata como "sem WhatsApp".
+    const staleCheck = !!givenCheck && !!checkedPhone && checkedPhone.replace(/\D+/g, "") !== g.phone;
+    const numberCheck: Infer<typeof numberCheckValidator> | undefined =
+      (staleCheck ? undefined : givenCheck) ?? (bridge && isMarkedNotOnWhatsapp(contact) ? { status: "not_on_whatsapp" } : undefined);
     const skip = (reason: string): WelcomeResult => ({ sent: false, reason });
-
-    const org = await ctx.db.get(args.organizationId);
-    const welcome = org?.settings.inboundLeadWelcome;
-    if (!org || !welcome || welcome.enabled !== true) return skip("desligado");
-
-    const lead = await ctx.db.get(args.leadId);
-    const contact = await ctx.db.get(args.contactId);
-    const actor = await ctx.db.get(args.actorMemberId);
-    if (
-      !lead ||
-      lead.organizationId !== args.organizationId ||
-      !contact ||
-      contact.organizationId !== args.organizationId ||
-      lead.contactId !== contact._id ||
-      !actor ||
-      actor.organizationId !== args.organizationId
-    ) {
-      return skip("referencia_invalida");
-    }
-
-    // Canal: da org, WhatsApp, ativo.
-    const config = await ctx.db.get(welcome.channelConfigId);
-    if (!config || config.organizationId !== args.organizationId || config.channel !== "whatsapp") {
-      return skip("canal_invalido");
-    }
-    if (config.status !== "active") return skip("canal_inativo");
-
-    const rawPhone = contact.whatsappNumber ?? contact.phone;
-    const phone = rawPhone ? normalizeCampaignPhone(rawPhone, resolveDefaultCountry(org.settings)) : null;
-    if (!phone?.ok) return skip("sem_telefone");
-
-    if (!shouldSendWelcome(welcome, { hasPhone: true, tags: lead.tags })) {
-      return skip("sem_tag_exigida");
-    }
-
-    if (await isPhoneSuppressed(ctx, args.organizationId, phone.phone)) {
-      await noteOnLead(ctx, lead, "Boas-vindas automáticas puladas: opt-out (o número pediu para não ser contatado).");
-      return skip("opt_out");
-    }
-
-    if (
-      config.channel === "whatsapp" &&
-      configProvider(config) === "bridge" &&
-      (isSessionLostState(config.bridgeSessionState) || config.bridgeSessionState === "disconnected")
-    ) {
-      await noteOnLead(ctx, lead, "Boas-vindas automáticas não enviadas: o número de WhatsApp está desconectado.");
-      return skip("canal_desconectado");
-    }
-
-    if (await contactAlreadyOnWhatsapp(ctx, args.organizationId, contact._id)) {
-      return skip("ja_contatado");
-    }
 
     const template = pickWelcomeMessage(welcome, lead.tags);
     const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
@@ -336,13 +513,59 @@ export const internalSendInboundLeadWelcome = internalMutation({
       conversation = (await ctx.db.get(conversationId))!;
     }
 
-    // O contato precisa do número normalizado para o dispatch e para a
-    // resposta da pessoa cair neste mesmo contato.
-    if (contact.whatsappNumber !== phone.phone) {
-      await ctx.db.patch(contact._id, { whatsappNumber: phone.phone, updatedAt: Date.now() });
+    const now = Date.now();
+
+    if (bridge) {
+      // Bridge: o gateway manda no número. NUNCA reescreve `whatsappNumber` com a
+      // normalização de 13 dígitos (podia trocar o JID real de 12 dígitos por uma
+      // grafia que o WhatsApp não conhece — o bug do `no LID found`).
+      if (numberCheck?.status === "not_on_whatsapp") {
+        if (contactNumberWasChecked(contact, g.phone, resolveDefaultCountry(g.org.settings))) {
+          await setWhatsappCheck(ctx, contact._id, "not_on_whatsapp", now);
+        }
+        await noteOnLead(ctx, lead, "Boas-vindas automáticas não enviadas: o número do formulário não está no WhatsApp.", {
+          conversationId,
+        });
+        try {
+          await createHandoffCore(ctx, {
+            leadId: lead._id,
+            conversationId,
+            fromMemberId: actor._id,
+            reason: WELCOME_NO_WHATSAPP_REASON,
+            summary: WELCOME_NO_WHATSAPP_SUMMARY,
+            suggestedActions: WELCOME_NO_WHATSAPP_ACTIONS,
+            origin: "human",
+            onDuplicate: "skip",
+          });
+        } catch (e) {
+          console.warn("[inboundWelcome] repasse (sem WhatsApp) não criado:", e instanceof Error ? e.message : e);
+        }
+        return { sent: false, reason: "numero_sem_whatsapp", conversationId };
+      }
+      // Telefone devolvido que não é grafia do número perguntado (mapa de LID
+      // errado) = inconclusivo: segue como "indisponível", sem reescrever.
+      if (numberCheck?.status === "on_whatsapp" && isSpellingOfSameNumber(g.phone, numberCheck.canonicalPhone)) {
+        const canonical = numberCheck.canonicalPhone;
+        const changed = canonical !== currentSendDigits(contact);
+        if (changed) {
+          await applyCanonicalNumberToContact(ctx, contact, canonical, {
+            now,
+            via: "inbound_welcome_check",
+            leadId: lead._id,
+          });
+        } else {
+          await setWhatsappCheck(ctx, contact._id, "verified", now);
+        }
+      } else if (!contact.whatsappNumber) {
+        // Sem checagem (indisponível) e sem número de WhatsApp: o dispatch lê
+        // `whatsappNumber ?? phone`; só preenche o que está vazio.
+        await ctx.db.patch(contact._id, { whatsappNumber: g.phone, updatedAt: now });
+      }
+    } else if (contact.whatsappNumber !== g.phone) {
+      // Meta: a Cloud API aceita as duas grafias; mantém o comportamento de sempre.
+      await ctx.db.patch(contact._id, { whatsappNumber: g.phone, updatedAt: now });
     }
 
-    const now = Date.now();
     const messageId = await ctx.db.insert("messages", withMessageSearch({
       organizationId: args.organizationId,
       conversationId,

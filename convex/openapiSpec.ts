@@ -107,7 +107,7 @@ export const OPENAPI_SPEC = `{
                     "attributionSaved": { "type": "boolean", "description": "true quando UTM/click ids foram gravados em leads.attribution" },
                     "attributionTruncated": { "type": "array", "items": { "type": "string" }, "description": "Campos de atribuição cortados por tamanho (ausente = nenhum)" },
                     "welcomeQueued": { "type": "boolean", "description": "true quando a boas-vindas do WhatsApp foi enfileirada para envio" },
-                    "welcomeSkippedReason": { "type": "string", "description": "Por que a boas-vindas aplicável não saiu (desligado, sem_telefone, sem_tag_exigida, opt_out, canal_inativo, canal_invalido, canal_desconectado, ja_contatado, mensagem_vazia, erro)" }
+                    "welcomeSkippedReason": { "type": "string", "description": "Por que a boas-vindas aplicável não saiu (desligado, sem_telefone, sem_tag_exigida, opt_out, canal_inativo, canal_invalido, canal_desconectado, ja_contatado, mensagem_vazia, numero_sem_whatsapp, erro)" }
                   }
                 }
               }
@@ -950,6 +950,7 @@ export const OPENAPI_SPEC = `{
                   "contentType": { "type": "string", "enum": ["text", "image", "file", "audio"], "default": "text", "description": "Tipo do conteúdo" },
                   "isInternal": { "type": "boolean", "default": false, "description": "Nota interna (não visível ao contato)" },
                   "language": { "type": "string", "description": "Tradução automática (módulo opcional por organização): auto traduz para o idioma da conversa, off envia como escrito, ou um código de idioma (ex.: es, en, pt-BR) força o idioma de saída. Sem o campo vale o comportamento da conversa. Valor fora de auto/off/catálogo = 400. Ignorado em nota interna, em grupo e com o módulo desligado. O código por mensagem fica em metadata.translationTarget; se a tradução falhar (ou o texto passar de 4000 caracteres e precisar de tradução, metadata.translation.reason long_text), a mensagem fica com deliveryStatus failed e metadata.deliveryError iniciando com Tradução falhou, e nada é enviado." },
+                  "notOnWhatsappAck": { "type": "boolean", "description": "Aceite humano explícito para enviar a um contato que o gateway já disse NÃO ter WhatsApp (contacts.whatsappCheck). Sem ele a chamada responde 409 com notOnWhatsapp: true. O uso do aceite é auditado com severidade alta (via api). Chaves de API de membros de IA não podem dar o aceite (400): quem confirma é uma pessoa." },
                   "translation": { "type": "object", "description": "Para clientes que já traduziram: content deve ser o texto traduzido; authoredText é o que o autor digitou. Formato inválido responde 400.", "required": ["authoredText", "sourceLang", "targetLang"], "properties": { "authoredText": { "type": "string" }, "sourceLang": { "type": "string" }, "targetLang": { "type": "string" }, "edited": { "type": "boolean" } } }
                 }
               }
@@ -974,6 +975,21 @@ export const OPENAPI_SPEC = `{
           "400": { "$ref": "#/components/responses/BadRequest" },
           "401": { "$ref": "#/components/responses/Unauthorized" },
           "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": {
+            "description": "Contato marcado como sem WhatsApp — reenvie com notOnWhatsappAck=true somente após confirmação humana",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": { "type": "integer", "const": 409 },
+                    "notOnWhatsapp": { "type": "boolean", "const": true }
+                  }
+                }
+              }
+            }
+          },
           "500": { "$ref": "#/components/responses/InternalError" }
         }
       }
