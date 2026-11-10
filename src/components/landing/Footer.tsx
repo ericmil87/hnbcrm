@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { ExternalLink } from "lucide-react";
 import { LegalIdentification } from "./LegalIdentification";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { APP_BUILD } from "@/lib/pwa/appBuild";
 import { versionFromBuild } from "@/lib/pwa/buildVersion";
 
@@ -42,11 +43,7 @@ export function Footer() {
           {/* Col 1 — Brand */}
           <div className="col-span-2 md:col-span-1 space-y-3">
             <div className="flex items-center gap-2">
-              <img
-                src="/black_icon_logo_transparent-bg-528x488.png"
-                alt="HNBCRM Logo"
-                className="h-8 w-8 object-contain"
-              />
+              <BrandLogo className="h-8 w-8 object-contain" />
               <span className="text-xl font-bold text-text-primary">HNBCRM</span>
             </div>
             <p className="text-sm text-text-secondary">

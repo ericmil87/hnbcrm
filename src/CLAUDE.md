@@ -28,8 +28,8 @@ src/
 ├── lib/uiStrings.ts            # extracts visible strings from TSX (JSX text, label/title/placeholder/aria-label/description, toast.*), sentence-case check
 ├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
 ├── lib/themeTokens.test.ts     # reads index.css: dark palette frozen (--rgb-* channels), aliases, AA pairs + DARK_KNOWN_FAILURES
-├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, isAppPath, resolveTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR, THEME_OPTIONS, themeLabel); test next to it
-├── lib/themeDom.ts             # applyTheme/clearTheme (back to whatsapp) on <html> + meta theme-color; subscribe/getAppliedTheme; themeInit.test.ts runs public/theme-init.js in jsdom
+├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, PUBLIC_THEME_STORAGE_KEY, isAppPath, resolveTheme, resolvePublicTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR, THEME_OPTIONS, themeLabel); test next to it
+├── lib/themeDom.ts             # applyTheme/clearTheme (back to the public theme: readPublicTheme) on <html> + meta theme-color; setPublicTheme (hnbcrm:public-theme); subscribe/getAppliedTheme; themeInit.test.ts runs public/theme-init.js in jsdom
 ├── lib/funnelCardPrefs.ts      # Funil card preference (density compact|comfortable + visible fields, localStorage hnbcrm.funnelCard.<org>), tolerant parse (+ test); hook hooks/useFunnelCardPrefs.ts
 ├── lib/funnelHeader.ts         # pure plan of the Funil contribution to the AppShell mobile header (funnelHeaderPlan: "Criar lead" +, ⋯ items/order/separators as commands); test next to it
 ├── lib/funnelFilters.ts        # Funil labels/variants, client filter, sort, URL (de)serialization (?view=&q=&owner=&temp=&priority=&unit=), initial-funnel pick (+ test)
@@ -78,6 +78,7 @@ src/
     ├── SEO.tsx, StructuredData.tsx  # Dynamic meta tags (react-helmet-async); JSON-LD
     ├── layout/                 # AuthLayout (auth → org → onboarding → ScrollRestoration → AppShell + Outlet), AppShell (Sidebar md+ / BottomTabBar mobile), Sidebar, BottomTabBar
     ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at /; auth screen at /entrar
+    ├── landing/PublicThemeButton.tsx  # icon button (Palette) in every public header: Menu of THEME_OPTIONS (menuitemradio), saves hnbcrm:public-theme per device
     ├── DashboardOverview.tsx   # Metrics (/app/painel)
     ├── KanbanBoard.tsx         # re-export of funnel/FunnelPage (main.tsx lazy import, route /app/pipeline)
     ├── funnel/                 # Funil: FunnelPage (orchestration + dnd-kit), FunnelToolbar (search, filters, Modo quadro/lista; < md: usePageHeader "+ Criar lead" and ⋯ items, pill search + "Filtros" sheet FunnelFiltersSheet with active count, icon view toggle) + FunnelCardPicker (Exibição dos cards: density and fields popover; FunnelCardPrefsFields reused in the mobile sheet) + FunnelSelector (funnel/archived/settings Menus; `compact`; useFunnelBoardMenus),

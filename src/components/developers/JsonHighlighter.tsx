@@ -13,17 +13,17 @@ export function highlightJson(json: string): string {
   return escaped.replace(
     /("(\\u[\da-fA-F]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
     (match) => {
-      let cls = "text-amber-300"; // number
+      let cls = "text-code-number"; // number
       if (/^"/.test(match)) {
         if (/:$/.test(match)) {
-          cls = "text-sky-400"; // key
+          cls = "text-code-key"; // key
         } else {
-          cls = "text-emerald-400"; // string value
+          cls = "text-code-string"; // string value
         }
       } else if (/true|false/.test(match)) {
-        cls = "text-purple-400"; // boolean
+        cls = "text-code-keyword"; // boolean
       } else if (/null/.test(match)) {
-        cls = "text-white/50"; // null
+        cls = "text-code-muted"; // null
       }
       return `<span class="${cls}">${match}</span>`;
     }
@@ -35,7 +35,7 @@ export function JsonHighlighter({ data }: JsonHighlighterProps) {
   const html = highlightJson(json);
 
   return (
-    <pre className="text-[13px] leading-relaxed bg-[#0d1117] rounded-lg p-3 overflow-auto text-white/70">
+    <pre className="text-[13px] leading-relaxed bg-code-bg border border-code-border rounded-lg p-3 overflow-auto text-code-fg">
       <code dangerouslySetInnerHTML={{ __html: html }} />
     </pre>
   );

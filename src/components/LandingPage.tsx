@@ -48,6 +48,8 @@ import { Footer } from "@/components/landing/Footer";
 import { PricingSection } from "@/components/landing/pricing/PricingSection";
 import { CTA_LABEL } from "@/components/landing/pricing/pricingCopy";
 import { PLANS, TRIAL } from "../../convex/lib/plans";
+import { BrandLogo } from "@/components/ui/BrandLogo";
+import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 
 export function LandingPage() {
   const [showFloatingCta, setShowFloatingCta] = useState(false);
@@ -91,14 +93,11 @@ export function LandingPage() {
         <header className="pt-6 px-4">
           <div className="flex items-center justify-between max-w-6xl mx-auto">
             <div className="flex items-center gap-2">
-              <img
-                src="/black_icon_logo_transparent-bg-528x488.png"
-                alt="HNBCRM Logo"
-                className="h-8 w-8 object-contain"
-              />
-              <span className="text-lg sm:text-xl font-bold text-text-primary">HNBCRM</span>
+              <BrandLogo className="h-8 w-8 object-contain" />
+              <span className="hidden sm:inline text-xl font-bold text-text-primary">HNBCRM</span>
             </div>
             <div className="flex items-center gap-1 sm:gap-4">
+              <PublicThemeButton />
               <a
                 href="https://github.com/ericmil87/hnbcrm"
                 target="_blank"

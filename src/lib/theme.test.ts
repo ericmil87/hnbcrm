@@ -7,6 +7,8 @@ import {
   themeLabel,
   THEME_OWNER_KEY,
   THEME_STORAGE_KEY,
+  PUBLIC_THEME_STORAGE_KEY,
+  resolvePublicTheme,
   isAppPath,
   failureAction,
   isForeignLocalTheme,
@@ -48,6 +50,24 @@ describe("resolveTheme", () => {
     expect(resolveTheme({})).toBe("whatsapp");
     expect(resolveTheme({ server: "x", local: "auto" })).toBe("whatsapp");
     expect(resolveTheme({ server: undefined, local: null })).toBe("whatsapp");
+  });
+});
+
+describe("resolvePublicTheme", () => {
+  it("public choice wins, then the device app theme, then whatsapp", () => {
+    expect(resolvePublicTheme({ publicChoice: "dark", appTheme: "light" })).toBe("dark");
+    expect(resolvePublicTheme({ publicChoice: null, appTheme: "whatsapp-dark" })).toBe("whatsapp-dark");
+    expect(resolvePublicTheme({})).toBe("whatsapp");
+  });
+
+  it("ignores invalid values", () => {
+    expect(resolvePublicTheme({ publicChoice: "auto", appTheme: "light" })).toBe("light");
+    expect(resolvePublicTheme({ publicChoice: "__proto__", appTheme: 42 })).toBe(DEFAULT_THEME);
+  });
+
+  it("uses its own key, separate from the account theme keys", () => {
+    expect(PUBLIC_THEME_STORAGE_KEY).toBe("hnbcrm:public-theme");
+    expect(new Set([PUBLIC_THEME_STORAGE_KEY, THEME_STORAGE_KEY, THEME_OWNER_KEY]).size).toBe(3);
   });
 });
 

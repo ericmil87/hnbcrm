@@ -7,6 +7,8 @@ import { LegalIdentification } from "@/components/landing/LegalIdentification";
 import { formatCount, formatMoney } from "@/lib/format";
 import { LEGAL_ENTITY } from "@/lib/legalEntity";
 import { EXTRA_CHANNEL_BRL, GROUPS_ADDON_BRL, PACK, PLAN_KEYS, PLANS, TRIAL } from "../../convex/lib/plans";
+import { BrandLogo } from "@/components/ui/BrandLogo";
+import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 
 const EFFECTIVE_DATE = "10 de novembro de 2026";
 
@@ -34,19 +36,18 @@ export function TermsPage() {
         <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur-md border-b border-border">
           <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <Link to="/" className="flex items-center gap-2">
-              <img
-                src="/black_icon_logo_transparent-bg-528x488.png"
-                alt="HNBCRM Logo"
-                className="h-7 w-7 object-contain"
-              />
+              <BrandLogo className="h-7 w-7 object-contain" />
               <span className="text-lg font-bold text-text-primary">HNBCRM</span>
             </Link>
-            <Link to="/">
-              <Button variant="ghost" size="sm">
-                <ArrowLeft size={16} />
-                Voltar
-              </Button>
-            </Link>
+            <div className="flex items-center gap-1">
+              <PublicThemeButton />
+              <Link to="/">
+                <Button variant="ghost" size="sm">
+                  <ArrowLeft size={16} />
+                  Voltar
+                </Button>
+              </Link>
+            </div>
           </div>
         </header>
 
