@@ -89,12 +89,22 @@ export function defaultScheduleValue(now: number): string {
   return toLocalInputValue(d);
 }
 
+/**
+ * Composer travado? Conta em modo leitura trava tudo (inclusive nota interna, que é
+ * escrita); a janela de atendimento fechada só trava a mensagem ao cliente.
+ */
+export function isComposerBlocked(opts: { windowBlocked: boolean; readOnly: boolean; internal: boolean }): boolean {
+  return opts.readOnly || (opts.windowBlocked && !opts.internal);
+}
+
 /** Placeholder do campo de texto conforme o modo do composer. */
 export function placeholderFor(opts: {
   internal: boolean;
   blocked: boolean;
   group: boolean;
+  readOnly?: boolean;
 }): string {
+  if (opts.readOnly) return "Conta em modo leitura. Fale com a gente para voltar a enviar.";
   if (opts.internal) return "Escreva uma nota interna... Use @ para mencionar";
   if (opts.blocked) return "Janela fechada — aguarde o cliente escrever de novo";
   if (opts.group) return "Mensagem para o grupo... Use @ para mencionar um membro";

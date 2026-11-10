@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { Link } from "react-router";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -31,6 +32,7 @@ import {
   defaultScheduleValue,
   deriveContentType,
   hasContentToSend,
+  isComposerBlocked,
   isSendKeyFor,
   placeholderFor,
   replyAuthorLabel,
@@ -142,7 +144,14 @@ export function Composer({
     return () => clearInterval(interval);
   }, [windowKind]);
   const windowResult = getServiceWindowInfo(windowKind, windowExpiresAt, now);
-  const blocked = isComposerBlockedByWindow(windowKind, windowExpiresAt, now) && !isInternal;
+  // Conta em modo leitura: o servidor também recusa; aqui só evitamos o erro (e a exportação segue liberada).
+  const entitlements = useQuery(api.billing.getMyEntitlements, { organizationId });
+  const readOnly = entitlements?.readOnly === true;
+  const blocked = isComposerBlocked({
+    windowBlocked: isComposerBlockedByWindow(windowKind, windowExpiresAt, now),
+    readOnly,
+    internal: isInternal,
+  });
   const mediaBlocked = mediaSendBlocked(channel, transport) && !isInternal;
   const textLimit = textLimitFor(channel, transport);
   const contactName =
@@ -406,12 +415,21 @@ export function Composer({
 
   const composerEmpty = text.trim() === "" && stagedFiles.length === 0;
   const showVoice =
-    voiceOn && canRecordVoice && !isInternal && !!conversationId && (recorderActive || composerEmpty);
+    voiceOn && canRecordVoice && !isInternal && !readOnly && !!conversationId && (recorderActive || composerEmpty);
   const showSchedule =
     scheduleOn && !showVoice && !isInternal && !blocked && !!conversationId && text.trim() !== "";
 
   return (
     <>
+      {readOnly && (
+        <p role="status" className="px-3 pt-2 text-caption text-text-secondary">
+          Conta em modo leitura: você continua vendo tudo e pode{" "}
+          <Link to="/app/configuracoes?secao=data" className="text-brand-400 hover:text-brand-300 underline underline-offset-2">
+            exportar os dados
+          </Link>
+          .
+        </p>
+      )}
       <ComposerView
         variant={variant}
         text={text}
@@ -427,7 +445,7 @@ export function Composer({
         isInternal={isInternal}
         onInternalChange={setIsInternal}
         showInternalToggle={internalNoteOn}
-        placeholder={placeholderFor({ internal: isInternal, blocked, group: isGroupConversation })}
+        placeholder={placeholderFor({ internal: isInternal, blocked, group: isGroupConversation, readOnly })}
         blocked={blocked}
         canSend={hasContentToSend(text, stagedFiles.length)}
         sending={sending}
