@@ -335,7 +335,7 @@ describe("org legacy com monthlyConversationBudget: nunca dispara mais cedo", ()
 
 describe("recordAttendance: modos live e backfill (A1)", () => {
   test("backfill só insere a linha; depois o live do mesmo contato é no-op e não dobra", async () => {
-    const s = await seed();
+    const s = await seed(undefined, { plan: "profissional", status: "active", overage: { enabled: true, capBrl: 100, updatedAt: 1 }, updatedAt: 1 });
     const base = { organizationId: s.organizationId, month: MONTH, contactKey: "c-1", conversationId: s.a1.conversationId, firstAt: Date.now() };
     await t.run((ctx) => recordAttendance(ctx, { ...base, billing: "legacy", mode: "backfill" }));
     expect(await ledger(s.organizationId)).toHaveLength(1);

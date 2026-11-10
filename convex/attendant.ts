@@ -1462,6 +1462,7 @@ export const internalClaimForProcessing = internalMutation({
       ...(humanInitiated ? { humanInitiated: true } : {}),
       // Billing (B2): a classe decidida aqui é a que o commit grava no livro.
       billingClass: budgetGate.billingClass,
+      ...(budgetGate.unitPriceBrlCents !== undefined ? { unitPriceBrlCents: budgetGate.unitPriceBrlCents } : {}),
       // Run PROATIVA: fica fora do gate do autopilot (um rascunho de follow-up
       // descartado não é a IA errando uma resposta a cliente).
       ...(isFollowUpTurn ? { proactive: true } : {}),

@@ -2350,6 +2350,7 @@ export async function resumeCampaignHandler(ctx: MutationCtx, args: ResumeCampai
     await ctx.db.patch(campaign._id, {
       status: "running",
       pausedReason: undefined,
+      pauseCode: undefined,
       pausedBy: undefined,
       stats: { ...campaign.stats, consecutiveFailures: 0 },
       batchSentSinceLastPause: 0,

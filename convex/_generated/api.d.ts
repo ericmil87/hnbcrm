@@ -80,6 +80,7 @@ import type * as lib_aiStateQueue from "../lib/aiStateQueue.js";
 import type * as lib_aiStateReasons from "../lib/aiStateReasons.js";
 import type * as lib_appUrl from "../lib/appUrl.js";
 import type * as lib_attendanceLedger from "../lib/attendanceLedger.js";
+import type * as lib_attendanceUsage from "../lib/attendanceUsage.js";
 import type * as lib_attendantConfigOps from "../lib/attendantConfigOps.js";
 import type * as lib_attendantDraft from "../lib/attendantDraft.js";
 import type * as lib_auditDescription from "../lib/auditDescription.js";
@@ -389,6 +390,7 @@ declare const fullApi: ApiFromModules<{
   "lib/aiStateReasons": typeof lib_aiStateReasons;
   "lib/appUrl": typeof lib_appUrl;
   "lib/attendanceLedger": typeof lib_attendanceLedger;
+  "lib/attendanceUsage": typeof lib_attendanceUsage;
   "lib/attendantConfigOps": typeof lib_attendantConfigOps;
   "lib/attendantDraft": typeof lib_attendantDraft;
   "lib/auditDescription": typeof lib_auditDescription;

@@ -15,6 +15,8 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { monthKeyUtc } from "./aiSpend";
+import { resolveEntitlements } from "./entitlements";
+import { firstValidCredit } from "./attendanceUsage";
 
 export type AttendanceClass = Doc<"aiAttendances">["billing"];
 export type AttendanceOrigin = NonNullable<Doc<"aiAttendances">["origin"]>;
@@ -94,9 +96,34 @@ export async function recordAttendance(
     creditId?: Id<"usageCredits">;
     unitPriceBrlCents?: number;
   }
-): Promise<{ inserted: boolean }> {
+): Promise<{ inserted: boolean; billing: AttendanceClass }> {
   const existing = await findAttendance(ctx, args.organizationId, args.month, args.contactKey);
-  if (existing) return { inserted: false };
+  if (existing) return { inserted: false, billing: existing.billing };
+
+  let billing = args.billing;
+  let creditId = args.creditId;
+  const meter = await getOrgUsageMonthly(ctx, args.organizationId, args.month);
+  if (args.mode === "live") {
+    // B6 (C2/C3): consumo do credito e checagem do teto na MESMA transacao do incremento.
+    // Perdeu a corrida (credito acabou, teto estourou, excedente desligado): grava
+    // `suggest_only` mesmo com a mensagem ja enviada (a favor do cliente).
+    if (billing === "credit") {
+      const credit = await firstValidCredit(ctx, args.organizationId, args.firstAt);
+      if (credit) {
+        await ctx.db.patch(credit._id, { consumed: credit.consumed + 1 });
+        creditId = credit._id;
+      } else {
+        billing = "suggest_only";
+      }
+    } else if (billing === "overage") {
+      const org = await ctx.db.get(args.organizationId);
+      const e = resolveEntitlements(org, args.firstAt);
+      const unit = args.unitPriceBrlCents ?? 0;
+      if (!e.gated || !e.overage.enabled || (meter?.overageBrlCents ?? 0) + unit > e.overage.capBrlCents) {
+        billing = "suggest_only";
+      }
+    }
+  }
 
   await ctx.db.insert("aiAttendances", {
     organizationId: args.organizationId,
@@ -104,16 +131,17 @@ export async function recordAttendance(
     contactKey: args.contactKey,
     conversationId: args.conversationId,
     firstAt: args.firstAt,
-    billing: args.billing,
+    billing,
     ...(args.origin ? { origin: args.origin } : {}),
-    ...(args.creditId ? { creditId: args.creditId } : {}),
-    ...(args.unitPriceBrlCents !== undefined ? { unitPriceBrlCents: args.unitPriceBrlCents } : {}),
+    ...(creditId ? { creditId } : {}),
+    ...(billing === "overage" && args.unitPriceBrlCents !== undefined
+      ? { unitPriceBrlCents: args.unitPriceBrlCents }
+      : {}),
   });
-  if (args.mode === "backfill") return { inserted: true };
+  if (args.mode === "backfill") return { inserted: true, billing };
 
-  const meter = await getOrgUsageMonthly(ctx, args.organizationId, args.month);
-  const bucket = args.billing === "legacy" ? null : BUCKET[args.billing];
-  const overageCents = args.billing === "overage" ? (args.unitPriceBrlCents ?? 0) : 0;
+  const bucket = billing === "legacy" ? null : BUCKET[billing];
+  const overageCents = billing === "overage" ? (args.unitPriceBrlCents ?? 0) : 0;
   if (meter) {
     await ctx.db.patch(meter._id, {
       aiAttendances: (meter.aiAttendances ?? 0) + 1,
@@ -132,7 +160,14 @@ export async function recordAttendance(
       updatedAt: args.firstAt,
     });
   }
-  return { inserted: true };
+  return { inserted: true, billing };
+}
+
+/** Item da fila iniciado por humano (coach, devolver a IA, pedir rascunho/Copiloto). */
+export function isHumanRequestItem(item: Pick<Doc<"aiReplyQueue">, "origin" | "requestedVia"> | null): boolean {
+  return (
+    item !== null && (item.origin === "coach" || item.origin === "return_to_ai" || item.requestedVia !== undefined)
+  );
 }
 
 /**
@@ -152,13 +187,12 @@ export async function recordCommittedAttendance(
     queueItemId?: Id<"aiReplyQueue">;
     now: number;
   }
-): Promise<void> {
-  if (!args.lead) return;
+): Promise<{ inserted: boolean; billing: AttendanceClass } | null> {
+  if (!args.lead) return null;
   const run = await ctx.db.get(args.agentRunId);
   const item = args.queueItemId ? await ctx.db.get(args.queueItemId) : null;
-  const humanRequest =
-    item !== null && (item.origin === "coach" || item.origin === "return_to_ai" || item.requestedVia !== undefined);
-  await recordAttendance(ctx, {
+  const humanRequest = isHumanRequestItem(item);
+  return await recordAttendance(ctx, {
     organizationId: args.conversation.organizationId,
     month: monthKeyUtc(args.now),
     contactKey: contactKeyOf(args.lead),

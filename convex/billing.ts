@@ -445,8 +445,12 @@ export const setOverage = mutation({
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new ConvexError("Organização não encontrada");
     const billing = org.billing;
-    // Teste, legacy, sem plano e só leitura/cancelada não ligam excedente.
-    if (!billing || !billing.plan || (billing.status !== "active" && billing.status !== "past_due")) {
+    // Sem plano/legacy nunca. Teste, só leitura e cancelada não LIGAM o excedente, mas
+    // DESLIGAR é permitido em qualquer status com plano (é a saída a favor do cliente).
+    if (!billing || !billing.plan || billing.status === "legacy") {
+      throw new ConvexError(FALE_COM_A_GENTE);
+    }
+    if (args.enabled && billing.status !== "active" && billing.status !== "past_due") {
       throw new ConvexError(FALE_COM_A_GENTE);
     }
     const capBrl = args.capBrl ?? (args.enabled ? undefined : billing.overage?.capBrl ?? 1);

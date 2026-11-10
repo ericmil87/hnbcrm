@@ -72,4 +72,13 @@ crons.daily(
 // de agendar (idempotente). `cronsDisabled()` dentro do handler.
 crons.cron("telegram reports", "5 * * * *", internal.telegramReports.internalReportsTick, {});
 
+// Billing B6: retoma campanhas pausadas por franquia de envios (`pauseCode` plan_quota)
+// quando vira o mes (UTC). Idempotente: se um dia falhar, o seguinte recupera.
+crons.daily(
+  "resume plan quota campaigns",
+  { hourUTC: 0, minuteUTC: 10 },
+  internal.campaignWorker.internalResumePlanQuotaCampaigns,
+  {}
+);
+
 export default crons;
