@@ -10,9 +10,9 @@
  */
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
-import { action, mutation, query } from "./_generated/server";
+import { action, mutation, query, type QueryCtx } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
@@ -67,6 +67,30 @@ const minPlanForValidator = v.object({
   units: planKeyValidator,
   attribution: planKeyValidator,
 });
+/** Assinatura vista pelo cliente: nunca documento, e-mail nem ids do provedor. */
+const subscriptionViewValidator = v.object({
+  billingCycle: v.union(v.literal("monthly"), v.literal("yearly"), v.literal("quarterly"), v.null()),
+  paymentStatus: v.union(v.literal("ok"), v.literal("pending"), v.literal("overdue"), v.null()),
+  provider: v.union(v.literal("manual"), v.literal("asaas"), v.null()),
+  hasSubscription: v.boolean(),
+});
+
+function subscriptionView(sub: Doc<"orgSubscriptions"> | null) {
+  return {
+    billingCycle: sub?.billingCycle ?? null,
+    paymentStatus: sub?.paymentStatus ?? null,
+    provider: sub?.billingProvider ?? null,
+    hasSubscription: sub?.providerSubscriptionId !== undefined,
+  };
+}
+
+async function loadSubscription(ctx: QueryCtx, organizationId: Id<"organizations">) {
+  return await ctx.db
+    .query("orgSubscriptions")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .first();
+}
+
 const byKindValidator = v.record(v.string(), v.object({ runs: v.number(), costUsdMicros: v.number() }));
 const MAX_PAGE = 100;
 const SCAN_CAP = 1000;
@@ -102,6 +126,8 @@ export const getMyEntitlements = query({
         priceLock: v.union(priceLockValidator, v.null()),
       })
     ),
+    /** Só para quem tem `settings:view` (lê a assinatura: 1 documento a mais). */
+    subscription: v.optional(subscriptionViewValidator),
   })),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
@@ -110,7 +136,10 @@ export const getMyEntitlements = query({
     if (!member) return null;
     const perms = resolvePermissions(member.role as Role, member.permissions as never);
     const org = await ctx.db.get(args.organizationId);
-    return buildMyEntitlements(org, hasPermission(perms, "settings", "view"));
+    const canView = hasPermission(perms, "settings", "view");
+    const view = buildMyEntitlements(org, canView);
+    if (canView) view.subscription = subscriptionView(await loadSubscription(ctx, args.organizationId));
+    return view;
   },
 });
 
@@ -160,6 +189,7 @@ export const getUsageSummary = query({
     byo: v.boolean(),
     costUsdMicros: v.number(),
     byKind: byKindValidator,
+    subscription: subscriptionViewValidator,
     estimate: v.union(
       v.null(),
       v.object({
@@ -249,6 +279,7 @@ export const getUsageSummary = query({
       byo,
       costUsdMicros: usage?.costUsdMicros ?? 0,
       byKind: usage?.byKind ?? {},
+      subscription: subscriptionView(await loadSubscription(ctx, args.organizationId)),
       estimate,
     };
   },
@@ -558,5 +589,53 @@ export const startCheckout = action({
       previousSubscriptionId: info.providerSubscriptionId,
     });
     return { invoiceUrl: out.invoiceUrl };
+  },
+});
+
+// ── listInvoices ────────────────────────────────────────────────────────────
+
+const INVOICES_LIMIT = 24;
+
+/**
+ * Faturas da org (as 24 mais recentes por vencimento). `settings:view`. Sem PII: o link da fatura
+ * é a página hospedada do Asaas; documento, e-mail e ids do provedor nunca saem daqui.
+ */
+export const listInvoices = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(
+    v.object({
+      id: v.id("billingInvoices"),
+      kind: v.string(),
+      description: v.string(),
+      amountCents: v.number(),
+      dueDate: v.number(),
+      status: v.union(v.literal("pending"), v.literal("paid"), v.literal("overdue"), v.literal("canceled"), v.literal("refunded")),
+      paidAt: v.union(v.number(), v.null()),
+      paymentMethod: v.union(v.literal("pix"), v.literal("boleto"), v.literal("card"), v.literal("transfer"), v.null()),
+      invoiceUrl: v.union(v.string(), v.null()),
+      nfseNumber: v.union(v.string(), v.null()),
+      nfseUrl: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "settings", "view");
+    const rows = await ctx.db
+      .query("billingInvoices")
+      .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", args.organizationId))
+      .order("desc")
+      .take(INVOICES_LIMIT);
+    return rows.map((r) => ({
+      id: r._id,
+      kind: r.kind,
+      description: r.description,
+      amountCents: r.amountCents,
+      dueDate: r.dueDate,
+      status: r.status,
+      paidAt: r.paidAt ?? null,
+      paymentMethod: r.paymentMethod ?? null,
+      invoiceUrl: r.invoiceUrl ?? null,
+      nfseNumber: r.nfseNumber ?? null,
+      nfseUrl: r.nfseUrl ?? null,
+    }));
   },
 });

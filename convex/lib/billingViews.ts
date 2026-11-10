@@ -46,6 +46,13 @@ export type MyEntitlements = {
    */
   usageLevel: "ok" | "warn80" | "limit100";
   usageAlertMonth?: string;
+  /** Só para quem tem `settings:view`: assinatura sem documento, e-mail nem ids do provedor. */
+  subscription?: {
+    billingCycle: "monthly" | "yearly" | "quarterly" | null;
+    paymentStatus: "ok" | "pending" | "overdue" | null;
+    provider: "manual" | "asaas" | null;
+    hasSubscription: boolean;
+  };
   /** Só para quem tem `settings:view`. */
   pricing?: {
     listMonthlyBrl: number | null;
