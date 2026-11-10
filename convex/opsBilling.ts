@@ -21,12 +21,15 @@ import {
   ASAAS_WEBHOOK_EVENTS,
   asaasConfig,
   asaasWebhookToken,
+  AsaasError,
   createWebhook,
   getAccountName,
+  getPayment,
   isAsaasEnabled,
   listWebhooks,
 } from "./lib/asaasApi";
 import { isValidCpfCnpj, maskCpfCnpj } from "./lib/brDocument";
+import { dayToMs, invoiceStatusOf } from "./lib/billingInvoices";
 import { isDeliverableEmail } from "./lib/emailAddress";
 import { firstDueDate, priceCheckout } from "./lib/checkoutPricing";
 import { runAsaasCheckout } from "./lib/asaasCheckout";
@@ -926,5 +929,89 @@ export const internalAsaasCreateSubscriptionForOrg = internalAction({
       viaOps: true,
     });
     return { ...summary, invoiceUrl: out.invoiceUrl, created: true };
+  },
+});
+
+/**
+ * Relê no Asaas as faturas ABERTAS (pending/overdue) e corrige o status local (cancelada, paga,
+ * estornada, vencida). Conserta fatura que ficou "Aguardando pagamento" depois de assinatura
+ * cancelada. Corrige SÓ a fatura: uma que o Asaas diz PAGA e o app não processou vem em
+ * `paidNotProcessed` (o estado da org é decisão do operador). `dryRun` padrão true; pagina por
+ * `cursor`/`pageSize` (rode de novo com o `continueCursor` até `isDone`). Saída sem PII.
+ */
+export const internalReconcileInvoices = internalAction({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    unchanged: v.number(),
+    changes: v.array(
+      v.object({ invoiceId: v.id("billingInvoices"), from: v.string(), to: v.string(), applied: v.boolean() })
+    ),
+    paidNotProcessed: v.array(v.id("billingInvoices")),
+    errors: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    if (!isAsaasEnabled()) throw new ConvexError("Chave da API do Asaas não configurada neste deployment");
+    const page: {
+      items: Array<{ invoiceId: Id<"billingInvoices">; organizationId: Id<"organizations">; providerPaymentId: string; status: string }>;
+      isDone: boolean;
+      continueCursor: string;
+    } = await ctx.runQuery(internal.billingAsaas.internalOpenInvoicesPage, {
+      organizationId: args.organizationId,
+      cursor: args.cursor,
+      pageSize: args.pageSize,
+    });
+    const changes: Array<{ invoiceId: Id<"billingInvoices">; from: string; to: string; applied: boolean }> = [];
+    const paidNotProcessed: Id<"billingInvoices">[] = [];
+    let unchanged = 0;
+    let errors = 0;
+    for (const item of page.items) {
+      let next: "pending" | "paid" | "overdue" | "canceled" | "refunded";
+      let paidAt: number | undefined;
+      try {
+        const payment = await getPayment(item.providerPaymentId);
+        next = invoiceStatusOf({ status: payment.status, deleted: payment.deleted });
+        paidAt = dayToMs(payment.paymentDate ?? payment.confirmedDate ?? undefined);
+      } catch (e) {
+        if (e instanceof AsaasError && e.status === 404) next = "canceled";
+        else {
+          errors++;
+          continue;
+        }
+      }
+      if (next === item.status) {
+        unchanged++;
+        continue;
+      }
+      if (next === "paid") {
+        paidNotProcessed.push(item.invoiceId);
+        if (!dryRun) {
+          await ctx.runMutation(internal.billingAsaas.internalSetInvoiceStatus, { invoiceId: item.invoiceId, status: "paid", paidAt });
+        }
+        changes.push({ invoiceId: item.invoiceId, from: item.status, to: next, applied: !dryRun });
+        continue;
+      }
+      if (!dryRun) await ctx.runMutation(internal.billingAsaas.internalSetInvoiceStatus, { invoiceId: item.invoiceId, status: next });
+      changes.push({ invoiceId: item.invoiceId, from: item.status, to: next, applied: !dryRun });
+    }
+    return {
+      dryRun,
+      scanned: page.items.length,
+      unchanged,
+      changes,
+      paidNotProcessed,
+      errors,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });

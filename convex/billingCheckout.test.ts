@@ -302,6 +302,21 @@ describe("robustez", () => {
     expect(calls.some((c) => c.method === "DELETE" || c.method === "POST")).toBe(false);
   });
 
+  test("refazer o checkout cancela, na hora, as faturas abertas da assinatura anterior", async () => {
+    const s = await seed();
+    await checkout(s);
+    const rows = () => t.run((ctx) => ctx.db.query("billingInvoices").withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", s.organizationId)).collect());
+    const first = (await rows())[0];
+    expect(first).toMatchObject({ providerSubscriptionId: "sub_1", status: "pending" });
+    // O mock reaproveita o id do pagamento; separa a fatura "antiga" para a nova ter linha própria.
+    await t.run((ctx) => ctx.db.patch(first._id, { providerPaymentId: "pay_antiga" }));
+    stubAsaas();
+    await checkout(s, { plan: "escala" });
+    const after = await rows();
+    expect(after.find((i) => i.providerPaymentId === "pay_antiga")?.status).toBe("canceled");
+    expect(after.filter((i) => i.status === "pending")).toHaveLength(1); // a fatura da assinatura nova
+  });
+
   test("dado recusado pelo Asaas (400) vira mensagem de conferir os dados; nada é gravado", async () => {
     failOn = (c) => (c.method === "POST" && c.url.endsWith("/customers") ? 400 : null);
     const s = await seed();

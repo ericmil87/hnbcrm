@@ -13,7 +13,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
 import { requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { applySubscriptionChange, setBillingStatus, type OrgBillingInput } from "./lib/entitlementsOps";
-import { dayToMs, isPaidStatus, upsertInvoiceFromPayment } from "./lib/billingInvoices";
+import { cancelOpenInvoicesForSubscription, dayToMs, invoiceStatusOf, isPaidStatus, upsertInvoiceFromPayment } from "./lib/billingInvoices";
 import {
   AsaasError,
   getPayment,
@@ -33,6 +33,7 @@ const CHECKOUT_COOLDOWN_MS = 60_000;
 
 export const paymentLiteValidator = v.object({
   id: v.string(),
+  subscription: v.optional(v.union(v.string(), v.null())),
   status: v.optional(v.string()),
   value: v.optional(v.number()),
   dueDate: v.optional(v.string()),
@@ -171,6 +172,8 @@ export const internalSaveCheckout = internalMutation({
     extraChannels: v.number(),
     monthlyCents: v.number(),
     firstPayment: v.optional(paymentLiteValidator),
+    /** Assinatura anterior cancelada no Asaas por este checkout: as faturas abertas dela viram canceled. */
+    canceledSubscriptionId: v.optional(v.string()),
     /** Chamado por op (sem sessão): o ator é o sistema. */
     viaOps: v.optional(v.boolean()),
   },
@@ -202,6 +205,9 @@ export const internalSaveCheckout = internalMutation({
       actor: member?._id,
       severity: "high",
     });
+    if (args.canceledSubscriptionId) {
+      await cancelOpenInvoicesForSubscription(ctx, args.organizationId, args.canceledSubscriptionId, now);
+    }
     if (args.firstPayment) {
       await upsertInvoiceFromPayment(ctx, { organizationId: args.organizationId, payment: args.firstPayment, now });
     }
@@ -219,7 +225,6 @@ const MAX_ATTEMPTS = 5;
 const paymentEventValidator = v.object({
   ...paymentLiteValidator.fields,
   customer: v.optional(v.union(v.string(), v.null())),
-  subscription: v.optional(v.union(v.string(), v.null())),
   externalReference: v.optional(v.union(v.string(), v.null())),
 });
 const subscriptionEventValidator = v.object({
@@ -426,6 +431,33 @@ export const internalApplyEvent = internalMutation({
     const payment = args.payment ?? null;
     const subscription = args.subscription ?? null;
 
+    // ── Fatura primeiro: DELETED/REFUNDED corrigem a fatura mesmo quando a assinatura é antiga ──
+    // (checkout refeito/troca de plano cancelam a assinatura anterior: o evento dela chega com um
+    // id que já não é o da org, e antes a fatura ficava "Aguardando pagamento" para sempre).
+    let invoiceOrgId: Id<"organizations"> | null = null;
+    if (ev.providerPaymentId && (ev.event === "PAYMENT_DELETED" || ev.event === "PAYMENT_REFUNDED")) {
+      const inv = await ctx.db
+        .query("billingInvoices")
+        .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", ev.providerPaymentId!))
+        .first();
+      if (inv) {
+        invoiceOrgId = inv.organizationId;
+        // Pagamento que sumiu da API (404) = removido. Senão vale o estado RELIDO.
+        const next =
+          ev.event === "PAYMENT_DELETED"
+            ? payment === null
+              ? ("canceled" as const)
+              : invoiceStatusOf(payment)
+            : payment && invoiceStatusOf(payment) === "refunded"
+              ? ("refunded" as const)
+              : null;
+        if (next && next !== inv.status && !(inv.status === "paid" && next === "canceled")) {
+          await ctx.db.patch(inv._id, { status: next, updatedAt: now });
+        }
+        if (ev.event === "PAYMENT_DELETED") return await finish("processed", undefined, inv.organizationId);
+      }
+    }
+
     // ── Resolve a org (assinatura gravada no checkout + externalReference que bate) ──
     const subId = payment?.subscription ?? subscription?.id ?? ev.providerSubscriptionId ?? null;
     let sub: Doc<"orgSubscriptions"> | null = subId
@@ -443,7 +475,11 @@ export const internalApplyEvent = internalMutation({
         .first();
       if (byOrg?.providerSubscriptionId && (!subId || byOrg.providerSubscriptionId === subId)) sub = byOrg;
     }
-    if (!sub) return await finish("ignored", "sem assinatura vinculada");
+    if (!sub) {
+      return invoiceOrgId
+        ? await finish("processed", "fatura atualizada; sem assinatura vinculada", invoiceOrgId)
+        : await finish("ignored", "sem assinatura vinculada");
+    }
     const orgId = sub.organizationId;
     if (refOrgId && refOrgId !== orgId) {
       await auditWebhook(ctx, orgId, ev.event, "externalReference diverge da assinatura", "high", now);
@@ -454,7 +490,11 @@ export const internalApplyEvent = internalMutation({
       await auditWebhook(ctx, orgId, ev.event, "cliente do pagamento diverge do cadastrado", "high", now);
       return await finish("failed", "cliente divergente", orgId);
     }
-    if (subId && sub.providerSubscriptionId !== subId) return await finish("ignored", "assinatura antiga", orgId);
+    if (subId && sub.providerSubscriptionId !== subId) {
+      return invoiceOrgId
+        ? await finish("processed", "fatura atualizada; assinatura antiga", orgId)
+        : await finish("ignored", "assinatura antiga", orgId);
+    }
     const org = await ctx.db.get(orgId);
     if (!org) return await finish("ignored", "organização removida");
 
@@ -643,6 +683,68 @@ export const internalRepriceExpiredLock = internalAction({
       organizationId: args.organizationId,
       monthlyCents: plan.monthlyCents,
       lockUntil: plan.lockUntil,
+    });
+    return null;
+  },
+});
+
+// ── Reconciliação de faturas (ops) ──────────────────────────────────────────
+
+/** Página de faturas abertas (pending/overdue) com id de pagamento do provedor. Só leitura. */
+export const internalOpenInvoicesPage = internalQuery({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    items: v.array(
+      v.object({
+        invoiceId: v.id("billingInvoices"),
+        organizationId: v.id("organizations"),
+        providerPaymentId: v.string(),
+        status: v.string(),
+      })
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const numItems = Math.min(Math.max(Math.floor(args.pageSize ?? 50), 1), 100);
+    const orgId = args.organizationId;
+    const page = orgId
+      ? await ctx.db
+          .query("billingInvoices")
+          .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", orgId))
+          .paginate({ numItems, cursor: args.cursor ?? null })
+      : await ctx.db.query("billingInvoices").paginate({ numItems, cursor: args.cursor ?? null });
+    const items = page.page
+      .filter((r) => (r.status === "pending" || r.status === "overdue") && r.providerPaymentId !== undefined)
+      .map((r) => ({
+        invoiceId: r._id,
+        organizationId: r.organizationId,
+        providerPaymentId: r.providerPaymentId!,
+        status: r.status as string,
+      }));
+    return { items, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+/** Corrige SÓ o status da fatura (nunca o estado da org). `paidAt` só para `paid`. */
+export const internalSetInvoiceStatus = internalMutation({
+  args: {
+    invoiceId: v.id("billingInvoices"),
+    status: v.union(v.literal("pending"), v.literal("paid"), v.literal("overdue"), v.literal("canceled"), v.literal("refunded")),
+    paidAt: v.optional(v.number()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const inv = await ctx.db.get(args.invoiceId);
+    if (!inv) return null;
+    await ctx.db.patch(inv._id, {
+      status: args.status,
+      ...(args.status === "paid" ? { paidAt: inv.paidAt ?? args.paidAt ?? Date.now() } : {}),
+      updatedAt: Date.now(),
     });
     return null;
   },

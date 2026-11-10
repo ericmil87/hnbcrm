@@ -85,12 +85,14 @@ export async function runAsaasCheckout(
       // segue
     }
     // Assinatura anterior que nunca foi paga: cancela para não deixar duas cobrando.
+    let canceledSubscriptionId: string | undefined;
     if (input.previousSubscriptionId) {
       try {
         await cancelSubscription(input.previousSubscriptionId);
       } catch {
         // já removida ou inexistente
       }
+      canceledSubscriptionId = input.previousSubscriptionId;
     }
     const subscription = await createSubscription({
       customer: customer.id,
@@ -120,10 +122,12 @@ export async function runAsaasCheckout(
       groupsAddon: input.groupsAddon,
       extraChannels: input.extraChannels,
       monthlyCents: Math.round(input.monthlyBrl * 100),
+      ...(canceledSubscriptionId ? { canceledSubscriptionId } : {}),
       ...(first
         ? {
             firstPayment: {
               id: first.id,
+              subscription: subscription.id,
               status: first.status,
               value: first.value,
               dueDate: first.dueDate,
