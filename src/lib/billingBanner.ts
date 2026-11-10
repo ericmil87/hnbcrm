@@ -4,7 +4,7 @@
  * (até 7 dias) > 100% > 80% > teste em andamento. Nunca em org legada.
  */
 import { formatMoney } from "./format";
-import { trialDaysLeft, type BillingMode } from "./billingPanel";
+import { isEffectivelyReadOnly, monthKeyUtc, trialDaysLeft, type BillingMode } from "./billingPanel";
 
 export type BannerKind = "read_only" | "past_due" | "trial_ending" | "limit100" | "warn80" | "trial";
 export type BannerTone = "error" | "warning" | "info";
@@ -57,7 +57,10 @@ export function resolveBillingBanner(args: {
   const pick = (b: BillingBanner): BillingBanner | null =>
     b.dismissible && b.dismissKey !== null && dismissed.has(b.dismissKey) ? null : b;
 
-  if (ent.readOnly || ent.mode === "read_only" || ent.mode === "canceled") {
+  // Alerta de uso de outro mês não vale (100% de novembro não aparece em dezembro).
+  const usageLevel = ent.usageAlertMonth === monthKeyUtc(now) ? ent.usageLevel : undefined;
+
+  if (isEffectivelyReadOnly(ent, now) || ent.mode === "read_only" || ent.mode === "canceled") {
     return {
       kind: "read_only",
       tone: "error",
@@ -96,28 +99,28 @@ export function resolveBillingBanner(args: {
     });
   }
 
-  if (ent.usageLevel === "limit100") {
+  if (usageLevel === "limit100") {
     const overage = ent.overage;
-    const body = overage?.enabled
-      ? `Você passou da franquia. Excedente ligado${overage.capBrl !== null ? `, com teto de ${formatMoney(overage.capBrl, "BRL", { fractionDigits: 0 })}` : ""}.`
-      : "Você usou todos os atendimentos IA do mês. A IA agora só sugere respostas e a equipe envia.";
+    const second = overage?.enabled
+      ? `Se for a de atendimentos, o excedente está ligado${overage.capBrl !== null ? `, com teto de ${formatMoney(overage.capBrl, "BRL", { fractionDigits: 0 })}` : ""}.`
+      : "Se for a de atendimentos, a IA passa a só sugerir respostas e a equipe envia.";
     return {
       kind: "limit100",
       tone: "warning",
-      title: "Atendimentos IA do mês no limite",
-      body: `${body}${adminHint}`,
+      title: "Você chegou a 100% da franquia do mês",
+      body: `Atendimentos da IA ou envios de campanha: veja o detalhe em Uso e fatura. ${second}${adminHint}`,
       cta: cta("Ver uso"),
       dismissible: false,
       dismissKey: null,
     };
   }
 
-  if (ent.usageLevel === "warn80") {
+  if (usageLevel === "warn80") {
     return pick({
       kind: "warn80",
       tone: "warning",
-      title: "Você usou 80% dos atendimentos IA do mês",
-      body: `Acompanhe o uso para não ficar sem a IA no fim do mês.${adminHint}`,
+      title: "Você usou 80% da franquia do mês",
+      body: `Atendimentos da IA ou envios de campanha: veja o detalhe em Uso e fatura.${adminHint}`,
       cta: cta("Ver uso"),
       dismissible: true,
       dismissKey: `warn80:${ent.usageAlertMonth ?? monthOf(now)}`,

@@ -21,6 +21,19 @@ export function roundNow(now: number): number {
 
 export { monthKeyUtc };
 
+/**
+ * Conta em modo leitura? Vale o que o servidor já marcou (`readOnly`) e também o teste
+ * vencido que o cron diário ainda não virou (o corte não espera o cron).
+ */
+export function isEffectivelyReadOnly(
+  ent: { readOnly: boolean; mode: BillingMode; trialEndsAt?: number } | null | undefined,
+  now: number,
+): boolean {
+  if (!ent) return false;
+  if (ent.readOnly) return true;
+  return ent.mode === "trial" && ent.trialEndsAt != null && ent.trialEndsAt <= now;
+}
+
 /** O painel só existe para org com plano gravado (modo diferente de `legacy`). */
 export function isBillingPanelVisible(mode: BillingMode | null | undefined): boolean {
   return mode !== undefined && mode !== null && mode !== "legacy";

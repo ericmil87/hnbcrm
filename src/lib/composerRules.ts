@@ -89,12 +89,27 @@ export function defaultScheduleValue(now: number): string {
   return toLocalInputValue(d);
 }
 
+/** Canais que despacham mensagem ao cliente (o modo leitura trava só esses). */
+const DISPATCH_CHANNELS: ReadonlySet<string> = new Set(["whatsapp", "instagram", "messenger"]);
+
 /**
- * Composer travado? Conta em modo leitura trava tudo (inclusive nota interna, que é
- * escrita); a janela de atendimento fechada só trava a mensagem ao cliente.
+ * Modo leitura trava a mensagem ao cliente em canal que despacha (WhatsApp, Instagram,
+ * Messenger). Nota interna e canais sem despacho (webchat) seguem livres. Canal ainda
+ * desconhecido (conversa carregando) conta como que despacha.
  */
-export function isComposerBlocked(opts: { windowBlocked: boolean; readOnly: boolean; internal: boolean }): boolean {
-  return opts.readOnly || (opts.windowBlocked && !opts.internal);
+export function readOnlyBlocksSend(opts: { readOnly: boolean; internal: boolean; channel?: string | null }): boolean {
+  if (!opts.readOnly || opts.internal) return false;
+  return opts.channel == null || DISPATCH_CHANNELS.has(opts.channel);
+}
+
+/** Composer travado: modo leitura (ver `readOnlyBlocksSend`) ou janela de atendimento fechada. */
+export function isComposerBlocked(opts: {
+  windowBlocked: boolean;
+  readOnly: boolean;
+  internal: boolean;
+  channel?: string | null;
+}): boolean {
+  return readOnlyBlocksSend(opts) || (opts.windowBlocked && !opts.internal);
 }
 
 /** Placeholder do campo de texto conforme o modo do composer. */

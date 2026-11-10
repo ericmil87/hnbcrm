@@ -8,6 +8,8 @@ import { assignableMembers } from "@/lib/teamMembers";
 import { setComposerDirty } from "@/lib/pwa/composerDirty";
 import { useComposerDraft } from "@/components/inbox/useComposerDraft";
 import { usePermissions } from "@/hooks/usePermissions";
+import { useNow } from "@/hooks/useNow";
+import { isEffectivelyReadOnly } from "@/lib/billingPanel";
 import { extractMentionIds } from "@/lib/mentions";
 import { formatDateTime } from "@/lib/format";
 import { SendDeferredError } from "@/lib/messageDelivery";
@@ -33,6 +35,7 @@ import {
   deriveContentType,
   hasContentToSend,
   isComposerBlocked,
+  readOnlyBlocksSend,
   isSendKeyFor,
   placeholderFor,
   replyAuthorLabel,
@@ -145,12 +148,15 @@ export function Composer({
   }, [windowKind]);
   const windowResult = getServiceWindowInfo(windowKind, windowExpiresAt, now);
   // Conta em modo leitura: o servidor também recusa; aqui só evitamos o erro (e a exportação segue liberada).
-  const entitlements = useQuery(api.billing.getMyEntitlements, { organizationId });
-  const readOnly = entitlements?.readOnly === true;
+  const entitlements = useQuery(api.billing.getMyEntitlements, organizationId ? { organizationId } : "skip");
+  const clock = useNow(true, 5 * 60_000);
+  const readOnly = isEffectivelyReadOnly(entitlements, clock);
+  const readOnlyBlocked = readOnlyBlocksSend({ readOnly, internal: isInternal, channel });
   const blocked = isComposerBlocked({
     windowBlocked: isComposerBlockedByWindow(windowKind, windowExpiresAt, now),
     readOnly,
     internal: isInternal,
+    channel,
   });
   const mediaBlocked = mediaSendBlocked(channel, transport) && !isInternal;
   const textLimit = textLimitFor(channel, transport);
@@ -415,13 +421,13 @@ export function Composer({
 
   const composerEmpty = text.trim() === "" && stagedFiles.length === 0;
   const showVoice =
-    voiceOn && canRecordVoice && !isInternal && !readOnly && !!conversationId && (recorderActive || composerEmpty);
+    voiceOn && canRecordVoice && !isInternal && !readOnlyBlocked && !!conversationId && (recorderActive || composerEmpty);
   const showSchedule =
     scheduleOn && !showVoice && !isInternal && !blocked && !!conversationId && text.trim() !== "";
 
   return (
     <>
-      {readOnly && (
+      {readOnlyBlocked && (
         <p role="status" className="px-3 pt-2 text-caption text-text-secondary">
           Conta em modo leitura: você continua vendo tudo e pode{" "}
           <Link to="/app/configuracoes?secao=data" className="text-brand-400 hover:text-brand-300 underline underline-offset-2">
@@ -445,7 +451,7 @@ export function Composer({
         isInternal={isInternal}
         onInternalChange={setIsInternal}
         showInternalToggle={internalNoteOn}
-        placeholder={placeholderFor({ internal: isInternal, blocked, group: isGroupConversation, readOnly })}
+        placeholder={placeholderFor({ internal: isInternal, blocked, group: isGroupConversation, readOnly: readOnlyBlocked })}
         blocked={blocked}
         canSend={hasContentToSend(text, stagedFiles.length)}
         sending={sending}
