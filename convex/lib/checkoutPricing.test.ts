@@ -26,15 +26,45 @@ describe("priceCheckout (o servidor calcula)", () => {
       plan: "profissional",
       cycle: "monthly",
       groupsAddon: false,
-      billing: { extraChannels: 2, priceLock: { kind: "frozen", monthlyBrl: 300 } },
+      billing: { plan: "profissional", extraChannels: 2, priceLock: { kind: "frozen", monthlyBrl: 300 } },
       now: NOW,
     });
     expect(r).toMatchObject({ ok: true, price: { monthlyBrl: 458, listMonthlyBrl: 655, lockApplied: true } });
-    const founder = priceCheckout({ plan: "essencial", cycle: "yearly", groupsAddon: false, billing: { priceLock: { kind: "founder", discountPct: 30 } }, now: NOW });
+    const founder = priceCheckout({ plan: "essencial", cycle: "yearly", groupsAddon: false, billing: { plan: "essencial", priceLock: { kind: "founder", discountPct: 30 } }, now: NOW });
     expect(founder).toMatchObject({ ok: true, price: { monthlyBrl: 137.9, chargeBrl: 1379 } });
     // Trava vencida volta à tabela.
-    const expired = priceCheckout({ plan: "essencial", cycle: "monthly", groupsAddon: false, billing: { priceLock: { kind: "frozen", monthlyBrl: 100, until: NOW - 1 } }, now: NOW });
+    const expired = priceCheckout({ plan: "essencial", cycle: "monthly", groupsAddon: false, billing: { plan: "essencial", priceLock: { kind: "frozen", monthlyBrl: 100, until: NOW - 1 } }, now: NOW });
     expect(expired).toMatchObject({ ok: true, price: { monthlyBrl: 197, lockApplied: false } });
+  });
+});
+
+describe("priceLock.monthlyBrl só vale no plano que a org tem", () => {
+  const lock = { plan: "profissional" as const, priceLock: { kind: "frozen" as const, monthlyBrl: 600 } };
+  test("mesmo plano: preço travado; outro plano: tabela (priceSource mostra a origem)", () => {
+    expect(priceCheckout({ plan: "profissional", cycle: "monthly", groupsAddon: false, billing: lock, now: NOW })).toMatchObject({
+      ok: true,
+      price: { monthlyBrl: 600, priceSource: "price_lock" },
+    });
+    expect(priceCheckout({ plan: "escala", cycle: "monthly", groupsAddon: false, billing: lock, now: NOW })).toMatchObject({
+      ok: true,
+      price: { monthlyBrl: 997, chargeBrl: 997, lockApplied: false, priceSource: "table" },
+    });
+    expect(priceCheckout({ plan: "essencial", cycle: "yearly", groupsAddon: false, billing: lock, now: NOW })).toMatchObject({
+      ok: true,
+      price: { chargeBrl: 1970, priceSource: "table" },
+    });
+  });
+  test("desconto percentual (fundador) segue valendo em qualquer plano; sem plano na org, a trava de valor não vale", () => {
+    const founder = { plan: "profissional" as const, priceLock: { kind: "founder" as const, discountPct: 30 } };
+    expect(priceCheckout({ plan: "escala", cycle: "monthly", groupsAddon: false, billing: founder, now: NOW })).toMatchObject({
+      ok: true,
+      price: { monthlyBrl: 697.9, priceSource: "price_lock" },
+    });
+    const noPlan = { priceLock: { kind: "frozen" as const, monthlyBrl: 300 } };
+    expect(priceCheckout({ plan: "profissional", cycle: "monthly", groupsAddon: false, billing: noPlan, now: NOW })).toMatchObject({
+      ok: true,
+      price: { monthlyBrl: 497, priceSource: "table" },
+    });
   });
 });
 

@@ -29,6 +29,10 @@ const SUBSCRIPTION_FILES = new Set([
   "lib/exportSanitize.ts",
   // Cobrança (Asaas): LÊ a assinatura (índice por id do provedor) e grava só pela porta.
   "billingAsaas.ts",
+  // Cron do plano: só LÊ a assinatura para achar trava vencida (o repreço grava pela porta, em billingAsaas).
+  "billingCron.ts",
+  // Puro: só o TIPO `Doc<"orgSubscriptions">` (decide se há repreço; não toca no banco).
+  "lib/lockExpiry.ts",
 ]);
 
 function sliceBalanced(src: string, openIdx: number): string {

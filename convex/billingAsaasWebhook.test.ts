@@ -180,6 +180,27 @@ describe("pagamento confirmado ativa a org (releitura na API)", () => {
     expect(log).toMatchObject({ severity: "high" });
   });
 
+  test("ativação a partir do modo leitura re-arma as agendadas retidas", async () => {
+    const s = await seed({ plan: "profissional", status: "read_only", updatedAt: 1 });
+    const conversationId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const board = await ctx.db.insert("boards", { organizationId: s.organizationId, name: "B", color: "#000", isDefault: true, order: 0, createdAt: now, updatedAt: now });
+      const stage = await ctx.db.insert("stages", { organizationId: s.organizationId, boardId: board, name: "S", color: "#000", order: 0, isClosedWon: false, isClosedLost: false, createdAt: now, updatedAt: now });
+      const lead = await ctx.db.insert("leads", { organizationId: s.organizationId, title: "L", boardId: board, stageId: stage, value: 0, currency: "BRL", priority: "medium", temperature: "cold", tags: [], customFields: {}, conversationStatus: "active", lastActivityAt: now, createdAt: now, updatedAt: now });
+      return await ctx.db.insert("conversations", { organizationId: s.organizationId, leadId: lead, channel: "whatsapp", status: "active", messageCount: 0, createdAt: now, updatedAt: now });
+    });
+    const rowId = await t.run((ctx) =>
+      ctx.db.insert("scheduledMessages", {
+        organizationId: s.organizationId, conversationId, content: "Lembrete", scheduledAt: NOW - 3_600_000, status: "pending",
+        createdBy: s.adminId, createdAt: NOW - 7_200_000, heldSince: NOW - 3_600_000, scheduledFunctionId: "antigo",
+      } as never)
+    );
+    await send("PAYMENT_CONFIRMED");
+    const row = await t.run((ctx) => ctx.db.get(rowId));
+    expect(row?.heldSince).toBeUndefined();
+    expect(row?.scheduledFunctionId).not.toBe("antigo");
+  });
+
   test("Essencial com add-on Grupos libera o add-on; outros planos não carregam o add-on", async () => {
     const e = await seed({ status: "legacy", updatedAt: 1 }, { pending: "essencial", groupsAddon: true });
     await send("PAYMENT_RECEIVED");
@@ -242,6 +263,19 @@ describe("atraso, estorno e assinatura encerrada", () => {
     const again = await t.run((ctx) => ctx.db.query("notifications").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect());
     expect(again.filter((n) => n.type === "plan_payment_overdue")).toHaveLength(1);
     expect((await orgOf(s.organizationId))?.billing?.status).toBe("past_due");
+  });
+
+  test("fora de ordem: o OVERDUE atrasado chega depois do RECEIVED -> vale o estado relido, continua active, sem aviso", async () => {
+    const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
+    payment.status = "RECEIVED"; // a API já diz que foi pago
+    payment.dueDate = "2026-11-05";
+    await send("PAYMENT_OVERDUE");
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
+    expect((await events())[0]).toMatchObject({ status: "ignored" });
+    expect((await invoices(s.organizationId))[0]).toMatchObject({ status: "paid" });
+    const notes = await t.run((ctx) => ctx.db.query("notifications").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect());
+    expect(notes.filter((n) => n.type === "plan_payment_overdue")).toHaveLength(0);
+    expect(await subOf(s.organizationId)).toMatchObject({ paymentStatus: "pending" }); // não virou overdue
   });
 
   test("PAYMENT_OVERDUE em trial/read_only/canceled/legacy só marca paymentStatus: nenhum status muda", async () => {

@@ -185,6 +185,14 @@ export async function createSubscription(input: {
   });
 }
 
+/**
+ * Reprecifica a assinatura para as PRÓXIMAS cobranças (`updatePendingPayments: false` não mexe
+ * na cobrança já emitida).
+ */
+export async function updateSubscriptionValue(id: string, value: number): Promise<void> {
+  await call("PUT", `/subscriptions/${encodeURIComponent(id)}`, { body: { value, updatePendingPayments: false } });
+}
+
 export async function getSubscription(id: string): Promise<AsaasSubscription> {
   return await call<AsaasSubscription>("GET", `/subscriptions/${encodeURIComponent(id)}`);
 }
