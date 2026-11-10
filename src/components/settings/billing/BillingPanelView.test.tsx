@@ -56,7 +56,7 @@ const summary: UsageSummary = {
   byo: false,
   costUsdMicros: 0,
   byKind: {},
-  subscription: { billingCycle: null, paymentStatus: null, provider: null, hasSubscription: false },
+  subscription: { billingCycle: null, paymentStatus: null, provider: null, hasSubscription: false, currentPeriodEnd: null, nextChargeBrl: null, nextChargeAt: null },
   estimate: { planBrl: 497, extraChannelsBrl: 79, groupsAddonBrl: 0, listBrl: 576, recurringBrl: 576, overageBrl: 0, totalBrl: 576 },
 };
 const channelUsage: ChannelAndGroupUsage = {

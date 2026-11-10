@@ -42,7 +42,27 @@ export const CHECKOUT_SUBSCRIPTION_FIELDS: ReadonlySet<string> = new Set([
   "addons",
   "paymentStatus",
   "checkoutStartedAt",
+  // Ciclo de vida self-service: fim do ciclo, cancelamento/troca agendados, reembolso e upgrade pendente.
+  "currentPeriodStart",
+  "currentPeriodEnd",
+  "chargeCents",
+  "cancelAt",
+  "scheduledChange",
+  "refundedAt",
+  "pendingUpgrade",
 ]);
+
+/**
+ * Única mudança de `billing` que o `checkout` faz: o reembolso automático leva a org paga
+ * (`active`/`past_due`) a `canceled` na hora, sem tocar em mais nada.
+ */
+export function isRefundCancel(before: OrgBilling | null, next: OrgBillingInput): boolean {
+  if (!before || (before.status !== "active" && before.status !== "past_due")) return false;
+  if (next.status !== "canceled") return false;
+  const { updatedAt: _u, ...rest } = before;
+  void _u;
+  return stable({ ...rest, status: "canceled" }) === stable(next);
+}
 
 export type OrgBilling = NonNullable<Doc<"organizations">["billing"]>;
 /** `updatedAt` é da porta; quem chama não o informa. */
@@ -202,7 +222,7 @@ export async function applySubscriptionChange(
     throw new ConvexError({ code: "customer_forbidden", fields: ["subscription"], source: args.source });
   }
   if (args.source === "checkout") {
-    if (args.patch.billing) {
+    if (args.patch.billing && !isRefundCancel(before, args.patch.billing)) {
       throw new ConvexError({ code: "checkout_forbidden", fields: ["billing"], source: args.source });
     }
     const forbidden = Object.keys(args.patch.subscription ?? {}).filter((k) => !CHECKOUT_SUBSCRIPTION_FIELDS.has(k));

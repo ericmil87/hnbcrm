@@ -193,6 +193,23 @@ export async function updateSubscriptionValue(id: string, value: number): Promis
   await call("PUT", `/subscriptions/${encodeURIComponent(id)}`, { body: { value, updatePendingPayments: false } });
 }
 
+/**
+ * Troca valor e/ou ciclo da assinatura para as PRÓXIMAS cobranças (downgrade agendado e o seu
+ * desfazer). `updatePendingPayments: true` só reprecifica cobranças ainda não pagas (a do próximo
+ * ciclo); quem chama garante que não há fatura aberta do ciclo atual.
+ */
+export async function updateSubscription(
+  id: string,
+  input: { value: number; cycle?: "MONTHLY" | "YEARLY"; updatePendingPayments: boolean }
+): Promise<void> {
+  await call("PUT", `/subscriptions/${encodeURIComponent(id)}`, { body: input });
+}
+
+/** Estorno TOTAL da cobrança (reembolso automático dentro dos 7 dias). */
+export async function refundPayment(id: string): Promise<AsaasPayment> {
+  return await call<AsaasPayment>("POST", `/payments/${encodeURIComponent(id)}/refund`, { body: {} });
+}
+
 export async function getSubscription(id: string): Promise<AsaasSubscription> {
   return await call<AsaasSubscription>("GET", `/subscriptions/${encodeURIComponent(id)}`);
 }

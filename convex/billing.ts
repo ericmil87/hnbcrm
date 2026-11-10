@@ -10,7 +10,7 @@
  */
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
-import { action, mutation, query, type QueryCtx } from "./_generated/server";
+import { action, mutation, query, type ActionCtx, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -27,7 +27,24 @@ import { estimateInvoice } from "./lib/billingMath";
 import { isAsaasEnabled } from "./lib/asaasApi";
 import { isValidCpfCnpj } from "./lib/brDocument";
 import { isDeliverableEmail } from "./lib/emailAddress";
-import { FALE_COM_A_GENTE_EMPRESA, evaluateCheckout, firstDueDate } from "./lib/checkoutPricing";
+import { FALE_COM_A_GENTE_EMPRESA, evaluateCheckout, firstDueDate, type CheckoutPrice } from "./lib/checkoutPricing";
+import {
+  CHANGE_OPEN_INVOICE,
+  CHANGE_SAME,
+  evaluatePlanChange,
+  type ChangeOrgInfo,
+  type PlanChangeKind,
+} from "./lib/planChange";
+import {
+  runCancel,
+  runCancelScheduledChange,
+  runDowngrade,
+  runReactivate,
+  runRefund,
+  runUpdateBillingDetails,
+  runUpgrade,
+  type LifecycleInfo,
+} from "./lib/asaasLifecycle";
 import { runAsaasCheckout } from "./lib/asaasCheckout";
 import { PLANS } from "./lib/plans";
 
@@ -76,9 +93,10 @@ const subscriptionViewValidator = v.object({
   provider: v.union(v.literal("manual"), v.literal("asaas"), v.null()),
   hasSubscription: v.boolean(),
   /** Fim do ciclo atual (ms) e a próxima cobrança; `null` com cancelamento agendado ou sem ciclo. */
-  currentPeriodEnd: v.union(v.number(), v.null()),
-  nextChargeBrl: v.union(v.number(), v.null()),
-  nextChargeAt: v.union(v.number(), v.null()),
+  // Opcionais no tipo (fixtures antigas do front compilam); a query sempre os devolve (null = sem dado).
+  currentPeriodEnd: v.optional(v.union(v.number(), v.null())),
+  nextChargeBrl: v.optional(v.union(v.number(), v.null())),
+  nextChargeAt: v.optional(v.union(v.number(), v.null())),
   cancelAt: v.optional(v.number()),
   scheduledChange: v.optional(
     v.object({ plan: planKeyValidator, cycle: v.union(v.literal("monthly"), v.literal("yearly")), effectiveAt: v.number() })
@@ -686,6 +704,8 @@ export const previewCheckout = query({
     cycle: v.union(v.literal("monthly"), v.literal("yearly")),
     groupsAddon: v.optional(v.boolean()),
     now: v.optional(v.number()),
+    /** `checkout` (padrão): quem ainda não paga. `change`: quem já paga e quer trocar de plano/ciclo. */
+    mode: v.optional(v.union(v.literal("checkout"), v.literal("change"))),
   },
   returns: v.object({
     chargeBrl: v.union(v.number(), v.null()),
@@ -695,6 +715,9 @@ export const previewCheckout = query({
     lines: v.array(v.object({ id: v.string(), label: v.string(), amountBrl: v.number() })),
     cycleMonths: v.number(),
     refusal: v.optional(v.string()),
+    /** Só no modo `change`: upgrade vale agora; downgrade só no fim do ciclo (`effectiveAt`). */
+    changeKind: v.optional(v.union(v.literal("upgrade"), v.literal("downgrade"), v.literal("same"))),
+    effectiveAt: v.optional(v.number()),
   }),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "view");
@@ -702,18 +725,40 @@ export const previewCheckout = query({
     if (!org) throw new ConvexError("Organização não encontrada");
     const now = args.now ?? 0;
     const groupsAddon = args.groupsAddon === true;
-    const evaluation = evaluateCheckout({
-      plan: args.plan,
-      cycle: args.cycle,
-      groupsAddon,
-      org: {
-        status: org.billing?.status ?? null,
-        plan: org.billing?.plan ?? null,
-        extraChannels: org.billing?.extraChannels ?? 0,
-        priceLock: org.billing?.priceLock ?? null,
-      },
-      now,
-    });
+    let changeKind: PlanChangeKind | undefined;
+    let effectiveAt: number | undefined;
+    let evaluation: { ok: true; price: CheckoutPrice } | { ok: false; refusal: string };
+    if (args.mode === "change") {
+      // A MESMA decisão de `changePlan` (`evaluatePlanChange`): a prévia = o valor enviado ao Asaas.
+      const sub = await loadSubscription(ctx, args.organizationId);
+      const change = evaluatePlanChange({
+        plan: args.plan,
+        cycle: args.cycle,
+        groupsAddon,
+        org: changeOrgInfo(org, sub),
+        now,
+      });
+      if (change.ok) {
+        evaluation = { ok: true, price: change.price };
+        changeKind = change.kind;
+        if (typeof change.effectiveAt === "number") effectiveAt = change.effectiveAt;
+      } else {
+        evaluation = change;
+      }
+    } else {
+      evaluation = evaluateCheckout({
+        plan: args.plan,
+        cycle: args.cycle,
+        groupsAddon,
+        org: {
+          status: org.billing?.status ?? null,
+          plan: org.billing?.plan ?? null,
+          extraChannels: org.billing?.extraChannels ?? 0,
+          priceLock: org.billing?.priceLock ?? null,
+        },
+        now,
+      });
+    }
     const cycleMonths = args.cycle === "yearly" ? 10 : 1;
     if (!evaluation.ok) {
       return { chargeBrl: null, listBrl: null, monthlyBrl: null, priceSource: null, lines: [], cycleMonths, refusal: evaluation.refusal };
@@ -741,9 +786,26 @@ export const previewCheckout = query({
       priceSource: price.priceSource,
       lines,
       cycleMonths,
+      ...(changeKind ? { changeKind } : {}),
+      ...(effectiveAt !== undefined ? { effectiveAt } : {}),
     };
   },
 });
+
+/** Dados da org para decidir a troca de plano (puro de ctx: serve à prévia e à ação). */
+function changeOrgInfo(org: Doc<"organizations">, sub: Doc<"orgSubscriptions"> | null): ChangeOrgInfo {
+  return {
+    status: org.billing?.status ?? null,
+    plan: org.billing?.plan ?? null,
+    cycle: sub?.billingCycle ?? null,
+    groupsAddon: org.billing?.addons?.groups === true,
+    extraChannels: org.billing?.extraChannels ?? 0,
+    priceLock: org.billing?.priceLock ?? null,
+    hasSubscription: sub?.providerSubscriptionId !== undefined,
+    canceling: sub?.cancelAt !== undefined,
+    currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+  };
+}
 
 // ── getCheckoutPrefill (pré-preenche o formulário do checkout) ──────────────
 
@@ -780,3 +842,192 @@ export const getCheckoutPrefill = query({
     return out.billingName || out.billingEmail || out.document ? out : null;
   },
 });
+
+// ── Ciclo de vida da assinatura (self-service, sem pro-rata, sem e-mail manual) ─────────────
+
+const LIFECYCLE_OFF = "A assinatura online ainda não está disponível. Fale com a gente.";
+const cycleArg = v.union(v.literal("monthly"), v.literal("yearly"));
+
+/** Autoriza (settings:manage + conta com e-mail) e lê o contexto do ciclo de vida. */
+async function lifecycleContext(ctx: ActionCtx, organizationId: Id<"organizations">): Promise<LifecycleInfo> {
+  if (!isAsaasEnabled()) throw new ConvexError(LIFECYCLE_OFF);
+  return await ctx.runQuery(internal.billingAsaas.internalLifecycleContext, { organizationId });
+}
+
+function changeInfoOf(info: LifecycleInfo): ChangeOrgInfo {
+  return {
+    status: info.status,
+    plan: info.plan,
+    cycle: info.cycle,
+    groupsAddon: info.groupsAddon,
+    extraChannels: info.extraChannels,
+    priceLock: info.priceLock,
+    hasSubscription: info.providerSubscriptionId !== null,
+    canceling: info.cancelAt !== null,
+    currentPeriodEnd: info.currentPeriodEnd,
+  };
+}
+
+const isPaying = (info: LifecycleInfo) => info.status === "active" || info.status === "past_due";
+
+/**
+ * Troca de plano/ciclo de quem já paga (`settings:manage` + conta com e-mail). Preço SEMPRE do servidor
+ * (`evaluatePlanChange`: o `priceLock` vale só no plano que cobriu). Upgrade: assinatura nova com valor
+ * cheio e sem crédito; o plano só troca quando o pagamento confirma, e devolve o link da fatura.
+ * Downgrade: agendado para o fim do ciclo pago (`effectiveAt`); o cron aplica.
+ */
+export const changePlan = action({
+  args: {
+    organizationId: v.id("organizations"),
+    plan: planKeyValidator,
+    cycle: cycleArg,
+    groupsAddon: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    kind: v.union(v.literal("upgrade"), v.literal("downgrade")),
+    invoiceUrl: v.union(v.string(), v.null()),
+    effectiveAt: v.union(v.number(), v.null()),
+  }),
+  handler: async (ctx, args): Promise<{ kind: "upgrade" | "downgrade"; invoiceUrl: string | null; effectiveAt: number | null }> => {
+    const info = await lifecycleContext(ctx, args.organizationId);
+    const now = Date.now();
+    const groupsAddon = args.groupsAddon === true;
+    const change = evaluatePlanChange({ plan: args.plan, cycle: args.cycle, groupsAddon, org: changeInfoOf(info), now });
+    if (!change.ok) throw new ConvexError(change.refusal);
+    if (change.kind === "same") throw new ConvexError(CHANGE_SAME);
+    if (change.kind === "downgrade") {
+      // Fatura vencida ou já vencendo hoje: o PUT com `updatePendingPayments` a reprecificaria.
+      if (info.openInvoices.some((i) => i.status === "overdue" || i.dueDate <= now)) throw new ConvexError(CHANGE_OPEN_INVOICE);
+    }
+    await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
+    if (change.kind === "upgrade") {
+      const out = await runUpgrade(ctx, {
+        organizationId: args.organizationId,
+        info,
+        plan: args.plan,
+        cycle: args.cycle,
+        groupsAddon,
+        price: change.price,
+        now,
+      });
+      return { kind: "upgrade", invoiceUrl: out.invoiceUrl, effectiveAt: null };
+    }
+    const out = await runDowngrade(ctx, {
+      organizationId: args.organizationId,
+      info,
+      plan: args.plan,
+      cycle: args.cycle,
+      groupsAddon,
+      price: change.price,
+      currentChargeBrl: change.currentChargeBrl,
+    });
+    return { kind: "downgrade", invoiceUrl: null, effectiveAt: out.effectiveAt };
+  },
+});
+
+/** Desfaz a troca (downgrade) agendada: o Asaas volta ao valor/ciclo atuais. `settings:manage`. */
+export const cancelScheduledChange = action({
+  args: { organizationId: v.id("organizations") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const info = await lifecycleContext(ctx, args.organizationId);
+    if (!isPaying(info) || info.scheduledChange === null) throw new ConvexError("Não há troca de plano agendada para desfazer.");
+    const same = info.plan
+      ? evaluatePlanChange({
+          plan: info.plan,
+          cycle: info.cycle === "yearly" ? "yearly" : "monthly",
+          groupsAddon: info.groupsAddon,
+          org: { ...changeInfoOf(info), canceling: false },
+          now: Date.now(),
+        })
+      : null;
+    await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
+    await runCancelScheduledChange(ctx, {
+      organizationId: args.organizationId,
+      info,
+      currentChargeBrl: same?.ok ? same.currentChargeBrl : 0,
+    });
+    return null;
+  },
+});
+
+/**
+ * Cancela a assinatura: apaga no Asaas agora (nenhuma cobrança nova) e agenda o fim do acesso para o
+ * fim do ciclo já pago. O status segue `active` até lá; depois vira `canceled` (só leitura, exporta).
+ */
+export const cancelSubscription = action({
+  args: { organizationId: v.id("organizations") },
+  returns: v.object({ cancelAt: v.number() }),
+  handler: async (ctx, args): Promise<{ cancelAt: number }> => {
+    const info = await lifecycleContext(ctx, args.organizationId);
+    if (!isPaying(info) || info.providerSubscriptionId === null) {
+      throw new ConvexError("Sua conta não tem uma assinatura ativa para cancelar.");
+    }
+    if (info.cancelAt !== null) throw new ConvexError("O cancelamento já está agendado. Dá para reativar antes do fim do ciclo.");
+    await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
+    return await runCancel(ctx, { organizationId: args.organizationId, info, now: Date.now() });
+  },
+});
+
+/** Desfaz o cancelamento agendado (antes do fim do ciclo): nada é cobrado agora, a próxima cobrança é no fim do ciclo. */
+export const reactivateSubscription = action({
+  args: { organizationId: v.id("organizations") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const info = await lifecycleContext(ctx, args.organizationId);
+    const now = Date.now();
+    if (!isPaying(info) || info.cancelAt === null || info.cancelAt <= now || !info.plan) {
+      throw new ConvexError("Não há cancelamento agendado para desfazer.");
+    }
+    const cycle = info.cycle === "yearly" ? "yearly" : "monthly";
+    const current = evaluatePlanChange({
+      plan: info.plan,
+      cycle,
+      groupsAddon: info.groupsAddon,
+      org: { ...changeInfoOf(info), canceling: false },
+      now,
+    });
+    const chargeBrl = info.chargeCents !== null ? info.chargeCents / 100 : current.ok ? current.currentChargeBrl : null;
+    if (chargeBrl === null) throw new ConvexError(FALE_COM_A_GENTE_EMPRESA);
+    await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
+    await runReactivate(ctx, { organizationId: args.organizationId, info, plan: info.plan, cycle, chargeBrl, cancelAt: info.cancelAt });
+    return null;
+  },
+});
+
+/**
+ * Reembolso automático (direito de arrependimento): só a primeira fatura paga da org, até 7 dias
+ * depois do pagamento, uma única vez. Estorna o valor total, cancela a assinatura e leva a org a
+ * `canceled` na hora (só leitura, exportação liberada). Fora da regra: orienta a falar com a gente.
+ */
+export const requestRefund = action({
+  args: { organizationId: v.id("organizations") },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const info = await lifecycleContext(ctx, args.organizationId);
+    // O prazo e a unicidade são decididos em `runRefund` (a mesma função `checkRefund` da visão).
+    await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
+    await runRefund(ctx, { organizationId: args.organizationId, info, now: Date.now() });
+    return null;
+  },
+});
+
+/** Atualiza razão social, CPF/CNPJ e e-mail financeiro no Asaas e no app. `settings:manage` + e-mail. */
+export const updateBillingDetails = action({
+  args: { organizationId: v.id("organizations"), billingName: v.string(), document: v.string(), billingEmail: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    const billingName = args.billingName.trim();
+    if (billingName.length < 2 || billingName.length > 120) {
+      throw new ConvexError("Informe o nome ou a razão social para a nota fiscal (2 a 120 caracteres).");
+    }
+    if (!isValidCpfCnpj(args.document)) throw new ConvexError("CPF ou CNPJ inválido. Confira os números e tente de novo.");
+    const billingEmail = args.billingEmail.trim().toLowerCase();
+    if (!isDeliverableEmail(billingEmail)) throw new ConvexError("Informe um e-mail financeiro válido.");
+    const info = await lifecycleContext(ctx, args.organizationId);
+    if (info.providerCustomerId === null) throw new ConvexError("Você ainda não tem assinatura: informe os dados ao assinar um plano.");
+    await runUpdateBillingDetails(ctx, { organizationId: args.organizationId, billingName, document: args.document, billingEmail });
+    return null;
+  },
+});
+
