@@ -11,7 +11,20 @@ import {
   TRIAL,
   USAGE_WARN_PCT,
   lowestPlanWithModule,
+  maxChannels,
 } from "./plans";
+
+describe("teto de canais extras", () => {
+  test("Essencial 2, Profissional 3, Escala e Empresa sem teto", () => {
+    expect(PLAN_KEYS.map((k) => PLANS[k].maxExtraChannels)).toEqual([2, 3, null, null]);
+  });
+  test("maxChannels soma incluídos e teto; sem teto = Infinity; Empresa por unidade", () => {
+    expect(maxChannels("essencial")).toBe(3);
+    expect(maxChannels("profissional")).toBe(6);
+    expect(maxChannels("escala")).toBe(Infinity);
+    expect(maxChannels("empresa", 4)).toBe(Infinity);
+  });
+});
 
 describe("catálogo de planos", () => {
   test("preços e limites da decisão", () => {

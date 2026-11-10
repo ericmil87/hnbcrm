@@ -97,4 +97,37 @@ describe("calculatePricing", () => {
   it("dinheiro formata via format.ts", () => {
     expect(formatMoney(1313)).toContain("1.313");
   });
+  it("teto de canais extra: 10 canais -> Escala + 4 = 1313, nunca Essencial + 9", () => {
+    const r = calculatePricing({ ...base, channels: 10, aiAttendancesPerMonth: 100 });
+    expect(r.plan).toBe("escala");
+    expect(r.extraChannels).toBe(4);
+    expect(r.totalMonthlyBrl).toBe(1313);
+    expect(r.alternatives.map((a) => a.plan)).not.toContain("essencial");
+    expect(r.alternatives.map((a) => a.plan)).not.toContain("profissional");
+  });
+  it("3 canais: Essencial + 2 = 355 ou Profissional conforme os atendimentos", () => {
+    const few = calculatePricing({ ...base, channels: 3, aiAttendancesPerMonth: 100 });
+    expect(few.plan).toBe("essencial");
+    expect(few.extraChannels).toBe(2);
+    expect(few.totalMonthlyBrl).toBe(355);
+    const many = calculatePricing({ ...base, channels: 3, aiAttendancesPerMonth: 800 });
+    expect(many.plan).toBe("profissional");
+    expect(many.totalMonthlyBrl).toBe(497);
+  });
+  it("4 canais: Essencial não comporta; Profissional + 1", () => {
+    const r = calculatePricing({ ...base, channels: 4 });
+    expect(r.plan).toBe("profissional");
+    expect(r.totalMonthlyBrl).toBe(576);
+  });
+  it("6 canais: Profissional + 3 = 734 contra Escala 997", () => {
+    const r = calculatePricing({ ...base, channels: 6 });
+    expect(r.plan).toBe("profissional");
+    expect(r.extraChannels).toBe(3);
+    expect(r.totalMonthlyBrl).toBe(734);
+    expect(r.alternatives[0].plan).toBe("escala");
+    expect(r.alternatives[0].totalMonthlyBrl).toBe(997);
+  });
+  it("7 canais: só Escala em diante", () => {
+    expect(calculatePricing({ ...base, channels: 7 }).plan).toBe("escala");
+  });
 });

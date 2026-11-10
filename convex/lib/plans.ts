@@ -38,6 +38,8 @@ export type PlanDef = {
   modules: readonly GatedModule[];
   /** Essencial: máximo de grupos com IA quando o add-on Grupos está ativo. */
   groupsAddonMax?: number;
+  /** Teto de canais extra (R$ 79 cada) que o plano comporta; `null` = sem teto. */
+  maxExtraChannels: number | null;
 };
 
 export const PLANS: Record<PlanKey, PlanDef> = {
@@ -51,6 +53,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     overageByoBrlCents: null,
     modules: [],
     groupsAddonMax: 3,
+    maxExtraChannels: 2,
   },
   profissional: {
     label: "Profissional",
@@ -61,6 +64,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     overageBrlCents: 49,
     overageByoBrlCents: 29,
     modules: ["groups", "departments", "translation", "api"],
+    maxExtraChannels: 3,
   },
   escala: {
     label: "Escala",
@@ -71,6 +75,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     overageBrlCents: 39,
     overageByoBrlCents: 25,
     modules: ["groups", "departments", "translation", "api"],
+    maxExtraChannels: null,
   },
   empresa: {
     label: "Empresa",
@@ -83,8 +88,19 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     overageBrlCents: 29,
     overageByoBrlCents: 19,
     modules: ["groups", "departments", "translation", "api", "central", "units", "attribution"],
+    maxExtraChannels: null,
   },
 };
+
+/**
+ * Máximo de canais que o plano comporta (incluídos + extra). Sem teto = `Infinity`.
+ * Empresa inclui 1 canal por unidade. Quem precisa de mais sobe de plano.
+ */
+export function maxChannels(plan: PlanKey, units = 1): number {
+  const def = PLANS[plan];
+  const included = def.channels === "perUnit" ? Math.max(1, Math.floor(units)) : def.channels;
+  return def.maxExtraChannels === null ? Infinity : included + def.maxExtraChannels;
+}
 
 export const TRIAL = { plan: "profissional" as PlanKey, days: 30, aiAttendances: 300 };
 export const EXTRA_CHANNEL_BRL = 79;

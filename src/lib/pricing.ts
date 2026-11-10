@@ -9,6 +9,7 @@ import {
   GROUPS_ADDON_BRL,
   PLAN_KEYS,
   PLANS,
+  maxChannels,
   type GatedModule,
   type PlanKey,
 } from "../../convex/lib/plans";
@@ -111,6 +112,8 @@ export function priceForPlan(plan: PlanKey, input: PricingInput): PricingOption 
     else return null;
   }
 
+  // Plano que não comporta os canais pedidos (incluídos + teto de extras) não é candidato.
+  if (channels > maxChannels(plan, units)) return null;
   const extraChannels = Math.max(0, channels - includedChannels(plan, units));
   const included = includedAttendances(plan, units);
   const overageAttendances = Math.max(0, attendances - included);
