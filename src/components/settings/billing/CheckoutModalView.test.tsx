@@ -15,6 +15,8 @@ function props(over: Partial<CheckoutModalViewProps> = {}): CheckoutModalViewPro
     errors: validateCheckoutForm(form),
     showErrors: false,
     summary: checkoutSummary({ plan: form.plan, cycle: form.cycle, groupsAddon: false, now: 1 }),
+    summaryFromServer: false,
+    summaryLoading: false,
     submitting: false,
     serverError: null,
     notice: null,
@@ -67,6 +69,19 @@ describe("CheckoutModalView", () => {
     rerender(<CheckoutModalView {...props({ showErrors: true, serverError: "A assinatura online ainda não está disponível." })} />);
     expect(screen.getByText(/CPF ou CNPJ inválido/)).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("ainda não está disponível");
+  });
+
+  it("o valor do resumo vem da prop (servidor), não do catálogo local", () => {
+    const fromServer = { monthlyBrl: 345, listMonthlyBrl: 497, chargeBrl: 345, yearly: null, lockApplied: true };
+    render(<CheckoutModalView {...props({ summary: fromServer, summaryFromServer: true })} />);
+    expect(screen.getByText(/R\$\s*345/)).toBeTruthy();
+    expect(screen.getByText("Valor calculado pelo servidor.")).toBeTruthy();
+    expect(screen.getByText(/Preço combinado aplicado \(tabela: R\$\s*497/)).toBeTruthy();
+  });
+
+  it("enquanto consulta o servidor mostra Calculando…", () => {
+    render(<CheckoutModalView {...props({ summaryLoading: true })} />);
+    expect(screen.getByText("Calculando…")).toBeTruthy();
   });
 
   it("anual mostra o resumo com 2 meses grátis; enviar chama onSubmit", () => {

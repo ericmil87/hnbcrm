@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useAction } from "convex/react";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClassName } from "@/components/ui/Button";
+import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   EMPTY_CHECKOUT_FORM,
@@ -30,7 +31,12 @@ interface PlanCheckoutProps {
   now: number;
 }
 
-/** Botão "Assinar plano"/"Trocar plano" do painel e o checkout (Asaas) em modal. */
+/**
+ * Botão "Assinar plano"/"Trocar plano" do painel e o checkout (Asaas) em modal.
+ *
+ * Org `legacy` NÃO tem self-checkout, de propósito: o painel nem aparece para ela (o Eric
+ * migra cada uma para um plano à mão), então este componente só existe com plano gravado.
+ */
 export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel, priceLock, canManage, now }: PlanCheckoutProps) {
   const startCheckout = useAction(api.billing.startCheckout);
   const [open, setOpen] = useState(false);
@@ -51,11 +57,10 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
 
   if (!canStartCheckout(mode)) {
     // Ativo ou em atraso: trocar de plano é com a gente (o servidor recusa o checkout).
+    // Link com estilo de botão (sem <Button> dentro de <a>).
     return (
-      <a href={changePlanMailto(null, planLabel)}>
-        <Button variant="secondary" className="w-full sm:w-auto">
-          Trocar plano
-        </Button>
+      <a href={changePlanMailto(null, planLabel)} className={cn(buttonClassName("secondary", "md"), "w-full sm:w-auto")}>
+        Trocar plano
       </a>
     );
   }
@@ -84,6 +89,8 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
   };
 
   const close = () => {
+    // Fatura criada: o form (documento e e-mail) não fica guardado para a próxima abertura.
+    if (created) setForm(EMPTY_CHECKOUT_FORM);
     setOpen(false);
     setCreated(false);
     setInvoiceUrl(null);
@@ -109,6 +116,8 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
         errors={errors}
         showErrors={showErrors}
         summary={summary}
+        summaryFromServer={false}
+        summaryLoading={false}
         submitting={submitting}
         serverError={serverError}
         notice={notice}
