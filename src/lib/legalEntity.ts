@@ -2,10 +2,9 @@
  * Identificação do fornecedor: fonte única para rodapé, Termos e Privacidade
  * (Decreto 7.962/2013, art. 2º: nome, CPF/CNPJ, endereço físico e eletrônico).
  *
- * TODO(Eric): preencher `document` (CPF ou CNPJ) e `address` e mudar
- * `LEGAL_ENTITY_COMPLETE` para `true`. BLOQUEIO DO MERGE: a landing com preço
- * não pode ir ao ar com "em atualização". `legalEntity.test.ts` falha se a
- * flag e os campos divergirem.
+ * Fornecedor: INOVAWAY LTDA (definido pelo Eric em 10/11/2026), a mesma PJ
+ * que emite a NFS-e, recebe pelo Asaas e será a licenciante. `legalEntity.test.ts`
+ * falha se `LEGAL_ENTITY_COMPLETE` e os campos divergirem.
  */
 export interface LegalEntity {
   name: string;
@@ -20,15 +19,15 @@ export interface LegalEntity {
 }
 
 export const LEGAL_ENTITY: LegalEntity = {
-  name: "Eric Milfont de Oliveira",
-  document: "",
-  address: "",
+  name: "INOVAWAY LTDA",
+  document: "18.652.375/0001-00",
+  address: "Rua do Apolo, 161, CXPST 136, Bairro do Recife, Recife-PE, CEP 50030-220",
   email: "contato@hnbcrm.com",
   dpoEmail: "privacidade@hnbcrm.com",
 };
 
 /** `true` só depois de preencher CPF/CNPJ e endereço acima. */
-export const LEGAL_ENTITY_COMPLETE = false;
+export const LEGAL_ENTITY_COMPLETE = true;
 
 /** Texto de identificação; vazio vira "em atualização" (nunca inventa dado). */
 export function legalIdentification(entity: LegalEntity = LEGAL_ENTITY): {

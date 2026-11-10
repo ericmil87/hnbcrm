@@ -26,7 +26,8 @@ describe("TermsPage", () => {
 
   it("traz as cláusulas obrigatórias", () => {
     for (const needle of [
-      "Eric Milfont de Oliveira",
+      "INOVAWAY LTDA",
+      "CNPJ 18.652.375/0001-00",
       "contato@hnbcrm.com",
       "10 de novembro de 2026",
       "Atendimento IA",
@@ -60,8 +61,9 @@ describe("TermsPage", () => {
     expect(t).toMatch(/Empresa: a partir de R\$\s*1\.490 mais R\$\s*390 por unidade/);
   });
 
-  it("identificação incompleta aparece como em atualização", () => {
-    expect(t).toContain("CPF/CNPJ e endereço: em atualização");
+  it("identifica o fornecedor completo (sem \"em atualização\")", () => {
+    expect(t).toContain("Rua do Apolo, 161");
+    expect(t).not.toContain("em atualização");
   });
 });
 
