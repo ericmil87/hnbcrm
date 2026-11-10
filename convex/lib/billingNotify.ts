@@ -29,7 +29,13 @@ export type BillingNoticeType =
   | "plan_overage_cap_reached"
   | "trial_ending"
   | "plan_read_only"
-  | "plan_payment_overdue";
+  | "plan_payment_overdue"
+  | "plan_payment_received"
+  | "plan_changed"
+  | "plan_change_scheduled"
+  | "plan_cancel_scheduled"
+  | "plan_canceled"
+  | "plan_refunded";
 
 export type BillingNoticeData = {
   meter?: "ai" | "campaign";
@@ -45,6 +51,10 @@ export type BillingNoticeData = {
   reason?: "trial_ended" | "manual";
   /** `plan_payment_overdue`: vencimento da fatura em atraso (texto ja formatado). */
   dueDate?: string;
+  /** Ciclo de vida: nome do plano, valor ("R$ 497,00") e datas (textos ja formatados). */
+  planLabel?: string;
+  amountBrl?: string;
+  effectiveAt?: string;
 };
 
 /** Humanos ativos que administram a org (`settings:manage`). Cap 25. */
@@ -89,6 +99,18 @@ function copyFor(type: BillingNoticeType, d: BillingNoticeData): NotificationCop
       return notificationCopy({ type, reason: d.reason, endsAt: d.endsAt });
     case "plan_payment_overdue":
       return notificationCopy({ type, dueDate: d.dueDate });
+    case "plan_payment_received":
+      return notificationCopy({ type, planLabel: d.planLabel, amountBrl: d.amountBrl });
+    case "plan_changed":
+      return notificationCopy({ type, planLabel: d.planLabel ?? "novo" });
+    case "plan_change_scheduled":
+      return notificationCopy({ type, planLabel: d.planLabel ?? "novo", effectiveAt: d.effectiveAt ?? "" });
+    case "plan_cancel_scheduled":
+      return notificationCopy({ type, endsAt: d.endsAt ?? "" });
+    case "plan_canceled":
+      return notificationCopy({ type });
+    case "plan_refunded":
+      return notificationCopy({ type, amountBrl: d.amountBrl });
   }
 }
 

@@ -43,6 +43,12 @@ export const NOTIFICATION_TYPE_GROUP: Record<string, NotificationGroup> = {
   trial_ending: "sistema",
   plan_read_only: "sistema",
   plan_payment_overdue: "sistema",
+  plan_payment_received: "sistema",
+  plan_changed: "sistema",
+  plan_change_scheduled: "sistema",
+  plan_cancel_scheduled: "sistema",
+  plan_canceled: "sistema",
+  plan_refunded: "sistema",
 };
 
 /** Grupo do tipo; tipo desconhecido (versão futura) cai em "sistema". */

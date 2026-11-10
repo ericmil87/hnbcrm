@@ -2442,7 +2442,14 @@ const applicationTables = {
       v.literal("trial_ending"),
       v.literal("plan_read_only"),
       // Cobrança (Asaas): fatura vencida sem pagamento (a conta segue funcionando: past_due).
-      v.literal("plan_payment_overdue")
+      v.literal("plan_payment_overdue"),
+      // Ciclo de vida self-service (Asaas): recibo, troca, agendamentos, cancelamento e reembolso.
+      v.literal("plan_payment_received"),
+      v.literal("plan_changed"),
+      v.literal("plan_change_scheduled"),
+      v.literal("plan_cancel_scheduled"),
+      v.literal("plan_canceled"),
+      v.literal("plan_refunded")
     ),
     title: v.string(),
     body: v.optional(v.string()),
