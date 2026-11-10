@@ -72,7 +72,8 @@ function renderView(over: Partial<BillingPanelViewProps>) {
     channelUsage,
     history: [],
     now: NOW,
-    changePlanHref: "mailto:contato@hnbcrm.com",
+    planAction: <button type="button">Assinar plano</button>,
+    invoices: <div>faturas</div>,
     overage: baseOverage,
     statement: <div>extrato</div>,
     ...over,
@@ -120,7 +121,8 @@ describe("BillingPanelView", () => {
     expect(screen.getByText("Vence em breve")).toBeTruthy();
     expect(screen.getByText("O histórico aparece depois do primeiro mês completo.")).toBeTruthy();
     expect(screen.getByText("extrato")).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Falar com a gente/ }) ?? screen.getByText("Falar com a gente")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Assinar plano" })).toBeTruthy();
+    expect(screen.getByText("faturas")).toBeTruthy();
   });
 
   it("teste: dias restantes calculados no front e sem fatura", () => {
@@ -138,6 +140,24 @@ describe("BillingPanelView", () => {
     unmount();
     renderView({ entitlements: ent({ mode: "read_only", readOnly: true }) });
     expect(screen.getByText(/em só leitura/)).toBeTruthy();
+  });
+
+  it("assinatura aguardando o 1º pagamento e fatura em atraso", () => {
+    const sub = (paymentStatus: "pending" | "overdue" | "ok") => ({
+      billingCycle: "monthly" as const,
+      paymentStatus,
+      provider: "asaas" as const,
+      hasSubscription: true,
+    });
+    const { unmount } = renderView({ entitlements: ent({ mode: "trial", subscription: sub("pending") }) });
+    expect(screen.getByText(/Aguardando o pagamento da 1ª fatura/)).toBeTruthy();
+    unmount();
+    const o = renderView({ entitlements: ent({ mode: "active", subscription: sub("overdue") }) });
+    expect(screen.getByText(/fatura em atraso/)).toBeTruthy();
+    o.unmount();
+    renderView({ entitlements: ent({ mode: "active", subscription: sub("ok") }) });
+    expect(screen.queryByText(/Aguardando o pagamento/)).toBeNull();
+    expect(screen.queryByText(/fatura em atraso/)).toBeNull();
   });
 
   it("priceLock aparece no plano", () => {

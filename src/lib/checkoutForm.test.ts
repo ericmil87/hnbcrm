@@ -1,0 +1,121 @@
+import { describe, expect, it } from "vitest";
+import {
+  EMPTY_CHECKOUT_FORM,
+  canStartCheckout,
+  checkoutButtonLabel,
+  checkoutSummary,
+  formatCpfCnpj,
+  invoiceStatusLabel,
+  isCheckoutReady,
+  paymentNotice,
+  toCheckoutArgs,
+  validateCheckoutForm,
+  type CheckoutForm,
+} from "./checkoutForm";
+
+const CPF = "529.982.247-25";
+const CNPJ = "11.222.333/0001-81";
+const ok: CheckoutForm = {
+  ...EMPTY_CHECKOUT_FORM,
+  billingName: "Acme Ltda",
+  document: CPF,
+  billingEmail: "financeiro@acme.com.br",
+};
+
+describe("máscara de CPF/CNPJ", () => {
+  it("CPF até 11 dígitos", () => {
+    expect(formatCpfCnpj("52998224725")).toBe("529.982.247-25");
+    expect(formatCpfCnpj("5299")).toBe("529.9");
+    expect(formatCpfCnpj("529.982")).toBe("529.982");
+  });
+  it("CNPJ com 12 a 14 dígitos, sem passar de 14", () => {
+    expect(formatCpfCnpj("11222333000181")).toBe(CNPJ);
+    expect(formatCpfCnpj("11222333000181999")).toBe(CNPJ);
+    expect(formatCpfCnpj("112223330001")).toBe("11.222.333/0001");
+  });
+  it("ignora letras", () => {
+    expect(formatCpfCnpj("abc")).toBe("");
+  });
+});
+
+describe("validação do formulário", () => {
+  it("completo é válido; vazio acusa nome, documento e e-mail", () => {
+    expect(validateCheckoutForm(ok)).toEqual({});
+    expect(isCheckoutReady(ok)).toBe(true);
+    expect(Object.keys(validateCheckoutForm(EMPTY_CHECKOUT_FORM)).sort()).toEqual(["billingEmail", "billingName", "document"]);
+  });
+  it("CPF e CNPJ por dígitos verificadores", () => {
+    expect(validateCheckoutForm({ ...ok, document: CNPJ }).document).toBeUndefined();
+    expect(validateCheckoutForm({ ...ok, document: "529.982.247-26" }).document).toContain("inválido");
+    expect(validateCheckoutForm({ ...ok, document: "111.111.111-11" }).document).toContain("inválido");
+    expect(validateCheckoutForm({ ...ok, document: "123" }).document).toContain("inválido");
+  });
+  it("e-mail e nome", () => {
+    expect(validateCheckoutForm({ ...ok, billingEmail: "toni" }).billingEmail).toBeTruthy();
+    expect(validateCheckoutForm({ ...ok, billingName: " a " }).billingName).toBeTruthy();
+  });
+  it("add-on Grupos só no Essencial", () => {
+    expect(validateCheckoutForm({ ...ok, plan: "profissional", groupsAddon: true }).groupsAddon).toBeTruthy();
+    expect(validateCheckoutForm({ ...ok, plan: "essencial", groupsAddon: true }).groupsAddon).toBeUndefined();
+  });
+});
+
+describe("argumentos do startCheckout", () => {
+  it("documento só com dígitos, e-mail em minúsculas, add-on só no Essencial", () => {
+    const a = toCheckoutArgs({ ...ok, billingEmail: " Fin@Acme.com.br ", plan: "essencial", groupsAddon: true });
+    expect(a).toEqual({
+      plan: "essencial",
+      cycle: "monthly",
+      groupsAddon: true,
+      billingName: "Acme Ltda",
+      document: "52998224725",
+      billingEmail: "fin@acme.com.br",
+    });
+    expect(toCheckoutArgs({ ...ok, plan: "profissional", groupsAddon: true }).groupsAddon).toBeUndefined();
+  });
+});
+
+describe("resumo do valor pelo catálogo", () => {
+  const now = 1_000;
+  it("mensal e anual (2 meses grátis)", () => {
+    const m = checkoutSummary({ plan: "profissional", cycle: "monthly", groupsAddon: false, now });
+    expect(m).toMatchObject({ monthlyBrl: 497, chargeBrl: 497, yearly: null });
+    const y = checkoutSummary({ plan: "profissional", cycle: "yearly", groupsAddon: false, now });
+    expect(y).toMatchObject({ monthlyBrl: 497, chargeBrl: 4970, yearly: { paidMonths: 10, freeMonths: 2 } });
+  });
+  it("add-on Grupos soma 99 no Essencial e é ignorado nos outros", () => {
+    expect(checkoutSummary({ plan: "essencial", cycle: "monthly", groupsAddon: true, now })?.monthlyBrl).toBe(296);
+    expect(checkoutSummary({ plan: "escala", cycle: "monthly", groupsAddon: true, now })?.monthlyBrl).toBe(997);
+  });
+  it("preço combinado vence a tabela", () => {
+    const s = checkoutSummary({ plan: "essencial", cycle: "monthly", groupsAddon: false, priceLock: { kind: "founder", discountPct: 30 }, now });
+    expect(s?.monthlyBrl).toBeCloseTo(137.9, 5);
+    expect(s?.listMonthlyBrl).toBe(197);
+    expect(s?.lockApplied).toBe(true);
+  });
+});
+
+describe("estados e rótulos", () => {
+  it("quem abre o checkout", () => {
+    expect(canStartCheckout("trial")).toBe(true);
+    expect(canStartCheckout("read_only")).toBe(true);
+    expect(canStartCheckout("canceled")).toBe(true);
+    expect(canStartCheckout("active")).toBe(false);
+    expect(canStartCheckout("past_due")).toBe(false);
+  });
+  it("botão", () => {
+    expect(checkoutButtonLabel(false)).toBe("Assinar plano");
+    expect(checkoutButtonLabel(true)).toBe("Trocar plano");
+  });
+  it("status de fatura traduzido", () => {
+    expect(invoiceStatusLabel("paid")).toBe("Paga");
+    expect(invoiceStatusLabel("pending")).toBe("Aguardando pagamento");
+    expect(invoiceStatusLabel("overdue")).toBe("Em atraso");
+  });
+  it("aviso do pagamento da assinatura", () => {
+    expect(paymentNotice({ paymentStatus: "pending", hasSubscription: true })?.text).toContain("Aguardando o pagamento da 1ª fatura");
+    expect(paymentNotice({ paymentStatus: "overdue", hasSubscription: true })?.tone).toBe("error");
+    expect(paymentNotice({ paymentStatus: "ok", hasSubscription: true })).toBeNull();
+    expect(paymentNotice(undefined)).toBeNull();
+  });
+});
