@@ -318,11 +318,10 @@ export function PrivacyPage() {
             <LegalSection id="retencao" title="8. Retenção">
               <p>
                 Os dados são mantidos enquanto a conta e a organização estiverem ativas e pelo tempo
-                necessário para cumprir as finalidades descritas ou obrigações legais. Depois do
-                cancelamento, guardamos os dados por 90 dias para que a organização exporte o que quiser;
-                passado esse prazo, eles são eliminados ou anonimizados, ressalvadas as hipóteses de guarda
-                obrigatória previstas em lei (por exemplo, dados fiscais). Contas de teste que não foram
-                contratadas seguem a mesma regra.
+                necessário para cumprir as finalidades descritas ou obrigações legais. Guardamos
+                os dados por 90 dias após o cancelamento ou o fim do teste não contratado, para que a
+                organização exporte o que quiser; depois disso eles podem ser eliminados ou anonimizados,
+                com aviso prévio, salvo obrigação legal (por exemplo, dados fiscais).
               </p>
               <p>
                 Os dados de membros de grupos de WhatsApp seguem a retenção específica da cláusula 5: a

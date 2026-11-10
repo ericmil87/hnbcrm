@@ -30,7 +30,8 @@ export const PLAN_SUPPORT: Record<keyof typeof PLANS, string> = {
 export const NOT_CHARGED: readonly string[] = [
   "Usuários e assentos: a equipe inteira, em qualquer plano",
   "Conversas só da equipe: não contam como atendimento IA",
-  "Grupos, campanhas e Copiloto: não contam como atendimento IA",
+  "Grupos e campanhas: não contam como atendimento IA",
+  "Conversar com o Copiloto não conta. Um rascunho pedido por você ou pelo Copiloto para um contato conta como atendimento dentro da franquia, nunca como excedente",
   "Mensagens, contatos, funis e leads sem limite",
   "Exportação dos seus dados: sempre liberada",
 ];
@@ -81,7 +82,7 @@ export function faqItems(): { question: string; answer: string }[] {
     {
       question: "O que é um atendimento IA?",
       answer:
-        "Um contato que a IA atendeu no mês (respondeu ou rascunhou). Se ela falar dez vezes com a mesma pessoa no mês, conta um. Conversa só da equipe, grupos e campanhas não contam.",
+        "Um contato que a IA atendeu no mês (respondeu ou rascunhou). Se ela falar dez vezes com a mesma pessoa no mês, conta um. Conversa só da equipe, grupos e campanhas não contam. Conversar com o Copiloto não conta. Um rascunho que você ou o Copiloto pedem à IA para um contato conta como atendimento dentro da franquia, nunca como excedente.",
     },
     { question: "Quantos usuários posso ter?", answer: "Quantos quiser, em qualquer plano pago." },
     {
