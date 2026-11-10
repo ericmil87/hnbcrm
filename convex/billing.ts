@@ -15,6 +15,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { firstPaidInvoice, paidSubscriptionCount, REFUND_WINDOW_MS } from "./lib/refund";
+import { resolvePeriod } from "./lib/billingPeriod";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
 import { applySubscriptionChange } from "./lib/entitlementsOps";
@@ -111,33 +112,48 @@ async function loadSubscription(ctx: QueryCtx, organizationId: Id<"organizations
     .first();
 }
 
-/** Visão da assinatura (sem documento, e-mail nem ids). Lê as faturas só para a janela de reembolso. */
+/**
+ * Visão da assinatura (sem documento, e-mail nem ids). Lê as faturas para a janela de reembolso e para
+ * o fim do ciclo quando `currentPeriodEnd` não foi gravado (org que pagou antes do app gravá-lo).
+ */
 async function subscriptionView(ctx: QueryCtx, organizationId: Id<"organizations">, orgStatus: string | undefined) {
   const sub = await loadSubscription(ctx, organizationId);
   let refundEligibleUntil: number | undefined;
-  // Reembolsável também com cancelamento agendado (a assinatura já saiu do Asaas, o pagamento não).
-  if ((sub?.providerSubscriptionId !== undefined || sub?.cancelAt !== undefined) && sub.refundedAt === undefined) {
-    const invoices = await ctx.db
+  let invoices: Doc<"billingInvoices">[] = [];
+  if (sub?.providerSubscriptionId !== undefined || sub?.cancelAt !== undefined) {
+    invoices = await ctx.db
       .query("billingInvoices")
       .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", organizationId))
+      .order("desc")
       .take(60);
+  }
+  // Reembolsável também com cancelamento agendado (a assinatura já saiu do Asaas, o pagamento não).
+  if (sub && sub.refundedAt === undefined && invoices.length > 0) {
     const first = firstPaidInvoice(invoices);
     // Só com EXATAMENTE 1 pagamento de assinatura (upgrade pago ou renovação tornam o caso manual).
     if (first && first.status === "paid" && paidSubscriptionCount(invoices) === 1 && (orgStatus === "active" || orgStatus === "past_due")) {
       refundEligibleUntil = (first.paidAt as number) + REFUND_WINDOW_MS;
     }
   }
+  const period = resolvePeriod({
+    currentPeriodEnd: sub?.currentPeriodEnd,
+    cycle: sub?.billingCycle,
+    invoices,
+    subscriptionIds: [sub?.providerSubscriptionId, sub?.lastProviderSubscriptionId],
+  });
+  // Valor da próxima cobrança: o agendado (downgrade), o gravado, o da última fatura paga ou o preço base.
+  const baseCents = sub?.basePriceCents !== undefined ? sub.basePriceCents * (sub.billingCycle === "yearly" ? 10 : 1) : undefined;
+  const nextCents = sub?.scheduledChange?.chargeCents ?? sub?.chargeCents ?? period.lastPaid?.amountCents ?? baseCents;
   const canceling = sub?.cancelAt !== undefined;
-  const nextCents = sub?.scheduledChange?.chargeCents ?? sub?.chargeCents;
   return {
     billingCycle: sub?.billingCycle ?? null,
     paymentStatus: sub?.paymentStatus ?? null,
     provider: sub?.billingProvider ?? null,
     // Cancelamento agendado: o id já saiu de `providerSubscriptionId`, mas a org ainda é assinante.
     hasSubscription: sub?.providerSubscriptionId !== undefined || sub?.cancelAt !== undefined,
-    currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+    currentPeriodEnd: period.periodEnd,
     nextChargeBrl: !canceling && nextCents !== undefined ? nextCents / 100 : null,
-    nextChargeAt: !canceling ? (sub?.currentPeriodEnd ?? null) : null,
+    nextChargeAt: !canceling ? period.periodEnd : null,
     ...(sub?.cancelAt !== undefined ? { cancelAt: sub.cancelAt } : {}),
     ...(sub?.scheduledChange
       ? {
@@ -734,11 +750,23 @@ export const previewCheckout = query({
     if (args.mode === "change") {
       // A MESMA decisão de `changePlan` (`evaluatePlanChange`): a prévia = o valor enviado ao Asaas.
       const sub = await loadSubscription(ctx, args.organizationId);
+      // Fim do ciclo: o gravado ou, se faltar (pagou antes de o app gravá-lo), o calculado das faturas.
+      const invoices = await ctx.db
+        .query("billingInvoices")
+        .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", args.organizationId))
+        .order("desc")
+        .take(60);
+      const period = resolvePeriod({
+        currentPeriodEnd: sub?.currentPeriodEnd,
+        cycle: sub?.billingCycle,
+        invoices,
+        subscriptionIds: [sub?.providerSubscriptionId],
+      });
       const change = evaluatePlanChange({
         plan: args.plan,
         cycle: args.cycle,
         groupsAddon,
-        org: changeOrgInfo(org, sub),
+        org: changeOrgInfo(org, sub, period.periodEnd),
         now,
       });
       if (change.ok) {
@@ -796,7 +824,7 @@ export const previewCheckout = query({
 });
 
 /** Dados da org para decidir a troca de plano (puro de ctx: serve à prévia e à ação). */
-function changeOrgInfo(org: Doc<"organizations">, sub: Doc<"orgSubscriptions"> | null): ChangeOrgInfo {
+function changeOrgInfo(org: Doc<"organizations">, sub: Doc<"orgSubscriptions"> | null, periodEnd: number | null): ChangeOrgInfo {
   return {
     status: org.billing?.status ?? null,
     plan: org.billing?.plan ?? null,
@@ -806,7 +834,7 @@ function changeOrgInfo(org: Doc<"organizations">, sub: Doc<"orgSubscriptions"> |
     priceLock: org.billing?.priceLock ?? null,
     hasSubscription: sub?.providerSubscriptionId !== undefined,
     canceling: sub?.cancelAt !== undefined,
-    currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+    currentPeriodEnd: periodEnd,
   };
 }
 

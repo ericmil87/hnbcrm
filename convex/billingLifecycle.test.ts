@@ -793,3 +793,84 @@ describe("revisão: reprecificação, reembolso, duplicidade, fim do ciclo", () 
     expect((await subOf(s.organizationId))?.paymentStatus).toBe("pending");
   });
 });
+
+describe("fim do ciclo ausente (org que pagou antes de o app gravar currentPeriodEnd)", () => {
+  const PAID_DUE = Date.UTC(2026, 11, 10); // venc. 10/12/2026 -> fim 10/01/2027
+  const END = Date.UTC(2027, 0, 10);
+  /** Org que pagou antes do #103: sem início nem fim do ciclo gravados. */
+  const legacySeed = async (extra: SeedOpts = {}) => {
+    const s = await seed({ plan: "profissional", periodEnd: null, paidDue: PAID_DUE, ...extra });
+    await t.run(async (ctx) => {
+      const sub = await ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).first();
+      if (sub) await ctx.db.patch(sub._id, { currentPeriodStart: undefined });
+    });
+    return s;
+  };
+  const clearCharge = (id: Id<"organizations">) =>
+    t.run(async (ctx) => {
+      const sub = await ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", id)).first();
+      await ctx.db.patch(sub!._id, { chargeCents: undefined });
+    });
+
+  test("a visão calcula fim, próxima cobrança e valor pela última fatura paga + 1 ciclo", async () => {
+    const s = await legacySeed();
+    await clearCharge(s.organizationId);
+    expect((await subOf(s.organizationId))?.currentPeriodEnd).toBeUndefined();
+    const ent = await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).toMatchObject({ currentPeriodEnd: END, nextChargeAt: END, nextChargeBrl: 497 });
+    const summary = await as(s.admin.userId).query(api.billing.getUsageSummary, { organizationId: s.organizationId, month: "2026-11" });
+    expect(summary.subscription).toMatchObject({ currentPeriodEnd: END, nextChargeAt: END, nextChargeBrl: 497 });
+  });
+
+  test("sem fatura paga nem fim gravado: continua null (nada a inferir)", async () => {
+    const s = await legacySeed({ paidDaysAgo: null });
+    const ent = await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).toMatchObject({ currentPeriodEnd: null, nextChargeAt: null });
+  });
+
+  test("cancelar agenda para o vencimento + 1 ciclo e grava o valor", async () => {
+    const s = await legacySeed();
+    const res = await act.cancel(s);
+    expect(res.cancelAt).toBe(END);
+    expect(await subOf(s.organizationId)).toMatchObject({ cancelAt: END, currentPeriodEnd: END });
+  });
+
+  test("downgrade: effectiveAt = fim calculado, igual na prévia e na ação, e grava currentPeriodEnd", async () => {
+    const s = await legacySeed();
+    const preview = await as(s.admin.userId).query(api.billing.previewCheckout, { organizationId: s.organizationId, plan: "essencial", cycle: "monthly", mode: "change", now: NOW });
+    expect(preview).toMatchObject({ changeKind: "downgrade", effectiveAt: END });
+    const res = await act.changePlan(s, "essencial");
+    expect(res.effectiveAt).toBe(END);
+    expect(await subOf(s.organizationId)).toMatchObject({ currentPeriodEnd: END, scheduledChange: { effectiveAt: END } });
+  });
+
+  test("internalBackfillPeriodEnd: dry run lista sem gravar; real grava início e fim; idempotente", async () => {
+    const s = await legacySeed();
+    const other = await seed({ plan: "profissional" }); // já tem fim gravado: pulada
+    const trial = await seed({ status: "trial", periodEnd: null, paidDue: PAID_DUE }); // não paga: pulada
+    const dry = await t.mutation(internal.opsBilling.internalBackfillPeriodEnd, {});
+    expect(dry.dryRun).toBe(true);
+    expect(dry.changes).toEqual([{ organizationId: s.organizationId, periodStart: PAID_DUE, periodEnd: END, applied: false }]);
+    expect(dry.skipped).toBe(2);
+    expect((await subOf(s.organizationId))?.currentPeriodEnd).toBeUndefined();
+    const real = await t.mutation(internal.opsBilling.internalBackfillPeriodEnd, { dryRun: false });
+    expect(real.changes).toHaveLength(1);
+    expect(await subOf(s.organizationId)).toMatchObject({ currentPeriodStart: PAID_DUE, currentPeriodEnd: END });
+    expect((await subOf(other.organizationId))?.currentPeriodEnd).toBe(PERIOD_END);
+    expect((await subOf(trial.organizationId))?.currentPeriodEnd).toBeUndefined();
+    const again = await t.mutation(internal.opsBilling.internalBackfillPeriodEnd, { dryRun: false });
+    expect(again.changes).toHaveLength(0);
+    // Sem PII na saída.
+    expect(JSON.stringify([dry, real])).not.toMatch(/@|cpf|document|sub_old/i);
+  });
+
+  test("internalBackfillPeriodEnd por organizationId e org sem fatura paga", async () => {
+    const a = await legacySeed();
+    const b = await legacySeed({ paidDaysAgo: null });
+    const onlyB = await t.mutation(internal.opsBilling.internalBackfillPeriodEnd, { organizationId: b.organizationId, dryRun: false });
+    expect(onlyB).toMatchObject({ changes: [], noPaidInvoice: 1 });
+    const onlyA = await t.mutation(internal.opsBilling.internalBackfillPeriodEnd, { organizationId: a.organizationId, dryRun: false });
+    expect(onlyA.changes).toHaveLength(1);
+    expect((await subOf(b.organizationId))?.currentPeriodEnd).toBeUndefined();
+  });
+});

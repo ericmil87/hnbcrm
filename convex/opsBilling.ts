@@ -30,6 +30,7 @@ import {
 } from "./lib/asaasApi";
 import { isValidCpfCnpj, maskCpfCnpj } from "./lib/brDocument";
 import { dayToMs, invoiceStatusOf } from "./lib/billingInvoices";
+import { resolvePeriod } from "./lib/billingPeriod";
 import { isDeliverableEmail } from "./lib/emailAddress";
 import { firstDueDate, priceCheckout } from "./lib/checkoutPricing";
 import { runAsaasCheckout } from "./lib/asaasCheckout";
@@ -1013,5 +1014,91 @@ export const internalReconcileInvoices = internalAction({
       isDone: page.isDone,
       continueCursor: page.continueCursor,
     };
+  },
+});
+
+/**
+ * Preenche `orgSubscriptions.currentPeriodStart/End` das orgs `active`/`past_due` com assinatura Asaas
+ * que pagaram ANTES de o app gravar o fim do ciclo. Mesma regra do app: vencimento da última fatura de
+ * assinatura paga da assinatura atual (início) + 1 ciclo (fim). Sem fatura paga: pula (nada a inferir).
+ * `dryRun` padrão true; pagina por `cursor`/`pageSize` (a execução real se reagenda sozinha). Sem audit
+ * por org (`audit:"none"`, como `internalBackfillLegacy`); a saída traz só ids de org e datas, sem PII.
+ */
+export const internalBackfillPeriodEnd = internalMutation({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    skipped: v.number(),
+    noPaidInvoice: v.number(),
+    changes: v.array(
+      v.object({ organizationId: v.id("organizations"), periodStart: v.number(), periodEnd: v.number(), applied: v.boolean() })
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 50), 1), 100);
+    let rows: Doc<"orgSubscriptions">[];
+    let isDone = true;
+    let continueCursor = "";
+    if (args.organizationId) {
+      const orgId = args.organizationId;
+      const one = await ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", orgId)).first();
+      rows = one ? [one] : [];
+    } else {
+      const page = await ctx.db.query("orgSubscriptions").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+      rows = page.page;
+      isDone = page.isDone;
+      continueCursor = page.continueCursor;
+    }
+    let skipped = 0;
+    let noPaidInvoice = 0;
+    const changes: Array<{ organizationId: Id<"organizations">; periodStart: number; periodEnd: number; applied: boolean }> = [];
+    for (const sub of rows) {
+      if (sub.billingProvider !== "asaas" || !sub.providerSubscriptionId || sub.currentPeriodEnd !== undefined) {
+        skipped++;
+        continue;
+      }
+      const org = await ctx.db.get(sub.organizationId);
+      if (!org?.billing || (org.billing.status !== "active" && org.billing.status !== "past_due")) {
+        skipped++;
+        continue;
+      }
+      const invoices = await ctx.db
+        .query("billingInvoices")
+        .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", sub.organizationId))
+        .order("desc")
+        .take(200);
+      const period = resolvePeriod({ cycle: sub.billingCycle, invoices, subscriptionIds: [sub.providerSubscriptionId] });
+      if (period.periodStart === null || period.periodEnd === null) {
+        noPaidInvoice++;
+        continue;
+      }
+      changes.push({ organizationId: sub.organizationId, periodStart: period.periodStart, periodEnd: period.periodEnd, applied: !dryRun });
+      if (dryRun) continue;
+      await applySubscriptionChange(ctx, {
+        organizationId: sub.organizationId,
+        patch: {
+          subscription: {
+            currentPeriodEnd: period.periodEnd,
+            ...(sub.currentPeriodStart === undefined ? { currentPeriodStart: period.periodStart } : {}),
+          },
+        },
+        source: "ops",
+        reason: "internalBackfillPeriodEnd",
+        audit: "none",
+      });
+    }
+    if (!dryRun && !isDone) {
+      await ctx.scheduler.runAfter(0, internal.opsBilling.internalBackfillPeriodEnd, { cursor: continueCursor, pageSize, dryRun: false });
+    }
+    return { dryRun, scanned: rows.length, skipped, noPaidInvoice, changes, isDone, continueCursor };
   },
 });
