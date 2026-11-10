@@ -7,6 +7,9 @@ import { Id } from "../../../convex/_generated/dataModel";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { TERMS_VERSION } from "../../../convex/lib/terms";
+import { canSubmitOrganization } from "@/lib/termsAcceptance";
 import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -76,15 +79,16 @@ export function CreateOrganizationForm({
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugEdited, setSlugEdited] = useState(false);
+  const [accepted, setAccepted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanSlug = slugify(slug);
-    if (!name.trim() || !cleanSlug) return;
+    if (!canSubmitOrganization({ name, slug: cleanSlug, accepted })) return;
     setIsCreating(true);
     try {
-      const orgId = await createOrganization({ name: name.trim(), slug: cleanSlug });
+      const orgId = await createOrganization({ name: name.trim(), slug: cleanSlug, acceptedTermsVersion: TERMS_VERSION });
       toast.success(`Organização "${name.trim()}" criada!`);
       onCreated(orgId);
     } catch (error) {
@@ -122,13 +126,30 @@ export function CreateOrganizationForm({
         }}
         required
       />
+      <Checkbox
+        checked={accepted}
+        onChange={(e) => setAccepted(e.target.checked)}
+        required
+        label={
+          <>
+            Li e aceito os{" "}
+            <a href="/termos" target="_blank" rel="noopener noreferrer" className="text-brand-400 underline underline-offset-2">
+              Termos de Uso
+            </a>{" "}
+            e a{" "}
+            <a href="/privacidade" target="_blank" rel="noopener noreferrer" className="text-brand-400 underline underline-offset-2">
+              Política de Privacidade
+            </a>
+          </>
+        }
+      />
       <div className="flex gap-3 pt-2">
         <Button type="button" variant="secondary" onClick={onCancel} className="flex-1">
           {cancelLabel}
         </Button>
         <Button
           type="submit"
-          disabled={isCreating || !name.trim() || !slugify(slug)}
+          disabled={isCreating || !canSubmitOrganization({ name, slug: slugify(slug), accepted })}
           className="flex-1"
         >
           {isCreating ? "Criando..." : "Criar"}

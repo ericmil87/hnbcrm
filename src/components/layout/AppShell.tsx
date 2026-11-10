@@ -8,6 +8,7 @@ import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { CopilotFab } from "@/components/copilot/CopilotFab";
 import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import { BillingBannerContainer } from "@/components/billing/BillingBannerContainer";
+import { TermsAcceptanceBanner } from "@/components/billing/TermsAcceptanceBanner";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { PushLifecycle } from "@/components/notifications/PushLifecycle";
 import { activeTabForPath } from "@/lib/routes";
@@ -159,6 +160,8 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
             <div className={cn("mb-4 empty:hidden", chatModeActive && "hidden md:block")}>
               <BillingBannerContainer organizationId={organizationId} />
             </div>
+            {/* Aceite da versão vigente dos Termos: aviso que não bloqueia o uso. */}
+            <TermsAcceptanceBanner className={cn("mb-4", chatModeActive && "hidden md:flex")} />
             {children}
           </div>
         </div>
