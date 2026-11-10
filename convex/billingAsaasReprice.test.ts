@@ -167,4 +167,13 @@ describe("repriceAfterLockExpiry (puro)", () => {
     expect(repriceAfterLockExpiry(org, sub, NOW)).toBeNull();
     expect(repriceAfterLockExpiry(org, { ...(sub as object), priceLockedUntil: undefined } as never, NOW)).toMatchObject({ chargeBrl: 497 });
   });
+
+  test("devolve null com troca agendada, upgrade pendente ou cancelamento agendado", () => {
+    const org = { billing: { plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 } } as never;
+    const base = { billingProvider: "asaas", providerSubscriptionId: "sub_1", billingCycle: "monthly" };
+    expect(repriceAfterLockExpiry(org, base as never, NOW)).toMatchObject({ chargeBrl: 497 });
+    expect(repriceAfterLockExpiry(org, { ...base, scheduledChange: { plan: "essencial" } } as never, NOW)).toBeNull();
+    expect(repriceAfterLockExpiry(org, { ...base, pendingUpgrade: { subscriptionId: "sub_2" } } as never, NOW)).toBeNull();
+    expect(repriceAfterLockExpiry(org, { ...base, cancelAt: NOW + 1 } as never, NOW)).toBeNull();
+  });
 });

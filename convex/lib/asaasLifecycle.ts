@@ -15,19 +15,19 @@ import {
   cancelSubscription,
   createSubscription,
   getPayment,
-  getSubscription,
   listSubscriptionPayments,
   refundPayment,
   updateSubscription,
   upsertCustomer,
 } from "./asaasApi";
 import { onlyDigits } from "./brDocument";
-import { dayToMs, isPaidStatus } from "./billingInvoices";
+import { isPaidStatus } from "./billingInvoices";
 import { brazilDay, type CheckoutCycle, type CheckoutPrice } from "./checkoutPricing";
 import { checkoutErrorFor, PAYMENT_BEING_PROCESSED } from "./asaasCheckout";
 import { CHANGE_NO_PERIOD_END } from "./planChange";
 import { PLANS, type PlanKey } from "./plans";
-import { checkRefund, REFUND_REFUSED_MESSAGE } from "./refund";
+import { checkRefund, REFUND_REFUSED_MESSAGE, REFUND_SPECIAL_CASE_MESSAGE } from "./refund";
+import { periodEndAfter } from "./billingPeriod";
 
 export type LifecycleInfo = Infer<typeof lifecycleContextValidator>;
 
@@ -53,17 +53,39 @@ async function assertNoPaymentThenCancel(subscriptionId: string): Promise<void> 
   }
 }
 
-/** Fim do ciclo pago em ms: o gravado ou, se faltar, o `nextDueDate` relido do Asaas. */
-async function periodEndOf(info: LifecycleInfo): Promise<number> {
+/**
+ * Fim do ciclo pago em ms: vencimento da última fatura paga + 1 ciclo (`lastPaidDue`). Sem fatura
+ * (assinatura antiga sem histórico local) vale o `currentPeriodEnd` gravado. Nunca o `nextDueDate`
+ * do Asaas, que pode já apontar para o ciclo seguinte.
+ */
+function periodEndOf(info: LifecycleInfo): number {
+  if (info.lastPaidDue !== null) return periodEndAfter(info.lastPaidDue, info.cycle);
   if (info.currentPeriodEnd !== null) return info.currentPeriodEnd;
-  if (!info.providerSubscriptionId) throw new ConvexError(CHANGE_NO_PERIOD_END);
-  try {
-    const end = dayToMs((await getSubscription(info.providerSubscriptionId)).nextDueDate);
-    if (end !== undefined) return end;
-  } catch {
-    // cai no erro abaixo
-  }
   throw new ConvexError(CHANGE_NO_PERIOD_END);
+}
+
+const DAY = 86_400_000;
+
+/** Adia a próxima cobrança da assinatura antiga se vence em até 3 dias. `null` = nada a fazer. */
+async function pushOldDueDate(info: LifecycleInfo, now: number): Promise<"ok" | "failed" | null> {
+  if (!info.providerSubscriptionId) return null;
+  let end: number;
+  try {
+    end = periodEndOf(info);
+  } catch {
+    return null;
+  }
+  if (end - now > 3 * DAY) return null;
+  const base = Math.max(end, Math.floor(now / DAY) * DAY);
+  try {
+    await updateSubscription(info.providerSubscriptionId, {
+      nextDueDate: new Date(base + 7 * DAY).toISOString().slice(0, 10),
+      updatePendingPayments: true,
+    });
+    return "ok";
+  } catch {
+    return "failed";
+  }
 }
 
 /**
@@ -103,6 +125,9 @@ export async function runUpgrade(
     } catch {
       // o link também chega pelo webhook PAYMENT_CREATED
     }
+    // A próxima cobrança da assinatura ANTIGA vence em ≤ 3 dias: adia 7 dias para o cliente não pagar
+    // as duas. Falhou: só audit (o estorno automático pós-upgrade cobre o resto).
+    const oldDueDatePush = await pushOldDueDate(info, args.now);
     await ctx.runMutation(internal.billingAsaas.internalSaveUpgrade, {
       organizationId: args.organizationId,
       subscriptionId: subscription.id,
@@ -112,6 +137,7 @@ export async function runUpgrade(
       monthlyCents: cents(price.monthlyBrl),
       chargeCents: cents(price.chargeBrl),
       ...(info.pendingUpgradeSubscriptionId ? { canceledSubscriptionId: info.pendingUpgradeSubscriptionId } : {}),
+      ...(oldDueDatePush ? { oldDueDatePush } : {}),
       ...(first
         ? {
             firstPayment: {
@@ -159,7 +185,7 @@ export async function runDowngrade(
 ): Promise<{ effectiveAt: number }> {
   const { info, price } = args;
   if (!info.providerSubscriptionId) throw new ConvexError(NOT_AVAILABLE);
-  const effectiveAt = await periodEndOf(info);
+  const effectiveAt = periodEndOf(info);
   const currentCycle: CheckoutCycle = info.cycle === "yearly" ? "yearly" : "monthly";
   try {
     await updateSubscription(info.providerSubscriptionId, {
@@ -228,7 +254,7 @@ export async function runCancel(
 ): Promise<{ cancelAt: number }> {
   const { info } = args;
   if (!info.providerSubscriptionId) throw new ConvexError(NOT_AVAILABLE);
-  const cancelAt = Math.max(await periodEndOf(info), args.now);
+  const cancelAt = Math.max(periodEndOf(info), args.now);
   try {
     await cancelSubscription(info.providerSubscriptionId);
   } catch (e) {
@@ -330,10 +356,14 @@ export async function runRefund(
       : [],
     refundedAt: info.refundedAt ?? undefined,
     orgStatus: info.status ?? "",
-    hasProviderSubscription: info.providerSubscriptionId !== null,
+    // Cancelamento agendado também conta: a assinatura já foi apagada, mas o pagamento é reembolsável.
+    hasProviderSubscription: info.providerSubscriptionId !== null || info.cancelAt !== null,
+    paidInvoiceCount: info.paidCount,
     now: args.now,
   });
-  if (!check.eligible) throw new ConvexError(REFUND_REFUSED_MESSAGE);
+  if (!check.eligible) {
+    throw new ConvexError(check.reason === "several_payments" ? REFUND_SPECIAL_CASE_MESSAGE : REFUND_REFUSED_MESSAGE);
+  }
   const paymentId = check.invoice.providerPaymentId as string;
   try {
     // O pagamento tem que estar pago também no Asaas (o estado local pode estar atrasado).

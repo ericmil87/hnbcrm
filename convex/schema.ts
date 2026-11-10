@@ -3190,6 +3190,9 @@ const applicationTables = {
       })
     ),
     refundedAt: v.optional(v.number()),
+    // Assinatura apagada no Asaas (cancelamento/reembolso): o id sai de `providerSubscriptionId` e fica
+    // aqui só para casar um webhook tardio (ex.: PAYMENT_REFUNDED).
+    lastProviderSubscriptionId: v.optional(v.string()),
     pendingUpgrade: v.optional(
       v.object({
         subscriptionId: v.string(),

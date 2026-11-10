@@ -52,7 +52,7 @@ beforeEach(() => {
       if (path.startsWith("/payments/")) {
         return new Response(JSON.stringify({ id: path.split("/")[2], billingType: "PIX", invoiceUrl: "https://www.asaas.com/i/x", description: "HNBCRM · plano Profissional", ...payment }), { status: 200 });
       }
-      if (path.startsWith("/subscriptions/")) return new Response(JSON.stringify({ id: path.split("/")[2], customer: "cus_1", externalReference: payment.externalReference, status: "INACTIVE", deleted: true, nextDueDate: "2026-12-10", value: payment.value, cycle: "MONTHLY" }), { status: 200 });
+      if (path.startsWith("/subscriptions/")) return new Response(JSON.stringify({ id: path.split("/")[2], customer: "cus_1", externalReference: payment.externalReference, status: "INACTIVE", deleted: true, nextDueDate: "2027-01-10", value: payment.value, cycle: "MONTHLY" }), { status: 200 });
       return new Response("{}", { status: 200 });
     })
   );

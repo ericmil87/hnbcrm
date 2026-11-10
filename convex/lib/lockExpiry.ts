@@ -35,6 +35,9 @@ export function repriceAfterLockExpiry(
   // Empresa é preço negociado: nunca reprecifica sozinho.
   if (!billing.plan || billing.plan === "empresa") return null;
   if (!sub || sub.billingProvider !== "asaas" || !sub.providerSubscriptionId) return null;
+  // Troca de plano agendada, upgrade pendente ou cancelamento agendado: o valor do Asaas já foi
+  // decidido pelo ciclo de vida (repreçar sobrescreveria o do plano novo ou ressuscitaria cobrança).
+  if (sub.scheduledChange || sub.pendingUpgrade || sub.cancelAt !== undefined) return null;
   if (sub.billingCycle !== "monthly" && sub.billingCycle !== "yearly") return null;
   if (sub.priceLockedUntil === lock.until) return null; // já tratada
   const priced = priceCheckout({

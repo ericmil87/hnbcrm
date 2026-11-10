@@ -18,6 +18,8 @@ import {
   AsaasError,
   cancelSubscription,
   getPayment,
+  listSubscriptionPayments,
+  refundPayment,
   getSubscription,
   isAsaasEnabled,
   updateSubscriptionValue,
@@ -31,7 +33,8 @@ import { notifyBillingAdmins } from "./lib/billingNotify";
 import { formatBrl } from "./lib/aiSpend";
 import { PLANS } from "./lib/plans";
 import { lockAfterPlanChange } from "./lib/planChange";
-import { firstPaidInvoice } from "./lib/refund";
+import { firstPaidInvoice, paidSubscriptionCount } from "./lib/refund";
+import { periodEndAfter } from "./lib/billingPeriod";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -505,6 +508,7 @@ export const internalApplyEvent = internalMutation({
     const ref = payment?.externalReference ?? subscription?.externalReference ?? null;
     const refOrgId = ref ? ctx.db.normalizeId("organizations", ref) : null;
     let viaPending = false;
+    let viaLast = false;
     if (!sub && refOrgId) {
       const byOrg = await ctx.db
         .query("orgSubscriptions")
@@ -531,6 +535,10 @@ export const internalApplyEvent = internalMutation({
         if (byOrg?.pendingUpgrade?.subscriptionId === subId) {
           sub = byOrg;
           viaPending = true;
+        } else if (byOrg?.lastProviderSubscriptionId === subId) {
+          // Assinatura que o app apagou (cancelamento/reembolso): só webhook tardio.
+          sub = byOrg;
+          viaLast = true;
         }
       }
     }
@@ -549,7 +557,7 @@ export const internalApplyEvent = internalMutation({
       await auditWebhook(ctx, orgId, ev.event, "cliente do pagamento diverge do cadastrado", "high", now);
       return await finish("failed", "cliente divergente", orgId);
     }
-    if (subId && !viaPending && sub.providerSubscriptionId !== subId) {
+    if (subId && !viaPending && !viaLast && sub.providerSubscriptionId !== subId) {
       return invoiceOrgId
         ? await finish("processed", "fatura atualizada; assinatura antiga", orgId)
         : await finish("ignored", "assinatura antiga", orgId);
@@ -577,7 +585,9 @@ export const internalApplyEvent = internalMutation({
             ? { ...current.addons, groups: undefined }
             : undefined;
       const priceLock = lockAfterPlanChange(current.priceLock, current.plan, up.plan);
-      const nextDue = dayToMs(subscription?.nextDueDate);
+      // Fim do ciclo = vencimento desta fatura paga + 1 ciclo (não o `nextDueDate` da assinatura).
+      const paidDue = dayToMs(payment.dueDate);
+      const nextDue = paidDue !== undefined ? periodEndAfter(paidDue, up.cycle) : undefined;
       try {
         await applySubscriptionChange(ctx, {
           organizationId: orgId,
@@ -613,6 +623,8 @@ export const internalApplyEvent = internalMutation({
         await ctx.scheduler.runAfter(0, internal.billingAsaas.internalCancelReplacedSubscription, {
           organizationId: orgId,
           subscriptionId: oldSubscriptionId,
+          // Cobrança da antiga paga DEPOIS do pedido de upgrade = duplicada: o action a estorna.
+          refundPaidSince: up.at,
           attempt: 0,
         });
       }
@@ -632,6 +644,15 @@ export const internalApplyEvent = internalMutation({
     }
     if (viaPending) return await finish("ignored", "assinatura de upgrade sem pendência", orgId);
 
+    // ── Assinatura já apagada pelo app: só espelha a fatura; o estorno da 1ª fatura fecha o reembolso ──
+    if (viaLast) {
+      if (payment) await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+      if (ev.event === "PAYMENT_REFUNDED" && payment && (await closeRefundIfFirstInvoice(ctx, { organizationId: orgId, sub, org, payment, now }))) {
+        return await finish("processed", "reembolso concluído pelo estorno", orgId);
+      }
+      return await finish("processed", "assinatura encerrada pelo app", orgId);
+    }
+
     switch (ev.event) {
       case "PAYMENT_CREATED":
       case "PAYMENT_UPDATED":
@@ -648,7 +669,9 @@ export const internalApplyEvent = internalMutation({
         await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
         const billing = org.billing;
         const targetPlan = sub.pendingPlanChange?.plan ?? billing?.plan;
-        const nextDue = dayToMs(subscription?.nextDueDate);
+        // Fim do ciclo = vencimento desta fatura paga + 1 ciclo (não o `nextDueDate` da assinatura).
+        const paidDue = dayToMs(payment.dueDate);
+        const nextDue = paidDue !== undefined ? periodEndAfter(paidDue, sub.billingCycle) : undefined;
         const paidSub = {
           paymentStatus: "ok" as const,
           graceUntil: undefined,
@@ -741,6 +764,10 @@ export const internalApplyEvent = internalMutation({
         if (payment) await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
         // Reembolso feito pelo app (`requestRefund`): já auditado lá; o estorno só confirma a fatura.
         if (sub.refundedAt !== undefined) return await finish("processed", "reembolso do app", orgId);
+        // Estorno da 1ª fatura sem `refundedAt` (a ação caiu no meio): fecha o estado como o reembolso do app.
+        if (payment && (await closeRefundIfFirstInvoice(ctx, { organizationId: orgId, sub, org, payment, now }))) {
+          return await finish("processed", "reembolso concluído pelo estorno", orgId);
+        }
         // Estorno: só o paymentStatus + audit high. Quem decide o que fazer com a conta é o Eric.
         await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: { paymentStatus: "pending" } }, source: "webhook", reason: "Pagamento estornado (Asaas)", severity: "high" });
         return await finish("processed", undefined, orgId);
@@ -946,6 +973,10 @@ export const lifecycleContextValidator = v.object({
     pendingUpgradeSubscriptionId: v.union(v.string(), v.null()),
     refundedAt: v.union(v.number(), v.null()),
     openInvoices: v.array(v.object({ status: v.string(), dueDate: v.number() })),
+    /** Faturas de assinatura pagas (ou estornadas) da org: o reembolso exige EXATAMENTE 1. */
+    paidCount: v.number(),
+    /** Vencimento da última fatura paga da assinatura atual: base do fim do ciclo (+ 1 ciclo). */
+    lastPaidDue: v.union(v.number(), v.null()),
     firstPaid: v.union(
       v.null(),
       v.object({
@@ -977,6 +1008,13 @@ export const internalLifecycleContext = internalQuery({
       .take(200);
     const pendingId = sub?.pendingUpgrade?.subscriptionId ?? null;
     const first = firstPaidInvoice(invoices);
+    let lastPaidDue: number | null = null;
+    for (const i of invoices) {
+      if (i.kind !== "subscription" || i.status !== "paid") continue;
+      // Só a assinatura atual (ou fatura antiga sem o id): depois de um upgrade, as da antiga não contam.
+      if (i.providerSubscriptionId !== undefined && i.providerSubscriptionId !== sub?.providerSubscriptionId) continue;
+      if (lastPaidDue === null || i.dueDate > lastPaidDue) lastPaidDue = i.dueDate;
+    }
     return {
       quiet: org.billing?.quiet === true,
       status: org.billing?.status ?? null,
@@ -998,6 +1036,8 @@ export const internalLifecycleContext = internalQuery({
         .filter((i) => (i.status === "pending" || i.status === "overdue") && i.providerSubscriptionId !== pendingId)
         .slice(0, 10)
         .map((i) => ({ status: i.status as string, dueDate: i.dueDate })),
+      paidCount: paidSubscriptionCount(invoices),
+      lastPaidDue,
       firstPaid: first
         ? {
             id: first._id as string,
@@ -1023,6 +1063,8 @@ export const internalSaveUpgrade = internalMutation({
     chargeCents: v.number(),
     /** Upgrade pendente anterior (nunca pago) cancelado no Asaas por este. */
     canceledSubscriptionId: v.optional(v.string()),
+    /** Vencimento da assinatura antiga estava a ≤ 3 dias: adiado 7 dias no Asaas (ok) ou não deu (failed). */
+    oldDueDatePush: v.optional(v.union(v.literal("ok"), v.literal("failed"))),
     firstPayment: v.optional(paymentLiteValidator),
   },
   returns: v.null(),
@@ -1046,7 +1088,13 @@ export const internalSaveUpgrade = internalMutation({
         },
       },
       source: "checkout",
-      reason: `Upgrade de plano solicitado (${PLANS[args.plan].label}, aguardando pagamento)`,
+      reason:
+        `Upgrade de plano solicitado (${PLANS[args.plan].label}, aguardando pagamento)` +
+        (args.oldDueDatePush === "ok"
+          ? "; vencimento da assinatura anterior adiado 7 dias"
+          : args.oldDueDatePush === "failed"
+            ? "; NÃO foi possível adiar o vencimento da assinatura anterior (risco de cobrança dupla)"
+            : ""),
       actor: member._id,
       severity: "high",
     });
@@ -1125,6 +1173,10 @@ export const internalSaveCancel = internalMutation({
         subscription: {
           cancelAt: args.cancelAt,
           currentPeriodEnd: args.cancelAt,
+          // A assinatura foi apagada no Asaas: o id sai de `providerSubscriptionId` (guardado só para
+          // casar webhook tardio) e a org não aparece mais como "com assinatura em cobrança".
+          providerSubscriptionId: undefined,
+          lastProviderSubscriptionId: sub.providerSubscriptionId,
           scheduledChange: undefined,
           pendingUpgrade: undefined,
           checkoutStartedAt: undefined,
@@ -1177,58 +1229,96 @@ export const internalSaveReactivate = internalMutation({
 });
 
 /**
- * Reembolso automático concluído no Asaas: a org vai a `canceled` na hora (modo leitura, exportação
- * liberada), a assinatura fica marcada como reembolsada e a fatura como estornada. Audit high.
+ * Fecha o estado local de um reembolso JÁ feito no Asaas: a org vai a `canceled` (modo leitura,
+ * exportação liberada), a assinatura fica marcada como reembolsada e apagada, a fatura estornada.
+ * Única porta do fechamento: a ação `requestRefund` e o webhook PAYMENT_REFUNDED da 1ª fatura (se a
+ * ação caiu no meio) passam por aqui. Audit high.
  */
+async function finishRefundCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; providerPaymentId: string; source: "checkout" | "webhook"; actor?: Id<"teamMembers">; now: number }
+): Promise<void> {
+  const { now } = args;
+  const org = await ctx.db.get(args.organizationId);
+  const sub = await ctx.db
+    .query("orgSubscriptions")
+    .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+    .first();
+  if (!org?.billing || !sub) throw new ConvexError("Organização sem assinatura.");
+  const { updatedAt: _u, ...current } = org.billing;
+  void _u;
+  const paying = current.status === "active" || current.status === "past_due";
+  const deletedId = sub.providerSubscriptionId ?? sub.lastProviderSubscriptionId;
+  await applySubscriptionChange(ctx, {
+    organizationId: args.organizationId,
+    patch: {
+      ...(paying ? { billing: { ...current, status: "canceled" as const } } : {}),
+      subscription: {
+        refundedAt: now,
+        cancelAt: now,
+        currentPeriodEnd: now,
+        providerSubscriptionId: undefined,
+        lastProviderSubscriptionId: deletedId,
+        scheduledChange: undefined,
+        pendingUpgrade: undefined,
+        paymentStatus: "pending",
+        checkoutStartedAt: undefined,
+      },
+    },
+    source: args.source,
+    reason: "Reembolso automático (primeiro pagamento, até 7 dias)",
+    actor: args.actor,
+    severity: "high",
+  });
+  const inv = await ctx.db
+    .query("billingInvoices")
+    .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", args.providerPaymentId))
+    .first();
+  if (inv && inv.organizationId === args.organizationId) {
+    await ctx.db.patch(inv._id, { status: "refunded", updatedAt: now });
+  }
+  if (deletedId) await cancelOpenInvoicesForSubscription(ctx, args.organizationId, deletedId, now);
+  if (sub.pendingUpgrade) await cancelOpenInvoicesForSubscription(ctx, args.organizationId, sub.pendingUpgrade.subscriptionId, now);
+  await pauseCampaignsForReadOnly(ctx, args.organizationId, now);
+  await notifyBillingAdmins(ctx, {
+    organizationId: args.organizationId,
+    type: "plan_refunded",
+    data: inv ? { amountBrl: formatBrl(inv.amountCents / 100) } : {},
+    dedupeKey: `plan_refunded:${args.organizationId}:${args.providerPaymentId}`,
+  });
+}
+
+/**
+ * Webhook PAYMENT_REFUNDED: se o pagamento estornado é a PRIMEIRA fatura paga da org, a org está paga e
+ * ainda não há `refundedAt` (a ação `requestRefund` caiu depois do estorno), fecha o reembolso. Devolve
+ * se fechou. Estorno de outra fatura (renovação, upgrade) segue o fluxo antigo (só paymentStatus + audit).
+ */
+async function closeRefundIfFirstInvoice(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; sub: Doc<"orgSubscriptions">; org: Doc<"organizations">; payment: PaymentEvent; now: number }
+): Promise<boolean> {
+  if (args.sub.refundedAt !== undefined) return false;
+  const status = args.org.billing?.status;
+  if (status !== "active" && status !== "past_due") return false;
+  if (invoiceStatusOf(args.payment) !== "refunded") return false;
+  const invoices = await ctx.db
+    .query("billingInvoices")
+    .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", args.organizationId))
+    .order("desc")
+    .take(200);
+  const first = firstPaidInvoice(invoices);
+  if (!first || first.providerPaymentId !== args.payment.id) return false;
+  await finishRefundCore(ctx, { organizationId: args.organizationId, providerPaymentId: args.payment.id, source: "webhook", now: args.now });
+  return true;
+}
+
+/** Reembolso automático concluído no Asaas pela ação `requestRefund`. */
 export const internalFinishRefund = internalMutation({
   args: { organizationId: v.id("organizations"), providerPaymentId: v.string() },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const now = Date.now();
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
-    const org = await ctx.db.get(args.organizationId);
-    const sub = await ctx.db
-      .query("orgSubscriptions")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .first();
-    if (!org?.billing || !sub) throw new ConvexError("Organização sem assinatura.");
-    const { updatedAt: _u, ...current } = org.billing;
-    void _u;
-    await applySubscriptionChange(ctx, {
-      organizationId: args.organizationId,
-      patch: {
-        billing: { ...current, status: "canceled" },
-        subscription: {
-          refundedAt: now,
-          cancelAt: now,
-          currentPeriodEnd: now,
-          scheduledChange: undefined,
-          pendingUpgrade: undefined,
-          paymentStatus: "pending",
-          checkoutStartedAt: undefined,
-        },
-      },
-      source: "checkout",
-      reason: "Reembolso automático (primeiro pagamento, até 7 dias)",
-      actor: member._id,
-      severity: "high",
-    });
-    const inv = await ctx.db
-      .query("billingInvoices")
-      .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", args.providerPaymentId))
-      .first();
-    if (inv && inv.organizationId === args.organizationId) {
-      await ctx.db.patch(inv._id, { status: "refunded", updatedAt: now });
-    }
-    if (sub.providerSubscriptionId) await cancelOpenInvoicesForSubscription(ctx, args.organizationId, sub.providerSubscriptionId, now);
-    if (sub.pendingUpgrade) await cancelOpenInvoicesForSubscription(ctx, args.organizationId, sub.pendingUpgrade.subscriptionId, now);
-    await pauseCampaignsForReadOnly(ctx, args.organizationId, now);
-    await notifyBillingAdmins(ctx, {
-      organizationId: args.organizationId,
-      type: "plan_refunded",
-      data: inv ? { amountBrl: formatBrl(inv.amountCents / 100) } : {},
-      dedupeKey: `plan_refunded:${args.organizationId}:${args.providerPaymentId}`,
-    });
+    await finishRefundCore(ctx, { ...args, source: "checkout", actor: member._id, now: Date.now() });
     return null;
   },
 });
@@ -1253,26 +1343,98 @@ export const internalSaveBillingDetails = internalMutation({
 });
 
 /**
- * Cancela no Asaas a assinatura SUBSTITUÍDA por um upgrade pago (a nova já cobra). Melhor esforço com
- * até 5 tentativas (backoff); as faturas abertas dela já foram canceladas localmente.
+ * Depois de um upgrade pago: (1) estorna cobranças da assinatura ANTIGA pagas depois do pedido de
+ * upgrade (cobrança duplicada: o cliente já pagou o plano novo) e (2) cancela a antiga no Asaas.
+ * Melhor esforço, até 5 tentativas (backoff); idempotente (o que já foi estornado não está mais pago).
+ * As faturas abertas da antiga já foram canceladas localmente.
  */
 export const internalCancelReplacedSubscription = internalAction({
-  args: { organizationId: v.id("organizations"), subscriptionId: v.string(), attempt: v.number() },
+  args: {
+    organizationId: v.id("organizations"),
+    subscriptionId: v.string(),
+    attempt: v.number(),
+    /** Instante do pedido de upgrade: pagamentos da antiga a partir daí são duplicados. */
+    refundPaidSince: v.optional(v.number()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     if (!isAsaasEnabled()) return null;
+    let failed = false;
+    if (args.refundPaidSince !== undefined) {
+      try {
+        const payments = await listSubscriptionPayments(args.subscriptionId);
+        for (const p of payments) {
+          if (!isPaidStatus(p.status)) continue;
+          const paidDay = dayToMs(p.paymentDate ?? p.confirmedDate ?? undefined);
+          // `paidAt` local (instante processado) decide o mesmo dia; sem fatura local vale o dia do pagamento.
+          const known = await ctx.runQuery(internal.billingAsaas.internalInvoicePaidAt, { providerPaymentId: p.id });
+          const after = known !== null ? known >= args.refundPaidSince : paidDay !== undefined && paidDay >= dayStart(args.refundPaidSince);
+          if (!after) continue;
+          try {
+            await refundPayment(p.id);
+            await ctx.runMutation(internal.billingAsaas.internalRecordDuplicateRefund, {
+              organizationId: args.organizationId,
+              providerPaymentId: p.id,
+              amountCents: Math.round((p.value ?? 0) * 100),
+            });
+          } catch {
+            failed = true;
+          }
+        }
+      } catch {
+        failed = true;
+      }
+    }
     try {
       await cancelSubscription(args.subscriptionId);
     } catch (e) {
-      if (e instanceof AsaasError && e.status === 404) return null; // já removida
-      if (args.attempt < 4) {
-        await ctx.scheduler.runAfter(60_000 * 2 ** args.attempt, internal.billingAsaas.internalCancelReplacedSubscription, {
-          organizationId: args.organizationId,
-          subscriptionId: args.subscriptionId,
-          attempt: args.attempt + 1,
-        });
-      }
+      if (!(e instanceof AsaasError && e.status === 404)) failed = true;
     }
+    if (failed && args.attempt < 4) {
+      await ctx.scheduler.runAfter(60_000 * 2 ** args.attempt, internal.billingAsaas.internalCancelReplacedSubscription, {
+        organizationId: args.organizationId,
+        subscriptionId: args.subscriptionId,
+        attempt: args.attempt + 1,
+        ...(args.refundPaidSince !== undefined ? { refundPaidSince: args.refundPaidSince } : {}),
+      });
+    }
+    return null;
+  },
+});
+
+const dayStart = (ms: number) => Math.floor(ms / DAY_MS) * DAY_MS;
+
+/** `paidAt` (ms) da fatura local de um pagamento, ou null se não há fatura paga. */
+export const internalInvoicePaidAt = internalQuery({
+  args: { providerPaymentId: v.string() },
+  returns: v.union(v.number(), v.null()),
+  handler: async (ctx, args) => {
+    const inv = await ctx.db
+      .query("billingInvoices")
+      .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", args.providerPaymentId))
+      .first();
+    return inv?.paidAt ?? null;
+  },
+});
+
+/** Estorno automático de cobrança duplicada (troca de plano): fatura `refunded`, audit high e aviso. */
+export const internalRecordDuplicateRefund = internalMutation({
+  args: { organizationId: v.id("organizations"), providerPaymentId: v.string(), amountCents: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const inv = await ctx.db
+      .query("billingInvoices")
+      .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", args.providerPaymentId))
+      .first();
+    if (inv && inv.organizationId === args.organizationId) await ctx.db.patch(inv._id, { status: "refunded", updatedAt: now });
+    await auditWebhook(ctx, args.organizationId, "PAYMENT_DUPLICATE_REFUND", "cobrança duplicada da assinatura anterior estornada após o upgrade", "high", now);
+    await notifyBillingAdmins(ctx, {
+      organizationId: args.organizationId,
+      type: "plan_refunded",
+      data: { amountBrl: formatBrl(args.amountCents / 100), duplicate: true },
+      dedupeKey: `plan_refunded:${args.organizationId}:${args.providerPaymentId}`,
+    });
     return null;
   },
 });
