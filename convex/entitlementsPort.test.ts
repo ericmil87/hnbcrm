@@ -290,7 +290,12 @@ describe("cron do plano (B7)", () => {
   test("o cron só age em orgs trial (nunca troca active/past_due/legacy/canceled)", () => {
     const src = read("billingCron.ts");
     expect(src).toMatch(/billing\.status !== "trial"/);
-    expect(src).not.toMatch(/status:\s*"(active|past_due|legacy|canceled)"/);
+    // Única exceção: o ciclo de vida self-service leva active/past_due a `canceled` quando o
+    // cancelamento que o CLIENTE agendou (`cancelAt`) vence; nada mais muda de status.
+    expect(src).not.toMatch(/status:\s*"(active|past_due|legacy)"/);
+    expect(src.match(/status:\s*"canceled"/g) ?? []).toHaveLength(1);
+    expect(src).toMatch(/billing\.status === "active" \|\| billing\.status === "past_due"/);
+    expect(src).toMatch(/sub\.cancelAt !== undefined && sub\.cancelAt <= now/);
   });
 });
 
