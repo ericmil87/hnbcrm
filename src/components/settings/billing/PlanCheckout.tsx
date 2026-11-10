@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Button, buttonClassName } from "@/components/ui/Button";
@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import {
   EMPTY_CHECKOUT_FORM,
+  applyPrefill,
   canStartCheckout,
   isPaymentProcessingMessage,
   summaryFromPreview,
@@ -50,6 +51,21 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
   const [created, setCreated] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [priceNote, setPriceNote] = useState<string | null>(null);
+
+  // Dados de cobrança de um checkout anterior (só com o modal aberto e quem pode assinar).
+  const prefill = useQuery(api.billing.getCheckoutPrefill, open && canManage ? { organizationId } : "skip");
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (!open) {
+      prefilledRef.current = false;
+      return;
+    }
+    // Uma vez por abertura, e só nos campos ainda vazios (o usuário pode já ter começado a digitar).
+    if (prefill !== undefined && !prefilledRef.current) {
+      prefilledRef.current = true;
+      setForm((f) => applyPrefill(f, prefill));
+    }
+  }, [open, prefill]);
 
   const errors = useMemo(() => validateCheckoutForm(form), [form]);
   // Valor do servidor (previewCheckout): só depende de plano/ciclo/add-on, não do que se digita.

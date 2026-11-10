@@ -144,6 +144,10 @@ describe("pré-preenchimento", () => {
     expect(f.document).toBe("529.982.247-25");
     expect(f.billingEmail).toBe("fin@acme.com.br");
   });
+  it("campo nulo no prefill deixa o campo como está", () => {
+    const f = applyPrefill(EMPTY_CHECKOUT_FORM, { billingName: "Acme", billingEmail: null, document: null });
+    expect(f).toMatchObject({ billingName: "Acme", billingEmail: "", document: "" });
+  });
   it("sem prefill, devolve o formulário como está", () => {
     expect(applyPrefill(EMPTY_CHECKOUT_FORM, null)).toBe(EMPTY_CHECKOUT_FORM);
     expect(applyPrefill(EMPTY_CHECKOUT_FORM, undefined)).toBe(EMPTY_CHECKOUT_FORM);
