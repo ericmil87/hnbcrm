@@ -117,9 +117,9 @@ describe("subscription nas queries de uso (sem PII)", () => {
   test("getUsageSummary e getMyEntitlements (visualizador) expõem só ciclo, status, provedor e hasSubscription", async () => {
     const s = await seed("org-sub-a");
     const summary = await as(s.admin).query(api.billing.getUsageSummary, { organizationId: s.organizationId, month: "2026-11" });
-    expect(summary.subscription).toEqual({ billingCycle: "yearly", paymentStatus: "overdue", provider: "asaas", hasSubscription: true });
+    expect(summary.subscription).toMatchObject({ billingCycle: "yearly", paymentStatus: "overdue", provider: "asaas", hasSubscription: true });
     const ent = await as(s.admin).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
-    expect(ent?.subscription).toEqual({ billingCycle: "yearly", paymentStatus: "overdue", provider: "asaas", hasSubscription: true });
+    expect(ent?.subscription).toMatchObject({ billingCycle: "yearly", paymentStatus: "overdue", provider: "asaas", hasSubscription: true });
     const raw = JSON.stringify([summary, ent]);
     expect(raw).not.toMatch(/11222333000181|financeiro-privado|cus_segredo|sub_segredo|Acme Ltda/);
   });
@@ -134,6 +134,27 @@ describe("subscription nas queries de uso (sem PII)", () => {
   test("org sem assinatura: tudo nulo e hasSubscription false", async () => {
     const s = await seed("org-sub-c", false);
     const summary = await as(s.admin).query(api.billing.getUsageSummary, { organizationId: s.organizationId, month: "2026-11" });
-    expect(summary.subscription).toEqual({ billingCycle: null, paymentStatus: null, provider: null, hasSubscription: false });
+    expect(summary.subscription).toEqual({ billingCycle: null, paymentStatus: null, provider: null, hasSubscription: false, currentPeriodEnd: null, nextChargeBrl: null, nextChargeAt: null });
+  });
+  test("fim do ciclo, próxima cobrança, cancelamento e troca agendada; janela de reembolso de 7 dias", async () => {
+    const s = await seed("org-sub-d");
+    const end = NOW + 20 * 86_400_000;
+    const patchSub = (fields: Record<string, unknown>) =>
+      t.run(async (ctx) => {
+        const sub = await ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).first();
+        await ctx.db.patch(sub!._id, fields as never);
+      });
+    await patchSub({ currentPeriodEnd: end, chargeCents: 49700 });
+    let ent = await as(s.admin).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).toMatchObject({ currentPeriodEnd: end, nextChargeBrl: 497, nextChargeAt: end, refundEligibleUntil: NOW + 7 * 86_400_000 });
+    expect(ent?.subscription).not.toHaveProperty("cancelAt");
+    await patchSub({ scheduledChange: { plan: "essencial", cycle: "monthly", effectiveAt: end, chargeCents: 9700 } });
+    ent = await as(s.admin).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).toMatchObject({ nextChargeBrl: 97, scheduledChange: { plan: "essencial", cycle: "monthly", effectiveAt: end } });
+    expect(JSON.stringify(ent?.subscription)).not.toMatch(/chargeCents|groupsAddon/);
+    await patchSub({ cancelAt: end });
+    ent = await as(s.admin).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).toMatchObject({ cancelAt: end, nextChargeBrl: null, nextChargeAt: null });
+    expect(ent?.subscription).not.toHaveProperty("refundEligibleUntil");
   });
 });

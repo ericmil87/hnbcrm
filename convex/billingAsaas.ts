@@ -27,6 +27,8 @@ import { repriceAfterLockExpiry } from "./lib/lockExpiry";
 import { resolveEntitlements } from "./lib/entitlements";
 import { rearmScheduledMessagesForOrg } from "./billingCron";
 import { notifyBillingAdmins } from "./lib/billingNotify";
+import { formatBrl } from "./lib/aiSpend";
+import { PLANS } from "./lib/plans";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -233,6 +235,10 @@ const subscriptionEventValidator = v.object({
   externalReference: v.optional(v.union(v.string(), v.null())),
   status: v.optional(v.string()),
   deleted: v.optional(v.boolean()),
+  /** Relido na API (só nos eventos de pagamento confirmado): fim do ciclo e valor da cobrança. */
+  nextDueDate: v.optional(v.string()),
+  value: v.optional(v.number()),
+  cycle: v.optional(v.string()),
 });
 type PaymentEvent = typeof paymentEventValidator.type;
 type SubscriptionEvent = typeof subscriptionEventValidator.type;
@@ -254,7 +260,16 @@ function toPaymentEvent(p: AsaasPayment): PaymentEvent {
   };
 }
 function toSubscriptionEvent(s: AsaasSubscription): SubscriptionEvent {
-  return { id: s.id, customer: s.customer ?? null, externalReference: s.externalReference ?? null, status: s.status, deleted: s.deleted === true };
+  return {
+    id: s.id,
+    customer: s.customer ?? null,
+    externalReference: s.externalReference ?? null,
+    status: s.status,
+    deleted: s.deleted === true,
+    nextDueDate: s.nextDueDate,
+    value: s.value,
+    cycle: s.cycle,
+  };
 }
 
 /** "2026-12-05" -> "05/12/2026" (texto do aviso). */
@@ -353,6 +368,15 @@ export const internalProcessEvent = internalAction({
           payment = toPaymentEvent(await getPayment(ev.providerPaymentId));
         } catch (e) {
           if (!(e instanceof AsaasError && e.status === 404)) throw e;
+        }
+        // Pagamento confirmado: relê a ASSINATURA para gravar o fim do ciclo (`nextDueDate`) e o valor.
+        // Melhor esforço: sem isso a ativação segue, só sem a data do próximo ciclo.
+        if ((ev.event === "PAYMENT_CONFIRMED" || ev.event === "PAYMENT_RECEIVED") && payment?.subscription) {
+          try {
+            subscription = toSubscriptionEvent(await getSubscription(payment.subscription));
+          } catch {
+            subscription = null;
+          }
         }
       } else if (ev.providerSubscriptionId) {
         try {
@@ -514,7 +538,14 @@ export const internalApplyEvent = internalMutation({
         await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
         const billing = org.billing;
         const targetPlan = sub.pendingPlanChange?.plan ?? billing?.plan;
-        const paidSub = { paymentStatus: "ok" as const, graceUntil: undefined };
+        const nextDue = dayToMs(subscription?.nextDueDate);
+        const paidSub = {
+          paymentStatus: "ok" as const,
+          graceUntil: undefined,
+          currentPeriodStart: now,
+          ...(nextDue !== undefined ? { currentPeriodEnd: nextDue } : {}),
+          ...(subscription?.value !== undefined ? { chargeCents: Math.round(subscription.value * 100) } : {}),
+        };
         try {
           if (!targetPlan) {
             // Sem plano pendente nem gravado (ex.: venda manual sem checkout): só registra o pagamento.
@@ -542,7 +573,7 @@ export const internalApplyEvent = internalMutation({
               organizationId: orgId,
               patch: {
                 billing: { ...current, plan: targetPlan, status: "active", ...(addons ? { addons } : {}) },
-                subscription: { ...paidSub, pendingPlanChange: undefined, currentPeriodStart: now },
+                subscription: { ...paidSub, pendingPlanChange: undefined },
               },
               source: "webhook",
               reason: "Pagamento confirmado (Asaas)",
@@ -554,6 +585,16 @@ export const internalApplyEvent = internalMutation({
           if (isInvalidTransition(e)) return await finish("ignored", `invalid_transition ${e.data.from}->${e.data.to}`, orgId);
           throw e;
         }
+        // Recibo: aviso aos admins (o Asaas já manda o e-mail dele ao cliente, então só admins).
+        await notifyBillingAdmins(ctx, {
+          organizationId: orgId,
+          type: "plan_payment_received",
+          data: {
+            ...(targetPlan ? { planLabel: PLANS[targetPlan].label } : {}),
+            ...(payment.value !== undefined ? { amountBrl: formatBrl(payment.value) } : {}),
+          },
+          dedupeKey: `plan_payment_received:${payment.id}`,
+        });
         return await finish("processed", undefined, orgId);
       }
 

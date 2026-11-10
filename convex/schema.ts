@@ -3175,6 +3175,22 @@ const applicationTables = {
     // Checkout (Asaas): razão social do tomador da NFS-e e carimbo anti duplo clique (60 s).
     billingName: v.optional(v.string()),
     checkoutStartedAt: v.optional(v.number()),
+    // Ciclo de vida self-service: valor de CADA cobrança da assinatura atual (centavos), fim do
+    // cancelamento agendado, troca (downgrade) agendada, reembolso já feito e a assinatura nova de
+    // um upgrade aguardando o 1º pagamento (a antiga só cai quando ele confirmar).
+    chargeCents: v.optional(v.number()),
+    cancelAt: v.optional(v.number()),
+    scheduledChange: v.optional(
+      v.object({
+        plan: v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa")),
+        cycle: v.union(v.literal("monthly"), v.literal("yearly")),
+        effectiveAt: v.number(),
+        chargeCents: v.number(),
+        groupsAddon: v.optional(v.boolean()),
+      })
+    ),
+    refundedAt: v.optional(v.number()),
+    pendingSubscriptionId: v.optional(v.string()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

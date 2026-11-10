@@ -52,6 +52,12 @@ export type MyEntitlements = {
     paymentStatus: "ok" | "pending" | "overdue" | null;
     provider: "manual" | "asaas" | null;
     hasSubscription: boolean;
+    currentPeriodEnd: number | null;
+    nextChargeBrl: number | null;
+    nextChargeAt: number | null;
+    cancelAt?: number;
+    scheduledChange?: { plan: PlanKey; cycle: "monthly" | "yearly"; effectiveAt: number };
+    refundEligibleUntil?: number;
   };
   /** Só para quem tem `settings:view`. */
   pricing?: {
