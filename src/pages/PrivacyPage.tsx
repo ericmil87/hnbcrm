@@ -3,8 +3,10 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
+import { LegalIdentification } from "@/components/landing/LegalIdentification";
+import { LEGAL_ENTITY } from "@/lib/legalEntity";
 
-const EFFECTIVE_DATE = "5 de novembro de 2026";
+const EFFECTIVE_DATE = "10 de novembro de 2026";
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -71,6 +73,8 @@ export function PrivacyPage() {
                 Cada organização é responsável por definir as bases legais, obter os consentimentos
                 necessários e atender às requisições dos titulares dos dados que ela insere no HNBCRM.
               </p>
+              <p>O controlador dos dados de cadastro, de cobrança e de contato comercial é:</p>
+              <LegalIdentification className="block not-italic text-sm text-text-secondary" />
             </LegalSection>
 
             <LegalSection id="dados-coletados" title="2. Dados que tratamos">
@@ -257,12 +261,41 @@ export function PrivacyPage() {
               </p>
             </LegalSection>
 
+            <LegalSection id="pagamento" title="6-A. Pagamento e contato comercial">
+              <p>
+                <span className="text-text-primary font-medium">Pagamento.</span> A cobrança é processada
+                pelo Asaas, que atua como operador e também como controlador próprio dos dados de pagamento.
+                Enviamos ao Asaas os dados de cobrança (nome ou razão social, CPF ou CNPJ, e-mail e endereço
+                de cobrança). O HNBCRM não guarda dados de cartão. A base legal é a execução do contrato, e
+                os dados fiscais (nota fiscal) são guardados pelo prazo exigido em lei.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Contato comercial.</span> Usamos o nome, o
+                e-mail e o telefone de cadastro da conta para falar com você sobre o serviço (avisos de uso
+                e de cobrança, novidades e ofertas do próprio HNBCRM), com base no legítimo interesse. Para
+                deixar de receber as mensagens comerciais, escreva para{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.email}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.email}
+                </a>
+                . Avisos de cobrança e do contrato continuam sendo enviados.
+              </p>
+            </LegalSection>
+
             <LegalSection id="compartilhamento" title="7. Compartilhamento com terceiros">
               <p>
                 Compartilhamos dados apenas com prestadores de serviço estritamente necessários à operação
                 da plataforma (por exemplo, a infraestrutura de backend e o serviço de envio de e-mails
                 transacionais), e com as plataformas de mensagem que cada organização opta por integrar. Não
                 comercializamos dados pessoais.
+              </p>
+              <p>
+                Os suboperadores são: Convex (infraestrutura de backend), Vercel (hospedagem do front),
+                Resend (e-mails), provedores de modelo de linguagem configurados pela organização, Meta
+                (canais oficiais de mensagem) e Asaas (meio de pagamento). Alguns estão fora do Brasil, e a
+                transferência internacional de dados segue o art. 33 da LGPD.
               </p>
               <p>
                 Os recursos de inteligência artificial são opcionais e, quando a organização os ativa,
@@ -285,9 +318,11 @@ export function PrivacyPage() {
             <LegalSection id="retencao" title="8. Retenção">
               <p>
                 Os dados são mantidos enquanto a conta e a organização estiverem ativas e pelo tempo
-                necessário para cumprir as finalidades descritas ou obrigações legais. Encerrada a conta, os
-                dados podem ser excluídos ou anonimizados, ressalvadas as hipóteses de guarda obrigatória
-                previstas em lei.
+                necessário para cumprir as finalidades descritas ou obrigações legais. Depois do
+                cancelamento, guardamos os dados por 90 dias para que a organização exporte o que quiser;
+                passado esse prazo, eles são eliminados ou anonimizados, ressalvadas as hipóteses de guarda
+                obrigatória previstas em lei (por exemplo, dados fiscais). Contas de teste que não foram
+                contratadas seguem a mesma regra.
               </p>
               <p>
                 Os dados de membros de grupos de WhatsApp seguem a retenção específica da cláusula 5: a
@@ -331,12 +366,26 @@ export function PrivacyPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="contato" title="12. Contato">
+            <LegalSection id="contato" title="12. Contato e encarregado">
               <p>
-                Para exercer direitos ou esclarecer dúvidas sobre esta Política, utilize os canais de contato
-                indicados no repositório do projeto. Consulte também os nossos{" "}
+                O encarregado pelo tratamento de dados pessoais atende em{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.dpoEmail}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.dpoEmail}
+                </a>
+                , onde você também pode exercer os direitos de titular. Para dúvidas comerciais, escreva
+                para{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.email}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.email}
+                </a>
+                . Consulte também os nossos{" "}
                 <Link to="/termos" className="text-brand-400 hover:text-brand-300 transition-colors">
-                  Termos de Uso
+                  Termos de Uso e Assinatura
                 </Link>
                 .
               </p>

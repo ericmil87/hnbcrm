@@ -3,8 +3,14 @@ import { ArrowLeft, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
+import { LegalIdentification } from "@/components/landing/LegalIdentification";
+import { formatCount, formatMoney } from "@/lib/format";
+import { LEGAL_ENTITY } from "@/lib/legalEntity";
+import { EXTRA_CHANNEL_BRL, GROUPS_ADDON_BRL, PACK, PLAN_KEYS, PLANS, TRIAL } from "../../convex/lib/plans";
 
-const EFFECTIVE_DATE = "5 de novembro de 2026";
+const EFFECTIVE_DATE = "10 de novembro de 2026";
+
+const brl = (v: number) => formatMoney(v, "BRL", { fractionDigits: 0 });
 
 function LegalSection({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
@@ -19,9 +25,9 @@ export function TermsPage() {
   return (
     <>
       <SEO
-        title="Termos de Uso"
-        description="Termos de Uso do HNBCRM — condições de uso da plataforma, planos, propriedade intelectual, limitação de responsabilidade, o canal WhatsApp não oficial e os grupos de WhatsApp."
-        keywords="termos de uso, termos de serviço, hnbcrm, whatsapp, grupos de whatsapp, saas"
+        title="Termos de Uso e Assinatura"
+        description="Termos de Uso e Assinatura do HNBCRM: planos, atendimentos de IA, excedente, teste, cancelamento, reembolso de 7 dias, só leitura, WhatsApp não oficial e proteção de dados."
+        keywords="termos de uso, termos de assinatura, hnbcrm, planos, reembolso, whatsapp, saas"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
@@ -47,25 +53,34 @@ export function TermsPage() {
         <main className="max-w-3xl mx-auto px-4 py-10 md:py-16">
           {/* Title */}
           <div className="mb-10 space-y-2">
-            <h1 className="text-3xl md:text-4xl font-bold text-text-primary">Termos de Uso</h1>
+            <h1 className="text-3xl md:text-4xl font-bold text-text-primary">Termos de Uso e Assinatura</h1>
             <p className="text-sm text-text-muted">Vigência: {EFFECTIVE_DATE}</p>
           </div>
 
           <div className="space-y-10">
             <p className="text-text-secondary leading-relaxed">
-              Estes Termos de Uso ("Termos") regem o acesso e o uso da plataforma HNBCRM ("HNBCRM",
-              "plataforma" ou "serviço"), um CRM multi-tenant com colaboração entre humanos e agentes de
-              IA. Ao criar uma conta ou utilizar o serviço, você declara ter lido, compreendido e aceito
-              estes Termos. Caso não concorde, não utilize a plataforma.
+              Estes Termos de Uso e Assinatura ("Termos") regem o acesso e o uso da plataforma HNBCRM
+              ("HNBCRM", "plataforma" ou "serviço"), um CRM multi-tenant com colaboração entre humanos e
+              agentes de IA, oferecido como serviço por assinatura (SaaS). Ao criar uma conta ou utilizar
+              o serviço, você declara ter lido, compreendido e aceito estes Termos. Caso não concorde, não
+              utilize a plataforma.
             </p>
 
-            <LegalSection id="objeto" title="1. Objeto">
+            <LegalSection id="objeto" title="1. Objeto e fornecedor">
               <p>
                 O HNBCRM disponibiliza ferramentas de gestão de relacionamento com clientes: pipeline de
                 vendas, gestão de contatos e leads, caixa de entrada multicanal, repasses entre humanos e
                 IA, calendário, automações de comunicação, API REST, servidor MCP e webhooks. Os recursos
-                disponíveis podem variar conforme o plano contratado e a fase de desenvolvimento do
-                produto.
+                disponíveis variam conforme o plano contratado.
+              </p>
+              <p>O serviço é fornecido por:</p>
+              <LegalIdentification className="block not-italic text-sm text-text-secondary" />
+              <p>
+                Estes Termos, o plano escolhido e a{" "}
+                <Link to="/privacidade" className="text-brand-400 hover:text-brand-300 transition-colors">
+                  Política de Privacidade
+                </Link>{" "}
+                formam o contrato entre você e o fornecedor.
               </p>
             </LegalSection>
 
@@ -78,7 +93,12 @@ export function TermsPage() {
               </p>
               <p>
                 Administradores de uma organização são responsáveis pelos membros que convidam, pelas
-                permissões que concedem e pelas chaves de API e integrações que configuram.
+                permissões que concedem e pelas chaves de API e integrações que configuram. O acesso é
+                nominal: contas compartilhadas para contornar o plano podem levar à revisão da assinatura.
+              </p>
+              <p>
+                Quem cria a organização aceita estes Termos em nome dela e declara ter poderes para isso.
+                O aceite fica registrado com a versão, a data e a hora.
               </p>
             </LegalSection>
 
@@ -103,12 +123,52 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="planos" title="4. Planos, cobrança e disponibilidade">
+            <LegalSection id="planos" title="4. Planos, franquias e atendimento IA">
               <p>
-                O HNBCRM encontra-se em fase de Beta Aberto, oferecido gratuitamente. Recursos, limites e
-                condições de planos pagos poderão ser introduzidos futuramente, mediante aviso prévio. O
-                serviço é fornecido "no estado em que se encontra", e podemos alterar, suspender ou
-                descontinuar funcionalidades a qualquer momento durante o período de Beta.
+                Os planos são {PLAN_KEYS.map((k) => PLANS[k].label).join(", ")}, com usuários ilimitados em
+                todos. Cada plano inclui canais, atendimentos IA por mês e envios de campanha, conforme a
+                tabela abaixo; os recursos de cada plano estão na{" "}
+                <Link to="/precos" className="text-brand-400 hover:text-brand-300 transition-colors">
+                  página de preços
+                </Link>
+                .
+              </p>
+              <ul className="list-disc list-inside space-y-1.5 tabular-nums">
+                {PLAN_KEYS.map((k) => {
+                  const p = PLANS[k];
+                  return (
+                    <li key={k}>
+                      {p.label}: {k === "empresa" ? `a partir de ${brl(p.monthlyBrl)} mais ${brl(p.perUnitBrl ?? 0)} por unidade` : brl(p.monthlyBrl)} por mês,{" "}
+                      {p.channels === "perUnit" ? "1 canal por unidade" : `${p.channels} ${p.channels === 1 ? "canal" : "canais"}`},{" "}
+                      {formatCount(p.aiAttendances)} atendimentos IA
+                      {p.aiAttendancesPerUnit ? ` mais ${formatCount(p.aiAttendancesPerUnit)} por unidade` : ""} e{" "}
+                      {formatCount(p.campaignSends)} envios de campanha por mês.
+                    </li>
+                  );
+                })}
+              </ul>
+              <p>
+                Canal extra: {brl(EXTRA_CHANNEL_BRL)} por mês. O add-on Grupos do plano Essencial custa{" "}
+                {brl(GROUPS_ADDON_BRL)} por mês. O pacote de {formatCount(PACK.attendances)} atendimentos
+                é contratado falando com a gente. As mudanças na tabela não alteram os contratos em curso.
+              </p>
+              <p id="atendimento-ia">
+                <span className="text-text-primary font-medium">Atendimento IA</span> é um contato distinto
+                que a IA atendeu (respondeu ou rascunhou resposta) no mês calendário. O mesmo contato
+                atendido várias vezes no mês conta uma vez. Conversas só da equipe, grupos, campanhas e o
+                Copiloto não contam. O medidor do painel "Uso e fatura" é a referência, e você pode
+                contestar um valor em até 30 dias.
+              </p>
+              <p id="excedente">
+                <span className="text-text-primary font-medium">Excedente.</span> Quando a franquia acaba, a
+                IA passa a só sugerir respostas e a sua equipe envia; nada é cobrado além do plano. O
+                excedente só é cobrado se você o ligar e escolher um teto mensal em reais. Ao chegar no
+                teto, a IA volta a só sugerir. Avisamos em 80% e 100% da franquia, e a ativação e o teto
+                ficam registrados com data e autor.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Terceiros.</span> A API oficial da Meta e a
+                chave de IA própria são cobradas direto de você pelo fornecedor, sem margem nossa.
               </p>
             </LegalSection>
 
@@ -288,35 +348,89 @@ export function TermsPage() {
               </ul>
             </LegalSection>
 
-            <LegalSection id="propriedade" title="7. Propriedade intelectual">
+            <LegalSection id="teste" title="7. Teste gratuito, preço, reajuste e preço de fundador">
               <p>
-                O HNBCRM é distribuído como software de código aberto sob a licença MIT. O código-fonte está
-                disponível publicamente e pode ser utilizado nos termos dessa licença. A marca, o nome, o
-                logotipo e os elementos de identidade visual "HNBCRM" permanecem de titularidade de seus
-                detentores e não são licenciados junto com o código.
+                <span className="text-text-primary font-medium">Teste gratuito.</span> Quem cria uma
+                organização recebe {TRIAL.days} dias do plano {PLANS[TRIAL.plan].label}, com{" "}
+                {formatCount(TRIAL.aiAttendances)} atendimentos IA, sem informar cartão e sem cobrança
+                automática ao fim. É permitido um teste por pessoa; criar contas para obter novos testes é
+                abuso e pode levar ao encerramento. Ao fim do teste, a conta passa a só leitura (cláusula 8)
+                até a contratação de um plano.
+              </p>
+              <p id="reajuste">
+                <span className="text-text-primary font-medium">Preço e reajuste.</span> Os preços são em
+                reais e constam da{" "}
+                <Link to="/precos" className="text-brand-400 hover:text-brand-300 transition-colors">
+                  página de preços
+                </Link>
+                . O preço contratado não muda durante os primeiros 12 meses. Depois, o valor pode ser
+                reajustado uma vez por ano pela variação do IPCA, ou por nova tabela, com aviso de 30
+                dias por e-mail e direito de cancelar sem multa antes de o novo valor valer.
               </p>
               <p>
-                Os dados que você insere na plataforma permanecem seus. Você concede ao HNBCRM apenas as
-                permissões necessárias para operar o serviço em seu nome.
+                <span className="text-text-primary font-medium">Preço de fundador.</span> Os 20 primeiros
+                novos pagantes têm 30% de desconto sobre a tabela por 12 meses corridos, contados do
+                primeiro pagamento. Ao fim desse prazo, o plano segue na tabela vigente, e perde o desconto
+                quem ficar inadimplente além do prazo da cláusula 8 ou cancelar.
               </p>
             </LegalSection>
 
-            <LegalSection id="limitacao" title="8. Limitação de responsabilidade">
+            <LegalSection id="inadimplencia" title="8. Pagamento, atraso e modo só leitura">
               <p>
-                O serviço é fornecido "no estado em que se encontra" e "conforme disponível", sem garantias
-                de qualquer natureza, expressas ou implícitas. Na máxima extensão permitida pela lei
-                aplicável, o HNBCRM e seus mantenedores não serão responsáveis por danos indiretos,
-                incidentais, especiais, consequenciais ou lucros cessantes decorrentes do uso ou da
-                impossibilidade de uso do serviço, incluindo — sem limitação — perdas relacionadas ao canal
-                WhatsApp não oficial descrito na cláusula 5.
+                O pagamento é feito por meio de cobrança enviada por e-mail (Pix, boleto ou cartão), e
+                emitimos nota fiscal a cada pagamento. Em caso de atraso, avisamos por e-mail. Se o atraso
+                passar de 7 dias, a conta{" "}
+                <span className="text-text-primary font-medium">poderá ser colocada em modo só leitura</span>
+                , por decisão nossa, caso a caso: a equipe continua vendo tudo e exportando os dados, mas a
+                IA e o envio de mensagens e campanhas ficam pausados. As mensagens que chegarem continuam
+                sendo gravadas. Pagando o valor em aberto, o acesso volta.
+              </p>
+              <p>
+                Nunca apagamos dados por atraso de pagamento. Em caso de multa e juros por atraso, valem os
+                limites da lei.
               </p>
             </LegalSection>
 
-            <LegalSection id="rescisao" title="9. Rescisão">
+            <LegalSection id="exportacao" title="9. Exportação dos dados e portabilidade">
               <p>
-                Você pode encerrar sua conta a qualquer momento. Podemos suspender ou encerrar o acesso em
-                caso de violação destes Termos, de uso indevido da plataforma ou por exigência legal. Com o
-                encerramento, o acesso ao serviço cessa; os dados poderão ser excluídos conforme nossa{" "}
+                Você pode exportar os dados da organização a qualquer momento, inclusive com a conta em
+                só leitura, com o teste encerrado ou em atraso. Depois do cancelamento, guardamos os dados
+                por 90 dias para que você exporte; passado esse prazo eles são eliminados, ressalvada a
+                guarda exigida por lei. Os dados que você insere continuam sendo seus.
+              </p>
+            </LegalSection>
+
+            <LegalSection id="cancelamento" title="10. Cancelamento e reembolso">
+              <p>
+                Você pode cancelar a qualquer momento, sem multa e sem fidelidade, escrevendo para{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.email}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.email}
+                </a>
+                . O acesso vale até o fim do período já pago. Podemos encerrar o serviço por violação
+                destes Termos, abuso, fraude ou exigência legal, com aviso prévio de 30 dias, salvo nos
+                casos graves.
+              </p>
+              <p id="reembolso">
+                <span className="text-text-primary font-medium">Reembolso de 7 dias.</span> Para todos os
+                clientes, devolvemos o valor integral do primeiro pagamento se você pedir em até 7 dias
+                corridos depois dele, sem precisar explicar o motivo, pelo mesmo meio de pagamento. Ficam
+                fora dessa garantia serviços de implantação já executados a seu pedido, atendimentos extras
+                já consumidos e taxas de terceiros (Meta, provedor de IA). O serviço é contratado para uso
+                profissional; essa garantia é uma liberalidade nossa e, quando o Código de Defesa do
+                Consumidor se aplicar ao seu caso, nada aqui reduz os direitos que ele garante.
+              </p>
+            </LegalSection>
+
+            <LegalSection id="ia" title="11. Inteligência artificial">
+              <p>
+                As respostas geradas por IA podem conter erros. Você define a persona, os horários e os
+                repasses para a equipe, e responde pelo conteúdo enviado aos seus contatos. A IA é opcional
+                e só funciona depois de ativada por um administrador. É proibido usá-la para spam ou
+                finalidade ilícita. O conteúdo necessário à resposta é enviado ao provedor de modelo de
+                linguagem configurado, conforme a{" "}
                 <Link to="/privacidade" className="text-brand-400 hover:text-brand-300 transition-colors">
                   Política de Privacidade
                 </Link>
@@ -324,26 +438,100 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="alteracoes" title="10. Alterações destes Termos">
+            <LegalSection id="propriedade" title="12. Propriedade intelectual e licença de uso">
               <p>
-                Podemos atualizar estes Termos periodicamente. Alterações relevantes serão comunicadas por
-                meios razoáveis. O uso continuado do serviço após a vigência das alterações representa a sua
-                concordância com os Termos revisados.
+                O software é licenciado para uso como serviço durante a vigência da assinatura. Esta
+                assinatura não transfere código nem direitos de propriedade intelectual. A marca, o nome, o
+                logotipo e os elementos de identidade visual "HNBCRM" não são licenciados para uso fora do
+                serviço.
+              </p>
+              <p>
+                Os dados que você insere na plataforma permanecem seus. Você concede ao HNBCRM apenas as
+                permissões necessárias para operar o serviço em seu nome.
               </p>
             </LegalSection>
 
-            <LegalSection id="foro" title="11. Legislação aplicável e foro">
+            <LegalSection id="sla" title="13. Disponibilidade e suporte">
               <p>
-                Estes Termos são regidos pelas leis da República Federativa do Brasil. Fica eleito o foro da
-                comarca do domicílio do titular dos dados para dirimir quaisquer controvérsias, salvo
-                disposição legal em contrário.
+                Trabalhamos para manter o serviço disponível, mas a disponibilidade é uma meta, não uma
+                garantia: ela depende de provedores como infraestrutura de nuvem, Meta e meios de
+                pagamento. Avisamos por e-mail os incidentes relevantes. O suporte é feito por e-mail em{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.email}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.email}
+                </a>
+                .
+              </p>
+              <p>
+                O uso de mensagens, contatos, funis e leads não tem limite de quantidade nos planos, desde
+                que dentro de um uso razoável da plataforma.
               </p>
             </LegalSection>
 
-            <LegalSection id="contato" title="12. Contato">
+            <LegalSection id="limitacao" title="14. Limitação de responsabilidade">
               <p>
-                Dúvidas sobre estes Termos podem ser encaminhadas pelos canais de contato indicados no
-                repositório do projeto e na nossa{" "}
+                O serviço é fornecido "conforme disponível". Na máxima extensão permitida pela lei
+                aplicável, a responsabilidade total do HNBCRM por qualquer reclamação fica limitada ao
+                valor que você pagou nos 12 meses anteriores ao fato, e não respondemos por danos indiretos
+                ou lucros cessantes, incluindo as perdas relacionadas ao canal WhatsApp não oficial da
+                cláusula 5. Isso não exclui a responsabilidade por vício do serviço que a lei não permita
+                excluir.
+              </p>
+            </LegalSection>
+
+            <LegalSection id="lgpd" title="15. Proteção de dados e suboperadores">
+              <p>
+                Em relação aos dados dos seus contatos e leads, a sua organização é a controladora e o
+                HNBCRM é operador, tratando os dados conforme as suas instruções. Para operar o serviço
+                contamos com suboperadores: infraestrutura de backend (Convex), hospedagem do front
+                (Vercel), envio de e-mails (Resend), provedores de IA configurados, Meta (canais oficiais)
+                e meio de pagamento (Asaas). A lista completa e os demais detalhes estão na{" "}
+                <Link to="/privacidade" className="text-brand-400 hover:text-brand-300 transition-colors">
+                  Política de Privacidade
+                </Link>
+                . O encarregado de dados atende em{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.dpoEmail}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.dpoEmail}
+                </a>
+                .
+              </p>
+            </LegalSection>
+
+            <LegalSection id="alteracoes" title="16. Alterações destes Termos">
+              <p>
+                Podemos atualizar estes Termos. Avisamos por e-mail e no aplicativo com 30 dias de
+                antecedência, e quem discordar pode cancelar sem multa. Mudanças materiais (preço,
+                franquias, reembolso, tratamento de dados) exigem o seu aceite ativo; continuar usando o
+                serviço não vale como aceite de preço novo.
+              </p>
+            </LegalSection>
+
+            <LegalSection id="foro" title="17. Aceite eletrônico, lei e foro">
+              <p>
+                O aceite destes Termos é feito por meio eletrônico, ao marcar a caixa de aceite no cadastro
+                ou ao usar o serviço depois do aviso. As partes reconhecem como válidos o registro do aceite
+                (versão, data e hora) e os demais meios eletrônicos de comprovação (MP 2.200-2/2001, art. 10,
+                § 2º). Estes Termos são regidos pelas leis da República Federativa do Brasil. Fica eleito o
+                foro da comarca do domicílio do consumidor, quando houver relação de consumo, e, nos demais
+                casos, o foro da comarca do domicílio do fornecedor.
+              </p>
+            </LegalSection>
+
+            <LegalSection id="contato" title="18. Contato">
+              <p>
+                Dúvidas, cancelamento e pedidos de reembolso: {" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.email}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.email}
+                </a>
+                . Veja também a nossa{" "}
                 <Link to="/privacidade" className="text-brand-400 hover:text-brand-300 transition-colors">
                   Política de Privacidade
                 </Link>
