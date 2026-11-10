@@ -3,6 +3,10 @@ import { internal } from "./_generated/api";
 
 const crons = cronJobs();
 
+// Plano (B7): teste vencido vira `read_only`, avisos D-7/D-3/D-1 e pausa das campanhas.
+// Só age em orgs `trial`; 12:00 UTC = 09:00 BRT. Paginado (a próxima página se agenda).
+crons.daily("billing trial tick", { hourUTC: 12, minuteUTC: 0 }, internal.billingCron.internalBillingTick, {});
+
 // Lembrete de cada task é agendado por `runAfter` (create, snooze, mudança de
 // prazo em updateTask/internalUpdateTask e instância nova da recorrência); o
 // cron é só resgate de um agendamento perdido, por índice — 1 h basta.

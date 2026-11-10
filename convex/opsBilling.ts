@@ -16,6 +16,7 @@ import { MODULE_GATE, type GatedModule } from "./lib/plans";
 import { isValidMonthKey, monthKeyUtc, monthStartUtcMs, nextMonthStartUtcMs } from "./lib/aiSpend";
 import { contactKeyOf, getOrgUsageMonthly, recordAttendance, totalAttendances } from "./lib/attendanceLedger";
 import { agentRunsRetentionCutoff } from "./retention";
+import { rearmScheduledMessagesForOrg } from "./billingCron";
 import { maskDigitRuns } from "./lib/telegramFormat";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -144,12 +145,18 @@ export const internalSetOrgPlan = internalMutation({
         outOfPlanModules,
       };
     }
+    const wasBlocked = !resolveEntitlements(org, now).outboundAllowed;
     const res = await applySubscriptionChange(ctx, {
       organizationId: args.organizationId,
       patch: { billing: next },
       source: "ops",
       reason: "internalSetOrgPlan",
     });
+    // Saiu do modo leitura: as mensagens agendadas (que ficaram pending) são re-armadas.
+    // Campanhas pausadas com `plan_read_only` NÃO são retomadas: o cliente retoma.
+    if (wasBlocked && res.after && resolveEntitlements({ settings: org.settings, billing: res.after }, now).outboundAllowed) {
+      await rearmScheduledMessagesForOrg(ctx, args.organizationId);
+    }
     return { dryRun, applied: true, before: res.before, after: res.after!, outOfPlanModules };
   },
 });
@@ -610,5 +617,117 @@ export const internalCostAudit = internalQuery({
       }
     }
     return { sinceDays, rows: [...agg.values()], truncatedOrgs, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+const ACTIVITY_DAYS = 30;
+const ACTIVITY_SCAN_CAP = 1000;
+
+/**
+ * Só leitura: atividade dos últimos 30 dias por org, para reconferir as `canceled` ANTES do
+ * deploy do B7 (que transforma `canceled` em corte real de IA e envio) e devolver a `legacy`
+ * quem voltou a usar. Sem e-mail, telefone nem texto de mensagem; o nome da org sai mascarado.
+ * Contagens são limitadas (`capped`) para não estourar leitura.
+ */
+export const internalOrgActivityReport = internalQuery({
+  args: {
+    /** Obrigatório: query não lê o relógio. */
+    now: v.number(),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    since: v.number(),
+    rows: v.array(
+      v.object({
+        organizationId: v.id("organizations"),
+        name: v.string(),
+        status: v.string(),
+        plan: v.union(v.string(), v.null()),
+        createdAt: v.number(),
+        humanMembers: v.number(),
+        activeChannels: v.number(),
+        conversationsActive30d: v.number(),
+        inboundConversations30d: v.number(),
+        lastMessageAt: v.union(v.number(), v.null()),
+        leadsCreated30d: v.number(),
+        aiRuns30d: v.number(),
+        capped: v.boolean(),
+        /** Conta `canceled` com sinal de uso: candidata a voltar para `legacy` antes do corte. */
+        looksActive: v.boolean(),
+      })
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    const since = args.now - ACTIVITY_DAYS * DAY_MS;
+    const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 25), 1), 50);
+    const page = await ctx.db.query("organizations").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+    const rows = [];
+    for (const org of page.page) {
+      let capped = false;
+      const members = await ctx.db
+        .query("teamMembers")
+        .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+        .take(ACTIVITY_SCAN_CAP + 1);
+      if (members.length > ACTIVITY_SCAN_CAP) capped = true;
+      const humanMembers = members.filter((m) => m.type === "human" && m.removedAt === undefined && m.status !== "inactive").length;
+
+      let activeChannels = 0;
+      let seenChannels = 0;
+      for await (const c of ctx.db
+        .query("channelConfigs")
+        .withIndex("by_organization", (q) => q.eq("organizationId", org._id))) {
+        if (c.status === "active") activeChannels++;
+        if (++seenChannels >= 500) {
+          capped = true;
+          break;
+        }
+      }
+
+      const convs = await ctx.db
+        .query("conversations")
+        .withIndex("by_organization_and_last_message", (q) => q.eq("organizationId", org._id).gte("lastMessageAt", since))
+        .order("desc")
+        .take(ACTIVITY_SCAN_CAP + 1);
+      if (convs.length > ACTIVITY_SCAN_CAP) capped = true;
+      const counted = convs.slice(0, ACTIVITY_SCAN_CAP);
+      const inboundConversations30d = counted.filter((c) => (c.lastInboundAt ?? 0) >= since).length;
+
+      const leads = await ctx.db
+        .query("leads")
+        .withIndex("by_organization_and_created", (q) => q.eq("organizationId", org._id).gte("createdAt", since))
+        .take(ACTIVITY_SCAN_CAP + 1);
+      if (leads.length > ACTIVITY_SCAN_CAP) capped = true;
+      const runs = await ctx.db
+        .query("agentRuns")
+        .withIndex("by_organization_and_started", (q) => q.eq("organizationId", org._id).gte("startedAt", since))
+        .take(ACTIVITY_SCAN_CAP + 1);
+      if (runs.length > ACTIVITY_SCAN_CAP) capped = true;
+
+      const leadsCreated30d = Math.min(leads.length, ACTIVITY_SCAN_CAP);
+      const aiRuns30d = Math.min(runs.length, ACTIVITY_SCAN_CAP);
+      const status = org.billing ? org.billing.status : "none";
+      rows.push({
+        organizationId: org._id,
+        name: maskDigitRuns(org.name),
+        status,
+        plan: org.billing?.plan ?? null,
+        createdAt: org.createdAt,
+        humanMembers,
+        activeChannels,
+        conversationsActive30d: counted.length,
+        inboundConversations30d,
+        lastMessageAt: counted[0]?.lastMessageAt ?? null,
+        leadsCreated30d,
+        aiRuns30d,
+        capped,
+        looksActive:
+          status === "canceled" &&
+          (activeChannels > 0 || counted.length > 0 || leadsCreated30d > 0 || aiRuns30d > 0),
+      });
+    }
+    return { since, rows, isDone: page.isDone, continueCursor: page.continueCursor };
   },
 });
