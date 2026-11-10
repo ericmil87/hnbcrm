@@ -45,6 +45,7 @@ describe("TermsPage", () => {
       "suboperadores",
       "Canal WhatsApp não oficial",
       "aceite ativo",
+      "também por WhatsApp",
       "foro",
     ]) {
       expect(t, needle).toContain(needle);

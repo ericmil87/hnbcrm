@@ -461,8 +461,8 @@ export function TermsPage() {
                   className="text-brand-400 hover:text-brand-300 transition-colors"
                 >
                   {LEGAL_ENTITY.email}
-                </a>
-                .
+                </a>{" "}
+                em todos os planos e, a partir do plano {PLANS.profissional.label}, também por WhatsApp.
               </p>
               <p>
                 O uso de mensagens, contatos, funis e leads não tem limite de quantidade nos planos, desde
