@@ -26,8 +26,9 @@ import { estimateInvoice } from "./lib/billingMath";
 import { isAsaasEnabled } from "./lib/asaasApi";
 import { isValidCpfCnpj } from "./lib/brDocument";
 import { isDeliverableEmail } from "./lib/emailAddress";
-import { firstDueDate, priceCheckout } from "./lib/checkoutPricing";
+import { FALE_COM_A_GENTE_EMPRESA, evaluateCheckout, firstDueDate } from "./lib/checkoutPricing";
 import { runAsaasCheckout } from "./lib/asaasCheckout";
+import { PLANS } from "./lib/plans";
 
 const planKeyValidator = v.union(
   v.literal("essencial"),
@@ -518,11 +519,6 @@ export const setOverage = mutation({
 
 // ── startCheckout (self-service de assinatura pelo Asaas) ───────────────────
 
-const FALE_COM_A_GENTE_EMPRESA =
-  "O plano Empresa é por contrato: fale com a gente para montar a proposta (unidades, canais e franquia).";
-const ALREADY_PAYING =
-  "Sua conta já tem um plano ativo. Para mudar de plano ou de ciclo, fale com a gente.";
-
 /**
  * Cria cliente + assinatura no Asaas e devolve o link da 1ª fatura (hospedada: o cliente escolhe
  * Pix, boleto ou cartão lá; nenhum dado de cartão passa por aqui). `settings:manage` + conta com
@@ -555,21 +551,17 @@ export const startCheckout = action({
 
     // Autoriza (settings:manage + conta com e-mail) e lê o necessário.
     const info = await ctx.runQuery(internal.billingAsaas.internalCheckoutContext, { organizationId: args.organizationId });
-    if (info.status === "active" || info.status === "past_due") throw new ConvexError(ALREADY_PAYING);
-
     const now = Date.now();
-    const priced = priceCheckout({
+    // Mesma decisão da prévia (`previewCheckout`): plano ativo recusa, senão o preço do servidor.
+    const evaluation = evaluateCheckout({
       plan: args.plan,
       cycle: args.cycle,
       groupsAddon: args.groupsAddon === true,
-      billing: { plan: info.plan ?? undefined, extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
+      org: { status: info.status, plan: info.plan, extraChannels: info.extraChannels, priceLock: info.priceLock },
       now,
     });
-    if (!priced.ok) {
-      throw new ConvexError(
-        priced.error === "empresa" ? FALE_COM_A_GENTE_EMPRESA : "O add-on Grupos existe só no plano Essencial."
-      );
-    }
+    if (!evaluation.ok) throw new ConvexError(evaluation.refusal);
+    const priced = { price: evaluation.price };
 
     await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
     const trialValid = info.status === "trial" && info.trialEndsAt !== null && info.trialEndsAt > now;
@@ -637,5 +629,79 @@ export const listInvoices = query({
       nfseNumber: r.nfseNumber ?? null,
       nfseUrl: r.nfseUrl ?? null,
     }));
+  },
+});
+
+// ── previewCheckout (prévia do preço antes de assinar) ──────────────────────
+
+/**
+ * Prévia do que o `startCheckout` vai cobrar: roda EXATAMENTE a mesma `evaluateCheckout` com o
+ * billing real da org (plano, canais extras, trava). `settings:view`. Sem relógio: `now` (do
+ * cliente, arredondado) só decide se a trava já venceu, como em `getUsageSummary`; ausente = a
+ * trava vale. Devolve `refusal` (Empresa, plano ativo, add-on inválido) em vez de lançar.
+ */
+export const previewCheckout = query({
+  args: {
+    organizationId: v.id("organizations"),
+    plan: planKeyValidator,
+    cycle: v.union(v.literal("monthly"), v.literal("yearly")),
+    groupsAddon: v.optional(v.boolean()),
+    now: v.optional(v.number()),
+  },
+  returns: v.object({
+    chargeBrl: v.union(v.number(), v.null()),
+    listBrl: v.union(v.number(), v.null()),
+    monthlyBrl: v.union(v.number(), v.null()),
+    priceSource: v.union(v.literal("price_lock"), v.literal("table"), v.null()),
+    lines: v.array(v.object({ id: v.string(), label: v.string(), amountBrl: v.number() })),
+    cycleMonths: v.number(),
+    refusal: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "settings", "view");
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    const now = args.now ?? 0;
+    const groupsAddon = args.groupsAddon === true;
+    const evaluation = evaluateCheckout({
+      plan: args.plan,
+      cycle: args.cycle,
+      groupsAddon,
+      org: {
+        status: org.billing?.status ?? null,
+        plan: org.billing?.plan ?? null,
+        extraChannels: org.billing?.extraChannels ?? 0,
+        priceLock: org.billing?.priceLock ?? null,
+      },
+      now,
+    });
+    const cycleMonths = args.cycle === "yearly" ? 10 : 1;
+    if (!evaluation.ok) {
+      return { chargeBrl: null, listBrl: null, monthlyBrl: null, priceSource: null, lines: [], cycleMonths, refusal: evaluation.refusal };
+    }
+    const { price } = evaluation;
+    // Linhas mensais (a cobrança do ciclo é `monthly × cycleMonths`): plano, canais extras, add-on e
+    // o ajuste da trava (valor combinado ou desconto) como diferença para a tabela.
+    const est = estimateInvoice({
+      plan: args.plan,
+      extraChannels: org.billing?.extraChannels,
+      groupsAddon,
+      now,
+    });
+    const lines: Array<{ id: string; label: string; amountBrl: number }> = [
+      { id: "plan", label: `Plano ${PLANS[args.plan].label}`, amountBrl: est.planBrl },
+    ];
+    if (est.extraChannelsBrl > 0) lines.push({ id: "extra_channels", label: "Canais extras", amountBrl: est.extraChannelsBrl });
+    if (est.groupsAddonBrl > 0) lines.push({ id: "groups_addon", label: "Add-on Grupos", amountBrl: est.groupsAddonBrl });
+    const adjustment = Math.round((price.monthlyBrl - est.listBrl) * 100) / 100;
+    if (adjustment !== 0) lines.push({ id: "price_lock", label: adjustment < 0 ? "Desconto combinado" : "Preço combinado", amountBrl: adjustment });
+    return {
+      chargeBrl: price.chargeBrl,
+      listBrl: Math.round(price.listMonthlyBrl * cycleMonths * 100) / 100,
+      monthlyBrl: price.monthlyBrl,
+      priceSource: price.priceSource,
+      lines,
+      cycleMonths,
+    };
   },
 });

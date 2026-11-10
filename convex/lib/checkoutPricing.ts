@@ -75,3 +75,41 @@ export function firstDueDate(now: number, trialEndsAt?: number): string {
   const end = brazilDay(trialEndsAt);
   return end > today ? end : today;
 }
+
+export const FALE_COM_A_GENTE_EMPRESA =
+  "O plano Empresa é por contrato: fale com a gente para montar a proposta (unidades, canais e franquia).";
+export const ALREADY_PAYING = "Sua conta já tem um plano ativo. Para mudar de plano ou de ciclo, fale com a gente.";
+export const GROUPS_ADDON_ONLY_ESSENCIAL = "O add-on Grupos existe só no plano Essencial.";
+
+export type CheckoutOrgInfo = {
+  status: string | null;
+  plan: PlanKey | null;
+  extraChannels: number;
+  priceLock: NonNullable<Doc<"organizations">["billing"]>["priceLock"] | null;
+};
+
+/**
+ * A MESMA decisão do `startCheckout` e do `previewCheckout` (a prévia nunca pode divergir do que
+ * será cobrado): recusa (Empresa, plano já ativo, add-on inválido) ou o preço calculado.
+ */
+export function evaluateCheckout(args: {
+  plan: PlanKey;
+  cycle: CheckoutCycle;
+  groupsAddon: boolean;
+  org: CheckoutOrgInfo;
+  now: number;
+}): { ok: true; price: CheckoutPrice } | { ok: false; refusal: string } {
+  if (args.plan === "empresa") return { ok: false, refusal: FALE_COM_A_GENTE_EMPRESA };
+  if (args.org.status === "active" || args.org.status === "past_due") return { ok: false, refusal: ALREADY_PAYING };
+  const priced = priceCheckout({
+    plan: args.plan,
+    cycle: args.cycle,
+    groupsAddon: args.groupsAddon,
+    billing: { plan: args.org.plan ?? undefined, extraChannels: args.org.extraChannels, priceLock: args.org.priceLock ?? undefined },
+    now: args.now,
+  });
+  if (!priced.ok) {
+    return { ok: false, refusal: priced.error === "empresa" ? FALE_COM_A_GENTE_EMPRESA : GROUPS_ADDON_ONLY_ESSENCIAL };
+  }
+  return { ok: true, price: priced.price };
+}
