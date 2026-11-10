@@ -3165,6 +3165,18 @@ const applicationTables = {
     .index("by_provider_subscription", ["providerSubscriptionId"])
     .index("by_payment_status", ["paymentStatus"]),
 
+  // 7b: aceite dos Termos de Uso. APPEND-ONLY (só insert, nenhuma função atualiza ou apaga):
+  // é a prova do consentimento. `organizationId` só quando o aceite aconteceu ao criar a org.
+  termsAcceptances: defineTable({
+    userId: v.id("users"),
+    organizationId: v.optional(v.id("organizations")),
+    version: v.string(), // `TERMS_VERSION` (convex/lib/terms.ts)
+    acceptedAt: v.number(),
+    userAgent: v.optional(v.string()),
+  })
+    .index("by_user", ["userId"])
+    .index("by_user_and_version", ["userId", "version"]),
+
   // Billing (B1): pacotes pré-pagos (R$ 390 = 1.000 atendimentos, 12 meses), FIFO por
   // `expiresAt`. B1 só tem o writer de ops (`internalGrantCredits`); consumo vem no B6.
   usageCredits: defineTable({
