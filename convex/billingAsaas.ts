@@ -75,6 +75,45 @@ export const internalCheckoutContext = internalQuery({
   },
 });
 
+/** Mesmo contexto do checkout, SEM sessão: só para as ops (`internal*` rodadas pelo operador). */
+export const internalCheckoutContextOps = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.object({
+    orgName: v.string(),
+    quiet: v.boolean(),
+    status: v.union(v.string(), v.null()),
+    trialEndsAt: v.union(v.number(), v.null()),
+    extraChannels: v.number(),
+    priceLock: v.union(
+      v.null(),
+      v.object({
+        kind: v.union(v.literal("founder"), v.literal("frozen")),
+        monthlyBrl: v.optional(v.number()),
+        discountPct: v.optional(v.number()),
+        until: v.optional(v.number()),
+      })
+    ),
+    providerSubscriptionId: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    return {
+      orgName: org.name,
+      quiet: org.billing?.quiet === true,
+      status: org.billing?.status ?? null,
+      trialEndsAt: org.billing?.trialEndsAt ?? null,
+      extraChannels: org.billing?.extraChannels ?? 0,
+      priceLock: org.billing?.priceLock ? { ...org.billing.priceLock } : null,
+      providerSubscriptionId: sub?.providerSubscriptionId ?? null,
+    };
+  },
+});
+
 /** Anti duplo clique: carimba a tentativa (60 s) pela porta; uma segunda dentro da janela é recusada. */
 export const internalBeginCheckout = internalMutation({
   args: { organizationId: v.id("organizations") },

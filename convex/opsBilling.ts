@@ -7,7 +7,7 @@
  */
 import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
-import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { orgBillingValidator } from "./schema";
 import { applySubscriptionChange, validateBillingChange, type OrgBillingInput } from "./lib/entitlementsOps";
@@ -17,6 +17,19 @@ import { isValidMonthKey, monthKeyUtc, monthStartUtcMs, nextMonthStartUtcMs } fr
 import { contactKeyOf, getOrgUsageMonthly, recordAttendance, totalAttendances } from "./lib/attendanceLedger";
 import { agentRunsRetentionCutoff } from "./retention";
 import { rearmScheduledMessagesForOrg } from "./billingCron";
+import {
+  ASAAS_WEBHOOK_EVENTS,
+  asaasConfig,
+  asaasWebhookToken,
+  createWebhook,
+  getAccountName,
+  isAsaasEnabled,
+  listWebhooks,
+} from "./lib/asaasApi";
+import { isValidCpfCnpj, maskCpfCnpj } from "./lib/brDocument";
+import { isDeliverableEmail } from "./lib/emailAddress";
+import { firstDueDate, priceCheckout } from "./lib/checkoutPricing";
+import { runAsaasCheckout } from "./lib/asaasCheckout";
 import { maskDigitRuns } from "./lib/telegramFormat";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -737,5 +750,175 @@ export const internalOrgActivityReport = internalQuery({
       });
     }
     return { since, rows, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});
+
+// ── Asaas (cobrança): ops ───────────────────────────────────────────────────
+// Actions (fetch) em `internal*`, `dryRun` padrão true. Só `lib/asaasApi.ts` fala com o Asaas.
+
+/** "Acme Comércio Ltda" -> "Acm•••" (confirma a conta certa sem expor o nome inteiro). */
+function maskName(name: string | null): string | null {
+  if (!name) return null;
+  const clean = maskDigitRuns(name).trim();
+  return `${clean.slice(0, 3)}•••`;
+}
+
+/** Confirma a chave e o ambiente (sandbox x produção) e devolve o nome da conta mascarado. */
+export const internalAsaasPing = internalAction({
+  args: {},
+  returns: v.object({
+    enabled: v.boolean(),
+    env: v.union(v.literal("production"), v.literal("sandbox"), v.null()),
+    ok: v.boolean(),
+    accountName: v.union(v.string(), v.null()),
+    webhookTokenConfigured: v.boolean(),
+  }),
+  handler: async () => {
+    const cfg = asaasConfig();
+    const webhookTokenConfigured = (asaasWebhookToken()?.length ?? 0) >= 32;
+    if (!cfg) return { enabled: false, env: null, ok: false, accountName: null, webhookTokenConfigured };
+    try {
+      return { enabled: true, env: cfg.env, ok: true, accountName: maskName(await getAccountName()), webhookTokenConfigured };
+    } catch {
+      return { enabled: true, env: cfg.env, ok: false, accountName: null, webhookTokenConfigured };
+    }
+  },
+});
+
+/**
+ * Cria o webhook no Asaas (`${CONVEX_SITE_URL}/webhooks/asaas`, token = `ASAAS_WEBHOOK_TOKEN`,
+ * eventos de pagamento e de assinatura). Idempotente: se já existe um webhook com a mesma URL, não
+ * duplica. `email`: caixa que o Asaas avisa se a fila do webhook parar (obrigatório no Asaas).
+ */
+export const internalAsaasConfigureWebhook = internalAction({
+  args: { dryRun: v.optional(v.boolean()), email: v.optional(v.string()) },
+  returns: v.object({
+    dryRun: v.boolean(),
+    action: v.union(v.literal("exists"), v.literal("would_create"), v.literal("created")),
+    url: v.string(),
+    events: v.array(v.string()),
+  }),
+  handler: async (_ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    if (!isAsaasEnabled()) throw new ConvexError("Chave da API do Asaas não configurada neste deployment");
+    const token = asaasWebhookToken();
+    if (!token || token.length < 32) throw new ConvexError("Token do webhook do Asaas ausente ou com menos de 32 caracteres");
+    const site = process.env.CONVEX_SITE_URL?.trim();
+    if (!site) throw new ConvexError("CONVEX_SITE_URL ausente neste deployment");
+    const url = `${site.replace(/\/+$/, "")}/webhooks/asaas`;
+    const existing = (await listWebhooks()).find((w) => w.url === url);
+    if (existing) return { dryRun, action: "exists" as const, url, events: [...ASAAS_WEBHOOK_EVENTS] };
+    if (dryRun) return { dryRun, action: "would_create" as const, url, events: [...ASAAS_WEBHOOK_EVENTS] };
+    const email = args.email?.trim().toLowerCase();
+    if (!email || !isDeliverableEmail(email)) throw new ConvexError("Informe `email` (caixa de avisos do webhook) para criar de verdade");
+    await createWebhook({ name: "HNBCRM", url, email, authToken: token });
+    return { dryRun, action: "created" as const, url, events: [...ASAAS_WEBHOOK_EVENTS] };
+  },
+});
+
+/**
+ * Venda manual: cria cliente + assinatura no Asaas para uma org, com preço NEGOCIADO opcional
+ * (`valueBrl` = valor de CADA cobrança, mensal ou anual; fundador, preço travado, Empresa). Sem
+ * `valueBrl` usa o catálogo (+ `priceLock` da org). O status/plano da org NÃO muda: só o pagamento
+ * confirmado (webhook) libera o plano. Saída sem documento nem e-mail.
+ */
+export const internalAsaasCreateSubscriptionForOrg = internalAction({
+  args: {
+    organizationId: v.id("organizations"),
+    plan: v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa")),
+    cycle: v.union(v.literal("monthly"), v.literal("yearly")),
+    valueBrl: v.optional(v.number()),
+    groupsAddon: v.optional(v.boolean()),
+    billingName: v.string(),
+    document: v.string(),
+    billingEmail: v.string(),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    plan: v.string(),
+    cycle: v.string(),
+    chargeBrl: v.number(),
+    monthlyBrl: v.number(),
+    nextDueDate: v.string(),
+    document: v.string(),
+    invoiceUrl: v.union(v.string(), v.null()),
+    created: v.boolean(),
+  }),
+  handler: async (ctx, args): Promise<{
+    dryRun: boolean;
+    plan: string;
+    cycle: string;
+    chargeBrl: number;
+    monthlyBrl: number;
+    nextDueDate: string;
+    document: string;
+    invoiceUrl: string | null;
+    created: boolean;
+  }> => {
+    const dryRun = args.dryRun !== false;
+    if (!dryRun && !isAsaasEnabled()) throw new ConvexError("Chave da API do Asaas não configurada neste deployment");
+    if (!isValidCpfCnpj(args.document)) throw new ConvexError("CPF/CNPJ inválido");
+    const billingEmail = args.billingEmail.trim().toLowerCase();
+    if (!isDeliverableEmail(billingEmail)) throw new ConvexError("E-mail financeiro inválido");
+    const billingName = args.billingName.trim();
+    if (billingName.length < 2 || billingName.length > 120) throw new ConvexError("billingName deve ter 2 a 120 caracteres");
+    if (args.valueBrl !== undefined && !(Number.isFinite(args.valueBrl) && args.valueBrl > 0 && args.valueBrl <= 1_000_000)) {
+      throw new ConvexError("valueBrl deve estar entre 0 e 1.000.000");
+    }
+    if (args.plan === "empresa" && args.valueBrl === undefined) {
+      throw new ConvexError("Empresa não tem preço de tabela: informe valueBrl (valor de cada cobrança)");
+    }
+    const info = await ctx.runQuery(internal.billingAsaas.internalCheckoutContextOps, { organizationId: args.organizationId });
+    if ((info.status === "active" || info.status === "past_due") && info.providerSubscriptionId) {
+      throw new ConvexError("A org já tem assinatura no Asaas (evita cobrança em duplicidade)");
+    }
+    const now = Date.now();
+    let chargeBrl: number;
+    let monthlyBrl: number;
+    if (args.valueBrl !== undefined) {
+      chargeBrl = Math.round(args.valueBrl * 100) / 100;
+      monthlyBrl = Math.round((args.cycle === "yearly" ? chargeBrl / 10 : chargeBrl) * 100) / 100;
+    } else {
+      const priced = priceCheckout({
+        plan: args.plan,
+        cycle: args.cycle,
+        groupsAddon: args.groupsAddon === true,
+        billing: { extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
+        now,
+      });
+      if (!priced.ok) throw new ConvexError("Plano ou add-on inválido para o preço de tabela");
+      chargeBrl = priced.price.chargeBrl;
+      monthlyBrl = priced.price.monthlyBrl;
+    }
+    const trialValid = info.status === "trial" && info.trialEndsAt !== null && info.trialEndsAt > now;
+    const nextDueDate = firstDueDate(now, trialValid ? (info.trialEndsAt ?? undefined) : undefined);
+    const summary = {
+      dryRun,
+      plan: args.plan,
+      cycle: args.cycle,
+      chargeBrl,
+      monthlyBrl,
+      nextDueDate,
+      document: maskCpfCnpj(args.document),
+    };
+    if (dryRun) return { ...summary, invoiceUrl: null, created: false };
+    const out = await runAsaasCheckout(ctx, {
+      organizationId: args.organizationId,
+      plan: args.plan,
+      cycle: args.cycle,
+      groupsAddon: args.groupsAddon === true,
+      extraChannels: info.extraChannels,
+      billingName,
+      document: args.document,
+      billingEmail,
+      monthlyBrl,
+      chargeBrl,
+      nextDueDate,
+      quiet: info.quiet,
+      previousSubscriptionId: info.providerSubscriptionId,
+      viaOps: true,
+    });
+    return { ...summary, invoiceUrl: out.invoiceUrl, created: true };
   },
 });

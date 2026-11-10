@@ -241,13 +241,19 @@ describe("porta de transições", () => {
     );
   });
 
-  test("webhook não tira org de legacy; transição inválida não grava nada", async () => {
+  test("webhook só tira org de legacy para active (pagamento confirmado); qualquer outro status é inválido e não grava nada", async () => {
     const id = await withBilling("legacy");
     const before = await audits(t, id);
-    expect(
-      (await errorData(t.run((ctx) => setBillingStatus(ctx, { organizationId: id, status: "active", source: "webhook", reason: "pago" }))))
-        .code
-    ).toBe("invalid_transition");
+    for (const status of ["past_due", "read_only", "trial", "canceled"] as const) {
+      expect(
+        (await errorData(t.run((ctx) => setBillingStatus(ctx, { organizationId: id, status, source: "webhook", reason: "x" })))).code,
+        status
+      ).toBe("invalid_transition");
+    }
+    // cron e cliente continuam sem poder sair de legacy.
+    for (const source of ["cron", "customer"] as const) {
+      expect((await errorData(t.run((ctx) => setBillingStatus(ctx, { organizationId: id, status: "active", source, reason: "x" })))).code, source).toBeDefined();
+    }
     expect((await getOrg(t, id))?.billing?.status).toBe("legacy");
     expect(await audits(t, id)).toHaveLength(before.length);
   });

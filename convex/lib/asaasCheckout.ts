@@ -17,12 +17,13 @@ import {
   upsertCustomer,
 } from "./asaasApi";
 import { onlyDigits } from "./brDocument";
-import type { CheckoutCycle, CheckoutPlan } from "./checkoutPricing";
-import { PLANS } from "./plans";
+import type { CheckoutCycle } from "./checkoutPricing";
+import { PLANS, type PlanKey } from "./plans";
 
 export type CheckoutFlowInput = {
   organizationId: Id<"organizations">;
-  plan: CheckoutPlan;
+  /** Empresa só entra por op (venda manual com preço negociado). */
+  plan: PlanKey;
   cycle: CheckoutCycle;
   groupsAddon: boolean;
   extraChannels: number;
