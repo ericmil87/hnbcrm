@@ -20,6 +20,7 @@ import { internal } from "./_generated/api";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
 import {
+  isHumanRequestItem,
   BILLING_LEDGER_START_MONTH,
   contactKeyOf,
   findAttendance,
@@ -27,7 +28,8 @@ import {
   recordAttendance,
   totalAttendances,
 } from "./lib/attendanceLedger";
-import { resolveEntitlements } from "./lib/entitlements";
+import { attendancePeriodStart, classifyNewAttendance, resolveEntitlements } from "./lib/entitlements";
+import { attendancesUsedInPeriod, firstValidCredit } from "./lib/attendanceUsage";
 import { notificationCopy } from "./lib/notificationCopy";
 import { isMembershipRevoked } from "./lib/auth";
 import { agentRunsRetentionCutoff } from "./retention";
@@ -267,8 +269,10 @@ export type AttendantBudgetGate = {
    */
   countConversation: boolean;
   month: string;
-  /** Classe gravada em `agentRuns.billingClass`: "legacy" sem gate, "included" com gate (B6 classifica de verdade). */
-  billingClass: "legacy" | "included";
+  /** Classe gravada em `agentRuns.billingClass`: "legacy" sem gate; com plano, a de `classifyNewAttendance`. */
+  billingClass: "legacy" | "included" | "credit" | "overage" | "suggest_only";
+  /** Só `overage`: centavos por atendimento, gravado em `agentRuns.unitPriceBrlCents`. */
+  unitPriceBrlCents?: number;
 };
 
 /**
@@ -386,7 +390,7 @@ export async function attendantBudgetGate(
       });
     }
   }
-  const billingClass = resolveEntitlements(args.org, args.now).gated ? ("included" as const) : ("legacy" as const);
+  const ent = resolveEntitlements(args.org, args.now);
 
   const budget = args.org.settings.aiConfig?.monthlyConversationBudget;
   if (budget !== undefined && budget > 0 && !served && totalAttendances(usage, meter) >= budget) {
@@ -402,17 +406,55 @@ export async function attendantBudgetGate(
         oncePerMonth: false,
       });
     }
-    return { skipReason: "budget_mensal", forceSuggest: false, countConversation: false, month, billingClass };
+    return {
+      skipReason: "budget_mensal",
+      forceSuggest: false,
+      countConversation: false,
+      month,
+      billingClass: ent.gated ? "included" : "legacy",
+    };
   }
 
   const cap = resolveSpendCap(args.org.settings.aiConfig?.spendCap);
   const evaluation = evaluateSpend(usage?.costUsdMicros ?? 0, cap);
+  let forceSuggest = evaluation.blocked;
+  let billingClass: AttendantBudgetGate["billingClass"] = ent.gated ? "included" : "legacy";
+  let unitPriceBrlCents: number | undefined;
+
+  // B6: contato NOVO de org com plano e classificado pela franquia. Contato ja atendido
+  // segue normal ate o fim do mes (a IA nao cai no meio da conversa).
+  if (ent.gated && !served && args.lead) {
+    const origin = isHumanRequestItem(args.item) ? "human_request" : "ai";
+    const used = await attendancesUsedInPeriod(ctx, {
+      organizationId: args.org._id,
+      now: args.now,
+      periodStart: attendancePeriodStart(args.org.billing),
+      acrossMonths: ent.status === "trial",
+      scanCap: Number.isFinite(ent.limits.aiAttendances) ? ent.limits.aiAttendances : 50_000,
+    });
+    // Credito so e consultado quando pode ser usado (evita leitura nos turnos comuns).
+    const overLimit = used >= ent.limits.aiAttendances;
+    const creditAllowed = overLimit && !forceSuggest && origin === "ai" && ent.status !== "trial";
+    const hasCredit = creditAllowed && (await firstValidCredit(ctx, args.org._id, args.now)) !== null;
+    const decision = classifyNewAttendance({
+      e: ent,
+      used,
+      overageBrlCents: meter?.overageBrlCents ?? 0,
+      hasCredit,
+      origin,
+      forceSuggest,
+    });
+    billingClass = decision.billingClass;
+    unitPriceBrlCents = decision.unitPriceBrlCents;
+    if (billingClass === "suggest_only") forceSuggest = true;
+  }
   return {
     skipReason: null,
-    forceSuggest: evaluation.blocked,
+    forceSuggest,
     countConversation: !served,
     month,
     billingClass,
+    ...(unitPriceBrlCents !== undefined ? { unitPriceBrlCents } : {}),
   };
 }
 
@@ -436,12 +478,14 @@ export async function onAttendantRunStarted(
   }
 ): Promise<void> {
   if (args.gate.forceSuggest && args.item.origin === undefined) {
+    const franchise = args.gate.billingClass === "suggest_only";
     await openBudgetHandoff(ctx, {
       lead: args.lead,
       agent: args.agent,
       conversationId: args.conversationId,
-      reason:
-        "Teto de gastos de IA do mês atingido: a IA deixou a resposta como rascunho para a equipe revisar e enviar.",
+      reason: franchise
+        ? "Franquia de atendimentos IA do mês atingida: a IA deixou um rascunho para a equipe enviar. Ligue o excedente em Configurações → Uso e fatura."
+        : "Teto de gastos de IA do mês atingido: a IA deixou a resposta como rascunho para a equipe revisar e enviar.",
       monthStart: monthStartUtcMs(args.gate.month),
       oncePerMonth: true,
     });

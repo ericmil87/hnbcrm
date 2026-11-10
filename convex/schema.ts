@@ -3455,6 +3455,9 @@ const applicationTables = {
       )
     ),
     pausedReason: v.optional(v.string()),
+    // Billing B6: motivo estruturado da pausa automatica ("plan_quota" = franquia de envios;
+    // a retomada do dia 1 so mexe neste codigo).
+    pauseCode: v.optional(v.string()),
     pausedBy: v.optional(v.id("teamMembers")),
     lastError: v.optional(v.string()),
     tierAtLaunch: v.optional(v.string()),
@@ -3473,6 +3476,7 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_status", ["organizationId", "status"])
+    .index("by_status_and_pause_code", ["status", "pauseCode"])
     .index("by_channel_config", ["channelConfigId"]),
 
   // Destinatários materializados no lançamento (snapshot). Um por telefone.

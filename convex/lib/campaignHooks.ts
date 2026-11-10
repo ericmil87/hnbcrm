@@ -142,7 +142,7 @@ async function notifyCampaignWatchers(
 export async function pauseCampaignCore(
   ctx: MutationCtx,
   campaign: Doc<"campaigns">,
-  args: { reason: string; actorId?: Id<"teamMembers">; automatic: boolean; now?: number }
+  args: { reason: string; actorId?: Id<"teamMembers">; automatic: boolean; now?: number; code?: string }
 ): Promise<void> {
   if (campaign.status !== "running" && campaign.status !== "scheduled") return;
   const now = args.now ?? Date.now();
@@ -156,6 +156,7 @@ export async function pauseCampaignCore(
   await ctx.db.patch(campaign._id, {
     status: "paused",
     pausedReason: args.reason,
+    pauseCode: args.code,
     pausedBy: args.actorId,
     schedulerFnId: undefined,
     nextTickAt: undefined,
@@ -193,6 +194,49 @@ export async function pauseCampaignCore(
     event: "campaign.paused",
     payload: { campaignId: campaign._id, name: campaign.name, reason: args.reason, automatic: args.automatic },
   });
+}
+
+/** Código de pausa automática por franquia de envios do plano (B6). */
+export const PLAN_QUOTA_PAUSE_CODE = "plan_quota";
+
+/**
+ * Retoma UMA campanha pausada por `plan_quota` (cron do dia 1). Só mexe nesse código:
+ * pausa manual, kill switch e canal caído ficam como estão.
+ */
+export async function resumePlanQuotaCampaign(
+  ctx: MutationCtx,
+  campaign: Doc<"campaigns">,
+  now: number
+): Promise<boolean> {
+  if (campaign.status !== "paused" || campaign.pauseCode !== PLAN_QUOTA_PAUSE_CODE) return false;
+  await ctx.db.patch(campaign._id, {
+    status: "running",
+    pausedReason: undefined,
+    pauseCode: undefined,
+    pausedBy: undefined,
+    updatedAt: now,
+  });
+  const fresh = (await ctx.db.get(campaign._id))!;
+  await addTimeline(ctx, fresh, { kind: "resumed", detail: "Novo mês: franquia de envios renovada" }, now);
+  await ctx.db.insert("auditLogs", {
+    organizationId: campaign.organizationId,
+    entityType: "campaign",
+    entityId: campaign._id,
+    action: "update",
+    actorType: "system",
+    changes: { before: { status: "paused" }, after: { status: "running" } },
+    metadata: { campaign: true, automatic: true, pauseCode: PLAN_QUOTA_PAUSE_CODE },
+    description: `Campanha «${campaign.name}» retomada: franquia de envios do novo mês`,
+    severity: "medium",
+    createdAt: now,
+  });
+  await scheduleWebhookEvent(ctx, {
+    organizationId: campaign.organizationId,
+    event: "campaign.resumed",
+    payload: { campaignId: campaign._id, name: campaign.name },
+  });
+  await scheduleCampaignTick(ctx, (await ctx.db.get(campaign._id))!, now, now);
+  return true;
 }
 
 export async function completeCampaignCore(

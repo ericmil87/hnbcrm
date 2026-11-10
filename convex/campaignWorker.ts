@@ -58,6 +58,10 @@ import { buildSearchText } from "./lib/searchText";
 import { channelConfigPatchFor } from "./lib/conversationListFields";
 import { withMessageSearch } from "./lib/messageSearch";
 import { bumpCampaignSends } from "./lib/usageMeter";
+import { resolveEntitlements } from "./lib/entitlements";
+import { getOrgUsageMonthly } from "./lib/attendanceLedger";
+import { monthKeyUtc, monthStartUtcMs } from "./lib/aiSpend";
+import { PLAN_QUOTA_PAUSE_CODE, resumePlanQuotaCampaign } from "./lib/campaignHooks";
 
 const CAMPAIGN_SOURCE_NAME = "Campanha";
 const RETRY_SOON_MS = 60 * 1000;
@@ -140,6 +144,33 @@ async function hasOutstanding(ctx: MutationCtx, campaignId: Id<"campaigns">): Pr
   return queued !== null;
 }
 
+/**
+ * Cron diario: retoma campanhas pausadas por `plan_quota` cuja pausa foi de um mes
+ * anterior (no dia 1 UTC isso e todas; se o cron falhar, o dia seguinte recupera).
+ * Lotes de 50 com continuacao.
+ */
+export const internalResumePlanQuotaCampaigns = internalMutation({
+  args: {},
+  returns: v.object({ resumed: v.number() }),
+  handler: async (ctx) => {
+    const now = Date.now();
+    const monthStart = monthStartUtcMs(monthKeyUtc(now));
+    const rows = await ctx.db
+      .query("campaigns")
+      .withIndex("by_status_and_pause_code", (q) => q.eq("status", "paused").eq("pauseCode", PLAN_QUOTA_PAUSE_CODE))
+      .take(50);
+    let resumed = 0;
+    for (const c of rows) {
+      if (c.updatedAt >= monthStart) continue;
+      if (await resumePlanQuotaCampaign(ctx, c, now)) resumed += 1;
+    }
+    if (rows.length === 50 && resumed > 0) {
+      await ctx.scheduler.runAfter(0, internal.campaignWorker.internalResumePlanQuotaCampaigns, {});
+    }
+    return { resumed };
+  },
+});
+
 export const tick = internalMutation({
   args: { campaignId: v.id("campaigns"), tickToken: v.string() },
   returns: v.null(),
@@ -172,6 +203,26 @@ export const tick = internalMutation({
     if (killReason) {
       await pauseCampaignCore(ctx, campaign, { reason: killReason, automatic: true, now });
       return null;
+    }
+
+    // Franquia de envios do plano (B6): pausa ao passar de limite x 1,05 (so org com plano).
+    // Nunca mexe em org legacy/sem plano. A retomada e do cron do dia 1 (so este codigo).
+    {
+      const org = await ctx.db.get(campaign.organizationId);
+      const ent = resolveEntitlements(org, now);
+      if (ent.gated && Number.isFinite(ent.limits.campaignSends)) {
+        const meter = await getOrgUsageMonthly(ctx, campaign.organizationId, monthKeyUtc(now));
+        const hardLimit = Math.floor(ent.limits.campaignSends * 1.05);
+        if ((meter?.campaignSends ?? 0) >= hardLimit) {
+          await pauseCampaignCore(ctx, campaign, {
+            reason: `Franquia de envios do plano atingida (${ent.limits.campaignSends} por mês). A campanha retoma sozinha no próximo mês.`,
+            automatic: true,
+            now,
+            code: PLAN_QUOTA_PAUSE_CODE,
+          });
+          return null;
+        }
+      }
     }
 
     // Janela de envio

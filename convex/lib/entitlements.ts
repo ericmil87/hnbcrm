@@ -174,3 +174,59 @@ export function usageCrossings(args: {
   if (pct >= USAGE_WARN_PCT) return { warn: args.warnedAt === undefined, reached: false };
   return { warn: false, reached: false };
 }
+
+// ── Classificação de atendimento novo (B6) ──────────────────────────────────
+
+export type NewAttendanceDecision = {
+  billingClass: "included" | "credit" | "overage" | "suggest_only";
+  /** Só em `overage`: centavos por atendimento (plano ou BYO), gravado na run. */
+  unitPriceBrlCents?: number;
+};
+
+/**
+ * Início do período em que a franquia conta (A2). Teste: o início do teste (a franquia
+ * vale para os 30 dias, não para o mês civil). Plano pago: `periodStart` da cobrança.
+ * `undefined` = sem corte (vale o mês inteiro).
+ */
+export function attendancePeriodStart(billing: Doc<"organizations">["billing"]): number | undefined {
+  if (!billing) return undefined;
+  if (billing.status === "trial") {
+    return (
+      billing.periodStart ??
+      (billing.trialEndsAt !== undefined ? billing.trialEndsAt - TRIAL.days * 86_400_000 : undefined)
+    );
+  }
+  return billing.periodStart;
+}
+
+/**
+ * Pura. Só para contato NOVO no mês de uma org com plano (`e.gated`).
+ *  1. cabe na franquia -> `included`;
+ *  2. senão, crédito válido -> `credit`;
+ *  3. senão, excedente ligado (active/past_due) e `acumulado + unitário <= teto` -> `overage`;
+ *  4. senão -> `suggest_only` (o claim força rascunho).
+ * Nunca `credit`/`overage`: turno com `forceSuggest` (qualquer motivo), pedido humano
+ * (coach, "pedir rascunho", Copiloto) e teste.
+ */
+export function classifyNewAttendance(args: {
+  e: Entitlements;
+  /** Atendimentos do período já contados (linhas diferentes de legacy). */
+  used: number;
+  overageBrlCents: number;
+  hasCredit: boolean;
+  origin: "ai" | "human_request";
+  forceSuggest: boolean;
+}): NewAttendanceDecision {
+  const { e } = args;
+  if (args.used < e.limits.aiAttendances) return { billingClass: "included" };
+  if (args.forceSuggest || args.origin === "human_request" || e.status === "trial") {
+    return { billingClass: "suggest_only" };
+  }
+  if (args.hasCredit) return { billingClass: "credit" };
+  const unit = e.overage.unitBrlCents;
+  const payingStatus = e.status === "active" || e.status === "past_due";
+  if (e.overage.enabled && payingStatus && args.overageBrlCents + unit <= e.overage.capBrlCents) {
+    return { billingClass: "overage", unitPriceBrlCents: unit };
+  }
+  return { billingClass: "suggest_only" };
+}
