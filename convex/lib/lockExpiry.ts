@@ -1,5 +1,5 @@
 /**
- * Fim da trava de preço / desconto com prazo (puro). Quando `priceLock.until` vence, a assinatura
+ * Fim do desconto de fundador com prazo (puro). Quando `priceLock.until` vence, a assinatura
  * do Asaas ainda cobra o valor travado: o cron diário a reprecifica para a TABELA (só para as
  * próximas cobranças). Idempotência: depois de reprecificar, `orgSubscriptions.priceLockedUntil`
  * guarda o `until` já tratado (a mesma trava nunca é reprecificada duas vezes).
@@ -26,6 +26,10 @@ export function repriceAfterLockExpiry(
   const billing = org?.billing;
   const lock = billing?.priceLock;
   if (!billing || !lock || lock.until === undefined || lock.until > now) return null;
+  // Só desconto de FUNDADOR volta sozinho para a tabela. Trava congelada ("frozen") vencida NUNCA
+  // reprecifica: o cliente combinou aquele valor, então o Eric decide e avisa (ver
+  // `internalBillingReport.frozenLockExpired`).
+  if (lock.kind !== "founder") return null;
   // Só quem paga: trial/read_only/canceled/legacy não têm assinatura em cobrança.
   if (billing.status !== "active" && billing.status !== "past_due") return null;
   // Empresa é preço negociado: nunca reprecifica sozinho.
