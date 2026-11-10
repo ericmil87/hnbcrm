@@ -77,6 +77,15 @@ describe("SubscriptionManagementView", () => {
     expect(screen.queryByRole("button", { name: "Pedir reembolso" })).toBeNull();
   });
 
+  it("com cancelamento agendado o reembolso continua disponível dentro da janela", () => {
+    const onAsk = vi.fn();
+    render(<SubscriptionManagementView {...mgmt({ sub: sub({ cancelAt: NOW + 5 * DAY, refundEligibleUntil: NOW + 2 * DAY }), onAsk })} />);
+    expect(screen.getByRole("button", { name: "Reativar" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Cancelar assinatura" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pedir reembolso" }));
+    expect(onAsk).toHaveBeenCalledWith("refund");
+  });
+
   it("sem settings:manage não há ações, só o texto", () => {
     render(<SubscriptionManagementView {...mgmt({ canManage: false, sub: sub({ nextChargeBrl: 497, nextChargeAt: NOW + DAY, refundEligibleUntil: NOW + DAY }) })} />);
     expect(screen.getByText(/Próxima cobrança/)).toBeTruthy();

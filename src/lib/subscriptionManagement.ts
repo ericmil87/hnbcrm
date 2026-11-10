@@ -71,7 +71,8 @@ export function canReactivateSubscription(args: {
   now: number;
 }): boolean {
   const end = args.sub?.cancelAt;
-  return args.canManage && end != null && end > args.now;
+  // O backend devolve hasSubscription=true também com o cancelamento agendado.
+  return args.canManage && args.sub?.hasSubscription === true && end != null && end > args.now;
 }
 
 /** Reembolso (7 dias do 1º pagamento) só enquanto a janela está aberta. */

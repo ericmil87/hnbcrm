@@ -431,9 +431,11 @@ export function TermsPage() {
               <p id="reembolso">
                 <span className="text-text-primary font-medium">Reembolso de 7 dias.</span> Para todos os
                 clientes, devolvemos o valor integral do primeiro pagamento se você pedir em até 7 dias
-                corridos depois dele, sem precisar explicar o motivo. O pedido é feito pelo painel e o
-                reembolso é automático, pelo mesmo meio de pagamento; ao pedir, a conta passa para modo
-                leitura. As renovações não são reembolsáveis, salvo exigência legal. Ficam
+                corridos depois dele, sem precisar explicar o motivo. Pelo painel, quando houver um único
+                pagamento, o reembolso é automático, pelo mesmo meio de pagamento, e a conta passa para
+                modo leitura. Nos demais casos (por exemplo, depois de uma troca de plano), fale com a
+                gente e devolvemos o primeiro pagamento. As renovações não são reembolsáveis, salvo
+                exigência legal. Ficam
                 fora dessa garantia serviços de implantação já executados a seu pedido, atendimentos extras
                 já consumidos e taxas de terceiros (Meta, provedor de IA). O serviço é contratado para uso
                 profissional; essa garantia é uma liberalidade nossa e, quando o Código de Defesa do

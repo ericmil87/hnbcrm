@@ -65,6 +65,7 @@ describe("quando mostrar cada ação", () => {
     expect(canReactivateSubscription({ sub: sub({ cancelAt: NOW - DAY }), canManage: true, now: NOW })).toBe(false);
     expect(canReactivateSubscription({ sub: sub(), canManage: true, now: NOW })).toBe(false);
     expect(canReactivateSubscription({ sub: sub({ cancelAt: NOW + DAY }), canManage: false, now: NOW })).toBe(false);
+    expect(canReactivateSubscription({ sub: sub({ cancelAt: NOW + DAY, hasSubscription: false }), canManage: true, now: NOW })).toBe(false);
   });
   it("reembolso: só enquanto a janela está aberta", () => {
     expect(canRequestRefund({ sub: sub({ refundEligibleUntil: NOW + DAY }), canManage: true, now: NOW })).toBe(true);

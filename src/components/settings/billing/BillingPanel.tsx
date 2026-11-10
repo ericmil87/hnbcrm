@@ -131,6 +131,7 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
       planLabel={entitlements.planLabel}
       planId={entitlements.planId}
       currentCycle={entitlements.subscription?.billingCycle === "quarterly" ? null : (entitlements.subscription?.billingCycle ?? null)}
+      canceling={entitlements.subscription?.cancelAt != null}
       priceLock={entitlements.pricing?.priceLock ?? null}
       canManage={canManage}
       now={now}
