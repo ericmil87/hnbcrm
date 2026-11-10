@@ -105,6 +105,12 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   trial_ending: Gauge,
   plan_read_only: Gauge,
   plan_payment_overdue: Gauge,
+  plan_payment_received: Gauge,
+  plan_changed: Gauge,
+  plan_change_scheduled: Gauge,
+  plan_cancel_scheduled: Gauge,
+  plan_canceled: Gauge,
+  plan_refunded: Gauge,
   // B2 — lead atribuído a você.
   lead_assigned: UserCheck,
 };

@@ -70,6 +70,12 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   trial_ending: "planAlert",
   plan_read_only: "planAlert",
   plan_payment_overdue: "planAlert",
+  plan_payment_received: "planAlert",
+  plan_changed: "planAlert",
+  plan_change_scheduled: "planAlert",
+  plan_cancel_scheduled: "planAlert",
+  plan_canceled: "planAlert",
+  plan_refunded: "planAlert",
 };
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */

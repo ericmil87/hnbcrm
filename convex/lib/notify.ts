@@ -36,7 +36,13 @@ export type NotificationType =
   | "plan_overage_cap_reached"
   | "trial_ending"
   | "plan_read_only"
-  | "plan_payment_overdue";
+  | "plan_payment_overdue"
+  | "plan_payment_received"
+  | "plan_changed"
+  | "plan_change_scheduled"
+  | "plan_cancel_scheduled"
+  | "plan_canceled"
+  | "plan_refunded";
 
 // Tipo → flag de preferência: `PREFERENCE_FLAG` mora em `lib/notificationPolicy.ts` (pura).
 

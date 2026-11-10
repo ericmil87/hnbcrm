@@ -127,6 +127,12 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   trial_ending: "generic",
   plan_read_only: "generic",
   plan_payment_overdue: "generic",
+  plan_payment_received: "generic",
+  plan_changed: "generic",
+  plan_change_scheduled: "generic",
+  plan_cancel_scheduled: "generic",
+  plan_canceled: "generic",
+  plan_refunded: "generic",
 };
 
 /** Types deliberately NOT sent to Telegram (none in F1; add with a reason). */
@@ -811,6 +817,12 @@ const PLAN_TYPES: ReadonlySet<string> = new Set([
   "trial_ending",
   "plan_read_only",
   "plan_payment_overdue",
+  "plan_payment_received",
+  "plan_changed",
+  "plan_change_scheduled",
+  "plan_cancel_scheduled",
+  "plan_canceled",
+  "plan_refunded",
 ]);
 
 const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
@@ -823,6 +835,12 @@ const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
   trial_ending: "⏳",
   plan_read_only: "🔒",
   plan_payment_overdue: "💳",
+  plan_payment_received: "✅",
+  plan_changed: "🔄",
+  plan_change_scheduled: "🗓",
+  plan_cancel_scheduled: "⏳",
+  plan_canceled: "🔒",
+  plan_refunded: "💳",
   task_comment_mention: "💬",
   campaign_completed: "📣",
   campaign_paused: "⏸",

@@ -196,6 +196,45 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     },
   ],
   [
+    { type: "plan_payment_received", planLabel: "Profissional", amountBrl: "R$ 497,00" },
+    {
+      title: "Pagamento confirmado",
+      body: "Recebemos R$ 497,00 do plano Profissional. O recibo e a nota fiscal ficam na fatura, em Configurações › Uso e fatura.",
+    },
+  ],
+  [
+    { type: "plan_changed", planLabel: "Escala" },
+    { title: "Plano alterado", body: "Sua conta agora está no plano Escala." },
+  ],
+  [
+    { type: "plan_change_scheduled", planLabel: "Essencial", effectiveAt: "10/12/2026" },
+    {
+      title: "Troca de plano agendada",
+      body: "Seu plano muda para Essencial em 10/12/2026, no fim do ciclo atual. Até lá, tudo segue como está.",
+    },
+  ],
+  [
+    { type: "plan_cancel_scheduled", endsAt: "10/12/2026" },
+    {
+      title: "Cancelamento agendado",
+      body: "Sua assinatura termina em 10/12/2026. Até lá você usa tudo normalmente; depois a conta fica em modo só leitura, com exportação liberada. Dá para reativar antes disso.",
+    },
+  ],
+  [
+    { type: "plan_canceled" },
+    {
+      title: "Assinatura cancelada",
+      body: "A conta está em modo só leitura: você continua vendo e exportando seus dados. Para voltar, assine um plano em Configurações › Uso e fatura.",
+    },
+  ],
+  [
+    { type: "plan_refunded", amountBrl: "R$ 497,00" },
+    {
+      title: "Reembolso solicitado",
+      body: "Devolvemos R$ 497,00; ele volta pelo mesmo meio de pagamento em alguns dias. A conta ficou em modo só leitura e você ainda pode exportar seus dados.",
+    },
+  ],
+  [
     { type: "plan_payment_overdue" },
     {
       title: "Pagamento em atraso",

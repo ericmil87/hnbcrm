@@ -69,6 +69,12 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "trial_ending",
   "plan_read_only",
   "plan_payment_overdue",
+  "plan_payment_received",
+  "plan_changed",
+  "plan_change_scheduled",
+  "plan_cancel_scheduled",
+  "plan_canceled",
+  "plan_refunded",
 ]);
 
 export function pushTemplateOf(type: NotificationType): PushTemplate | null {

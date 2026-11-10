@@ -74,7 +74,13 @@ export type CopyInput =
   | { type: "plan_overage_cap_reached"; capBrl: string }
   | { type: "trial_ending"; daysLeft: number; endsAt: string }
   | { type: "plan_read_only"; reason?: "trial_ended" | "manual"; endsAt?: string }
-  | { type: "plan_payment_overdue"; dueDate?: string };
+  | { type: "plan_payment_overdue"; dueDate?: string }
+  | { type: "plan_payment_received"; planLabel?: string; amountBrl?: string }
+  | { type: "plan_changed"; planLabel: string }
+  | { type: "plan_change_scheduled"; planLabel: string; effectiveAt: string }
+  | { type: "plan_cancel_scheduled"; endsAt: string }
+  | { type: "plan_canceled" }
+  | { type: "plan_refunded"; amountBrl?: string };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -463,6 +469,33 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         title: "Pagamento em atraso",
         body: `${input.dueDate ? `A fatura com vencimento em ${input.dueDate} não foi paga. ` : "Há uma fatura vencida. "}A conta segue funcionando por alguns dias; regularize pelo link da fatura em Configurações › Uso e fatura.`,
       };
+    case "plan_payment_received":
+      return {
+        title: "Pagamento confirmado",
+        body: `Recebemos ${input.amountBrl ?? "o pagamento"}${input.planLabel ? ` do plano ${input.planLabel}` : ""}. O recibo e a nota fiscal ficam na fatura, em Configurações › Uso e fatura.`,
+      };
+    case "plan_changed":
+      return { title: "Plano alterado", body: `Sua conta agora está no plano ${input.planLabel}.` };
+    case "plan_change_scheduled":
+      return {
+        title: "Troca de plano agendada",
+        body: `Seu plano muda para ${input.planLabel} em ${input.effectiveAt}, no fim do ciclo atual. Até lá, tudo segue como está.`,
+      };
+    case "plan_cancel_scheduled":
+      return {
+        title: "Cancelamento agendado",
+        body: `Sua assinatura termina em ${input.endsAt}. Até lá você usa tudo normalmente; depois a conta fica em modo só leitura, com exportação liberada. Dá para reativar antes disso.`,
+      };
+    case "plan_canceled":
+      return {
+        title: "Assinatura cancelada",
+        body: "A conta está em modo só leitura: você continua vendo e exportando seus dados. Para voltar, assine um plano em Configurações › Uso e fatura.",
+      };
+    case "plan_refunded":
+      return {
+        title: "Reembolso solicitado",
+        body: `Devolvemos ${input.amountBrl ?? "o valor pago"}; ele volta pelo mesmo meio de pagamento em alguns dias. A conta ficou em modo só leitura e você ainda pode exportar seus dados.`,
+      };
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -502,4 +535,10 @@ export const COPY_TYPES = [
   "trial_ending",
   "plan_read_only",
   "plan_payment_overdue",
+  "plan_payment_received",
+  "plan_changed",
+  "plan_change_scheduled",
+  "plan_cancel_scheduled",
+  "plan_canceled",
+  "plan_refunded",
 ] as const satisfies readonly CopyInput["type"][];

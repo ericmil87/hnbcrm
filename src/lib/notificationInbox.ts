@@ -123,6 +123,12 @@ export function notificationHref(n: InboxNotification): string | null {
     case "trial_ending":
     case "plan_read_only":
     case "plan_payment_overdue":
+    case "plan_payment_received":
+    case "plan_changed":
+    case "plan_change_scheduled":
+    case "plan_cancel_scheduled":
+    case "plan_canceled":
+    case "plan_refunded":
       return `${TAB_ROUTES.settings}?secao=billing`;
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
