@@ -12,7 +12,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { orgBillingValidator } from "./schema";
 import { applySubscriptionChange, validateBillingChange, type OrgBillingInput } from "./lib/entitlementsOps";
 import { resolveEntitlements } from "./lib/entitlements";
-import { MODULE_GATE, type GatedModule } from "./lib/plans";
+import { MODULE_GATE, PLANS, type GatedModule } from "./lib/plans";
 import { isValidMonthKey, monthKeyUtc, monthStartUtcMs, nextMonthStartUtcMs } from "./lib/aiSpend";
 import { contactKeyOf, getOrgUsageMonthly, recordAttendance, totalAttendances } from "./lib/attendanceLedger";
 import { agentRunsRetentionCutoff } from "./retention";
@@ -87,6 +87,14 @@ export const internalSetOrgPlan = internalMutation({
       throw new ConvexError("units só vale para o plano Empresa");
     }
     if (args.extraChannels !== undefined) assertInt("extraChannels", args.extraChannels, 0, 1000);
+    // Teto de canais extra do plano (vale também ao trocar de plano mantendo os extras gravados).
+    const effectiveExtra = args.extraChannels ?? org.billing?.extraChannels ?? 0;
+    const maxExtra = args.plan !== undefined ? PLANS[args.plan].maxExtraChannels : null;
+    if (args.plan !== undefined && maxExtra !== null && effectiveExtra > maxExtra) {
+      throw new ConvexError(
+        `O plano ${PLANS[args.plan].label} aceita até ${maxExtra} canais extras (pedido: ${effectiveExtra}). Escolha um plano maior.`
+      );
+    }
     if (args.addons?.groups === true && args.plan !== "essencial") {
       throw new ConvexError("O add-on Grupos só existe no Essencial");
     }

@@ -114,6 +114,21 @@ describe("checks puros", () => {
     expect(checkChannelSlot(e, 1)).toMatchObject({ ok: false, needsExtraAck: true });
   });
 
+  test("checkChannelSlot: no teto do plano não há canal extra a comprar", () => {
+    const e = resolveEntitlements(org({ plan: "essencial", status: "active", extraChannels: 2 }), NOW);
+    expect(e.limits.channels).toBe(3);
+    expect(e.maxChannels).toBe(3);
+    expect(checkChannelSlot(e, 2)).toEqual({ ok: true });
+    const r = checkChannelSlot(e, 3);
+    expect(r).toMatchObject({ ok: false, needsExtraAck: false, atPlanCeiling: true });
+    expect(r.ok === false && r.message).toContain("plano maior");
+    const esc = resolveEntitlements(org({ plan: "escala", status: "active" }), NOW);
+    expect(esc.maxChannels).toBe(Infinity);
+    expect(checkChannelSlot(esc, 6)).toMatchObject({ ok: false, needsExtraAck: true });
+    const ov = resolveEntitlements(org({ plan: "essencial", status: "active", overrides: { channels: 10 } }), NOW);
+    expect(ov.maxChannels).toBe(Infinity);
+  });
+
   test("usageCrossings: 80%, 100%, carimbos e salto direto", () => {
     expect(usageCrossings({ used: 79, limit: 100 })).toEqual({ warn: false, reached: false });
     expect(usageCrossings({ used: 80, limit: 100 })).toEqual({ warn: true, reached: false });

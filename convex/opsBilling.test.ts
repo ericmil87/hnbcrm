@@ -45,6 +45,37 @@ const audits = (t: TestConvex<typeof schema>, id: Id<"organizations">) =>
       .collect()
   );
 
+describe("internalSetOrgPlan: teto de canais extras", () => {
+  test("recusa extraChannels acima do teto do plano, com mensagem em PT-BR", async () => {
+    const id = await seedOrg(t, "Org Teto");
+    await expect(
+      t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: id, plan: "essencial", status: "active", extraChannels: 3 })
+    ).rejects.toThrow(/Essencial aceita até 2 canais extras/);
+    await expect(
+      t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: id, plan: "profissional", status: "active", extraChannels: 4 })
+    ).rejects.toThrow(/Profissional aceita até 3 canais extras/);
+  });
+
+  test("aceita no teto e sem teto em Escala e Empresa", async () => {
+    const id = await seedOrg(t, "Org Teto 2");
+    const ok = (args: Record<string, unknown>) =>
+      t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: id, status: "active", ...args } as never);
+    await expect(ok({ plan: "essencial", extraChannels: 2 })).resolves.toBeTruthy();
+    await expect(ok({ plan: "profissional", extraChannels: 3 })).resolves.toBeTruthy();
+    await expect(ok({ plan: "escala", extraChannels: 40 })).resolves.toBeTruthy();
+    await expect(ok({ plan: "empresa", units: 2, extraChannels: 40 })).resolves.toBeTruthy();
+  });
+
+  test("trocar para um plano menor mantendo os extras gravados também é recusado", async () => {
+    const id = await seedOrg(t, "Org Teto 3", {
+      billing: { plan: "escala", status: "active", extraChannels: 4, updatedAt: 1 },
+    });
+    await expect(
+      t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: id, plan: "essencial", status: "active" })
+    ).rejects.toThrow(/aceita até 2 canais extras \(pedido: 4\)/);
+  });
+});
+
 describe("internalSetOrgPlan", () => {
   test("dryRun (default) devolve diff e não escreve", async () => {
     const id = await seedOrg(t, "Org A");

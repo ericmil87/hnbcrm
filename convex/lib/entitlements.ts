@@ -15,6 +15,7 @@ import {
   TRIAL,
   USAGE_WARN_PCT,
   lowestPlanWithModule,
+  maxChannels,
   type BillingStatus,
   type GatedModule,
   type PlanKey,
@@ -27,6 +28,8 @@ export type Entitlements = {
   plan: PlanKey | null;
   status: BillingStatus | "none";
   limits: { channels: number; aiAttendances: number; campaignSends: number; groupsWithAi: number };
+  /** Teto de canais do plano (incluídos + extra); Infinity sem teto, em override ou sem gate. */
+  maxChannels: number;
   modules: Record<GatedModule, boolean>;
   overage: { enabled: boolean; capBrlCents: number; unitBrlCents: number };
   /** false em read_only / canceled / teste vencido. */
@@ -53,6 +56,7 @@ export function resolveEntitlements(org: OrgForEntitlements | null | undefined, 
       plan: billing?.plan ?? null,
       status: billing ? billing.status : "none",
       limits: { channels: Infinity, aiAttendances: Infinity, campaignSends: Infinity, groupsWithAi: Infinity },
+      maxChannels: Infinity,
       modules: allModules(true),
       overage: { enabled: false, capBrlCents: 0, unitBrlCents: 0 },
       aiAllowed: true,
@@ -100,6 +104,8 @@ export function resolveEntitlements(org: OrgForEntitlements | null | undefined, 
       campaignSends: ov?.campaignSends ?? def.campaignSends,
       groupsWithAi: ov?.groupsWithAi ?? groupsWithAi,
     },
+    // Override de canais é decisão manual: vale sobre o teto do plano.
+    maxChannels: ov?.channels !== undefined ? Infinity : maxChannels(planKey, units),
     modules: finalModules,
     overage: {
       enabled: overage?.enabled === true,
@@ -149,8 +155,20 @@ export function checkModule(
 export function checkChannelSlot(
   e: Entitlements,
   activeChannels: number
-): { ok: true } | { ok: false; needsExtraAck: true; message: string } {
+):
+  | { ok: true }
+  | { ok: false; needsExtraAck: true; message: string }
+  | { ok: false; needsExtraAck: false; atPlanCeiling: true; message: string } {
   if (!e.gated || activeChannels < e.limits.channels) return { ok: true };
+  // No teto do plano não há canal extra a comprar: precisa de um plano maior.
+  if (activeChannels >= e.maxChannels) {
+    return {
+      ok: false,
+      needsExtraAck: false,
+      atPlanCeiling: true,
+      message: `O seu plano comporta até ${e.maxChannels} canais. Para conectar mais, mude para um plano maior. Fale com a gente.`,
+    };
+  }
   return {
     ok: false,
     needsExtraAck: true,
