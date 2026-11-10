@@ -74,18 +74,37 @@ const tick = async () => {
 };
 const subOf = (id: Id<"organizations">) => t.run((ctx) => ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", id)).first());
 const puts = () => calls.filter((c) => c.method === "PUT");
+const founderExpired = { kind: "founder" as const, discountPct: 30, until: NOW - 1000 };
 const frozenExpired = { kind: "frozen" as const, monthlyBrl: 300, until: NOW - 1000 };
 
-describe("fim da trava de preço", () => {
-  test("org ativa com trava vencida: PUT na assinatura (valor de tabela, sem mexer na cobrança emitida), carimbo e audit high", async () => {
-    const id = await seed({ plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 });
+describe("fim do desconto de fundador", () => {
+  test("org ativa com desconto de fundador vencido: PUT na assinatura (valor de tabela, sem mexer na cobrança emitida), carimbo e audit high", async () => {
+    const id = await seed({ plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 });
     expect(await tick()).toMatchObject({ repricing: 1 });
     expect(puts()).toHaveLength(1);
     expect(puts()[0].url).toContain("/subscriptions/sub_1");
     expect(puts()[0].body).toEqual({ value: 497, updatePendingPayments: false });
-    expect(await subOf(id)).toMatchObject({ basePriceCents: 49700, priceLockedUntil: frozenExpired.until });
+    expect(await subOf(id)).toMatchObject({ basePriceCents: 49700, priceLockedUntil: founderExpired.until });
     const audits = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_organization", (q) => q.eq("organizationId", id)).collect());
     expect(audits.find((a) => a.metadata?.source === "cron")).toMatchObject({ severity: "high" });
+  });
+
+  test("trava CONGELADA vencida NUNCA reprecifica (nem PUT nem carimbo); só aparece no relatório", async () => {
+    const id = await seed({ plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 });
+    expect(await tick()).toMatchObject({ repricing: 0 });
+    await tick();
+    expect(puts()).toHaveLength(0);
+    expect((await subOf(id))?.priceLockedUntil).toBeUndefined();
+    const report = await t.query(internal.opsBilling.internalBillingReport, { now: NOW });
+    expect(report.rows.find((r) => r.organizationId === id)).toMatchObject({ frozenLockExpired: true });
+  });
+
+  test("relatório: frozenLockExpired só para trava congelada vencida (não para fundador, nem trava válida)", async () => {
+    const founder = await seed({ plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 });
+    const valid = await seed({ plan: "profissional", status: "active", priceLock: { kind: "frozen", monthlyBrl: 300, until: NOW + DAY }, updatedAt: 1 });
+    const noLock = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
+    const report = await t.query(internal.opsBilling.internalBillingReport, { now: NOW });
+    for (const id of [founder, valid, noLock]) expect(report.rows.find((r) => r.organizationId === id)?.frozenLockExpired).toBe(false);
   });
 
   test("anual (10×) e Essencial com Grupos usam a tabela do plano e do ciclo", async () => {
@@ -95,36 +114,37 @@ describe("fim da trava de preço", () => {
   });
 
   test("idempotente: o segundo tick não reprecifica a mesma trava de novo", async () => {
-    await seed({ plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 });
+    await seed({ plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 });
     await tick();
     await tick();
     expect(puts()).toHaveLength(1);
   });
 
   test("falha na API: nada é carimbado e o cron tenta de novo no dia seguinte", async () => {
-    const id = await seed({ plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 });
+    const id = await seed({ plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 });
     putStatus = 500;
     await tick();
     expect((await subOf(id))?.priceLockedUntil).toBeUndefined();
     putStatus = 200;
     await tick();
-    expect((await subOf(id))?.priceLockedUntil).toBe(frozenExpired.until);
+    expect((await subOf(id))?.priceLockedUntil).toBe(founderExpired.until);
     expect(puts()).toHaveLength(2);
   });
 
   test("past_due também; mas trava ainda válida, sem assinatura Asaas, trial, read_only, legacy e Empresa ficam de fora", async () => {
-    await seed({ plan: "profissional", status: "past_due", priceLock: frozenExpired, updatedAt: 1 });
+    await seed({ plan: "profissional", status: "past_due", priceLock: founderExpired, updatedAt: 1 });
     expect(await tick()).toMatchObject({ repricing: 1 });
     calls = [];
     const skipped: Array<[string, Billing, Record<string, unknown> | null]> = [
-      ["trava válida", { plan: "profissional", status: "active", priceLock: { kind: "frozen", monthlyBrl: 300, until: NOW + DAY }, updatedAt: 1 }, {}],
-      ["trava sem prazo", { plan: "profissional", status: "active", priceLock: { kind: "frozen", monthlyBrl: 300 }, updatedAt: 1 }, {}],
-      ["sem assinatura", { plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 }, null],
-      ["assinatura manual", { plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 }, { billingProvider: "manual", providerSubscriptionId: undefined }],
-      ["trial", { plan: "profissional", status: "trial", trialEndsAt: NOW + DAY, priceLock: frozenExpired, updatedAt: 1 }, {}],
-      ["read_only", { plan: "profissional", status: "read_only", priceLock: frozenExpired, updatedAt: 1 }, {}],
-      ["legacy", { status: "legacy", priceLock: frozenExpired, updatedAt: 1 }, {}],
-      ["Empresa (negociado)", { plan: "empresa", status: "active", units: 3, priceLock: frozenExpired, updatedAt: 1 }, {}],
+      ["trava válida", { plan: "profissional", status: "active", priceLock: { kind: "founder", discountPct: 30, until: NOW + DAY }, updatedAt: 1 }, {}],
+      ["trava congelada vencida", { plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 }, {}],
+      ["desconto sem prazo", { plan: "profissional", status: "active", priceLock: { kind: "founder", discountPct: 30 }, updatedAt: 1 }, {}],
+      ["sem assinatura", { plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 }, null],
+      ["assinatura manual", { plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 }, { billingProvider: "manual", providerSubscriptionId: undefined }],
+      ["trial", { plan: "profissional", status: "trial", trialEndsAt: NOW + DAY, priceLock: founderExpired, updatedAt: 1 }, {}],
+      ["read_only", { plan: "profissional", status: "read_only", priceLock: founderExpired, updatedAt: 1 }, {}],
+      ["legacy", { status: "legacy", priceLock: founderExpired, updatedAt: 1 }, {}],
+      ["Empresa (negociado)", { plan: "empresa", status: "active", units: 3, priceLock: founderExpired, updatedAt: 1 }, {}],
     ];
     for (const [, billing, sub] of skipped) await seed(billing, sub);
     expect(await tick()).toMatchObject({ repricing: 0 });
@@ -132,7 +152,7 @@ describe("fim da trava de preço", () => {
   });
 
   test("sem ASAAS_API_KEY a ação não faz nada (integração desligada)", async () => {
-    const id = await seed({ plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 });
+    const id = await seed({ plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 });
     vi.stubEnv("ASAAS_API_KEY", "");
     await tick();
     expect(calls).toHaveLength(0);
@@ -142,8 +162,8 @@ describe("fim da trava de preço", () => {
 
 describe("repriceAfterLockExpiry (puro)", () => {
   test("devolve null quando a trava já foi tratada (priceLockedUntil = until)", () => {
-    const org = { billing: { plan: "profissional", status: "active", priceLock: frozenExpired, updatedAt: 1 } } as never;
-    const sub = { billingProvider: "asaas", providerSubscriptionId: "sub_1", billingCycle: "monthly", priceLockedUntil: frozenExpired.until } as never;
+    const org = { billing: { plan: "profissional", status: "active", priceLock: founderExpired, updatedAt: 1 } } as never;
+    const sub = { billingProvider: "asaas", providerSubscriptionId: "sub_1", billingCycle: "monthly", priceLockedUntil: founderExpired.until } as never;
     expect(repriceAfterLockExpiry(org, sub, NOW)).toBeNull();
     expect(repriceAfterLockExpiry(org, { ...(sub as object), priceLockedUntil: undefined } as never, NOW)).toMatchObject({ chargeBrl: 497 });
   });

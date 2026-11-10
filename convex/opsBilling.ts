@@ -345,6 +345,8 @@ export const internalBillingReport = internalQuery({
         aiAttendancesLimit: v.union(v.number(), v.null()),
         trialEndsInDays: v.union(v.number(), v.null()),
         trialEndingSoon: v.boolean(),
+        /** Trava CONGELADA vencida: não reprecifica sozinha; avisar o cliente e o Eric decide. */
+        frozenLockExpired: v.boolean(),
         legacyUntil: v.union(v.number(), v.null()),
       })
     ),
@@ -387,6 +389,10 @@ export const internalBillingReport = internalQuery({
         aiAttendancesLimit: Number.isFinite(ent.limits.aiAttendances) ? ent.limits.aiAttendances : null,
         trialEndsInDays: days,
         trialEndingSoon: days !== null && days <= 7,
+        frozenLockExpired:
+          org.billing?.priceLock?.kind === "frozen" &&
+          org.billing.priceLock.until !== undefined &&
+          org.billing.priceLock.until <= now,
         legacyUntil: org.billing?.legacyUntil ?? null,
       });
     }
