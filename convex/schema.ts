@@ -3163,12 +3163,73 @@ const applicationTables = {
     trialUsedByUserId: v.optional(v.id("users")),
     currentPeriodStart: v.optional(v.number()),
     currentPeriodEnd: v.optional(v.number()),
+    // Checkout (Asaas): razão social do tomador da NFS-e e carimbo anti duplo clique (60 s).
+    billingName: v.optional(v.string()),
+    checkoutStartedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
     .index("by_provider_subscription", ["providerSubscriptionId"])
     .index("by_payment_status", ["paymentStatus"]),
+
+  // Cobrança (Asaas): uma linha por fatura, manual ou do gateway. Valores em centavos inteiros;
+  // `dueDate` em ms (meia-noite UTC do dia de vencimento). Sem PII: o link da fatura é do Asaas.
+  // Escrita só por `billingAsaas.ts` (webhook/checkout) e pelas ops de `opsBilling.ts`.
+  billingInvoices: defineTable({
+    organizationId: v.id("organizations"),
+    source: v.union(v.literal("manual"), v.literal("asaas")),
+    kind: v.union(
+      v.literal("subscription"),
+      v.literal("overage"),
+      v.literal("credit_pack"),
+      v.literal("setup"),
+      v.literal("addon_proration"),
+      v.literal("other")
+    ),
+    periodKey: v.optional(v.string()),
+    description: v.string(),
+    amountCents: v.number(),
+    discountCents: v.optional(v.number()),
+    dueDate: v.number(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("paid"),
+      v.literal("overdue"),
+      v.literal("canceled"),
+      v.literal("refunded")
+    ),
+    paidAt: v.optional(v.number()),
+    paymentMethod: v.optional(v.union(v.literal("pix"), v.literal("boleto"), v.literal("card"), v.literal("transfer"))),
+    providerPaymentId: v.optional(v.string()),
+    invoiceUrl: v.optional(v.string()),
+    nfseNumber: v.optional(v.string()),
+    nfseUrl: v.optional(v.string()),
+    createdBy: v.union(v.literal("ops"), v.literal("system")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization_and_due_date", ["organizationId", "dueDate"])
+    .index("by_provider_payment_id", ["providerPaymentId"]),
+
+  // Cobrança (Asaas): eventos de webhook recebidos, dedupe por `eventId`. Nasce SEM org (é
+  // ingestão da plataforma, como `metaDeletionRequests`): `organizationId` é preenchido ao
+  // resolver o pagamento. Nenhuma query pública lê esta tabela. Sem corpo do evento (tem PII).
+  billingWebhookEvents: defineTable({
+    provider: v.literal("asaas"),
+    eventId: v.string(),
+    event: v.string(),
+    providerPaymentId: v.optional(v.string()),
+    providerSubscriptionId: v.optional(v.string()),
+    organizationId: v.optional(v.id("organizations")),
+    receivedAt: v.number(),
+    processedAt: v.optional(v.number()),
+    status: v.union(v.literal("pending"), v.literal("processed"), v.literal("ignored"), v.literal("failed")),
+    attempts: v.number(),
+    error: v.optional(v.string()),
+  })
+    .index("by_event_id", ["eventId"])
+    .index("by_status_and_received_at", ["status", "receivedAt"]),
 
   // 7b: aceite dos Termos de Uso. APPEND-ONLY (só insert, nenhuma função atualiza ou apaga):
   // é a prova do consentimento. `organizationId` só quando o aceite aconteceu ao criar a org.

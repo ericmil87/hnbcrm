@@ -23,6 +23,9 @@ const PATTERNS: { name: string; re: RegExp }[] = [
   // Token de bot do Telegram: `<bot id>:<35 chars>` (o 2º trecho nem sempre começa
   // com "AA"). Fixtures ficam curtos: "123456:FAKE-TOKEN-xyz" (14 chars) passa.
   { name: "Telegram bot token", re: /\b\d{6,12}:[A-Za-z0-9_-]{35}\b/ },
+  // Chave de API do Asaas (acesso TOTAL à conta, sem escopo): `$aact_prod_…` / `$aact_hmlg_…`.
+  // Fixtures de teste ficam curtos ("$aact_test_fake").
+  { name: "Asaas API key", re: /\$aact_[A-Za-z0-9_]{20,}/ },
   { name: "private key block", re: /-----BEGIN (RSA )?PRIVATE KEY-----/ },
   // Tokens hex de 64 chars (HMAC do bridge, admin token do wuzapi, Whisper).
   { name: "64-hex token", re: /\b[a-f0-9]{64}\b/ },
@@ -61,4 +64,13 @@ test("padrão do token do Telegram pega o formato real e deixa os fixtures", () 
   expect(re.test(realShape)).toBe(true);
   expect(re.test(`9245775500:AA${"x".repeat(33)}`)).toBe(true);
   for (const fixture of ["123456:FAKE-TOKEN-xyz", "123456:FAKE-TOKEN-ops"]) expect(re.test(fixture)).toBe(false);
+});
+
+test("padrão da chave do Asaas pega o formato real e deixa os fixtures", () => {
+  const re = PATTERNS.find((p) => p.name === "Asaas API key")!.re;
+  // Montado em tempo de execução para o próprio arquivo não virar achado.
+  const realShape = "$" + "aact_prod_" + "AbC1".repeat(10);
+  expect(re.test(realShape)).toBe(true);
+  expect(re.test("$" + "aact_hmlg_" + "x".repeat(40))).toBe(true);
+  for (const fixture of ["$aact_test_fake", "$aact_fake_key_1"]) expect(re.test(fixture)).toBe(false);
 });
