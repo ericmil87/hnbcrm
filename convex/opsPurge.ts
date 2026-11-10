@@ -61,6 +61,8 @@ const ORG_TABLES: { table: string; index: string }[] = [
   // Billing (B1): comercial (PII: documento, e-mail) e pacotes pré-pagos. LGPD: sai com a org.
   { table: "orgSubscriptions", index: "by_organization" },
   { table: "usageCredits", index: "by_organization_and_expires" },
+  // Cobrança (Asaas): faturas da org.
+  { table: "billingInvoices", index: "by_organization_and_due_date" },
   // Billing (B2): livro de atendimentos e medidor de envios.
   { table: "aiAttendances", index: "by_organization_and_month_and_contact" },
   { table: "orgUsageMonthly", index: "by_organization_and_month" },

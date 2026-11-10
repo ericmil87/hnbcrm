@@ -37,6 +37,9 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "orgSubscriptions",
   // 7b: aceites dos Termos (userId, userAgent): prova de consentimento, não dado de negócio.
   "termsAcceptances",
+  // Cobrança (Asaas): ingestão de webhook da plataforma e faturas (derivadas do gateway).
+  "billingWebhookEvents",
+  "billingInvoices",
   // B7a: registro anti-abuso do teste de 30 dias (userId).
   "trialGrants",
   "usageCredits",
