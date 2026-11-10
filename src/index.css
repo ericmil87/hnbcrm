@@ -10,7 +10,9 @@
  * aliases are resolved on the same element as the channels.
  */
 
-/* === Dark Mode (Default) === */
+/* === Escuro (base palette; [data-theme="dark"] has no override block) ===
+ * The default theme is "whatsapp": index.html ships data-theme="whatsapp" and public/theme-init.js
+ * sets the attribute before the first paint. Every theme block overrides every --rgb-* key. */
 :root {
   --rgb-surface-base: 15 15 17;
   --rgb-surface-raised: 24 24 27;
@@ -170,7 +172,8 @@
 [data-theme="whatsapp"] {
   --rgb-surface-base: 240 242 245;
   --rgb-surface-raised: 255 255 255;
-  --rgb-surface-overlay: 255 255 255;
+  /* WhatsApp hover grey: must differ from raised (hover:bg-surface-overlay on white cards, Badge default). */
+  --rgb-surface-overlay: 245 246 246;
   --rgb-surface-sunken: 233 237 239;
   --rgb-border-default: 209 215 219;
   --rgb-border-subtle: 233 237 239;
@@ -231,6 +234,72 @@
   --shimmer-highlight: rgba(0, 0, 0, 0.04);
 }
 
+/* === WhatsApp escuro === */
+[data-theme="whatsapp-dark"] {
+  --rgb-surface-base: 17 27 33;
+  --rgb-surface-raised: 32 44 51;
+  /* Visibly above raised (hover feedback) while border-default (42 57 66) still reads on it. */
+  --rgb-surface-overlay: 38 52 60;
+  --rgb-surface-sunken: 11 20 26;
+  --rgb-border-default: 42 57 66;
+  --rgb-border-subtle: 34 45 52;
+  --rgb-border-strong: 59 74 84;
+  --rgb-text-primary: 233 237 239;
+  --rgb-text-secondary: 174 186 193;
+  --rgb-text-muted: 149 164 173;
+  --rgb-brand-50: 231 252 227;
+  --rgb-brand-100: 217 253 211;
+  --rgb-brand-200: 185 240 216;
+  --rgb-brand-300: 122 227 195;
+  --rgb-brand-400: 33 199 160;
+  --rgb-brand-500: 0 168 132;
+  --rgb-brand-600: 0 128 105;
+  --rgb-brand-700: 0 110 90;
+  --rgb-brand-800: 0 92 75;
+  --rgb-brand-900: 2 77 64;
+  --rgb-semantic-success: 63 207 122;
+  --rgb-semantic-error: 248 113 113;
+  --rgb-semantic-warning: 234 179 8;
+  --rgb-semantic-info: 96 165 250;
+  --rgb-ai-300: 216 180 254;
+  --rgb-ai-400: 201 162 252;
+  --rgb-ai-500: 168 85 247;
+  --rgb-ai-600: 147 51 234;
+  --rgb-ai-700: 126 34 206;
+  --rgb-chat-bg: 11 20 26;
+  --rgb-chat-header: 32 44 51;
+  --rgb-composer: 32 44 51;
+  --rgb-composer-field: 42 57 66;
+  --rgb-chat-send: 0 168 132;
+  --rgb-bubble-in: 32 44 51;
+  --rgb-bubble-in-link: 83 189 235;
+  --rgb-bubble-out: 0 92 75;
+  --rgb-bubble-out-fg: 233 237 239;
+  --rgb-bubble-out-label: 157 235 211;
+  --rgb-bubble-out-link: 159 220 247;
+  --rgb-bubble-ai: 74 45 110;
+  --rgb-bubble-ai-label: 226 201 254;
+  --rgb-bubble-note: 58 50 32;
+  --rgb-bubble-note-label: 245 196 81;
+  --rgb-bubble-note-border: 183 121 31;
+  --rgb-bubble-system: 24 34 41;
+  --rgb-bubble-system-fg: 149 164 173;
+  --rgb-tick-read: 83 189 235;
+  --rgb-badge-unread: 0 168 132;
+  --rgb-badge-unread-fg: 17 27 33;
+
+  --chat-wallpaper:
+    radial-gradient(rgb(233 237 239 / 0.06) 0.6px, transparent 0.6px),
+    radial-gradient(rgb(233 237 239 / 0.06) 0.6px, transparent 0.6px);
+
+  --shadow-card:       0 1px 3px rgba(0, 0, 0, 0.3);
+  --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-elevated:   0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-glow:       0 0 20px rgb(var(--rgb-brand-500) / 0.15);
+  --shadow-bubble:     0 1px 0.5px rgba(0, 0, 0, 0.25);
+  --shimmer-highlight: rgba(255, 255, 255, 0.04);
+}
+
 /* === Prevent double-tap zoom on mobile === */
 html {
   touch-action: manipulation;
@@ -289,7 +358,7 @@ body {
   animation: shimmer 1.5s ease-in-out infinite;
 }
 
-/* === Custom scrollbar (dark mode) === */
+/* === Custom scrollbar (follows the theme tokens) === */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;

@@ -23,7 +23,7 @@ export function highlightJson(json: string): string {
       } else if (/true|false/.test(match)) {
         cls = "text-purple-400"; // boolean
       } else if (/null/.test(match)) {
-        cls = "text-gray-500"; // null
+        cls = "text-white/50"; // null
       }
       return `<span class="${cls}">${match}</span>`;
     }
@@ -35,7 +35,7 @@ export function JsonHighlighter({ data }: JsonHighlighterProps) {
   const html = highlightJson(json);
 
   return (
-    <pre className="text-[13px] leading-relaxed bg-[#0d1117] rounded-lg p-3 overflow-auto text-gray-400">
+    <pre className="text-[13px] leading-relaxed bg-[#0d1117] rounded-lg p-3 overflow-auto text-white/70">
       <code dangerouslySetInnerHTML={{ __html: html }} />
     </pre>
   );

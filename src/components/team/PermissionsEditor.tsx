@@ -107,7 +107,7 @@ export function PermissionsEditor({
                       className={cn(
                         "px-2.5 py-1 rounded-full text-xs font-medium transition-colors min-h-[32px]",
                         isActive
-                          ? "bg-brand-500 text-white"
+                          ? "bg-brand-600 text-white"
                           : "bg-surface-raised text-text-secondary hover:bg-surface-overlay hover:text-text-primary border border-border-subtle",
                         disabled && "opacity-50 cursor-not-allowed"
                       )}

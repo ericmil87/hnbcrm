@@ -399,7 +399,7 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
             <div className="flex gap-0.5 bg-surface-sunken rounded-full p-0.5 flex-shrink-0">
               <button
                 onClick={() => setMode("form")}
-                className={`px-2.5 py-0.5 text-xs rounded-full transition-colors ${
+                className={`px-3 min-h-[44px] md:min-h-[28px] text-xs rounded-full transition-colors ${
                   mode === "form" ? "bg-brand-500 text-white" : "text-text-muted hover:text-text-secondary"
                 }`}
               >
@@ -407,7 +407,7 @@ export function RequestBuilder({ endpoint, baseUrl, apiKey, onSendRequest }: Req
               </button>
               <button
                 onClick={() => setMode("json")}
-                className={`px-2.5 py-0.5 text-xs rounded-full transition-colors ${
+                className={`px-3 min-h-[44px] md:min-h-[28px] text-xs rounded-full transition-colors ${
                   mode === "json" ? "bg-brand-500 text-white" : "text-text-muted hover:text-text-secondary"
                 }`}
               >
@@ -510,7 +510,7 @@ function JsonEditorOverlay({
       <pre
         ref={preRef}
         aria-hidden="true"
-        className="absolute inset-0 m-0 p-3 text-[13px] leading-relaxed font-mono overflow-hidden whitespace-pre-wrap break-words bg-[#0d1117] text-gray-400 pointer-events-none"
+        className="absolute inset-0 m-0 p-3 text-[13px] leading-relaxed font-mono overflow-hidden whitespace-pre-wrap break-words bg-[#0d1117] text-white/70 pointer-events-none"
         dangerouslySetInnerHTML={{ __html: highlighted + "\n" }}
       />
       {/* Editable textarea (on top, transparent text) */}

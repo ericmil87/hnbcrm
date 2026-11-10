@@ -29,7 +29,7 @@ export function AuthPage() {
         description="Acesse sua conta HNBCRM"
         noindex={true}
       />
-      <div className="flex items-center justify-center min-h-screen px-4 bg-gradient-to-b from-surface-overlay to-surface-base">
+      <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8 bg-gradient-to-b from-surface-overlay to-surface-base">
         <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
           <Link
@@ -40,7 +40,7 @@ export function AuthPage() {
             Voltar ao início
           </Link>
           <img
-            src="/orange_icon_logo_transparent-bg-528x488.png"
+            src="/black_icon_logo_transparent-bg-528x488.png"
             alt="HNBCRM"
             className="h-16 w-16 mx-auto mb-4 object-contain"
           />
@@ -51,7 +51,7 @@ export function AuthPage() {
             CRM multi-tenant com colaboração humano-IA
           </p>
         </div>
-        <div className="animate-fade-in-up">
+        <div className="animate-fade-in-up rounded-card border border-border-subtle bg-surface-raised p-5 shadow-card sm:p-6">
           <SignInForm />
         </div>
       </div>

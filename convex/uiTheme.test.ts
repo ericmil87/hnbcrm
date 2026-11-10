@@ -52,6 +52,15 @@ describe("setMyUiTheme", () => {
     expect((await as.query(api.teamMembers.getCurrentTeamMember, { organizationId: s.orgB }))?.uiTheme).toBe("whatsapp");
   });
 
+  test("aceita o tema WhatsApp escuro", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const as = t.withIdentity({ subject: `${s.user}|s1` });
+    await as.mutation(api.teamMembers.setMyUiTheme, { organizationId: s.orgA, theme: "whatsapp-dark" });
+    expect((await as.query(api.teamMembers.getCurrentTeamMember, { organizationId: s.orgA }))?.uiTheme).toBe("whatsapp-dark");
+    expect(isUiTheme("whatsapp-dark")).toBe(true);
+  });
+
   test("não altera removida, IA nem outro usuário", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

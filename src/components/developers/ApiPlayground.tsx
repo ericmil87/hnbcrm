@@ -337,7 +337,7 @@ export function ApiPlayground({ initialEndpointId, fullPage, onEndpointChange }:
                 <div className="flex border-b border-border bg-surface-raised">
                   <button
                     onClick={() => setMobileTab("request")}
-                    className={`flex-1 px-3 py-2 text-sm font-medium transition-colors ${
+                    className={`flex-1 px-3 py-2 min-h-[44px] text-sm font-medium transition-colors ${
                       mobileTab === "request"
                         ? "text-brand-400 border-b-2 border-brand-500"
                         : "text-text-muted hover:text-text-secondary"
@@ -347,7 +347,7 @@ export function ApiPlayground({ initialEndpointId, fullPage, onEndpointChange }:
                   </button>
                   <button
                     onClick={() => setMobileTab("response")}
-                    className={`flex-1 px-3 py-2 text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    className={`flex-1 px-3 py-2 min-h-[44px] text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
                       mobileTab === "response"
                         ? "text-brand-400 border-b-2 border-brand-500"
                         : "text-text-muted hover:text-text-secondary"

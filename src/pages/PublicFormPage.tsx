@@ -341,7 +341,7 @@ export function PublicFormPage() {
           <div className="w-full max-w-sm text-center space-y-4 animate-fade-in-up">
             <div className="w-16 h-16 rounded-2xl bg-surface-raised border border-border flex items-center justify-center mx-auto">
               <img
-                src="/orange_icon_logo_transparent-bg-528x488.png"
+                src="/black_icon_logo_transparent-bg-528x488.png"
                 alt="HNBCRM"
                 className="w-9 h-9 object-contain"
                 loading="lazy"

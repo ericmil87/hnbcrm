@@ -82,25 +82,25 @@ export function LandingPage() {
         {/* Hero Section with inline header */}
       <section
         ref={heroRef}
-        className="relative min-h-[85vh] md:min-h-screen flex flex-col bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,107,0,0.15),transparent)]"
+        className="relative min-h-[85vh] supports-[height:100dvh]:min-h-[85dvh] md:min-h-screen md:supports-[height:100dvh]:min-h-[100dvh] flex flex-col bg-gradient-to-b from-brand-500/[0.06] via-surface-base to-surface-base"
       >
         {/* Header */}
         <header className="pt-6 px-4">
           <div className="flex items-center justify-between max-w-6xl mx-auto">
             <div className="flex items-center gap-2">
               <img
-                src="/orange_icon_logo_transparent-bg-528x488.png"
+                src="/black_icon_logo_transparent-bg-528x488.png"
                 alt="HNBCRM Logo"
                 className="h-8 w-8 object-contain"
               />
-              <span className="text-xl font-bold text-text-primary">HNBCRM</span>
+              <span className="text-lg sm:text-xl font-bold text-text-primary">HNBCRM</span>
             </div>
-            <div className="flex items-center gap-4">
+            <div className="flex items-center gap-1 sm:gap-4">
               <a
                 href="https://github.com/ericmil87/hnbcrm"
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-text-muted hover:text-text-primary transition-colors"
+                className="hidden sm:inline-flex items-center justify-center min-h-11 min-w-11 text-text-muted hover:text-text-primary transition-colors"
                 aria-label="GitHub"
               >
                 <Github size={20} />
@@ -144,7 +144,7 @@ export function LandingPage() {
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in-up [animation-delay:200ms]">
               <Link to="/entrar">
-                <Button variant="primary" size="lg" className="shadow-glow min-h-[44px]">
+                <Button variant="primary" size="lg" className="min-h-[44px]">
                   {CTA_LABEL}
                 </Button>
               </Link>
@@ -379,7 +379,7 @@ function FeaturesSection() {
             >
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center flex-shrink-0">
-                  <feature.icon className="text-brand-400" size={20} />
+                  <feature.icon className="text-brand-500" size={20} />
                 </div>
                 <div>
                   <h3 className="font-semibold text-text-primary mb-2">
@@ -482,7 +482,7 @@ function DeveloperSection() {
               )}
             >
               <div className="w-12 h-12 rounded-xl bg-brand-500/10 flex items-center justify-center mb-4">
-                <card.icon className="text-brand-400" size={24} />
+                <card.icon className="text-brand-500" size={24} />
               </div>
               <h3 className="text-xl font-semibold text-text-primary mb-2">
                 {card.title}
@@ -685,7 +685,7 @@ function CTASection() {
   return (
     <section
       ref={ref}
-      className="py-16 md:py-24 text-center bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,rgba(255,107,0,0.15),transparent)]"
+      className="py-16 md:py-24 text-center bg-gradient-to-b from-brand-500/[0.06] to-transparent"
       aria-labelledby="cta-heading"
     >
       <div className="max-w-4xl mx-auto px-4">

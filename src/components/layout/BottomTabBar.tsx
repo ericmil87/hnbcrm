@@ -37,7 +37,7 @@ interface BottomTabBarViewProps {
 }
 
 const BADGE_PILL =
-  "min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums";
+  "min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold leading-none tabular-nums";
 
 /** Barra inferior pura: 4 primários + "Mais" (folha por grupos). */
 export function BottomTabBarView({
@@ -208,7 +208,7 @@ export function BottomTabBarView({
             <span className="relative">
               <MoreHorizontal size={20} aria-hidden="true" />
               {moreHasBadge && (
-                <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-brand-600" aria-hidden="true" />
+                <span className="absolute -top-0.5 -right-1 h-2 w-2 rounded-full bg-badge-unread" aria-hidden="true" />
               )}
             </span>
             <span className="text-caption font-medium" aria-hidden="true">Mais</span>

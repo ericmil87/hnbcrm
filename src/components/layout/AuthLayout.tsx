@@ -10,6 +10,7 @@ import {
 import { useConvex, useConvexAuth, useQuery } from "convex/react";
 import { useAuthActions } from "@convex-dev/auth/react";
 import { api } from "../../../convex/_generated/api";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 import { Id } from "../../../convex/_generated/dataModel";
 import { AppShell } from "./AppShell";
 import { Spinner } from "../ui/Spinner";
@@ -529,11 +530,7 @@ function WelcomeScreen({
     <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
-          <img
-            src="/orange_icon_logo_transparent-bg-528x488.png"
-            alt="HNBCRM"
-            className="h-20 w-20 mx-auto mb-6 object-contain"
-          />
+          <BrandLogo className="h-20 w-20 mx-auto mb-6" />
           <h1 className="text-2xl md:text-3xl font-bold text-text-primary mb-2">
             Bem-vindo ao HNBCRM
           </h1>

@@ -81,7 +81,7 @@ export function CalendarHeader({
             className={cn(
               "px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] md:min-w-[60px]",
               view === "day"
-                ? "bg-brand-500 text-white"
+                ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:text-text-primary"
             )}
           >
@@ -92,7 +92,7 @@ export function CalendarHeader({
             className={cn(
               "px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] md:min-w-[60px]",
               view === "week"
-                ? "bg-brand-500 text-white"
+                ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:text-text-primary"
             )}
           >
@@ -103,7 +103,7 @@ export function CalendarHeader({
             className={cn(
               "px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] md:min-w-[60px]",
               view === "month"
-                ? "bg-brand-500 text-white"
+                ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:text-text-primary"
             )}
           >

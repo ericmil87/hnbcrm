@@ -385,7 +385,7 @@ function DefaultItem({
             data-testid="selection-box"
             className={cn(
               "mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-              checked ? "bg-brand-500 border-brand-500 text-white" : "border-border-strong"
+              checked ? "bg-brand-600 border-brand-600 text-white" : "border-border-strong"
             )}
             aria-hidden
           >

@@ -1,14 +1,21 @@
 // Pre-paint theme (fv2-14). Served from 'self' (CSP script-src 'self'), no module, loaded before the CSS.
-// Keep the theme-color values in sync with THEME_COLOR in src/lib/theme.ts. Ownership ("hnbcrm:theme-user")
-// is checked by useUiTheme, not here: the app clears both keys on sign-out and on an expired session.
+// Public pages always get the default ("whatsapp"); under /app the stored device theme wins when valid.
+// Keep THEMES/COLORS in sync with UI_THEMES (convex/lib/uiTheme.ts) and THEME_COLOR (src/lib/theme.ts).
+// Ownership ("hnbcrm:theme-user") is checked by useUiTheme, not here: the app clears both keys on
+// sign-out and on an expired session.
 (function () {
+  var COLORS = { dark: "#0F0F11", light: "#FAFAFA", whatsapp: "#008069", "whatsapp-dark": "#202C33" };
+  var theme = "whatsapp";
   try {
-    var t = localStorage.getItem("hnbcrm:theme");
     var p = location.pathname;
-    if ((t === "light" || t === "whatsapp") && (p === "/app" || p.indexOf("/app/") === 0)) {
-      document.documentElement.setAttribute("data-theme", t);
-      var m = document.querySelector('meta[name="theme-color"]');
-      if (m) m.setAttribute("content", t === "light" ? "#FAFAFA" : "#008069");
+    if (p === "/app" || p.indexOf("/app/") === 0) {
+      var t = localStorage.getItem("hnbcrm:theme");
+      if (t && Object.prototype.hasOwnProperty.call(COLORS, t)) theme = t;
     }
+  } catch (e) {}
+  try {
+    document.documentElement.setAttribute("data-theme", theme);
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute("content", COLORS[theme]);
   } catch (e) {}
 })();

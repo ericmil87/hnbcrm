@@ -242,7 +242,7 @@ function OrgSwitcherModalContent({
                       <span className="block text-xs text-text-muted truncate">{org.slug}</span>
                     </span>
                     {!isActive && orgNewsLabel(newsByOrg?.[org._id] ?? 0) && (
-                      <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold tabular-nums shrink-0">
+                      <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold tabular-nums shrink-0">
                         <span aria-hidden="true">{orgNewsLabel(newsByOrg?.[org._id] ?? 0)}</span>
                         <span className="sr-only">{`${orgNewsLabel(newsByOrg?.[org._id] ?? 0)} novidades`}</span>
                       </span>

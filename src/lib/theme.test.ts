@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_THEME,
   THEME_COLOR,
   THEME_OPTIONS,
   UI_THEMES,
@@ -12,6 +13,7 @@ import {
   resolveTheme,
   shouldPushLocalToServer,
   toasterTheme,
+  isDarkTheme,
 } from "./theme";
 
 describe("isAppPath", () => {
@@ -32,28 +34,35 @@ describe("resolveTheme", () => {
     expect(resolveTheme({ server: "whatsapp", local: "light" })).toBe("whatsapp");
     expect(resolveTheme({ server: "dark", local: "light" })).toBe("dark");
   });
+  it("server whatsapp-dark wins too", () => {
+    expect(resolveTheme({ server: "whatsapp-dark", local: "dark" })).toBe("whatsapp-dark");
+  });
   it("falls back to a valid local value", () => {
     expect(resolveTheme({ server: undefined, local: "light" })).toBe("light");
     expect(resolveTheme({ server: null, local: "whatsapp" })).toBe("whatsapp");
+    expect(resolveTheme({ server: undefined, local: "dark" })).toBe("dark");
+    expect(resolveTheme({ server: undefined, local: "whatsapp-dark" })).toBe("whatsapp-dark");
   });
-  it("defaults to dark on empty or invalid values", () => {
-    expect(resolveTheme({})).toBe("dark");
-    expect(resolveTheme({ server: "x", local: "auto" })).toBe("dark");
-    expect(resolveTheme({ server: undefined, local: null })).toBe("dark");
+  it("defaults to whatsapp on empty or invalid values (who never chose gets WhatsApp)", () => {
+    expect(DEFAULT_THEME).toBe("whatsapp");
+    expect(resolveTheme({})).toBe("whatsapp");
+    expect(resolveTheme({ server: "x", local: "auto" })).toBe("whatsapp");
+    expect(resolveTheme({ server: undefined, local: null })).toBe("whatsapp");
   });
 });
 
 describe("shouldPushLocalToServer", () => {
-  it("pushes only when server is empty and local is light/whatsapp", () => {
+  it("pushes when server is empty and local is a valid non-default theme", () => {
     expect(shouldPushLocalToServer({ server: undefined, local: "light" })).toBe(true);
-    expect(shouldPushLocalToServer({ server: undefined, local: "whatsapp" })).toBe(true);
+    expect(shouldPushLocalToServer({ server: undefined, local: "dark" })).toBe(true);
+    expect(shouldPushLocalToServer({ server: undefined, local: "whatsapp-dark" })).toBe(true);
   });
   it("never writes when both are empty", () => {
     expect(shouldPushLocalToServer({ server: undefined, local: null })).toBe(false);
     expect(shouldPushLocalToServer({})).toBe(false);
   });
-  it("does not push dark, invalid, or when the server has a value", () => {
-    expect(shouldPushLocalToServer({ server: undefined, local: "dark" })).toBe(false);
+  it("does not push the default, invalid, or when the server has a value", () => {
+    expect(shouldPushLocalToServer({ server: undefined, local: "whatsapp" })).toBe(false);
     expect(shouldPushLocalToServer({ server: undefined, local: "x" })).toBe(false);
     expect(shouldPushLocalToServer({ server: "dark", local: "light" })).toBe(false);
   });
@@ -65,7 +74,7 @@ describe("theme owner", () => {
   });
   it("pushes when the owner matches or is absent (legacy)", () => {
     expect(shouldPushLocalToServer({ server: undefined, local: "light", owner: "userA", userId: "userA" })).toBe(true);
-    expect(shouldPushLocalToServer({ server: undefined, local: "whatsapp", owner: null, userId: "userA" })).toBe(true);
+    expect(shouldPushLocalToServer({ server: undefined, local: "whatsapp-dark", owner: null, userId: "userA" })).toBe(true);
   });
   it("isForeignLocalTheme", () => {
     expect(isForeignLocalTheme({ owner: "a", userId: "b" })).toBe(true);
@@ -94,17 +103,26 @@ describe("toasterTheme and constants", () => {
     expect(toasterTheme("dark")).toBe("dark");
     expect(toasterTheme("light")).toBe("light");
     expect(toasterTheme("whatsapp")).toBe("light");
+    expect(toasterTheme("whatsapp-dark")).toBe("dark");
+  });
+  it("isDarkTheme", () => {
+    expect(UI_THEMES.filter(isDarkTheme)).toEqual(["dark", "whatsapp-dark"]);
   });
   it("exposes theme-color per theme and the storage key", () => {
-    expect(THEME_COLOR).toEqual({ dark: "#0F0F11", light: "#FAFAFA", whatsapp: "#008069" });
+    expect(THEME_COLOR).toEqual({ dark: "#0F0F11", light: "#FAFAFA", whatsapp: "#008069", "whatsapp-dark": "#202C33" });
     expect(THEME_STORAGE_KEY).toBe("hnbcrm:theme");
     expect(THEME_OWNER_KEY).toBe("hnbcrm:theme-user");
   });
 });
 
 describe("THEME_OPTIONS", () => {
-  it("tem 3 opções com os ids de UI_THEMES", () => {
-    expect(THEME_OPTIONS.map((o) => o.id)).toEqual([...UI_THEMES]);
+  it("tem 4 opções com os ids de UI_THEMES, WhatsApp primeiro", () => {
+    expect(THEME_OPTIONS.map((o) => o.id).sort()).toEqual([...UI_THEMES].sort());
+    expect(THEME_OPTIONS.map((o) => o.id)).toEqual(["whatsapp", "whatsapp-dark", "dark", "light"]);
+  });
+
+  it("só o WhatsApp se diz padrão", () => {
+    expect(THEME_OPTIONS.filter((o) => /padrão/i.test(o.description)).map((o) => o.id)).toEqual([DEFAULT_THEME]);
   });
 
   it("textos em português, sem inglês", () => {
@@ -130,5 +148,6 @@ describe("THEME_OPTIONS", () => {
     expect(themeLabel("dark")).toBe("Escuro");
     expect(themeLabel("light")).toBe("Claro");
     expect(themeLabel("whatsapp")).toBe("Estilo WhatsApp");
+    expect(themeLabel("whatsapp-dark")).toBe("WhatsApp escuro");
   });
 });

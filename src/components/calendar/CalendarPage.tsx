@@ -260,7 +260,7 @@ export function CalendarPage() {
         {/* Mobile FAB - shows only on mobile, positioned above bottom tab bar */}
         <button
           onClick={handleCreateEvent}
-          className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-brand-500 text-white shadow-lg flex items-center justify-center hover:bg-brand-600 active:scale-95 transition-all"
+          className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-brand-600 text-white shadow-lg flex items-center justify-center hover:bg-brand-700 active:scale-95 transition-all"
           aria-label="Novo Evento"
         >
           <Plus size={24} />

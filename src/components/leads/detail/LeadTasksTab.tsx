@@ -119,7 +119,7 @@ export function LeadTasksTab({
                   aria-label={isCompleted ? "Concluída" : "Concluir"}
                 >
                   {isCompleted && (
-                    <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-white" aria-hidden="true">
+                    <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-surface-base" aria-hidden="true">
                       <path d="M1 4L3.5 6.5L9 1" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
                   )}

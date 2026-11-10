@@ -120,7 +120,7 @@ export function NotificationBell({ organizationId }: NotificationBellProps) {
         {pausedNow ? <BellOff size={20} /> : <Bell size={20} />}
         {badgeLabel && (
           <span
-            className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
+            className="absolute top-1.5 right-1.5 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold leading-none tabular-nums"
             aria-hidden="true"
           >
             {badgeLabel}

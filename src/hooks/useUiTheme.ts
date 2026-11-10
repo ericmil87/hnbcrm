@@ -123,7 +123,7 @@ export function useUiTheme(
     }, SAVE_DEBOUNCE_MS),
   );
 
-  // Leaving /app (unmount) returns to the dark default. Mark unmounted BEFORE the flush so a failing
+  // Leaving /app (unmount) returns to the public default (whatsapp). Mark unmounted BEFORE the flush so a failing
   // save (no session) cannot touch the DOM, storage or toasts.
   useEffect(() => {
     mountedRef.current = true;

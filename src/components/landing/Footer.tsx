@@ -39,7 +39,7 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1 space-y-3">
             <div className="flex items-center gap-2">
               <img
-                src="/orange_icon_logo_transparent-bg-528x488.png"
+                src="/black_icon_logo_transparent-bg-528x488.png"
                 alt="HNBCRM Logo"
                 className="h-8 w-8 object-contain"
               />

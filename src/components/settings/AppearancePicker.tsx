@@ -60,7 +60,7 @@ export function AppearancePicker({ value, onValueChange, disabled }: AppearanceP
   };
 
   return (
-    <div role="radiogroup" aria-label="Aparência" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div role="radiogroup" aria-label="Aparência" className="grid grid-cols-2 gap-3">
       {THEME_OPTIONS.map((option, index) => {
         const selected = option.id === value;
         return (

@@ -9,7 +9,7 @@ src/
 ├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
 ├── SignInForm.tsx              # Password sign-in; links to components/auth/ForgotPasswordForm.tsx (password reset)
 ├── SignOutButton.tsx           # Sign-out button
-├── index.css                   # --rgb-* color channels + full-color aliases (dark/light/whatsapp), shadows, auth classes, shimmer, .chat-wallpaper
+├── index.css                   # --rgb-* color channels + full-color aliases (:root = dark base; light/whatsapp/whatsapp-dark blocks; default whatsapp), shadows, auth classes, shimmer, .chat-wallpaper
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)
 ├── lib/format.ts               # pt-BR formatters (date/time/relative/money/count/parseDecimal, formatListTime for the Conversas list) — the only entry point
 ├── lib/pageHeader.ts           # pure signature/merge of the page contribution to the AppShell mobile header (components/layout/pageHeader.tsx: usePageHeader, PageHeaderSlot, globalMenuItems); test next to it
@@ -29,13 +29,13 @@ src/
 ├── lib/contrast.ts             # WCAG contrast helpers (hex/channels, luminance, ratio, alpha composite); test next to it
 ├── lib/themeTokens.test.ts     # reads index.css: dark palette frozen (--rgb-* channels), aliases, AA pairs + DARK_KNOWN_FAILURES
 ├── lib/theme.ts                # theme constants/pure logic (THEME_STORAGE_KEY, isAppPath, resolveTheme, shouldPushLocalToServer, toasterTheme, THEME_COLOR, THEME_OPTIONS, themeLabel); test next to it
-├── lib/themeDom.ts             # applyTheme/clearTheme on <html> + meta theme-color; subscribe/getAppliedTheme
+├── lib/themeDom.ts             # applyTheme/clearTheme (back to whatsapp) on <html> + meta theme-color; subscribe/getAppliedTheme; themeInit.test.ts runs public/theme-init.js in jsdom
 ├── lib/funnelCardPrefs.ts      # Funil card preference (density compact|comfortable + visible fields, localStorage hnbcrm.funnelCard.<org>), tolerant parse (+ test); hook hooks/useFunnelCardPrefs.ts
 ├── lib/funnelHeader.ts         # pure plan of the Funil contribution to the AppShell mobile header (funnelHeaderPlan: "Criar lead" +, ⋯ items/order/separators as commands); test next to it
 ├── lib/funnelFilters.ts        # Funil labels/variants, client filter, sort, URL (de)serialization (?view=&q=&owner=&temp=&priority=&unit=), initial-funnel pick (+ test)
 ├── hooks/useFunnelUrlState.ts  # Funil URL state: ?board= (initial pick), ?lead= (panel, replace), filters/view (replace), last funnel per org in localStorage
 ├── hooks/useUiTheme.ts         # AuthLayout only: syncs theme with teamMembers.uiTheme + localStorage; exposes {theme, setTheme}
-├── lib/themeLegacy.test.ts     # guard: no .light in index.css, no [.light_&] in src, no darkMode in tailwind.config.js, index.html without class="dark" and with /theme-init.js first
+├── lib/themeLegacy.test.ts     # guard: no .light in index.css, no [.light_&] in src, no darkMode in tailwind.config.js, index.html without class="dark", with data-theme="whatsapp" and /theme-init.js first; light-theme: never matches whatsapp-dark
 ├── lib/uiClassGuard.test.ts    # guard: no text-[9|10|11px] outside WhatsAppPreview/forms/renderer; viewport height in layout/ui/main needs dvh
 ├── lib/a11yGuard.test.ts       # guard (TS AST): icon-only buttons need aria-label; no title= on controls in layout/ui/inbox/funnel/settings
 ├── lib/rawColorsGuard.test.ts  # ratchet: raw Tailwind palette classes / [#hex] per file (ALLOWLIST ceilings only go down); purple- only in JsonHighlighter
@@ -68,6 +68,7 @@ src/
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
     ├── ui/                     # Primitives: Button, Input, Badge, Card, Modal (bottom sheet/dialog), SlideOver, Spinner, Skeleton, Avatar,
+    │                           #   BrandLogo (icon black on light/whatsapp, white on whatsapp-dark, orange on dark; the only logo entry point in the app shell),
     │                           #   ConfirmDialog, Checkbox, FileDropZone (drag/click .csv, >10 MB warning), ApiKeyRevealModal,
     │                           #   form controls: Switch, Select (native), SegmentedControl, Tabs/TabPanel, FormField, Textarea
     │                           #   structure: PageHeader, SectionCard, EmptyState, Stepper, SearchInput (`variant="pill"`), Popover, Menu, Tooltip (+ lib/popoverPosition.ts), FilterChips (toolbar of aria-pressed chips, horizontal scroll)
@@ -151,6 +152,6 @@ src/
 
 ## Styling and language
 
-Dark default (`:root` dark, `[data-theme="light"|"whatsapp"]` on `<html>` in `index.css`), mobile-first (`md:`/`lg:`), tokens `bg-surface-base|raised`, `text-text-primary|secondary`, `border-border`, `bg-brand-600`;
+Estilo WhatsApp default everywhere (`data-theme` always explicit on `<html>`: `whatsapp`, `whatsapp-dark`, `dark` = `:root` base, `light`; see `index.css`), mobile-first (`md:`/`lg:`), tokens `bg-surface-base|raised`, `text-text-primary|secondary`, `border-border`, `bg-brand-600`;
 `cn()` from `@/lib/utils`; `lucide-react` icons (no emoji); pills `rounded-full`, cards `rounded-card border border-border bg-surface-raised`.
 All user-facing text is Portuguese (BR); nav: Painel, Pipeline, Caixa de Entrada, Repasses, Equipe, Auditoria, Configurações.

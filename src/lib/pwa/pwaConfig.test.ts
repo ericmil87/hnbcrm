@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MANIFEST_ID, MANIFEST_SCOPE, MANIFEST_START_URL, SW_SCOPE, WEB_MANIFEST } from "./manifestConfig";
+import { DEFAULT_THEME, THEME_COLOR as UI_THEME_COLOR } from "../theme";
 
 const root = resolve(__dirname, "../../..");
 const read = (rel: string) => readFileSync(join(root, rel), "utf8");
@@ -25,8 +26,10 @@ describe("manifest", () => {
     expect(WEB_MANIFEST.short_name).toBeTruthy();
     expect(WEB_MANIFEST.display).toBe("standalone");
     expect(WEB_MANIFEST.lang).toBe("pt-BR");
-    expect(WEB_MANIFEST.theme_color).toBe("#0F0F11");
-    expect(WEB_MANIFEST.background_color).toBe("#0F0F11");
+    expect(WEB_MANIFEST.theme_color).toBe("#008069");
+    expect(WEB_MANIFEST.background_color).toBe("#F0F2F5");
+    // manifestConfig stays import-free for vite.config.ts, so it repeats the default theme's color.
+    expect(WEB_MANIFEST.theme_color).toBe(UI_THEME_COLOR[DEFAULT_THEME]);
     expect(WEB_MANIFEST.shortcuts.map((s) => s.url)).toEqual(["/app/entrada", "/app/repasses", "/app/tarefas"]);
   });
   it("keeps id, scope and start_url coherent", () => {

@@ -20,9 +20,9 @@ const ALLOWLIST: Record<string, number> = {
   // Cor de dado: tipo de evento do calendário (par `-400` + `light-theme:-700`).
   "components/calendar/constants.ts": 20,
   // Bloco de código sempre escuro (#0d1117), nos dois temas.
-  "components/developers/JsonHighlighter.tsx": 7,
+  "components/developers/JsonHighlighter.tsx": 5,
   "components/developers/CodeBlock.tsx": 2,
-  "components/developers/RequestBuilder.tsx": 2,
+  "components/developers/RequestBuilder.tsx": 1,
   // Cores canônicas do WhatsApp na pré-visualização de campanha.
   "components/campaigns/WhatsAppPreview.tsx": 30,
   "components/campaigns/WhatsAppText.tsx": 2,

@@ -102,22 +102,22 @@ export function DevelopersPage() {
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
-      <header className="sticky top-0 z-30 backdrop-blur-md border-b border-border">
+      <header className="sticky top-0 z-30 backdrop-blur-md bg-surface-base/90 border-b border-border">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-shrink-0">
             <Link to="/" className="flex items-center gap-2">
               <img
-                src="/orange_icon_logo_transparent-bg-528x488.png"
+                src="/black_icon_logo_transparent-bg-528x488.png"
                 alt="HNBCRM Logo"
                 className="h-7 w-7 object-contain"
               />
-              <span className="text-lg font-bold text-text-primary">HNBCRM</span>
+              <span className="text-lg font-bold text-text-primary hidden sm:inline">HNBCRM</span>
             </Link>
-            <span className="text-text-muted">/</span>
-            <span className="text-sm font-medium text-text-secondary">Developers</span>
+            <span className="text-text-muted hidden sm:inline">/</span>
+            <span className="text-sm font-medium text-text-secondary hidden sm:inline">Developers</span>
           </div>
 
-          <div className="flex items-center gap-2 flex-1 max-w-sm mx-4">
+          <div className="flex items-center gap-2 flex-1 max-w-sm sm:mx-4">
             <div className="relative flex-1">
               <SearchIcon size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted" />
               <input
@@ -125,7 +125,7 @@ export function DevelopersPage() {
                 placeholder="Buscar endpoints..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-surface-overlay border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-brand-500"
+                className="w-full pl-9 pr-3 py-2.5 min-h-[44px] bg-surface-overlay border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-brand-500"
               />
             </div>
           </div>
@@ -135,7 +135,7 @@ export function DevelopersPage() {
               href="https://github.com/ericmil87/hnbcrm"
               target="_blank"
               rel="noopener noreferrer"
-              className="text-text-muted hover:text-text-primary transition-colors"
+              className="text-text-muted hover:text-text-primary transition-colors hidden sm:inline-flex items-center justify-center min-h-[44px] min-w-[44px]"
               aria-label="GitHub"
             >
               <Github size={20} />
@@ -151,14 +151,14 @@ export function DevelopersPage() {
       </header>
 
       {/* Mobile ToC */}
-      <nav className="md:hidden sticky top-[57px] z-20 backdrop-blur-md border-b border-border overflow-x-auto">
+      <nav className="md:hidden sticky top-[69px] z-20 backdrop-blur-md bg-surface-base/90 border-b border-border overflow-x-auto">
         <div className="flex gap-1 px-4 py-2">
           {sections.map((s) =>
             s.id === "playground" ? (
               <Link
                 key={s.id}
                 to="/developers/playground"
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors text-text-muted hover:text-text-secondary"
+                className="flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] rounded-full text-xs font-medium whitespace-nowrap transition-colors text-text-muted hover:text-text-secondary"
               >
                 <s.icon size={14} />
                 {s.label}
@@ -169,7 +169,7 @@ export function DevelopersPage() {
                 key={s.id}
                 onClick={() => scrollTo(s.id)}
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors",
+                  "flex items-center gap-1.5 px-3 py-2.5 min-h-[44px] rounded-full text-xs font-medium whitespace-nowrap transition-colors",
                   activeSection === s.id
                     ? "bg-brand-500/10 text-brand-400"
                     : "text-text-muted hover:text-text-secondary"
