@@ -16,6 +16,7 @@ import { applySubscriptionChange, setBillingStatus, type OrgBillingInput } from 
 import { cancelOpenInvoicesForSubscription, dayToMs, invoiceStatusOf, isPaidStatus, upsertInvoiceFromPayment } from "./lib/billingInvoices";
 import {
   AsaasError,
+  cancelSubscription,
   getPayment,
   getSubscription,
   isAsaasEnabled,
@@ -25,10 +26,12 @@ import {
 } from "./lib/asaasApi";
 import { repriceAfterLockExpiry } from "./lib/lockExpiry";
 import { resolveEntitlements } from "./lib/entitlements";
-import { rearmScheduledMessagesForOrg } from "./billingCron";
+import { pauseCampaignsForReadOnly, rearmScheduledMessagesForOrg } from "./billingCron";
 import { notifyBillingAdmins } from "./lib/billingNotify";
 import { formatBrl } from "./lib/aiSpend";
 import { PLANS } from "./lib/plans";
+import { lockAfterPlanChange } from "./lib/planChange";
+import { firstPaidInvoice } from "./lib/refund";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -86,7 +89,8 @@ export const internalCheckoutContext = internalQuery({
       trialEndsAt: org.billing?.trialEndsAt ?? null,
       extraChannels: org.billing?.extraChannels ?? 0,
       priceLock: org.billing?.priceLock ? { ...org.billing.priceLock } : null,
-      providerSubscriptionId: sub?.providerSubscriptionId ?? null,
+      // Cancelada por nós (cancelAt/reembolso): já não existe no Asaas, não é "assinatura anterior".
+      providerSubscriptionId: sub?.cancelAt !== undefined ? null : (sub?.providerSubscriptionId ?? null),
     };
   },
 });
@@ -127,7 +131,8 @@ export const internalCheckoutContextOps = internalQuery({
       trialEndsAt: org.billing?.trialEndsAt ?? null,
       extraChannels: org.billing?.extraChannels ?? 0,
       priceLock: org.billing?.priceLock ? { ...org.billing.priceLock } : null,
-      providerSubscriptionId: sub?.providerSubscriptionId ?? null,
+      // Cancelada por nós (cancelAt/reembolso): já não existe no Asaas, não é "assinatura anterior".
+      providerSubscriptionId: sub?.cancelAt !== undefined ? null : (sub?.providerSubscriptionId ?? null),
     };
   },
 });
@@ -199,6 +204,13 @@ export const internalSaveCheckout = internalMutation({
           addons: { groupsAddon: args.groupsAddon, extraChannels: args.extraChannels },
           paymentStatus: "pending",
           checkoutStartedAt: undefined,
+          // Assinatura nova: nada do ciclo anterior sobrevive.
+          cancelAt: undefined,
+          scheduledChange: undefined,
+          pendingUpgrade: undefined,
+          chargeCents: undefined,
+          currentPeriodStart: undefined,
+          currentPeriodEnd: undefined,
         },
       },
       // `checkout` só escreve campos de cobrança; a ops de venda manual usa a mesma variante.
@@ -492,12 +504,35 @@ export const internalApplyEvent = internalMutation({
       : null;
     const ref = payment?.externalReference ?? subscription?.externalReference ?? null;
     const refOrgId = ref ? ctx.db.normalizeId("organizations", ref) : null;
+    let viaPending = false;
     if (!sub && refOrgId) {
       const byOrg = await ctx.db
         .query("orgSubscriptions")
         .withIndex("by_organization", (q) => q.eq("organizationId", refOrgId))
         .first();
       if (byOrg?.providerSubscriptionId && (!subId || byOrg.providerSubscriptionId === subId)) sub = byOrg;
+    }
+    // Assinatura NOVA de um upgrade ainda não pago: a org guarda o id em `pendingUpgrade`. Acha pela
+    // org do `externalReference` ou, sem ele, pela fatura já gravada no momento do upgrade.
+    if (!sub && subId) {
+      let pendingOrgId = refOrgId;
+      if (!pendingOrgId && ev.providerPaymentId) {
+        const inv = await ctx.db
+          .query("billingInvoices")
+          .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", ev.providerPaymentId!))
+          .first();
+        pendingOrgId = inv?.organizationId ?? null;
+      }
+      if (pendingOrgId) {
+        const byOrg = await ctx.db
+          .query("orgSubscriptions")
+          .withIndex("by_organization", (q) => q.eq("organizationId", pendingOrgId))
+          .first();
+        if (byOrg?.pendingUpgrade?.subscriptionId === subId) {
+          sub = byOrg;
+          viaPending = true;
+        }
+      }
     }
     if (!sub) {
       return invoiceOrgId
@@ -514,13 +549,88 @@ export const internalApplyEvent = internalMutation({
       await auditWebhook(ctx, orgId, ev.event, "cliente do pagamento diverge do cadastrado", "high", now);
       return await finish("failed", "cliente divergente", orgId);
     }
-    if (subId && sub.providerSubscriptionId !== subId) {
+    if (subId && !viaPending && sub.providerSubscriptionId !== subId) {
       return invoiceOrgId
         ? await finish("processed", "fatura atualizada; assinatura antiga", orgId)
         : await finish("ignored", "assinatura antiga", orgId);
     }
     const org = await ctx.db.get(orgId);
     if (!org) return await finish("ignored", "organização removida");
+
+    // ── Upgrade: a assinatura NOVA só troca o plano quando o 1º pagamento dela confirma ──
+    if (viaPending && sub.pendingUpgrade) {
+      if (!payment) return await finish("ignored", "pagamento não encontrado", orgId);
+      await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+      const confirmed = ev.event === "PAYMENT_CONFIRMED" || ev.event === "PAYMENT_RECEIVED";
+      // Vencida, estornada, criada...: só espelha a fatura. Nada muda na org até pagar.
+      if (!confirmed || !isPaidStatus(payment.status)) return await finish("processed", "troca de plano aguardando pagamento", orgId);
+      const up = sub.pendingUpgrade;
+      const oldSubscriptionId = sub.providerSubscriptionId;
+      const { updatedAt: _u, ...billingNoStamp } = org.billing ?? { status: "legacy" as const, updatedAt: 0 };
+      void _u;
+      const current: OrgBillingInput = billingNoStamp;
+      const wasBlocked = !resolveEntitlements(org, now).outboundAllowed;
+      const addons =
+        up.plan === "essencial"
+          ? { ...(current.addons ?? {}), groups: up.groupsAddon }
+          : current.addons
+            ? { ...current.addons, groups: undefined }
+            : undefined;
+      const priceLock = lockAfterPlanChange(current.priceLock, current.plan, up.plan);
+      const nextDue = dayToMs(subscription?.nextDueDate);
+      try {
+        await applySubscriptionChange(ctx, {
+          organizationId: orgId,
+          patch: {
+            billing: { ...current, plan: up.plan, status: "active", ...(addons ? { addons } : {}), priceLock },
+            subscription: {
+              paymentStatus: "ok",
+              graceUntil: undefined,
+              providerSubscriptionId: up.subscriptionId,
+              billingCycle: up.cycle,
+              basePriceCents: up.monthlyCents,
+              addons: { groupsAddon: up.groupsAddon, extraChannels: sub.addons?.extraChannels ?? current.extraChannels ?? 0 },
+              chargeCents: subscription?.value !== undefined ? Math.round(subscription.value * 100) : up.chargeCents,
+              currentPeriodStart: now,
+              currentPeriodEnd: nextDue,
+              pendingUpgrade: undefined,
+              pendingPlanChange: undefined,
+              scheduledChange: undefined,
+              cancelAt: undefined,
+            },
+          },
+          source: "webhook",
+          reason: "Upgrade de plano pago (Asaas)",
+        });
+      } catch (e) {
+        if (isInvalidTransition(e)) return await finish("ignored", `invalid_transition ${e.data.from}->${e.data.to}`, orgId);
+        throw e;
+      }
+      if (wasBlocked) await rearmScheduledMessagesForOrg(ctx, orgId);
+      // A assinatura antiga e as faturas abertas dela saem: o cliente não pode pagar duas vezes.
+      if (oldSubscriptionId && oldSubscriptionId !== up.subscriptionId) {
+        await cancelOpenInvoicesForSubscription(ctx, orgId, oldSubscriptionId, now);
+        await ctx.scheduler.runAfter(0, internal.billingAsaas.internalCancelReplacedSubscription, {
+          organizationId: orgId,
+          subscriptionId: oldSubscriptionId,
+          attempt: 0,
+        });
+      }
+      await notifyBillingAdmins(ctx, {
+        organizationId: orgId,
+        type: "plan_payment_received",
+        data: { planLabel: PLANS[up.plan].label, ...(payment.value !== undefined ? { amountBrl: formatBrl(payment.value) } : {}) },
+        dedupeKey: `plan_payment_received:${payment.id}`,
+      });
+      await notifyBillingAdmins(ctx, {
+        organizationId: orgId,
+        type: "plan_changed",
+        data: { planLabel: PLANS[up.plan].label },
+        dedupeKey: `plan_changed:${payment.id}`,
+      });
+      return await finish("processed", undefined, orgId);
+    }
+    if (viaPending) return await finish("ignored", "assinatura de upgrade sem pendência", orgId);
 
     switch (ev.event) {
       case "PAYMENT_CREATED":
@@ -629,6 +739,8 @@ export const internalApplyEvent = internalMutation({
 
       case "PAYMENT_REFUNDED": {
         if (payment) await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+        // Reembolso feito pelo app (`requestRefund`): já auditado lá; o estorno só confirma a fatura.
+        if (sub.refundedAt !== undefined) return await finish("processed", "reembolso do app", orgId);
         // Estorno: só o paymentStatus + audit high. Quem decide o que fazer com a conta é o Eric.
         await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: { paymentStatus: "pending" } }, source: "webhook", reason: "Pagamento estornado (Asaas)", severity: "high" });
         return await finish("processed", undefined, orgId);
@@ -636,6 +748,8 @@ export const internalApplyEvent = internalMutation({
 
       case "SUBSCRIPTION_DELETED":
       case "SUBSCRIPTION_INACTIVATED": {
+        // Encerrada por nós (cancelamento agendado, reembolso): o app já sabe, não é "problema".
+        if (sub.cancelAt !== undefined) return await finish("ignored", "cancelamento pelo app", orgId);
         await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: { paymentStatus: "pending" } }, source: "webhook", reason: "Assinatura encerrada no Asaas", severity: "high" });
         return await finish("processed", undefined, orgId);
       }
@@ -787,6 +901,378 @@ export const internalSetInvoiceStatus = internalMutation({
       ...(args.status === "paid" ? { paidAt: inv.paidAt ?? args.paidAt ?? Date.now() } : {}),
       updatedAt: Date.now(),
     });
+    return null;
+  },
+});
+
+// ── Ciclo de vida self-service: troca de plano, cancelamento, reembolso, dados de cobrança ──
+
+const cycleValidator = v.union(v.literal("monthly"), v.literal("yearly"));
+const scheduledChangeValidator = v.object({
+  plan: planKeyValidator,
+  cycle: cycleValidator,
+  effectiveAt: v.number(),
+  chargeCents: v.number(),
+  groupsAddon: v.optional(v.boolean()),
+});
+const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Contexto das ações de ciclo de vida (`settings:manage` + conta com e-mail). Sem documento nem
+ * e-mail na saída. `firstPaid` é a primeira fatura de assinatura paga (regra do reembolso).
+ */
+export const lifecycleContextValidator = v.object({
+    quiet: v.boolean(),
+    status: v.union(v.string(), v.null()),
+    plan: v.union(planKeyValidator, v.null()),
+    groupsAddon: v.boolean(),
+    extraChannels: v.number(),
+    priceLock: v.union(
+      v.null(),
+      v.object({
+        kind: v.union(v.literal("founder"), v.literal("frozen")),
+        monthlyBrl: v.optional(v.number()),
+        discountPct: v.optional(v.number()),
+        until: v.optional(v.number()),
+      })
+    ),
+    providerSubscriptionId: v.union(v.string(), v.null()),
+    providerCustomerId: v.union(v.string(), v.null()),
+    cycle: v.union(v.literal("monthly"), v.literal("yearly"), v.literal("quarterly"), v.null()),
+    currentPeriodEnd: v.union(v.number(), v.null()),
+    chargeCents: v.union(v.number(), v.null()),
+    cancelAt: v.union(v.number(), v.null()),
+    scheduledChange: v.union(v.null(), scheduledChangeValidator),
+    pendingUpgradeSubscriptionId: v.union(v.string(), v.null()),
+    refundedAt: v.union(v.number(), v.null()),
+    openInvoices: v.array(v.object({ status: v.string(), dueDate: v.number() })),
+    firstPaid: v.union(
+      v.null(),
+      v.object({
+        id: v.string(),
+        status: v.string(),
+        paidAt: v.number(),
+        providerPaymentId: v.union(v.string(), v.null()),
+        amountCents: v.number(),
+      })
+    ),
+});
+
+export const internalLifecycleContext = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: lifecycleContextValidator,
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx);
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    const invoices = await ctx.db
+      .query("billingInvoices")
+      .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", args.organizationId))
+      .order("desc")
+      .take(200);
+    const pendingId = sub?.pendingUpgrade?.subscriptionId ?? null;
+    const first = firstPaidInvoice(invoices);
+    return {
+      quiet: org.billing?.quiet === true,
+      status: org.billing?.status ?? null,
+      plan: org.billing?.plan ?? null,
+      groupsAddon: org.billing?.addons?.groups === true,
+      extraChannels: org.billing?.extraChannels ?? 0,
+      priceLock: org.billing?.priceLock ? { ...org.billing.priceLock } : null,
+      providerSubscriptionId: sub?.providerSubscriptionId ?? null,
+      providerCustomerId: sub?.providerCustomerId ?? null,
+      cycle: sub?.billingCycle ?? null,
+      currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+      chargeCents: sub?.chargeCents ?? null,
+      cancelAt: sub?.cancelAt ?? null,
+      scheduledChange: sub?.scheduledChange ? { ...sub.scheduledChange } : null,
+      pendingUpgradeSubscriptionId: pendingId,
+      refundedAt: sub?.refundedAt ?? null,
+      // Faturas abertas da assinatura ATUAL (a do upgrade pendente não conta).
+      openInvoices: invoices
+        .filter((i) => (i.status === "pending" || i.status === "overdue") && i.providerSubscriptionId !== pendingId)
+        .slice(0, 10)
+        .map((i) => ({ status: i.status as string, dueDate: i.dueDate })),
+      firstPaid: first
+        ? {
+            id: first._id as string,
+            status: first.status as string,
+            paidAt: first.paidAt as number,
+            providerPaymentId: first.providerPaymentId ?? null,
+            amountCents: first.amountCents,
+          }
+        : null,
+    };
+  },
+});
+
+/** Upgrade: guarda a assinatura NOVA (aguardando o 1º pagamento) e a fatura dela. NÃO muda plano nem status. */
+export const internalSaveUpgrade = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    subscriptionId: v.string(),
+    plan: planKeyValidator,
+    cycle: cycleValidator,
+    groupsAddon: v.boolean(),
+    monthlyCents: v.number(),
+    chargeCents: v.number(),
+    /** Upgrade pendente anterior (nunca pago) cancelado no Asaas por este. */
+    canceledSubscriptionId: v.optional(v.string()),
+    firstPayment: v.optional(paymentLiteValidator),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: {
+        subscription: {
+          pendingUpgrade: {
+            subscriptionId: args.subscriptionId,
+            plan: args.plan,
+            cycle: args.cycle,
+            groupsAddon: args.groupsAddon,
+            monthlyCents: args.monthlyCents,
+            chargeCents: args.chargeCents,
+            at: now,
+          },
+          checkoutStartedAt: undefined,
+        },
+      },
+      source: "checkout",
+      reason: `Upgrade de plano solicitado (${PLANS[args.plan].label}, aguardando pagamento)`,
+      actor: member._id,
+      severity: "high",
+    });
+    if (args.canceledSubscriptionId) {
+      await cancelOpenInvoicesForSubscription(ctx, args.organizationId, args.canceledSubscriptionId, now);
+    }
+    if (args.firstPayment) {
+      await upsertInvoiceFromPayment(ctx, { organizationId: args.organizationId, payment: args.firstPayment, now });
+    }
+    return null;
+  },
+});
+
+/** Downgrade: agenda a troca para o fim do ciclo pago e avisa os admins. O plano atual segue até lá. */
+export const internalSaveScheduledChange = internalMutation({
+  args: { organizationId: v.id("organizations"), scheduledChange: scheduledChangeValidator, currentPeriodEnd: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: { subscription: { scheduledChange: args.scheduledChange, currentPeriodEnd: args.currentPeriodEnd, checkoutStartedAt: undefined } },
+      source: "checkout",
+      reason: `Troca de plano agendada para o fim do ciclo (${PLANS[args.scheduledChange.plan].label})`,
+      actor: member._id,
+      severity: "high",
+    });
+    await notifyBillingAdmins(ctx, {
+      organizationId: args.organizationId,
+      type: "plan_change_scheduled",
+      data: { planLabel: PLANS[args.scheduledChange.plan].label, effectiveAt: brDay(dayOf(args.scheduledChange.effectiveAt)) ?? "" },
+      dedupeKey: `plan_change_scheduled:${args.organizationId}:${args.scheduledChange.effectiveAt}:${args.scheduledChange.plan}:${args.scheduledChange.cycle}`,
+    });
+    return null;
+  },
+});
+
+/** Desfaz a troca agendada (o valor já foi restaurado no Asaas). */
+export const internalClearScheduledChange = internalMutation({
+  args: { organizationId: v.id("organizations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: { subscription: { scheduledChange: undefined, checkoutStartedAt: undefined } },
+      source: "checkout",
+      reason: "Troca de plano agendada desfeita",
+      actor: member._id,
+      severity: "high",
+    });
+    return null;
+  },
+});
+
+/** Cancelamento agendado: a assinatura já foi apagada no Asaas; o acesso segue até `cancelAt`. */
+export const internalSaveCancel = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    cancelAt: v.number(),
+    /** Upgrade pendente que também foi cancelado no Asaas. */
+    canceledPendingSubscriptionId: v.optional(v.string()),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    if (!sub?.providerSubscriptionId) throw new ConvexError("Sua conta não tem uma assinatura para cancelar.");
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: {
+        subscription: {
+          cancelAt: args.cancelAt,
+          currentPeriodEnd: args.cancelAt,
+          scheduledChange: undefined,
+          pendingUpgrade: undefined,
+          checkoutStartedAt: undefined,
+        },
+      },
+      source: "checkout",
+      reason: "Cancelamento agendado para o fim do ciclo",
+      actor: member._id,
+      severity: "high",
+    });
+    await cancelOpenInvoicesForSubscription(ctx, args.organizationId, sub.providerSubscriptionId, now);
+    if (args.canceledPendingSubscriptionId) {
+      await cancelOpenInvoicesForSubscription(ctx, args.organizationId, args.canceledPendingSubscriptionId, now);
+    }
+    await notifyBillingAdmins(ctx, {
+      organizationId: args.organizationId,
+      type: "plan_cancel_scheduled",
+      data: { endsAt: brDay(dayOf(args.cancelAt)) ?? "" },
+      dedupeKey: `plan_cancel_scheduled:${args.organizationId}:${args.cancelAt}`,
+    });
+    return null;
+  },
+});
+
+/** Reativação antes do fim: assinatura nova com 1º vencimento em `cancelAt` (nada é cobrado agora). */
+export const internalSaveReactivate = internalMutation({
+  args: { organizationId: v.id("organizations"), subscriptionId: v.string(), firstPayment: v.optional(paymentLiteValidator) },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    if (sub?.cancelAt === undefined) throw new ConvexError("Não há cancelamento agendado para desfazer.");
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: { subscription: { providerSubscriptionId: args.subscriptionId, cancelAt: undefined, checkoutStartedAt: undefined } },
+      source: "checkout",
+      reason: "Assinatura reativada antes do fim do ciclo",
+      actor: member._id,
+      severity: "high",
+    });
+    if (args.firstPayment) {
+      await upsertInvoiceFromPayment(ctx, { organizationId: args.organizationId, payment: args.firstPayment, now });
+    }
+    return null;
+  },
+});
+
+/**
+ * Reembolso automático concluído no Asaas: a org vai a `canceled` na hora (modo leitura, exportação
+ * liberada), a assinatura fica marcada como reembolsada e a fatura como estornada. Audit high.
+ */
+export const internalFinishRefund = internalMutation({
+  args: { organizationId: v.id("organizations"), providerPaymentId: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const org = await ctx.db.get(args.organizationId);
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    if (!org?.billing || !sub) throw new ConvexError("Organização sem assinatura.");
+    const { updatedAt: _u, ...current } = org.billing;
+    void _u;
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: {
+        billing: { ...current, status: "canceled" },
+        subscription: {
+          refundedAt: now,
+          cancelAt: now,
+          currentPeriodEnd: now,
+          scheduledChange: undefined,
+          pendingUpgrade: undefined,
+          paymentStatus: "pending",
+          checkoutStartedAt: undefined,
+        },
+      },
+      source: "checkout",
+      reason: "Reembolso automático (primeiro pagamento, até 7 dias)",
+      actor: member._id,
+      severity: "high",
+    });
+    const inv = await ctx.db
+      .query("billingInvoices")
+      .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", args.providerPaymentId))
+      .first();
+    if (inv && inv.organizationId === args.organizationId) {
+      await ctx.db.patch(inv._id, { status: "refunded", updatedAt: now });
+    }
+    if (sub.providerSubscriptionId) await cancelOpenInvoicesForSubscription(ctx, args.organizationId, sub.providerSubscriptionId, now);
+    if (sub.pendingUpgrade) await cancelOpenInvoicesForSubscription(ctx, args.organizationId, sub.pendingUpgrade.subscriptionId, now);
+    await pauseCampaignsForReadOnly(ctx, args.organizationId, now);
+    await notifyBillingAdmins(ctx, {
+      organizationId: args.organizationId,
+      type: "plan_refunded",
+      data: inv ? { amountBrl: formatBrl(inv.amountCents / 100) } : {},
+      dedupeKey: `plan_refunded:${args.organizationId}:${args.providerPaymentId}`,
+    });
+    return null;
+  },
+});
+
+/** Dados de cobrança (nome, documento, e-mail): grava em `orgSubscriptions`; o audit só leva os nomes dos campos. */
+export const internalSaveBillingDetails = internalMutation({
+  args: { organizationId: v.id("organizations"), billingName: v.string(), billingDocument: v.string(), billingEmail: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx);
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: { subscription: { billingName: args.billingName, billingDocument: args.billingDocument, billingEmail: args.billingEmail } },
+      source: "checkout",
+      reason: "Dados de cobrança atualizados",
+      actor: member._id,
+      severity: "high",
+    });
+    return null;
+  },
+});
+
+/**
+ * Cancela no Asaas a assinatura SUBSTITUÍDA por um upgrade pago (a nova já cobra). Melhor esforço com
+ * até 5 tentativas (backoff); as faturas abertas dela já foram canceladas localmente.
+ */
+export const internalCancelReplacedSubscription = internalAction({
+  args: { organizationId: v.id("organizations"), subscriptionId: v.string(), attempt: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (!isAsaasEnabled()) return null;
+    try {
+      await cancelSubscription(args.subscriptionId);
+    } catch (e) {
+      if (e instanceof AsaasError && e.status === 404) return null; // já removida
+      if (args.attempt < 4) {
+        await ctx.scheduler.runAfter(60_000 * 2 ** args.attempt, internal.billingAsaas.internalCancelReplacedSubscription, {
+          organizationId: args.organizationId,
+          subscriptionId: args.subscriptionId,
+          attempt: args.attempt + 1,
+        });
+      }
+    }
     return null;
   },
 });

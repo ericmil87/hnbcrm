@@ -52,9 +52,10 @@ export type MyEntitlements = {
     paymentStatus: "ok" | "pending" | "overdue" | null;
     provider: "manual" | "asaas" | null;
     hasSubscription: boolean;
-    currentPeriodEnd: number | null;
-    nextChargeBrl: number | null;
-    nextChargeAt: number | null;
+    // Opcionais no TIPO (fixtures antigas do front compilam); a query sempre os devolve (null = sem dado).
+    currentPeriodEnd?: number | null;
+    nextChargeBrl?: number | null;
+    nextChargeAt?: number | null;
     cancelAt?: number;
     scheduledChange?: { plan: PlanKey; cycle: "monthly" | "yearly"; effectiveAt: number };
     refundEligibleUntil?: number;

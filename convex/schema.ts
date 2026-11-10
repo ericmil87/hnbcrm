@@ -3190,7 +3190,17 @@ const applicationTables = {
       })
     ),
     refundedAt: v.optional(v.number()),
-    pendingSubscriptionId: v.optional(v.string()),
+    pendingUpgrade: v.optional(
+      v.object({
+        subscriptionId: v.string(),
+        plan: v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa")),
+        cycle: v.union(v.literal("monthly"), v.literal("yearly")),
+        groupsAddon: v.boolean(),
+        monthlyCents: v.number(),
+        chargeCents: v.number(),
+        at: v.number(),
+      })
+    ),
     createdAt: v.number(),
     updatedAt: v.number(),
   })
