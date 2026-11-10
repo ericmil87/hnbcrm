@@ -181,11 +181,16 @@ export interface OpenableInvoice {
 }
 
 /** Link da fatura pendente ou vencida mais recente (por vencimento) que tenha link; senão `null`. */
+/** Só links https viram `href` (defesa contra `javascript:` em dado corrompido). */
+export function safeHttpsUrl(url: string | null | undefined): string | null {
+  return typeof url === "string" && url.startsWith("https://") ? url : null;
+}
+
 export function openInvoiceUrl(invoices: readonly OpenableInvoice[] | null | undefined): string | null {
   if (!invoices) return null;
   let best: OpenableInvoice | null = null;
   for (const inv of invoices) {
-    if ((inv.status !== "pending" && inv.status !== "overdue") || !inv.invoiceUrl) continue;
+    if ((inv.status !== "pending" && inv.status !== "overdue") || !safeHttpsUrl(inv.invoiceUrl)) continue;
     if (best === null || inv.dueDate > best.dueDate) best = inv;
   }
   return best?.invoiceUrl ?? null;

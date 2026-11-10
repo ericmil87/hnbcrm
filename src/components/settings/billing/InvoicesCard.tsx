@@ -1,3 +1,4 @@
+import { safeHttpsUrl } from "@/lib/checkoutForm";
 import { useQuery } from "convex/react";
 import { FileText } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
@@ -41,13 +42,13 @@ export function InvoicesCardView({ invoices }: { invoices: InvoiceRow[] | undefi
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span className="text-sm font-medium tabular-nums text-text-primary">{formatMoney(inv.amountCents / 100)}</span>
                 <Badge variant={invoiceStatusTone(inv.status)}>{invoiceStatusLabel(inv.status)}</Badge>
-                {inv.invoiceUrl && (
-                  <a href={inv.invoiceUrl} target="_blank" rel="noopener noreferrer" className={linkClass}>
+                {safeHttpsUrl(inv.invoiceUrl) && (
+                  <a href={safeHttpsUrl(inv.invoiceUrl) ?? undefined} target="_blank" rel="noopener noreferrer" className={linkClass}>
                     Ver fatura
                   </a>
                 )}
-                {inv.nfseUrl && (
-                  <a href={inv.nfseUrl} target="_blank" rel="noopener noreferrer" className={linkClass}>
+                {safeHttpsUrl(inv.nfseUrl) && (
+                  <a href={safeHttpsUrl(inv.nfseUrl) ?? undefined} target="_blank" rel="noopener noreferrer" className={linkClass}>
                     Nota fiscal{inv.nfseNumber ? ` ${inv.nfseNumber}` : ""}
                   </a>
                 )}
