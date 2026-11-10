@@ -20,3 +20,48 @@ export function addMonthsUtc(ms: number, months: number): number {
 export function periodEndAfter(lastPaidDueDate: number, cycle: PeriodCycle): number {
   return addMonthsUtc(lastPaidDueDate, MONTHS[cycle ?? "monthly"]);
 }
+
+type PeriodInvoice = {
+  kind: string;
+  status: string;
+  dueDate: number;
+  amountCents: number;
+  providerSubscriptionId?: string;
+};
+
+/**
+ * Última fatura de assinatura PAGA da assinatura atual (maior vencimento). Faturas antigas sem o id
+ * da assinatura contam; as de OUTRA assinatura (antes de um upgrade) não.
+ */
+export function lastPaidSubscriptionInvoice<T extends PeriodInvoice>(
+  invoices: readonly T[],
+  subscriptionIds: ReadonlyArray<string | undefined>
+): T | null {
+  const ids = subscriptionIds.filter((i): i is string => i !== undefined);
+  let last: T | null = null;
+  for (const inv of invoices) {
+    if (inv.kind !== "subscription" || inv.status !== "paid") continue;
+    if (inv.providerSubscriptionId !== undefined && !ids.includes(inv.providerSubscriptionId)) continue;
+    if (!last || inv.dueDate > last.dueDate) last = inv;
+  }
+  return last;
+}
+
+/**
+ * Período atual da assinatura. `currentPeriodEnd` gravado vale; se ausente (org que pagou antes de o
+ * app gravá-lo), calcula pela MESMA regra: vencimento da última fatura paga + 1 ciclo (e o início é
+ * esse vencimento). `lastPaid` serve também de fonte do valor da próxima cobrança.
+ */
+export function resolvePeriod<T extends PeriodInvoice>(args: {
+  currentPeriodEnd?: number;
+  cycle: PeriodCycle;
+  invoices: readonly T[];
+  subscriptionIds: ReadonlyArray<string | undefined>;
+}): { periodStart: number | null; periodEnd: number | null; lastPaid: T | null } {
+  const lastPaid = lastPaidSubscriptionInvoice(args.invoices, args.subscriptionIds);
+  if (args.currentPeriodEnd !== undefined) {
+    return { periodStart: lastPaid?.dueDate ?? null, periodEnd: args.currentPeriodEnd, lastPaid };
+  }
+  if (!lastPaid) return { periodStart: null, periodEnd: null, lastPaid: null };
+  return { periodStart: lastPaid.dueDate, periodEnd: periodEndAfter(lastPaid.dueDate, args.cycle), lastPaid };
+}

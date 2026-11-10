@@ -33,6 +33,8 @@ const SUBSCRIPTION_FILES = new Set([
   "billingCron.ts",
   // Puro: só o TIPO `Doc<"orgSubscriptions">` (decide se há repreço; não toca no banco).
   "lib/lockExpiry.ts",
+  // Ops: `internalBackfillPeriodEnd` LÊ as assinaturas e grava só pela porta (source "ops").
+  "opsBilling.ts",
 ]);
 
 function sliceBalanced(src: string, openIdx: number): string {
