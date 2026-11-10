@@ -41,6 +41,7 @@ import { StepFunnel } from "./StepFunnel";
 import { StepTeam } from "./StepTeam";
 import { StepTest } from "./StepTest";
 import { StepWhatsapp } from "./StepWhatsapp";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 
 const COPILOT_HINT = "Marque “Quero que a IA me ajude” no passo 1.";
 
@@ -376,7 +377,7 @@ function FullScreenChrome({
   return (
     <header className="border-b border-border-subtle p-2 md:px-6">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-2">
-        <img src="/orange_icon_logo_transparent-bg-528x488.png" alt="HNBCRM" className="h-10 w-10 object-contain" />
+        <BrandLogo className="h-10 w-10" />
         <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"

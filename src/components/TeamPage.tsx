@@ -271,7 +271,7 @@ export function TeamPage() {
                     className={cn(
                       "px-2.5 py-1 rounded-full text-xs font-medium transition-colors min-h-[32px]",
                       roleFilter === r
-                        ? "bg-brand-500 text-white"
+                        ? "bg-brand-600 text-white"
                         : "bg-surface-overlay text-text-secondary hover:text-text-primary"
                     )}
                   >
@@ -294,7 +294,7 @@ export function TeamPage() {
                     className={cn(
                       "px-2.5 py-1 rounded-full text-xs font-medium transition-colors min-h-[32px]",
                       typeFilter === t
-                        ? "bg-brand-500 text-white"
+                        ? "bg-brand-600 text-white"
                         : "bg-surface-overlay text-text-secondary hover:text-text-primary"
                     )}
                   >
@@ -317,7 +317,7 @@ export function TeamPage() {
                     className={cn(
                       "px-2.5 py-1 rounded-full text-xs font-medium transition-colors min-h-[32px]",
                       statusFilter === s
-                        ? "bg-brand-500 text-white"
+                        ? "bg-brand-600 text-white"
                         : "bg-surface-overlay text-text-secondary hover:text-text-primary"
                     )}
                   >

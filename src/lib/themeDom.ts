@@ -1,9 +1,9 @@
-import { THEME_COLOR, THEME_OWNER_KEY, THEME_STORAGE_KEY, isUiTheme, type UiTheme } from "./theme";
+import { DEFAULT_THEME, THEME_COLOR, THEME_OWNER_KEY, THEME_STORAGE_KEY, isUiTheme, type UiTheme } from "./theme";
 
 function readInitial(): UiTheme {
-  if (typeof document === "undefined") return "dark";
+  if (typeof document === "undefined") return DEFAULT_THEME;
   const attr = document.documentElement.getAttribute("data-theme");
-  return isUiTheme(attr) ? attr : "dark";
+  return isUiTheme(attr) ? attr : DEFAULT_THEME;
 }
 
 let applied: UiTheme = readInitial();
@@ -18,11 +18,13 @@ function notify() {
   listeners.forEach((l) => l());
 }
 
-/** Dark = no attribute. Theme lives on <html> (aliases resolve where declared). */
+/**
+ * Every theme is an explicit attribute (index.html ships `data-theme="whatsapp"`; `:root` holds the
+ * Escuro palette as the base, so `data-theme="dark"` needs no override block). Theme lives on <html>
+ * (aliases resolve where declared).
+ */
 export function applyTheme(theme: UiTheme): void {
-  const root = document.documentElement;
-  if (theme === "dark") root.removeAttribute("data-theme");
-  else root.setAttribute("data-theme", theme);
+  document.documentElement.setAttribute("data-theme", theme);
   setMetaThemeColor(THEME_COLOR[theme]);
   if (applied !== theme) {
     applied = theme;
@@ -30,9 +32,9 @@ export function applyTheme(theme: UiTheme): void {
   }
 }
 
-/** Back to the dark default (leaving /app). */
+/** Back to the public default (leaving /app). */
 export function clearTheme(): void {
-  applyTheme("dark");
+  applyTheme(DEFAULT_THEME);
 }
 
 export function subscribe(listener: () => void): () => void {

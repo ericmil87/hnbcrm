@@ -141,8 +141,8 @@ interface Pair {
   bg: string;
   min: number;
   alpha?: number;
-  /** Checked only in the Claro and Estilo WhatsApp themes. */
-  lightOnly?: boolean;
+  /** Checked in every theme except the frozen Escuro (Claro, Estilo WhatsApp, WhatsApp escuro). */
+  notDark?: boolean;
 }
 
 const surfaces = ["surface-base", "surface-raised", "surface-overlay", "surface-sunken"];
@@ -164,18 +164,20 @@ const PAIRS: Pair[] = [
   { fg: "bubble-system-fg", bg: "bubble-system", min: 4.5 },
   { fg: "white", bg: "chat-send", min: 3 },
   { fg: "brand-500", bg: "surface-base", min: 3 },
-  // Light and WhatsApp only (the dark brand text and semantic colors are frozen, see DARK_KNOWN_FAILURES notes).
+  // Not checked in Escuro (its brand text and semantic colors are frozen, see DARK_KNOWN_FAILURES notes).
   ...["brand-300", "brand-400", "brand-500"].flatMap((fg) =>
-    ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, lightOnly: true })),
+    ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, notDark: true })),
   ),
   ...["semantic-success", "semantic-error", "semantic-warning", "semantic-info"].flatMap((fg) =>
-    ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, lightOnly: true })),
+    ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, notDark: true })),
   ),
 ];
 
 const pairKey = (p: Pair) => `${p.fg}/${p.bg}${p.alpha ? `@${p.alpha}` : ""}`;
 
-const THEMES = ["dark", "light", "whatsapp"] as const;
+const THEMES = ["dark", "light", "whatsapp", "whatsapp-dark"] as const;
+const OVERRIDE_THEMES = ["light", "whatsapp", "whatsapp-dark"] as const;
+const LIGHT_THEMES = ["light", "whatsapp"] as const;
 const themeVars = (theme: (typeof THEMES)[number]): Block => (theme === "dark" ? root : blocks[`[data-theme="${theme}"]`] ?? {});
 
 function channelsIn(theme: (typeof THEMES)[number], token: string): Rgb {
@@ -212,39 +214,83 @@ const DARK_KNOWN_FAILURES: Record<string, number> = {
   "bubble-system-fg/bubble-system": 3.4,
 };
 
+/**
+ * WhatsApp escuro: semantic tokens are mostly text on dark surfaces (about 10 text uses per solid
+ * background), so they are light enough to read as text and white on them stays below AA, as in
+ * Escuro. Same rules as DARK_KNOWN_FAILURES: remove a pair when it passes, never add one silently.
+ */
+const WHATSAPP_DARK_KNOWN_FAILURES: Record<string, number> = {
+  "white/semantic-success": 2.02,
+  "white/semantic-error": 2.77,
+  "white/semantic-warning": 1.92,
+  "white/semantic-info": 2.54,
+};
+
 describe("themeTokens: cobertura completa", () => {
   const rootKeys = Object.keys(root).filter((k) => k.startsWith("--rgb-")).sort();
-  it.each(["light", "whatsapp"] as const)("[data-theme=%s] defines exactly the --rgb-* keys of :root", (theme) => {
+  it.each(OVERRIDE_THEMES)("[data-theme=%s] defines exactly the --rgb-* keys of :root", (theme) => {
     const keys = Object.keys(themeVars(theme)).filter((k) => k.startsWith("--rgb-")).sort();
     expect(keys).toEqual(rootKeys);
   });
-  it.each(["light", "whatsapp"] as const)("[data-theme=%s] defines wallpaper, shadows and shimmer", (theme) => {
+  it.each(OVERRIDE_THEMES)("[data-theme=%s] defines wallpaper, shadows and shimmer", (theme) => {
     const v = themeVars(theme);
     for (const k of ["--chat-wallpaper", "--shadow-card", "--shadow-card-hover", "--shadow-elevated", "--shadow-glow", "--shadow-bubble", "--shimmer-highlight"]) {
       expect(v[k], k).toBeTruthy();
     }
     expect(v["--shadow-glow"]).toContain("var(--rgb-brand-500)");
-    expect(v["--shimmer-highlight"]).toBe("rgba(0, 0, 0, 0.04)");
+    expect(v["--shimmer-highlight"]).toBe(theme === "whatsapp-dark" ? "rgba(255, 255, 255, 0.04)" : "rgba(0, 0, 0, 0.04)");
   });
-  it("whatsapp has the dotted wallpaper, light has none", () => {
+  it("both WhatsApp themes have the dotted wallpaper, light has none", () => {
     expect(themeVars("whatsapp")["--chat-wallpaper"]).toContain("radial-gradient");
+    expect(themeVars("whatsapp-dark")["--chat-wallpaper"]).toContain("radial-gradient");
     expect(themeVars("light")["--chat-wallpaper"]).toBe("none");
   });
+  it("there is no [data-theme=dark] block (dark is the :root base palette)", () => {
+    expect(blocks['[data-theme="dark"]']).toBeUndefined();
+  });
   it("aliases live only in :root", () => {
-    for (const t of ["light", "whatsapp"] as const) {
+    for (const t of OVERRIDE_THEMES) {
       expect(Object.keys(themeVars(t)).filter((k) => !k.startsWith("--rgb-") && !k.startsWith("--shadow-") && k !== "--chat-wallpaper" && k !== "--shimmer-highlight")).toEqual([]);
     }
   });
 });
 
 describe("themeTokens: contraste AA dos temas claros", () => {
-  for (const theme of ["light", "whatsapp"] as const) {
+  for (const theme of LIGHT_THEMES) {
     describe(theme, () => {
       it.each(PAIRS.map((p) => [pairKey(p), p] as const))("%s passes its minimum", (_k, p) => {
         expect(measureIn(theme, p)).toBeGreaterThanOrEqual(p.min);
       });
     });
   }
+});
+
+describe("themeTokens: contraste do WhatsApp escuro", () => {
+  const measured = PAIRS.map((p) => [pairKey(p), p] as const);
+  it.each(measured.filter(([k]) => !(k in WHATSAPP_DARK_KNOWN_FAILURES)))("%s passes its minimum", (_k, p) => {
+    expect(measureIn("whatsapp-dark", p)).toBeGreaterThanOrEqual(p.min);
+  });
+  it.each(Object.entries(WHATSAPP_DARK_KNOWN_FAILURES))("%s still fails with ratio %s (remove it when it passes)", (key, ratio) => {
+    const pair = PAIRS.find((p) => pairKey(p) === key);
+    expect(pair).toBeDefined();
+    expect(measureIn("whatsapp-dark", pair!)).toBeLessThan(pair!.min);
+    expect(measureIn("whatsapp-dark", pair!)).toBeCloseTo(ratio, 1);
+  });
+  it("white text on primary buttons (brand-600) and the send button is readable", () => {
+    expect(measureIn("whatsapp-dark", { fg: "white", bg: "brand-600", min: 4.5 })).toBeGreaterThanOrEqual(4.5);
+    expect(measureIn("whatsapp-dark", { fg: "white", bg: "chat-send", min: 3 })).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("themeTokens: overlay distinto de raised", () => {
+  // hover:bg-surface-overlay on raised cards and Badge default need a visible step.
+  it.each(["whatsapp", "whatsapp-dark"] as const)("%s: surface-overlay differs from surface-raised", (theme) => {
+    const ratio = contrastWithAlpha(channelsIn(theme, "surface-overlay"), channelsIn(theme, "surface-raised"));
+    expect(ratio).toBeGreaterThanOrEqual(1.08);
+  });
+  it("whatsapp-dark: border-default still reads on surface-overlay", () => {
+    expect(contrastWithAlpha(channelsIn("whatsapp-dark", "border-default"), channelsIn("whatsapp-dark", "surface-overlay"))).toBeGreaterThan(1.05);
+  });
 });
 
 describe("themeTokens: bolhas compartilham fg", () => {
@@ -259,7 +305,7 @@ describe("themeTokens: bolhas compartilham fg", () => {
 });
 
 describe("themeTokens: contraste do Escuro", () => {
-  const failing = PAIRS.filter((p) => !p.lightOnly)
+  const failing = PAIRS.filter((p) => !p.notDark)
     .filter((p) => measureIn("dark", p) < p.min)
     .map(pairKey);
 

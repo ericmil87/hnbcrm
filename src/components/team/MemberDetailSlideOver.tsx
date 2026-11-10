@@ -367,7 +367,7 @@ export function MemberDetailSlideOver({
                     className={cn(
                       "px-3 py-2 rounded-full text-sm font-medium transition-colors min-h-[44px]",
                       editRole === r
-                        ? "bg-brand-500 text-white"
+                        ? "bg-brand-600 text-white"
                         : "bg-surface-raised text-text-secondary hover:bg-surface-overlay border border-border-subtle"
                     )}
                   >

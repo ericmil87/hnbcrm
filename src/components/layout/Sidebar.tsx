@@ -23,6 +23,7 @@ import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
 import type { UiTheme } from "@/lib/theme";
 import { VOCAB } from "@/lib/vocab";
 import { copilotAriaShortcut, detectIsMac } from "@/lib/copilotShortcut";
+import { BrandLogo } from "@/components/ui/BrandLogo";
 
 type NavGroups = ReturnType<typeof groupNavItems>;
 
@@ -74,11 +75,7 @@ export function SidebarView({
     <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-20 flex-col bg-surface-raised border-r border-border w-16 lg:w-56 transition-all duration-200">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-16 border-b border-border shrink-0">
-        <img
-          src="/orange_icon_logo_transparent-bg-528x488.png"
-          alt="HNBCRM"
-          className="h-8 w-8 object-contain shrink-0"
-        />
+        <BrandLogo className="h-8 w-8 shrink-0" />
         <span className="hidden lg:block text-lg font-bold text-text-primary tracking-tight">
           HNBCRM
         </span>
@@ -127,14 +124,14 @@ export function SidebarView({
                         <>
                           {/* Sidebar expandida: pill no fim da linha */}
                           <span
-                            className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
+                            className="hidden lg:flex ml-auto min-w-[18px] h-[18px] px-1 items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold leading-none tabular-nums"
                             aria-hidden="true"
                           >
                             {badgeLabel}
                           </span>
                           {/* Sidebar colapsada (só ícones): pill sobre o ícone */}
                           <span
-                            className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-brand-600 text-white text-micro font-semibold leading-none tabular-nums"
+                            className="lg:hidden absolute top-1 right-1 min-w-[16px] h-4 px-1 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold leading-none tabular-nums"
                             aria-hidden="true"
                           >
                             {badgeLabel}

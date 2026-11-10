@@ -152,7 +152,7 @@ export default {
     },
   },
   plugins: [
-    // Pairs that must differ between dark and the light themes (light + whatsapp).
+    // Pairs that must differ between the dark themes (dark, whatsapp-dark) and the light ones (light + whatsapp).
     plugin(({ addVariant }) =>
       addVariant("light-theme", ':is([data-theme="light"],[data-theme="whatsapp"]) &'),
     ),

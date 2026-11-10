@@ -32,7 +32,7 @@ export function PlaygroundPage() {
             <div className="flex items-center gap-2 min-w-0">
               <Link to="/" className="flex items-center gap-1.5 flex-shrink-0">
                 <img
-                  src="/orange_icon_logo_transparent-bg-528x488.png"
+                  src="/black_icon_logo_transparent-bg-528x488.png"
                   alt="HNBCRM"
                   className="h-6 w-6 object-contain"
                 />

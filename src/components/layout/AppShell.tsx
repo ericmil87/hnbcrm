@@ -122,7 +122,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
       <main className="md:ml-16 lg:ml-56 transition-all duration-200">
         {/* Header — título da página + troca de org (só mobile; no desktop fica na sidebar) + sino */}
         <header className={cn(
-          "sticky top-0 z-30 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] md:h-16 md:pt-0 items-center justify-between md:justify-end gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:px-6 backdrop-blur border-b border-border",
+          "sticky top-0 z-30 h-[calc(3.5rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)] md:h-16 md:pt-0 items-center justify-between md:justify-end gap-3 pl-[max(1rem,env(safe-area-inset-left))] pr-[max(1rem,env(safe-area-inset-right))] md:px-6 bg-surface-raised/95 backdrop-blur border-b border-border",
           chatModeActive ? "hidden md:flex" : "flex"
         )}>
           <div className="md:hidden flex items-center gap-1 min-w-0">
@@ -139,7 +139,7 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
               <span className="relative inline-flex">
                 <Building2 size={18} className="text-brand-500" aria-hidden="true" />
                 {orgNews.total > 0 && (
-                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-brand-600 ring-2 ring-surface-base" aria-hidden="true" />
+                  <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-badge-unread ring-2 ring-surface-base" aria-hidden="true" />
                 )}
               </span>
               <ChevronsUpDown size={12} aria-hidden="true" />

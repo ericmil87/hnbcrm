@@ -195,7 +195,7 @@ export function CalendarEventModal({
                 className={cn(
                   "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
                   eventType === type
-                    ? "bg-brand-500 text-white"
+                    ? "bg-brand-600 text-white"
                     : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-overlay"
                 )}
               >
@@ -333,7 +333,7 @@ export function CalendarEventModal({
                   className={cn(
                     "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
                     attendees.includes(member._id)
-                      ? "bg-brand-500 text-white"
+                      ? "bg-brand-600 text-white"
                       : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-overlay"
                   )}
                 >

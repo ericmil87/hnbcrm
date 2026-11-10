@@ -28,7 +28,7 @@ export function PricingPage() {
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <Link to="/" className="flex min-h-11 items-center gap-2">
             <img
-              src="/orange_icon_logo_transparent-bg-528x488.png"
+              src="/black_icon_logo_transparent-bg-528x488.png"
               alt="HNBCRM Logo"
               className="h-8 w-8 object-contain"
             />

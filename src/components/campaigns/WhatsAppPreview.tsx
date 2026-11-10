@@ -73,7 +73,7 @@ const BUBBLE_CLASS =
 const BUBBLE_MUTED = "text-[#e9edef]/60 light-theme:text-[#111b21]/55";
 const WALLPAPER_CLASS =
   "bg-[#0b141a] light-theme:bg-[#efeae2]";
-const HEADER_CLASS = "bg-[#1f2c34] text-[#e9edef] light-theme:bg-[#008069] light-theme:text-white";
+const HEADER_CLASS = "bg-[#202c33] text-[#e9edef] light-theme:bg-[#008069] light-theme:text-white";
 const BUTTON_CLASS =
   "bg-[#005c4b] text-[#53bdeb] light-theme:bg-[#d9fdd3] light-theme:text-[#027eb5]";
 const TICK_CLASS = "text-[#53bdeb]";
@@ -365,7 +365,7 @@ export function WhatsAppPreview({
             <div className="text-[#e9edef] light-theme:text-[#111b21]">{bubble}</div>
           </div>
           {/* barra do compositor (decorativa) */}
-          <div className={cn("flex items-center gap-2 px-2.5 py-2", "bg-[#1f2c34] light-theme:bg-[#f0f2f5]")}>
+          <div className={cn("flex items-center gap-2 px-2.5 py-2", "bg-[#202c33] light-theme:bg-[#f0f2f5]")}>
             <div className="flex-1 h-9 rounded-full bg-[#2a3942] light-theme:bg-white px-3 flex items-center text-xs text-[#8696a0]">
               Mensagem
             </div>

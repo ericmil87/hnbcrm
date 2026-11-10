@@ -69,7 +69,7 @@ export function DayView({ date, events, onEventClick, onSlotClick, onSelectDay }
             className={cn(
               "flex flex-col items-center justify-center flex-1 h-[56px] rounded-lg transition-colors shrink-0",
               isSameDay(d, date)
-                ? "bg-brand-500 text-white"
+                ? "bg-brand-600 text-white"
                 : "bg-surface-raised text-text-secondary hover:bg-surface-overlay"
             )}
           >

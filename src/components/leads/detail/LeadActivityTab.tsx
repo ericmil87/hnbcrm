@@ -11,17 +11,19 @@ import { formatDateTime } from "@/lib/format";
 /*  Activity Tab                                                       */
 /* ------------------------------------------------------------------ */
 
-const activityTypeConfig: Record<string, { color: string; letter: string }> = {
-  created: { color: "bg-semantic-success", letter: "C" },
-  stage_change: { color: "bg-ai-500", letter: "S" },
-  assignment: { color: "bg-ai-700", letter: "A" },
-  message_sent: { color: "bg-brand-500", letter: "M" },
-  message_received: { color: "bg-brand-800", letter: "R" },
-  handoff: { color: "bg-brand-600", letter: "H" },
-  qualification_update: { color: "bg-semantic-warning", letter: "Q" },
-  note: { color: "bg-surface-overlay", letter: "N" },
-  call: { color: "bg-ai-600", letter: "P" },
-  email_sent: { color: "bg-semantic-info", letter: "E" },
+// `fg` per background: dark text on the light fills (semantic, brand-500, ai-500), white on the deep ones
+// (ai-600/700, brand-600/800, identical to before in Escuro) and primary text on the neutral note.
+const activityTypeConfig: Record<string, { color: string; fg: string; letter: string }> = {
+  created: { color: "bg-semantic-success", fg: "text-surface-base", letter: "C" },
+  stage_change: { color: "bg-ai-500", fg: "text-surface-base", letter: "S" },
+  assignment: { color: "bg-ai-700", fg: "text-white", letter: "A" },
+  message_sent: { color: "bg-brand-500", fg: "text-surface-base", letter: "M" },
+  message_received: { color: "bg-brand-800", fg: "text-white", letter: "R" },
+  handoff: { color: "bg-brand-600", fg: "text-white", letter: "H" },
+  qualification_update: { color: "bg-semantic-warning", fg: "text-surface-base", letter: "Q" },
+  note: { color: "bg-surface-overlay", fg: "text-text-primary", letter: "N" },
+  call: { color: "bg-ai-600", fg: "text-white", letter: "P" },
+  email_sent: { color: "bg-semantic-info", fg: "text-surface-base", letter: "E" },
 };
 
 export function LeadActivityTab({ leadId }: { leadId: Id<"leads"> }) {
@@ -53,6 +55,7 @@ export function LeadActivityTab({ leadId }: { leadId: Id<"leads"> }) {
           {activities.map((activity) => {
             const config = activityTypeConfig[activity.type] || {
               color: "bg-text-muted",
+              fg: "text-surface-base",
               letter: "?",
             };
 
@@ -61,8 +64,9 @@ export function LeadActivityTab({ leadId }: { leadId: Id<"leads"> }) {
                 {/* Icon */}
                 <div
                   className={cn(
-                    "relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold",
-                    config.color
+                    "relative z-10 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold",
+                    config.color,
+                    config.fg
                   )}
                 >
                   {config.letter}

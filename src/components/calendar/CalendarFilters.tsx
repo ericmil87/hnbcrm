@@ -51,7 +51,7 @@ export function CalendarFilters({
         <Filter size={16} />
         <span className="hidden md:inline">Filtros</span>
         {hasFilters && (
-          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-brand-500 text-white text-xs font-bold">
+          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-brand-600 text-white text-xs font-bold">
             {(selectedMemberId ? 1 : 0) + selectedEventTypes.length}
           </span>
         )}
@@ -97,7 +97,7 @@ export function CalendarFilters({
                     className={cn(
                       "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
                       selectedEventTypes.includes(type)
-                        ? "bg-brand-500 text-white"
+                        ? "bg-brand-600 text-white"
                         : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-sunken"
                     )}
                   >

@@ -10,7 +10,9 @@ export const MANIFEST_SCOPE: string = "/";
 export const MANIFEST_START_URL = "/app/painel?source=pwa";
 /** Scope the service worker is registered with (narrower than or equal to the manifest scope). */
 export const SW_SCOPE: string = APP_BASE;
-export const THEME_COLOR = "#0F0F11";
+/** Default theme (Estilo WhatsApp): THEME_COLOR.whatsapp in src/lib/theme.ts and its surface-base. */
+export const THEME_COLOR = "#008069";
+export const BACKGROUND_COLOR = "#F0F2F5";
 
 export interface WebManifest {
   id: string;
@@ -43,7 +45,7 @@ export const WEB_MANIFEST: WebManifest = {
   scope: MANIFEST_SCOPE,
   start_url: MANIFEST_START_URL,
   theme_color: THEME_COLOR,
-  background_color: THEME_COLOR,
+  background_color: BACKGROUND_COLOR,
   categories: ["business", "productivity"],
   icons: [
     { src: "/pwa-192x192.png", sizes: "192x192", type: "image/png" },

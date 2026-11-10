@@ -118,7 +118,7 @@ export function SubtasksSection({
                     aria-label={isDone ? "Reabrir subtarefa" : "Concluir subtarefa"}
                   >
                     {isDone && (
-                      <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-white">
+                      <svg width="10" height="8" viewBox="0 0 10 8" fill="none" className="text-surface-base">
                         <path
                           d="M1 4L3.5 6.5L9 1"
                           stroke="currentColor"

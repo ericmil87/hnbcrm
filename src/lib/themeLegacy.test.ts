@@ -37,4 +37,17 @@ describe("themeLegacy", () => {
     expect(init).toBeLessThan(html.indexOf("/src/index.css"));
     expect(init).toBeLessThan(html.indexOf("/src/main.tsx"));
   });
+
+  it("index.html ships the default theme (whatsapp) on <html> and its theme-color", () => {
+    const html = read("index.html");
+    expect(html).toMatch(/<html[^>]*\sdata-theme="whatsapp"/);
+    expect(html).toContain('<meta name="theme-color" content="#008069" />');
+    expect(html.indexOf('name="theme-color"')).toBeLessThan(html.indexOf('src="/theme-init.js"'));
+  });
+
+  it("the light-theme: variant covers only the light themes (never whatsapp-dark)", () => {
+    const cfg = read("tailwind.config.js");
+    expect(cfg).toContain(`addVariant("light-theme", ':is([data-theme="light"],[data-theme="whatsapp"]) &')`);
+    expect(cfg).not.toContain('"whatsapp-dark"]) &');
+  });
 });
