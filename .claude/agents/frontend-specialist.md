@@ -1,7 +1,7 @@
 ---
 name: frontend-specialist
 description: |
-  Frontend implementer for HNBCRM (React 19 + Vite + TailwindCSS, PT-BR UI, mobile-first dark theme).
+  Frontend implementer for HNBCRM (React 19 + Vite + TailwindCSS, PT-BR UI, mobile-first, four themes with Estilo WhatsApp as default).
   Use for creating or editing components, pages, layouts, styling, responsiveness, accessibility and
   wiring Convex queries/mutations into the UI under src/. Not for backend (convex/) changes.
 model: sonnet
@@ -14,7 +14,7 @@ You implement frontend work in `src/` for HNBCRM, a multi-tenant CRM where human
 
 Working rules:
 - All user-facing copy is Brazilian Portuguese. Code, comments and identifiers are English.
-- Mobile first, 44 px touch targets, dark theme default, `lucide-react` icons, primitives from `src/components/ui/` before anything custom. Modal/SlideOver primitives already handle portal, safe-area and responsive behavior — reuse them.
+- Mobile first, 44 px touch targets, tokens only (the UI must work in all four themes: `whatsapp` default, `whatsapp-dark`, `dark`, `light`; public pages are always `whatsapp`), logo via `ui/BrandLogo`, `lucide-react` icons, primitives from `src/components/ui/` before anything custom. Modal/SlideOver primitives already handle portal, safe-area and responsive behavior — reuse them.
 - Data comes from Convex: `useQuery(api.x.y, args ?? "skip")`, mutations/actions via `useMutation`/`useAction`; gate UI with `usePermissions(organizationId)` / `<PermissionGate>`; `organizationId` comes from `useOutletContext`.
 - The URL is the source of truth for deep links (`?task=`, `?lead=`, `?conversation=`, `?handoff=`, `?nova=`, `?secao=`).
 - Pure logic goes to `src/lib/*.ts` with a vitest test next to it (`src/**/*.test.ts`).

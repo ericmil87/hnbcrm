@@ -10,7 +10,7 @@ SPA react-router v7, chunking/lazy loading, SEO. Regras de UI estão em `STYLE_G
 
 ### Frontend
 
-**Frontend:** SPA with react-router v7. Dark theme default, mobile-first, PT-BR UI. `src/main.tsx` → `HelmetProvider` → `ConvexAuthProvider` → `RouterProvider`. Public routes: `/` (LandingPage), `/entrar` (AuthPage). App routes: `/app/*` wrapped by `AuthLayout` → `ScrollRestoration` → `AppShell` → `<Outlet />`. Page components get `organizationId` via `useOutletContext`. Reusable UI in `src/components/ui/`, layout in `src/components/layout/`. State is Convex reactive queries + local `useState`. Path alias `@/` → `src/`.
+**Frontend:** SPA with react-router v7. Estilo WhatsApp theme default (also WhatsApp escuro, Escuro, Claro), mobile-first, PT-BR UI. `src/main.tsx` → `HelmetProvider` → `ConvexAuthProvider` → `RouterProvider`. Public routes: `/` (LandingPage), `/entrar` (AuthPage). App routes: `/app/*` wrapped by `AuthLayout` → `ScrollRestoration` → `AppShell` → `<Outlet />`. Page components get `organizationId` via `useOutletContext`. Reusable UI in `src/components/ui/`, layout in `src/components/layout/`. State is Convex reactive queries + local `useState`. Path alias `@/` → `src/`.
 
 ### Build optimizations
 
@@ -120,3 +120,7 @@ O app é instalável (manifest `id` `/app/`, `scope` `/` — para o login `/entr
 **Rascunho do composer** (`components/inbox/useComposerDraft.ts` sobre `lib/pwa/composerDraft.ts`): `localStorage` por organização + membro + conversa, restaurado quando o membro é conhecido (só em campo vazio), salvo com debounce de 400 ms e no `pagehide`/desmontagem, limpo ao enviar/agendar (texto vazio), com "Nota interna" ligada (nunca volta como mensagem ao cliente), ao sair/sessão expirada (`clearStoredDrafts` no `AuthLayout`) e após 7 dias (limpeza ao montar). O rascunho persistente NÃO relaxa o momento seguro de atualização (`composerDirty` continua marcando texto e anexos): ele só reduz o dano se a página recarregar mesmo assim.
 
 
+
+### Versão da landing ligada ao repositório (v0.80.0, 10/11/2026)
+
+A landing não tem versão escrita à mão: `landing/OpenSourceSection` e `landing/Footer` mostram `versionFromBuild(APP_BUILD)` (`src/lib/pwa/buildVersion.ts`, o `version` do `package.json` sem o sufixo `+sha`) e linkam para `CHANGELOG.md` no GitHub ("Novidades"). Antes o card dizia `v0.63.0` fixo enquanto o repositório estava na 0.79. Sob vitest o build é `dev` e o card mostra só "Novidades".
