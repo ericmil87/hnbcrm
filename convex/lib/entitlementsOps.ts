@@ -35,6 +35,14 @@ export function initialOrgBilling(now: number): OrgBilling {
   return { status: "legacy", updatedAt: now };
 }
 
+/**
+ * `billing` de uma org que nasce em TESTE (`BILLING_TRIAL_ON_SIGNUP`): Profissional até
+ * `trialEndsAt`. Segundo valor permitido no insert de `organizations` (entitlementsPort.test.ts).
+ */
+export function initialTrialBilling(now: number, trialEndsAt: number): OrgBilling {
+  return { status: "trial", plan: "profissional", trialEndsAt, periodStart: now, updatedAt: now };
+}
+
 /** Decide se a mudança de status é permitida. Pura. */
 export function validateTransition(
   from: BillingStatus | undefined,

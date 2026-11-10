@@ -37,6 +37,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "orgSubscriptions",
   // 7b: aceites dos Termos (userId, userAgent): prova de consentimento, não dado de negócio.
   "termsAcceptances",
+  // B7a: registro anti-abuso do teste de 30 dias (userId).
+  "trialGrants",
   "usageCredits",
   // Billing (B2): extrato de atendimentos IA (derivado de `agentRuns`) e medidor de envios.
   "aiAttendances",
