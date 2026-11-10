@@ -35,6 +35,8 @@ interface PlanCheckoutProps {
   /** Plano e ciclo atuais (modo troca). */
   planId: PlanKey | null;
   currentCycle: SubscriptionCycle | null;
+  /** Cancelamento agendado: o servidor recusa a troca até reativar. */
+  canceling?: boolean;
   priceLock: PriceLock | null;
   canManage: boolean;
   /** Relógio arredondado do painel (só decide se o preço combinado venceu). */
@@ -47,7 +49,7 @@ interface PlanCheckoutProps {
  * Org `legacy` NÃO tem self-checkout, de propósito: o painel nem aparece para ela (o Eric
  * migra cada uma para um plano à mão), então este componente só existe com plano gravado.
  */
-export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel, planId, currentCycle, priceLock, canManage, now }: PlanCheckoutProps) {
+export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel, planId, currentCycle, canceling = false, priceLock, canManage, now }: PlanCheckoutProps) {
   const startCheckout = useAction(api.billing.startCheckout);
   const changePlan = useAction(api.billing.changePlan);
   // Com assinatura ativa (ou em atraso) a troca é pelo painel; o Empresa é por contrato.
@@ -183,7 +185,7 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
         <Button
           variant={changeMode ? "secondary" : "primary"}
           className="w-full sm:w-auto"
-          disabled={!canManage}
+          disabled={!canManage || (changeMode && canceling)}
           onClick={() => {
             // Troca: começa no plano atual (o servidor diz o que é upgrade/downgrade ao escolher outro).
             if (changeMode) {
@@ -199,6 +201,9 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
           {changeMode ? "Trocar plano" : checkoutButtonLabel(hasSubscription)}
         </Button>
         {!canManage && <p className="text-caption text-text-muted">Peça a um administrador para assinar.</p>}
+        {canManage && changeMode && canceling && (
+          <p className="text-caption text-text-muted">Reative a assinatura para trocar de plano.</p>
+        )}
       </div>
       <CheckoutModalView
         open={open}
