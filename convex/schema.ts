@@ -2440,7 +2440,9 @@ const applicationTables = {
       v.literal("plan_usage_reached"),
       v.literal("plan_overage_cap_reached"),
       v.literal("trial_ending"),
-      v.literal("plan_read_only")
+      v.literal("plan_read_only"),
+      // Cobrança (Asaas): fatura vencida sem pagamento (a conta segue funcionando: past_due).
+      v.literal("plan_payment_overdue")
     ),
     title: v.string(),
     body: v.optional(v.string()),

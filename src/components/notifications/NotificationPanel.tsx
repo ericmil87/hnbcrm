@@ -104,6 +104,7 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   plan_overage_cap_reached: Gauge,
   trial_ending: Gauge,
   plan_read_only: Gauge,
+  plan_payment_overdue: Gauge,
   // B2 — lead atribuído a você.
   lead_assigned: UserCheck,
 };

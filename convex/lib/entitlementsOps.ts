@@ -7,7 +7,8 @@
  * Regras de transição (decisão "avisar, não travar"):
  *  - `past_due` é igual a `active`; NUNCA vira `read_only` sozinho (só `source:"ops"`).
  *  - `read_only` automático (cron/webhook) só a partir de `trial`.
- *  - Só `ops` tira uma org de `legacy`.
+ *  - Só `ops` tira uma org de `legacy`, exceto o `webhook` de pagamento confirmado (legacy -> active,
+ *    e só para org que tem assinatura no gateway).
  *  - `source:"customer"` só mexe em `overage`: status, plano, unidades, canais extra,
  *    add-ons e overrides são intocáveis por quem é o cliente (anti-autodesbloqueio).
  *  - Transição inválida lança `ConvexError({ code: "invalid_transition", from, to, source })`
@@ -82,7 +83,9 @@ export function validateTransition(
   if (from === to) return { ok: true };
   if (source === "ops") return { ok: true };
   if (source === "customer") return { ok: false };
-  if (from === "legacy" || from === undefined) return { ok: false };
+  // Pagamento confirmado: a org `legacy`/sem plano que fez o checkout vira `active`. O webhook só
+  // chama isto depois de provar que a org tem `providerSubscriptionId` (nunca toca legacy sem ele).
+  if (from === "legacy" || from === undefined) return source === "webhook" && to === "active" ? { ok: true } : { ok: false };
   if (to === "read_only" && from !== "trial") return { ok: false };
   if (to === "legacy") return { ok: false };
   return { ok: true };

@@ -73,7 +73,8 @@ export type CopyInput =
   | { type: "plan_usage_reached"; meter: "ai" | "campaign"; overageEnabled: boolean }
   | { type: "plan_overage_cap_reached"; capBrl: string }
   | { type: "trial_ending"; daysLeft: number; endsAt: string }
-  | { type: "plan_read_only"; reason?: "trial_ended" | "manual"; endsAt?: string };
+  | { type: "plan_read_only"; reason?: "trial_ended" | "manual"; endsAt?: string }
+  | { type: "plan_payment_overdue"; dueDate?: string };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -457,6 +458,11 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         title: "Conta em modo só leitura",
         body: "A IA e os envios estão pausados. Você continua vendo seus dados e pode exportá-los. Contrate um plano para voltar.",
       };
+    case "plan_payment_overdue":
+      return {
+        title: "Pagamento em atraso",
+        body: `${input.dueDate ? `A fatura com vencimento em ${input.dueDate} não foi paga. ` : "Há uma fatura vencida. "}A conta segue funcionando por alguns dias; regularize pelo link da fatura em Configurações › Uso e fatura.`,
+      };
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -495,4 +501,5 @@ export const COPY_TYPES = [
   "plan_overage_cap_reached",
   "trial_ending",
   "plan_read_only",
+  "plan_payment_overdue",
 ] as const satisfies readonly CopyInput["type"][];

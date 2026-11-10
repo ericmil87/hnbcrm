@@ -42,6 +42,7 @@ export const NOTIFICATION_TYPE_GROUP: Record<string, NotificationGroup> = {
   plan_overage_cap_reached: "sistema",
   trial_ending: "sistema",
   plan_read_only: "sistema",
+  plan_payment_overdue: "sistema",
 };
 
 /** Grupo do tipo; tipo desconhecido (versão futura) cai em "sistema". */

@@ -27,6 +27,8 @@ const SUBSCRIPTION_FILES = new Set([
   "billing.ts",
   "opsPurge.ts",
   "lib/exportSanitize.ts",
+  // Cobrança (Asaas): LÊ a assinatura (índice por id do provedor) e grava só pela porta.
+  "billingAsaas.ts",
 ]);
 
 function sliceBalanced(src: string, openIdx: number): string {
@@ -185,11 +187,11 @@ describe("porta única de escrita do plano", () => {
     expect(violations, "orgSubscriptions só é escrita por lib/entitlementsOps.ts").toEqual([]);
   });
 
-  test('audit:"none" só no backfill (opsBilling), no nível de uso (billingNotify), no carimbo do cron (billingCron) e na própria porta', () => {
+  test('audit:"none" só no backfill (opsBilling), no nível de uso (billingNotify), no carimbo do cron (billingCron), nas renovações do Asaas (billingAsaas) e na própria porta', () => {
     const offenders: string[] = [];
     for (const abs of walk(CONVEX_DIR)) {
       const r = rel(abs);
-      if (PORT_FILES.has(r) || r === "lib/billingNotify.ts" || r === "billingCron.ts") continue;
+      if (PORT_FILES.has(r) || r === "lib/billingNotify.ts" || r === "billingCron.ts" || r === "billingAsaas.ts") continue;
       if (/audit:\s*["']none["']/.test(readFileSync(abs, "utf8"))) offenders.push(r);
     }
     expect(offenders).toEqual([]);

@@ -7,10 +7,15 @@
  * PII (documento, e-mail financeiro) mora em `orgSubscriptions`, nunca em log nem em audit.
  */
 import { ConvexError, v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internal } from "./_generated/api";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx } from "./_generated/server";
 import { requireAccountWithEmail, requirePermission } from "./lib/auth";
-import { applySubscriptionChange } from "./lib/entitlementsOps";
-import { upsertInvoiceFromPayment } from "./lib/billingInvoices";
+import { applySubscriptionChange, setBillingStatus, type OrgBillingInput } from "./lib/entitlementsOps";
+import { dayToMs, isPaidStatus, upsertInvoiceFromPayment } from "./lib/billingInvoices";
+import { AsaasError, getPayment, getSubscription, isAsaasEnabled, type AsaasPayment, type AsaasSubscription } from "./lib/asaasApi";
+import { notifyBillingAdmins } from "./lib/billingNotify";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -147,5 +152,356 @@ export const internalSaveCheckout = internalMutation({
       await upsertInvoiceFromPayment(ctx, { organizationId: args.organizationId, payment: args.firstPayment, now });
     }
     return null;
+  },
+});
+
+// ── Webhook: ingestão, releitura na API e aplicação ─────────────────────────
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** Carência após o vencimento (a conta segue funcionando: `past_due` = `active` nos gates). */
+const GRACE_DAYS = 7;
+const MAX_ATTEMPTS = 5;
+
+const paymentEventValidator = v.object({
+  ...paymentLiteValidator.fields,
+  customer: v.optional(v.union(v.string(), v.null())),
+  subscription: v.optional(v.union(v.string(), v.null())),
+  externalReference: v.optional(v.union(v.string(), v.null())),
+});
+const subscriptionEventValidator = v.object({
+  id: v.string(),
+  customer: v.optional(v.union(v.string(), v.null())),
+  externalReference: v.optional(v.union(v.string(), v.null())),
+  status: v.optional(v.string()),
+  deleted: v.optional(v.boolean()),
+});
+type PaymentEvent = typeof paymentEventValidator.type;
+type SubscriptionEvent = typeof subscriptionEventValidator.type;
+
+function toPaymentEvent(p: AsaasPayment): PaymentEvent {
+  return {
+    id: p.id,
+    status: p.status,
+    value: p.value,
+    dueDate: p.dueDate,
+    invoiceUrl: p.invoiceUrl ?? null,
+    billingType: p.billingType,
+    paymentDate: p.paymentDate ?? p.confirmedDate ?? null,
+    description: p.description ?? null,
+    deleted: p.deleted === true,
+    customer: p.customer ?? null,
+    subscription: p.subscription ?? null,
+    externalReference: p.externalReference ?? null,
+  };
+}
+function toSubscriptionEvent(s: AsaasSubscription): SubscriptionEvent {
+  return { id: s.id, customer: s.customer ?? null, externalReference: s.externalReference ?? null, status: s.status, deleted: s.deleted === true };
+}
+
+/** "2026-12-05" -> "05/12/2026" (texto do aviso). */
+function brDay(day: string | undefined): string | undefined {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day ?? "");
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : undefined;
+}
+
+/** Grava o evento (dedupe por `eventId`) e agenda o processamento. Repetido = no-op. */
+export const internalIngestEvent = internalMutation({
+  args: {
+    eventId: v.string(),
+    event: v.string(),
+    paymentId: v.optional(v.string()),
+    subscriptionId: v.optional(v.string()),
+  },
+  returns: v.object({ inserted: v.boolean() }),
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("billingWebhookEvents")
+      .withIndex("by_event_id", (q) => q.eq("eventId", args.eventId))
+      .first();
+    if (existing) return { inserted: false };
+    const id = await ctx.db.insert("billingWebhookEvents", {
+      provider: "asaas",
+      eventId: args.eventId,
+      event: args.event,
+      ...(args.paymentId ? { providerPaymentId: args.paymentId } : {}),
+      ...(args.subscriptionId ? { providerSubscriptionId: args.subscriptionId } : {}),
+      receivedAt: Date.now(),
+      status: "pending",
+      attempts: 0,
+    });
+    await ctx.scheduler.runAfter(0, internal.billingAsaas.internalProcessEvent, { eventDocId: id });
+    return { inserted: true };
+  },
+});
+
+export const internalGetEvent = internalQuery({
+  args: { eventDocId: v.id("billingWebhookEvents") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      status: v.string(),
+      event: v.string(),
+      providerPaymentId: v.union(v.string(), v.null()),
+      providerSubscriptionId: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const ev = await ctx.db.get(args.eventDocId);
+    if (!ev) return null;
+    return {
+      status: ev.status,
+      event: ev.event,
+      providerPaymentId: ev.providerPaymentId ?? null,
+      providerSubscriptionId: ev.providerSubscriptionId ?? null,
+    };
+  },
+});
+
+/** Falha ao reler na API: tenta de novo com backoff (até 5); depois `failed`. */
+export const internalMarkEventFailed = internalMutation({
+  args: { eventDocId: v.id("billingWebhookEvents"), error: v.string() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ev = await ctx.db.get(args.eventDocId);
+    if (!ev || ev.status !== "pending") return null;
+    const attempts = ev.attempts + 1;
+    if (attempts >= MAX_ATTEMPTS) {
+      await ctx.db.patch(ev._id, { status: "failed", attempts, error: args.error.slice(0, 200), processedAt: Date.now() });
+      return null;
+    }
+    await ctx.db.patch(ev._id, { attempts, error: args.error.slice(0, 200) });
+    await ctx.scheduler.runAfter(60_000 * 2 ** (attempts - 1), internal.billingAsaas.internalProcessEvent, { eventDocId: ev._id });
+    return null;
+  },
+});
+
+/**
+ * Processa um evento: NÃO confia no corpo do webhook. Relê o pagamento (ou a assinatura) na API do
+ * Asaas com a nossa chave e só então decide (um token vazado não consegue "pagar" uma fatura).
+ */
+export const internalProcessEvent = internalAction({
+  args: { eventDocId: v.id("billingWebhookEvents") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const ev = await ctx.runQuery(internal.billingAsaas.internalGetEvent, { eventDocId: args.eventDocId });
+    if (!ev || ev.status !== "pending") return null;
+    if (!isAsaasEnabled()) return null; // chave removida: o evento fica pendente
+    let payment: PaymentEvent | null = null;
+    let subscription: SubscriptionEvent | null = null;
+    try {
+      if (ev.providerPaymentId) {
+        try {
+          payment = toPaymentEvent(await getPayment(ev.providerPaymentId));
+        } catch (e) {
+          if (!(e instanceof AsaasError && e.status === 404)) throw e;
+        }
+      } else if (ev.providerSubscriptionId) {
+        try {
+          subscription = toSubscriptionEvent(await getSubscription(ev.providerSubscriptionId));
+        } catch (e) {
+          if (!(e instanceof AsaasError && e.status === 404)) throw e;
+          subscription = { id: ev.providerSubscriptionId, deleted: true };
+        }
+      }
+    } catch (e) {
+      const status = e instanceof AsaasError ? e.status : 0;
+      await ctx.runMutation(internal.billingAsaas.internalMarkEventFailed, {
+        eventDocId: args.eventDocId,
+        error: `falha ao reler no Asaas (HTTP ${status})`,
+      });
+      return null;
+    }
+    await ctx.runMutation(internal.billingAsaas.internalApplyEvent, { eventDocId: args.eventDocId, payment, subscription });
+    return null;
+  },
+});
+
+async function auditWebhook(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  event: string,
+  reason: string,
+  severity: "medium" | "high",
+  now: number
+): Promise<void> {
+  await ctx.db.insert("auditLogs", {
+    organizationId,
+    entityType: "organization",
+    entityId: organizationId,
+    action: "update",
+    actorType: "api",
+    metadata: { kind: "billing_webhook", event, reason },
+    description: `Cobrança (Asaas): ${reason}`,
+    severity,
+    createdAt: now,
+  });
+}
+
+const isInvalidTransition = (e: unknown): e is ConvexError<{ from: string; to: string }> =>
+  e instanceof ConvexError && typeof e.data === "object" && e.data !== null && (e.data as { code?: string }).code === "invalid_transition";
+
+/**
+ * Aplica o evento já RELIDO na API. A org vem da assinatura gravada no checkout (e do
+ * `externalReference`, que precisa bater): nunca do corpo do webhook. Org sem assinatura no
+ * gateway (legacy "pura") nunca é tocada. Nenhum evento coloca a org em `read_only`.
+ */
+export const internalApplyEvent = internalMutation({
+  args: {
+    eventDocId: v.id("billingWebhookEvents"),
+    payment: v.optional(v.union(paymentEventValidator, v.null())),
+    subscription: v.optional(v.union(subscriptionEventValidator, v.null())),
+  },
+  returns: v.object({ outcome: v.union(v.literal("processed"), v.literal("ignored"), v.literal("failed")) }),
+  handler: async (ctx, args) => {
+    const ev = await ctx.db.get(args.eventDocId);
+    if (!ev || ev.status !== "pending") return { outcome: "ignored" as const };
+    const now = Date.now();
+    const finish = async (
+      status: "processed" | "ignored" | "failed",
+      error?: string,
+      organizationId?: Id<"organizations">
+    ) => {
+      await ctx.db.patch(ev._id, {
+        status,
+        processedAt: now,
+        ...(error ? { error: error.slice(0, 200) } : {}),
+        ...(organizationId ? { organizationId } : {}),
+      });
+      return { outcome: status };
+    };
+    const payment = args.payment ?? null;
+    const subscription = args.subscription ?? null;
+
+    // ── Resolve a org (assinatura gravada no checkout + externalReference que bate) ──
+    const subId = payment?.subscription ?? subscription?.id ?? ev.providerSubscriptionId ?? null;
+    let sub: Doc<"orgSubscriptions"> | null = subId
+      ? await ctx.db
+          .query("orgSubscriptions")
+          .withIndex("by_provider_subscription", (q) => q.eq("providerSubscriptionId", subId))
+          .first()
+      : null;
+    const ref = payment?.externalReference ?? subscription?.externalReference ?? null;
+    const refOrgId = ref ? ctx.db.normalizeId("organizations", ref) : null;
+    if (!sub && refOrgId) {
+      const byOrg = await ctx.db
+        .query("orgSubscriptions")
+        .withIndex("by_organization", (q) => q.eq("organizationId", refOrgId))
+        .first();
+      if (byOrg?.providerSubscriptionId && (!subId || byOrg.providerSubscriptionId === subId)) sub = byOrg;
+    }
+    if (!sub) return await finish("ignored", "sem assinatura vinculada");
+    const orgId = sub.organizationId;
+    if (refOrgId && refOrgId !== orgId) {
+      await auditWebhook(ctx, orgId, ev.event, "externalReference diverge da assinatura", "high", now);
+      return await finish("failed", "organização divergente", orgId);
+    }
+    const customer = payment?.customer ?? subscription?.customer ?? null;
+    if (customer && sub.providerCustomerId && customer !== sub.providerCustomerId) {
+      await auditWebhook(ctx, orgId, ev.event, "cliente do pagamento diverge do cadastrado", "high", now);
+      return await finish("failed", "cliente divergente", orgId);
+    }
+    if (subId && sub.providerSubscriptionId !== subId) return await finish("ignored", "assinatura antiga", orgId);
+    const org = await ctx.db.get(orgId);
+    if (!org) return await finish("ignored", "organização removida");
+
+    switch (ev.event) {
+      case "PAYMENT_CREATED":
+      case "PAYMENT_UPDATED":
+      case "PAYMENT_DELETED": {
+        if (!payment) return await finish("ignored", "pagamento não encontrado", orgId);
+        await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+        return await finish("processed", undefined, orgId);
+      }
+
+      case "PAYMENT_CONFIRMED":
+      case "PAYMENT_RECEIVED": {
+        if (!payment) return await finish("ignored", "pagamento não encontrado", orgId);
+        if (!isPaidStatus(payment.status)) return await finish("ignored", `pagamento ${payment.status ?? "sem status"}`, orgId);
+        await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+        const billing = org.billing;
+        const targetPlan = sub.pendingPlanChange?.plan ?? billing?.plan;
+        const paidSub = { paymentStatus: "ok" as const, graceUntil: undefined };
+        try {
+          if (!targetPlan) {
+            // Sem plano pendente nem gravado (ex.: venda manual sem checkout): só registra o pagamento.
+            await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: paidSub }, source: "webhook", reason: "Pagamento confirmado (Asaas)", audit: "none" });
+          } else if (billing && (billing.status === "active" || billing.status === "past_due") && billing.plan === targetPlan) {
+            // Renovação: org já paga. past_due volta a active; active só carimba o pagamento.
+            const { updatedAt: _u, ...current } = billing;
+            void _u;
+            await applySubscriptionChange(ctx, {
+              organizationId: orgId,
+              patch: { ...(billing.status === "past_due" ? { billing: { ...current, status: "active" as const } } : {}), subscription: paidSub },
+              source: "webhook",
+              reason: "Pagamento confirmado (Asaas)",
+              ...(billing.status === "active" ? { audit: "none" as const } : {}),
+            });
+          } else {
+            // Ativação (trial, read_only, canceled, legacy ou sem plano) ou troca de plano.
+            const { updatedAt: _u, ...billingNoStamp } = billing ?? { status: "legacy" as const, updatedAt: 0 };
+            void _u;
+            const current: OrgBillingInput = billingNoStamp;
+            const groups = targetPlan === "essencial" && sub.addons?.groupsAddon === true;
+            const addons = targetPlan === "essencial" ? { ...(current.addons ?? {}), groups } : current.addons ? { ...current.addons, groups: undefined } : undefined;
+            await applySubscriptionChange(ctx, {
+              organizationId: orgId,
+              patch: {
+                billing: { ...current, plan: targetPlan, status: "active", ...(addons ? { addons } : {}) },
+                subscription: { ...paidSub, pendingPlanChange: undefined, currentPeriodStart: now },
+              },
+              source: "webhook",
+              reason: "Pagamento confirmado (Asaas)",
+            });
+          }
+        } catch (e) {
+          if (isInvalidTransition(e)) return await finish("ignored", `invalid_transition ${e.data.from}->${e.data.to}`, orgId);
+          throw e;
+        }
+        return await finish("processed", undefined, orgId);
+      }
+
+      case "PAYMENT_OVERDUE": {
+        if (!payment) return await finish("ignored", "pagamento não encontrado", orgId);
+        await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+        const due = dayToMs(payment.dueDate);
+        const graceUntil = (due ?? now) + GRACE_DAYS * DAY_MS;
+        const status = org.billing?.status;
+        try {
+          if (status === "active") {
+            // active -> past_due (libera igual; o aviso é o recurso). NUNCA read_only.
+            await setBillingStatus(ctx, { organizationId: orgId, status: "past_due", paymentStatus: "overdue", graceUntil, source: "webhook", reason: "Fatura vencida (Asaas)" });
+            await notifyBillingAdmins(ctx, {
+              organizationId: orgId,
+              type: "plan_payment_overdue",
+              data: { dueDate: brDay(payment.dueDate) },
+              dedupeKey: `plan_payment_overdue:${payment.id}`,
+            });
+          } else {
+            // past_due já avisado; trial/read_only/canceled/legacy: só marca o pagamento, sem mudar status.
+            await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: { paymentStatus: "overdue", ...(status === "past_due" ? { graceUntil } : {}) } }, source: "webhook", reason: "Fatura vencida (Asaas)", audit: "none" });
+          }
+        } catch (e) {
+          if (isInvalidTransition(e)) return await finish("ignored", `invalid_transition ${e.data.from}->${e.data.to}`, orgId);
+          throw e;
+        }
+        return await finish("processed", undefined, orgId);
+      }
+
+      case "PAYMENT_REFUNDED": {
+        if (payment) await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+        // Estorno: só o paymentStatus + audit high. Quem decide o que fazer com a conta é o Eric.
+        await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: { paymentStatus: "pending" } }, source: "webhook", reason: "Pagamento estornado (Asaas)", severity: "high" });
+        return await finish("processed", undefined, orgId);
+      }
+
+      case "SUBSCRIPTION_DELETED":
+      case "SUBSCRIPTION_INACTIVATED": {
+        await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: { paymentStatus: "pending" } }, source: "webhook", reason: "Assinatura encerrada no Asaas", severity: "high" });
+        return await finish("processed", undefined, orgId);
+      }
+
+      default:
+        return await finish("ignored", "evento não tratado", orgId);
+    }
   },
 });
