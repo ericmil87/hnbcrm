@@ -14,6 +14,7 @@ import { action, mutation, query, type QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { firstPaidInvoice, REFUND_WINDOW_MS } from "./lib/refund";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
 import { applySubscriptionChange } from "./lib/entitlementsOps";
@@ -74,22 +75,60 @@ const subscriptionViewValidator = v.object({
   paymentStatus: v.union(v.literal("ok"), v.literal("pending"), v.literal("overdue"), v.null()),
   provider: v.union(v.literal("manual"), v.literal("asaas"), v.null()),
   hasSubscription: v.boolean(),
+  /** Fim do ciclo atual (ms) e a próxima cobrança; `null` com cancelamento agendado ou sem ciclo. */
+  currentPeriodEnd: v.union(v.number(), v.null()),
+  nextChargeBrl: v.union(v.number(), v.null()),
+  nextChargeAt: v.union(v.number(), v.null()),
+  cancelAt: v.optional(v.number()),
+  scheduledChange: v.optional(
+    v.object({ plan: planKeyValidator, cycle: v.union(v.literal("monthly"), v.literal("yearly")), effectiveAt: v.number() })
+  ),
+  refundEligibleUntil: v.optional(v.number()),
 });
-
-function subscriptionView(sub: Doc<"orgSubscriptions"> | null) {
-  return {
-    billingCycle: sub?.billingCycle ?? null,
-    paymentStatus: sub?.paymentStatus ?? null,
-    provider: sub?.billingProvider ?? null,
-    hasSubscription: sub?.providerSubscriptionId !== undefined,
-  };
-}
 
 async function loadSubscription(ctx: QueryCtx, organizationId: Id<"organizations">) {
   return await ctx.db
     .query("orgSubscriptions")
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
     .first();
+}
+
+/** Visão da assinatura (sem documento, e-mail nem ids). Lê as faturas só para a janela de reembolso. */
+async function subscriptionView(ctx: QueryCtx, organizationId: Id<"organizations">, orgStatus: string | undefined) {
+  const sub = await loadSubscription(ctx, organizationId);
+  let refundEligibleUntil: number | undefined;
+  if (sub?.providerSubscriptionId !== undefined && sub.refundedAt === undefined && sub.cancelAt === undefined) {
+    const invoices = await ctx.db
+      .query("billingInvoices")
+      .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", organizationId))
+      .take(60);
+    const first = firstPaidInvoice(invoices);
+    if (first && first.status === "paid" && (orgStatus === "active" || orgStatus === "past_due")) {
+      refundEligibleUntil = (first.paidAt as number) + REFUND_WINDOW_MS;
+    }
+  }
+  const canceling = sub?.cancelAt !== undefined;
+  const nextCents = sub?.scheduledChange?.chargeCents ?? sub?.chargeCents;
+  return {
+    billingCycle: sub?.billingCycle ?? null,
+    paymentStatus: sub?.paymentStatus ?? null,
+    provider: sub?.billingProvider ?? null,
+    hasSubscription: sub?.providerSubscriptionId !== undefined,
+    currentPeriodEnd: sub?.currentPeriodEnd ?? null,
+    nextChargeBrl: !canceling && nextCents !== undefined ? nextCents / 100 : null,
+    nextChargeAt: !canceling ? (sub?.currentPeriodEnd ?? null) : null,
+    ...(sub?.cancelAt !== undefined ? { cancelAt: sub.cancelAt } : {}),
+    ...(sub?.scheduledChange
+      ? {
+          scheduledChange: {
+            plan: sub.scheduledChange.plan,
+            cycle: sub.scheduledChange.cycle,
+            effectiveAt: sub.scheduledChange.effectiveAt,
+          },
+        }
+      : {}),
+    ...(refundEligibleUntil !== undefined ? { refundEligibleUntil } : {}),
+  };
 }
 
 const byKindValidator = v.record(v.string(), v.object({ runs: v.number(), costUsdMicros: v.number() }));
@@ -139,7 +178,7 @@ export const getMyEntitlements = query({
     const org = await ctx.db.get(args.organizationId);
     const canView = hasPermission(perms, "settings", "view");
     const view = buildMyEntitlements(org, canView);
-    if (canView) view.subscription = subscriptionView(await loadSubscription(ctx, args.organizationId));
+    if (canView) view.subscription = await subscriptionView(ctx, args.organizationId, org?.billing?.status);
     return view;
   },
 });
@@ -280,7 +319,7 @@ export const getUsageSummary = query({
       byo,
       costUsdMicros: usage?.costUsdMicros ?? 0,
       byKind: usage?.byKind ?? {},
-      subscription: subscriptionView(await loadSubscription(ctx, args.organizationId)),
+      subscription: await subscriptionView(ctx, args.organizationId, org?.billing?.status),
       estimate,
     };
   },

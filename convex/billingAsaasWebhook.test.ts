@@ -52,7 +52,7 @@ beforeEach(() => {
       if (path.startsWith("/payments/")) {
         return new Response(JSON.stringify({ id: path.split("/")[2], billingType: "PIX", invoiceUrl: "https://www.asaas.com/i/x", description: "HNBCRM · plano Profissional", ...payment }), { status: 200 });
       }
-      if (path.startsWith("/subscriptions/")) return new Response(JSON.stringify({ id: path.split("/")[2], customer: "cus_1", externalReference: payment.externalReference, status: "INACTIVE", deleted: true }), { status: 200 });
+      if (path.startsWith("/subscriptions/")) return new Response(JSON.stringify({ id: path.split("/")[2], customer: "cus_1", externalReference: payment.externalReference, status: "INACTIVE", deleted: true, nextDueDate: "2026-12-10", value: payment.value, cycle: "MONTHLY" }), { status: 200 });
       return new Response("{}", { status: 200 });
     })
   );
@@ -250,6 +250,18 @@ describe("pagamento confirmado ativa a org (releitura na API)", () => {
 });
 
 describe("atraso, estorno e assinatura encerrada", () => {
+  test("pagamento confirmado grava o fim do ciclo (nextDueDate) e o valor, e avisa os admins uma vez (recibo)", async () => {
+    const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+    await send("PAYMENT_RECEIVED");
+    const sub = await subOf(s.organizationId);
+    expect(sub).toMatchObject({ currentPeriodStart: NOW, currentPeriodEnd: Date.UTC(2026, 11, 10), chargeCents: 49700, paymentStatus: "ok" });
+    await send("PAYMENT_RECEIVED");
+    const notes = await t.run((ctx) => ctx.db.query("notifications").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect());
+    const receipts = notes.filter((n) => n.type === "plan_payment_received");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].memberId).toBe(s.adminId);
+  });
+
   test("PAYMENT_OVERDUE: active -> past_due (carência 7 d) + aviso; nunca read_only", async () => {
     const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
     payment.status = "OVERDUE";
