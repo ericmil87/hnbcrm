@@ -58,6 +58,8 @@ export const internalSetOrgPlan = internalMutation({
     addons: v.optional(v.object({ groups: v.optional(v.boolean()) })),
     overrides: orgBillingValidator.fields.overrides,
     priceLock: orgBillingValidator.fields.priceLock,
+    /** Silencia todos os avisos de plano da org (`billing.quiet`). */
+    quiet: v.optional(v.boolean()),
     trialEndsAt: v.optional(v.number()),
     /** Permite `trialEndsAt` no passado (teste vencido de propósito). */
     force: v.optional(v.boolean()),
@@ -123,6 +125,7 @@ export const internalSetOrgPlan = internalMutation({
       ...(args.addons !== undefined ? { addons: args.addons } : {}),
       ...(args.overrides !== undefined ? { overrides: args.overrides } : {}),
       ...(args.priceLock !== undefined ? { priceLock: args.priceLock } : {}),
+      ...(args.quiet !== undefined ? { quiet: args.quiet } : {}),
       ...(args.trialEndsAt !== undefined ? { trialEndsAt: args.trialEndsAt } : {}),
     } as OrgBillingInput;
     if (args.plan !== "empresa") delete next.units;

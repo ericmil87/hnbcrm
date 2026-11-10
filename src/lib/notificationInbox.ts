@@ -122,7 +122,7 @@ export function notificationHref(n: InboxNotification): string | null {
     case "plan_overage_cap_reached":
     case "trial_ending":
     case "plan_read_only":
-      return `${TAB_ROUTES.settings}?secao=ai-usage`;
+      return `${TAB_ROUTES.settings}?secao=billing`;
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;

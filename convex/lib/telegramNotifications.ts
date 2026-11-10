@@ -395,7 +395,7 @@ function crmUrlFor(ctx: CardContext, n?: NotificationInput): string {
   if (n?.type === "ai_spend_warning" || n?.type === "ai_spend_reached") {
     return crmLink(ctx, "/app/configuracoes?secao=ai-usage");
   }
-  if (n && PLAN_TYPES.has(n.type)) return crmLink(ctx, "/app/configuracoes?secao=ai-usage");
+  if (n && PLAN_TYPES.has(n.type)) return crmLink(ctx, "/app/configuracoes?secao=billing");
   if (ctx.conversation) return crmLink(ctx, `/app/entrada?conversation=${ctx.conversation.id}`);
   if (ctx.lead) return crmLink(ctx, `/app/pipeline?lead=${ctx.lead.id}`);
   return crmLink(ctx, "/app/painel");

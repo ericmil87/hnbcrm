@@ -2351,6 +2351,7 @@ export async function resumeCampaignHandler(ctx: MutationCtx, args: ResumeCampai
       status: "running",
       pausedReason: undefined,
       pauseCode: undefined,
+      pausedAt: undefined,
       pausedBy: undefined,
       stats: { ...campaign.stats, consecutiveFailures: 0 },
       batchSentSinceLastPause: 0,

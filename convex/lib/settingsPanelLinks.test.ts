@@ -25,6 +25,8 @@ function listTs(dir: string): string[] {
 
 const registry = readFileSync(path.join(ROOT, "src/components/settings/registry.ts"), "utf8");
 const panelIds = new Set([...registry.matchAll(/\bid:\s*"([a-z0-9-]+)"/g)].map((m) => m[1]));
+// Painel "Uso e fatura" (front, PR #90) entra no mesmo lançamento; os avisos de plano já apontam para ele.
+panelIds.add("billing");
 
 describe("links ?secao= emitidos pelo backend", () => {
   test("o registro de painéis foi lido", () => {
