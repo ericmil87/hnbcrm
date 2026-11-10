@@ -29,7 +29,7 @@ paths:
 - Text: `text-text-primary`, `text-text-secondary`, `text-text-muted`.
 - Borders: `border-border`, `border-border-subtle`, `border-border-strong`.
 - Brand: `brand-50..900`. Primary action is `bg-brand-600` (AA with white text), not `brand-500`. Selected state: `border-brand-500 bg-brand-500/10`.
-- Semantic: `semantic-success|error|warning|info` (`text-semantic-error`, `bg-semantic-error/10`). Warning is amber, distinct from brand orange.
+- Semantic: `semantic-success|error|warning|info` (`text-semantic-error`, `bg-semantic-error/10`). Warning is amber, distinct from the brand (orange in Escuro/Claro, green in the WhatsApp themes).
 - Radius: `rounded-card` (12px) for cards, `rounded-field` (8px) for inputs, `rounded-full` for buttons and badges.
 - Shadows: `shadow-card`, `shadow-card-hover`, `shadow-elevated`. Animations: `animate-fade-in`, `fade-in-up`, `slide-in-right`, `slide-in-up`, `shimmer`.
 - Typography (Inter, `font-sans`): body 14px, small 13px, caption 11-12px, H1 22px (md 28), H2 18px (md 22), H3 16px (md 18). Weights 400/500/600/700 only.

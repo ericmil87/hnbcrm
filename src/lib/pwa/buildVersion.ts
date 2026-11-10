@@ -38,3 +38,9 @@ export function compareBuild(a: string, b: string): -1 | 0 | 1 {
 export function isBelowMinimum(current: string, min: string | null | undefined): boolean {
   return !!min && compareBuild(current, min) < 0;
 }
+
+/** "0.80.0+abc1234" → "0.80.0"; null when the build has no dotted version ("dev" under vitest). */
+export function versionFromBuild(build: string): string | null {
+  const core = build.trim().replace(/^v/i, "").split("+")[0];
+  return /^\d+(\.\d+)+$/.test(core) ? core : null;
+}

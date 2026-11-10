@@ -32,6 +32,9 @@ import {
   Megaphone,
   MessagesSquare,
   Headset,
+  Smartphone,
+  Send,
+  Palette,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -276,6 +279,21 @@ function FeaturesSection() {
       icon: Bot,
       title: "IA Copiloto & Atendente",
       description: "Assistente in-app que opera o CRM com seu time e atendente virtual que responde no WhatsApp em modo sugestão, com follow-up automático dos combinados com o cliente.",
+    },
+    {
+      icon: Send,
+      title: "Copiloto no Telegram",
+      description: "Consulte leads, receba avisos e reconecte o WhatsApp pelo Telegram, sem abrir o computador.",
+    },
+    {
+      icon: Smartphone,
+      title: "App no celular com avisos",
+      description: "Instale o HNBCRM no celular ou no computador e receba avisos de novas conversas e repasses, mesmo com o app fechado.",
+    },
+    {
+      icon: Palette,
+      title: "Visual do WhatsApp",
+      description: "Interface com a cara do WhatsApp, no claro ou no escuro. Prefere outro visual? Escolha entre os temas Escuro e Claro.",
     },
     {
       icon: Users,

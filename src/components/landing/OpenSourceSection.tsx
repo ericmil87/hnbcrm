@@ -3,10 +3,20 @@ import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { cn } from "@/lib/utils";
 import { useInView } from "@/hooks/useInView";
+import { APP_BUILD } from "@/lib/pwa/appBuild";
+import { versionFromBuild } from "@/lib/pwa/buildVersion";
 
-const stats = [
-  { label: "Versão", value: "v0.63.0" },
-  { label: "MCP Tools", value: "66" },
+const GITHUB_URL = "https://github.com/ericmil87/hnbcrm";
+/** Version comes from package.json (via the build id), so the site never drifts from the repo. */
+const APP_VERSION = versionFromBuild(APP_BUILD);
+
+const stats: { label: string; value: string; href?: string }[] = [
+  {
+    label: "Novidades",
+    value: APP_VERSION ? `v${APP_VERSION}` : "Novidades",
+    href: `${GITHUB_URL}/blob/main/CHANGELOG.md`,
+  },
+  { label: "MCP Tools", value: "68" },
   { label: "TypeScript", value: "99%" },
 ];
 
@@ -50,14 +60,34 @@ export function OpenSourceSection() {
             isInView && "animate-fade-in-up [animation-delay:150ms]"
           )}
         >
-          {stats.map((stat) => (
-            <Card key={stat.label} className="p-4 text-center">
-              <div className="text-xl md:text-2xl font-bold text-text-primary">
-                {stat.value}
-              </div>
-              <div className="text-xs text-text-secondary">{stat.label}</div>
-            </Card>
-          ))}
+          {stats.map((stat) => {
+            const body = (
+              <>
+                <div className="text-xl md:text-2xl font-bold text-text-primary tabular-nums">
+                  {stat.value}
+                </div>
+                <div className="text-xs text-text-secondary">{stat.label}</div>
+              </>
+            );
+            return stat.href ? (
+              <a
+                key={stat.label}
+                href={stat.href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={`${stat.value}: ver o histórico de versões no GitHub`}
+                className="block rounded-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
+              >
+                <Card variant="interactive" className="p-4 text-center h-full">
+                  {body}
+                </Card>
+              </a>
+            ) : (
+              <Card key={stat.label} className="p-4 text-center">
+                {body}
+              </Card>
+            );
+          })}
         </div>
 
         <div
@@ -83,7 +113,7 @@ export function OpenSourceSection() {
           )}
         >
           <a
-            href="https://github.com/ericmil87/hnbcrm"
+            href={GITHUB_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-surface-overlay text-text-primary font-medium border border-border hover:bg-surface-raised transition-colors"

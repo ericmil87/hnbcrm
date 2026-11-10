@@ -1,7 +1,7 @@
 # HNBCRM — Guia de Estilos Frontend
 
 > **Stack:** Vite + React + TypeScript | Convex (backend) | TailwindCSS
-> **Abordagem:** Mobile First | Dark Mode Padrão | Suporte a Light Mode
+> **Abordagem:** Mobile First | Estilo WhatsApp (claro, verde) como tema padrão | Escuro, Claro e WhatsApp escuro como opções
 > **Última atualização:** Fevereiro 2026
 
 ---
@@ -10,15 +10,15 @@
 
 ### 1.1 Logo
 
-O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colaboração entre humanos e bots de IA. Existe em três variantes de cor:
+O logo HNBCRM é um ícone de aperto de mãos, representando a colaboração entre humanos e bots de IA. Existe em três variantes de cor (laranja, branco e preto), escolhidas conforme o tema:
 
 **Arquivos de logo:**
 
 | Arquivo | Variante | Uso |
 |---|---|---|
-| `public/orange_icon_logo_transparent-bg-528x488.png` | Laranja sobre transparente | **Principal** — sidebar, header em fundos escuros |
-| `public/white_icon_logo_transparent-bg-528x488.png` | Branco sobre transparente | Splash screens, marcas d'água em fundos escuros |
-| `public/black_icon_logo_transparent-bg-528x488.png` | Preto sobre transparente | Light mode, impressão |
+| `public/orange_icon_logo_transparent-bg-528x488.png` | Laranja sobre transparente | Escuro (marca laranja): sidebar e header; só via `BrandLogo` |
+| `public/white_icon_logo_transparent-bg-528x488.png` | Branco sobre transparente | WhatsApp escuro: logo do app via `BrandLogo`; splash screens e marcas d'água em fundos escuros |
+| `public/black_icon_logo_transparent-bg-528x488.png` | Preto sobre transparente | **Principal** — páginas públicas (sempre Estilo WhatsApp, usam `/black_icon_logo_transparent-bg-528x488.png`); no app, Estilo WhatsApp e Claro via `BrandLogo`; impressão |
 | `public/icon_logo_white_bg_full-700x700.png` | Laranja sobre fundo branco | Favicon, meta tags, Open Graph |
 | `public/icon_logo_white_bg_full-700x700.jpg` | Laranja sobre fundo branco (JPG) | Fallback para plataformas sem suporte PNG |
 
@@ -26,12 +26,15 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 - Área de respiro mínima: 1x a largura do ícone em todas as direções
 - Tamanho mínimo do ícone: 24px (mobile), 32px (desktop)
 - Nunca distorcer, rotacionar ou alterar as proporções do logo
-- Em fundos escuros: usar versão laranja ou branca sobre transparente
-- Em fundos claros: usar versão preta sobre transparente
+- No app use sempre `BrandLogo` (`src/components/ui/BrandLogo.tsx`), que troca a variante pelo tema: preto no Estilo WhatsApp e no Claro, branco no WhatsApp escuro, laranja no Escuro. Não referencie os PNGs direto em telas do app
+- Páginas públicas (landing, entrar, preços, developers, legais) ficam sempre no Estilo WhatsApp e usam o PNG preto
+- Fora dos temas (splash, marca d'água): fundo escuro = branco ou laranja; fundo claro = preto
 
 ### 1.2 Paleta de Cores
 
-#### Laranja Primário (cor da marca ~#FF6B00)
+A cor da marca depende do tema: verde nos temas WhatsApp (`brand-500` `#017561` no Estilo WhatsApp, `#00A884` no WhatsApp escuro; botão primário `brand-600` `#008069` nos dois) e laranja no Escuro e no Claro. Use sempre os tokens `brand-*`, que mudam com o tema (valores por tema na tabela abaixo).
+
+#### Laranja (paleta do Escuro e do Claro, ~#FF6B00)
 
 ```css
 :root {
@@ -62,7 +65,7 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 | `brand-800` | `#9A3412` | Ênfase escura |
 | `brand-900` | `#7C2D12` | Acento mais escuro |
 
-#### Superfícies Dark Mode
+#### Superfícies (Escuro)
 
 | Token | Hex | Uso |
 |---|---|---|
@@ -79,7 +82,7 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 | `border-subtle` | `#1E1E22` | Borda sutil |
 | `border-strong` | `#3F3F46` | Borda forte |
 
-#### Texto (Dark Mode)
+#### Texto (Escuro)
 
 | Token | Hex | Uso |
 |---|---|---|
@@ -87,7 +90,7 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 | `text-secondary` | `#A1A1AA` | Texto secundário |
 | `text-muted` | `#71717A` | Texto terciário/placeholder |
 
-#### Superfícies Light Mode
+#### Superfícies (Claro)
 
 | Token | Hex | Uso |
 |---|---|---|
@@ -104,27 +107,27 @@ O logo HNBCRM é um ícone de aperto de mãos em laranja, representando a colabo
 | `warning` | `#EAB308` | Avisos (âmbar — distinto do laranja) |
 | `info` | `#3B82F6` | Informações |
 
-#### Três temas (`data-theme` no `<html>`)
+#### Quatro temas (`data-theme` no `<html>`)
 
-Fonte da verdade: `src/index.css` (canais `--rgb-*`) e `src/lib/themeTokens.test.ts`. Escuro é o `:root`; Claro e Estilo WhatsApp são `[data-theme="light"]` e `[data-theme="whatsapp"]`. O seletor de tema chega depois; hoje os dois blocos novos só valem se o atributo for setado no DevTools.
+Fonte da verdade: `src/index.css` (canais `--rgb-*`) e `src/lib/themeTokens.test.ts`. O padrão é o Estilo WhatsApp (`whatsapp`, `DEFAULT_THEME`): páginas públicas sempre o usam e, no app, vale a escolha da pessoa (Configurações › Aparência), com Estilo WhatsApp para quem nunca escolheu. Opções, na ordem de `THEME_OPTIONS`: Estilo WhatsApp, WhatsApp escuro (`whatsapp-dark`), Escuro (`dark`, o `:root`, paleta laranja) e Claro (`light`).
 
-| Grupo | Token | Escuro | Claro | Estilo WhatsApp |
-|---|---|---|---|---|
-| Base | `surface-base` / `raised` / `overlay` / `sunken` | `#0F0F11` / `#18181B` / `#1F1F23` / `#09090B` | `#FAFAFA` / `#FFFFFF` / `#FFFFFF` / `#F4F4F5` | `#F0F2F5` / `#FFFFFF` / `#FFFFFF` / `#E9EDEF` |
-| Base | `border-default` / `subtle` / `strong` | `#27272A` / `#1E1E22` / `#3F3F46` | `#E4E4E7` / `#EBEBED` / `#D4D4D8` | `#D1D7DB` / `#E9EDEF` / `#AEBAC1` |
-| Base | `text-primary` / `secondary` / `muted` | `#FAFAFA` / `#A1A1AA` / `#71717A` | `#18181B` / `#52525B` / `#6B6B74` | `#111B21` / `#3B4A54` / `#54656F` |
-| Marca | `brand-300` / `400` / `500` | `#FDBA74` / `#FB923C` / `#FF6B00` | `#9A3412` / `#C2410C` / `#C2410C` | `#015C4B` / `#017561` / `#017561` |
-| Marca | `brand-600` (botão) | `#EA580C` | `#AD3A0B` | `#008069` |
-| Semântica | `success` / `error` / `warning` / `info` | `#22C55E` / `#EF4444` / `#EAB308` / `#3B82F6` | `#15803D` / `#B91C1C` / `#8A5A00` / `#1D4ED8` | `#166534` / `#B91C1C` / `#8A5A00` / `#1D4ED8` |
-| IA | `ai-300` / `400` / `500` / `600` / `700` | `#D8B4FE` / `#C084FC` / `#A855F7` / `#9333EA` / `#7E22CE` | `#6B21A8` / `#7E22CE` / `#9333EA` / `#7E22CE` / `#6B21A8` | igual ao Claro |
-| Chat | `chat-bg` / `bubble-out` / `bubble-ai` | `#0F0F11` / `#EA580C` / `#792CBF` | `#F4F4F5` / `#9A3412` / `#7E22CE` | `#EFEAE2` / `#D9FDD3` / `#E8DEF8` |
-| Chat | `bubble-out-fg` | `#FFFFFF` | `#FFFFFF` | `#111B21` |
+| Grupo | Token | Estilo WhatsApp (padrão) | WhatsApp escuro | Escuro | Claro |
+|---|---|---|---|---|---|
+| Base | `surface-base` / `raised` / `overlay` / `sunken` | `#F0F2F5` / `#FFFFFF` / `#F5F6F6` / `#E9EDEF` | `#111B21` / `#202C33` / `#26343C` / `#0B141A` | `#0F0F11` / `#18181B` / `#1F1F23` / `#09090B` | `#FAFAFA` / `#FFFFFF` / `#FFFFFF` / `#F4F4F5` |
+| Base | `border-default` / `subtle` / `strong` | `#D1D7DB` / `#E9EDEF` / `#AEBAC1` | `#2A3942` / `#222D34` / `#3B4A54` | `#27272A` / `#1E1E22` / `#3F3F46` | `#E4E4E7` / `#EBEBED` / `#D4D4D8` |
+| Base | `text-primary` / `secondary` / `muted` | `#111B21` / `#3B4A54` / `#54656F` | `#E9EDEF` / `#AEBAC1` / `#95A4AD` | `#FAFAFA` / `#A1A1AA` / `#71717A` | `#18181B` / `#52525B` / `#6B6B74` |
+| Marca | `brand-300` / `400` / `500` | `#015C4B` / `#017561` / `#017561` | `#7AE3C3` / `#21C7A0` / `#00A884` | `#FDBA74` / `#FB923C` / `#FF6B00` | `#9A3412` / `#C2410C` / `#C2410C` |
+| Marca | `brand-600` (botão) | `#008069` | `#008069` | `#EA580C` | `#AD3A0B` |
+| Semântica | `success` / `error` / `warning` / `info` | `#166534` / `#B91C1C` / `#8A5A00` / `#1D4ED8` | `#3FCF7A` / `#F87171` / `#EAB308` / `#60A5FA` | `#22C55E` / `#EF4444` / `#EAB308` / `#3B82F6` | `#15803D` / `#B91C1C` / `#8A5A00` / `#1D4ED8` |
+| IA | `ai-300` / `400` / `500` / `600` / `700` | igual ao Claro | `#D8B4FE` / `#C9A2FC` / `#A855F7` / `#9333EA` / `#7E22CE` | `#D8B4FE` / `#C084FC` / `#A855F7` / `#9333EA` / `#7E22CE` | `#6B21A8` / `#7E22CE` / `#9333EA` / `#7E22CE` / `#6B21A8` |
+| Chat | `chat-bg` / `bubble-out` / `bubble-ai` | `#EFEAE2` / `#D9FDD3` / `#E8DEF8` | `#0B141A` / `#005C4B` / `#4A2D6E` | `#0F0F11` / `#EA580C` / `#792CBF` | `#F4F4F5` / `#9A3412` / `#7E22CE` |
+| Chat | `bubble-out-fg` | `#111B21` | `#E9EDEF` | `#FFFFFF` | `#FFFFFF` |
 
 `ai-*` substitui o `purple-*` do Tailwind (proibido em `src`, exceto `developers/JsonHighlighter.tsx`). A tabela completa de chat, bolhas e sombras está no plano `01-temas.md` §3.5-3.6. Divergência do plano: `bubble-out` do Claro é `#9A3412` (= `brand-700` do Claro), não `#C2410C`, porque o rodapé a 75% de branco só atinge 3,58:1 com `#C2410C`; com `#9A3412` chega a 4,80:1 (7,31 com branco pleno, 6,38 com o rótulo). A tabela 3.5 do plano continua com `#C2410C`, mas o valor ajustado vale e não deve ser revertido. Nessa bolha `bubble-out-fg/70` dá 4,20 e `/60` 3,49: use essas opacidades só em ícones, não em texto.
 
 #### Conformidade de Contraste
 
-Claro e Estilo WhatsApp passam em todos os pares AA do teste (texto 4,5:1; ícones e tique 3:1). O Escuro é mantido idêntico ao app anterior e falha os pares abaixo (valores medidos; lista `DARK_KNOWN_FAILURES`):
+Estilo WhatsApp e Claro passam em todos os pares AA do teste (texto 4,5:1; ícones e tique 3:1). O WhatsApp escuro também passa em todos, exceto branco sobre `semantic-*` (`WHATSAPP_DARK_KNOWN_FAILURES`), porque esses tokens são claros para servir de texto. O Escuro é mantido idêntico ao app anterior e falha os pares abaixo (valores medidos; lista `DARK_KNOWN_FAILURES`):
 
 - `text-muted` sobre `surface-base` 3,96, `raised` 3,67, `overlay` 3,40, `sunken` 4,12
 - Branco sobre `brand-600` 3,56, `success` 2,28, `error` 3,76, `warning` 1,92, `info` 3,68
@@ -639,11 +642,14 @@ space-16: 64px   (section gap desktop)
 ## 6. Acessibilidade
 
 - Contraste mínimo WCAG AA: 4.5:1 para texto, 3:1 para elementos grandes
-- `#FAFAFA` sobre `#0F0F11` = ratio ~18.1:1 (AAA)
-- `#A1A1AA` sobre `#0F0F11` = ratio ~7.2:1 (AAA)
-- `#EA580C` sobre `#FFFFFF` = ratio ~4.6:1 (AA)
+- Tema padrão (Estilo WhatsApp): `#111B21` sobre `#F0F2F5` = ~15,6:1 (AAA); `#54656F` (`text-muted`) sobre `#F0F2F5` = ~5,4:1 (AA); `#FFFFFF` sobre `#008069` (botão primário) = ~4,9:1 (AA); `#017561` (texto de marca) sobre `#FFFFFF` = ~5,7:1 (AA)
+- WhatsApp escuro: `#E9EDEF` sobre `#111B21` = ~14,8:1 (AAA); `#E9EDEF` sobre a bolha enviada `#005C4B` = ~6,8:1 (AA)
+- Exemplos do Escuro:
+  - `#FAFAFA` sobre `#0F0F11` = ratio ~18.1:1 (AAA)
+  - `#A1A1AA` sobre `#0F0F11` = ratio ~7.2:1 (AAA)
+  - `#EA580C` sobre `#FFFFFF` = ratio ~4.6:1 (AA)
 - Todos os ícones interativos precisam de `aria-label`
-- Focus visible com ring laranja: `focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base`
+- Focus visible com o ring da marca (verde nos temas WhatsApp, laranja no Escuro e no Claro): `focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-surface-base`
 - Suporte a screen readers com landmarks (`<nav>`, `<main>`, `<header>`, `<aside>`)
 - `role="dialog"` + `aria-modal="true"` em modais
 - Link "Pular para conteúdo" no topo do app
@@ -733,11 +739,11 @@ export function Card({
 
 Os tokens de cor são canais RGB (`--rgb-*`) com alfa funcionando (`bg-surface-base/50`); CSS cru e `style={{}}` usam os aliases `var(--surface-*)`, `var(--text-*)`, `var(--border-*)` e `var(--color-semantic-*)`. Há tokens de chat (`chat-*`, `composer*`, `bubble-*`, `tick-read`, `badge-unread*`) e a escala `ai-300..700`. Os valores do Escuro estão congelados em `src/lib/themeTokens.test.ts`.
 
-Bolhas por tema (`getBubbleStyle`, `src/components/inbox/MessageBubble.tsx`): nota interna `bg-bubble-note` com borda tracejada `border-bubble-note-border/30`; entrada `bg-bubble-in` (branca no Claro e no Estilo WhatsApp); equipe `bg-bubble-out` (laranja escuro no Claro, verde `#D9FDD3` no Estilo WhatsApp); IA `bg-bubble-ai` sólida. Dentro da bolha de saída use `bubble-out-fg[/N]` (texto e fundos translúcidos), `bubble-out-link` e `bubble-in-link` nos links; `/70` e `/60` de `bubble-out-fg` só em ícones. A área de mensagens usa `bg-chat-bg chat-wallpaper`, o cabeçalho `bg-chat-header`, o composer `bg-composer` e `bg-composer-field`. No Escuro a única diferença visível é a bolha da IA: `purple-600/80` virou o sólido `#792CBF`, até 1 nível por canal. O `src/lib/rawColorsGuard.test.ts` impede cor crua nova (catraca por arquivo).
+Bolhas por tema (`getBubbleStyle`, `src/components/inbox/MessageBubble.tsx`): nota interna `bg-bubble-note` com borda tracejada `border-bubble-note-border/30`; entrada `bg-bubble-in` (branca no Claro e no Estilo WhatsApp, `#202C33` no WhatsApp escuro); equipe `bg-bubble-out` (verde claro `#D9FDD3` com texto escuro no Estilo WhatsApp, verde escuro `#005C4B` com texto `#E9EDEF` no WhatsApp escuro, laranja escuro no Claro); IA `bg-bubble-ai` sólida (`#E8DEF8` no Estilo WhatsApp, `#4A2D6E` no WhatsApp escuro). Dentro da bolha de saída use `bubble-out-fg[/N]` (texto e fundos translúcidos), `bubble-out-link` e `bubble-in-link` nos links; `/70` e `/60` de `bubble-out-fg` só em ícones. A área de mensagens usa `bg-chat-bg chat-wallpaper`, o cabeçalho `bg-chat-header`, o composer `bg-composer` e `bg-composer-field`. No Escuro a única diferença visível é a bolha da IA: `purple-600/80` virou o sólido `#792CBF`, até 1 nível por canal. O `src/lib/rawColorsGuard.test.ts` impede cor crua nova (catraca por arquivo).
 
-O app tem três temas: Escuro (padrão, `:root`), Claro e Estilo WhatsApp. O tema é o atributo `data-theme` no `<html>` (`light` ou `whatsapp`; sem atributo = Escuro). Tem de ser no `<html>`: os aliases (`--surface-*`, `--text-*`...) são resolvidos no elemento onde foram declarados, então um tema em wrapper deixaria os aliases na paleta do Escuro. Os aliases ficam só em `:root`.
+O app tem quatro temas: Estilo WhatsApp (padrão), WhatsApp escuro, Escuro (`:root`, paleta laranja) e Claro. O tema é o atributo `data-theme` no `<html>`, sempre explícito (`whatsapp`, `whatsapp-dark`, `dark` ou `light`). Tem de ser no `<html>`: os aliases (`--surface-*`, `--text-*`...) são resolvidos no elemento onde foram declarados, então um tema em wrapper deixaria os aliases na paleta do Escuro. Os aliases ficam só em `:root`.
 
-Use sempre tokens, que mudam sozinhos com o tema. Para o par inevitável claro/escuro (ex.: `WhatsAppPreview`, cores fixas do WhatsApp), use a variante `light-theme:`, que vale para Claro e Estilo WhatsApp:
+Use sempre tokens, que mudam sozinhos com o tema. Para o par inevitável claro/escuro (ex.: `WhatsAppPreview`, cores fixas do WhatsApp), use a variante `light-theme:`, que vale só para Claro e Estilo WhatsApp (no WhatsApp escuro aparece o lado escuro do par):
 
 ```tsx
 <div className="bg-[#005c4b] light-theme:bg-[#d9fdd3]" />
@@ -755,7 +761,7 @@ Layout da tela de login:
 
 ```
 ┌─────────────────────────────┐
-│     [Logo Laranja]          │
+│     [Logo]                 │
 │       HNBCRM                │
 │                             │
 │    Email                    │

@@ -1,9 +1,13 @@
 import { Link } from "react-router";
 import { ExternalLink } from "lucide-react";
 import { LegalIdentification } from "./LegalIdentification";
+import { APP_BUILD } from "@/lib/pwa/appBuild";
+import { versionFromBuild } from "@/lib/pwa/buildVersion";
 
 const GITHUB_URL = "https://github.com/ericmil87/hnbcrm";
 const NPM_URL = "https://www.npmjs.com/package/hnbcrm-mcp";
+const CHANGELOG_URL = `${GITHUB_URL}/blob/main/CHANGELOG.md`;
+const APP_VERSION = versionFromBuild(APP_BUILD);
 
 function ExtLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
@@ -58,6 +62,7 @@ export function Footer() {
               <InternalLink to="/#funcionalidades">Funcionalidades</InternalLink>
               <InternalLink to="/precos">Preços</InternalLink>
               <ExtLink href={`${GITHUB_URL}/blob/main/ROADMAP.md`}>Roadmap</ExtLink>
+              <ExtLink href={CHANGELOG_URL}>Novidades</ExtLink>
               <InternalLink to="/entrar">Entrar</InternalLink>
             </div>
           </div>
@@ -93,6 +98,19 @@ export function Footer() {
         <div className="pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-sm text-text-muted">
             &copy; 2026 HNBCRM. Todos os direitos reservados.
+            {APP_VERSION && (
+              <>
+                {" · "}
+                <a
+                  href={CHANGELOG_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="tabular-nums hover:text-text-primary transition-colors"
+                >
+                  v{APP_VERSION}
+                </a>
+              </>
+            )}
           </p>
           <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
             <InternalLink to="/termos">Termos</InternalLink>

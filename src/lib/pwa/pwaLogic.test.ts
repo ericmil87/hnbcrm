@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { compareBuild, isBelowMinimum, makeBuildId } from "./buildVersion";
+import { compareBuild, isBelowMinimum, makeBuildId, versionFromBuild } from "./buildVersion";
 import { isSafeMomentToReload } from "./safeMoment";
 import { handlePreloadError, PRELOAD_RELOAD_KEY } from "./preloadError";
 import { isShellNavigation } from "./swRoutes";
@@ -38,6 +38,18 @@ describe("makeBuildId", () => {
   it("uses the short sha when present, else a timestamp", () => {
     expect(makeBuildId({ version: "0.78.1", sha: "0123456789abcdef", now: new Date() })).toBe("0.78.1+0123456");
     expect(makeBuildId({ version: "0.78.1", sha: "", now: new Date("2026-11-07T22:04:00Z") })).toBe("0.78.1+t20261107T2204");
+  });
+});
+
+describe("versionFromBuild", () => {
+  it("drops the +sha/+timestamp suffix", () => {
+    expect(versionFromBuild("0.80.0+abc1234")).toBe("0.80.0");
+    expect(versionFromBuild("0.80.0+t20261110T2100")).toBe("0.80.0");
+    expect(versionFromBuild("v1.2.3")).toBe("1.2.3");
+  });
+  it("returns null without a dotted version", () => {
+    expect(versionFromBuild("dev")).toBeNull();
+    expect(versionFromBuild("")).toBeNull();
   });
 });
 

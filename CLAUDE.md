@@ -42,7 +42,7 @@ Rules: (1) no flag = DEV; PROD only with `--prod` (`run`, `env`, `data`, `logs`,
 - **REST** (`convex/router.ts`): every route has an entry in `ROUTE_PERMISSIONS` and calls `requireRoutePermission` (fail-closed; `routerPermissions.test.ts`).
 - **AI is opt-in per org** (`aiConfig.enabled` + LGPD ack); eligibility is re-checked inside the transactional commit; anything the model could send to a customer passes the output guard (`convex/lib/llmOutputGuard.ts`). Details: `.claude/rules/ai-pipeline.md`.
 - **Secrets**: never commit tokens (`secretScan.test.ts`), never log full phone numbers or e-mails in ops output, never persist WhatsApp `MediaKey` material.
-- **UI**: PT-BR copy, mobile-first, `lucide-react` icons (no emoji), 44 px touch targets, dark theme default.
+- **UI**: PT-BR copy, mobile-first, `lucide-react` icons (no emoji), 44 px touch targets, Estilo WhatsApp theme default (also WhatsApp escuro, Escuro, Claro; tokens only).
 - **Git**: no AI attribution lines (no `Co-Authored-By: Claude`) in commits or PRs. Branch → PR → review → merge; `main` deploys PROD via Vercel.
 
 ## Convex rules (summary; full set in `.claude/rules/convex-official.md`)
