@@ -1,6 +1,6 @@
 import { AlertTriangle, CalendarClock, Gauge, Receipt, Ticket, WalletCards } from "lucide-react";
+import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
 import { SectionCard } from "@/components/ui/SectionCard";
 import {
   attendanceProjection,
@@ -8,12 +8,14 @@ import {
   creditExpiresSoon,
   creditSourceLabel,
   invoiceLines,
+
   priceLockText,
   statusInfo,
   trialDaysLeft,
   trialText,
   type StatusTone,
 } from "@/lib/billingPanel";
+import { paymentNotice } from "@/lib/checkoutForm";
 import { formatCount, formatDate, formatMonthValue, formatMoney } from "@/lib/format";
 import { CYCLE_CLOSE_TEXT, daysLeftInMonthUtc } from "@/lib/usageProjection";
 import { cn } from "@/lib/utils";
@@ -31,10 +33,14 @@ const TONE_BADGE: Record<StatusTone, "default" | "success" | "info" | "warning" 
 interface PlanSummaryCardProps {
   entitlements: Entitlements;
   now: number;
-  changePlanHref: string;
+  /** "Assinar plano"/"Trocar plano" (checkout) — montado pelo container. */
+  action: ReactNode;
 }
 
-export function PlanSummaryCard({ entitlements, now, changePlanHref }: PlanSummaryCardProps) {
+export function PlanSummaryCard({ entitlements, now, action }: PlanSummaryCardProps) {
+  const rawPayment = paymentNotice(entitlements.subscription);
+  // Em atraso o aviso do status já cobre; não repete.
+  const payment = rawPayment && entitlements.mode === "past_due" && rawPayment.tone === "error" ? null : rawPayment;
   const info = statusInfo(entitlements.mode);
   const days = entitlements.mode === "trial" ? trialDaysLeft(entitlements.trialEndsAt, now) : null;
   const lock = priceLockText(entitlements.pricing?.priceLock, now);
@@ -73,12 +79,21 @@ export function PlanSummaryCard({ entitlements, now, changePlanHref }: PlanSumma
             <p className="text-text-primary">{info.notice}</p>
           </div>
         )}
-        <a href={changePlanHref}>
-          <Button variant="secondary" className="w-full sm:w-auto">
-            Falar com a gente
-          </Button>
-        </a>
-        <p className="text-caption text-text-muted">Para trocar de plano, é só falar com a gente.</p>
+        {payment && (
+          <div
+            role="status"
+            className={cn(
+              "flex gap-2 rounded-card border p-3 text-sm",
+              payment.tone === "error"
+                ? "border-semantic-error/40 bg-semantic-error/5"
+                : "border-semantic-warning/40 bg-semantic-warning/5",
+            )}
+          >
+            <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
+            <p className="text-text-primary">{payment.text}</p>
+          </div>
+        )}
+        {action}
       </div>
     </SectionCard>
   );

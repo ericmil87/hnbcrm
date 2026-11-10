@@ -1,10 +1,9 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { useNow } from "@/hooks/useNow";
 import { usePermissions } from "@/hooks/usePermissions";
 import {
-  changePlanMailto,
   monthKeyUtc,
   overageConfirmText,
   overageEligibility,
@@ -14,6 +13,8 @@ import {
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { AttendancesStatement } from "./AttendancesStatement";
+import { InvoicesCard } from "./InvoicesCard";
+import { PlanCheckout } from "./PlanCheckout";
 import { BillingPanelView } from "./BillingPanelView";
 import type { OverageCardViewProps } from "./OverageCard";
 import type { UsageSummary } from "./billingTypes";
@@ -116,10 +117,17 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
   const history = useQuery(api.billing.getUsageHistory, hasPlan ? { organizationId } : "skip");
 
   const overage = useOverageControl(organizationId, summary, entitlements?.mode, canManage);
-  const changePlanHref = useMemo(
-    () => changePlanMailto(null, entitlements?.planLabel ?? null),
-    [entitlements?.planLabel],
-  );
+  const planAction = entitlements ? (
+    <PlanCheckout
+      organizationId={organizationId}
+      mode={entitlements.mode}
+      hasSubscription={entitlements.subscription?.hasSubscription === true}
+      planLabel={entitlements.planLabel}
+      priceLock={entitlements.pricing?.priceLock ?? null}
+      canManage={canManage}
+      now={now}
+    />
+  ) : null;
 
   return (
     <BillingPanelView
@@ -129,7 +137,8 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
       channelUsage={channelUsage}
       history={history}
       now={now}
-      changePlanHref={changePlanHref}
+      planAction={planAction}
+      invoices={<InvoicesCard organizationId={organizationId} />}
       overage={overage}
       statement={<AttendancesStatement organizationId={organizationId} month={month} />}
     />

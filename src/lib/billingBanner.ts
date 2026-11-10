@@ -66,7 +66,7 @@ export function resolveBillingBanner(args: {
       tone: "error",
       title: "Sua conta está em modo leitura",
       body: `Seus dados estão guardados e a exportação continua liberada.${adminHint}`,
-      cta: cta("Ver plano"),
+      cta: cta("Escolher plano"),
       dismissible: false,
       dismissKey: null,
     };
