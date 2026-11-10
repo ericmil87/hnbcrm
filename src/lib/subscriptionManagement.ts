@@ -155,3 +155,15 @@ export function maskDocument(raw: string | null | undefined): string | null {
   if (d.length === 14) return `••.•••.•••/••••-${last}`;
   return d.length >= 2 ? `•••${last}` : null;
 }
+
+/** Valor da 1ª fatura paga (a elegível ao reembolso): a de menor `paidAt`. */
+export function firstPaidAmountBrl(
+  invoices: ReadonlyArray<{ status: string; paidAt: number | null; amountCents: number }> | null | undefined,
+): number | null {
+  let first: { paidAt: number; amountCents: number } | null = null;
+  for (const inv of invoices ?? []) {
+    if (inv.status !== "paid" || inv.paidAt == null) continue;
+    if (first === null || inv.paidAt < first.paidAt) first = { paidAt: inv.paidAt, amountCents: inv.amountCents };
+  }
+  return first ? first.amountCents / 100 : null;
+}

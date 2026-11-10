@@ -3,6 +3,7 @@ import {
   canCancelSubscription,
   canReactivateSubscription,
   canRequestRefund,
+  firstPaidAmountBrl,
   cancelConfirmText,
   cancelScheduledText,
   changeKindLabel,
@@ -108,5 +109,14 @@ describe("documento mascarado", () => {
     expect(maskDocument("1234")).toBe("•••34");
     expect(maskDocument("")).toBeNull();
     expect(maskDocument(null)).toBeNull();
+  });
+});
+
+describe("valor do reembolso", () => {
+  it("1ª fatura paga (menor paidAt), ignorando pendentes", () => {
+    const inv = (status: string, paidAt: number | null, amountCents: number) => ({ status, paidAt, amountCents });
+    expect(firstPaidAmountBrl([inv("paid", 20, 29600), inv("paid", 10, 19700), inv("pending", null, 1)])).toBe(197);
+    expect(firstPaidAmountBrl([inv("pending", null, 1)])).toBeNull();
+    expect(firstPaidAmountBrl(undefined)).toBeNull();
   });
 });
