@@ -37,6 +37,10 @@ export interface CheckoutModalViewProps {
   /** Mostra os erros dos campos (depois da primeira tentativa de enviar). */
   showErrors: boolean;
   summary: CheckoutSummary | null;
+  /** O valor veio do servidor (`previewCheckout`); `false` = estimativa local de exibição. */
+  summaryFromServer: boolean;
+  /** Consultando o servidor (o formulário mudou): mostra "Calculando…". */
+  summaryLoading: boolean;
   submitting: boolean;
   serverError: string | null;
   /** Aviso (não é erro): ex.: pagamento recebido e em processamento. */
@@ -188,7 +192,13 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
                   Preço combinado aplicado (tabela: {brl(p.summary.listMonthlyBrl)}/mês).
                 </p>
               )}
-              <p className="mt-1 text-caption text-text-muted">Estimativa: o valor final é confirmado ao criar a fatura.</p>
+              <p className="mt-1 text-caption text-text-muted" aria-busy={p.summaryLoading}>
+                {p.summaryLoading
+                  ? "Calculando…"
+                  : p.summaryFromServer
+                    ? "Valor calculado pelo servidor."
+                    : "Estimativa: o valor final é confirmado ao criar a fatura."}
+              </p>
             </div>
           )}
 
