@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/Button";
 import { PlaygroundConfigProvider } from "@/components/developers/PlaygroundConfigProvider";
 import { ApiPlayground } from "@/components/developers/ApiPlayground";
 import { SEO } from "@/components/SEO";
+import { BrandLogo } from "@/components/ui/BrandLogo";
+import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 
 export function PlaygroundPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,22 +33,19 @@ export function PlaygroundPage() {
           <div className="px-4 py-2.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 min-w-0">
               <Link to="/" className="flex items-center gap-1.5 flex-shrink-0">
-                <img
-                  src="/black_icon_logo_transparent-bg-528x488.png"
-                  alt="HNBCRM"
-                  className="h-6 w-6 object-contain"
-                />
+                <BrandLogo className="h-6 w-6 object-contain" />
                 <span className="text-sm font-bold text-text-primary hidden sm:inline">HNBCRM</span>
               </Link>
-              <span className="text-text-muted text-xs">/</span>
-              <Link to="/developers" className="text-xs text-text-secondary hover:text-text-primary transition-colors">
+              <span className="text-text-muted text-xs hidden sm:inline">/</span>
+              <Link to="/developers" className="text-xs text-text-secondary hover:text-text-primary transition-colors hidden sm:inline">
                 Developers
               </Link>
               <span className="text-text-muted text-xs">/</span>
               <span className="text-xs font-medium text-text-primary">Playground</span>
             </div>
 
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+              <PublicThemeButton />
               <a href="/api/v1/openapi.json" target="_blank" rel="noopener noreferrer">
                 <Button variant="ghost" size="sm">
                   <Download size={14} />

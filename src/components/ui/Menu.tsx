@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode, Ref } from "react";
+import { Check } from "lucide-react";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { Popover } from "./Popover";
@@ -14,6 +15,8 @@ export interface MenuItem {
   separatorBefore?: boolean;
   /** Chave estável (padrão: rótulo + posição). */
   id?: string;
+  /** Item de escolha única: vira `menuitemradio` com `aria-checked` e mostra o check quando marcado. */
+  checked?: boolean;
 }
 
 export interface MenuTriggerProps {
@@ -42,7 +45,7 @@ export function Menu({ trigger, items, ariaLabel, align = "end", className }: Me
   const menuId = useId();
 
   const buttons = () =>
-    Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+    Array.from(listRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled), [role="menuitemradio"]:not(:disabled)') ?? []);
 
   useEffect(() => {
     if (open) buttons()[0]?.focus();
@@ -98,7 +101,8 @@ export function Menu({ trigger, items, ariaLabel, align = "end", className }: Me
             <button
               key={item.id ?? `${item.label}-${index}`}
               type="button"
-              role="menuitem"
+              role={item.checked === undefined ? "menuitem" : "menuitemradio"}
+              aria-checked={item.checked}
               tabIndex={-1}
               disabled={item.disabled}
               onClick={() => select(item)}
@@ -112,6 +116,7 @@ export function Menu({ trigger, items, ariaLabel, align = "end", className }: Me
             >
               {item.icon}
               {item.label}
+              {item.checked && <Check size={16} aria-hidden="true" className="ml-auto shrink-0 text-brand-500 light-theme:text-brand-600" />}
             </button>
           ))}
         </div>

@@ -19,10 +19,6 @@ const ARBITRARY_HEX = /-\[#[0-9a-fA-F]{3,8}\]/g;
 const ALLOWLIST: Record<string, number> = {
   // Cor de dado: tipo de evento do calendário (par `-400` + `light-theme:-700`).
   "components/calendar/constants.ts": 20,
-  // Bloco de código sempre escuro (#0d1117), nos dois temas.
-  "components/developers/JsonHighlighter.tsx": 5,
-  "components/developers/CodeBlock.tsx": 2,
-  "components/developers/RequestBuilder.tsx": 1,
   // Cores canônicas do WhatsApp na pré-visualização de campanha.
   "components/campaigns/WhatsAppPreview.tsx": 30,
   "components/campaigns/WhatsAppText.tsx": 2,
@@ -98,9 +94,9 @@ describe("rawColorsGuard", () => {
     expect(stale, "Baixe o teto na ALLOWLIST para a contagem atual (ou remova o arquivo).").toEqual([]);
   });
 
-  it("purple- só existe em JsonHighlighter.tsx (IA usa ai-*)", () => {
+  it("purple- não existe em lugar nenhum (IA usa ai-*, código usa code-*)", () => {
     const purple = countByFile(/\b(?:[a-z-]+:)*[a-z]+-purple-\d{2,3}\b/g);
-    const offenders = Object.keys(purple).filter((f) => f !== "components/developers/JsonHighlighter.tsx");
-    expect(offenders, "Roxo cru fora do bloco de código: use os tokens ai-* (ex.: bg-ai-600).").toEqual([]);
+    const offenders = Object.keys(purple);
+    expect(offenders, "Roxo cru: use os tokens ai-* (ex.: bg-ai-600) ou code-* em blocos de código.").toEqual([]);
   });
 });

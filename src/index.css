@@ -73,6 +73,17 @@
   --rgb-badge-unread: 234 88 12;
   --rgb-badge-unread-fg: 255 255 255;
 
+  /* Code blocks (developers, playground) follow the theme */
+  --rgb-code-bg: 13 17 23;
+  --rgb-code-header: 22 27 34;
+  --rgb-code-border: 48 54 61;
+  --rgb-code-fg: 230 237 243;
+  --rgb-code-muted: 139 148 158;
+  --rgb-code-key: 121 192 255;
+  --rgb-code-string: 126 231 135;
+  --rgb-code-number: 255 166 87;
+  --rgb-code-keyword: 210 168 255;
+
   /* Full-color aliases for raw CSS and inline styles */
   --surface-base:    rgb(var(--rgb-surface-base));
   --surface-raised:  rgb(var(--rgb-surface-raised));
@@ -158,6 +169,17 @@
   --rgb-badge-unread: 173 58 11;
   --rgb-badge-unread-fg: 255 255 255;
 
+  /* Code blocks (developers, playground) follow the theme */
+  --rgb-code-bg: 246 248 250;
+  --rgb-code-header: 234 238 242;
+  --rgb-code-border: 208 215 222;
+  --rgb-code-fg: 31 35 40;
+  --rgb-code-muted: 87 96 106;
+  --rgb-code-key: 5 80 174;
+  --rgb-code-string: 17 99 41;
+  --rgb-code-number: 149 56 0;
+  --rgb-code-keyword: 102 57 186;
+
   --chat-wallpaper: none;
 
   --shadow-card:       0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
@@ -221,6 +243,17 @@
   --rgb-tick-read: 2 126 181;
   --rgb-badge-unread: 37 211 102;
   --rgb-badge-unread-fg: 17 27 33;
+
+  /* Code blocks (developers, playground) follow the theme */
+  --rgb-code-bg: 247 248 250;
+  --rgb-code-header: 238 241 244;
+  --rgb-code-border: 209 215 219;
+  --rgb-code-fg: 17 27 33;
+  --rgb-code-muted: 84 101 111;
+  --rgb-code-key: 5 80 174;
+  --rgb-code-string: 17 99 41;
+  --rgb-code-number: 149 56 0;
+  --rgb-code-keyword: 102 57 186;
 
   --chat-wallpaper:
     radial-gradient(rgb(84 101 111 / 0.1) 0.6px, transparent 0.6px),
@@ -287,6 +320,17 @@
   --rgb-tick-read: 83 189 235;
   --rgb-badge-unread: 0 168 132;
   --rgb-badge-unread-fg: 17 27 33;
+
+  /* Code blocks (developers, playground) follow the theme */
+  --rgb-code-bg: 11 20 26;
+  --rgb-code-header: 32 44 51;
+  --rgb-code-border: 42 57 66;
+  --rgb-code-fg: 233 237 239;
+  --rgb-code-muted: 134 150 160;
+  --rgb-code-key: 121 192 255;
+  --rgb-code-string: 126 231 135;
+  --rgb-code-number: 255 166 87;
+  --rgb-code-keyword: 210 168 255;
 
   --chat-wallpaper:
     radial-gradient(rgb(233 237 239 / 0.06) 0.6px, transparent 0.6px),

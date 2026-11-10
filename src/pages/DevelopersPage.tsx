@@ -26,6 +26,8 @@ import { CodeBlock } from "@/components/developers/CodeBlock";
 import { ALL_ENDPOINTS, API_CATEGORIES, getEndpointsByCategory } from "@/lib/apiRegistry";
 import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
+import { BrandLogo } from "@/components/ui/BrandLogo";
+import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 
 const sections = [
   { id: "quick-start", label: "Quick Start", icon: Rocket },
@@ -106,11 +108,7 @@ export function DevelopersPage() {
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-shrink-0">
             <Link to="/" className="flex items-center gap-2">
-              <img
-                src="/black_icon_logo_transparent-bg-528x488.png"
-                alt="HNBCRM Logo"
-                className="h-7 w-7 object-contain"
-              />
+              <BrandLogo className="h-7 w-7 object-contain" />
               <span className="text-lg font-bold text-text-primary hidden sm:inline">HNBCRM</span>
             </Link>
             <span className="text-text-muted hidden sm:inline">/</span>
@@ -130,7 +128,8 @@ export function DevelopersPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+            <PublicThemeButton />
             <a
               href="https://github.com/ericmil87/hnbcrm"
               target="_blank"

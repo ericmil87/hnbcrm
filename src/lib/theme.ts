@@ -6,7 +6,12 @@ export type { UiTheme };
 export const THEME_STORAGE_KEY = "hnbcrm:theme";
 /** Who the device theme belongs to (user id). Absent = legacy value without owner. */
 export const THEME_OWNER_KEY = "hnbcrm:theme-user";
-/** Default of the whole frontend: public pages always, and /app when the person never chose. */
+/**
+ * Theme a visitor picked on the public pages (landing, /entrar, /developers, legal pages), per device.
+ * Never pushed to an account and not subject to the owner rules of THEME_STORAGE_KEY.
+ */
+export const PUBLIC_THEME_STORAGE_KEY = "hnbcrm:public-theme";
+/** Default of the whole frontend: public pages without a choice, and /app when the person never chose. */
 export const DEFAULT_THEME: UiTheme = "whatsapp";
 
 /** Value of `<meta name="theme-color">` per theme (data, not styling). */
@@ -17,7 +22,7 @@ export const THEME_COLOR: Record<UiTheme, string> = {
   "whatsapp-dark": "#202C33",
 };
 
-/** The personal theme only applies under /app; public pages always use DEFAULT_THEME. Does not match /apple. */
+/** The account theme only applies under /app; public pages use resolvePublicTheme. Does not match /apple. */
 export function isAppPath(pathname: string): boolean {
   return pathname === "/app" || pathname.startsWith("/app/");
 }
@@ -26,6 +31,16 @@ export function isAppPath(pathname: string): boolean {
 export function resolveTheme({ server, local }: { server?: unknown; local?: unknown }): UiTheme {
   if (isUiTheme(server)) return server;
   if (isUiTheme(local)) return local;
+  return DEFAULT_THEME;
+}
+
+/**
+ * Public pages: the visitor's public choice wins; else the device app theme (a signed-in person who never
+ * picked a public theme sees the landing like their app); else DEFAULT_THEME. Mirrored by public/theme-init.js.
+ */
+export function resolvePublicTheme({ publicChoice, appTheme }: { publicChoice?: unknown; appTheme?: unknown }): UiTheme {
+  if (isUiTheme(publicChoice)) return publicChoice;
+  if (isUiTheme(appTheme)) return appTheme;
   return DEFAULT_THEME;
 }
 

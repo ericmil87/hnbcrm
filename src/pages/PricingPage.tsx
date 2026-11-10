@@ -8,6 +8,8 @@ import { PricingSection } from "@/components/landing/pricing/PricingSection";
 import { formatMoney } from "@/lib/format";
 import { buildPricingJsonLd } from "@/lib/pricingJsonLd";
 import { PLANS } from "../../convex/lib/plans";
+import { BrandLogo } from "@/components/ui/BrandLogo";
+import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 
 const SITE_URL = import.meta.env.VITE_SITE_URL || "https://hnbcrm.com";
 
@@ -27,18 +29,16 @@ export function PricingPage() {
       <header className="px-4 pt-6">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <Link to="/" className="flex min-h-11 items-center gap-2">
-            <img
-              src="/black_icon_logo_transparent-bg-528x488.png"
-              alt="HNBCRM Logo"
-              className="h-8 w-8 object-contain"
-            />
+            <BrandLogo className="h-8 w-8 object-contain" />
             <span className="text-xl font-bold text-text-primary">HNBCRM</span>
           </Link>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <PublicThemeButton />
             <Link to="/">
               <Button variant="ghost" size="sm">
                 <ArrowLeft size={16} />
-                Voltar ao início
+                <span className="sm:hidden">Voltar</span>
+                <span className="hidden sm:inline">Voltar ao início</span>
               </Button>
             </Link>
             <Link to="/entrar">

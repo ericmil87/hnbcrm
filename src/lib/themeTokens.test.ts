@@ -58,6 +58,15 @@ const DARK_HEX: Record<string, string> = {
   "chat-send": "EA580C",
   "badge-unread": "EA580C",
   "badge-unread-fg": "FFFFFF",
+  "code-bg": "0D1117",
+  "code-header": "161B22",
+  "code-border": "30363D",
+  "code-fg": "E6EDF3",
+  "code-muted": "8B949E",
+  "code-key": "79C0FF",
+  "code-string": "7EE787",
+  "code-number": "FFA657",
+  "code-keyword": "D2A8FF",
 };
 
 type Block = Record<string, string>;
@@ -164,6 +173,9 @@ const PAIRS: Pair[] = [
   { fg: "bubble-system-fg", bg: "bubble-system", min: 4.5 },
   { fg: "white", bg: "chat-send", min: 3 },
   { fg: "brand-500", bg: "surface-base", min: 3 },
+  // Code blocks: every readable color on the code background, in all four themes (comments included).
+  ...["code-fg", "code-muted", "code-key", "code-string", "code-number", "code-keyword"].map((fg) => ({ fg, bg: "code-bg", min: 4.5 })),
+  { fg: "code-muted", bg: "code-header", min: 4.5 },
   // Not checked in Escuro (its brand text and semantic colors are frozen, see DARK_KNOWN_FAILURES notes).
   ...["brand-300", "brand-400", "brand-500"].flatMap((fg) =>
     ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, notDark: true })),

@@ -503,14 +503,14 @@ function JsonEditorOverlay({
   return (
     <div
       className={`relative flex-1 min-h-0 rounded-lg border overflow-hidden ${
-        hasError ? "border-semantic-error" : "border-border-strong focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20"
+        hasError ? "border-semantic-error" : "border-code-border focus-within:border-brand-500 focus-within:ring-2 focus-within:ring-brand-500/20"
       }`}
     >
       {/* Highlighted layer (behind) */}
       <pre
         ref={preRef}
         aria-hidden="true"
-        className="absolute inset-0 m-0 p-3 text-[13px] leading-relaxed font-mono overflow-hidden whitespace-pre-wrap break-words bg-[#0d1117] text-white/70 pointer-events-none"
+        className="absolute inset-0 m-0 p-3 text-[13px] leading-relaxed font-mono overflow-hidden whitespace-pre-wrap break-words bg-code-bg text-code-fg pointer-events-none"
         dangerouslySetInnerHTML={{ __html: highlighted + "\n" }}
       />
       {/* Editable textarea (on top, transparent text) */}
@@ -521,7 +521,7 @@ function JsonEditorOverlay({
         onBlur={onBlur}
         onScroll={handleScroll}
         spellCheck={false}
-        className="relative w-full h-full m-0 p-3 text-[13px] leading-relaxed font-mono bg-transparent text-transparent caret-white resize-none outline-none whitespace-pre-wrap break-words"
+        className="relative w-full h-full m-0 p-3 text-[13px] leading-relaxed font-mono bg-transparent text-transparent caret-code-fg resize-none outline-none whitespace-pre-wrap break-words"
       />
     </div>
   );

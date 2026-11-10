@@ -4,6 +4,8 @@ import { SignInForm } from "@/SignInForm";
 import { Spinner } from "@/components/ui/Spinner";
 import { ArrowLeft } from "lucide-react";
 import { SEO } from "@/components/SEO";
+import { BrandLogo } from "@/components/ui/BrandLogo";
+import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { postLoginTarget } from "@/lib/signOutFlow";
 
 export function AuthPage() {
@@ -29,7 +31,10 @@ export function AuthPage() {
         description="Acesse sua conta HNBCRM"
         noindex={true}
       />
-      <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8 bg-gradient-to-b from-surface-overlay to-surface-base">
+      <div className="relative flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8 bg-gradient-to-b from-surface-overlay to-surface-base">
+        <div className="absolute right-2 top-2 sm:right-4 sm:top-4">
+          <PublicThemeButton />
+        </div>
         <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
           <Link
@@ -39,11 +44,7 @@ export function AuthPage() {
             <ArrowLeft size={16} />
             Voltar ao início
           </Link>
-          <img
-            src="/black_icon_logo_transparent-bg-528x488.png"
-            alt="HNBCRM"
-            className="h-16 w-16 mx-auto mb-4 object-contain"
-          />
+          <BrandLogo className="h-16 w-16 mx-auto mb-4" />
           <h1 className="text-3xl md:text-4xl font-bold text-text-primary mb-2">
             HNBCRM
           </h1>

@@ -9,6 +9,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Estilo WhatsApp é o novo padrão.** O site, a tela de entrada, os preços, o portal para desenvolvedores, os Termos e a Política de Privacidade passam a usar as cores do WhatsApp. Dentro do app, quem nunca escolheu um tema também passa a ver o Estilo WhatsApp. Quem já tinha escolhido Escuro ou Claro continua com a sua escolha.
 - **Novo tema "WhatsApp escuro"**, com as cores do modo escuro do WhatsApp: conversas, bolhas, menus e selos de não lidas. Escolha em Aparência (menu lateral, "Mais" no celular ou Configurações › Conta).
 - **Escuro e Claro continuam disponíveis** como opções.
+- **Escolha o tema também no site.** Visitantes podem trocar o tema no botão de paleta no topo da página inicial, da tela de entrada, dos preços, do portal para desenvolvedores, dos Termos e da Política de Privacidade. A escolha fica salva no aparelho. Quem já usa o app e nunca escolheu um tema no site vê o site com o mesmo tema do app.
 - **Ajustes de leitura:** botões e selos com mais contraste, logotipo que acompanha o tema, cabeçalho do app que não deixa o conteúdo aparecer por trás e menu do site que cabe no celular.
 - **Site:** a versão mostrada na página inicial agora é sempre a do repositório e leva ao histórico de novidades no GitHub (link "Novidades" também no rodapé). Novos destaques na lista de funcionalidades: Copiloto no Telegram, app no celular com avisos e o visual do WhatsApp.
 

@@ -2,15 +2,20 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { THEME_COLOR, THEME_STORAGE_KEY, UI_THEMES } from "./theme";
-import { applyTheme, clearTheme, getAppliedTheme } from "./themeDom";
+import { PUBLIC_THEME_STORAGE_KEY, THEME_COLOR, THEME_OWNER_KEY, THEME_STORAGE_KEY, UI_THEMES } from "./theme";
+import { applyTheme, clearStoredTheme, clearTheme, getAppliedTheme, readPublicTheme, setPublicTheme } from "./themeDom";
 
 const script = readFileSync(resolve(__dirname, "../../public/theme-init.js"), "utf8");
 
-function runInit(path: string, stored: string | null) {
+function setOrRemove(key: string, value: string | null) {
+  if (value === null) localStorage.removeItem(key);
+  else localStorage.setItem(key, value);
+}
+
+function runInit(path: string, stored: string | null, publicChoice: string | null = null) {
   window.history.replaceState({}, "", path);
-  if (stored === null) localStorage.removeItem(THEME_STORAGE_KEY);
-  else localStorage.setItem(THEME_STORAGE_KEY, stored);
+  setOrRemove(THEME_STORAGE_KEY, stored);
+  setOrRemove(PUBLIC_THEME_STORAGE_KEY, publicChoice);
   document.documentElement.removeAttribute("data-theme");
   new Function(script)();
   return {
@@ -28,12 +33,29 @@ afterEach(() => {
 });
 
 describe("public/theme-init.js", () => {
-  it.each(["/", "/entrar", "/developers", "/developers/playground", "/privacidade", "/termos", "/nao-existe", "/apple"])(
-    "public page %s always gets whatsapp, even with a stored theme",
-    (path) => {
-      expect(runInit(path, "dark")).toEqual({ theme: "whatsapp", color: THEME_COLOR.whatsapp });
-    },
-  );
+  const PUBLIC_PATHS = ["/", "/entrar", "/developers", "/developers/playground", "/privacidade", "/termos", "/precos", "/nao-existe", "/apple"];
+
+  it.each(PUBLIC_PATHS)("public page %s without any stored theme gets whatsapp", (path) => {
+    expect(runInit(path, null)).toEqual({ theme: "whatsapp", color: THEME_COLOR.whatsapp });
+  });
+
+  it.each(PUBLIC_PATHS)("public page %s: the visitor's public choice wins over the device app theme", (path) => {
+    expect(runInit(path, "dark", "whatsapp-dark")).toEqual({ theme: "whatsapp-dark", color: THEME_COLOR["whatsapp-dark"] });
+  });
+
+  it.each(UI_THEMES)("public page without a public choice follows the device app theme %s", (t) => {
+    expect(runInit("/", t)).toEqual({ theme: t, color: THEME_COLOR[t] });
+  });
+
+  it("public page ignores invalid values and falls through", () => {
+    expect(runInit("/", "light", "auto")).toEqual({ theme: "light", color: THEME_COLOR.light });
+    expect(runInit("/", "__proto__", "__proto__")).toEqual({ theme: "whatsapp", color: THEME_COLOR.whatsapp });
+  });
+
+  it("under /app the public choice never applies", () => {
+    expect(runInit("/app/entrada", null, "dark")).toEqual({ theme: "whatsapp", color: THEME_COLOR.whatsapp });
+    expect(runInit("/app/entrada", "light", "dark")).toEqual({ theme: "light", color: THEME_COLOR.light });
+  });
 
   it.each(UI_THEMES)("under /app applies the stored theme %s and its theme-color", (t) => {
     expect(runInit("/app/entrada", t)).toEqual({ theme: t, color: THEME_COLOR[t] });
@@ -60,11 +82,40 @@ describe("themeDom", () => {
     expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe(THEME_COLOR["whatsapp-dark"]);
   });
 
-  it("clearTheme returns to the public default (whatsapp)", () => {
+  it("clearTheme without any stored theme returns to whatsapp", () => {
     applyTheme("dark");
     clearTheme();
     expect(document.documentElement.getAttribute("data-theme")).toBe("whatsapp");
     expect(getAppliedTheme()).toBe("whatsapp");
     expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe(THEME_COLOR.whatsapp);
+  });
+
+  it("clearTheme applies the resolved public theme (public choice > device app theme)", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "light");
+    applyTheme("dark");
+    clearTheme();
+    expect(getAppliedTheme()).toBe("light");
+    localStorage.setItem(PUBLIC_THEME_STORAGE_KEY, "whatsapp-dark");
+    clearTheme();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("whatsapp-dark");
+    expect(document.querySelector('meta[name="theme-color"]')?.getAttribute("content")).toBe(THEME_COLOR["whatsapp-dark"]);
+  });
+
+  it("setPublicTheme applies at once and stores only the public key", () => {
+    setPublicTheme("dark");
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+    expect(localStorage.getItem(PUBLIC_THEME_STORAGE_KEY)).toBe("dark");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+    expect(readPublicTheme()).toBe("dark");
+  });
+
+  it("clearStoredTheme (sign-out) keeps the visitor's public choice", () => {
+    localStorage.setItem(THEME_STORAGE_KEY, "light");
+    localStorage.setItem(THEME_OWNER_KEY, "user1");
+    localStorage.setItem(PUBLIC_THEME_STORAGE_KEY, "whatsapp-dark");
+    clearStoredTheme();
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
+    expect(localStorage.getItem(THEME_OWNER_KEY)).toBeNull();
+    expect(localStorage.getItem(PUBLIC_THEME_STORAGE_KEY)).toBe("whatsapp-dark");
   });
 });

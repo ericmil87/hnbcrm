@@ -55,6 +55,10 @@ export default {
           "system-fg":   c("bubble-system-fg"),
         },
         tick: { read: c("tick-read") },
+        code: {
+          bg: c("code-bg"), header: c("code-header"), border: c("code-border"), fg: c("code-fg"), muted: c("code-muted"),
+          key: c("code-key"), string: c("code-string"), number: c("code-number"), keyword: c("code-keyword"),
+        },
         badge: { unread: c("badge-unread"), "unread-fg": c("badge-unread-fg") },
       },
       fontFamily: {
