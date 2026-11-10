@@ -263,17 +263,65 @@ describe("mensagens agendadas em modo leitura", () => {
     ).rejects.toThrow(READ_ONLY_SEND_MESSAGE);
   });
 
-  test("ao sair do modo leitura (ops), as agendadas pendentes são re-armadas; legacy entrega normal", async () => {
+  test("ao sair do modo leitura (ops), só as RETIDAS são re-armadas e perdem o heldSince; a entrega respeita o scheduledAt", async () => {
     const s = await seed(READ_ONLY);
-    const id = await scheduled(s);
+    const id = await scheduled(s); // vence em 60 s
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id }); // retida
+    expect((await t.run((ctx) => ctx.db.get(id)))?.heldSince).toBe(NOW);
     await t.run((ctx) => ctx.db.patch(id, { scheduledFunctionId: "antigo" }));
     await t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: s.organizationId, plan: "profissional", status: "active", dryRun: false });
     const row = await t.run((ctx) => ctx.db.get(id));
     expect(row?.scheduledFunctionId).not.toBe("antigo");
+    expect(row?.heldSince).toBeUndefined();
     expect(row?.status).toBe("pending");
-    await setBilling(s.organizationId, ACTIVE);
+    // Defesa do deliver: executado ANTES do scheduledAt, reagenda em vez de enviar adiantado.
     await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id });
-    expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("sent");
+    expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("pending");
+    expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(0);
+    // Chegada a hora, entrega.
+    vi.setSystemTime(NOW + 2 * 60_000);
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id });
+    const sent = await t.run((ctx) => ctx.db.get(id));
+    expect(sent?.status).toBe("sent");
+    expect(sent?.heldSince).toBeUndefined();
+  });
+
+  test("org bloqueada com agendada FUTURA sem retenção: reativar não a adianta", async () => {
+    const s = await seed(READ_ONLY);
+    const id = await scheduled(s); // nunca passou pelo deliver em modo leitura (sem heldSince)
+    await t.run((ctx) => ctx.db.patch(id, { scheduledFunctionId: "original", scheduledAt: NOW + 3 * 3_600_000 }));
+    await t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: s.organizationId, plan: "profissional", status: "active", dryRun: false });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row?.scheduledFunctionId).toBe("original"); // não re-armada: a função original continua valendo
+    // Mesmo que um job antigo dispare agora, o deliver não envia antes do scheduledAt.
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id });
+    expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("pending");
+    expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(0);
+  });
+
+  test("re-arme: retida e vencida há < 24 h sai; > 24 h expira (no próprio re-arme)", async () => {
+    const s = await seed(READ_ONLY);
+    const fresh = await t.run((ctx) =>
+      ctx.db.insert("scheduledMessages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, content: "Recente", scheduledAt: NOW - 3 * 3_600_000,
+        status: "pending", createdBy: s.adminId, createdAt: NOW - 4 * 3_600_000, heldSince: NOW - 3 * 3_600_000,
+      } as never)
+    );
+    const stale = await t.run((ctx) =>
+      ctx.db.insert("scheduledMessages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, content: "Velha", scheduledAt: NOW - 2 * 86_400_000,
+        status: "pending", createdBy: s.adminId, createdAt: NOW - 3 * 86_400_000, heldSince: NOW - 2 * 86_400_000,
+      } as never)
+    );
+    await t.mutation(internal.opsBilling.internalSetOrgPlan, { organizationId: s.organizationId, plan: "profissional", status: "active", dryRun: false });
+    expect(await t.run((ctx) => ctx.db.get(stale))).toMatchObject({ status: "canceled", error: "Expirou durante o modo leitura" });
+    const recent = await t.run((ctx) => ctx.db.get(fresh));
+    expect(recent).toMatchObject({ status: "pending" });
+    expect(recent?.heldSince).toBeUndefined();
+    vi.setSystemTime(NOW + 10_000);
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: fresh });
+    expect((await t.run((ctx) => ctx.db.get(fresh)))?.status).toBe("sent");
+    expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(1); // só a recente saiu
   });
 });
 

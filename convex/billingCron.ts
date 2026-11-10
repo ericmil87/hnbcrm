@@ -17,6 +17,7 @@ import type { Doc } from "./_generated/dataModel";
 import { applySubscriptionChange, setBillingStatus } from "./lib/entitlementsOps";
 import { notifyBillingAdmins } from "./lib/billingNotify";
 import { pauseCampaignCore } from "./lib/campaignHooks";
+import { READ_ONLY_STALE_MS, expireScheduled } from "./scheduledMessages";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const TRIAL_NOTICE_DAYS = [7, 3, 1] as const;
@@ -60,9 +61,12 @@ export async function pauseCampaignsForReadOnly(
 }
 
 /**
- * Quando a org volta a poder enviar (ops: `internalSetOrgPlan` para `active`), re-arma as
- * mensagens agendadas pendentes (elas ficaram `pending` em modo leitura). Campanhas pausadas
- * com `plan_read_only` NÃO são retomadas: o cliente retoma. Varre até 1000 linhas da org.
+ * Quando a org volta a poder enviar (ops: `internalSetOrgPlan` para `active`), re-arma SÓ as
+ * agendadas RETIDAS pelo modo leitura (`heldSince`): as não retidas já têm a função original
+ * agendada para o `scheduledAt` e re-armá-las as entregaria adiantadas. Retida e vencida há
+ * mais de 24 h expira (a conversa já seguiu); as demais voltam a `max(scheduledAt, agora+5 s)`
+ * com `heldSince` limpo. Campanhas pausadas com `plan_read_only` NÃO são retomadas: o cliente
+ * retoma. Varre até 1000 linhas da org.
  */
 export async function rearmScheduledMessagesForOrg(
   ctx: MutationCtx,
@@ -74,11 +78,16 @@ export async function rearmScheduledMessagesForOrg(
     .query("scheduledMessages")
     .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))) {
     if (++seen > 1000) break;
-    if (row.status !== "pending") continue;
-    const fnId = await ctx.scheduler.runAfter(5_000, internal.scheduledMessages.deliver, {
+    if (row.status !== "pending" || row.heldSince === undefined) continue;
+    const now = Date.now();
+    if (now - row.scheduledAt > READ_ONLY_STALE_MS) {
+      await expireScheduled(ctx, row, now);
+      continue;
+    }
+    const fnId = await ctx.scheduler.runAt(Math.max(row.scheduledAt, now + 5_000), internal.scheduledMessages.deliver, {
       scheduledMessageId: row._id,
     });
-    await ctx.db.patch(row._id, { scheduledFunctionId: fnId as string });
+    await ctx.db.patch(row._id, { scheduledFunctionId: fnId as string, heldSince: undefined });
     rearmed++;
   }
   return rearmed;

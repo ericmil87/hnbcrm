@@ -22,7 +22,7 @@ export const READ_ONLY_HOLD_MAX_MS = 30 * 24 * 60 * 60 * 1000;
 export const READ_ONLY_STALE_MS = 24 * 60 * 60 * 1000;
 const EXPIRED_IN_READ_ONLY = "Expirou durante o modo leitura";
 
-async function expireScheduled(ctx: MutationCtx, row: Doc<"scheduledMessages">, now: number): Promise<void> {
+export async function expireScheduled(ctx: MutationCtx, row: Doc<"scheduledMessages">, now: number): Promise<void> {
   await ctx.db.patch(row._id, { status: "canceled", error: EXPIRED_IN_READ_ONLY, scheduledFunctionId: undefined });
   // Só audit (sem notificação): o aviso ao autor exigiria um tipo novo de sino + preferências.
   await ctx.db.insert("auditLogs", {
@@ -212,6 +212,15 @@ export const deliver = internalMutation({
       await ctx.db.patch(args.scheduledMessageId, { scheduledFunctionId: fnId as string, heldSince });
       return null;
     }
+    // Defesa: nunca entrega antes da hora. Uma execução fora do `runAt` original (re-arme, job
+    // antigo) reagenda para o `scheduledAt` em vez de enviar adiantado.
+    if (row.scheduledAt > nowTs) {
+      const fnId = await ctx.scheduler.runAt(row.scheduledAt, internal.scheduledMessages.deliver, {
+        scheduledMessageId: args.scheduledMessageId,
+      });
+      await ctx.db.patch(args.scheduledMessageId, { scheduledFunctionId: fnId as string });
+      return null;
+    }
     // Voltou o plano: o que ficou retido e venceu há mais de 24 h NÃO sai (a conversa já
     // seguiu sem ele). Mensagem fora do contexto é pior que mensagem perdida, e vira audit.
     if (row.heldSince !== undefined && nowTs - row.scheduledAt > READ_ONLY_STALE_MS) {
@@ -352,7 +361,8 @@ export const deliver = internalMutation({
 
     await scheduleOutboundDispatch(ctx, conversation, messageId);
 
-    await ctx.db.patch(args.scheduledMessageId, { status: "sent", sentMessageId: messageId });
+    // `heldSince` limpo: entregue, a retenção acabou.
+    await ctx.db.patch(args.scheduledMessageId, { status: "sent", sentMessageId: messageId, heldSince: undefined });
     return null;
   },
 });
