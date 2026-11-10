@@ -80,7 +80,7 @@ export type CopyInput =
   | { type: "plan_change_scheduled"; planLabel: string; effectiveAt: string }
   | { type: "plan_cancel_scheduled"; endsAt: string }
   | { type: "plan_canceled" }
-  | { type: "plan_refunded"; amountBrl?: string };
+  | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -492,6 +492,12 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         body: "A conta está em modo só leitura: você continua vendo e exportando seus dados. Para voltar, assine um plano em Configurações › Uso e fatura.",
       };
     case "plan_refunded":
+      if (input.duplicate) {
+        return {
+          title: "Cobrança duplicada estornada",
+          body: `Estornamos ${input.amountBrl ?? "o valor"}: era uma cobrança da assinatura anterior, paga depois da troca de plano. Ele volta pelo mesmo meio de pagamento em alguns dias.`,
+        };
+      }
       return {
         title: "Reembolso solicitado",
         body: `Devolvemos ${input.amountBrl ?? "o valor pago"}; ele volta pelo mesmo meio de pagamento em alguns dias. A conta ficou em modo só leitura e você ainda pode exportar seus dados.`,

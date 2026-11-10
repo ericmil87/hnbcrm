@@ -50,6 +50,7 @@ export const CHECKOUT_SUBSCRIPTION_FIELDS: ReadonlySet<string> = new Set([
   "scheduledChange",
   "refundedAt",
   "pendingUpgrade",
+  "lastProviderSubscriptionId",
 ]);
 
 /**

@@ -200,7 +200,7 @@ export async function updateSubscriptionValue(id: string, value: number): Promis
  */
 export async function updateSubscription(
   id: string,
-  input: { value: number; cycle?: "MONTHLY" | "YEARLY"; updatePendingPayments: boolean }
+  input: { value?: number; cycle?: "MONTHLY" | "YEARLY"; nextDueDate?: string; updatePendingPayments: boolean }
 ): Promise<void> {
   await call("PUT", `/subscriptions/${encodeURIComponent(id)}`, { body: input });
 }

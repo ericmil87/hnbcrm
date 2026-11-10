@@ -78,10 +78,11 @@ export function evaluatePlanChange(args: {
 }): PlanChangeEvaluation {
   const { org } = args;
   if (args.plan === "empresa" || org.plan === "empresa") return { ok: false, refusal: FALE_COM_A_GENTE_EMPRESA };
+  // Cancelamento agendado antes de tudo: a assinatura já foi apagada no Asaas (sem id em cobrança).
+  if (org.canceling && (org.status === "active" || org.status === "past_due")) return { ok: false, refusal: CHANGE_CANCELING };
   if ((org.status !== "active" && org.status !== "past_due") || !org.plan || !org.hasSubscription) {
     return { ok: false, refusal: CHANGE_NEEDS_SUBSCRIPTION };
   }
-  if (org.canceling) return { ok: false, refusal: CHANGE_CANCELING };
   if (org.cycle === "quarterly") return { ok: false, refusal: CHANGE_UNSUPPORTED_CYCLE };
   const currentCycle: CheckoutCycle = org.cycle === "yearly" ? "yearly" : "monthly";
   const billing = { plan: org.plan, extraChannels: org.extraChannels, priceLock: org.priceLock ?? undefined };

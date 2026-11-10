@@ -155,6 +155,7 @@ describe("subscription nas queries de uso (sem PII)", () => {
     await patchSub({ cancelAt: end });
     ent = await as(s.admin).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
     expect(ent?.subscription).toMatchObject({ cancelAt: end, nextChargeBrl: null, nextChargeAt: null });
-    expect(ent?.subscription).not.toHaveProperty("refundEligibleUntil");
+    // Cancelamento agendado não tira o direito ao reembolso de 7 dias (só o prazo conta).
+    expect(ent?.subscription).toHaveProperty("refundEligibleUntil");
   });
 });

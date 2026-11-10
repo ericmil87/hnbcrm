@@ -19,7 +19,7 @@ type Billing = Doc<"organizations">["billing"];
 
 type Call = { method: string; path: string; body: Record<string, unknown> | undefined };
 type FakeSub = { id: string; customer: string; value: number; cycle: string; nextDueDate: string; externalReference: string; deleted: boolean };
-type FakePay = { id: string; subscription: string; customer: string; externalReference: string; status: string; value: number; dueDate: string };
+type FakePay = { id: string; subscription: string; customer: string; externalReference: string; status: string; value: number; dueDate: string; paymentDate?: string };
 let calls: Call[] = [];
 let subs: Record<string, FakeSub> = {};
 let pays: Record<string, FakePay> = {};
@@ -119,6 +119,8 @@ type SeedOpts = {
   quiet?: boolean;
   noSubscription?: boolean;
   paidDaysAgo?: number | null;
+  /** Vencimento da 1ª fatura paga (padrão 05/11/2026: + 1 ciclo = PERIOD_END). */
+  paidDue?: number;
   periodEnd?: number | null;
   billingExtra?: Partial<NonNullable<Billing>>;
 };
@@ -175,7 +177,7 @@ async function seed(opts: SeedOpts = {}) {
           kind: "subscription",
           description: "Assinatura",
           amountCents: charge * 100,
-          dueDate: now - (opts.paidDaysAgo ?? 1) * DAY,
+          dueDate: opts.paidDue ?? Date.UTC(2026, 10, 5), // + 1 ciclo = PERIOD_END (05/12)
           status: "paid",
           paidAt: now - (opts.paidDaysAgo ?? 1) * DAY,
           providerPaymentId: "pay_first",
@@ -513,7 +515,7 @@ describe("reembolso de 7 dias", () => {
         createdBy: "system", createdAt: NOW, updatedAt: NOW,
       })
     );
-    await expect(act.refund(s)).rejects.toThrow(/O reembolso automático/);
+    await expect(act.refund(s)).rejects.toThrow(/Para este caso, fale com a gente: contato@hnbcrm\.com/);
     expect(callsTo("POST", "/payments")).toHaveLength(0);
   });
 
@@ -609,5 +611,185 @@ describe("legacy, silêncio e isolamento", () => {
     failOn = (c) => (c.method === "PUT" ? 500 : null);
     await expect(act.changePlan(s, "essencial")).rejects.toThrow(/Não foi possível/);
     expect((await subOf(s.organizationId))?.scheduledChange).toBeUndefined();
+  });
+});
+
+describe("revisão: reprecificação, reembolso, duplicidade, fim do ciclo", () => {
+  const lock = { kind: "founder" as const, discountPct: 20, until: NOW + 5 * DAY };
+  const putsToOld = () => callsTo("PUT", "/subscriptions/sub_old");
+  const auditsOf = (id: Id<"organizations">) =>
+    t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_organization", (q) => q.eq("organizationId", id)).collect());
+  const reasonOf = (a: { metadata?: unknown }) => String((a.metadata as { reason?: string } | undefined)?.reason);
+
+  test("ALTO 1: fim do desconto de fundador NÃO reprecifica org com troca agendada (o valor do Asaas segue o do plano novo)", async () => {
+    const s = await seed({ plan: "escala", billingExtra: { priceLock: lock } });
+    await act.changePlan(s, "profissional");
+    const scheduled = putsToOld().at(-1)?.body?.value;
+    expect(putsToOld()).toHaveLength(1);
+    vi.setSystemTime(NOW + 6 * DAY); // a trava venceu, o ciclo ainda não
+    const res = await tick();
+    expect(res.repricing).toBe(0);
+    expect(putsToOld()).toHaveLength(1);
+    expect(putsToOld().at(-1)?.body?.value).toBe(scheduled);
+  });
+
+  test("ALTO 1 (controle): sem agendamento a mesma org reprecifica", async () => {
+    await seed({ plan: "escala", billingExtra: { priceLock: lock } });
+    vi.setSystemTime(NOW + 6 * DAY);
+    expect((await tick()).repricing).toBe(1);
+  });
+
+  test("ALTO 1: upgrade pendente e cancelamento agendado também seguram o repreço", async () => {
+    const up = await seed({ plan: "essencial", billingExtra: { priceLock: lock } });
+    await act.changePlan(up, "profissional");
+    const canceled = await seed({ plan: "escala", billingExtra: { priceLock: lock } });
+    await act.cancel(canceled);
+    const before = calls.length;
+    vi.setSystemTime(NOW + 6 * DAY);
+    expect((await tick()).repricing).toBe(0);
+    expect(calls.slice(before).filter((c) => c.method === "PUT")).toHaveLength(0);
+  });
+
+  test("ALTO 2: Essencial pago + upgrade para Escala pago -> reembolso recusado (caso manual), nada é estornado", async () => {
+    const s = await seed({ plan: "essencial", paidDaysAgo: 1 });
+    await act.changePlan(s, "escala");
+    const pendingId = (await subOf(s.organizationId))!.pendingUpgrade!.subscriptionId;
+    pays[`pay_${pendingId}`].status = "RECEIVED";
+    await deliver("PAYMENT_RECEIVED", `pay_${pendingId}`);
+    expect((await orgOf(s.organizationId))?.billing?.plan).toBe("escala");
+    const ent = await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).not.toHaveProperty("refundEligibleUntil");
+    await expect(act.refund(s)).rejects.toThrow(/Para este caso, fale com a gente: contato@hnbcrm\.com/);
+    expect(callsTo("POST", "/payments")).toHaveLength(0);
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
+  });
+
+  test("MÉDIO 3: cobrança da assinatura antiga paga depois do pedido de upgrade é estornada (audit high + aviso); a anterior não", async () => {
+    const s = await seed({ plan: "profissional" });
+    await act.changePlan(s, "escala");
+    // A antiga renovou no mesmo dia, depois do pedido (webhook ainda não processado).
+    pays.pay_old_renew = { id: "pay_old_renew", subscription: "sub_old", customer: "cus_1", externalReference: s.organizationId, status: "RECEIVED", value: 497, dueDate: "2026-11-10", paymentDate: "2026-11-10" };
+    const pendingId = (await subOf(s.organizationId))!.pendingUpgrade!.subscriptionId;
+    pays[`pay_${pendingId}`].status = "RECEIVED";
+    await deliver("PAYMENT_RECEIVED", `pay_${pendingId}`);
+    expect(callsTo("POST", "/payments/pay_old_renew/refund")).toHaveLength(1);
+    expect(callsTo("POST", "/payments/pay_first/refund")).toHaveLength(0); // paga ANTES do pedido
+    expect(callsTo("DELETE", "/subscriptions/sub_old")).toHaveLength(1);
+    const audits = await auditsOf(s.organizationId);
+    expect(audits.some((a) => a.severity === "high" && /duplicada/.test(reasonOf(a)))).toBe(true);
+    const notes = await notices(s.organizationId, "plan_refunded");
+    expect(notes).toHaveLength(1);
+    expect(notes[0].title).toMatch(/duplicada/i);
+  });
+
+  test("MÉDIO 3: próxima cobrança da antiga em ≤ 3 dias -> nextDueDate adiado 7 dias", async () => {
+    const near = await seed({ plan: "profissional", paidDue: Date.UTC(2026, 9, 12) }); // fim do ciclo = 12/11
+    await act.changePlan(near, "escala");
+    expect(putsToOld()).toHaveLength(1);
+    expect(putsToOld()[0].body).toEqual({ nextDueDate: "2026-11-19", updatePendingPayments: true });
+    expect((await auditsOf(near.organizationId)).some((a) => /adiado 7 dias/.test(reasonOf(a)))).toBe(true);
+  });
+
+  test("MÉDIO 3: cobrança da antiga longe (> 3 dias) não é adiada", async () => {
+    const far = await seed({ plan: "profissional" }); // 05/12
+    await act.changePlan(far, "escala");
+    expect(putsToOld()).toHaveLength(0);
+  });
+
+  test("MÉDIO 3: se o adiamento falhar, só audit e o upgrade segue", async () => {
+    failOn = (c) => (c.method === "PUT" ? 500 : null);
+    const failing = await seed({ plan: "profissional", paidDue: Date.UTC(2026, 9, 12) });
+    const res = await act.changePlan(failing, "escala");
+    expect(res.kind).toBe("upgrade");
+    expect((await subOf(failing.organizationId))?.pendingUpgrade?.plan).toBe("escala");
+    expect((await auditsOf(failing.organizationId)).some((a) => /NÃO foi possível adiar/.test(reasonOf(a)))).toBe(true);
+  });
+
+  test("MÉDIO 4: upgrade exige não ter fatura vencida (mesma regra do downgrade)", async () => {
+    const s = await seed({ plan: "profissional" });
+    await t.run((ctx) =>
+      ctx.db.insert("billingInvoices", {
+        organizationId: s.organizationId, source: "asaas", kind: "subscription", description: "Atrasada", amountCents: 49700,
+        dueDate: NOW - 3 * DAY, status: "overdue", providerPaymentId: "pay_late", providerSubscriptionId: "sub_old",
+        createdBy: "system", createdAt: NOW, updatedAt: NOW,
+      })
+    );
+    await expect(act.changePlan(s, "escala")).rejects.toThrow(/Pague antes/);
+    expect(callsTo("POST", "/subscriptions")).toHaveLength(0);
+  });
+
+  test("BAIXO a: o fim do ciclo é a última fatura paga + 1 ciclo, não o nextDueDate da assinatura", async () => {
+    const s = await seed({ plan: "profissional" });
+    subs.sub_old.nextDueDate = "2027-01-05"; // o Asaas já aponta para o ciclo seguinte
+    const res = await act.cancel(s);
+    expect(res.cancelAt).toBe(PERIOD_END);
+    const s2 = await seed({ plan: "profissional", cycle: "yearly", paidDue: Date.UTC(2026, 0, 31) });
+    subs.sub_old.nextDueDate = "2028-01-31";
+    const down = await act.changePlan(s2, "profissional", "monthly");
+    expect(down.effectiveAt).toBe(Date.UTC(2027, 0, 31));
+  });
+
+  test("BAIXO b: cancelar limpa providerSubscriptionId (guarda a última); a visão segue 'com assinatura'; evento tardio só espelha a fatura", async () => {
+    const s = await seed({ plan: "profissional" });
+    await act.cancel(s);
+    const sub = await subOf(s.organizationId);
+    expect(sub?.providerSubscriptionId).toBeUndefined();
+    expect(sub?.lastProviderSubscriptionId).toBe("sub_old");
+    const ent = await as(s.admin.userId).query(api.billing.getMyEntitlements, { organizationId: s.organizationId });
+    expect(ent?.subscription).toMatchObject({ hasSubscription: true, cancelAt: PERIOD_END });
+    await expect(act.cancel(s)).rejects.toThrow(/já está agendado/);
+    pays.pay_late_ok = { id: "pay_late_ok", subscription: "sub_old", customer: "cus_1", externalReference: s.organizationId, status: "RECEIVED", value: 497, dueDate: "2026-12-05" };
+    await deliver("PAYMENT_RECEIVED", "pay_late_ok");
+    expect(await subOf(s.organizationId)).toMatchObject({ cancelAt: PERIOD_END, currentPeriodEnd: PERIOD_END });
+    expect((await orgOf(s.organizationId))?.billing).toMatchObject({ plan: "profissional", status: "active" });
+  });
+
+  test("BAIXO b: o reembolso segue possível com cancelamento agendado e guarda a última assinatura", async () => {
+    const s = await seed({ plan: "profissional", paidDaysAgo: 2 });
+    await act.cancel(s);
+    wait();
+    await act.refund(s);
+    expect(callsTo("POST", "/payments/pay_first/refund")).toHaveLength(1);
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("canceled");
+    const sub = await subOf(s.organizationId);
+    expect(sub).toMatchObject({ refundedAt: NOW + 61_000, lastProviderSubscriptionId: "sub_old" });
+    expect(sub?.providerSubscriptionId).toBeUndefined();
+  });
+
+  test("BAIXO c: PAYMENT_REFUNDED da 1ª fatura sem refundedAt fecha o reembolso (a ação caiu no meio)", async () => {
+    const s = await seed({ plan: "profissional", paidDaysAgo: 2 });
+    pays.pay_first.status = "REFUNDED"; // estorno feito no Asaas, o app não fechou
+    await deliver("PAYMENT_REFUNDED", "pay_first");
+    expect((await orgOf(s.organizationId))?.billing).toMatchObject({ status: "canceled", plan: "profissional" });
+    expect(await subOf(s.organizationId)).toMatchObject({ refundedAt: NOW });
+    expect(await notices(s.organizationId, "plan_refunded")).toHaveLength(1);
+    expect((await invoices(s.organizationId))[0].status).toBe("refunded");
+    await deliver("PAYMENT_REFUNDED", "pay_first");
+    expect(await notices(s.organizationId, "plan_refunded")).toHaveLength(1);
+  });
+
+  test("BAIXO c: também fecha quando a assinatura já tinha sido cancelada (id só em lastProviderSubscriptionId)", async () => {
+    const s = await seed({ plan: "profissional", paidDaysAgo: 2 });
+    await act.cancel(s);
+    pays.pay_first.status = "REFUNDED";
+    await deliver("PAYMENT_REFUNDED", "pay_first");
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("canceled");
+    expect(await subOf(s.organizationId)).toMatchObject({ refundedAt: NOW });
+  });
+
+  test("BAIXO c: estorno de OUTRA fatura (renovação) não fecha a conta: segue o fluxo antigo", async () => {
+    const s = await seed({ plan: "profissional", paidDaysAgo: 40 });
+    await t.run((ctx) =>
+      ctx.db.insert("billingInvoices", {
+        organizationId: s.organizationId, source: "asaas", kind: "subscription", description: "2o", amountCents: 49700,
+        dueDate: NOW - DAY, status: "paid", paidAt: NOW - DAY, providerPaymentId: "pay_second", providerSubscriptionId: "sub_old",
+        createdBy: "system", createdAt: NOW, updatedAt: NOW,
+      })
+    );
+    pays.pay_second = { id: "pay_second", subscription: "sub_old", customer: "cus_1", externalReference: s.organizationId, status: "REFUNDED", value: 497, dueDate: "2026-11-09" };
+    await deliver("PAYMENT_REFUNDED", "pay_second");
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
+    expect((await subOf(s.organizationId))?.refundedAt).toBeUndefined();
+    expect((await subOf(s.organizationId))?.paymentStatus).toBe("pending");
   });
 });

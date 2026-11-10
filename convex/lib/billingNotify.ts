@@ -55,6 +55,8 @@ export type BillingNoticeData = {
   planLabel?: string;
   amountBrl?: string;
   effectiveAt?: string;
+  /** `plan_refunded`: estorno de cobrança duplicada (troca de plano), não reembolso da conta. */
+  duplicate?: boolean;
 };
 
 /** Humanos ativos que administram a org (`settings:manage`). Cap 25. */
@@ -110,7 +112,7 @@ function copyFor(type: BillingNoticeType, d: BillingNoticeData): NotificationCop
     case "plan_canceled":
       return notificationCopy({ type });
     case "plan_refunded":
-      return notificationCopy({ type, amountBrl: d.amountBrl });
+      return notificationCopy({ type, amountBrl: d.amountBrl, duplicate: d.duplicate });
   }
 }
 

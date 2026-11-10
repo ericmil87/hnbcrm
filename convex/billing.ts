@@ -14,7 +14,7 @@ import { action, mutation, query, type ActionCtx, type QueryCtx } from "./_gener
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { firstPaidInvoice, REFUND_WINDOW_MS } from "./lib/refund";
+import { firstPaidInvoice, paidSubscriptionCount, REFUND_WINDOW_MS } from "./lib/refund";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { hasPermission, resolvePermissions, type Role } from "./lib/permissions";
 import { applySubscriptionChange } from "./lib/entitlementsOps";
@@ -115,13 +115,15 @@ async function loadSubscription(ctx: QueryCtx, organizationId: Id<"organizations
 async function subscriptionView(ctx: QueryCtx, organizationId: Id<"organizations">, orgStatus: string | undefined) {
   const sub = await loadSubscription(ctx, organizationId);
   let refundEligibleUntil: number | undefined;
-  if (sub?.providerSubscriptionId !== undefined && sub.refundedAt === undefined && sub.cancelAt === undefined) {
+  // Reembolsável também com cancelamento agendado (a assinatura já saiu do Asaas, o pagamento não).
+  if ((sub?.providerSubscriptionId !== undefined || sub?.cancelAt !== undefined) && sub.refundedAt === undefined) {
     const invoices = await ctx.db
       .query("billingInvoices")
       .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", organizationId))
       .take(60);
     const first = firstPaidInvoice(invoices);
-    if (first && first.status === "paid" && (orgStatus === "active" || orgStatus === "past_due")) {
+    // Só com EXATAMENTE 1 pagamento de assinatura (upgrade pago ou renovação tornam o caso manual).
+    if (first && first.status === "paid" && paidSubscriptionCount(invoices) === 1 && (orgStatus === "active" || orgStatus === "past_due")) {
       refundEligibleUntil = (first.paidAt as number) + REFUND_WINDOW_MS;
     }
   }
@@ -131,7 +133,8 @@ async function subscriptionView(ctx: QueryCtx, organizationId: Id<"organizations
     billingCycle: sub?.billingCycle ?? null,
     paymentStatus: sub?.paymentStatus ?? null,
     provider: sub?.billingProvider ?? null,
-    hasSubscription: sub?.providerSubscriptionId !== undefined,
+    // Cancelamento agendado: o id já saiu de `providerSubscriptionId`, mas a org ainda é assinante.
+    hasSubscription: sub?.providerSubscriptionId !== undefined || sub?.cancelAt !== undefined,
     currentPeriodEnd: sub?.currentPeriodEnd ?? null,
     nextChargeBrl: !canceling && nextCents !== undefined ? nextCents / 100 : null,
     nextChargeAt: !canceling ? (sub?.currentPeriodEnd ?? null) : null,
@@ -895,10 +898,9 @@ export const changePlan = action({
     const change = evaluatePlanChange({ plan: args.plan, cycle: args.cycle, groupsAddon, org: changeInfoOf(info), now });
     if (!change.ok) throw new ConvexError(change.refusal);
     if (change.kind === "same") throw new ConvexError(CHANGE_SAME);
-    if (change.kind === "downgrade") {
-      // Fatura vencida ou já vencendo hoje: o PUT com `updatePendingPayments` a reprecificaria.
-      if (info.openInvoices.some((i) => i.status === "overdue" || i.dueDate <= now)) throw new ConvexError(CHANGE_OPEN_INVOICE);
-    }
+    // Fatura vencida ou vencendo hoje bloqueia upgrade e downgrade: no downgrade o PUT com
+    // `updatePendingPayments` a reprecificaria; no upgrade, pagar a nova + a atrasada é cobrança dupla.
+    if (info.openInvoices.some((i) => i.status === "overdue" || i.dueDate <= now)) throw new ConvexError(CHANGE_OPEN_INVOICE);
     await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
     if (change.kind === "upgrade") {
       const out = await runUpgrade(ctx, {
@@ -960,10 +962,12 @@ export const cancelSubscription = action({
   returns: v.object({ cancelAt: v.number() }),
   handler: async (ctx, args): Promise<{ cancelAt: number }> => {
     const info = await lifecycleContext(ctx, args.organizationId);
+    if (isPaying(info) && info.cancelAt !== null) {
+      throw new ConvexError("O cancelamento já está agendado. Dá para reativar antes do fim do ciclo.");
+    }
     if (!isPaying(info) || info.providerSubscriptionId === null) {
       throw new ConvexError("Sua conta não tem uma assinatura ativa para cancelar.");
     }
-    if (info.cancelAt !== null) throw new ConvexError("O cancelamento já está agendado. Dá para reativar antes do fim do ciclo.");
     await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
     return await runCancel(ctx, { organizationId: args.organizationId, info, now: Date.now() });
   },
@@ -984,7 +988,7 @@ export const reactivateSubscription = action({
       plan: info.plan,
       cycle,
       groupsAddon: info.groupsAddon,
-      org: { ...changeInfoOf(info), canceling: false },
+      org: { ...changeInfoOf(info), canceling: false, hasSubscription: true },
       now,
     });
     const chargeBrl = info.chargeCents !== null ? info.chargeCents / 100 : current.ok ? current.currentChargeBrl : null;
