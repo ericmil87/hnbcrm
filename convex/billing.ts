@@ -539,8 +539,8 @@ export const startCheckout = action({
     document: v.string(),
     billingEmail: v.string(),
   },
-  returns: v.object({ invoiceUrl: v.union(v.string(), v.null()) }),
-  handler: async (ctx, args): Promise<{ invoiceUrl: string | null }> => {
+  returns: v.object({ invoiceUrl: v.union(v.string(), v.null()), priceSource: v.union(v.literal("price_lock"), v.literal("table")) }),
+  handler: async (ctx, args): Promise<{ invoiceUrl: string | null; priceSource: "price_lock" | "table" }> => {
     if (!isAsaasEnabled()) {
       throw new ConvexError("A assinatura online ainda não está disponível. Fale com a gente para contratar.");
     }
@@ -562,7 +562,7 @@ export const startCheckout = action({
       plan: args.plan,
       cycle: args.cycle,
       groupsAddon: args.groupsAddon === true,
-      billing: { extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
+      billing: { plan: info.plan ?? undefined, extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
       now,
     });
     if (!priced.ok) {
@@ -588,7 +588,7 @@ export const startCheckout = action({
       quiet: info.quiet,
       previousSubscriptionId: info.providerSubscriptionId,
     });
-    return { invoiceUrl: out.invoiceUrl };
+    return { invoiceUrl: out.invoiceUrl, priceSource: priced.price.priceSource };
   },
 });
 

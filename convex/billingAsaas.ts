@@ -14,7 +14,18 @@ import type { MutationCtx } from "./_generated/server";
 import { requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { applySubscriptionChange, setBillingStatus, type OrgBillingInput } from "./lib/entitlementsOps";
 import { dayToMs, isPaidStatus, upsertInvoiceFromPayment } from "./lib/billingInvoices";
-import { AsaasError, getPayment, getSubscription, isAsaasEnabled, type AsaasPayment, type AsaasSubscription } from "./lib/asaasApi";
+import {
+  AsaasError,
+  getPayment,
+  getSubscription,
+  isAsaasEnabled,
+  updateSubscriptionValue,
+  type AsaasPayment,
+  type AsaasSubscription,
+} from "./lib/asaasApi";
+import { repriceAfterLockExpiry } from "./lib/lockExpiry";
+import { resolveEntitlements } from "./lib/entitlements";
+import { rearmScheduledMessagesForOrg } from "./billingCron";
 import { notifyBillingAdmins } from "./lib/billingNotify";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
@@ -41,6 +52,7 @@ export const internalCheckoutContext = internalQuery({
     orgName: v.string(),
     quiet: v.boolean(),
     status: v.union(v.string(), v.null()),
+    plan: v.union(planKeyValidator, v.null()),
     trialEndsAt: v.union(v.number(), v.null()),
     extraChannels: v.number(),
     priceLock: v.union(
@@ -67,6 +79,7 @@ export const internalCheckoutContext = internalQuery({
       orgName: org.name,
       quiet: org.billing?.quiet === true,
       status: org.billing?.status ?? null,
+      plan: org.billing?.plan ?? null,
       trialEndsAt: org.billing?.trialEndsAt ?? null,
       extraChannels: org.billing?.extraChannels ?? 0,
       priceLock: org.billing?.priceLock ? { ...org.billing.priceLock } : null,
@@ -82,6 +95,7 @@ export const internalCheckoutContextOps = internalQuery({
     orgName: v.string(),
     quiet: v.boolean(),
     status: v.union(v.string(), v.null()),
+    plan: v.union(planKeyValidator, v.null()),
     trialEndsAt: v.union(v.number(), v.null()),
     extraChannels: v.number(),
     priceLock: v.union(
@@ -106,6 +120,7 @@ export const internalCheckoutContextOps = internalQuery({
       orgName: org.name,
       quiet: org.billing?.quiet === true,
       status: org.billing?.status ?? null,
+      plan: org.billing?.plan ?? null,
       trialEndsAt: org.billing?.trialEndsAt ?? null,
       extraChannels: org.billing?.extraChannels ?? 0,
       priceLock: org.billing?.priceLock ? { ...org.billing.priceLock } : null,
@@ -480,6 +495,7 @@ export const internalApplyEvent = internalMutation({
             const { updatedAt: _u, ...billingNoStamp } = billing ?? { status: "legacy" as const, updatedAt: 0 };
             void _u;
             const current: OrgBillingInput = billingNoStamp;
+            const wasBlocked = !resolveEntitlements(org, now).outboundAllowed;
             const groups = targetPlan === "essencial" && sub.addons?.groupsAddon === true;
             const addons = targetPlan === "essencial" ? { ...(current.addons ?? {}), groups } : current.addons ? { ...current.addons, groups: undefined } : undefined;
             await applySubscriptionChange(ctx, {
@@ -491,6 +507,8 @@ export const internalApplyEvent = internalMutation({
               source: "webhook",
               reason: "Pagamento confirmado (Asaas)",
             });
+            // Saiu do modo leitura: as agendadas retidas voltam (campanhas pausadas: o cliente retoma).
+            if (wasBlocked) await rearmScheduledMessagesForOrg(ctx, orgId);
           }
         } catch (e) {
           if (isInvalidTransition(e)) return await finish("ignored", `invalid_transition ${e.data.from}->${e.data.to}`, orgId);
@@ -502,6 +520,8 @@ export const internalApplyEvent = internalMutation({
       case "PAYMENT_OVERDUE": {
         if (!payment) return await finish("ignored", "pagamento não encontrado", orgId);
         await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
+        // Fora de ordem (ex.: RECEIVED chegou antes do OVERDUE atrasado): vale o estado RELIDO.
+        if (payment.status !== "OVERDUE") return await finish("ignored", `pagamento ${payment.status ?? "sem status"}, não vencido`, orgId);
         const due = dayToMs(payment.dueDate);
         const graceUntil = (due ?? now) + GRACE_DAYS * DAY_MS;
         const status = org.billing?.status;
@@ -542,5 +562,88 @@ export const internalApplyEvent = internalMutation({
       default:
         return await finish("ignored", "evento não tratado", orgId);
     }
+  },
+});
+
+// ── Fim da trava de preço: reprecifica a assinatura para a tabela ───────────
+
+/** Plano de repreço da org (ou null se não há o que fazer). `now` vem do chamador (action). */
+export const internalRepriceContext = internalQuery({
+  args: { organizationId: v.id("organizations"), now: v.number() },
+  returns: v.union(
+    v.null(),
+    v.object({
+      providerSubscriptionId: v.string(),
+      chargeBrl: v.number(),
+      monthlyCents: v.number(),
+      lockUntil: v.number(),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    const plan = repriceAfterLockExpiry(org, sub, args.now);
+    if (!plan) return null;
+    return {
+      providerSubscriptionId: plan.providerSubscriptionId,
+      chargeBrl: plan.chargeBrl,
+      monthlyCents: Math.round(plan.monthlyBrl * 100),
+      lockUntil: plan.lockUntil,
+    };
+  },
+});
+
+/** Carimba o repreço pela porta (audit high) e guarda o `until` já tratado. Revalida (idempotente). */
+export const internalRecordReprice = internalMutation({
+  args: { organizationId: v.id("organizations"), monthlyCents: v.number(), lockUntil: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    const sub = await ctx.db
+      .query("orgSubscriptions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .first();
+    const plan = repriceAfterLockExpiry(org, sub, Date.now());
+    if (!plan || plan.lockUntil !== args.lockUntil) return null;
+    await applySubscriptionChange(ctx, {
+      organizationId: args.organizationId,
+      patch: { subscription: { basePriceCents: args.monthlyCents, priceLockedUntil: args.lockUntil } },
+      source: "cron",
+      reason: "Fim do desconto/trava: assinatura reprecificada para a tabela",
+      severity: "high",
+    });
+    return null;
+  },
+});
+
+/**
+ * Chamada pelo cron diário (`internalBillingTick`) para cada org pagante cuja trava venceu:
+ * PUT na assinatura do Asaas (só as próximas cobranças) e depois o carimbo. Falhou na API: nada é
+ * carimbado, e o cron tenta de novo amanhã.
+ */
+export const internalRepriceExpiredLock = internalAction({
+  args: { organizationId: v.id("organizations") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    if (!isAsaasEnabled()) return null;
+    const plan = await ctx.runQuery(internal.billingAsaas.internalRepriceContext, {
+      organizationId: args.organizationId,
+      now: Date.now(),
+    });
+    if (!plan) return null;
+    try {
+      await updateSubscriptionValue(plan.providerSubscriptionId, plan.chargeBrl);
+    } catch {
+      return null;
+    }
+    await ctx.runMutation(internal.billingAsaas.internalRecordReprice, {
+      organizationId: args.organizationId,
+      monthlyCents: plan.monthlyCents,
+      lockUntil: plan.lockUntil,
+    });
+    return null;
   },
 });

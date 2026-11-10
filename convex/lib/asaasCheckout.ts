@@ -17,6 +17,7 @@ import {
   upsertCustomer,
 } from "./asaasApi";
 import { onlyDigits } from "./brDocument";
+import { isPaidStatus } from "./billingInvoices";
 import type { CheckoutCycle } from "./checkoutPricing";
 import { PLANS, type PlanKey } from "./plans";
 
@@ -41,6 +42,7 @@ export type CheckoutFlowInput = {
 
 export const CHECKOUT_UNAVAILABLE =
   "Não foi possível iniciar a cobrança agora. Tente de novo em instantes ou fale com a gente.";
+export const PAYMENT_BEING_PROCESSED = "Recebemos um pagamento e ele está sendo processado; aguarde alguns minutos.";
 export const CHECKOUT_BAD_DATA = "Confira os dados de cobrança (documento e e-mail) e tente de novo.";
 
 /** Erro do Asaas -> mensagem PT-BR segura (sem corpo, sem dados do cliente). */
@@ -56,6 +58,19 @@ export async function runAsaasCheckout(
 ): Promise<{ invoiceUrl: string | null; providerSubscriptionId: string; providerCustomerId: string }> {
   const document = onlyDigits(input.document);
   let createdSubscriptionId: string | null = null;
+  // Antes de cancelar a assinatura anterior: se ela JÁ recebeu pagamento (o webhook ainda não
+  // processou), cancelar e recriar cobraria em duplicidade. Recusa e pede para aguardar.
+  if (input.previousSubscriptionId) {
+    let previous: Awaited<ReturnType<typeof listSubscriptionPayments>>;
+    try {
+      previous = await listSubscriptionPayments(input.previousSubscriptionId);
+    } catch (e) {
+      // Não dá para provar que nada foi pago: falha fechado.
+      if (e instanceof AsaasError && e.status === 404) previous = [];
+      else throw checkoutErrorFor(e);
+    }
+    if (previous.some((p) => isPaidStatus(p.status))) throw new ConvexError(PAYMENT_BEING_PROCESSED);
+  }
   try {
     const customer = await upsertCustomer({
       name: input.billingName,

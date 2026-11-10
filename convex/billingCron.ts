@@ -17,6 +17,7 @@ import type { Doc } from "./_generated/dataModel";
 import { applySubscriptionChange, setBillingStatus } from "./lib/entitlementsOps";
 import { notifyBillingAdmins } from "./lib/billingNotify";
 import { pauseCampaignCore } from "./lib/campaignHooks";
+import { repriceAfterLockExpiry } from "./lib/lockExpiry";
 import { READ_ONLY_STALE_MS, expireScheduled } from "./scheduledMessages";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -100,6 +101,7 @@ export const internalBillingTick = internalMutation({
     expired: v.number(),
     noticesSent: v.number(),
     campaignsPaused: v.number(),
+    repricing: v.number(),
     isDone: v.boolean(),
   }),
   handler: async (ctx, args) => {
@@ -108,8 +110,20 @@ export const internalBillingTick = internalMutation({
     let expired = 0;
     let noticesSent = 0;
     let campaignsPaused = 0;
+    let repricing = 0;
     for (const org of page.page) {
       const billing = org.billing;
+      // Fim da trava/desconto (só quem tem assinatura no Asaas e paga): reprecifica para a tabela.
+      if (billing?.priceLock?.until !== undefined && billing.priceLock.until <= now) {
+        const sub = await ctx.db
+          .query("orgSubscriptions")
+          .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+          .first();
+        if (repriceAfterLockExpiry(org, sub, now)) {
+          await ctx.scheduler.runAfter(0, internal.billingAsaas.internalRepriceExpiredLock, { organizationId: org._id });
+          repricing++;
+        }
+      }
       // Só `trial`. Qualquer outro status (inclusive canceled/past_due/legacy) fica como está.
       if (!billing || billing.status !== "trial" || billing.trialEndsAt === undefined) continue;
 
@@ -157,6 +171,6 @@ export const internalBillingTick = internalMutation({
     if (!page.isDone) {
       await ctx.scheduler.runAfter(0, internal.billingCron.internalBillingTick, { cursor: page.continueCursor });
     }
-    return { scanned: page.page.length, expired, noticesSent, campaignsPaused, isDone: page.isDone };
+    return { scanned: page.page.length, expired, noticesSent, campaignsPaused, repricing, isDone: page.isDone };
   },
 });

@@ -151,7 +151,7 @@ describe("internalAsaasCreateSubscriptionForOrg", () => {
   });
 
   test("sem valueBrl usa o catálogo e o priceLock da org; Empresa exige valor negociado", async () => {
-    const orgId = await seedOrg({ status: "legacy", priceLock: { kind: "frozen", monthlyBrl: 300 }, updatedAt: 1 });
+    const orgId = await seedOrg({ plan: "profissional", status: "legacy", priceLock: { kind: "frozen", monthlyBrl: 300 }, updatedAt: 1 });
     const res = await t.action(internal.opsBilling.internalAsaasCreateSubscriptionForOrg, sale(orgId));
     expect(res.chargeBrl).toBe(300);
     await expect(t.action(internal.opsBilling.internalAsaasCreateSubscriptionForOrg, sale(orgId, { plan: "empresa" }))).rejects.toThrow(/valueBrl/);

@@ -23,6 +23,7 @@ let failOn: ((c: Call) => number | null) | null = null;
 let hook: ((c: Call) => Promise<void>) | null = null;
 let lastValue = 497;
 let lastRef = "org";
+let previousPaid = false;
 
 function stubAsaas() {
   calls = [];
@@ -45,7 +46,7 @@ function stubAsaas() {
       else if (call.method === "GET" && path.endsWith("/notifications")) out = { data: [{ id: "not_1" }] };
       else if (call.method === "POST" && path === "/subscriptions") out = { id: "sub_1" };
       else if (call.method === "GET" && path.endsWith("/payments")) {
-        out = { data: [{ id: `pay_${lastRef}`, status: "PENDING", value: lastValue, dueDate: "2026-11-10", billingType: "UNDEFINED", invoiceUrl: "https://www.asaas.com/i/abc123" }] };
+        out = { data: [{ id: `pay_${lastRef}`, status: previousPaid && path === "/subscriptions/sub_1/payments" ? "RECEIVED" : "PENDING", value: lastValue, dueDate: "2026-11-10", billingType: "UNDEFINED", invoiceUrl: "https://www.asaas.com/i/abc123" }] };
       }
       return new Response(JSON.stringify(out), { status: 200, headers: { "Content-Type": "application/json" } });
     })
@@ -59,6 +60,7 @@ beforeEach(() => {
   vi.stubEnv("ASAAS_API_KEY", "$aact_test_fake");
   failOn = null;
   hook = null;
+  previousPaid = false;
   t = convexTest(schema, modules);
   stubAsaas();
 });
@@ -167,9 +169,21 @@ describe("preço calculado no servidor", () => {
     expect(subscriptionBody()).toMatchObject({ value: 296 });
 
     stubAsaas();
-    const locked = await seed({ status: "legacy", priceLock: { kind: "frozen", monthlyBrl: 300 }, updatedAt: 1 });
+    const locked = await seed({ plan: "profissional", status: "legacy", priceLock: { kind: "frozen", monthlyBrl: 300 }, updatedAt: 1 });
     await as(locked.admin.userId).action(api.billing.startCheckout, input(locked) as never);
     expect(subscriptionBody()).toMatchObject({ value: 300 });
+  });
+});
+
+describe("trava de preço só no plano que a org tem", () => {
+  test("lock frozen 600 no Profissional: Profissional = 600 (price_lock); Escala = tabela 997 (table)", async () => {
+    const s1 = await seed({ plan: "profissional", status: "legacy", priceLock: { kind: "frozen", monthlyBrl: 600 }, updatedAt: 1 });
+    expect(await as(s1.admin.userId).action(api.billing.startCheckout, input(s1) as never)).toMatchObject({ priceSource: "price_lock" });
+    expect(subscriptionBody()).toMatchObject({ value: 600 });
+    stubAsaas();
+    const s2 = await seed({ plan: "profissional", status: "legacy", priceLock: { kind: "frozen", monthlyBrl: 600 }, updatedAt: 1 });
+    expect(await as(s2.admin.userId).action(api.billing.startCheckout, input(s2, { plan: "escala" }) as never)).toMatchObject({ priceSource: "table" });
+    expect(subscriptionBody()).toMatchObject({ value: 997 });
   });
 });
 
@@ -177,7 +191,7 @@ describe("o que é criado e gravado", () => {
   test("cliente por org, assinatura UNDEFINED, descrição e vencimento; devolve o link da 1ª fatura", async () => {
     const s = await seed();
     const res = await checkout(s);
-    expect(res).toEqual({ invoiceUrl: "https://www.asaas.com/i/abc123" });
+    expect(res).toEqual({ invoiceUrl: "https://www.asaas.com/i/abc123", priceSource: "table" });
     const customer = calls.find((c) => c.method === "POST" && c.url.endsWith("/customers"))!;
     expect(customer.body).toMatchObject({ externalReference: s.organizationId, name: "Acme Ltda", cpfCnpj: "11222333000181", email: "financeiro@acme.com.br" });
     expect(subscriptionBody()).toMatchObject({
@@ -266,6 +280,26 @@ describe("robustez", () => {
     await checkout(s, { plan: "escala" });
     expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/subscriptions/sub_1"))).toBe(true);
     expect((await subOf(s.organizationId))?.pendingPlanChange).toMatchObject({ plan: "escala" });
+  });
+
+  test("assinatura anterior que JÁ recebeu pagamento: recusa e não cancela nem recria", async () => {
+    const s = await seed();
+    await checkout(s);
+    stubAsaas();
+    previousPaid = true;
+    await expect(checkout(s, { plan: "escala" })).rejects.toThrow(/Recebemos um pagamento e ele está sendo processado/);
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect((await subOf(s.organizationId))?.pendingPlanChange).toMatchObject({ plan: "profissional" });
+  });
+
+  test("não dá para listar os pagamentos da anterior (500): falha fechado, sem cancelar", async () => {
+    const s = await seed();
+    await checkout(s);
+    stubAsaas();
+    failOn = (c) => (c.method === "GET" && c.url.includes("/subscriptions/sub_1/payments") ? 500 : null);
+    await expect(checkout(s, { plan: "escala" })).rejects.toThrow(/Não foi possível iniciar a cobrança/);
+    expect(calls.some((c) => c.method === "DELETE" || c.method === "POST")).toBe(false);
   });
 
   test("dado recusado pelo Asaas (400) vira mensagem de conferir os dados; nada é gravado", async () => {

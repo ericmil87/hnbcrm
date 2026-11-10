@@ -20,6 +20,8 @@ export type CheckoutPrice = {
   /** Valor de CADA cobrança da assinatura: mensal, ou 10× a mensalidade no anual. */
   chargeBrl: number;
   lockApplied: boolean;
+  /** De onde veio o preço: a trava da org ("price_lock") ou a tabela ("table"). */
+  priceSource: "price_lock" | "table";
 };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -30,7 +32,7 @@ export function priceCheckout(args: {
   plan: PlanKey;
   cycle: CheckoutCycle;
   groupsAddon: boolean;
-  billing: Pick<NonNullable<Doc<"organizations">["billing"]>, "extraChannels" | "priceLock"> | null;
+  billing: Pick<NonNullable<Doc<"organizations">["billing"]>, "plan" | "extraChannels" | "priceLock"> | null;
   now: number;
 }): { ok: true; price: CheckoutPrice } | { ok: false; error: CheckoutPriceError } {
   if (args.plan === "empresa") return { ok: false, error: "empresa" };
@@ -39,7 +41,12 @@ export function priceCheckout(args: {
   }
   const base = { plan: args.plan, extraChannels: args.billing?.extraChannels, groupsAddon: args.groupsAddon, now: args.now };
   const list = estimateInvoice({ ...base, priceLock: null });
-  const locked = estimateInvoice({ ...base, priceLock: args.billing?.priceLock ?? null });
+  // `monthlyBrl` da trava é o preço do plano que a org TEM: em outro plano vale a tabela (e o
+  // desconto percentual, se houver). A trava não vira desconto em plano que ela nunca cobriu.
+  const lock = args.billing?.priceLock ?? null;
+  const effectiveLock =
+    lock && lock.monthlyBrl !== undefined && args.billing?.plan !== args.plan ? { ...lock, monthlyBrl: undefined } : lock;
+  const locked = estimateInvoice({ ...base, priceLock: effectiveLock });
   const monthlyBrl = round2(locked.recurringBrl);
   return {
     ok: true,
@@ -48,6 +55,7 @@ export function priceCheckout(args: {
       listMonthlyBrl: list.listBrl,
       chargeBrl: round2(args.cycle === "yearly" ? monthlyBrl * ANNUAL_MONTHS_CHARGED : monthlyBrl),
       lockApplied: locked.recurringBrl !== list.listBrl,
+      priceSource: locked.recurringBrl !== list.listBrl ? "price_lock" : "table",
     },
   };
 }

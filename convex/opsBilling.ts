@@ -884,7 +884,7 @@ export const internalAsaasCreateSubscriptionForOrg = internalAction({
         plan: args.plan,
         cycle: args.cycle,
         groupsAddon: args.groupsAddon === true,
-        billing: { extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
+        billing: { plan: info.plan ?? undefined, extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
         now,
       });
       if (!priced.ok) throw new ConvexError("Plano ou add-on inválido para o preço de tabela");

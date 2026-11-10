@@ -190,6 +190,7 @@ import type * as lib_llm_registry from "../lib/llm/registry.js";
 import type * as lib_llm_sanitize from "../lib/llm/sanitize.js";
 import type * as lib_llm_types from "../lib/llm/types.js";
 import type * as lib_llmOutputGuard from "../lib/llmOutputGuard.js";
+import type * as lib_lockExpiry from "../lib/lockExpiry.js";
 import type * as lib_mediaEnrichment from "../lib/mediaEnrichment.js";
 import type * as lib_messageRetry from "../lib/messageRetry.js";
 import type * as lib_messageSearch from "../lib/messageSearch.js";
@@ -512,6 +513,7 @@ declare const fullApi: ApiFromModules<{
   "lib/llm/sanitize": typeof lib_llm_sanitize;
   "lib/llm/types": typeof lib_llm_types;
   "lib/llmOutputGuard": typeof lib_llmOutputGuard;
+  "lib/lockExpiry": typeof lib_lockExpiry;
   "lib/mediaEnrichment": typeof lib_mediaEnrichment;
   "lib/messageRetry": typeof lib_messageRetry;
   "lib/messageSearch": typeof lib_messageSearch;
