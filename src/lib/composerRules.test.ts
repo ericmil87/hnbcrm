@@ -8,6 +8,7 @@ import {
   composerMaxRows,
   autoGrowHeight,
   placeholderFor,
+  isComposerBlocked,
   replyAuthorLabel,
   replyPreviewText,
 } from "./composerRules";
@@ -63,6 +64,27 @@ describe("composerRules", () => {
     expect(placeholderFor({ internal: false, blocked: true, group: true })).toContain("Janela fechada");
     expect(placeholderFor({ internal: false, blocked: false, group: true })).toContain("grupo");
     expect(placeholderFor({ internal: false, blocked: false, group: false })).toBe("Digite uma mensagem...");
+  });
+
+  it("modo leitura: placeholder próprio, vence qualquer outro modo", () => {
+    for (const internal of [true, false]) {
+      expect(placeholderFor({ internal, blocked: true, group: false, readOnly: true })).toContain("Conta em modo leitura");
+    }
+    expect(placeholderFor({ internal: false, blocked: false, group: false, readOnly: false })).toBe("Digite uma mensagem...");
+  });
+});
+
+describe("isComposerBlocked", () => {
+  it("modo leitura trava tudo, inclusive nota interna", () => {
+    expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: true })).toBe(true);
+    expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: false })).toBe(true);
+  });
+  it("janela fechada só trava a mensagem ao cliente", () => {
+    expect(isComposerBlocked({ windowBlocked: true, readOnly: false, internal: false })).toBe(true);
+    expect(isComposerBlocked({ windowBlocked: true, readOnly: false, internal: true })).toBe(false);
+  });
+  it("livre quando nada trava", () => {
+    expect(isComposerBlocked({ windowBlocked: false, readOnly: false, internal: false })).toBe(false);
   });
 });
 

@@ -7,6 +7,7 @@ import { BottomTabBar } from "./BottomTabBar";
 import { InstallPrompt } from "@/components/pwa/InstallPrompt";
 import { CopilotFab } from "@/components/copilot/CopilotFab";
 import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
+import { BillingBannerContainer } from "@/components/billing/BillingBannerContainer";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { PushLifecycle } from "@/components/notifications/PushLifecycle";
 import { activeTabForPath } from "@/lib/routes";
@@ -154,6 +155,10 @@ export function AppShell({ onSignOut, organizationId, orgName, onOpenOrgSwitcher
 
         <div className="min-h-[calc(100vh-3.5rem-env(safe-area-inset-top))] supports-[height:100dvh]:min-h-[calc(100dvh-3.5rem-env(safe-area-inset-top))] md:min-h-[calc(100vh-4rem)] md:supports-[height:100dvh]:min-h-[calc(100dvh-4rem)] pb-20 md:pb-0">
           <div className="p-4 md:p-6">
+            {/* Aviso de plano e uso: nunca em org sem plano; some no modo conversa do celular. */}
+            <div className={cn("mb-4 empty:hidden", chatModeActive && "hidden md:block")}>
+              <BillingBannerContainer organizationId={organizationId} />
+            </div>
             {children}
           </div>
         </div>
