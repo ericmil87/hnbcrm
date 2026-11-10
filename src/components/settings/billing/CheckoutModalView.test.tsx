@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { CheckoutModalView, type CheckoutModalViewProps } from "./CheckoutModalView";
 import { InvoicesCardView } from "./InvoicesCard";
-import { EMPTY_CHECKOUT_FORM, checkoutSummary, validateCheckoutForm } from "@/lib/checkoutForm";
+import { EMPTY_CHECKOUT_FORM, applyPrefill, checkoutSummary, validateCheckoutForm } from "@/lib/checkoutForm";
 
 const form = { ...EMPTY_CHECKOUT_FORM };
 
@@ -40,6 +40,17 @@ describe("CheckoutModalView", () => {
     expect(screen.getByText("fale com a gente").getAttribute("href")).toBe("mailto:contato@hnbcrm.com");
     expect(screen.getByText(/Pix, boleto ou cartão na página segura do Asaas/)).toBeTruthy();
     expect(screen.getByText(/INOVAWAY LTDA/)).toBeTruthy();
+  });
+
+  it("campos pré-preenchidos (editáveis) com máscara no CPF/CNPJ", () => {
+    const prefilled = applyPrefill(form, { billingName: "Acme Ltda", billingEmail: "fin@acme.com.br", document: "11222333000181" });
+    const onChange = vi.fn();
+    render(<CheckoutModalView {...props({ form: prefilled, errors: validateCheckoutForm(prefilled), onChange })} />);
+    expect((screen.getByLabelText("Nome ou razão social") as HTMLInputElement).value).toBe("Acme Ltda");
+    expect((screen.getByLabelText("CPF ou CNPJ") as HTMLInputElement).value).toBe("11.222.333/0001-81");
+    expect((screen.getByLabelText("E-mail financeiro") as HTMLInputElement).value).toBe("fin@acme.com.br");
+    fireEvent.change(screen.getByLabelText("Nome ou razão social"), { target: { value: "Outro" } });
+    expect(onChange).toHaveBeenCalledWith({ billingName: "Outro" });
   });
 
   it("add-on Grupos só aparece no Essencial", () => {

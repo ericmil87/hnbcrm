@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { useNow } from "@/hooks/useNow";
 import { usePermissions } from "@/hooks/usePermissions";
+import { openInvoiceUrl } from "@/lib/checkoutForm";
 import {
   monthKeyUtc,
   overageConfirmText,
@@ -116,6 +117,8 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
   const channelUsage = useQuery(api.billing.getChannelAndGroupUsage, hasPlan ? { organizationId } : "skip");
   const history = useQuery(api.billing.getUsageHistory, hasPlan ? { organizationId } : "skip");
 
+  // Mesma query do cartão "Faturas" (o Convex deduplica): o botão "Abrir fatura" do aviso de pagamento.
+  const invoices = useQuery(api.billing.listInvoices, hasPlan ? { organizationId } : "skip");
   const overage = useOverageControl(organizationId, summary, entitlements?.mode, canManage);
   const planAction = entitlements ? (
     <PlanCheckout
@@ -137,6 +140,7 @@ export function BillingPanel({ organizationId }: { organizationId: Id<"organizat
       channelUsage={channelUsage}
       history={history}
       now={now}
+      openInvoiceUrl={openInvoiceUrl(invoices)}
       planAction={planAction}
       invoices={<InvoicesCard organizationId={organizationId} />}
       overage={overage}

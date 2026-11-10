@@ -16,6 +16,8 @@ export interface BillingPanelViewProps {
   channelUsage: ChannelAndGroupUsage | undefined;
   history: UsageHistory | undefined;
   now: number;
+  /** Link da fatura pendente/vencida mais recente (container). */
+  openInvoiceUrl?: string | null;
   /** Botão de assinar/trocar plano (container). */
   planAction: ReactNode;
   /** Cartão de faturas (container). */
@@ -61,7 +63,7 @@ export function BillingPanelView(p: BillingPanelViewProps) {
   }
   return (
     <div className="space-y-4">
-      <PlanSummaryCard entitlements={p.entitlements} now={p.now} action={p.planAction} />
+      <PlanSummaryCard entitlements={p.entitlements} now={p.now} action={p.planAction} openInvoiceUrl={p.openInvoiceUrl} />
       {p.summary === undefined ? (
         <LoadingCards />
       ) : (
