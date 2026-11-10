@@ -20,7 +20,28 @@ import type { BillingStatus } from "./plans";
 import { monthKeyUtc } from "./aiSpend";
 import { bucketsTotal } from "./attendanceUsage";
 
-export type BillingSource = "ops" | "webhook" | "cron" | "customer";
+/**
+ * `checkout` (self-service de assinatura): só escreve campos de PROVEDOR/COBRANÇA em
+ * `orgSubscriptions` (ids, ciclo, e-mail/documento, `pendingPlanChange`...). Nunca `billing`
+ * (status/plano): quem libera o plano é o pagamento confirmado (`webhook`).
+ */
+export type BillingSource = "ops" | "webhook" | "cron" | "customer" | "checkout";
+
+/** Campos de `orgSubscriptions` que o checkout pode gravar (nunca status nem plano). */
+export const CHECKOUT_SUBSCRIPTION_FIELDS: ReadonlySet<string> = new Set([
+  "billingProvider",
+  "providerCustomerId",
+  "providerSubscriptionId",
+  "billingCycle",
+  "billingEmail",
+  "billingDocument",
+  "billingName",
+  "pendingPlanChange",
+  "basePriceCents",
+  "addons",
+  "paymentStatus",
+  "checkoutStartedAt",
+]);
 
 export type OrgBilling = NonNullable<Doc<"organizations">["billing"]>;
 /** `updatedAt` é da porta; quem chama não o informa. */
@@ -176,6 +197,15 @@ export async function applySubscriptionChange(
 
   if (args.source === "customer" && args.patch.subscription) {
     throw new ConvexError({ code: "customer_forbidden", fields: ["subscription"], source: args.source });
+  }
+  if (args.source === "checkout") {
+    if (args.patch.billing) {
+      throw new ConvexError({ code: "checkout_forbidden", fields: ["billing"], source: args.source });
+    }
+    const forbidden = Object.keys(args.patch.subscription ?? {}).filter((k) => !CHECKOUT_SUBSCRIPTION_FIELDS.has(k));
+    if (forbidden.length > 0) {
+      throw new ConvexError({ code: "checkout_forbidden", fields: forbidden, source: args.source });
+    }
   }
 
   let after: OrgBilling | null = before;

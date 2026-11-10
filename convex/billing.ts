@@ -10,7 +10,8 @@
  */
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator, paginationResultValidator } from "convex/server";
-import { mutation, query } from "./_generated/server";
+import { action, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
@@ -22,6 +23,11 @@ import { totalAttendances } from "./lib/attendanceLedger";
 
 import { buildMyEntitlements, initialsOf, isValidOverageCap, resolvePlanView, safeContactName } from "./lib/billingViews";
 import { estimateInvoice } from "./lib/billingMath";
+import { isAsaasEnabled } from "./lib/asaasApi";
+import { isValidCpfCnpj } from "./lib/brDocument";
+import { isDeliverableEmail } from "./lib/emailAddress";
+import { firstDueDate, priceCheckout } from "./lib/checkoutPricing";
+import { runAsaasCheckout } from "./lib/asaasCheckout";
 
 const planKeyValidator = v.union(
   v.literal("essencial"),
@@ -476,5 +482,81 @@ export const setOverage = mutation({
       severity: "high",
     });
     return { enabled: args.enabled, capBrl };
+  },
+});
+
+// ── startCheckout (self-service de assinatura pelo Asaas) ───────────────────
+
+const FALE_COM_A_GENTE_EMPRESA =
+  "O plano Empresa é por contrato: fale com a gente para montar a proposta (unidades, canais e franquia).";
+const ALREADY_PAYING =
+  "Sua conta já tem um plano ativo. Para mudar de plano ou de ciclo, fale com a gente.";
+
+/**
+ * Cria cliente + assinatura no Asaas e devolve o link da 1ª fatura (hospedada: o cliente escolhe
+ * Pix, boleto ou cartão lá; nenhum dado de cartão passa por aqui). `settings:manage` + conta com
+ * e-mail. O preço é SEMPRE calculado no servidor pelo catálogo (o `priceLock` da org vence); o
+ * cliente não envia valor. O status da org NÃO muda aqui: só o pagamento confirmado libera o plano.
+ */
+export const startCheckout = action({
+  args: {
+    organizationId: v.id("organizations"),
+    plan: planKeyValidator,
+    cycle: v.union(v.literal("monthly"), v.literal("yearly")),
+    groupsAddon: v.optional(v.boolean()),
+    billingName: v.string(),
+    document: v.string(),
+    billingEmail: v.string(),
+  },
+  returns: v.object({ invoiceUrl: v.union(v.string(), v.null()) }),
+  handler: async (ctx, args): Promise<{ invoiceUrl: string | null }> => {
+    if (!isAsaasEnabled()) {
+      throw new ConvexError("A assinatura online ainda não está disponível. Fale com a gente para contratar.");
+    }
+    if (args.plan === "empresa") throw new ConvexError(FALE_COM_A_GENTE_EMPRESA);
+    const billingName = args.billingName.trim();
+    if (billingName.length < 2 || billingName.length > 120) {
+      throw new ConvexError("Informe o nome ou a razão social para a nota fiscal (2 a 120 caracteres).");
+    }
+    if (!isValidCpfCnpj(args.document)) throw new ConvexError("CPF ou CNPJ inválido. Confira os números e tente de novo.");
+    const billingEmail = args.billingEmail.trim().toLowerCase();
+    if (!isDeliverableEmail(billingEmail)) throw new ConvexError("Informe um e-mail financeiro válido.");
+
+    // Autoriza (settings:manage + conta com e-mail) e lê o necessário.
+    const info = await ctx.runQuery(internal.billingAsaas.internalCheckoutContext, { organizationId: args.organizationId });
+    if (info.status === "active" || info.status === "past_due") throw new ConvexError(ALREADY_PAYING);
+
+    const now = Date.now();
+    const priced = priceCheckout({
+      plan: args.plan,
+      cycle: args.cycle,
+      groupsAddon: args.groupsAddon === true,
+      billing: { extraChannels: info.extraChannels, priceLock: info.priceLock ?? undefined },
+      now,
+    });
+    if (!priced.ok) {
+      throw new ConvexError(
+        priced.error === "empresa" ? FALE_COM_A_GENTE_EMPRESA : "O add-on Grupos existe só no plano Essencial."
+      );
+    }
+
+    await ctx.runMutation(internal.billingAsaas.internalBeginCheckout, { organizationId: args.organizationId });
+    const trialValid = info.status === "trial" && info.trialEndsAt !== null && info.trialEndsAt > now;
+    const out = await runAsaasCheckout(ctx, {
+      organizationId: args.organizationId,
+      plan: args.plan,
+      cycle: args.cycle,
+      groupsAddon: args.groupsAddon === true,
+      extraChannels: info.extraChannels,
+      billingName,
+      document: args.document,
+      billingEmail,
+      monthlyBrl: priced.price.monthlyBrl,
+      chargeBrl: priced.price.chargeBrl,
+      nextDueDate: firstDueDate(now, trialValid ? (info.trialEndsAt ?? undefined) : undefined),
+      quiet: info.quiet,
+      previousSubscriptionId: info.providerSubscriptionId,
+    });
+    return { invoiceUrl: out.invoiceUrl };
   },
 });
