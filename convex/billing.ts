@@ -705,3 +705,39 @@ export const previewCheckout = query({
     };
   },
 });
+
+// ── getCheckoutPrefill (pré-preenche o formulário do checkout) ──────────────
+
+/**
+ * Dados de cobrança que a própria org já informou num checkout anterior (razão social, e-mail
+ * financeiro, CPF/CNPJ), para o formulário vir preenchido. É dado de cobrança (PII): só
+ * `settings:manage`. Quem não pode (ou não é membro) recebe `null`, sem erro: o front apenas não
+ * pré-preenche. Nunca devolve ids do provedor.
+ */
+export const getCheckoutPrefill = query({
+  args: { organizationId: v.id("organizations") },
+  returns: v.union(
+    v.null(),
+    v.object({
+      billingName: v.union(v.string(), v.null()),
+      billingEmail: v.union(v.string(), v.null()),
+      document: v.union(v.string(), v.null()),
+    })
+  ),
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const member = await getActiveMembership(ctx, args.organizationId, userId);
+    if (!member) return null;
+    const perms = resolvePermissions(member.role as Role, member.permissions as never);
+    if (!hasPermission(perms, "settings", "manage")) return null;
+    const sub = await loadSubscription(ctx, args.organizationId);
+    if (!sub) return null;
+    const out = {
+      billingName: sub.billingName ?? null,
+      billingEmail: sub.billingEmail ?? null,
+      document: sub.billingDocument ?? null,
+    };
+    return out.billingName || out.billingEmail || out.document ? out : null;
+  },
+});
