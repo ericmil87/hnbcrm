@@ -4,7 +4,13 @@ import { readDismissed, resolveBillingBanner, writeDismissed, type BannerEntitle
 const NOW = Date.parse("2026-11-16T12:00:00Z");
 const DAY = 24 * 60 * 60 * 1000;
 const none = new Set<string>();
-const ent = (o: Partial<BannerEntitlements>): BannerEntitlements => ({ mode: "active", readOnly: false, ...o });
+// Com `usageLevel`, o alerta é do mês corrente (novembro) salvo se o teste disser outro.
+const ent = (o: Partial<BannerEntitlements>): BannerEntitlements => ({
+  mode: "active",
+  readOnly: false,
+  ...(o.usageLevel ? { usageAlertMonth: "2026-11" } : {}),
+  ...o,
+});
 const run = (o: Partial<BannerEntitlements>, extra: { canViewBilling?: boolean; dismissed?: Set<string> } = {}) =>
   resolveBillingBanner({ ent: ent(o), now: NOW, canViewBilling: extra.canViewBilling ?? true, dismissed: extra.dismissed ?? none });
 
@@ -40,9 +46,13 @@ describe("resolveBillingBanner", () => {
   });
 
   it("texto do limite com e sem excedente", () => {
-    expect(run({ usageLevel: "limit100" })?.body).toContain("só sugere respostas");
+    const plain = run({ usageLevel: "limit100" });
+    expect(plain?.title).toBe("Você chegou a 100% da franquia do mês");
+    expect(plain?.body).toContain("envios de campanha");
+    expect(plain?.body).toContain("a IA passa a só sugerir respostas e a equipe envia");
     const b = run({ usageLevel: "limit100", overage: { enabled: true, capBrl: 250 } });
-    expect(b?.body).toMatch(/Excedente ligado, com teto de R\$\s*250/);
+    expect(b?.body).toMatch(/excedente está ligado, com teto de R\$\s*250/);
+    expect(run({ usageLevel: "warn80" })?.title).toBe("Você usou 80% da franquia do mês");
   });
 
   it("quem não administra não recebe CTA e vê a orientação", () => {
@@ -63,7 +73,14 @@ describe("resolveBillingBanner", () => {
     const w = run({ usageLevel: "warn80", usageAlertMonth: "2026-11" });
     expect(w?.dismissKey).toBe("warn80:2026-11");
     expect(run({ usageLevel: "warn80", usageAlertMonth: "2026-11" }, { dismissed: new Set(["warn80:2026-11"]) })).toBeNull();
-    expect(run({ usageLevel: "warn80", usageAlertMonth: "2026-12" }, { dismissed: new Set(["warn80:2026-11"]) })?.kind).toBe("warn80");
+    const dec = Date.parse("2026-12-05T12:00:00Z");
+    const decBanner = resolveBillingBanner({
+      ent: ent({ usageLevel: "warn80", usageAlertMonth: "2026-12" }),
+      now: dec,
+      canViewBilling: true,
+      dismissed: new Set(["warn80:2026-11"]),
+    });
+    expect(decBanner?.kind).toBe("warn80");
 
     const long = run({ mode: "trial", trialEndsAt: NOW + 20 * DAY });
     expect(run({ mode: "trial", trialEndsAt: NOW + 20 * DAY }, { dismissed: new Set([long!.dismissKey!]) })).toBeNull();
@@ -71,6 +88,23 @@ describe("resolveBillingBanner", () => {
 
   it("dispensar o aviso de 80% não esconde o de 100%", () => {
     expect(run({ usageLevel: "limit100" }, { dismissed: new Set(["warn80:2026-11"]) })?.kind).toBe("limit100");
+  });
+});
+
+describe("alerta de uso de outro mês e teste vencido", () => {
+  it("100% de novembro não aparece em dezembro", () => {
+    const dec = Date.parse("2026-12-02T12:00:00Z");
+    const stale = ent({ usageLevel: "limit100", usageAlertMonth: "2026-11" });
+    expect(resolveBillingBanner({ ent: stale, now: NOW, canViewBilling: true, dismissed: none })?.kind).toBe("limit100");
+    expect(resolveBillingBanner({ ent: stale, now: dec, canViewBilling: true, dismissed: none })).toBeNull();
+    const noMonth: BannerEntitlements = { mode: "active", readOnly: false, usageLevel: "warn80" };
+    expect(resolveBillingBanner({ ent: noMonth, now: NOW, canViewBilling: true, dismissed: none })).toBeNull();
+  });
+
+  it("teste vencido antes do cron já vira modo leitura", () => {
+    const b = run({ mode: "trial", trialEndsAt: NOW - 1000 });
+    expect(b?.kind).toBe("read_only");
+    expect(run({ mode: "trial", trialEndsAt: NOW + DAY })?.kind).toBe("trial_ending");
   });
 });
 

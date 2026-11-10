@@ -6,6 +6,7 @@ import {
   buildMeters,
   changePlanMailto,
   creditExpiresSoon,
+  isEffectivelyReadOnly,
   invoiceLines,
   isBillingPanelVisible,
   overageConfirmText,
@@ -123,5 +124,20 @@ describe("billingPanel", () => {
     expect(creditExpiresSoon(90 * DAY, 0)).toBe(false);
     expect(changePlanMailto("Acme", "Essencial")).toMatch(/^mailto:.+\?subject=/);
     expect(roundNow(1_000_000_123)).toBe(Math.floor(1_000_000_123 / 900000) * 900000);
+  });
+});
+
+describe("isEffectivelyReadOnly", () => {
+  const NOW2 = 1_000_000_000_000;
+  it("vale o readOnly do servidor", () => {
+    expect(isEffectivelyReadOnly({ readOnly: true, mode: "active" }, NOW2)).toBe(true);
+    expect(isEffectivelyReadOnly({ readOnly: false, mode: "active" }, NOW2)).toBe(false);
+    expect(isEffectivelyReadOnly(null, NOW2)).toBe(false);
+  });
+  it("teste vencido antes do cron conta como leitura", () => {
+    expect(isEffectivelyReadOnly({ readOnly: false, mode: "trial", trialEndsAt: NOW2 - 1 }, NOW2)).toBe(true);
+    expect(isEffectivelyReadOnly({ readOnly: false, mode: "trial", trialEndsAt: NOW2 }, NOW2)).toBe(true);
+    expect(isEffectivelyReadOnly({ readOnly: false, mode: "trial", trialEndsAt: NOW2 + 1 }, NOW2)).toBe(false);
+    expect(isEffectivelyReadOnly({ readOnly: false, mode: "trial" }, NOW2)).toBe(false);
   });
 });

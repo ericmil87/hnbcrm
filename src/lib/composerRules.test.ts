@@ -75,9 +75,15 @@ describe("composerRules", () => {
 });
 
 describe("isComposerBlocked", () => {
-  it("modo leitura trava tudo, inclusive nota interna", () => {
-    expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: true })).toBe(true);
+  it("modo leitura trava a mensagem ao cliente nos canais que despacham", () => {
+    for (const channel of ["whatsapp", "instagram", "messenger"]) {
+      expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: false, channel })).toBe(true);
+    }
     expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: false })).toBe(true);
+  });
+  it("modo leitura não trava nota interna nem canal sem despacho (webchat)", () => {
+    expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: true, channel: "whatsapp" })).toBe(false);
+    expect(isComposerBlocked({ windowBlocked: false, readOnly: true, internal: false, channel: "webchat" })).toBe(false);
   });
   it("janela fechada só trava a mensagem ao cliente", () => {
     expect(isComposerBlocked({ windowBlocked: true, readOnly: false, internal: false })).toBe(true);
