@@ -40,7 +40,16 @@ export function initialOrgBilling(now: number): OrgBilling {
  * `trialEndsAt`. Segundo valor permitido no insert de `organizations` (entitlementsPort.test.ts).
  */
 export function initialTrialBilling(now: number, trialEndsAt: number): OrgBilling {
-  return { status: "trial", plan: "profissional", trialEndsAt, periodStart: now, updatedAt: now };
+  // Mesma regra da porta ao abrir um período: `periodStart` + baseline dos baldes do mês (0: a org
+  // acabou de nascer). Sem o baseline o "usado" cairia na varredura do livro.
+  return {
+    status: "trial",
+    plan: "profissional",
+    trialEndsAt,
+    periodStart: now,
+    periodBaseline: { month: monthKeyUtc(now), total: 0 },
+    updatedAt: now,
+  };
 }
 
 /** Decide se a mudança de status é permitida. Pura. */
