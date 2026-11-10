@@ -18,7 +18,14 @@ import {
 import { formatMoney } from "@/lib/format";
 import { LEGAL_ENTITY } from "@/lib/legalEntity";
 import { cn } from "@/lib/utils";
-import { GROUPS_ADDON_BRL, PLANS } from "../../../../convex/lib/plans";
+import { GROUPS_ADDON_BRL, PLANS, type PlanKey } from "../../../../convex/lib/plans";
+import {
+  changeKindLabel,
+  changeNotice,
+  planChangeKind,
+  type ChangeKind,
+  type SubscriptionCycle,
+} from "@/lib/subscriptionManagement";
 
 export const SALES_EMAIL = LEGAL_ENTITY.email;
 export const PAYMENT_NOTE = `Pagamento por Pix, boleto ou cartão na página segura do Asaas. A nota fiscal sai em nome da ${LEGAL_ENTITY.name} após a confirmação.`;
@@ -30,7 +37,16 @@ const CYCLE_OPTIONS = [
   { value: "yearly", label: "Anual (2 meses grátis)" },
 ];
 
+/** Modo troca de plano (assinatura ativa): sem dados de cobrança, com upgrade/downgrade por plano. */
+export interface ChangePlanContext {
+  currentPlan: PlanKey;
+  currentCycle: SubscriptionCycle;
+  /** Início do downgrade (próxima renovação), se o servidor informar. */
+  effectiveAt: number | null;
+}
+
 export interface CheckoutModalViewProps {
+  change?: ChangePlanContext;
   open: boolean;
   onClose: () => void;
   form: CheckoutForm;
@@ -61,12 +77,20 @@ export interface CheckoutModalViewProps {
 
 export function CheckoutModalView(p: CheckoutModalViewProps) {
   const err = (k: keyof CheckoutErrors) => (p.showErrors ? p.errors[k] : undefined);
+  const change = p.change;
+  const kindFor = (plan: PlanKey): ChangeKind | null =>
+    change ? planChangeKind({ plan: change.currentPlan, cycle: change.currentCycle }, { plan, cycle: p.form.cycle }) : null;
+  const selectedKind = kindFor(p.form.plan);
+  const notice = change && selectedKind ? changeNotice(selectedKind, { chargeBrl: p.summary?.chargeBrl ?? null, effectiveAt: change.effectiveAt }) : null;
+  const title = p.created ? "Fatura criada" : change ? "Trocar plano" : "Assinar plano";
   return (
-    <Modal open={p.open} onClose={p.onClose} title={p.created ? "Fatura criada" : "Assinar plano"}>
+    <Modal open={p.open} onClose={p.onClose} title={title}>
       {p.created ? (
         <div className="space-y-4">
           <p className="text-sm text-text-secondary">
-            A primeira fatura foi criada. Pague pela página do Asaas; o plano é liberado assim que o pagamento for confirmado.
+            {change
+              ? "A fatura da troca foi criada. Pague pela página do Asaas; o plano muda assim que o pagamento for confirmado."
+              : "A primeira fatura foi criada. Pague pela página do Asaas; o plano é liberado assim que o pagamento for confirmado."}
           </p>
           {safeHttpsUrl(p.invoiceUrl) ? (
             <a
@@ -100,6 +124,8 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             <legend className="mb-1 text-sm font-medium text-text-secondary">Plano</legend>
             {CHECKOUT_PLANS.map((k) => {
               const selected = p.form.plan === k;
+              const kind = kindFor(k);
+              const isCurrent = kind === "same";
               return (
                 <label
                   key={k}
@@ -114,10 +140,12 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
                       name="checkout-plan"
                       value={k}
                       checked={selected}
+                      disabled={isCurrent}
                       onChange={() => p.onChange({ plan: k as CheckoutPlan })}
                       className="h-4 w-4 accent-brand-600"
                     />
                     <span className="text-sm font-medium text-text-primary">{PLANS[k].label}</span>
+                    {kind && <span className="text-caption text-text-muted">{changeKindLabel(kind)}</span>}
                   </span>
                   <span className="text-sm tabular-nums text-text-secondary">{brl(PLANS[k].monthlyBrl)}/mês</span>
                 </label>
@@ -151,6 +179,13 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             />
           )}
 
+          {notice && (
+            <p role="status" className="rounded-card border border-border bg-surface-sunken p-3 text-sm text-text-primary">
+              {notice}
+            </p>
+          )}
+
+          {!change && (
           <div className="space-y-3">
             <Input
               id="checkout-name"
@@ -180,6 +215,7 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
               onChange={(e) => p.onChange({ billingEmail: e.target.value })}
             />
           </div>
+          )}
 
           {p.summary && (
             <div className="rounded-card border border-border bg-surface-sunken p-3 text-sm" aria-live="polite">
@@ -239,8 +275,8 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             <Button type="button" variant="secondary" className="flex-1" onClick={p.onClose}>
               Cancelar
             </Button>
-            <Button type="submit" className="flex-1" loading={p.submitting} disabled={p.refusal !== null || p.summaryLoading}>
-              Ir para o pagamento
+            <Button type="submit" className="flex-1" loading={p.submitting} disabled={p.refusal !== null || p.summaryLoading || selectedKind === "same"}>
+              {change ? (selectedKind === "upgrade" ? "Confirmar e ir para o pagamento" : "Confirmar troca") : "Ir para o pagamento"}
             </Button>
           </div>
         </form>
