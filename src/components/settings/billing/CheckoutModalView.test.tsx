@@ -17,6 +17,8 @@ function props(over: Partial<CheckoutModalViewProps> = {}): CheckoutModalViewPro
     summary: checkoutSummary({ plan: form.plan, cycle: form.cycle, groupsAddon: false, now: 1 }),
     submitting: false,
     serverError: null,
+    notice: null,
+    priceNote: null,
     invoiceUrl: null,
     created: false,
     onSubmit: () => {},
@@ -81,6 +83,22 @@ describe("CheckoutModalView", () => {
     expect(screen.getByText(/paga 10 meses e usa 12 \(2 grátis\)/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ir para o pagamento" }));
     expect(onSubmit).toHaveBeenCalled();
+  });
+
+  it("pagamento em processamento aparece como aviso (status), não como erro", () => {
+    render(<CheckoutModalView {...props({ notice: "Recebemos um pagamento e ele está sendo processado; aguarde alguns minutos." })} />);
+    expect(screen.getByRole("status").textContent).toContain("está sendo processado");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("fatura criada com preço especial mostra a nota", () => {
+    render(<CheckoutModalView {...props({ created: true, invoiceUrl: null, priceNote: "Preço especial da sua conta aplicado nesta fatura." })} />);
+    expect(screen.getByText(/Preço especial da sua conta/)).toBeTruthy();
+  });
+
+  it("nota fiscal em nome do fornecedor do cadastro", () => {
+    render(<CheckoutModalView {...props()} />);
+    expect(screen.getByText(/nota fiscal sai em nome da INOVAWAY LTDA/)).toBeTruthy();
   });
 
   it("depois de criada: link clicável da fatura", () => {

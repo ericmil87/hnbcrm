@@ -5,6 +5,8 @@ import { mutationErrorMessage } from "@/lib/errors";
 import {
   EMPTY_CHECKOUT_FORM,
   canStartCheckout,
+  isPaymentProcessingMessage,
+  priceSourceNote,
   checkoutButtonLabel,
   checkoutSummary,
   toCheckoutArgs,
@@ -38,6 +40,8 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
   const [serverError, setServerError] = useState<string | null>(null);
   const [invoiceUrl, setInvoiceUrl] = useState<string | null>(null);
   const [created, setCreated] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [priceNote, setPriceNote] = useState<string | null>(null);
 
   const errors = useMemo(() => validateCheckoutForm(form), [form]);
   const summary = useMemo(
@@ -59,16 +63,21 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
   const submit = async () => {
     setShowErrors(true);
     setServerError(null);
+    setNotice(null);
     if (Object.keys(errors).length > 0) return;
     setSubmitting(true);
     try {
       const out = await startCheckout({ organizationId, ...toCheckoutArgs(form) });
       setInvoiceUrl(out.invoiceUrl);
+      setPriceNote(priceSourceNote(out.priceSource));
       setCreated(true);
       // Depois do await o navegador pode bloquear a aba: o link "Abrir fatura" fica no modal.
       if (out.invoiceUrl) window.open(out.invoiceUrl, "_blank", "noopener,noreferrer");
     } catch (e) {
-      setServerError(mutationErrorMessage(e, "Não foi possível criar a fatura. Tente de novo."));
+      const message = mutationErrorMessage(e, "Não foi possível criar a fatura. Tente de novo.");
+      // Pagamento já recebido e em processamento: aviso, não erro.
+      if (isPaymentProcessingMessage(message)) setNotice(message);
+      else setServerError(message);
     } finally {
       setSubmitting(false);
     }
@@ -79,6 +88,8 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
     setCreated(false);
     setInvoiceUrl(null);
     setServerError(null);
+    setNotice(null);
+    setPriceNote(null);
     setShowErrors(false);
   };
 
@@ -100,6 +111,8 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
         summary={summary}
         submitting={submitting}
         serverError={serverError}
+        notice={notice}
+        priceNote={priceNote}
         invoiceUrl={invoiceUrl}
         created={created}
         onSubmit={() => void submit()}
