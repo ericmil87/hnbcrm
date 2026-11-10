@@ -76,8 +76,9 @@ export const createOrganization = mutation({
 
     const now = Date.now();
 
-    // B7a: cadastro em teste. 1 TESTE por usuário: a 2ª org da mesma pessoa nasce em teste com o
-    // MESMO `trialEndsAt` do 1º grant (não ganha 30 dias novos e a agência não é bloqueada).
+    // B7a: cadastro em teste. 1 TESTE por usuário: a 2ª org da mesma pessoa herda o MESMO
+    // `trialEndsAt` do 1º grant (não ganha 30 dias novos). Se esse teste já venceu, a org nasce
+    // em modo leitura (o cron/resolve tratam como teste vencido); liberar por op (`internalSetOrgPlan`).
     let trialEndsAt: number | null = null;
     if (process.env.BILLING_TRIAL_ON_SIGNUP === "true") {
       const firstGrant = await ctx.db

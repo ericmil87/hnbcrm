@@ -591,7 +591,9 @@ const RESCHEDULE_REASONS = new Set([
   "rascunho_ja_revisado",
   "aguardando_transcricao",
 ]);
-const CANCEL_REASONS = new Set(["opt_out", "conversa_removida"]);
+// `plano_inativo` (B7): org em modo leitura. O follow-up cancela sem virar `needs_human`
+// (que abriria tarefa/aviso para cada um): quem volta de um plano ativo agenda de novo.
+const CANCEL_REASONS = new Set(["opt_out", "conversa_removida", "plano_inativo"]);
 
 /**
  * Motivo técnico → frase que a equipe entende no sino, na tarefa e na tela.

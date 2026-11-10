@@ -483,8 +483,8 @@ export const internalSpendGate = internalQuery({
   args: {
     organizationId: v.id("organizations"),
     month: v.string(),
-    /** Relógio do chamador (action): decide teste vencido. Ausente = só o status gravado. */
-    now: v.optional(v.number()),
+    /** Relógio do chamador (action): decide teste vencido. Obrigatório (query não lê o relógio). */
+    now: v.number(),
   },
   returns: v.object({
     blocked: v.boolean(),
@@ -496,7 +496,7 @@ export const internalSpendGate = internalQuery({
     const org = await ctx.db.get(args.organizationId);
     if (!org || !isValidMonthKey(args.month)) return { blocked: false, reason: null, readOnly: false };
     // Modo leitura (B7): teste vencido, read_only e canceled não rodam IA.
-    if (!resolveEntitlements(org, args.now ?? monthStartUtcMs(args.month)).aiAllowed) {
+    if (!resolveEntitlements(org, args.now).aiAllowed) {
       return { blocked: true, reason: READ_ONLY_REASON, readOnly: true };
     }
     const status = await spendStatusFor(ctx, org, args.month);

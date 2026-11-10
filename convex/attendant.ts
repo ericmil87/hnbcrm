@@ -129,6 +129,7 @@ import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGu
 import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
 import { recordCommittedAttendance } from "./lib/attendanceLedger";
 import { resolveEntitlements } from "./lib/entitlements";
+import { assertConversationSendAllowed } from "./lib/readOnly";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
@@ -4330,6 +4331,8 @@ export async function acceptAiDraftCore(
   }
 ): Promise<Id<"messages">> {
   const { draft, conversation, member } = args;
+  // Modo leitura (B7): aceitar o rascunho é enviar ao cliente.
+  await assertConversationSendAllowed(ctx, conversation);
   const aiDraft = draft.metadata?.aiDraft as
     | {
         status: string;

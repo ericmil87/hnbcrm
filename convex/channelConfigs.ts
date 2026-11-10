@@ -1208,6 +1208,12 @@ export const provisionBridgeChannel = action({
     await ctx.runQuery(internal.channelConfigs.internalRequireSettingsManage, {
       organizationId: args.organizationId,
     });
+    // Modo leitura (B7): recusa ANTES de criar a instância no gateway (senão sobra instância
+    // órfã quando o insert do canal for recusado).
+    await ctx.runQuery(internal.channelConfigs.internalAssertPlanWritable, {
+      organizationId: args.organizationId,
+      now: Date.now(),
+    });
 
     // The env admin token is only ever sent to the env URL — never to a
     // client-supplied one (a client URL + env token would leak the token).
@@ -1432,6 +1438,16 @@ export const internalAuditPairingRequested = internalMutation({
 
 // Internal: enforce settings/manage for an org (used by actions that must guard
 // BEFORE side effects, e.g. calling the gateway admin API during provisioning).
+/** Recusa criar canal em modo leitura (chamada pela action antes de tocar o gateway). */
+export const internalAssertPlanWritable = internalQuery({
+  args: { organizationId: v.id("organizations"), now: v.number() },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await assertPlanWritable(ctx, args.organizationId, "criar canais", args.now);
+    return null;
+  },
+});
+
 export const internalRequireSettingsManage = internalQuery({
   args: { organizationId: v.id("organizations") },
   returns: v.null(),

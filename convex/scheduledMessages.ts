@@ -1,7 +1,7 @@
 import { v } from "convex/values";
-import { query, mutation, internalMutation } from "./_generated/server";
+import { query, mutation, internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
-import { Id } from "./_generated/dataModel";
+import { Doc, Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
@@ -16,6 +16,29 @@ import { assertOutboundAllowed, outboundBlockedFor } from "./lib/readOnly";
 
 /** Em modo leitura a agendada é reavaliada a cada 6 h (pending, nunca failed). */
 export const READ_ONLY_RECHECK_MS = 6 * 60 * 60 * 1000;
+/** Depois de 30 dias retida em modo leitura, a agendada expira. */
+export const READ_ONLY_HOLD_MAX_MS = 30 * 24 * 60 * 60 * 1000;
+/** Retida e vencida há mais de 24 h ao voltar o plano: não sai, expira. */
+export const READ_ONLY_STALE_MS = 24 * 60 * 60 * 1000;
+const EXPIRED_IN_READ_ONLY = "Expirou durante o modo leitura";
+
+async function expireScheduled(ctx: MutationCtx, row: Doc<"scheduledMessages">, now: number): Promise<void> {
+  await ctx.db.patch(row._id, { status: "canceled", error: EXPIRED_IN_READ_ONLY, scheduledFunctionId: undefined });
+  // Só audit (sem notificação): o aviso ao autor exigiria um tipo novo de sino + preferências.
+  await ctx.db.insert("auditLogs", {
+    organizationId: row.organizationId,
+    entityType: "scheduledMessage",
+    entityId: row._id,
+    action: "update",
+    actorId: row.createdBy,
+    actorType: "system",
+    changes: { before: { status: "pending" }, after: { status: "canceled" } },
+    metadata: { reason: "read_only_expired", scheduledAt: row.scheduledAt },
+    description: `Mensagem agendada cancelada: ${EXPIRED_IN_READ_ONLY.toLowerCase()}`,
+    severity: "medium",
+    createdAt: now,
+  });
+}
 
 const scheduledTranslationValidator = v.object({
   authoredText: v.string(),
@@ -175,11 +198,24 @@ export const deliver = internalMutation({
     // Modo leitura (B7): a agendada NÃO vira `failed` nem sai. Fica `pending` e é
     // reagendada para depois; quando o plano voltar, a próxima tentativa entrega (já vencida,
     // sai na hora). Mensagem de cliente nunca é descartada por mudança de plano.
-    if (outboundBlockedFor(await ctx.db.get(row.organizationId), Date.now())) {
+    const nowTs = Date.now();
+    if (outboundBlockedFor(await ctx.db.get(row.organizationId), nowTs)) {
+      const heldSince = row.heldSince ?? nowTs;
+      // Teto: 30 dias retida em modo leitura e a agendada expira (o loop de 6 h para).
+      if (nowTs - heldSince > READ_ONLY_HOLD_MAX_MS) {
+        await expireScheduled(ctx, row, nowTs);
+        return null;
+      }
       const fnId = await ctx.scheduler.runAfter(READ_ONLY_RECHECK_MS, internal.scheduledMessages.deliver, {
         scheduledMessageId: args.scheduledMessageId,
       });
-      await ctx.db.patch(args.scheduledMessageId, { scheduledFunctionId: fnId as string });
+      await ctx.db.patch(args.scheduledMessageId, { scheduledFunctionId: fnId as string, heldSince });
+      return null;
+    }
+    // Voltou o plano: o que ficou retido e venceu há mais de 24 h NÃO sai (a conversa já
+    // seguiu sem ele). Mensagem fora do contexto é pior que mensagem perdida, e vira audit.
+    if (row.heldSince !== undefined && nowTs - row.scheduledAt > READ_ONLY_STALE_MS) {
+      await expireScheduled(ctx, row, nowTs);
       return null;
     }
 

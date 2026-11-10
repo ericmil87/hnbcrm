@@ -60,7 +60,7 @@ describe("cadastro em teste (B7a)", () => {
     expect(resolveEntitlements(org, NOW + 31 * DAY)).toMatchObject({ aiAllowed: false, outboundAllowed: false });
   });
 
-  test("1 teste por usuário: a 2ª org herda o MESMO trialEndsAt (não ganha 30 dias novos) e não é bloqueada", async () => {
+  test("1 teste por usuário: a 2ª org herda o MESMO trialEndsAt (sem 30 dias novos); se já venceu, nasce em modo leitura (liberar por op)", async () => {
     vi.stubEnv("BILLING_TRIAL_ON_SIGNUP", "true");
     const u = await mkUser("d@acme.com.br");
     const first = await as(u).mutation(api.organizations.createOrganization, { name: "D1", slug: "d1" });
