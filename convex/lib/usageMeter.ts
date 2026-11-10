@@ -7,6 +7,7 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { monthKeyUtc } from "./aiSpend";
+import { maybeNotifyCampaignUsage } from "./billingNotify";
 
 /**
  * Conta 1 envio de campanha no mês de `now`, UMA vez por destinatário: o retry
@@ -34,15 +35,19 @@ export async function bumpCampaignSends(
       q.eq("organizationId", args.organizationId).eq("month", month)
     )
     .unique();
+  let meterId: Id<"orgUsageMonthly">;
   if (row) {
+    meterId = row._id;
     await ctx.db.patch(row._id, { campaignSends: row.campaignSends + 1, updatedAt: args.now });
   } else {
-    await ctx.db.insert("orgUsageMonthly", {
+    meterId = await ctx.db.insert("orgUsageMonthly", {
       organizationId: args.organizationId,
       month,
       campaignSends: 1,
       updatedAt: args.now,
     });
   }
+  // B4: avisos de 80%/100% da franquia de envios (idempotentes; so org com plano).
+  await maybeNotifyCampaignUsage(ctx, { organizationId: args.organizationId, month, now: args.now, meterId });
   return true;
 }

@@ -98,6 +98,12 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   // v0.69 — gasto de IA do mês: aviso (80%) / teto atingido.
   ai_spend_warning: Gauge,
   ai_spend_reached: Gauge,
+  // B4 — avisos de plano (franquia, excedente, teste, so leitura).
+  plan_usage_warning: Gauge,
+  plan_usage_reached: Gauge,
+  plan_overage_cap_reached: Gauge,
+  trial_ending: Gauge,
+  plan_read_only: Gauge,
   // B2 — lead atribuído a você.
   lead_assigned: UserCheck,
 };

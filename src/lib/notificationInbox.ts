@@ -117,6 +117,12 @@ export function notificationHref(n: InboxNotification): string | null {
     case "ai_spend_warning":
     case "ai_spend_reached":
       return `${TAB_ROUTES.settings}?secao=ai-usage`;
+    case "plan_usage_warning":
+    case "plan_usage_reached":
+    case "plan_overage_cap_reached":
+    case "trial_ending":
+    case "plan_read_only":
+      return `${TAB_ROUTES.settings}?secao=ai-usage`;
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;

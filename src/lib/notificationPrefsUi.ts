@@ -42,6 +42,7 @@ export const EMAIL_FLAGS: ReadonlySet<string> = new Set([
   "groupPostPending",
   "groupPostFailed",
   "aiSpendAlert",
+  "planAlert",
   "channelSessionLost",
 ]);
 
@@ -70,6 +71,7 @@ export const FLAG_COPY: Record<
   campaignPaused: { label: "Campanha pausada por segurança", desc: "Quando um limite ou sinal de risco pausa uma campanha" },
   channelSessionLost: { label: "Canal desconectado", desc: "Quando um canal conectado perde a conexão" },
   aiSpendAlert: { label: "Gasto de IA do mês", desc: "Para administradores: perto do teto mensal ou ao atingi-lo" },
+  planAlert: { label: "Avisos do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 

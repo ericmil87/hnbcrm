@@ -588,6 +588,8 @@ export function buildTemplate(
       return buildAiSpendAlertTemplate(data as any);
     case "channelSessionLost":
       return buildChannelSessionLostTemplate(data as any);
+    case "planAlert":
+      return buildPlanAlertTemplate(data as any);
     default:
       // Fail-closed: um typo de eventType virava um e-mail vazio ("Evento: x")
       // entregue ao cliente. `dispatchNotification` captura e loga.
@@ -708,6 +710,28 @@ export function buildAiSpendAlertTemplate(data: {
         ${paragraph(consequence)}
         ${paragraph(`<em style="color: ${TEXT_SECONDARY};">Valores aproximados: custo estimado em dólar convertido pela cotação configurada.</em>`)}
         ${ctaButton("Ver uso e teto", settingsUrl)}
+      `,
+    }),
+  };
+}
+
+/** Avisos de plano (B4): o texto vem pronto do `notificationCopy` (mesmo do sino). */
+export function buildPlanAlertTemplate(data: {
+  orgName: string;
+  title: string;
+  body?: string;
+  appUrl?: string;
+}): TemplateResult {
+  const appUrl = data.appUrl || resolveAppUrl();
+  return {
+    subject: `${line(data.title)} (${line(data.orgName)})`,
+    html: baseTemplate({
+      preheader: `${escapeHtml(data.orgName)}: ${escapeHtml(data.title)}`,
+      appUrl,
+      content: `
+        ${heading(escapeHtml(data.title))}
+        ${data.body ? paragraph(escapeHtml(data.body)) : ""}
+        ${ctaButton("Ver uso e plano", `${appUrl}/app/configuracoes?secao=ai-usage`)}
       `,
     }),
   };

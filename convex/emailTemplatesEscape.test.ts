@@ -23,6 +23,7 @@ const CASES: Record<string, Record<string, unknown>> = {
   groupPostPending: { postName: EVIL, postId: EVIL, groups: EVIL, scheduledFor: EVIL, text: EVIL, appUrl: "https://app.test" },
   groupPostFailed: { postName: EVIL, postId: EVIL, reason: EVIL, appUrl: "https://app.test" },
   aiSpendAlert: { level: "warn", orgName: EVIL, month: EVIL, costBrl: EVIL, capBrl: EVIL, pct: 80, mode: "warn", appUrl: "https://app.test" },
+  planAlert: { orgName: EVIL, title: EVIL, body: EVIL, appUrl: "https://app.test" },
   channelSessionLost: { orgName: EVIL, channelName: EVIL, phoneDisplay: EVIL, state: EVIL, detail: EVIL },
   channelSessionLostMeta: { orgName: EVIL, channelName: EVIL, state: EVIL, detail: EVIL, provider: "meta_messaging" },
 };

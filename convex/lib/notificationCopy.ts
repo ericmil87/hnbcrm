@@ -68,7 +68,12 @@ export type CopyInput =
   | { type: "ai_spend_warning"; pct: number; costBrl: string; capBrl: string; month: string }
   | { type: "ai_spend_reached"; costBrl: string; capBrl: string; blockMode: boolean }
   | { type: "new_message"; contactName?: string; count: number; preview?: string }
-  | { type: "lead_assigned"; leadTitle: string; actorName?: string };
+  | { type: "lead_assigned"; leadTitle: string; actorName?: string }
+  | { type: "plan_usage_warning"; meter: "ai" | "campaign"; pct: number; month: string }
+  | { type: "plan_usage_reached"; meter: "ai" | "campaign"; overageEnabled: boolean }
+  | { type: "plan_overage_cap_reached"; capBrl: string }
+  | { type: "trial_ending"; daysLeft: number; endsAt: string }
+  | { type: "plan_read_only" };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -414,6 +419,38 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         body: bodyOf(input.preview),
       };
     }
+    case "plan_usage_warning":
+      return {
+        title: `${input.meter === "ai" ? "Atendimentos IA" : "Envios de campanha"} em ${Math.round(input.pct)}% da franquia do mês`,
+        body: `Em ${input.month} você já usou ${Math.round(input.pct)}% da franquia do plano. Nada muda por enquanto.`,
+      };
+    case "plan_usage_reached":
+      return input.meter === "ai"
+        ? {
+            title: "Franquia de atendimentos IA do mês atingida",
+            body: input.overageEnabled
+              ? "Os próximos contatos novos usam crédito ou excedente, dentro do teto que você definiu."
+              : "Os próximos contatos novos recebem rascunho para a equipe enviar. Ligue o excedente em Configurações → Uso e fatura.",
+          }
+        : {
+            title: "Franquia de envios de campanha do mês atingida",
+            body: "As campanhas pausam sozinhas um pouco acima da franquia e retomam no próximo mês.",
+          };
+    case "plan_overage_cap_reached":
+      return {
+        title: "Teto do excedente atingido",
+        body: `O teto de ${input.capBrl} em excedente do mês acabou: contatos novos recebem rascunho para a equipe enviar.`,
+      };
+    case "trial_ending":
+      return {
+        title: input.daysLeft <= 1 ? "Seu teste termina amanhã" : `Seu teste termina em ${input.daysLeft} dias`,
+        body: `O teste grátis acaba em ${input.endsAt}. Depois disso a conta fica em modo só leitura até você contratar um plano.`,
+      };
+    case "plan_read_only":
+      return {
+        title: "Conta em modo só leitura",
+        body: "A IA e os envios estão pausados. Você continua vendo seus dados e pode exportá-los. Contrate um plano para voltar.",
+      };
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -447,4 +484,9 @@ export const COPY_TYPES = [
   "ai_spend_reached",
   "new_message",
   "lead_assigned",
+  "plan_usage_warning",
+  "plan_usage_reached",
+  "plan_overage_cap_reached",
+  "trial_ending",
+  "plan_read_only",
 ] as const satisfies readonly CopyInput["type"][];

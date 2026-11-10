@@ -167,6 +167,15 @@ export const orgBillingValidator = v.object({
   ),
   legacyNoticeAt: v.optional(v.number()),
   legacyUntil: v.optional(v.number()),
+  // B4: nivel de uso do mes (so nos cruzamentos de 80%/100%); `month` "AAAA-MM" UTC. O front
+  // compara com o mes corrente (a query nao le o relogio).
+  usageAlert: v.optional(
+    v.object({
+      month: v.string(),
+      ai: v.optional(v.union(v.literal("warn80"), v.literal("limit100"))),
+      campaign: v.optional(v.union(v.literal("warn80"), v.literal("limit100"))),
+    })
+  ),
   trialUsedByUserId: v.optional(v.id("users")),
   updatedAt: v.number(),
 });
@@ -2409,7 +2418,14 @@ const applicationTables = {
       // quem está atendendo com a IA fora do comando. `data.messageIds`.
       v.literal("new_message"),
       // B2 — lead atribuído a você (antes só e-mail). `data.leadId`.
-      v.literal("lead_assigned")
+      v.literal("lead_assigned"),
+      // Billing B4 — avisos de plano (admins, 1x por limiar/mes): 80% e 100% da franquia
+      // (IA ou envios de campanha), teto do excedente, fim do teste e modo so leitura.
+      v.literal("plan_usage_warning"),
+      v.literal("plan_usage_reached"),
+      v.literal("plan_overage_cap_reached"),
+      v.literal("trial_ending"),
+      v.literal("plan_read_only")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2636,6 +2652,8 @@ const applicationTables = {
     channelSessionLost: v.optional(v.boolean()),
     // v0.69 — aviso/teto de gasto de IA do mês (sino + e-mail `aiSpendAlert`).
     aiSpendAlert: v.optional(v.boolean()),
+    // Billing B4 — avisos de plano (franquia, excedente, teste); sino + e-mail `planAlert`.
+    planAlert: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),

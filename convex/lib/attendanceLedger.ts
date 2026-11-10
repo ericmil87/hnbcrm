@@ -17,6 +17,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { monthKeyUtc } from "./aiSpend";
 import { resolveEntitlements } from "./entitlements";
 import { firstValidCredit } from "./attendanceUsage";
+import { maybeNotifyPlanUsage } from "./billingNotify";
 
 export type AttendanceClass = Doc<"aiAttendances">["billing"];
 export type AttendanceOrigin = NonNullable<Doc<"aiAttendances">["origin"]>;
@@ -192,7 +193,7 @@ export async function recordCommittedAttendance(
   const run = await ctx.db.get(args.agentRunId);
   const item = args.queueItemId ? await ctx.db.get(args.queueItemId) : null;
   const humanRequest = isHumanRequestItem(item);
-  return await recordAttendance(ctx, {
+  const result = await recordAttendance(ctx, {
     organizationId: args.conversation.organizationId,
     month: monthKeyUtc(args.now),
     contactKey: contactKeyOf(args.lead),
@@ -205,4 +206,9 @@ export async function recordCommittedAttendance(
     // voo no deploy): o contador antigo já a contou no claim, então só grava a linha.
     mode: run?.billingClass === undefined ? "backfill" : "live",
   });
+  // B4: avisos de 80%/100% e do teto do excedente (idempotentes; so org com plano).
+  if (result.inserted && run?.billingClass !== undefined && result.billing !== "legacy") {
+    await maybeNotifyPlanUsage(ctx, { organizationId: args.conversation.organizationId, now: args.now });
+  }
+  return result;
 }

@@ -37,6 +37,11 @@ export const NOTIFICATION_TYPE_GROUP: Record<string, NotificationGroup> = {
   channel_session_lost: "sistema",
   ai_spend_warning: "sistema",
   ai_spend_reached: "sistema",
+  plan_usage_warning: "sistema",
+  plan_usage_reached: "sistema",
+  plan_overage_cap_reached: "sistema",
+  trial_ending: "sistema",
+  plan_read_only: "sistema",
 };
 
 /** Grupo do tipo; tipo desconhecido (versão futura) cai em "sistema". */

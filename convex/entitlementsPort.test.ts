@@ -185,11 +185,11 @@ describe("porta única de escrita do plano", () => {
     expect(violations, "orgSubscriptions só é escrita por lib/entitlementsOps.ts").toEqual([]);
   });
 
-  test('audit:"none" só no backfill (opsBilling) e na própria porta', () => {
+  test('audit:"none" só no backfill (opsBilling), no nível de uso (billingNotify) e na própria porta', () => {
     const offenders: string[] = [];
     for (const abs of walk(CONVEX_DIR)) {
       const r = rel(abs);
-      if (PORT_FILES.has(r)) continue;
+      if (PORT_FILES.has(r) || r === "lib/billingNotify.ts") continue;
       if (/audit:\s*["']none["']/.test(readFileSync(abs, "utf8"))) offenders.push(r);
     }
     expect(offenders).toEqual([]);
