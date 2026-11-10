@@ -189,6 +189,20 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     },
   ],
   [
+    { type: "plan_payment_overdue", dueDate: "05/12/2026" },
+    {
+      title: "Pagamento em atraso",
+      body: "A fatura com vencimento em 05/12/2026 não foi paga. A conta segue funcionando por alguns dias; regularize pelo link da fatura em Configurações › Uso e fatura.",
+    },
+  ],
+  [
+    { type: "plan_payment_overdue" },
+    {
+      title: "Pagamento em atraso",
+      body: "Há uma fatura vencida. A conta segue funcionando por alguns dias; regularize pelo link da fatura em Configurações › Uso e fatura.",
+    },
+  ],
+  [
     { type: "new_message", contactName: "Ana", count: 1, preview: "Oi!" },
     { title: "Mensagem nova de Ana", body: "Oi!" },
   ],

@@ -68,6 +68,7 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "plan_overage_cap_reached",
   "trial_ending",
   "plan_read_only",
+  "plan_payment_overdue",
 ]);
 
 export function pushTemplateOf(type: NotificationType): PushTemplate | null {

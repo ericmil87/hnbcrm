@@ -126,6 +126,7 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   plan_overage_cap_reached: "generic",
   trial_ending: "generic",
   plan_read_only: "generic",
+  plan_payment_overdue: "generic",
 };
 
 /** Types deliberately NOT sent to Telegram (none in F1; add with a reason). */
@@ -809,6 +810,7 @@ const PLAN_TYPES: ReadonlySet<string> = new Set([
   "plan_overage_cap_reached",
   "trial_ending",
   "plan_read_only",
+  "plan_payment_overdue",
 ]);
 
 const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
@@ -820,6 +822,7 @@ const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
   plan_overage_cap_reached: "📊",
   trial_ending: "⏳",
   plan_read_only: "🔒",
+  plan_payment_overdue: "💳",
   task_comment_mention: "💬",
   campaign_completed: "📣",
   campaign_paused: "⏸",

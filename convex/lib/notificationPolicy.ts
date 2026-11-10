@@ -69,6 +69,7 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   plan_overage_cap_reached: "planAlert",
   trial_ending: "planAlert",
   plan_read_only: "planAlert",
+  plan_payment_overdue: "planAlert",
 };
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */

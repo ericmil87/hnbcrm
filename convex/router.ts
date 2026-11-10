@@ -34,6 +34,7 @@ import {
 } from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
 import { telegramWebhook } from "./telegramHttp";
+import { asaasWebhook } from "./billingHttp";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
 
 const http = httpRouter();
@@ -4368,6 +4369,8 @@ http.route({ path: "/meta/deletion-status", method: "GET", handler: metaDeletion
 // ---- Telegram (Copiloto da equipe, F0): bot da plataforma. secret_token no header, fora de /api/v1.
 // O segmento `platform` vira `<botKey>` quando houver bots por org (F6).
 http.route({ path: "/webhooks/telegram/platform", method: "POST", handler: telegramWebhook });
+// Cobrança (Asaas): autenticado pelo token do emissor (header `asaas-access-token`), fora do /api/v1.
+http.route({ path: "/webhooks/asaas", method: "POST", handler: asaasWebhook });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

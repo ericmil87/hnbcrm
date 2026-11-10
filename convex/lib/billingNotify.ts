@@ -28,7 +28,8 @@ export type BillingNoticeType =
   | "plan_usage_reached"
   | "plan_overage_cap_reached"
   | "trial_ending"
-  | "plan_read_only";
+  | "plan_read_only"
+  | "plan_payment_overdue";
 
 export type BillingNoticeData = {
   meter?: "ai" | "campaign";
@@ -42,6 +43,8 @@ export type BillingNoticeData = {
   endsAt?: string;
   /** `plan_read_only`: por que a conta entrou em so leitura (`endsAt` = fim do teste, opcional). */
   reason?: "trial_ended" | "manual";
+  /** `plan_payment_overdue`: vencimento da fatura em atraso (texto ja formatado). */
+  dueDate?: string;
 };
 
 /** Humanos ativos que administram a org (`settings:manage`). Cap 25. */
@@ -84,6 +87,8 @@ function copyFor(type: BillingNoticeType, d: BillingNoticeData): NotificationCop
       return notificationCopy({ type, daysLeft: d.daysLeft ?? 1, endsAt: d.endsAt ?? "" });
     case "plan_read_only":
       return notificationCopy({ type, reason: d.reason, endsAt: d.endsAt });
+    case "plan_payment_overdue":
+      return notificationCopy({ type, dueDate: d.dueDate });
   }
 }
 

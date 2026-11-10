@@ -29,6 +29,7 @@ import type * as authHelpers from "../authHelpers.js";
 import type * as billing from "../billing.js";
 import type * as billingAsaas from "../billingAsaas.js";
 import type * as billingCron from "../billingCron.js";
+import type * as billingHttp from "../billingHttp.js";
 import type * as boards from "../boards.js";
 import type * as bridge from "../bridge.js";
 import type * as calendar from "../calendar.js";
@@ -350,6 +351,7 @@ declare const fullApi: ApiFromModules<{
   billing: typeof billing;
   billingAsaas: typeof billingAsaas;
   billingCron: typeof billingCron;
+  billingHttp: typeof billingHttp;
   boards: typeof boards;
   bridge: typeof bridge;
   calendar: typeof calendar;
