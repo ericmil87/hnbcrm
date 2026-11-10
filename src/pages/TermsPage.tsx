@@ -148,7 +148,9 @@ export function TermsPage() {
                 })}
               </ul>
               <p>
-                Canal extra: {brl(EXTRA_CHANNEL_BRL)} por mês. O add-on Grupos do plano Essencial custa{" "}
+                Canal extra: {brl(EXTRA_CHANNEL_BRL)} por mês cada. O plano {PLANS.essencial.label} comporta
+                até {PLANS.essencial.maxExtraChannels} canais extras e o {PLANS.profissional.label}, até{" "}
+                {PLANS.profissional.maxExtraChannels}; para mais canais, é preciso um plano maior. O add-on Grupos do plano Essencial custa{" "}
                 {brl(GROUPS_ADDON_BRL)} por mês. O pacote de {formatCount(PACK.attendances)} atendimentos
                 é contratado falando com a gente. As mudanças na tabela não alteram os contratos em curso.
               </p>

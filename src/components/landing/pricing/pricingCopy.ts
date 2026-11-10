@@ -52,12 +52,17 @@ export const DEFINITIONS: readonly { term: string; text: string }[] = [
   { term: "Unidade", text: "Uma filial, casa ou hotel da rede, no plano Empresa." },
 ];
 
+/** "Essencial: até 2 canais extras; Profissional: até 3." (do catálogo; Escala e Empresa sem teto). */
+export function extraChannelsLimitText(): string {
+  return `${PLANS.essencial.label}: até ${PLANS.essencial.maxExtraChannels} canais extras; ${PLANS.profissional.label}: até ${PLANS.profissional.maxExtraChannels}. ${PLANS.escala.label} e ${PLANS.empresa.label}: sem teto.`;
+}
+
 export function addonLines(): { title: string; price: string; detail: string }[] {
   return [
     {
       title: "Canal extra",
       price: `${formatMoney(EXTRA_CHANNEL_BRL, "BRL", { fractionDigits: 0 })}/mês`,
-      detail: "Para passar da quantidade de canais do plano.",
+      detail: extraChannelsLimitText(),
     },
     {
       title: "Add-on Grupos (só Essencial)",
