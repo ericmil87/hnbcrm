@@ -112,6 +112,50 @@ export function checkoutSummary(args: {
   };
 }
 
+export interface SummaryLine {
+  id: string;
+  label: string;
+  /** Valor mensal da linha (a cobrança do ciclo é a soma × meses cobrados). */
+  amountBrl: number;
+}
+
+/** Forma do retorno de `api.billing.previewCheckout`. */
+export interface PreviewLike {
+  chargeBrl: number | null;
+  listBrl: number | null;
+  monthlyBrl: number | null;
+  priceSource: "price_lock" | "table" | null;
+  lines: SummaryLine[];
+  cycleMonths: number;
+  refusal?: string;
+}
+
+export interface ServerSummary {
+  summary: CheckoutSummary | null;
+  lines: SummaryLine[];
+  refusal: string | null;
+}
+
+/** Prévia do servidor -> o que o modal mostra (o servidor é a fonte do valor). */
+export function summaryFromPreview(p: PreviewLike): ServerSummary {
+  if (p.refusal !== undefined || p.chargeBrl === null || p.monthlyBrl === null || p.listBrl === null) {
+    return { summary: null, lines: [], refusal: p.refusal ?? null };
+  }
+  const months = p.cycleMonths > 0 ? p.cycleMonths : 1;
+  const listMonthlyBrl = Math.round((p.listBrl / months) * 100) / 100;
+  return {
+    summary: {
+      monthlyBrl: p.monthlyBrl,
+      listMonthlyBrl,
+      chargeBrl: p.chargeBrl,
+      yearly: months > 1 ? { paidMonths: months, freeMonths: 12 - months } : null,
+      lockApplied: p.priceSource === "price_lock",
+    },
+    lines: p.lines,
+    refusal: null,
+  };
+}
+
 /** Esta conta pode abrir o checkout? (Ativo/atrasado: trocar de plano é com a gente, o servidor recusa.) */
 export function canStartCheckout(mode: string): boolean {
   return mode === "trial" || mode === "read_only" || mode === "canceled";

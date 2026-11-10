@@ -12,6 +12,7 @@ import {
   type CheckoutForm,
   type CheckoutPlan,
   type CheckoutSummary,
+  type SummaryLine,
 } from "@/lib/checkoutForm";
 import { formatMoney } from "@/lib/format";
 import { LEGAL_ENTITY } from "@/lib/legalEntity";
@@ -38,6 +39,10 @@ export interface CheckoutModalViewProps {
   showErrors: boolean;
   summary: CheckoutSummary | null;
   /** O valor veio do servidor (`previewCheckout`); `false` = estimativa local de exibição. */
+  /** Linhas mensais do resumo (servidor). */
+  summaryLines: SummaryLine[];
+  /** Recusa da prévia (ex.: plano ativo): mostrada como aviso e trava o envio. */
+  refusal: string | null;
   summaryFromServer: boolean;
   /** Consultando o servidor (o formulário mudou): mostra "Calculando…". */
   summaryLoading: boolean;
@@ -181,6 +186,16 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
                 <span>{p.form.cycle === "yearly" ? "Cobrança anual" : "Cobrança mensal"}</span>
                 <strong>{brl(p.summary.chargeBrl)}</strong>
               </p>
+              {p.summaryLines.length > 0 && (
+                <ul className="mb-1 mt-1 space-y-0.5 text-caption text-text-muted tabular-nums">
+                  {p.summaryLines.map((l) => (
+                    <li key={l.id} className="flex items-center justify-between gap-3">
+                      <span>{l.label}</span>
+                      <span>{brl(l.amountBrl)}/mês</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
               {p.summary.yearly && (
                 <p className="text-caption text-text-muted tabular-nums">
                   Você paga {p.summary.yearly.paidMonths} meses e usa 12 ({p.summary.yearly.freeMonths} grátis). Equivale a{" "}
@@ -202,6 +217,11 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             </div>
           )}
 
+          {p.refusal && (
+            <p role="status" className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 text-sm text-text-primary">
+              {p.refusal}
+            </p>
+          )}
           {p.notice && (
             <p role="status" className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 text-sm text-text-primary">
               {p.notice}
@@ -218,7 +238,7 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             <Button type="button" variant="secondary" className="flex-1" onClick={p.onClose}>
               Cancelar
             </Button>
-            <Button type="submit" className="flex-1" loading={p.submitting}>
+            <Button type="submit" className="flex-1" loading={p.submitting} disabled={p.refusal !== null}>
               Ir para o pagamento
             </Button>
           </div>

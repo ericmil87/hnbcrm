@@ -15,6 +15,8 @@ function props(over: Partial<CheckoutModalViewProps> = {}): CheckoutModalViewPro
     errors: validateCheckoutForm(form),
     showErrors: false,
     summary: checkoutSummary({ plan: form.plan, cycle: form.cycle, groupsAddon: false, now: 1 }),
+    summaryLines: [],
+    refusal: null,
     summaryFromServer: false,
     summaryLoading: false,
     submitting: false,
@@ -77,6 +79,26 @@ describe("CheckoutModalView", () => {
     expect(screen.getByText(/R\$\s*345/)).toBeTruthy();
     expect(screen.getByText("Valor calculado pelo servidor.")).toBeTruthy();
     expect(screen.getByText(/Preço combinado aplicado \(tabela: R\$\s*497/)).toBeTruthy();
+  });
+
+  it("linhas do servidor no resumo e recusa trava o envio", () => {
+    const { rerender } = render(
+      <CheckoutModalView
+        {...props({
+          summaryFromServer: true,
+          summaryLines: [
+            { id: "plan", label: "Plano Essencial", amountBrl: 197 },
+            { id: "extra_channels", label: "Canais extras", amountBrl: 158 },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Canais extras")).toBeTruthy();
+    expect(screen.getByText(/R\$\s*158\/mês/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ir para o pagamento" }).hasAttribute("disabled")).toBe(false);
+    rerender(<CheckoutModalView {...props({ summary: null, refusal: "Sua conta já tem um plano ativo." })} />);
+    expect(screen.getByText("Sua conta já tem um plano ativo.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ir para o pagamento" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("enquanto consulta o servidor mostra Calculando…", () => {

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { useAction } from "convex/react";
+import { useAction, useQuery } from "convex/react";
+import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { Button, buttonClassName } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -7,6 +8,7 @@ import {
   EMPTY_CHECKOUT_FORM,
   canStartCheckout,
   isPaymentProcessingMessage,
+  summaryFromPreview,
   priceSourceNote,
   checkoutButtonLabel,
   checkoutSummary,
@@ -50,6 +52,23 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
   const [priceNote, setPriceNote] = useState<string | null>(null);
 
   const errors = useMemo(() => validateCheckoutForm(form), [form]);
+  // Valor do servidor (previewCheckout): só depende de plano/ciclo/add-on, não do que se digita.
+  // O cálculo local fica como estimativa de exibição enquanto carrega.
+  const previewArgs = useMemo(
+    () => ({ plan: form.plan, cycle: form.cycle, groupsAddon: form.plan === "essencial" && form.groupsAddon }),
+    [form.plan, form.cycle, form.groupsAddon],
+  );
+  const settledArgs = useDebouncedValue(previewArgs, 250);
+  const preview = useQuery(
+    api.billing.previewCheckout,
+    open && organizationId ? { organizationId, ...settledArgs, now } : "skip",
+  );
+  const previewLoading = open && (settledArgs !== previewArgs || preview === undefined);
+  const fromServer = preview !== undefined && settledArgs === previewArgs;
+  const server = useMemo(
+    () => (preview !== undefined ? summaryFromPreview(preview) : { summary: null, lines: [], refusal: null }),
+    [preview],
+  );
   const summary = useMemo(
     () => checkoutSummary({ plan: form.plan, cycle: form.cycle, groupsAddon: form.groupsAddon, priceLock, now }),
     [form.plan, form.cycle, form.groupsAddon, priceLock, now],
@@ -115,9 +134,11 @@ export function PlanCheckout({ organizationId, mode, hasSubscription, planLabel,
         onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
         errors={errors}
         showErrors={showErrors}
-        summary={summary}
-        summaryFromServer={false}
-        summaryLoading={false}
+        summary={fromServer ? server.summary : summary}
+        summaryLines={server.lines}
+        refusal={server.refusal}
+        summaryFromServer={fromServer}
+        summaryLoading={previewLoading}
         submitting={submitting}
         serverError={serverError}
         notice={notice}
