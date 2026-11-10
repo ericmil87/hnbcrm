@@ -12,6 +12,8 @@ import schema from "./schema";
 import { spendBlockedNow } from "./aiSpend";
 import { scheduleOutboundDispatch } from "./lib/outboundDispatch";
 import { READ_ONLY_SEND_MESSAGE } from "./lib/readOnly";
+import { releaseFollowUpFromQueue } from "./lib/followUpOps";
+import { acceptAiDraftCore } from "./attendant";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 let t: TestConvex<typeof schema>;
@@ -272,5 +274,132 @@ describe("mensagens agendadas em modo leitura", () => {
     await setBilling(s.organizationId, ACTIVE);
     await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id });
     expect((await t.run((ctx) => ctx.db.get(id)))?.status).toBe("sent");
+  });
+});
+
+describe("revisão do B7: canais que não despacham, follow-up, agendadas vencidas, encaminhar e aceitar", () => {
+  test("lead REST em org canceled mantém o texto do cliente (webchat não despacha: sem recusa)", async () => {
+    const s = await seed(CANCELED);
+    const conversationId = await t.mutation(internal.conversations.internalCreateConversation, {
+      organizationId: s.organizationId, leadId: s.leadId, channel: "webchat",
+    });
+    // É o ramo legado de `POST /inbound/lead`: o texto do formulário entra como mensagem não interna.
+    const id = await t.mutation(internal.conversations.internalSendMessage, {
+      conversationId, content: "Quero um orçamento", isInternal: false, teamMemberId: s.adminId,
+    });
+    const msg = await t.run((ctx) => ctx.db.get(id));
+    expect(msg).toMatchObject({ content: "Quero um orçamento" });
+    expect(msg?.deliveryStatus).not.toBe("failed");
+    // O mesmo texto num canal que despacha (WhatsApp) segue recusado.
+    await expect(
+      t.mutation(internal.conversations.internalSendMessage, { conversationId: s.conversationId, content: "Oi", teamMemberId: s.adminId })
+    ).rejects.toThrow(READ_ONLY_SEND_MESSAGE);
+  });
+
+  test("follow-up em org bloqueada CANCELA (sem needs_human nem tarefa de gente)", async () => {
+    const s = await seed(READ_ONLY);
+    const result = await t.run(async (ctx) => {
+      const now = Date.now();
+      const taskId = await ctx.db.insert("tasks", {
+        organizationId: s.organizationId, title: "Retomar contato", type: "task", status: "pending", priority: "medium",
+        createdBy: s.adminId, createdAt: now, updatedAt: now,
+      } as never);
+      const followUpId = await ctx.db.insert("aiFollowUps", {
+        organizationId: s.organizationId, taskId, conversationId: s.conversationId, leadId: s.leadId, agentMemberId: s.adminId,
+        status: "queued", dueAt: now, chainIndex: 0, deferrals: 0, createdAt: now, updatedAt: now,
+      } as never);
+      const queueItemId = await ctx.db.insert("aiReplyQueue", {
+        organizationId: s.organizationId, conversationId: s.conversationId, triggerMessageId: await ctx.db.insert("messages", {
+          organizationId: s.organizationId, conversationId: s.conversationId, direction: "inbound", senderType: "contact",
+          content: "x", contentType: "text", isInternal: false, createdAt: now,
+        }),
+        agentMemberId: s.adminId, status: "pending", attempts: 0, nextAttemptAt: now, origin: "follow_up", followUpId, createdAt: now, updatedAt: now,
+      } as never);
+      const item = (await ctx.db.get(queueItemId))!;
+      await releaseFollowUpFromQueue(ctx, item, "plano_inativo");
+      return await ctx.db.get(followUpId);
+    });
+    expect(result?.status).toBe("canceled");
+    expect(result?.reasonCode).toBe("plano_inativo");
+    expect(result?.status).not.toBe("needs_human");
+  });
+
+  async function scheduledRow(s: Seed, fields: Record<string, unknown>) {
+    return await t.run((ctx) =>
+      ctx.db.insert("scheduledMessages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, content: "Lembrete", scheduledAt: Date.now() - 1000,
+        status: "pending", createdBy: s.adminId, createdAt: Date.now() - 2000, ...fields,
+      } as never)
+    );
+  }
+  const DAY = 86_400_000;
+
+  test("agendada retida e vencida há mais de 24 h NÃO sai ao voltar o plano: expira com motivo e audit", async () => {
+    const s = await seed(READ_ONLY);
+    const id = await scheduledRow(s, { scheduledAt: NOW - 2 * DAY });
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id }); // retida
+    expect((await t.run((ctx) => ctx.db.get(id)))?.heldSince).toBe(NOW);
+    await setBilling(s.organizationId, ACTIVE);
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row).toMatchObject({ status: "canceled", error: "Expirou durante o modo leitura" });
+    expect(await t.run((ctx) => ctx.db.query("messages").collect())).toHaveLength(0);
+    const audits = await t.run((ctx) => ctx.db.query("auditLogs").collect());
+    expect(audits.some((a) => a.entityType === "scheduledMessage" && a.metadata?.reason === "read_only_expired")).toBe(true);
+  });
+
+  test("agendada retida há menos de 24 h de atraso sai normalmente quando o plano volta; a não retida segue o fluxo antigo", async () => {
+    const s = await seed(READ_ONLY);
+    const held = await scheduledRow(s, { scheduledAt: NOW - 3 * 3_600_000, heldSince: NOW - 3 * 3_600_000 });
+    await setBilling(s.organizationId, ACTIVE);
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: held });
+    expect((await t.run((ctx) => ctx.db.get(held)))?.status).toBe("sent");
+    // Sem `heldSince` (nunca foi retida, ex.: re-arme pós-restore): comportamento de sempre, sem expirar.
+    const old = await scheduledRow(s, { scheduledAt: NOW - 5 * DAY });
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: old });
+    expect((await t.run((ctx) => ctx.db.get(old)))?.status).toBe("sent");
+  });
+
+  test("teto de 30 dias retida em modo leitura: expira e o loop de 6 h para", async () => {
+    const s = await seed(READ_ONLY);
+    const id = await scheduledRow(s, { scheduledAt: NOW - 40 * DAY, heldSince: NOW - 31 * DAY, scheduledFunctionId: "antigo" });
+    await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: id });
+    const row = await t.run((ctx) => ctx.db.get(id));
+    expect(row).toMatchObject({ status: "canceled", error: "Expirou durante o modo leitura" });
+    expect(row?.scheduledFunctionId).toBeUndefined();
+    // Nada novo foi agendado (o `antigo` era só um valor; o loop não rearmou).
+    const jobs = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+    expect(jobs.filter((j) => j.name.includes("scheduledMessages:deliver"))).toHaveLength(0);
+  });
+
+  test("encaminhar e aceitar rascunho da IA são envios: recusados em modo leitura", async () => {
+    const s = await seed(CANCELED);
+    const messageId = await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, direction: "inbound", senderType: "contact",
+        content: "Comprovante", contentType: "text", isInternal: false, createdAt: Date.now(),
+      })
+    );
+    await expect(
+      admin(s).mutation(api.conversations.forwardMessage, { messageId, targetConversationId: s.conversationId })
+    ).rejects.toThrow(READ_ONLY_SEND_MESSAGE);
+
+    await expect(
+      t.run(async (ctx) => {
+        const conversation = (await ctx.db.get(s.conversationId))!;
+        const member = (await ctx.db.get(s.adminId))!;
+        const draft = (await ctx.db.get(messageId))!;
+        return await acceptAiDraftCore(ctx, { draft, conversation, member });
+      })
+    ).rejects.toThrow(READ_ONLY_SEND_MESSAGE);
+  });
+
+  test("provisionar canal checa o plano ANTES de tocar o gateway (query de pré-checagem)", async () => {
+    const blocked = await seed(READ_ONLY);
+    await expect(
+      t.query(internal.channelConfigs.internalAssertPlanWritable, { organizationId: blocked.organizationId, now: NOW })
+    ).rejects.toThrow(/modo leitura/);
+    const ok = await seed(LEGACY);
+    expect(await t.query(internal.channelConfigs.internalAssertPlanWritable, { organizationId: ok.organizationId, now: NOW })).toBeNull();
   });
 });

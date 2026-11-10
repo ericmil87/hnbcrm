@@ -23,7 +23,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { scheduleWhatsappDispatch } from "./whatsappDispatch";
 import { scheduleMetaMessagingDispatch } from "./metaDispatch";
 import { maybeDivertOutboundForTranslation } from "./translationOps";
-import { READ_ONLY_SEND_MESSAGE, outboundBlockedFor } from "./readOnly";
+import { DISPATCHING_CHANNELS, READ_ONLY_SEND_MESSAGE, outboundBlockedFor } from "./readOnly";
 
 export async function scheduleOutboundDispatch(
   ctx: MutationCtx,
@@ -35,8 +35,9 @@ export async function scheduleOutboundDispatch(
   // Defesa em profundidade do modo leitura (B7): os guards dos chamadores recusam antes; se uma
   // mensagem chegou aqui (corrida, agendada, retry), ela falha COM motivo em vez de sair.
   // ANTES do desvio de tradução: nada é retido nem traduzido por conta em modo leitura.
-  const org = opts?.org !== undefined ? opts.org : await ctx.db.get(conversation.organizationId);
-  if (outboundBlockedFor(org, Date.now())) {
+  const dispatches = DISPATCHING_CHANNELS.has(conversation.channel);
+  const org = !dispatches ? null : opts?.org !== undefined ? opts.org : await ctx.db.get(conversation.organizationId);
+  if (dispatches && outboundBlockedFor(org, Date.now())) {
     const message = await ctx.db.get(messageId);
     await ctx.db.patch(messageId, {
       deliveryStatus: "failed",

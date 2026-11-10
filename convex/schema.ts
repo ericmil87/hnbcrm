@@ -2093,6 +2093,8 @@ const applicationTables = {
     scheduledFunctionId: v.optional(v.string()), // id do runAt, para cancelar
     sentMessageId: v.optional(v.id("messages")),
     error: v.optional(v.string()),
+    // B7: desde quando a agendada está retida pelo modo leitura (teto de 30 dias; depois expira).
+    heldSince: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_conversation_and_status", ["conversationId", "status"])

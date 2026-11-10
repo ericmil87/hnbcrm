@@ -7,7 +7,7 @@ import { query, mutation, internalQuery, internalMutation, MutationCtx, QueryCtx
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
-import { assertOutboundAllowed } from "./lib/readOnly";
+import { assertConversationSendAllowed, assertOutboundAllowed } from "./lib/readOnly";
 import { seesWholeInbox } from "./lib/inboxScope";
 import { batchGet } from "./lib/batchGet";
 import { buildAuditDescription } from "./lib/auditDescription";
@@ -1317,7 +1317,7 @@ export const sendMessage = mutation({
 
     const userMember = await requireAuth(ctx, conversation.organizationId);
     // Modo leitura (B7): nota interna segue liberada; envio ao cliente não.
-    if (!args.isInternal) await assertOutboundAllowed(ctx, conversation.organizationId);
+    if (!args.isInternal) await assertConversationSendAllowed(ctx, conversation);
     // Sala de grupo: as MESMAS guardas de `POST /api/v1/groups/send`
     // (acompanhado, não saímos, grupos ligados no número).
     await assertGroupConversationSendable(ctx, conversation);
@@ -1520,6 +1520,8 @@ export const forwardMessage = mutation({
       throw new Error("Não é possível encaminhar uma mensagem de grupo");
     }
 
+    // Modo leitura (B7): encaminhar é envio ao cliente.
+    await assertConversationSendAllowed(ctx, target);
     const notOnWhatsappAcked = await assertManualSendAllowed(ctx, target, args.notOnWhatsappAck, member);
     const now = Date.now();
 
@@ -1868,7 +1870,7 @@ export async function internalSendMessageCore(
   }
 
   // Modo leitura (B7): vale para o app, a REST e o Telegram (mesmo núcleo).
-  if (!args.isInternal) await assertOutboundAllowed(ctx, conversation.organizationId);
+  if (!args.isInternal) await assertConversationSendAllowed(ctx, conversation);
   // Sala de grupo: mesmas guardas do caminho do app e da rota REST de grupo.
   await assertGroupConversationSendable(ctx, conversation);
   const notOnWhatsappAcked = args.isInternal
