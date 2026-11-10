@@ -255,6 +255,23 @@ describe("medição: portas únicas de escrita (B2)", () => {
   });
 });
 
+describe("termsAcceptances é append-only (7b)", () => {
+  test("só convex/terms.ts insere e ninguém atualiza ou apaga a tabela", () => {
+    const violations: string[] = [];
+    for (const abs of walk(CONVEX_DIR)) {
+      const r = rel(abs);
+      const src = readFileSync(abs, "utf8");
+      if (r !== "terms.ts") for (const line of findTableInserts(src, "termsAcceptances")) violations.push(`${r}:${line}`);
+      if (/termsAcceptances/.test(src) && /\.(?:patch|replace|delete)\s*\(/.test(src) && r !== "schema.ts" && r !== "lib/exportSanitize.ts") {
+        // Um arquivo que cita a tabela não pode também alterar/apagar docs (heurística conservadora).
+        violations.push(`${r}: cita termsAcceptances e usa patch/replace/delete`);
+      }
+    }
+    expect(violations).toEqual([]);
+    expect(findTableInserts(read("terms.ts"), "termsAcceptances").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("convites e exportação nunca têm gate de plano", () => {
   test("teamMembers.ts e o convite em nodeActions.ts não citam entitlements", () => {
     const team = read("teamMembers.ts");

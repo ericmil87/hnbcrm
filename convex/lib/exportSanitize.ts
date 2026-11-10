@@ -35,6 +35,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   // Billing (B1): dados comerciais da assinatura (CPF/CNPJ, e-mail de cobrança, ids do
   // provedor) e pacotes pré-pagos. Não são dados de negócio da org para restaurar.
   "orgSubscriptions",
+  // 7b: aceites dos Termos (userId, userAgent): prova de consentimento, não dado de negócio.
+  "termsAcceptances",
   "usageCredits",
   // Billing (B2): extrato de atendimentos IA (derivado de `agentRuns`) e medidor de envios.
   "aiAttendances",

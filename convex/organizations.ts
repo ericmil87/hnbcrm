@@ -6,6 +6,7 @@ import { requireAuth, requirePermission, getActiveMembership, isMembershipRevoke
 import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator, notifPresetValidator } from "./schema";
 import { initialOrgBilling } from "./lib/entitlementsOps";
+import { assertCurrentTermsVersion, recordTermsAcceptance } from "./terms";
 
 // Get user's organizations
 export const getUserOrganizations = query({
@@ -48,6 +49,8 @@ export const createOrganization = mutation({
   args: {
     name: v.string(),
     slug: v.string(),
+    // 7b: versão dos Termos que a pessoa aceitou no cadastro (caixa não pré-marcada).
+    acceptedTermsVersion: v.optional(v.string()),
   },
   returns: v.id("organizations"),
   handler: async (ctx, args) => {
@@ -56,6 +59,9 @@ export const createOrganization = mutation({
 
     // Sessão anônima legada (login anônimo removido na v0.68.1) não cria org.
     const user = await requireAccountWithEmail(ctx, userId);
+
+    // Versão errada recusa ANTES de criar qualquer coisa (front desatualizado).
+    if (args.acceptedTermsVersion !== undefined) assertCurrentTermsVersion(args.acceptedTermsVersion);
 
     // Check if slug is available
     const existing = await ctx.db
@@ -90,6 +96,10 @@ export const createOrganization = mutation({
       createdAt: now,
       updatedAt: now,
     });
+
+    if (args.acceptedTermsVersion !== undefined) {
+      await recordTermsAcceptance(ctx, { userId, version: args.acceptedTermsVersion, organizationId: orgId, now });
+    }
 
     // Create admin team member
     const teamMemberId = await ctx.db.insert("teamMembers", {
