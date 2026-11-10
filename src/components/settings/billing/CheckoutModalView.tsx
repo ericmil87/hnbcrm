@@ -1,3 +1,4 @@
+import { safeHttpsUrl } from "@/lib/checkoutForm";
 import { ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -67,9 +68,9 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
           <p className="text-sm text-text-secondary">
             A primeira fatura foi criada. Pague pela página do Asaas; o plano é liberado assim que o pagamento for confirmado.
           </p>
-          {p.invoiceUrl ? (
+          {safeHttpsUrl(p.invoiceUrl) ? (
             <a
-              href={p.invoiceUrl}
+              href={safeHttpsUrl(p.invoiceUrl) ?? undefined}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex min-h-11 items-center gap-2 rounded-full bg-brand-600 px-5 text-sm font-semibold text-white hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"

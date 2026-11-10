@@ -190,3 +190,14 @@ describe("estados e rótulos", () => {
     expect(paymentNotice(undefined)).toBeNull();
   });
 });
+
+describe("safeHttpsUrl", () => {
+  it("só aceita https", async () => {
+    const { safeHttpsUrl, openInvoiceUrl } = await import("./checkoutForm");
+    expect(safeHttpsUrl("https://www.asaas.com/i/x")).toBe("https://www.asaas.com/i/x");
+    expect(safeHttpsUrl("javascript:alert(1)")).toBeNull();
+    expect(safeHttpsUrl("http://x")).toBeNull();
+    expect(safeHttpsUrl(null)).toBeNull();
+    expect(openInvoiceUrl([{ status: "pending", invoiceUrl: "javascript:x", dueDate: 1 } as never])).toBeNull();
+  });
+});
