@@ -4,11 +4,14 @@
  * exceto o que não existe no catálogo (reembolso, reativação do bridge).
  */
 import { formatCount, formatMoney } from "@/lib/format";
+import { LEGAL_ENTITY } from "@/lib/legalEntity";
 import { EXTRA_CHANNEL_BRL, GROUPS_ADDON_BRL, PACK, PLANS, TRIAL } from "../../../../convex/lib/plans";
 
 /** Fora do catálogo; vem do documento de decisão (revisar com o jurídico). */
 export const BRIDGE_REACTIVATION_BRL = 190;
 export const REFUND_DAYS = 7;
+/** Dias de atraso a partir dos quais a conta pode ir para só leitura (decisão manual). */
+export const LATE_DAYS = 7;
 
 export const PLAN_AUDIENCE: Record<keyof typeof PLANS, string> = {
   essencial: "Corretor, terapeuta, consultório e autônomo",
@@ -63,7 +66,7 @@ export function addonLines(): { title: string; price: string; detail: string }[]
     {
       title: `Pacote de ${formatCount(PACK.attendances)} atendimentos`,
       price: formatMoney(PACK.brl, "BRL", { fractionDigits: 0 }),
-      detail: `Vale por ${PACK.months} meses. Alternativa ao excedente.`,
+      detail: `Vale por ${PACK.months} meses. Para contratar, fale com a gente.`,
     },
     {
       title: "Reativação do número por QR code",
@@ -97,16 +100,16 @@ export function faqItems(): { question: string; answer: string }[] {
     },
     {
       question: "E se eu não pagar?",
-      answer: "A conta fica em só leitura. Os dados continuam disponíveis para exportação.",
+      answer: `Avisamos por e-mail. Se o atraso passar de ${LATE_DAYS} dias, a conta pode ficar em só leitura: a equipe continua vendo tudo e exportando os dados, e as mensagens que chegam continuam sendo gravadas. Nunca apagamos dados por atraso.`,
     },
     {
       question: "Posso cancelar?",
-      answer: `Quando quiser, pelo painel. Mensal sem fidelidade. Nos ${REFUND_DAYS} primeiros dias depois de pagar, devolvemos o valor.`,
+      answer: `Quando quiser, por e-mail para ${LEGAL_ENTITY.email}, sem multa. Vale até o fim do período já pago. Nos ${REFUND_DAYS} primeiros dias depois do primeiro pagamento, devolvemos o valor.`,
     },
     {
       question: "O preço aumenta?",
       answer:
-        "O preço fica travado por 12 meses. Depois, só com aviso de 60 dias e com direito de cancelar.",
+        "O preço fica travado por 12 meses. Depois, o reajuste é anual, pela variação do IPCA, com aviso de 30 dias e direito de cancelar sem multa.",
     },
     {
       question: "Quanto custa o WhatsApp?",
@@ -117,7 +120,7 @@ export function faqItems(): { question: string; answer: string }[] {
       question: "O número pode ser banido?",
       answer: `O QR code usa uma conexão não oficial e há risco de banimento do número. Explicamos o risco antes de ligar e recomendamos a API oficial para operações críticas. Oferecemos reativação (${formatMoney(BRIDGE_REACTIVATION_BRL, "BRL", { fractionDigits: 0 })}, a primeira do ano é grátis).`,
     },
-    { question: "Emitem nota fiscal?", answer: "Sim (NFS-e), em todos os planos." },
+    { question: "Emitem nota fiscal?", answer: "Sim, emitimos nota fiscal a cada pagamento." },
   ];
 }
 

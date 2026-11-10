@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { ExternalLink } from "lucide-react";
+import { LegalIdentification } from "./LegalIdentification";
 
 const GITHUB_URL = "https://github.com/ericmil87/hnbcrm";
 const NPM_URL = "https://www.npmjs.com/package/hnbcrm-mcp";
@@ -84,6 +85,10 @@ export function Footer() {
           </div>
         </div>
 
+        <div className="mb-6">
+          <LegalIdentification />
+        </div>
+
         {/* Bottom bar */}
         <div className="pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3">
           <p className="text-sm text-text-muted">
@@ -92,6 +97,7 @@ export function Footer() {
           <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
             <InternalLink to="/termos">Termos</InternalLink>
             <InternalLink to="/privacidade">Privacidade</InternalLink>
+            <InternalLink to="/precos">Preços</InternalLink>
             <ExtLink href={`${GITHUB_URL}/blob/main/LICENSE`}>MIT License</ExtLink>
           </div>
         </div>
