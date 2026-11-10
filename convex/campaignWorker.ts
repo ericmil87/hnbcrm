@@ -161,7 +161,7 @@ export const internalResumePlanQuotaCampaigns = internalMutation({
       .take(50);
     let resumed = 0;
     for (const c of rows) {
-      if (c.updatedAt >= monthStart) continue;
+      if ((c.pausedAt ?? c.updatedAt) >= monthStart) continue;
       if (await resumePlanQuotaCampaign(ctx, c, now)) resumed += 1;
     }
     if (rows.length === 50 && resumed > 0) {

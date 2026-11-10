@@ -73,7 +73,7 @@ export type CopyInput =
   | { type: "plan_usage_reached"; meter: "ai" | "campaign"; overageEnabled: boolean }
   | { type: "plan_overage_cap_reached"; capBrl: string }
   | { type: "trial_ending"; daysLeft: number; endsAt: string }
-  | { type: "plan_read_only" };
+  | { type: "plan_read_only"; reason?: "trial_ended" | "manual"; endsAt?: string };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -447,6 +447,12 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         body: `O teste grátis acaba em ${input.endsAt}. Depois disso a conta fica em modo só leitura até você contratar um plano.`,
       };
     case "plan_read_only":
+      if (input.reason === "trial_ended") {
+        return {
+          title: "Seu teste terminou: conta em modo só leitura",
+          body: `${input.endsAt ? `O teste acabou em ${input.endsAt}. ` : ""}A IA e os envios estão pausados; você continua vendo e exportando seus dados. Contrate um plano para voltar.`,
+        };
+      }
       return {
         title: "Conta em modo só leitura",
         body: "A IA e os envios estão pausados. Você continua vendo seus dados e pode exportá-los. Contrate um plano para voltar.",

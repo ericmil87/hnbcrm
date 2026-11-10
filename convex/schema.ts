@@ -116,6 +116,10 @@ const productRoutingValidator = v.object({
 // Ausente = legacy implícito, sem gate nenhum. Só `lib/entitlementsOps` e
 // `opsBilling` escrevem (entitlementsPort.test.ts). Sem notas internas aqui:
 // o doc da org é devolvido aos membros. Docs: temp/ plano 01 §1.1.
+// Motivo estruturado da pausa automatica de campanha por plano (billing B6/B7).
+export const campaignPauseCodeValidator = v.union(v.literal("plan_quota"), v.literal("plan_read_only"));
+export type CampaignPauseCode = "plan_quota" | "plan_read_only";
+
 // Classe de cobrança de um atendimento IA (livro `aiAttendances` e `agentRuns.billingClass`).
 export const attendanceBillingValidator = v.union(
   v.literal("included"),
@@ -138,6 +142,9 @@ export const orgBillingValidator = v.object({
   ),
   trialEndsAt: v.optional(v.number()),
   periodStart: v.optional(v.number()),
+  // Soma dos baldes cobraveis do mes de `periodStart` naquele instante (ativacao/troca de plano
+  // ou inicio do teste). O uso do periodo no mes da ativacao = baldes - baseline (sem varrer o livro).
+  periodBaseline: v.optional(v.object({ month: v.string(), total: v.number() })),
   units: v.optional(v.number()),
   extraChannels: v.optional(v.number()),
   addons: v.optional(v.object({ groups: v.optional(v.boolean()) })),
@@ -167,6 +174,9 @@ export const orgBillingValidator = v.object({
   ),
   legacyNoticeAt: v.optional(v.number()),
   legacyUntil: v.optional(v.number()),
+  // Silencio de avisos de plano (decisao do dono): true = `notifyBillingAdmins` nao faz nada e
+  // `usageAlert` nao e gravado, mesmo se a org sair de legacy. So ops liga/desliga.
+  quiet: v.optional(v.boolean()),
   // B4: nivel de uso do mes (so nos cruzamentos de 80%/100%); `month` "AAAA-MM" UTC. O front
   // compara com o mes corrente (a query nao le o relogio).
   usageAlert: v.optional(
@@ -3475,7 +3485,10 @@ const applicationTables = {
     pausedReason: v.optional(v.string()),
     // Billing B6: motivo estruturado da pausa automatica ("plan_quota" = franquia de envios;
     // a retomada do dia 1 so mexe neste codigo).
-    pauseCode: v.optional(v.string()),
+    pauseCode: v.optional(campaignPauseCodeValidator),
+    // Quando a pausa atual comecou (a retomada de `plan_quota` compara com o mes; `updatedAt`
+    // muda a cada tick/edicao e nao serve).
+    pausedAt: v.optional(v.number()),
     pausedBy: v.optional(v.id("teamMembers")),
     lastError: v.optional(v.string()),
     tierAtLaunch: v.optional(v.string()),

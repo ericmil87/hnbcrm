@@ -407,6 +407,7 @@ export async function attendantBudgetGate(
       now: args.now,
       periodStart: attendancePeriodStart(args.org.billing),
       acrossMonths: ent.status === "trial",
+      baseline: args.org.billing?.periodBaseline,
       scanCap: Number.isFinite(ent.limits.aiAttendances) ? ent.limits.aiAttendances : 50_000,
     });
     // Credito so e consultado quando pode ser usado (evita leitura nos turnos comuns).

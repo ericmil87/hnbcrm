@@ -731,7 +731,7 @@ export function buildPlanAlertTemplate(data: {
       content: `
         ${heading(escapeHtml(data.title))}
         ${data.body ? paragraph(escapeHtml(data.body)) : ""}
-        ${ctaButton("Ver uso e plano", `${appUrl}/app/configuracoes?secao=ai-usage`)}
+        ${ctaButton("Ver uso e plano", `${appUrl}/app/configuracoes?secao=billing`)}
       `,
     }),
   };

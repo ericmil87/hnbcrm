@@ -17,6 +17,8 @@ import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { BillingStatus } from "./plans";
+import { monthKeyUtc } from "./aiSpend";
+import { bucketsTotal } from "./attendanceUsage";
 
 export type BillingSource = "ops" | "webhook" | "cron" | "customer";
 
@@ -46,6 +48,22 @@ export function validateTransition(
   if (to === "read_only" && from !== "trial") return { ok: false };
   if (to === "legacy") return { ok: false };
   return { ok: true };
+}
+
+const PAID: ReadonlySet<string> = new Set(["active", "past_due"]);
+
+/**
+ * Ativacao / troca de plano / inicio do teste abrem um periodo novo: `periodStart = now` e
+ * a baseline dos baldes do mes. `active <-> past_due` nao reabre (mesmo ciclo). Quem chama
+ * a porta pode fixar `periodStart` por conta propria (ops): nesse caso a porta respeita.
+ */
+export function opensNewPeriod(before: OrgBilling | null, next: OrgBillingInput): boolean {
+  if (next.status === "legacy" || next.status === "read_only" || next.status === "canceled") return false;
+  if (!next.plan) return false;
+  if (!before || before.status === "legacy" || !before.plan) return true;
+  if (before.plan !== next.plan) return true;
+  if (before.status === next.status) return false;
+  return !(PAID.has(before.status) && PAID.has(next.status));
 }
 
 /** JSON estável (chaves ordenadas, sem `undefined`) para comparar campos do `billing`. */
@@ -146,7 +164,21 @@ export async function applySubscriptionChange(
   let after: OrgBilling | null = before;
   if (args.patch.billing) {
     validateBillingChange(before, args.patch.billing, args.source);
-    after = { ...args.patch.billing, updatedAt: now };
+    let next: OrgBillingInput = args.patch.billing;
+    if (args.source !== "customer" && opensNewPeriod(before, next) && (next.periodStart === undefined || next.periodStart === before?.periodStart)) {
+      const month = monthKeyUtc(now);
+      const meter = await ctx.db
+        .query("orgUsageMonthly")
+        .withIndex("by_organization_and_month", (q) => q.eq("organizationId", args.organizationId).eq("month", month))
+        .unique();
+      next = { ...next, periodStart: now, periodBaseline: { month, total: bucketsTotal(meter) } };
+      delete next.usageAlert;
+      // Periodo novo = avisos novos: zera os carimbos de franquia do mes de abertura.
+      if (meter && (meter.planWarnedAt !== undefined || meter.planReachedAt !== undefined)) {
+        await ctx.db.patch(meter._id, { planWarnedAt: undefined, planReachedAt: undefined });
+      }
+    }
+    after = { ...next, updatedAt: now };
     await ctx.db.patch(args.organizationId, { billing: after });
   }
 

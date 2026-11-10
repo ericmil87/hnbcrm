@@ -37,9 +37,11 @@ export type BillingNoticeData = {
   overageEnabled?: boolean;
   /** Centavos (teto do excedente). */
   capBrlCents?: number;
+  /** `trial_ending`: dias restantes e data (texto ja formatado, ex.: "20/12/2026"). */
   daysLeft?: number;
-  /** Texto de data ja formatado (ex.: "20/12/2026"). */
   endsAt?: string;
+  /** `plan_read_only`: por que a conta entrou em so leitura (`endsAt` = fim do teste, opcional). */
+  reason?: "trial_ended" | "manual";
 };
 
 /** Humanos ativos que administram a org (`settings:manage`). Cap 25. */
@@ -81,7 +83,7 @@ function copyFor(type: BillingNoticeType, d: BillingNoticeData): NotificationCop
     case "trial_ending":
       return notificationCopy({ type, daysLeft: d.daysLeft ?? 1, endsAt: d.endsAt ?? "" });
     case "plan_read_only":
-      return notificationCopy({ type });
+      return notificationCopy({ type, reason: d.reason, endsAt: d.endsAt });
   }
 }
 
@@ -95,7 +97,7 @@ export async function notifyBillingAdmins(
   args: { organizationId: Id<"organizations">; type: BillingNoticeType; data: BillingNoticeData; dedupeKey: string }
 ): Promise<number> {
   const org = await ctx.db.get(args.organizationId);
-  if (!hasPaidPlanDoc(org)) return 0;
+  if (!hasPaidPlanDoc(org) || org.billing?.quiet === true) return 0;
   const copy = copyFor(args.type, args.data);
   const severity = args.type === "plan_usage_warning" || args.type === "trial_ending" ? "medium" : "high";
   let notified = 0;
@@ -149,7 +151,7 @@ async function setUsageAlert(
   level: Level
 ): Promise<void> {
   const billing = org.billing;
-  if (!billing) return;
+  if (!billing || billing.quiet === true) return;
   const { updatedAt: _ignored, ...current } = billing;
   void _ignored;
   const prev = billing.usageAlert?.month === month ? billing.usageAlert : { month };
@@ -171,7 +173,7 @@ export async function maybeNotifyPlanUsage(
   args: { organizationId: Id<"organizations">; now: number }
 ): Promise<void> {
   const org = await ctx.db.get(args.organizationId);
-  if (!hasPaidPlanDoc(org)) return;
+  if (!hasPaidPlanDoc(org) || org.billing?.quiet === true) return;
   const e = resolveEntitlements(org, args.now);
   if (!e.gated) return;
   const month = monthKeyUtc(args.now);
@@ -181,24 +183,41 @@ export async function maybeNotifyPlanUsage(
     .unique();
   if (!meter) return;
 
+  const periodStart = attendancePeriodStart(org.billing);
+  const trial = e.status === "trial";
   const used = await attendancesUsedInPeriod(ctx, {
     organizationId: args.organizationId,
     now: args.now,
-    periodStart: attendancePeriodStart(org.billing),
-    acrossMonths: e.status === "trial",
+    periodStart,
+    acrossMonths: trial,
+    baseline: org.billing?.periodBaseline,
     scanCap: Number.isFinite(e.limits.aiAttendances) ? e.limits.aiAttendances : 50_000,
   });
+  // Teste: carimbos e dedupe sao POR PERIODO (a franquia atravessa a virada do mes), guardados
+  // no doc do mes em que o teste comecou. Plano pago: por mes.
+  const anchorMonth = trial && periodStart !== undefined ? monthKeyUtc(periodStart) : month;
+  let anchor = meter;
+  if (anchorMonth !== month) {
+    const found = await ctx.db
+      .query("orgUsageMonthly")
+      .withIndex("by_organization_and_month", (q) => q.eq("organizationId", args.organizationId).eq("month", anchorMonth))
+      .unique();
+    // Sem doc no mes de inicio (nao houve uso la): os carimbos ficam no mes corrente; o
+    // `dedupeKey` por periodo continua impedindo o aviso repetido.
+    if (found) anchor = found;
+  }
+  const periodKey = trial ? `trial:${org.billing?.trialEndsAt ?? "x"}` : month;
   const crossing = usageCrossings({
     used,
     limit: e.limits.aiAttendances,
-    warnedAt: meter.planWarnedAt,
-    reachedAt: meter.planReachedAt,
+    warnedAt: anchor.planWarnedAt,
+    reachedAt: anchor.planReachedAt,
   });
   if (crossing.warn || crossing.reached) {
     // Carimbo ANTES de notificar; cruzar 100% de uma vez marca o 80% tambem.
-    await ctx.db.patch(meter._id, {
+    await ctx.db.patch(anchor._id, {
       ...(crossing.reached ? { planReachedAt: args.now } : {}),
-      ...(meter.planWarnedAt === undefined ? { planWarnedAt: args.now } : {}),
+      ...(anchor.planWarnedAt === undefined ? { planWarnedAt: args.now } : {}),
     });
     await setUsageAlert(ctx, org, month, "ai", crossing.reached ? "limit100" : "warn80");
     const pct = Math.round((used / e.limits.aiAttendances) * 100);
@@ -207,14 +226,14 @@ export async function maybeNotifyPlanUsage(
         organizationId: args.organizationId,
         type: "plan_usage_reached",
         data: { meter: "ai", pct, month, overageEnabled: e.overage.enabled },
-        dedupeKey: `plan_usage_reached:ai:${month}`,
+        dedupeKey: `plan_usage_reached:ai:${periodKey}`,
       });
     } else {
       await notifyBillingAdmins(ctx, {
         organizationId: args.organizationId,
         type: "plan_usage_warning",
         data: { meter: "ai", pct, month },
-        dedupeKey: `plan_usage_warning:ai:${month}`,
+        dedupeKey: `plan_usage_warning:ai:${periodKey}`,
       });
     }
   }
@@ -243,7 +262,7 @@ export async function maybeNotifyCampaignUsage(
   args: { organizationId: Id<"organizations">; month: string; now: number; meterId: Id<"orgUsageMonthly"> }
 ): Promise<void> {
   const org = await ctx.db.get(args.organizationId);
-  if (!hasPaidPlanDoc(org)) return;
+  if (!hasPaidPlanDoc(org) || org.billing?.quiet === true) return;
   const e = resolveEntitlements(org, args.now);
   if (!e.gated) return;
   const meter = await ctx.db.get(args.meterId);

@@ -7,6 +7,7 @@
  * importam daqui; campaigns.ts e campaignWorker.ts também.
  */
 import { MutationCtx } from "../_generated/server";
+import type { CampaignPauseCode } from "../schema";
 import { internal } from "../_generated/api";
 import { Doc, Id } from "../_generated/dataModel";
 import { createNotification } from "./notify";
@@ -142,7 +143,7 @@ async function notifyCampaignWatchers(
 export async function pauseCampaignCore(
   ctx: MutationCtx,
   campaign: Doc<"campaigns">,
-  args: { reason: string; actorId?: Id<"teamMembers">; automatic: boolean; now?: number; code?: string }
+  args: { reason: string; actorId?: Id<"teamMembers">; automatic: boolean; now?: number; code?: CampaignPauseCode }
 ): Promise<void> {
   if (campaign.status !== "running" && campaign.status !== "scheduled") return;
   const now = args.now ?? Date.now();
@@ -157,6 +158,7 @@ export async function pauseCampaignCore(
     status: "paused",
     pausedReason: args.reason,
     pauseCode: args.code,
+    pausedAt: now,
     pausedBy: args.actorId,
     schedulerFnId: undefined,
     nextTickAt: undefined,
@@ -197,7 +199,7 @@ export async function pauseCampaignCore(
 }
 
 /** Código de pausa automática por franquia de envios do plano (B6). */
-export const PLAN_QUOTA_PAUSE_CODE = "plan_quota";
+export const PLAN_QUOTA_PAUSE_CODE = "plan_quota" as const satisfies CampaignPauseCode;
 
 /**
  * Retoma UMA campanha pausada por `plan_quota` (cron do dia 1). Só mexe nesse código:
@@ -213,7 +215,10 @@ export async function resumePlanQuotaCampaign(
     status: "running",
     pausedReason: undefined,
     pauseCode: undefined,
+    pausedAt: undefined,
     pausedBy: undefined,
+    stats: { ...campaign.stats, consecutiveFailures: 0 },
+    batchSentSinceLastPause: 0,
     updatedAt: now,
   });
   const fresh = (await ctx.db.get(campaign._id))!;

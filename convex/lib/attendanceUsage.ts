@@ -42,7 +42,9 @@ export async function attendancesUsedInPeriod(
     periodStart: number | undefined;
     /** Teste: a franquia atravessa a virada do mes. Plano pago: so o mes corrente. */
     acrossMonths: boolean;
-    /** Interrompe a varredura do livro acima disto (basta saber que estourou). */
+    /** `billing.periodBaseline`: baldes do mes de `periodStart` no instante em que o periodo abriu. */
+    baseline?: { month: string; total: number };
+    /** Interrompe a varredura do livro (so sem baseline) acima disto. */
     scanCap: number;
   }
 ): Promise<number> {
@@ -62,7 +64,16 @@ export async function attendancesUsedInPeriod(
       total += bucketsTotal(meter);
       continue;
     }
-    // O periodo comeca no meio deste mes: conta as linhas do livro a partir dele.
+    if (args.baseline && args.baseline.month === m) {
+      // Mes em que o periodo abriu: baldes - baseline (sem varrer o livro).
+      const meter = await ctx.db
+        .query("orgUsageMonthly")
+        .withIndex("by_organization_and_month", (q) => q.eq("organizationId", args.organizationId).eq("month", m))
+        .unique();
+      total += Math.max(0, bucketsTotal(meter) - args.baseline.total);
+      continue;
+    }
+    // Sem baseline (dado antigo ou `periodStart` fixado por ops): conta as linhas do livro a partir dele.
     const rows = ctx.db
       .query("aiAttendances")
       .withIndex("by_organization_and_month_and_firstAt", (q) =>
