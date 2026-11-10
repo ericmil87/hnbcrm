@@ -16,3 +16,5 @@ Contexto e histórico: `docs/architecture/billing.md`. Números: `convex/lib/pla
 - Envio de campanha conta só por `bumpCampaignSends` (idempotente por destinatário via `meteredMonth`).
 - `getMyEntitlements` é assinada em várias telas: lê só o doc da org e devolve `null` para não-membro. Contagens (canais, grupos) e uso detalhado ficam em queries que só o painel "Uso e fatura" assina.
 - Nunca expor `billing` em queries que devolvem o doc da org (`getUserOrganizations` o omite). Preço/teto só para `settings:view`; nome de contato no extrato só com `contacts:view` e sem telefone/e-mail.
+- Modo leitura (`read_only`/`canceled`/teste vencido): IA e envio param, inbound e exportação nunca. Gate novo de envio/IA reusa `lib/readOnly.ts` (`assertOutboundAllowed`, `assertPlanWritable`) e `internalSpendGate`; mensagem agendada fica `pending` (nunca `failed`) e campanha pausa com `pauseCode:"plan_read_only"`. O cron `internalBillingTick` só age em `trial`.
+- Termos: `termsAcceptances` é append-only e `TERMS_VERSION` muda quando preço/franquia/licença/reembolso mudam. Cadastro em teste só com env `BILLING_TRIAL_ON_SIGNUP="true"`; 1 teste por usuário (`trialGrants`).

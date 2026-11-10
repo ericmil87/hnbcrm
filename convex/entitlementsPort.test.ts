@@ -185,11 +185,11 @@ describe("porta única de escrita do plano", () => {
     expect(violations, "orgSubscriptions só é escrita por lib/entitlementsOps.ts").toEqual([]);
   });
 
-  test('audit:"none" só no backfill (opsBilling), no nível de uso (billingNotify) e na própria porta', () => {
+  test('audit:"none" só no backfill (opsBilling), no nível de uso (billingNotify), no carimbo do cron (billingCron) e na própria porta', () => {
     const offenders: string[] = [];
     for (const abs of walk(CONVEX_DIR)) {
       const r = rel(abs);
-      if (PORT_FILES.has(r) || r === "lib/billingNotify.ts") continue;
+      if (PORT_FILES.has(r) || r === "lib/billingNotify.ts" || r === "billingCron.ts") continue;
       if (/audit:\s*["']none["']/.test(readFileSync(abs, "utf8"))) offenders.push(r);
     }
     expect(offenders).toEqual([]);
@@ -272,6 +272,19 @@ describe("termsAcceptances é append-only (7b)", () => {
     }
     expect(violations).toEqual([]);
     expect(findTableInserts(read("terms.ts"), "termsAcceptances").length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("cron do plano (B7)", () => {
+  test("crons.ts agenda internalBillingTick diariamente às 12:00 UTC", () => {
+    const src = read("crons.ts");
+    expect(src).toMatch(/crons\.daily\(\s*"billing trial tick",\s*\{\s*hourUTC:\s*12,\s*minuteUTC:\s*0\s*\},\s*internal\.billingCron\.internalBillingTick/);
+  });
+
+  test("o cron só age em orgs trial (nunca troca active/past_due/legacy/canceled)", () => {
+    const src = read("billingCron.ts");
+    expect(src).toMatch(/billing\.status !== "trial"/);
+    expect(src).not.toMatch(/status:\s*"(active|past_due|legacy|canceled)"/);
   });
 });
 
