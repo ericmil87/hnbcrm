@@ -7,6 +7,7 @@ import type { MutationCtx } from "../_generated/server";
 
 export type PaymentLite = {
   id: string;
+  subscription?: string | null;
   status?: string;
   value?: number;
   dueDate?: string;
@@ -81,12 +82,19 @@ export async function upsertInvoiceFromPayment(
     // Nunca mexe em fatura de outra org (id de pagamento repetido por engano/ataque).
     return existing._id;
   }
-  const paidAt = status === "paid" ? (dayToMs(payment.paymentDate) ?? existing?.paidAt ?? now) : existing?.paidAt;
+  // `paidAt`: o INSTANTE em que processamos o pagamento (o Asaas só manda o dia; o reembolso de 7 dias
+  // conta 168 h reais). Evento antigo (reconciliação) usa o dia informado.
+  const paymentDay = dayToMs(payment.paymentDate);
+  const paidAt =
+    status === "paid"
+      ? (existing?.paidAt ?? (paymentDay !== undefined && now - paymentDay > 2 * 86_400_000 ? paymentDay + 12 * 3_600_000 : now))
+      : existing?.paidAt;
   const fields = {
     status,
     ...(payment.value !== undefined ? { amountCents: Math.round(payment.value * 100) } : {}),
     ...(dueDate !== undefined ? { dueDate } : {}),
     ...(payment.invoiceUrl ? { invoiceUrl: payment.invoiceUrl } : {}),
+    ...(payment.subscription ? { providerSubscriptionId: payment.subscription } : {}),
     ...(payment.description ? { description: payment.description.slice(0, 200) } : {}),
     ...(paymentMethodOf(payment.billingType) ? { paymentMethod: paymentMethodOf(payment.billingType) } : {}),
     ...(paidAt !== undefined ? { paidAt } : {}),
@@ -108,4 +116,30 @@ export async function upsertInvoiceFromPayment(
     createdAt: now,
     ...fields,
   });
+}
+
+/**
+ * Cancelamento LOCAL de uma assinatura (checkout refeito, troca de plano, cancelamento,
+ * reembolso): as faturas abertas dela (pending/overdue) viram `canceled` na hora, sem esperar o
+ * webhook. Lê até 200 faturas da org (poucas por org).
+ */
+export async function cancelOpenInvoicesForSubscription(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  providerSubscriptionId: string,
+  now: number
+): Promise<number> {
+  const rows = await ctx.db
+    .query("billingInvoices")
+    .withIndex("by_organization_and_due_date", (q) => q.eq("organizationId", organizationId))
+    .order("desc")
+    .take(200);
+  let canceled = 0;
+  for (const row of rows) {
+    if (row.providerSubscriptionId !== providerSubscriptionId) continue;
+    if (row.status !== "pending" && row.status !== "overdue") continue;
+    await ctx.db.patch(row._id, { status: "canceled", updatedAt: now });
+    canceled++;
+  }
+  return canceled;
 }

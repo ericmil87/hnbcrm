@@ -27,6 +27,7 @@ type PaymentState = {
 };
 let payment: PaymentState;
 let apiStatus = 200;
+let paymentGone = false;
 let apiCalls: string[] = [];
 let eventCounter = 0;
 
@@ -37,6 +38,7 @@ beforeEach(() => {
   vi.stubEnv("ASAAS_WEBHOOK_TOKEN", TOKEN);
   t = convexTest(schema, modules);
   apiStatus = 200;
+  paymentGone = false;
   apiCalls = [];
   eventCounter = 0;
   payment = { status: "RECEIVED", value: 497, dueDate: "2026-11-10", subscription: "sub_1", customer: "cus_1", externalReference: null };
@@ -46,6 +48,7 @@ beforeEach(() => {
       const path = decodeURIComponent(new URL(url).pathname.replace("/v3", ""));
       apiCalls.push(path);
       if (apiStatus !== 200) return new Response("{}", { status: apiStatus });
+      if (paymentGone && path.startsWith("/payments/")) return new Response("{}", { status: 404 });
       if (path.startsWith("/payments/")) {
         return new Response(JSON.stringify({ id: path.split("/")[2], billingType: "PIX", invoiceUrl: "https://www.asaas.com/i/x", description: "HNBCRM · plano Profissional", ...payment }), { status: 200 });
       }
@@ -320,6 +323,62 @@ describe("atraso, estorno e assinatura encerrada", () => {
     const inv = await invoices(s.organizationId);
     expect(inv[0]).toMatchObject({ status: "pending", amountCents: 12345, dueDate: Date.UTC(2026, 11, 1), invoiceUrl: "https://www.asaas.com/i/x" });
     expect((await orgOf(s.organizationId))?.billing?.status).toBe("trial");
+  });
+});
+
+describe("status das faturas (DELETED/REFUNDED)", () => {
+  async function invoiceFor(s: { organizationId: Id<"organizations"> }, paymentId: string, subscription: string, status: "pending" | "paid" | "overdue") {
+    return await t.run((ctx) =>
+      ctx.db.insert("billingInvoices", {
+        organizationId: s.organizationId, source: "asaas", kind: "subscription", description: "Assinatura", amountCents: 19700,
+        dueDate: NOW, status, providerPaymentId: paymentId, providerSubscriptionId: subscription, createdBy: "system", createdAt: NOW, updatedAt: NOW,
+      })
+    );
+  }
+  const statusOf = (id: Id<"billingInvoices">) => t.run(async (ctx) => (await ctx.db.get(id))?.status);
+
+  test("PAYMENT_DELETED de ASSINATURA ANTIGA cancela a fatura (era o achado de PROD: ficava 'Aguardando pagamento')", async () => {
+    const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
+    const inv = await invoiceFor(s, "pay_velha", "sub_antiga", "pending");
+    payment.subscription = "sub_antiga"; // a assinatura da org já é outra
+    payment.status = "PENDING";
+    payment.deleted = true;
+    await send("PAYMENT_DELETED", "pay_velha");
+    expect(await statusOf(inv)).toBe("canceled");
+    expect((await events())[0]).toMatchObject({ status: "processed", organizationId: s.organizationId });
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("active"); // a org não é tocada
+  });
+
+  test("pagamento que sumiu da API (404) também cancela; o relido NÃO apagado vale pelo estado relido", async () => {
+    const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
+    const gone = await invoiceFor(s, "pay_sumiu", "sub_antiga", "overdue");
+    paymentGone = true;
+    await send("PAYMENT_DELETED", "pay_sumiu");
+    expect(await statusOf(gone)).toBe("canceled");
+    paymentGone = false;
+    const live = await invoiceFor(s, "pay_vivo", "sub_x", "pending");
+    payment.status = "PENDING";
+    payment.deleted = false;
+    await send("PAYMENT_DELETED", "pay_vivo");
+    expect(await statusOf(live)).toBe("pending"); // o Asaas diz que a cobrança existe: não cancela
+  });
+
+  test("fatura paga nunca vira cancelada por um DELETED atrasado", async () => {
+    const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
+    const inv = await invoiceFor(s, "pay_paga", "sub_antiga", "paid");
+    paymentGone = true;
+    await send("PAYMENT_DELETED", "pay_paga");
+    expect(await statusOf(inv)).toBe("paid");
+  });
+
+  test("PAYMENT_REFUNDED atualiza a fatura mesmo de assinatura antiga", async () => {
+    const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
+    const inv = await invoiceFor(s, "pay_estorno", "sub_antiga", "paid");
+    payment.subscription = "sub_antiga";
+    payment.status = "REFUNDED";
+    await send("PAYMENT_REFUNDED", "pay_estorno");
+    expect(await statusOf(inv)).toBe("refunded");
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
   });
 });
 

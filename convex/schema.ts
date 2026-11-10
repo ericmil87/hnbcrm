@@ -3211,6 +3211,8 @@ const applicationTables = {
     paidAt: v.optional(v.number()),
     paymentMethod: v.optional(v.union(v.literal("pix"), v.literal("boleto"), v.literal("card"), v.literal("transfer"))),
     providerPaymentId: v.optional(v.string()),
+    // Assinatura do provedor que gerou a fatura: cancelar a assinatura cancela as faturas abertas dela.
+    providerSubscriptionId: v.optional(v.string()),
     invoiceUrl: v.optional(v.string()),
     nfseNumber: v.optional(v.string()),
     nfseUrl: v.optional(v.string()),
