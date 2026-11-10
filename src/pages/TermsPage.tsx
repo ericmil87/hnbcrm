@@ -155,8 +155,9 @@ export function TermsPage() {
               <p id="atendimento-ia">
                 <span className="text-text-primary font-medium">Atendimento IA</span> é um contato distinto
                 que a IA atendeu (respondeu ou rascunhou resposta) no mês calendário. O mesmo contato
-                atendido várias vezes no mês conta uma vez. Conversas só da equipe, grupos, campanhas e o
-                Copiloto não contam. O medidor do painel "Uso e fatura" é a referência, e você pode
+                atendido várias vezes no mês conta uma vez. Conversas só da equipe, grupos e campanhas não
+                contam. Conversar com o Copiloto não conta. Um rascunho que você ou o Copiloto pedem à IA
+                para um contato conta como atendimento dentro da franquia, nunca como excedente. O medidor do painel "Uso e fatura" é a referência, e você pode
                 contestar um valor em até 30 dias.
               </p>
               <p id="excedente">
@@ -394,9 +395,9 @@ export function TermsPage() {
             <LegalSection id="exportacao" title="9. Exportação dos dados e portabilidade">
               <p>
                 Você pode exportar os dados da organização a qualquer momento, inclusive com a conta em
-                só leitura, com o teste encerrado ou em atraso. Depois do cancelamento, guardamos os dados
-                por 90 dias para que você exporte; passado esse prazo eles são eliminados, ressalvada a
-                guarda exigida por lei. Os dados que você insere continuam sendo seus.
+                só leitura, com o teste encerrado ou em atraso. Guardamos os dados por 90 dias após o
+                cancelamento ou o fim do teste não contratado, para que você exporte; depois disso eles
+                podem ser eliminados, com aviso prévio, salvo obrigação legal. Os dados que você insere continuam sendo seus.
               </p>
             </LegalSection>
 
@@ -506,15 +507,16 @@ export function TermsPage() {
               <p>
                 Podemos atualizar estes Termos. Avisamos por e-mail e no aplicativo com 30 dias de
                 antecedência, e quem discordar pode cancelar sem multa. Mudanças materiais (preço,
-                franquias, reembolso, tratamento de dados) exigem o seu aceite ativo; continuar usando o
-                serviço não vale como aceite de preço novo.
+                franquias, reembolso, tratamento de dados) exigem o seu aceite ativo, e continuar usando o
+                serviço não vale como aceite delas. Mudanças não materiais (correções, esclarecimentos
+                e ajustes de redação) valem com o aviso prévio.
               </p>
             </LegalSection>
 
             <LegalSection id="foro" title="17. Aceite eletrônico, lei e foro">
               <p>
                 O aceite destes Termos é feito por meio eletrônico, ao marcar a caixa de aceite no cadastro
-                ou ao usar o serviço depois do aviso. As partes reconhecem como válidos o registro do aceite
+                ou ao clicar em aceitar quando há uma nova versão. As partes reconhecem como válidos o registro do aceite
                 (versão, data e hora) e os demais meios eletrônicos de comprovação (MP 2.200-2/2001, art. 10,
                 § 2º). Estes Termos são regidos pelas leis da República Federativa do Brasil. Fica eleito o
                 foro da comarca do domicílio do consumidor, quando houver relação de consumo, e, nos demais

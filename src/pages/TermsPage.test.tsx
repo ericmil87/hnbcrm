@@ -46,6 +46,9 @@ describe("TermsPage", () => {
       "Canal WhatsApp não oficial",
       "aceite ativo",
       "também por WhatsApp",
+      "nunca como excedente",
+      "Mudanças não materiais",
+      "ao clicar em aceitar",
       "foro",
     ]) {
       expect(t, needle).toContain(needle);
