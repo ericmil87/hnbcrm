@@ -63,6 +63,11 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "ai_spend_warning",
   "ai_spend_reached",
   "lead_assigned",
+  "plan_usage_warning",
+  "plan_usage_reached",
+  "plan_overage_cap_reached",
+  "trial_ending",
+  "plan_read_only",
 ]);
 
 export function pushTemplateOf(type: NotificationType): PushTemplate | null {

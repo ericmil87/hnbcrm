@@ -121,6 +121,11 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   group_opportunity: "generic",
   group_digest: "generic",
   lead_assigned: "generic",
+  plan_usage_warning: "generic",
+  plan_usage_reached: "generic",
+  plan_overage_cap_reached: "generic",
+  trial_ending: "generic",
+  plan_read_only: "generic",
 };
 
 /** Types deliberately NOT sent to Telegram (none in F1; add with a reason). */
@@ -390,6 +395,7 @@ function crmUrlFor(ctx: CardContext, n?: NotificationInput): string {
   if (n?.type === "ai_spend_warning" || n?.type === "ai_spend_reached") {
     return crmLink(ctx, "/app/configuracoes?secao=ai-usage");
   }
+  if (n && PLAN_TYPES.has(n.type)) return crmLink(ctx, "/app/configuracoes?secao=ai-usage");
   if (ctx.conversation) return crmLink(ctx, `/app/entrada?conversation=${ctx.conversation.id}`);
   if (ctx.lead) return crmLink(ctx, `/app/pipeline?lead=${ctx.lead.id}`);
   return crmLink(ctx, "/app/painel");
@@ -797,10 +803,23 @@ function simpleCard(emoji: string, n: NotificationInput, ctx: CardContext, rows:
   return { text: blocks([`${emoji} <b>${safe(redactName(ctx, n.title), ctx.discreet, 300)}</b>`, body]), keyboard: nonEmpty(rows), focus: focusOf(ctx) };
 }
 
+const PLAN_TYPES: ReadonlySet<string> = new Set([
+  "plan_usage_warning",
+  "plan_usage_reached",
+  "plan_overage_cap_reached",
+  "trial_ending",
+  "plan_read_only",
+]);
+
 const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
   channel_session_lost: "🔴",
   ai_spend_warning: "💸",
   ai_spend_reached: "💸",
+  plan_usage_warning: "📊",
+  plan_usage_reached: "📊",
+  plan_overage_cap_reached: "📊",
+  trial_ending: "⏳",
+  plan_read_only: "🔒",
   task_comment_mention: "💬",
   campaign_completed: "📣",
   campaign_paused: "⏸",

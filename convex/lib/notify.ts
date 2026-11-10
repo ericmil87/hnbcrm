@@ -30,7 +30,12 @@ export type NotificationType =
   | "ai_spend_warning"
   | "ai_spend_reached"
   | "new_message"
-  | "lead_assigned";
+  | "lead_assigned"
+  | "plan_usage_warning"
+  | "plan_usage_reached"
+  | "plan_overage_cap_reached"
+  | "trial_ending"
+  | "plan_read_only";
 
 // Tipo → flag de preferência: `PREFERENCE_FLAG` mora em `lib/notificationPolicy.ts` (pura).
 

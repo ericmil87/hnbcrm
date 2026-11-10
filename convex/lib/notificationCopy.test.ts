@@ -154,6 +154,41 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     { title: "Teto de gastos de IA atingido", body: "Gasto aproximado R$ 100 de R$ 100. A IA continua funcionando." },
   ],
   [
+    { type: "plan_usage_warning", meter: "ai", pct: 80, month: "2026-11" },
+    {
+      title: "Atendimentos IA em 80% da franquia do mês",
+      body: "Em 2026-11 você já usou 80% da franquia do plano. Nada muda por enquanto.",
+    },
+  ],
+  [
+    { type: "plan_usage_reached", meter: "ai", overageEnabled: false },
+    {
+      title: "Franquia de atendimentos IA do mês atingida",
+      body: "Os próximos contatos novos recebem rascunho para a equipe enviar. Ligue o excedente em Configurações → Uso e fatura.",
+    },
+  ],
+  [
+    { type: "plan_overage_cap_reached", capBrl: "R$ 100,00" },
+    {
+      title: "Teto do excedente atingido",
+      body: "O teto de R$ 100,00 em excedente do mês acabou: contatos novos recebem rascunho para a equipe enviar.",
+    },
+  ],
+  [
+    { type: "trial_ending", daysLeft: 3, endsAt: "20/12/2026" },
+    {
+      title: "Seu teste termina em 3 dias",
+      body: "O teste grátis acaba em 20/12/2026. Depois disso a conta fica em modo só leitura até você contratar um plano.",
+    },
+  ],
+  [
+    { type: "plan_read_only" },
+    {
+      title: "Conta em modo só leitura",
+      body: "A IA e os envios estão pausados. Você continua vendo seus dados e pode exportá-los. Contrate um plano para voltar.",
+    },
+  ],
+  [
     { type: "new_message", contactName: "Ana", count: 1, preview: "Oi!" },
     { title: "Mensagem nova de Ana", body: "Oi!" },
   ],

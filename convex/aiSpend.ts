@@ -19,6 +19,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { createHandoffCore } from "./handoffs";
 import { createNotification } from "./lib/notify";
+import { spendAlertRecipients } from "./lib/billingNotify";
 import {
   isHumanRequestItem,
   BILLING_LEDGER_START_MONTH,
@@ -151,30 +152,6 @@ export async function recordRunUsage(
       now,
     });
   }
-}
-
-/** Humanos ativos que administram a org (settings:manage). Cap 25. */
-async function spendAlertRecipients(
-  ctx: { db: Db },
-  organizationId: Id<"organizations">
-): Promise<Doc<"teamMembers">[]> {
-  const members = await ctx.db
-    .query("teamMembers")
-    .withIndex("by_organization_and_type", (q) =>
-      q.eq("organizationId", organizationId).eq("type", "human")
-    )
-    .collect();
-  return members
-    .filter(
-      (m) =>
-        !isMembershipRevoked(m) &&
-        hasPermission(
-          resolvePermissions(m.role as Role, m.permissions ?? undefined),
-          "settings",
-          "manage"
-        )
-    )
-    .slice(0, 25);
 }
 
 async function maybeNotifySpend(

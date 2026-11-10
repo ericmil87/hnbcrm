@@ -27,6 +27,7 @@ export const PREF_DEFAULTS = {
   conversationTransferred: true,
   channelSessionLost: true,
   aiSpendAlert: true,
+  planAlert: true,
 };
 
 export async function loadMemberPrefs(

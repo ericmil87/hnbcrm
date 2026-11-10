@@ -39,6 +39,13 @@ export type MyEntitlements = {
   features: Record<GatedModule, boolean>;
   minPlanFor: Record<GatedModule, PlanKey>;
   overage: { enabled: boolean; capBrl: number | null };
+  /**
+   * B4: pior nivel de uso (IA ou campanha) gravado no ultimo cruzamento. So vale para o mes
+   * `usageAlertMonth` ("AAAA-MM" UTC): o front compara com o mes corrente (a query nao le o
+   * relogio). Org sem plano: "ok".
+   */
+  usageLevel: "ok" | "warn80" | "limit100";
+  usageAlertMonth?: string;
   /** Só para quem tem `settings:view`. */
   pricing?: {
     listMonthlyBrl: number | null;
@@ -53,7 +60,12 @@ export function buildMyEntitlements(org: OrgForBilling | null | undefined, canSe
   const minPlanFor = Object.fromEntries(GATED_MODULES.map((m) => [m, lowestPlanWithModule(m)])) as Record<GatedModule, PlanKey>;
   const planId = ent.gated ? ent.plan : null;
 
+  const alert = ent.gated ? billing?.usageAlert : undefined;
+  const levels = [alert?.ai, alert?.campaign];
+  const usageLevel = levels.includes("limit100") ? "limit100" : levels.includes("warn80") ? "warn80" : "ok";
   const view: MyEntitlements = {
+    usageLevel,
+    ...(alert && usageLevel !== "ok" ? { usageAlertMonth: alert.month } : {}),
     mode,
     planId,
     planLabel: planId ? PLANS[planId].label : null,

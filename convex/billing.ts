@@ -88,6 +88,8 @@ export const getMyEntitlements = query({
     features: gatedFeaturesValidator,
     minPlanFor: minPlanForValidator,
     overage: v.object({ enabled: v.boolean(), capBrl: v.union(v.number(), v.null()) }),
+    usageLevel: v.union(v.literal("ok"), v.literal("warn80"), v.literal("limit100")),
+    usageAlertMonth: v.optional(v.string()),
     pricing: v.optional(
       v.object({
         listMonthlyBrl: v.union(v.number(), v.null()),

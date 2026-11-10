@@ -63,6 +63,12 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   ai_spend_reached: "aiSpendAlert",
   new_message: "newMessage",
   lead_assigned: "leadAssigned",
+  // Billing B4: um flag so para os avisos de plano (tambem e o eventType do e-mail).
+  plan_usage_warning: "planAlert",
+  plan_usage_reached: "planAlert",
+  plan_overage_cap_reached: "planAlert",
+  trial_ending: "planAlert",
+  plan_read_only: "planAlert",
 };
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */
@@ -106,6 +112,7 @@ export const NON_PERSONAL_FLAGS = new Set([
   "groupOpportunity",
   "groupDigest",
   "aiSpendAlert",
+  "planAlert",
 ]);
 
 /**
