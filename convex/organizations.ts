@@ -5,7 +5,8 @@ import { internal } from "./_generated/api";
 import { requireAuth, requirePermission, getActiveMembership, isMembershipRevoked, requireAccountWithEmail } from "./lib/auth";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator, notifPresetValidator } from "./schema";
-import { initialOrgBilling } from "./lib/entitlementsOps";
+import { initialOrgBilling, initialTrialBilling } from "./lib/entitlementsOps";
+import { TRIAL } from "./lib/plans";
 import { assertCurrentTermsVersion, recordTermsAcceptance } from "./terms";
 
 // Get user's organizations
@@ -74,7 +75,18 @@ export const createOrganization = mutation({
     if (existing) throw new ConvexError("Este endereço (slug) já está em uso por outra organização");
 
     const now = Date.now();
-    
+
+    // B7a: cadastro em teste. 1 TESTE por usuário: a 2ª org da mesma pessoa nasce em teste com o
+    // MESMO `trialEndsAt` do 1º grant (não ganha 30 dias novos e a agência não é bloqueada).
+    let trialEndsAt: number | null = null;
+    if (process.env.BILLING_TRIAL_ON_SIGNUP === "true") {
+      const firstGrant = await ctx.db
+        .query("trialGrants")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .first();
+      trialEndsAt = firstGrant ? firstGrant.endsAt : now + TRIAL.days * 24 * 60 * 60 * 1000;
+    }
+
     // Create organization
     const orgId = await ctx.db.insert("organizations", {
       name: args.name,
@@ -91,12 +103,16 @@ export const createOrganization = mutation({
           handoffThreshold: 0.8,
         },
       },
-      // Legacy explícito (sem gate): o comportamento é o de sempre.
-      billing: initialOrgBilling(now),
+      // Legacy explícito (sem gate) por padrão. Com `BILLING_TRIAL_ON_SIGNUP="true"` a org
+      // nasce em teste de 30 dias (1 teste por usuário: ver `trialEndsAt` acima).
+      billing: trialEndsAt === null ? initialOrgBilling(now) : initialTrialBilling(now, trialEndsAt),
       createdAt: now,
       updatedAt: now,
     });
 
+    if (trialEndsAt !== null) {
+      await ctx.db.insert("trialGrants", { userId, organizationId: orgId, startedAt: now, endsAt: trialEndsAt });
+    }
     if (args.acceptedTermsVersion !== undefined) {
       await recordTermsAcceptance(ctx, { userId, version: args.acceptedTermsVersion, organizationId: orgId, now });
     }

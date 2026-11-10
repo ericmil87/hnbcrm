@@ -66,7 +66,7 @@ export function findBillingWrites(src: string): number[] {
   while ((m = re.exec(src))) {
     const raw = sliceBalanced(src, m.index + m[0].length - 1);
     // `initialOrgBilling(now)` é o único valor de `billing` permitido no insert de organizations.
-    const call = raw.replace(/\bbilling\s*:\s*initialOrgBilling\s*\([^)]*\)/g, "");
+    const call = raw.replace(/\bbilling\s*:\s*initialOrgBilling\s*\([^)]*\)/g, "").replace(/\bbilling\s*:[^,]*\binitialTrialBilling\s*\([^)]*\)/g, "");
     const code = stripStrings(call);
     const direct = /\bbilling\b/.test(code);
     const second = /^\(\s*[^,()]+(?:\([^)]*\))?[^,()]*,\s*([A-Za-z_$][\w$]*)\s*\)$/.exec(code.trim());
@@ -213,7 +213,8 @@ describe("porta única de escrita do plano", () => {
 
   test("createOrganization grava legacy explícito pelo helper da porta", () => {
     const src = read("organizations.ts");
-    expect(src).toMatch(/billing:\s*initialOrgBilling\(now\)/);
+    expect(src).toMatch(/initialOrgBilling\(now\)/);
+    expect(src).toMatch(/initialTrialBilling\(now, trialEndsAt\)/);
   });
 
   test("controle positivo: a porta é detectada pela heurística", () => {
@@ -228,6 +229,8 @@ describe("medição: portas únicas de escrita (B2)", () => {
   const OWNERS: Array<[table: string, owners: string[]]> = [
     ["aiAttendances", ["lib/attendanceLedger.ts"]],
     ["orgUsageMonthly", ["lib/usageMeter.ts", "lib/attendanceLedger.ts"]],
+    // B7a: só o cadastro concede teste (1 por usuário).
+    ["trialGrants", ["organizations.ts"]],
   ];
 
   test("auto-teste da heurística", () => {

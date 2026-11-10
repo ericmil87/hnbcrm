@@ -3177,6 +3177,16 @@ const applicationTables = {
     .index("by_user", ["userId"])
     .index("by_user_and_version", ["userId", "version"]),
 
+  // B7a: 1 teste por usuário. Uma linha por criação de org em teste; a 2ª org do mesmo usuário
+  // herda o `endsAt` do 1º grant (não ganha 30 dias novos). Não é purgada com a org (é o
+  // registro anti-abuso); não entra no backup (userId).
+  trialGrants: defineTable({
+    userId: v.id("users"),
+    organizationId: v.id("organizations"),
+    startedAt: v.number(),
+    endsAt: v.number(),
+  }).index("by_user", ["userId"]),
+
   // Billing (B1): pacotes pré-pagos (R$ 390 = 1.000 atendimentos, 12 meses), FIFO por
   // `expiresAt`. B1 só tem o writer de ops (`internalGrantCredits`); consumo vem no B6.
   usageCredits: defineTable({
