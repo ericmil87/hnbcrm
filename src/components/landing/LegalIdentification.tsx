@@ -16,7 +16,7 @@ export function LegalIdentification({ entity = LEGAL_ENTITY, className }: LegalI
         <span>CPF/CNPJ e endereço: em atualização</span>
       ) : (
         <span>
-          CPF/CNPJ {id.document} · {id.address}
+          {id.document.replace(/\D/g, "").length === 14 ? "CNPJ" : "CPF"} {id.document} · {id.address}
         </span>
       )}
       {" · "}
