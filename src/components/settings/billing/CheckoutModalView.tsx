@@ -238,7 +238,7 @@ export function CheckoutModalView(p: CheckoutModalViewProps) {
             <Button type="button" variant="secondary" className="flex-1" onClick={p.onClose}>
               Cancelar
             </Button>
-            <Button type="submit" className="flex-1" loading={p.submitting} disabled={p.refusal !== null}>
+            <Button type="submit" className="flex-1" loading={p.submitting} disabled={p.refusal !== null || p.summaryLoading}>
               Ir para o pagamento
             </Button>
           </div>

@@ -101,9 +101,12 @@ describe("CheckoutModalView", () => {
     expect(screen.getByRole("button", { name: "Ir para o pagamento" }).hasAttribute("disabled")).toBe(true);
   });
 
-  it("enquanto consulta o servidor mostra Calculando…", () => {
-    render(<CheckoutModalView {...props({ summaryLoading: true })} />);
+  it("enquanto consulta o servidor mostra Calculando… e não deixa pagar", () => {
+    const { rerender } = render(<CheckoutModalView {...props({ summaryLoading: true })} />);
     expect(screen.getByText("Calculando…")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ir para o pagamento" }).hasAttribute("disabled")).toBe(true);
+    rerender(<CheckoutModalView {...props({ summaryLoading: false })} />);
+    expect(screen.getByRole("button", { name: "Ir para o pagamento" }).hasAttribute("disabled")).toBe(false);
   });
 
   it("anual mostra o resumo com 2 meses grátis; enviar chama onSubmit", () => {
