@@ -1057,6 +1057,8 @@ describe("guardas de envio numa sala (review de correção nº 2)", () => {
       scheduledAt: Date.now() + 120_000,
     });
     await asAdmin.mutation(api.groupChats.setMonitored, { groupChatId, monitored: false });
+    // O timer dispara NO horário agendado (o deliver nunca entrega antes do scheduledAt).
+    await t.run((ctx) => ctx.db.patch(scheduledMessageId, { scheduledAt: Date.now() - 1 }));
     await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId });
 
     const row = await t.run(async (ctx) => ctx.db.get(scheduledMessageId));

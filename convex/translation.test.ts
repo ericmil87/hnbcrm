@@ -971,6 +971,8 @@ describe("F3: agendadas traduzem ao agendar (D9)", () => {
     const pending = await s.asAdmin.query(api.scheduledMessages.listPending, { conversationId: s.conversationId });
     expect(pending[0]).toMatchObject({ content: "Hola, ¿mañana a las 10?", authoredText: "Olá, amanhã às 10?", targetLang: "es" });
     await cancelPendingJobs(t);
+    // O timer dispara NO horário agendado (o deliver nunca entrega antes do scheduledAt).
+    await t.run((ctx) => ctx.db.patch(scheduledId, { scheduledAt: Date.now() - 1 }));
     await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: scheduledId });
     const row = await t.run(async (ctx) => (await ctx.db.get(scheduledId))!);
     const m = await getMsg(t, row.sentMessageId!);
@@ -990,6 +992,8 @@ describe("F3: agendadas traduzem ao agendar (D9)", () => {
       conversationId: s.conversationId, content: PT_OUT, scheduledAt: Date.now() + 5 * 60_000,
     });
     await cancelPendingJobs(t);
+    // O timer dispara NO horário agendado (o deliver nunca entrega antes do scheduledAt).
+    await t.run((ctx) => ctx.db.patch(scheduledId, { scheduledAt: Date.now() - 1 }));
     await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: scheduledId });
     const row = await t.run(async (ctx) => (await ctx.db.get(scheduledId))!);
     const m = await getMsg(t, row.sentMessageId!);
@@ -1010,6 +1014,8 @@ describe("F3: agendadas traduzem ao agendar (D9)", () => {
     });
     await cancelPendingJobs(t);
     await s.asAdmin.mutation(api.translation.setConversationLanguage, { conversationId: s.conversationId, mode: "off" });
+    // O timer dispara NO horário agendado (o deliver nunca entrega antes do scheduledAt).
+    await t.run((ctx) => ctx.db.patch(scheduledId, { scheduledAt: Date.now() - 1 }));
     await t.mutation(internal.scheduledMessages.deliver, { scheduledMessageId: scheduledId });
     const row = await t.run(async (ctx) => (await ctx.db.get(scheduledId))!);
     const m = await getMsg(t, row.sentMessageId!);
