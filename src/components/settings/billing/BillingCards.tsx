@@ -1,6 +1,7 @@
-import { AlertTriangle, CalendarClock, Gauge, Receipt, Ticket, WalletCards } from "lucide-react";
+import { AlertTriangle, CalendarClock, ExternalLink, Gauge, Receipt, Ticket, WalletCards } from "lucide-react";
 import type { ReactNode } from "react";
 import { Badge } from "@/components/ui/Badge";
+import { buttonClassName } from "@/components/ui/Button";
 import { SectionCard } from "@/components/ui/SectionCard";
 import {
   attendanceProjection,
@@ -35,13 +36,31 @@ interface PlanSummaryCardProps {
   now: number;
   /** "Assinar plano"/"Trocar plano" (checkout) — montado pelo container. */
   action: ReactNode;
+  /** Fatura pendente/vencida mais recente com link (`openInvoiceUrl`); sem ela, sem botão. */
+  openInvoiceUrl?: string | null;
 }
 
-export function PlanSummaryCard({ entitlements, now, action }: PlanSummaryCardProps) {
+function OpenInvoiceButton({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(buttonClassName("secondary", "sm"), "mt-2 inline-flex w-full sm:w-auto")}
+    >
+      Abrir fatura
+      <ExternalLink size={14} aria-hidden="true" />
+    </a>
+  );
+}
+
+export function PlanSummaryCard({ entitlements, now, action, openInvoiceUrl = null }: PlanSummaryCardProps) {
   const rawPayment = paymentNotice(entitlements.subscription);
   // Em atraso o aviso do status já cobre; não repete.
   const payment = rawPayment && entitlements.mode === "past_due" && rawPayment.tone === "error" ? null : rawPayment;
   const info = statusInfo(entitlements.mode);
+  // O botão vai no aviso de pagamento (aguardando a 1ª fatura ou em atraso), onde ele aparecer.
+  const invoiceButton = rawPayment && openInvoiceUrl ? <OpenInvoiceButton url={openInvoiceUrl} /> : null;
   const days = entitlements.mode === "trial" ? trialDaysLeft(entitlements.trialEndsAt, now) : null;
   const lock = priceLockText(entitlements.pricing?.priceLock, now);
   const list = entitlements.pricing?.listMonthlyBrl ?? null;
@@ -76,7 +95,10 @@ export function PlanSummaryCard({ entitlements, now, action }: PlanSummaryCardPr
             )}
           >
             <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-            <p className="text-text-primary">{info.notice}</p>
+            <div>
+              <p className="text-text-primary">{info.notice}</p>
+              {!payment && invoiceButton}
+            </div>
           </div>
         )}
         {payment && (
@@ -90,7 +112,10 @@ export function PlanSummaryCard({ entitlements, now, action }: PlanSummaryCardPr
             )}
           >
             <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
-            <p className="text-text-primary">{payment.text}</p>
+            <div>
+              <p className="text-text-primary">{payment.text}</p>
+              {invoiceButton}
+            </div>
           </div>
         )}
         {action}

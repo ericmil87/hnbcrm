@@ -160,6 +160,30 @@ describe("BillingPanelView", () => {
     expect(screen.queryByText(/fatura em atraso/)).toBeNull();
   });
 
+  it("Abrir fatura no aviso do 1º pagamento e no de atraso; sem link, sem botão", () => {
+    const sub = (paymentStatus: "pending" | "overdue") => ({
+      billingCycle: "monthly" as const,
+      paymentStatus,
+      provider: "asaas" as const,
+      hasSubscription: true,
+    });
+    const a = renderView({ entitlements: ent({ mode: "trial", subscription: sub("pending") }), openInvoiceUrl: "https://www.asaas.com/i/1" });
+    const link = screen.getByRole("link", { name: /Abrir fatura/ });
+    expect(link.getAttribute("href")).toBe("https://www.asaas.com/i/1");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(screen.getByText(/Aguardando o pagamento da 1ª fatura/).closest("div")?.contains(link)).toBe(true);
+    a.unmount();
+    const b = renderView({ entitlements: ent({ mode: "past_due", subscription: sub("overdue") }), openInvoiceUrl: "https://www.asaas.com/i/2" });
+    expect(screen.getByRole("link", { name: /Abrir fatura/ }).getAttribute("href")).toBe("https://www.asaas.com/i/2");
+    b.unmount();
+    const c = renderView({ entitlements: ent({ mode: "trial", subscription: sub("pending") }), openInvoiceUrl: null });
+    expect(screen.queryByRole("link", { name: /Abrir fatura/ })).toBeNull();
+    c.unmount();
+    renderView({ entitlements: ent({ mode: "active" }), openInvoiceUrl: "https://x" });
+    expect(screen.queryByRole("link", { name: /Abrir fatura/ })).toBeNull();
+  });
+
   it("priceLock aparece no plano", () => {
     renderView({
       entitlements: ent({ pricing: { listMonthlyBrl: 497, priceLock: { kind: "founder", discountPct: 30 } } }),

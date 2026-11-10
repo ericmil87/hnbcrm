@@ -9,6 +9,8 @@ import {
   isCheckoutReady,
   isPaymentProcessingMessage,
   priceSourceNote,
+  applyPrefill,
+  openInvoiceUrl,
   summaryFromPreview,
   paymentNotice,
   toCheckoutArgs,
@@ -127,6 +129,36 @@ describe("prévia do servidor", () => {
   it("recusa vira aviso e some o valor", () => {
     const r = summaryFromPreview({ chargeBrl: null, listBrl: null, monthlyBrl: null, priceSource: null, lines: [], cycleMonths: 1, refusal: "Sua conta já tem um plano ativo." });
     expect(r).toEqual({ summary: null, lines: [], refusal: "Sua conta já tem um plano ativo." });
+  });
+});
+
+describe("pré-preenchimento", () => {
+  const prefill = { billingName: "Acme Ltda", billingEmail: "fin@acme.com.br", document: "11222333000181" };
+  it("preenche os campos vazios, com máscara no documento", () => {
+    const f = applyPrefill(EMPTY_CHECKOUT_FORM, prefill);
+    expect(f).toMatchObject({ billingName: "Acme Ltda", billingEmail: "fin@acme.com.br", document: "11.222.333/0001-81" });
+  });
+  it("não sobrescreve o que o usuário já digitou", () => {
+    const f = applyPrefill({ ...EMPTY_CHECKOUT_FORM, billingName: "Meu Nome", document: "529.982.247-25" }, prefill);
+    expect(f.billingName).toBe("Meu Nome");
+    expect(f.document).toBe("529.982.247-25");
+    expect(f.billingEmail).toBe("fin@acme.com.br");
+  });
+  it("sem prefill, devolve o formulário como está", () => {
+    expect(applyPrefill(EMPTY_CHECKOUT_FORM, null)).toBe(EMPTY_CHECKOUT_FORM);
+    expect(applyPrefill(EMPTY_CHECKOUT_FORM, undefined)).toBe(EMPTY_CHECKOUT_FORM);
+  });
+});
+
+describe("fatura a abrir", () => {
+  const inv = (status: "pending" | "paid" | "overdue" | "canceled", dueDate: number, invoiceUrl: string | null) => ({ status, dueDate, invoiceUrl });
+  it("a pendente ou vencida mais recente com link", () => {
+    expect(openInvoiceUrl([inv("paid", 3, "https://p"), inv("overdue", 1, "https://old"), inv("pending", 2, "https://new")])).toBe("https://new");
+  });
+  it("ignora paga, cancelada e sem link; sem nada, null", () => {
+    expect(openInvoiceUrl([inv("paid", 3, "https://p"), inv("canceled", 2, "https://c"), inv("pending", 1, null)])).toBeNull();
+    expect(openInvoiceUrl([])).toBeNull();
+    expect(openInvoiceUrl(undefined)).toBeNull();
   });
 });
 

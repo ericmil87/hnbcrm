@@ -156,6 +156,40 @@ export function summaryFromPreview(p: PreviewLike): ServerSummary {
   };
 }
 
+export interface CheckoutPrefill {
+  billingName: string;
+  billingEmail: string;
+  document: string;
+}
+
+/** Pré-preenche só os campos vazios (o que o usuário já digitou fica); documento com máscara. */
+export function applyPrefill(form: CheckoutForm, prefill: CheckoutPrefill | null | undefined): CheckoutForm {
+  if (!prefill) return form;
+  return {
+    ...form,
+    billingName: form.billingName.trim() === "" ? prefill.billingName : form.billingName,
+    document: onlyDigits(form.document) === "" ? formatCpfCnpj(prefill.document) : form.document,
+    billingEmail: form.billingEmail.trim() === "" ? prefill.billingEmail : form.billingEmail,
+  };
+}
+
+export interface OpenableInvoice {
+  status: InvoiceStatus;
+  dueDate: number;
+  invoiceUrl: string | null;
+}
+
+/** Link da fatura pendente ou vencida mais recente (por vencimento) que tenha link; senão `null`. */
+export function openInvoiceUrl(invoices: readonly OpenableInvoice[] | null | undefined): string | null {
+  if (!invoices) return null;
+  let best: OpenableInvoice | null = null;
+  for (const inv of invoices) {
+    if ((inv.status !== "pending" && inv.status !== "overdue") || !inv.invoiceUrl) continue;
+    if (best === null || inv.dueDate > best.dueDate) best = inv;
+  }
+  return best?.invoiceUrl ?? null;
+}
+
 /** Esta conta pode abrir o checkout? (Ativo/atrasado: trocar de plano é com a gente, o servidor recusa.) */
 export function canStartCheckout(mode: string): boolean {
   return mode === "trial" || mode === "read_only" || mode === "canceled";
