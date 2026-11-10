@@ -20,6 +20,7 @@
  * confirmar, com nota).
  */
 import { buildBridgeCheckUserRequest, parseBridgeCheckUserResponse } from "./bridgeSession";
+import { phoneLookupCandidates } from "./phone";
 import {
   parseUserLidPhone,
   phoneSpellingVariants,
@@ -94,10 +95,19 @@ export async function checkBridgeNumber(args: {
         pick = { ...pick, canonicalPhone: known ?? unique[0], ambiguous: true };
       }
     }
+    // RAIZ da validação do telefone canônico: o que vem de `/user/lid` ou do JID
+    // pode ser de OUTRA pessoa (mapa/cache de LID errado). Só vale uma grafia do
+    // número perguntado; fora disso a resposta é inconclusiva (`ok:false`) para
+    // TODOS os chamadores — Nova conversa/campanha seguem "não verificado" com o
+    // número normalizado do próprio destinatário, nunca com o número estranho.
+    const canonical = pick.canonicalPhone ?? phone;
+    if (!phoneLookupCandidates(phone).includes(canonical)) {
+      return { ok: false, error: "O número devolvido pelo gateway não confere com o consultado" };
+    }
     return {
       ok: true,
       onWhatsapp: true,
-      canonicalPhone: pick.canonicalPhone ?? phone,
+      canonicalPhone: canonical,
       checked,
       ...(pick.ambiguous ? { ambiguous: true } : {}),
       ...(pick.lid ? { lid: pick.lid } : {}),

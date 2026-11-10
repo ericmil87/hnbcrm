@@ -202,6 +202,10 @@ export const internalRearmGroupPosts = internalMutation({
  * `externalId` nem `deliveryStatus`) perdeu o job. Reagenda o dispatch pelo
  * MESMO caminho do envio normal (pacing, typing, guarda de demoMode).
  */
+/** Janelas de graça: o backoff mais longo é 15 min (rate limit); o self-heal dura segundos. */
+const RETRY_GRACE_MS = 30 * 60 * 1000;
+const SELF_HEAL_GRACE_MS = 15 * 60 * 1000;
+
 export const internalRedispatchStuckOutbound = internalMutation({
   args: { sinceMs: v.number(), dryRun: v.optional(v.boolean()) },
   returns: v.array(v.object({ messageId: v.id("messages"), createdAt: v.number(), action: v.string() })),
@@ -213,6 +217,20 @@ export const internalRedispatchStuckOutbound = internalMutation({
     for (const m of recent) {
       if (m.createdAt < from) break;
       if (m.direction !== "outbound" || m.isInternal || m.externalId || m.deliveryStatus) continue;
+      // Esperando retry automático do bridge (backoff) ou no meio do self-heal:
+      // redispatch aqui quebraria o backoff e criaria uma 2ª cadeia de envio.
+      // Só enquanto o estado é RECENTE: passada a janela de graça o retry/self-heal
+      // morreu (restore, job perdido) e a mensagem volta a ser tratada como travada.
+      const nowMs = Date.now();
+      const retryNextAt = (m.metadata?.bridgeRetry as { nextAt?: number } | undefined)?.nextAt;
+      const selfHealAt = m.metadata?.selfHealAt;
+      const inRetry =
+        (m.metadata?.bridgeRetry && (typeof retryNextAt !== "number" || retryNextAt + RETRY_GRACE_MS > nowMs)) ||
+        (typeof selfHealAt === "number" && selfHealAt + SELF_HEAL_GRACE_MS > nowMs);
+      if (inRetry) {
+        out.push({ messageId: m._id, createdAt: m.createdAt, action: "skipped_in_retry" });
+        continue;
+      }
       // Tradução automática (F1): saída retida numa tradução `pending`. Velha
       // demais = `failed` legível (nunca reenvia em pt-BR); recente = aguarda.
       const translation = translationOf(m);

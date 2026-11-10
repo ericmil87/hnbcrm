@@ -594,7 +594,7 @@ npm run dev`}</CodeBlock>
                   <tbody>
                     <ToolRow name="crm_list_conversations" description="Lista conversas de um lead" params="leadId?" />
                     <ToolRow name="crm_get_messages" description="Retorna mensagens de uma conversa (com translatedText e metadata.translation quando há tradução)" params="conversationId" />
-                    <ToolRow name="crm_send_message" description="Envia mensagem em uma conversa (com tradução automática opcional)" params="conversationId, content, language?" />
+                    <ToolRow name="crm_send_message" description="Envia mensagem em uma conversa (com tradução automática opcional). Para número que o gateway disse não ter WhatsApp, recusa com 409 até um humano confirmar (notOnWhatsappAck)" params="conversationId, content, language?, notOnWhatsappAck?" />
                     <ToolRow name="crm_list_whatsapp_channels" description="Lista os números de WhatsApp ativos que podem iniciar conversa" params="—" />
                     <ToolRow name="crm_start_conversation" description="Inicia conversa 1 a 1 pelo WhatsApp (verifica o número no bridge; reaproveita ou cria o lead)" params="channelConfigId, phone | contactId, content?, optOutAck?" />
                   </tbody>

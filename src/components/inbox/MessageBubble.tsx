@@ -1,8 +1,8 @@
 import { Tooltip } from "@/components/ui/Tooltip";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "sonner";
-import { Check, CheckCheck, AlertCircle, AlertTriangle, ChevronDown, Megaphone, Bot, Ban, Eye } from "lucide-react";
+import { Check, CheckCheck, AlertCircle, RefreshCw, AlertTriangle, ChevronDown, Megaphone, Bot, Ban, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MentionRenderer } from "@/components/ui/MentionRenderer";
 import { FormattedMessageText } from "./FormattedMessageText";
@@ -38,6 +38,7 @@ import {
 import { describeSpecialMessage, isEdited, isRevoked, isViewOnce } from "@/lib/bridgeSpecialMessage";
 import { getMessageMediaState } from "@/lib/groupMedia";
 import { formatDateTime, formatTime } from "@/lib/format";
+import { AUTO_RETRY_GRACE_MS, deliveryFailureView, retryWaitText } from "@/lib/messageDelivery";
 import { senderLabelKind } from "@/lib/threadLayout";
 import { allowedReactionEmojis, channelSupports, deliveryTicksMode } from "@/lib/channelCapabilities";
 import { deviceViaLabel } from "@/lib/serviceWindow";
@@ -122,6 +123,13 @@ interface MessageBubbleProps {
   onTranslateAs?: (message: InboxMessage, lang: string) => void;
   onRetryOutbound?: (message: InboxMessage) => void;
   onSendUntranslated?: (message: InboxMessage) => void;
+  /**
+   * "Tentar novamente" de uma entrega que falhou (`messageRetry.retryFailedMessage`).
+   * Distinto de `onRetryOutbound` (tradução). Ausente = sem o botão (sem `inbox:reply`).
+   */
+  onRetryDelivery?: (message: InboxMessage) => void;
+  /** Reenvio manual desta mensagem em andamento. */
+  retryingDelivery?: boolean;
 }
 
 async function copyText(value: string, done: string) {
@@ -255,6 +263,8 @@ export function MessageBubble({
   onTranslateAs,
   onRetryOutbound,
   onSendUntranslated,
+  onRetryDelivery,
+  retryingDelivery = false,
 }: MessageBubbleProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   // Toque longo ancora na bolha; o botão do hover ancora nele mesmo.
@@ -502,7 +512,26 @@ export function MessageBubble({
   );
   const META = "inline-flex items-center gap-1 whitespace-nowrap leading-4";
 
-  const failureNote = isFailed && !translationFailed && message.metadata?.deliveryError;
+  // Relógio da leitura da falha: só roda quando há um instante futuro a esperar
+  // (fim da espera entre consultas do número ou reenvio automático vencido).
+  const retryAfter = message.deliveryRetry?.retryAfter;
+  const autoRetryNextAt = message.deliveryRetry?.autoRetryNextAt;
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (retryAfter === undefined && autoRetryNextAt === undefined) return;
+    const t = Date.now();
+    setClockNow(t);
+    const targets = [retryAfter, autoRetryNextAt === undefined ? undefined : autoRetryNextAt + AUTO_RETRY_GRACE_MS]
+      .filter((x): x is number => x !== undefined && x > t);
+    if (targets.length === 0) return;
+    const timer = window.setTimeout(() => setClockNow(Date.now()), Math.min(Math.min(...targets) - t + 250, 2 ** 31 - 1));
+    return () => window.clearTimeout(timer);
+  }, [retryAfter, autoRetryNextAt]);
+  const failureView =
+    !message.isInternal && message.direction === "outbound"
+      ? deliveryFailureView(message, isFailed && !translationFailed, clockNow)
+      : null;
+  const failureNote = !!failureView;
   const dispatchNote =
     !message.isInternal && typeof message.metadata?.dispatchNote === "string" && message.metadata.dispatchNote
       ? message.metadata.dispatchNote
@@ -783,10 +812,40 @@ export function MessageBubble({
             )
           )}
 
-          {failureNote && (
-            <p className={cn("text-caption", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-error")}>
-              {message.metadata?.deliveryError}
-            </p>
+          {failureView && (
+            <div
+              role={failureView.autoRetrying ? "status" : undefined}
+              className={cn("flex flex-col gap-0.5 text-caption", style.variant === "outbound" ? "text-bubble-out-fg" : "text-semantic-error")}
+            >
+              <p>{failureView.text}</p>
+              {failureView.hint && <p className="opacity-80">{failureView.hint}</p>}
+              {failureView.note && <p className="opacity-80">{failureView.note}</p>}
+              {failureView.waitUntil !== undefined && (
+                <p className="opacity-80">{retryWaitText(formatTime(failureView.waitUntil))}</p>
+              )}
+              {failureView.showRetry && onRetryDelivery && (
+                <button
+                  type="button"
+                  onClick={() => onRetryDelivery(message)}
+                  disabled={retryingDelivery || failureView.waitUntil !== undefined}
+                  aria-busy={retryingDelivery}
+                  className={cn(
+                    "mt-0.5 inline-flex min-h-8 coarse:min-h-11 items-center gap-1.5 self-start rounded-md px-1 font-medium underline-offset-2",
+                    "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-60",
+                    failureView.numberProblem ? "font-normal underline" : "hover:underline"
+                  )}
+                >
+                  <RefreshCw className={cn("size-3.5", retryingDelivery && "animate-spin")} aria-hidden="true" />
+                  {retryingDelivery ? "Reenviando…" : "Tentar novamente"}
+                </button>
+              )}
+              {failureView.raw && (
+                <details className="opacity-80">
+                  <summary className="cursor-pointer select-none">Detalhes</summary>
+                  <span className="break-words">{failureView.raw}</span>
+                </details>
+              )}
+            </div>
           )}
           {/* Falha parcial / "só o texto saiu": aparece mesmo sem status failed. */}
           {dispatchNote && (

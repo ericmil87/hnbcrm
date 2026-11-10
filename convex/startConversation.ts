@@ -68,6 +68,7 @@ import { checkBridgeNumber } from "./lib/bridgeNumberCheck";
 import { channelConfigPatchFor } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { withMessageSearch } from "./lib/messageSearch";
+import { LOOKUP_MIN_GAP_MS, canonicalContactPatch, contactNumberWasChecked, isMarkedNotOnWhatsapp, reserveWhatsappLookup, setWhatsappCheck } from "./lib/whatsappCheck";
 
 const TEAM_SOURCE_NAME = "Conversa iniciada pela equipe";
 const MAX_CONTENT_CHARS = 4096;
@@ -368,6 +369,12 @@ const startContextReturns = v.object({
   // Grafias do número que JÁ são contato na org — desempate quando o gateway
   // confirma as duas e só devolve LID (ver `pickCanonicalFromCheck`).
   knownPhones: v.array(v.string()),
+  // Marcador `not_on_whatsapp` (checkedAt) de contato que já tem ESTE número: a
+  // action responde dele, sem gateway, enquanto tiver menos de 10 min.
+  notOnWhatsappAt: v.optional(v.number()),
+  // Contato que já tem este número: a consulta ao gateway passa pelo orçamento dele.
+  budgetContactId: v.optional(v.id("contacts")),
+  organizationId: v.id("organizations"),
   bridge: v.optional(
     v.object({
       baseUrl: v.optional(v.string()),
@@ -381,6 +388,9 @@ type StartContext = {
   provider: "meta" | "bridge";
   phoneToCheck: string;
   knownPhones: string[];
+  notOnWhatsappAt?: number;
+  budgetContactId?: Id<"contacts">;
+  organizationId: Id<"organizations">;
   bridge?: { baseUrl?: string; tokenEncrypted?: string; sessionState?: string };
 };
 
@@ -453,10 +463,37 @@ async function startContextCore(ctx: QueryCtx, args: StartContextArgs): Promise<
         knownPhones.push(candidate);
       }
     }
+    // Guarda barata (sem gateway): contato do número (qualquer grafia) já marcado.
+    const markedCandidates: Doc<"contacts">[] = [];
+    if (args.contactId) {
+      const c = await ctx.db.get(args.contactId);
+      if (c) markedCandidates.push(c);
+    }
+    for (const candidate of phoneLookupCandidates(r.phone)) {
+      markedCandidates.push(...(await findContactsByPhoneCandidates(ctx, args.organizationId, candidate)));
+    }
+    let notOnWhatsappAt: number | undefined;
+    let budgetContactId: Id<"contacts"> | undefined;
+    for (const c of markedCandidates) {
+      if (c.organizationId === args.organizationId && !budgetContactId && contactNumberWasChecked(c, r.phone, defaultCountry)) {
+        budgetContactId = c._id;
+      }
+      if (
+        c.organizationId === args.organizationId &&
+        isMarkedNotOnWhatsapp(c) &&
+        contactNumberWasChecked(c, r.phone, defaultCountry) &&
+        c.whatsappCheck
+      ) {
+        notOnWhatsappAt = Math.max(notOnWhatsappAt ?? 0, c.whatsappCheck.checkedAt);
+      }
+    }
     return {
       provider,
       phoneToCheck: r.phone,
       knownPhones,
+      organizationId: args.organizationId,
+      ...(budgetContactId ? { budgetContactId } : {}),
+      ...(notOnWhatsappAt !== undefined ? { notOnWhatsappAt } : {}),
       ...(provider === "bridge"
         ? {
             bridge: {
@@ -472,7 +509,7 @@ async function startContextCore(ctx: QueryCtx, args: StartContextArgs): Promise<
 
 type NumberCheck =
   | { status: "on_whatsapp"; canonicalPhone: string; phoneDisplay: string; changed: boolean; ambiguous?: boolean; lid?: string; checked?: CheckedWhatsappUser[] }
-  | { status: "not_on_whatsapp"; phone: string; checked?: CheckedWhatsappUser[] }
+  | { status: "not_on_whatsapp"; phone: string; checked?: CheckedWhatsappUser[]; fromMarker?: boolean }
   | { status: "unverified"; reason: "meta" | "bridge_offline" | "gateway_error"; phone: string; detail?: string };
 
 const checkedUsersValidator = v.array(
@@ -490,7 +527,13 @@ const numberCheckReturns = v.union(
     // Diagnóstico: o que o gateway respondeu para cada grafia perguntada.
     checked: v.optional(checkedUsersValidator),
   }),
-  v.object({ status: v.literal("not_on_whatsapp"), phone: v.string(), checked: v.optional(checkedUsersValidator) }),
+  v.object({
+    status: v.literal("not_on_whatsapp"),
+    phone: v.string(),
+    checked: v.optional(checkedUsersValidator),
+    // Respondido do marcador recente, sem consultar o gateway.
+    fromMarker: v.optional(v.boolean()),
+  }),
   v.object({
     status: v.literal("unverified"),
     reason: v.union(v.literal("meta"), v.literal("bridge_offline"), v.literal("gateway_error")),
@@ -504,12 +547,36 @@ const numberCheckReturns = v.union(
  * lança por problema do gateway: indisponível = `unverified` e quem chama
  * decide (o início segue sem confirmação; só o "não tem WhatsApp" barra).
  */
-async function runBridgeNumberCheck(context: StartContext): Promise<NumberCheck> {
+async function runBridgeNumberCheck(ctx: ActionCtx, context: StartContext): Promise<NumberCheck> {
   const phone = context.phoneToCheck;
   if (context.provider !== "bridge") return { status: "unverified", reason: "meta", phone };
   const bridge = context.bridge;
   if (!bridge?.baseUrl || !bridge.tokenEncrypted || bridge.sessionState !== "connected") {
     return { status: "unverified", reason: "bridge_offline", phone };
+  }
+  // Marcador recente do próprio número: responde sem gateway (mesma janela de 10 min).
+  if (context.notOnWhatsappAt !== undefined && Date.now() - context.notOnWhatsappAt < LOOKUP_MIN_GAP_MS) {
+    return { status: "not_on_whatsapp", phone, fromMarker: true };
+  }
+  // Número que JÁ tem contato: a consulta passa pelo orçamento POR CONTATO (10 min /
+  // 3 por dia, o mesmo do self-heal e do retry). Sem vaga, responde do último
+  // resultado (marcador) em vez de perguntar de novo. Número SEM contato fica fora do
+  // orçamento (não há onde reservar): a ação exige membro autenticado com `inbox:reply`
+  // e é uma consulta por clique/chamada.
+  if (context.budgetContactId) {
+    const reserved = await ctx.runMutation(internal.startConversation.internalReserveStartLookup, {
+      organizationId: context.organizationId,
+      contactId: context.budgetContactId,
+    });
+    if (!reserved) {
+      if (context.notOnWhatsappAt !== undefined) return { status: "not_on_whatsapp", phone, fromMarker: true };
+      return {
+        status: "unverified",
+        reason: "gateway_error",
+        phone,
+        detail: "Consultas ao WhatsApp deste contato no limite por enquanto — tente mais tarde",
+      };
+    }
   }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CHECK_TIMEOUT_MS);
@@ -588,7 +655,7 @@ export const checkWhatsappNumber = action({
   returns: numberCheckReturns,
   handler: async (ctx, args): Promise<NumberCheck> => {
     const context = await loadStartContext(ctx, args);
-    return await runBridgeNumberCheck(context);
+    return await runBridgeNumberCheck(ctx, context);
   },
 });
 
@@ -1016,17 +1083,12 @@ async function startConversationCore(
       const patch: Partial<Doc<"contacts">> = {};
       if (canonical) {
         // O WhatsApp confirmou OUTRA grafia: o número gravado era inalcançável.
-        // `whatsappNumber` é o que o dispatch lê; `phone` só é trocado quando é
-        // o MESMO número noutra grafia (não apaga um fixo cadastrado à parte).
-        const digits = (raw: string | undefined) => (raw ?? "").replace(/\D+/g, "");
-        const spellings = phoneLookupCandidates(phone);
-        const dispatchDigits = digits(contactRawPhone(contact));
-        if (dispatchDigits && dispatchDigits !== phone) previousPhone = dispatchDigits;
-        if (digits(contact.whatsappNumber) !== phone) patch.whatsappNumber = phone;
-        const phoneDigits = digits(contact.phone);
-        if (!phoneDigits || (phoneDigits !== phone && (spellings.includes(phoneDigits) || phoneDigits === dispatchDigits))) {
-          patch.phone = phone;
-        }
+        // Regra única em `lib/whatsappCheck.canonicalContactPatch` (também usada
+        // pelo self-heal do dispatch): `whatsappNumber` é o que o dispatch lê;
+        // `phone` só troca quando é o MESMO número noutra grafia.
+        const { patch: canonicalPatch, previousPhone: prev } = canonicalContactPatch(contact, phone);
+        Object.assign(patch, canonicalPatch);
+        previousPhone = prev;
       } else {
         if (!contact.phone) patch.phone = phone;
         if (!contact.whatsappNumber) patch.whatsappNumber = phone;
@@ -1036,6 +1098,10 @@ async function startConversationCore(
         contact = (await ctx.db.get(contact._id))!;
       }
     }
+
+    // O WhatsApp confirmou o número (JID): marca "verificado" para os envios
+    // seguintes não precisarem perguntar de novo (lib/whatsappCheck).
+    if (canonical) await setWhatsappCheck(ctx, contact._id, "verified", now);
 
     // 6. Lead: reaproveita o mais recente; senão cria no funil escolhido.
     let lead = await findLeadForContact(ctx, args.organizationId, contact._id);
@@ -1243,6 +1309,52 @@ export const internalStartConversationAsMember = internalAction({
   },
 });
 
+/** Reserva UMA consulta no orçamento do contato (lib/whatsappCheck `reserveWhatsappLookup`). */
+export const internalReserveStartLookup = internalMutation({
+  args: { organizationId: v.id("organizations"), contactId: v.id("contacts") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact || contact.organizationId !== args.organizationId) return true;
+    return (await reserveWhatsappLookup(ctx, contact._id, Date.now(), { startFlow: true })).ok;
+  },
+});
+
+/**
+ * Grava `contacts.whatsappCheck = not_on_whatsapp` no contato escolhido (ou nos
+ * contatos que já têm o número, em qualquer grafia). Nunca cria contato.
+ */
+export const internalMarkNumberNotOnWhatsapp = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    contactId: v.optional(v.id("contacts")),
+    phone: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const ids = new Set<Id<"contacts">>();
+    if (args.contactId) {
+      const c = await ctx.db.get(args.contactId);
+      if (c && c.organizationId === args.organizationId) ids.add(c._id);
+    } else {
+      for (const candidate of phoneLookupCandidates(args.phone)) {
+        for (const row of await findContactsByPhoneCandidates(ctx, args.organizationId, candidate)) ids.add(row._id);
+      }
+    }
+    // Só marca o contato cujo número ATUAL é o que foi perguntado ao gateway
+    // (o operador pode ter digitado outro número; o contato escolhido fica como está).
+    const defaultCountry = await orgDefaultCountry(ctx, args.organizationId);
+    for (const id of ids) {
+      const c = await ctx.db.get(id);
+      if (c && contactNumberWasChecked(c, args.phone, defaultCountry)) {
+        await setWhatsappCheck(ctx, id, "not_on_whatsapp", now);
+      }
+    }
+    return null;
+  },
+});
+
 type StartResult = InternalStartResult & { verified: boolean; verifyReason?: "meta" | "bridge_offline" | "gateway_error" };
 
 async function runStartConversation(
@@ -1251,8 +1363,18 @@ async function runStartConversation(
   actor?: StartActorArgs
 ): Promise<StartResult> {
   const context = await loadStartContext(ctx, args, actor);
-  const check = await runBridgeNumberCheck(context);
-  if (check.status === "not_on_whatsapp") throw new ConvexError(NOT_ON_WHATSAPP_ERROR);
+  const check = await runBridgeNumberCheck(ctx, context);
+  if (check.status === "not_on_whatsapp") {
+    // Os dois formatos foram recusados pelo gateway: marca o contato (se já
+    // existir) para os envios automáticos não insistirem nesse número. Resposta
+    // vinda do próprio marcador não o renova (senão a janela nunca fecharia).
+    if (!check.fromMarker) await ctx.runMutation(internal.startConversation.internalMarkNumberNotOnWhatsapp, {
+      organizationId: args.organizationId,
+      ...(args.contactId ? { contactId: args.contactId } : {}),
+      phone: check.phone,
+    });
+    throw new ConvexError(NOT_ON_WHATSAPP_ERROR);
+  }
   const writeArgs = {
     ...args,
     // Verificado: o número do WhatsApp manda. Sem verificação: o caminho de

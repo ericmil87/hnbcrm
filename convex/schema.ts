@@ -1015,6 +1015,37 @@ const applicationTables = {
     company: v.optional(v.string()),
     title: v.optional(v.string()),
     whatsappNumber: v.optional(v.string()),
+    // Última checagem do número no WhatsApp (gateway bridge). Só vale enquanto o
+    // número ATUAL do contato (`whatsappNumber ?? phone`, só dígitos) for igual a
+    // `phone`; editar o número ou uma mensagem recebida do contato invalida.
+    // `not_on_whatsapp` trava envio automático (lib/whatsappCheck.ts).
+    whatsappCheck: v.optional(v.object({
+      phone: v.string(),
+      status: v.union(v.literal("not_on_whatsapp"), v.literal("verified")),
+      checkedAt: v.number(),
+    })),
+    // Orçamento de CONSULTAS ao gateway por contato/número (lib/whatsappCheck.ts
+    // `reserveWhatsappLookup`): espaçamento mínimo + teto diário, compartilhado por
+    // self-heal, boas-vindas e "Tentar novamente" (mensagens diferentes do mesmo
+    // contato disputam o mesmo documento, então o OCC as serializa).
+    whatsappLookup: v.optional(v.object({
+      phone: v.string(),
+      at: v.number(),
+      day: v.string(),
+      count: v.number(),
+      // Nova conversa: "conferir" e "iniciar" são UMA interação (duas consultas
+      // seguidas). A 1ª reserva abre UMA consulta grátis por 2 min.
+      burst: v.optional(v.object({ until: v.number() })),
+    })),
+    // `recipient_not_found` SEGUIDOS para o número atual quando nada pôde ser
+    // marcado (checagem indisponível/inconclusiva): a partir de 2 o envio automático
+    // para (lib/whatsappCheck.ts `isAutomatedSendBlocked`). Zera com número diferente,
+    // mensagem recebida ou envio aceito pelo gateway.
+    whatsappFails: v.optional(v.object({
+      phone: v.string(),
+      count: v.number(),
+      at: v.number(),
+    })),
     telegramUsername: v.optional(v.string()),
     instagramUsername: v.optional(v.string()), // Meta Messaging: @ do IG (sem phone)
     tags: v.array(v.string()),

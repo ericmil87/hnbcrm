@@ -18,6 +18,7 @@
  * o watchdog, a adoção de uma tarefa existente e a API que a tela usa.
  * O ciclo de vida compartilhado mora em `lib/followUpOps.ts`.
  */
+import { isOptedOutAnySpelling } from "./lib/whatsappCheck";
 import { resolveTaskNotifications } from "./lib/notificationResolve";
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
@@ -272,12 +273,8 @@ async function fireCore(
       ? normalizeCampaignPhone(contact.phone, resolveDefaultCountry(org?.settings))
       : null;
   if (phone?.ok) {
-    const optOut = await ctx.db
-      .query("optOuts")
-      .withIndex("by_organization_and_phone", (q) =>
-        q.eq("organizationId", followUp.organizationId).eq("phone", phone.phone)
-      )
-      .first();
+    // Ambas as grafias BR (o opt-out por palavra-chave grava o JID cru).
+    const optOut = await isOptedOutAnySpelling(ctx, followUp.organizationId, phone.phone);
     if (optOut) {
       await resolveFollowUpOutcome(ctx, followUp._id, { kind: "canceled", reason: "opt_out" });
       return { ok: false, reason: "opt_out" };

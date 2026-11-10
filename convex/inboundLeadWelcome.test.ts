@@ -417,6 +417,172 @@ describe("POST /api/v1/inbound/lead — v0.64", () => {
   });
 });
 
+/**
+ * Pré-checagem do número no gateway (bridge) antes das boas-vindas. Caso real:
+ * o formulário trazia (31) 99000-1234 → 5531990001234, mas a conta é
+ * 553190001234; a normalização de 13 dígitos sobrescrevia o JID real e o envio
+ * dava `no LID found`.
+ */
+function checkGateway(opts: { registered?: string; down?: boolean } = {}) {
+  const urls: string[] = [];
+  const fn = vi.fn(async (input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    urls.push(url);
+    const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+    const j = (status: number, data: unknown) =>
+      new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+    if (url.endsWith("/user/check")) {
+      if (opts.down) return j(500, { success: false, error: "gateway down" });
+      const first = (body.Phone as string[])[0];
+      return j(200, {
+        code: 200,
+        success: true,
+        data: { Users: [opts.registered ? { Query: first, IsInWhatsapp: true, JID: "161495166009388@lid" } : { Query: first, IsInWhatsapp: false, JID: "" }] },
+      });
+    }
+    const m = url.match(/\/user\/lid\/(\d+)$/);
+    if (m) {
+      return opts.registered && m[1] === opts.registered
+        ? j(200, { code: 200, success: true, data: { jid: `${opts.registered}@s.whatsapp.net`, lid: "161495166009388@lid" } })
+        : j(404, { success: false, error: "LID not found" });
+    }
+    return j(200, { code: 200, success: true, data: {} });
+  });
+  vi.stubGlobal("fetch", fn);
+  return { fn, urls, checks: () => urls.filter((u) => u.endsWith("/user/check")).length };
+}
+
+describe("boas-vindas: pré-checagem do número no gateway", () => {
+  test("outra grafia confirmada → contato passa a ter o número do WhatsApp (12 dígitos) e a mensagem sai para ele", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    const gw = checkGateway({ registered: "553190001234" });
+    const r = await post(t, { title: "Lead", contact: { firstName: "Ana", phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    expect(r.json.welcomeQueued).toBe(true);
+    expect(gw.checks()).toBe(1);
+    const contact = (await t.run((ctx) => ctx.db.get(r.json.contactId as Id<"contacts">)))!;
+    expect(contact.whatsappNumber).toBe("553190001234");
+    expect(contact.whatsappCheck).toMatchObject({ phone: "553190001234", status: "verified" });
+    const welcome = (await messagesOfLead(t, r.json.leadId)).find((m) => m.metadata?.inboundWelcome)!;
+    expect(welcome).toBeTruthy();
+    const ctxRow = await t.query(internal.whatsapp.internalGetDispatchContext, { messageId: welcome._id });
+    expect(ctxRow!.toPhone).toBe("553190001234");
+  });
+
+  test("sem WhatsApp → nada sai, marcador no contato e repasse humano em PT-BR (sem texto cru do gateway)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    checkGateway({});
+    const r = await post(t, { title: "Lead", contact: { firstName: "Ana", phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    expect(r.status).toBe(201);
+    expect(r.json.welcomeQueued).toBe(false);
+    expect(r.json.welcomeSkippedReason).toBe("numero_sem_whatsapp");
+    expect((await messagesOfLead(t, r.json.leadId)).filter((m) => m.direction === "outbound")).toHaveLength(0);
+    const contact = (await t.run((ctx) => ctx.db.get(r.json.contactId as Id<"contacts">)))!;
+    expect(contact.whatsappCheck).toMatchObject({ status: "not_on_whatsapp" });
+    const handoffs = await t.run((ctx) =>
+      ctx.db.query("handoffs").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect()
+    );
+    expect(handoffs).toHaveLength(1);
+    expect(handoffs[0].reason).toContain("sem WhatsApp");
+    expect(handoffs[0].summary).toContain("não está no WhatsApp");
+    expect(handoffs[0].summary).not.toMatch(/LID|gateway|usync/i);
+    expect(handoffs[0].suggestedActions?.join(" ")).toContain("Confirmar o número");
+  });
+
+  test("checagem indisponível → envia como antes e NÃO sobrescreve o JID real do contato", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    const existing = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId, firstName: "Ana", phone: "5531990001234", whatsappNumber: "553190001234",
+        tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    checkGateway({ down: true });
+    const r = await post(t, { title: "Lead", contact: { phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    expect(r.json.contactId).toBe(existing);
+    expect(r.json.welcomeQueued).toBe(true);
+    const contact = (await t.run((ctx) => ctx.db.get(existing)))!;
+    expect(contact.whatsappNumber).toBe("553190001234");
+    expect(contact.whatsappCheck).toBeUndefined();
+  });
+
+  test("marcador `verified` recente para o número → pula a checagem (zero consultas)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId, firstName: "Ana", phone: "5531990001234", whatsappNumber: "5531990001234",
+        whatsappCheck: { phone: "5531990001234", status: "verified", checkedAt: Date.now() }, tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    const gw = checkGateway({ registered: "553190001234" });
+    const r = await post(t, { title: "Lead", contact: { phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    expect(r.json.welcomeQueued).toBe(true);
+    expect(gw.checks()).toBe(0);
+  });
+
+  test("marcador `sem WhatsApp` válido: formulário repetido recusa SEM consultar o gateway", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId, firstName: "Ana", phone: "5531990001234", whatsappNumber: "5531990001234",
+        whatsappCheck: { phone: "5531990001234", status: "not_on_whatsapp", checkedAt: Date.now() }, tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    const gw = checkGateway({ registered: "553190001234" });
+    const r = await post(t, { title: "Lead", contact: { phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    expect(r.json.welcomeQueued).toBe(false);
+    expect(r.json.welcomeSkippedReason).toBe("numero_sem_whatsapp");
+    expect(gw.checks()).toBe(0);
+  });
+
+  test("telefone devolvido que não é grafia do número é ignorado: não reescreve o contato", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    // gateway confirma um telefone de OUTRA pessoa via /user/lid
+    checkGateway({ registered: "5511987654321" });
+    const r = await post(t, { title: "Lead", contact: { phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    const contact = (await t.run((ctx) => ctx.db.get(r.json.contactId as Id<"contacts">)))!;
+    expect(contact.whatsappNumber).not.toBe("5511987654321");
+    expect(contact.phone).not.toBe("5511987654321");
+  });
+
+  test("site-lead: o contato com a OUTRA grafia BR é reaproveitado (sem duplicar)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const existing = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId, firstName: "Ana", phone: "553190001234", whatsappNumber: "553190001234",
+        tags: [], createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    const r = await post(t, { title: "Lead", contact: { firstName: "Ana", phone: "(31) 99000-1234" } });
+    expect(r.json.contactId).toBe(existing);
+    const all = await t.run((ctx) => ctx.db.query("contacts").withIndex("by_organization_and_phone", (q) => q.eq("organizationId", s.organizationId)).collect());
+    expect(all.filter((c) => c.firstName === "Ana")).toHaveLength(1);
+  });
+
+  test("guardas continuam valendo: opt-out em QUALQUER grafia BR pula sem consultar o gateway", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await configure(t, s);
+    await t.run((ctx) => ctx.db.insert("optOuts", { organizationId: s.organizationId, phone: "553190001234", source: "manual", createdAt: Date.now() }));
+    const gw = checkGateway({ registered: "553190001234" });
+    const r = await post(t, { title: "Lead", contact: { phone: "(31) 99000-1234" }, tags: ["optin:whatsapp"] });
+    expect(r.json.welcomeSkippedReason).toBe("opt_out");
+    expect(gw.checks()).toBe(0);
+  });
+});
+
 describe("envelope do atendente: camposCapturados + mensagemDoFormulario", () => {
   test("só chaves de captureFields, valores cortados, nota do formulário mais recente", () => {
     const out = leadCapturedContext(

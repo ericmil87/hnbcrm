@@ -32,7 +32,9 @@ Project-specific rules that change how code must be written. Official Convex rul
 | Group sends | `assertGroupConversationSendable` + `resolveGroupMentions` (`convex/lib/groupGuard.ts`) | — |
 | Lead hard delete | `hardDeleteLead` (`convex/lib/leadCascade.ts`): snapshot in audit, batched cascade job | `leadDelete.test.ts` |
 | Follow-up terminal states | `resolveFollowUpOutcome` (`convex/lib/followUpOps.ts`) | `attendantFollowUp.test.ts` |
-| Bridge number check | `convex/lib/bridgeNumberCheck.ts` (used by Nova conversa AND campaigns) | — |
+| Bridge number check | `convex/lib/bridgeNumberCheck.ts` (Nova conversa, campanhas, self-heal do dispatch, boas-vindas, "Tentar novamente", ops) | — |
+| "Sem WhatsApp" marker / manual-send ack | `convex/lib/whatsappCheck.ts` (`contacts.whatsappCheck`; gate dos automáticos no `dispatchMessage`; `assertManualSendAllowed` nos envios humanos) | `bridgeNumberSelfHeal.test.ts` |
+| Bridge send errors | `convex/lib/bridgeSendError.ts` (`classifyBridgeSendError`, retry plan); veredito único `whatsapp.internalDecideBridgeFailure` | `lib/bridgeSendError.test.ts` |
 | Webhook scheduling | `scheduleWebhookEvent` (`convex/lib/webhookDispatch.ts`) | `webhookDispatchPort.test.ts` |
 | Outbound message dispatch (any channel) | `scheduleOutboundDispatch` (`convex/lib/outboundDispatch.ts`) branches by `conversation.channel`; callers keep their own business guards (`!isInternal`) | `outboundDispatchPort.test.ts` fails on `scheduleWhatsappDispatch(` or `internal.whatsapp.internalDispatchMessage` outside the port |
 | Outbound translation | `maybeDivertOutboundForTranslation` (`convex/lib/translationOps.ts`), called FIRST in `scheduleOutboundDispatch` and in `internalApplyOutbound`; only `translationOps` schedules `internal.translation.*`; provider calls only via `runTranslation` (`lib/translationCore.ts`) | `translationPort.test.ts` fails on a scheduling outside `translationOps`, a diversion after the channel branch, or unwired receivers |

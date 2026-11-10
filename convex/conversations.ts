@@ -38,6 +38,8 @@ import { coalesceKeys, createNotification, GROUP_MENTION_WINDOW_MS } from "./lib
 import { notificationCopy } from "./lib/notificationCopy";
 import { escalateFollowUpsOfConversation } from "./lib/followUpOps";
 import { assertGroupConversationSendable, resolveGroupMentions } from "./lib/groupGuard";
+import { deliveryRetryInfo } from "./lib/messageRetry";
+import { assertManualSendAllowed, clearNotFoundFails, clearWhatsappCheck, recordNotOnWhatsappAck } from "./lib/whatsappCheck";
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
@@ -738,6 +740,9 @@ export const getMessages = query({
 
       // `searchNorm` é só para o índice de busca: não viaja para o cliente.
       const { searchNorm: _searchNorm, ...messageFields } = message;
+      // "Tentar novamente": o que a UI precisa para decidir o botão (só em saída
+      // que falhou ou que o bridge está reenviando sozinho). lib/messageRetry.
+      const deliveryRetry = deliveryRetryInfo(message);
       return {
         ...messageFields,
         sender: message.senderId ? senderMap.get(message.senderId) ?? null : null,
@@ -745,6 +750,7 @@ export const getMessages = query({
           ? senderContactMap.get(message.senderContactId) ?? null
           : null,
         attachmentFiles,
+        ...(deliveryRetry ? { deliveryRetry } : {}),
       };
     });
 
@@ -1299,6 +1305,9 @@ export const sendMessage = mutation({
     // F3: o composer já traduziu — `content` é o texto traduzido e a mensagem
     // nasce `done`, sem desvio na porta.
     translation: v.optional(outboundTranslationArgValidator),
+    // Aceite explícito de envio a número que o gateway disse NÃO ter WhatsApp
+    // (`contacts.whatsappCheck`). Sem ele a mutation recusa com `NOT_ON_WHATSAPP:`.
+    notOnWhatsappAck: v.optional(v.boolean()),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -1309,6 +1318,10 @@ export const sendMessage = mutation({
     // Sala de grupo: as MESMAS guardas de `POST /api/v1/groups/send`
     // (acompanhado, não saímos, grupos ligados no número).
     await assertGroupConversationSendable(ctx, conversation);
+    // Contato marcado "sem WhatsApp": avisar, não travar (aceite auditado).
+    const notOnWhatsappAcked = args.isInternal
+      ? false
+      : await assertManualSendAllowed(ctx, conversation, args.notOnWhatsappAck, userMember);
     await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
     const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
 
@@ -1341,6 +1354,7 @@ export const sendMessage = mutation({
       ...translationInsert.fields,
       createdAt: now,
     }));
+    if (notOnWhatsappAcked) await recordNotOnWhatsappAck(ctx, { messageId, member: userMember, now });
     if (translationInsert.untranslatedTarget) {
       await auditUntranslatedSend(ctx, {
         conversation,
@@ -1472,6 +1486,8 @@ export const forwardMessage = mutation({
   args: {
     messageId: v.id("messages"),
     targetConversationId: v.id("conversations"),
+    // Aceite de envio a número sem WhatsApp confirmado (`NOT_ON_WHATSAPP:` sem ele).
+    notOnWhatsappAck: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -1501,6 +1517,7 @@ export const forwardMessage = mutation({
       throw new Error("Não é possível encaminhar uma mensagem de grupo");
     }
 
+    const notOnWhatsappAcked = await assertManualSendAllowed(ctx, target, args.notOnWhatsappAck, member);
     const now = Date.now();
 
     // Duplicate the attachment file rows so the forwarded copy owns its own
@@ -1561,6 +1578,7 @@ export const forwardMessage = mutation({
       await Promise.all(attachments.map((fileId) => ctx.db.patch(fileId, { messageId })));
     }
 
+    if (notOnWhatsappAcked) await recordNotOnWhatsappAck(ctx, { messageId, member, now });
     await applyOutboundMessageSideEffects(ctx, { conversation: target, member, messageId, now });
 
     if (!carriesTranscript) {
@@ -1801,6 +1819,8 @@ export const internalSendMessage = internalMutation({
     // Tradução automática (F1): mesma semântica de `sendMessage`.
     language: v.optional(v.string()),
     translation: v.optional(outboundTranslationArgValidator),
+    // Mesma semântica de `sendMessage.notOnWhatsappAck` (REST/MCP).
+    notOnWhatsappAck: v.optional(v.boolean()),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -1830,6 +1850,8 @@ export async function internalSendMessageCore(
     /** Tradução automática (F1): mesma semântica de `sendMessage`. */
     language?: string;
     translation?: { authoredText: string; sourceLang: string; targetLang: string; edited?: boolean };
+    /** Aceite de envio a número sem WhatsApp confirmado (`lib/whatsappCheck`). */
+    notOnWhatsappAck?: boolean;
   }
 ): Promise<Id<"messages">> {
   const teamMember = await ctx.db.get(args.teamMemberId);
@@ -1844,6 +1866,9 @@ export async function internalSendMessageCore(
 
   // Sala de grupo: mesmas guardas do caminho do app e da rota REST de grupo.
   await assertGroupConversationSendable(ctx, conversation);
+  const notOnWhatsappAcked = args.isInternal
+    ? false
+    : await assertManualSendAllowed(ctx, conversation, args.notOnWhatsappAck, teamMember);
   await assertAttachmentsInOrg(ctx, conversation.organizationId, args.attachments);
   const replyMeta = await resolveReplyMeta(ctx, conversation, args.replyToMessageId);
 
@@ -1875,6 +1900,7 @@ export async function internalSendMessageCore(
     ...translationInsert.fields,
     createdAt: now,
   }));
+  if (notOnWhatsappAcked) await recordNotOnWhatsappAck(ctx, { messageId, member: teamMember, now, via: "api" });
   if (translationInsert.untranslatedTarget) {
     await auditUntranslatedSend(ctx, {
       conversation,
@@ -2063,6 +2089,17 @@ export const internalReceiveMessage = internalMutation({
     const lead = await ctx.db.get(args.leadId);
     if (!lead) throw new Error("Lead not found");
     if (lead.organizationId !== args.organizationId) throw new Error("Lead not in organization");
+
+    // Mensagem RECEBIDA prova que o número existe no WhatsApp: derruba o marcador
+    // "sem WhatsApp" (lib/whatsappCheck) — o envio automático volta a valer.
+    if (args.channel === "whatsapp" && lead.contactId) {
+      const inboundContact = await ctx.db.get(lead.contactId);
+      if (inboundContact?.whatsappCheck?.status === "not_on_whatsapp") {
+        await clearWhatsappCheck(ctx, inboundContact._id);
+      }
+      // O contato existe e respondeu: zera também o contador de `recipient_not_found`.
+      if (inboundContact?.whatsappFails) await clearNotFoundFails(ctx, inboundContact._id);
+    }
 
     // Comandos de teste ("/resetme", "/resetlist", "/resetother"): hard delete e
     // consulta dos leads da org de teste. Triplo gate em testReset.ts — sem a env

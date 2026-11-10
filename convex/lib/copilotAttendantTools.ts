@@ -13,6 +13,7 @@
  * when the attendant is in `autopilot` (its reply goes straight to the
  * customer, P8). Everything else runs the domain core directly, `via:"copilot"`.
  */
+import { NOT_ON_WHATSAPP_SEND_PREFIX } from "./whatsappCheck";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { acceptHandoffCore, rejectHandoffWithInstructionCore } from "../handoffs";
@@ -529,7 +530,22 @@ export async function executeAttendantPendingAction(
   if (pa.tool === "sendCustomerReply") {
     const text = typeof pa.args.text === "string" ? pa.args.text : "";
     if (!text) return { ok: false, message: "Texto vazio." };
-    await internalSendMessageCore(ctx, { conversationId: conversation._id, content: text, teamMemberId: member._id, via });
+    try {
+      // Sem `notOnWhatsappAck`: o aceite de enviar a número sem WhatsApp é de um
+      // HUMANO no app; o Copiloto/IA nunca o define.
+      await internalSendMessageCore(ctx, { conversationId: conversation._id, content: text, teamMemberId: member._id, via });
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : "";
+      const data = (e as { data?: unknown })?.data;
+      if (`${typeof data === "string" ? data : ""}${raw}`.includes(NOT_ON_WHATSAPP_SEND_PREFIX)) {
+        return {
+          ok: false,
+          message:
+            "Este número não está no WhatsApp (verificado pelo gateway), então a mensagem não foi enviada. Peça a uma pessoa para conferir o número do contato no app.",
+        };
+      }
+      throw e;
+    }
     return { ok: true, message: "Mensagem enviada." };
   }
   if (pa.tool === "instructAttendant") {

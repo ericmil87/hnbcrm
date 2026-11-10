@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, Users } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, PhoneOff, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -17,6 +17,7 @@ import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { conversationLanguageState } from "@/lib/translationRules";
 import { GroupMenuItems, type GroupMenuActions } from "@/components/inbox/GroupMenuItems";
 import { InlineNameEditor, type InlineNameContact, type InlineNameLead } from "@/components/inbox/InlineNameEditor";
+import { NOT_FOUND_BADGE, NOT_ON_WHATSAPP_BADGE, isBridgeWhatsapp, numberWarningOf } from "@/lib/messageDelivery";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import {
@@ -547,6 +548,19 @@ export function ConversationHeader({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Número sem WhatsApp (marcador vale só para o número atual) */}
+      {!isGroup && isBridgeWhatsapp(conversation.channel, conversation.channelProvider) && numberWarningOf(conversation.contact) && (
+        <div className="shrink-0 border-b border-semantic-warning/40 bg-semantic-warning/5 px-3 py-1.5 md:px-4">
+          <p className="mx-auto flex w-full max-w-4xl items-start gap-2 text-xs">
+            <PhoneOff size={14} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden />
+            <span>
+              <span className="font-medium text-semantic-warning">{(numberWarningOf(conversation.contact) === "not_found" ? NOT_FOUND_BADGE : NOT_ON_WHATSAPP_BADGE).label}</span>
+              <span className="text-text-secondary"> — {(numberWarningOf(conversation.contact) === "not_found" ? NOT_FOUND_BADGE : NOT_ON_WHATSAPP_BADGE).explanation}</span>
+            </span>
+          </p>
         </div>
       )}
 

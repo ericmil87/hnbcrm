@@ -229,6 +229,8 @@ describe("startConversation — número conferido no WhatsApp (bridge)", () => {
     await t.run(async (ctx) => {
       const contact = (await ctx.db.get(res.contactId))!;
       expect(contact).toMatchObject({ phone: "558181392929", whatsappNumber: "558181392929" });
+      // Confirmado pelo gateway: marcador "verified" para o número que o dispatch lê.
+      expect(contact.whatsappCheck).toMatchObject({ phone: "558181392929", status: "verified" });
       expect(await ctx.db.query("contacts").collect()).toHaveLength(1);
     });
   });
@@ -248,6 +250,23 @@ describe("startConversation — número conferido no WhatsApp (bridge)", () => {
     await t.run(async (ctx) => {
       expect(await ctx.db.query("contacts").collect()).toHaveLength(1);
     });
+  });
+
+  test("número fora do WhatsApp de um contato existente: erro, e o contato fica marcado `sem WhatsApp`", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const contactId = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Zé", phone: "5585999997777", tags: [], createdAt: NOW, updatedAt: NOW })
+    );
+    wuzapiCheck([]);
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s1` });
+    await expect(
+      asAgent.action(api.startConversation.startConversation, {
+        organizationId: s.organizationId, channelConfigId: s.bridgeId, contactId,
+      })
+    ).rejects.toThrow(/não tem WhatsApp/);
+    const c = await t.run((ctx) => ctx.db.get(contactId));
+    expect(c!.whatsappCheck).toMatchObject({ phone: "5585999997777", status: "not_on_whatsapp" });
   });
 
   test("número fora do WhatsApp: erro ANTES de qualquer escrita", async () => {

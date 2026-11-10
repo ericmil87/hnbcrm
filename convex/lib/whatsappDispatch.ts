@@ -180,3 +180,45 @@ export async function scheduleWhatsappDispatch(
     ...(typingDelayMs > 0 ? { typingDelayMs } : {}),
   });
 }
+
+/**
+ * Re-agenda UM envio já em curso (retry do bridge ou reenvio após o self-heal do
+ * número) PELO MESMO pacing do envio original: novo slot no cursor do canal e no
+ * da conversa, nunca burst. `delayMs` é o backoff mínimo; `floorChannel` empurra
+ * a fila inteira do canal (rate limit é do NÚMERO, não da mensagem). Não toca
+ * `deliveryStatus` (a guarda de idempotência do dispatcher é a razão).
+ * Devolve o atraso real em ms.
+ */
+export async function rescheduleWhatsappDispatch(
+  ctx: MutationCtx,
+  conversation: Doc<"conversations">,
+  messageId: Id<"messages">,
+  opts: { delayMs: number; typingDelayMs?: number; floorChannel?: boolean }
+): Promise<number> {
+  const now = Date.now();
+  const config = await resolveConversationChannelConfig(ctx, conversation);
+  const typingDelayMs = opts.typingDelayMs && opts.typingDelayMs > 0 ? opts.typingDelayMs : 0;
+  const runtime = await getRuntime(ctx, conversation._id);
+  const earliestAt = Math.max(now + opts.delayMs, runtime?.nextDispatchAt ?? 0);
+  const slot = config
+    ? await claimChannelSlot(ctx, {
+        config,
+        conversation,
+        earliestAt,
+        now,
+        extraAdvanceMs: typingDelayMs,
+        ...(opts.floorChannel ? { floorMs: now + opts.delayMs } : {}),
+      })
+    : earliestAt;
+  await upsertRuntime(
+    ctx,
+    { organizationId: conversation.organizationId, conversationId: conversation._id },
+    { nextDispatchAt: slot + PAIR_RATE_INTERVAL_MS },
+    runtime
+  );
+  await ctx.scheduler.runAfter(slot - now, internal.whatsapp.internalDispatchMessage, {
+    messageId,
+    ...(typingDelayMs > 0 ? { typingDelayMs } : {}),
+  });
+  return slot - now;
+}

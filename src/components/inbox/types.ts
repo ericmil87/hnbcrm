@@ -30,6 +30,22 @@ export interface InboxMessage {
    */
   translatedText?: string;
   metadata?: Record<string, any>;
+  /** Estado de "Tentar novamente" (só saída que falhou ou em reenvio automático). */
+  deliveryRetry?: {
+    canRetry: boolean;
+    requiresCheck: boolean;
+    manualRetries: number;
+    maxManualRetries: number;
+    errorKind?: string;
+    requiresDeliveredAck?: boolean;
+    numberChecks?: number;
+    maxNumberChecks?: number;
+    /** ms epoch: antes disso a checagem do número é recusada (compare com o relógio do cliente). */
+    retryAfter?: number;
+    /** ms epoch da próxima tentativa automática (só com `autoRetrying`). */
+    autoRetryNextAt?: number;
+    autoRetrying: boolean;
+  };
   attachmentFiles?: InboxAttachmentFile[];
   sender?: { name?: string | null } | null;
   // ── Conversa de GRUPO (v0.57) ──

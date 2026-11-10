@@ -10,10 +10,18 @@ import type { Id } from "../_generated/dataModel";
 import { createHandoffCore } from "../handoffs";
 
 export const WELCOME_FAILURE_REASON = "Boas-vindas automáticas não entregues";
+/** Número sem WhatsApp (checagem do gateway ou `no LID found` confirmado). */
+export const WELCOME_NO_WHATSAPP_REASON = "Número sem WhatsApp — boas-vindas não enviadas";
+export const WELCOME_NO_WHATSAPP_SUMMARY =
+  "O número informado no formulário não está no WhatsApp (ou foi digitado errado), então a mensagem automática não foi enviada. Confirme o número com o lead por outro canal.";
+export const WELCOME_NO_WHATSAPP_ACTIONS = [
+  "Confirmar o número com o lead por e-mail, telefone ou outro canal",
+  "Corrigir o telefone no contato",
+];
 
 export async function applyInboundWelcomeDeliveryFailure(
   ctx: MutationCtx,
-  args: { messageId: Id<"messages">; detail?: string }
+  args: { messageId: Id<"messages">; detail?: string; errorKind?: string }
 ): Promise<void> {
   const message = await ctx.db.get(args.messageId);
   const marker = message?.metadata?.inboundWelcome as { leadId?: string; handoffAt?: number } | undefined;
@@ -25,16 +33,23 @@ export async function applyInboundWelcomeDeliveryFailure(
     metadata: { ...(message.metadata ?? {}), inboundWelcome: { ...marker, handoffAt: Date.now() } },
   });
 
+  // Sem WhatsApp: texto próprio em PT-BR (nada do texto cru do gateway) e
+  // ações que servem (confirmar o número por outro canal).
+  const noWhatsapp = args.errorKind === "recipient_not_found";
   try {
     await createHandoffCore(ctx, {
       leadId: message.leadId,
       conversationId: message.conversationId,
       fromMemberId: message.senderId,
-      reason: WELCOME_FAILURE_REASON,
-      summary: args.detail
+      reason: noWhatsapp ? WELCOME_NO_WHATSAPP_REASON : WELCOME_FAILURE_REASON,
+      summary: noWhatsapp
+        ? WELCOME_NO_WHATSAPP_SUMMARY
+        : args.detail
         ? `A primeira mensagem automática do WhatsApp não foi entregue (${args.detail.slice(0, 200)}). Entre em contato manualmente.`
         : "A primeira mensagem automática do WhatsApp não foi entregue. Entre em contato manualmente.",
-      suggestedActions: ["Conferir o número do contato", "Contatar o lead manualmente"],
+      suggestedActions: noWhatsapp
+        ? WELCOME_NO_WHATSAPP_ACTIONS
+        : ["Conferir o número do contato", "Contatar o lead manualmente"],
       origin: "human",
       onDuplicate: "skip",
     });

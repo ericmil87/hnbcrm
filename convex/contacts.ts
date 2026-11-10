@@ -9,9 +9,10 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib/cursor";
 import { buildSearchText } from "./lib/searchText";
 import { normalizeCampaignPhone } from "./lib/phone";
+import { currentSendDigits, markerSurvivesNumberChange } from "./lib/whatsappCheck";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeLanguageCode } from "./lib/languages";
 
 // Shared optional-field arg validators for enrichment fields
@@ -352,6 +353,27 @@ export const findOrCreateContact = mutation({
   },
 });
 
+/**
+ * Edição do número: o marcador/contador só some quando o número NOVO não é o
+ * mesmo número (mudar só o 9º dígito mantém "sem WhatsApp"; `verified` é exato).
+ */
+function numberEditClears(
+  contact: Doc<"contacts">,
+  changes: Record<string, unknown>
+): { whatsappCheck?: undefined; whatsappFails?: undefined } {
+  if (!("phone" in changes || "whatsappNumber" in changes)) return {};
+  const merged = { phone: contact.phone, whatsappNumber: contact.whatsappNumber, ...changes } as {
+    phone?: string;
+    whatsappNumber?: string;
+  };
+  const digits = currentSendDigits(merged);
+  const out: { whatsappCheck?: undefined; whatsappFails?: undefined } = {};
+  if (contact.whatsappCheck && !markerSurvivesNumberChange(contact.whatsappCheck, digits)) out.whatsappCheck = undefined;
+  // Contador: exato (um `no LID` é daquele JID; trocar a grafia é outra tentativa).
+  if (contact.whatsappFails && contact.whatsappFails.phone !== digits) out.whatsappFails = undefined;
+  return out;
+}
+
 export const updateContact = mutation({
   args: {
     contactId: v.id("contacts"),
@@ -387,6 +409,8 @@ export const updateContact = mutation({
     await ctx.db.patch(args.contactId, {
       ...changes,
       searchText: searchText || undefined,
+      // Número novo = nova pergunta ao WhatsApp (lib/whatsappCheck).
+      ...numberEditClears(contact, changes),
       updatedAt: now,
     });
 
@@ -532,6 +556,12 @@ export const internalFindOrCreateContact = internalMutation({
         .first();
     }
 
+    // Telefone normalizado: acha por AMBAS as grafias BR (12/13 dígitos) em
+    // `phone` e `whatsappNumber` — o mesmo helper do ingest. Busca exata duplicava
+    // o contato quando o ingest já tinha gravado a outra grafia.
+    if (!contact && phone && normalized?.ok) {
+      contact = (await findContactsByPhoneCandidates(ctx, args.organizationId, phone))[0] ?? null;
+    }
     if (!contact && phone) {
       contact = await ctx.db
         .query("contacts")
@@ -714,6 +744,8 @@ export const internalUpdateContact = internalMutation({
     await ctx.db.patch(args.contactId, {
       ...changes,
       searchText: searchText || undefined,
+      // Número novo = nova pergunta ao WhatsApp (lib/whatsappCheck).
+      ...numberEditClears(contact, changes),
       updatedAt: now,
     });
 

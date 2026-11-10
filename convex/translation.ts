@@ -697,7 +697,7 @@ async function loadOutboundForMember(
 }
 
 function metadataWithoutDeliveryError(metadata: Record<string, any> | undefined): Record<string, any> {
-  const { deliveryError: _e, deliveryErrorCode: _c, ...rest } = metadata ?? {};
+  const { deliveryError: _e, deliveryErrorCode: _c, deliveryErrorKind: _k, deliveryPreSend: _p, ...rest } = metadata ?? {};
   return rest;
 }
 

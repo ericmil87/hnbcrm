@@ -15,6 +15,7 @@ import {
 } from "./lib/permissions";
 import { encodeHeaderKey } from "./lib/importKeys";
 import { OPT_OUT_ERROR_PREFIX } from "./lib/startConversation";
+import { NOT_ON_WHATSAPP_SEND_PREFIX } from "./lib/whatsappCheck";
 import { FORM_NOTE_PREFIX } from "./lib/inboundLeadWelcome";
 import { buildAttributionFromInput, sanitizeAttributionInput } from "./lib/leadAttribution";
 import { resend } from "./email";
@@ -470,7 +471,8 @@ http.route({
       let welcomeSkippedReason: string | undefined;
       if (welcome) {
         try {
-          const result = await ctx.runMutation(internal.inboundLeadWelcome.internalSendInboundLeadWelcome, {
+          // Action: pré-checa o número no gateway (bridge) antes de enfileirar.
+          const result = await ctx.runAction(internal.inboundLeadWelcome.internalRunInboundLeadWelcome, {
             organizationId,
             leadId,
             contactId,
@@ -1070,10 +1072,24 @@ http.route({
           ? { language: body.language.trim() }
           : {}),
         ...(isTranslationBody(body.translation) ? { translation: body.translation } : {}),
+        // Aceite explícito de envio a número sem WhatsApp (lib/whatsappCheck).
+        ...(body.notOnWhatsappAck === true ? { notOnWhatsappAck: true } : {}),
       });
 
       return jsonResponse({ success: true, messageId }, 201);
     } catch (error) {
+      // Número marcado "sem WhatsApp": 409 — repetir com `notOnWhatsappAck: true`
+      // só depois de um humano confirmar (mesma ideia do opt-out da Nova conversa).
+      if (error instanceof ConvexError) {
+        const raw = plainErrorMessage(error);
+        const at = raw.indexOf(NOT_ON_WHATSAPP_SEND_PREFIX);
+        if (at !== -1) {
+          return new Response(
+            JSON.stringify({ error: raw.slice(at + NOT_ON_WHATSAPP_SEND_PREFIX.length).trim(), code: 409, notOnWhatsapp: true }),
+            { status: 409, headers: { "Content-Type": "application/json", ...corsHeaders } }
+          );
+        }
+      }
       // Erro de regra/validação (ConvexError PT-BR) = 400, não 500.
       if (error instanceof ConvexError) return errorResponse(plainErrorMessage(error), 400);
       return errorResponse(error instanceof Error ? error.message : "Internal server error");

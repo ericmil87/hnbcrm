@@ -9,6 +9,9 @@ import { useComposerDraft } from "@/components/inbox/useComposerDraft";
 import { usePermissions } from "@/hooks/usePermissions";
 import { extractMentionIds } from "@/lib/mentions";
 import { formatDateTime } from "@/lib/format";
+import { SendDeferredError } from "@/lib/messageDelivery";
+import { useNotOnWhatsappAck } from "@/components/inbox/useNotOnWhatsappAck";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import {
   MEDIA_BLOCKED_HINT,
   channelSupports,
@@ -109,6 +112,10 @@ export function Composer({
   const [stagedFiles, setStagedFiles] = useState<UploadedFile[]>([]);
   const [recorderActive, setRecorderActive] = useState(false);
   const [sending, setSending] = useState(false);
+  // Aceite de envio a número sem WhatsApp (texto e nota de voz).
+  const { intercept: interceptNotOnWhatsapp, dialogProps: notOnWhatsappDialog } = useNotOnWhatsappAck();
+  // Remonta o gravador depois de um envio de voz confirmado no diálogo.
+  const [voiceKey, setVoiceKey] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const coarsePointer = useMediaQuery("(pointer: coarse)");
 
@@ -233,7 +240,7 @@ export function Composer({
     },
   });
 
-  const handleSend = async (opts: { untranslated?: boolean } = {}) => {
+  const handleSend = async (opts: { untranslated?: boolean; notOnWhatsappAck?: boolean } = {}) => {
     const trimmed = text.trim();
     if (!hasContentToSend(text, stagedFiles.length) || blocked || sending) return;
     setSending(true);
@@ -263,6 +270,7 @@ export function Composer({
         mentionedUserIds: mentionedUserIds?.length ? mentionedUserIds : undefined,
         replyToMessageId: !isInternal && replyTo ? (replyTo._id as Id<"messages">) : undefined,
         mentions: memberMentions.length ? memberMentions : undefined,
+        ...(opts.notOnWhatsappAck ? { notOnWhatsappAck: true } : {}),
       });
       // Defensivo: só limpa o que foi enviado. Texto (ou anexo) que entrou
       // depois do Enter fica no campo em vez de sumir.
@@ -272,22 +280,41 @@ export function Composer({
       groupMentions.reset();
       typing.stop();
       onSent?.();
-    } catch {
-      toast.error("Não foi possível enviar a mensagem. Tente de novo.");
+    } catch (error) {
+      // Número sem WhatsApp: pede o aceite; o texto digitado fica no campo.
+      if (!interceptNotOnWhatsapp(error, () => void handleSend({ ...opts, notOnWhatsappAck: true }))) {
+        toast.error("Não foi possível enviar a mensagem. Tente de novo.");
+      }
     } finally {
       setSending(false);
     }
   };
 
-  const handleSendVoice = async (file: UploadedFile) => {
+  const handleSendVoice = async (file: UploadedFile, notOnWhatsappAck = false) => {
     if (!conversationId) throw new Error("no conversation");
-    await sendMessage({
-      conversationId,
-      content: "",
-      contentType: "audio",
-      attachments: [file.fileId],
-      replyToMessageId: replyTo ? (replyTo._id as Id<"messages">) : undefined,
-    });
+    try {
+      await sendMessage({
+        conversationId,
+        content: "",
+        contentType: "audio",
+        attachments: [file.fileId],
+        replyToMessageId: replyTo ? (replyTo._id as Id<"messages">) : undefined,
+        ...(notOnWhatsappAck ? { notOnWhatsappAck: true } : {}),
+      });
+    } catch (error) {
+      // Número sem WhatsApp: a gravação fica na prévia do gravador (o erro
+      // "adiado" não limpa nem avisa); só confirmar no diálogo envia.
+      if (
+        interceptNotOnWhatsapp(error, () => {
+          void handleSendVoice(file, true)
+            .then(() => setVoiceKey((k) => k + 1))
+            .catch(() => toast.error("Não foi possível enviar a nota de voz."));
+        })
+      ) {
+        throw new SendDeferredError();
+      }
+      throw error;
+    }
     setReplyTo(null);
     typing.stop();
     onSent?.();
@@ -560,6 +587,7 @@ export function Composer({
         voice={
           showVoice ? (
             <VoiceRecorder
+              key={voiceKey}
               organizationId={organizationId}
               onActiveChange={setRecorderActive}
               onRecorded={handleSendVoice}
@@ -572,6 +600,7 @@ export function Composer({
         open={quickReplies.manageOpen}
         onClose={() => quickReplies.setManageOpen(false)}
       />
+      <ConfirmDialog {...notOnWhatsappDialog} />
     </>
   );
 }

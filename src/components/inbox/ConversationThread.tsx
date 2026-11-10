@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { formatDayLabel } from "@/lib/format";
 import { layoutThread } from "@/lib/threadLayout";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
 import { AiDraftCard, getAiDraft } from "@/components/inbox/AiDraftCard";
 import { TransferEvent } from "@/components/inbox/central/CentralChips";
@@ -23,6 +24,7 @@ import { mentionTokensFor } from "@/components/inbox/GroupMentionText";
 import { MessageBubble } from "@/components/inbox/MessageBubble";
 import { getReactions, type InboxMessage } from "@/components/inbox/types";
 import { useConversationDoc } from "@/components/inbox/useConversationDoc";
+import { useRetryDelivery } from "@/components/inbox/useRetryDelivery";
 import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { useMarkReadAndPresence } from "@/components/inbox/useMarkReadAndPresence";
 import { useThreadPaging } from "@/components/inbox/useThreadPaging";
@@ -95,6 +97,7 @@ export function ConversationThread({
   const retryOutbound = useMutation(api.translation.retryOutbound);
   const sendUntranslated = useMutation(api.translation.sendUntranslated);
   const setConversationLanguage = useMutation(api.translation.setConversationLanguage);
+  const { retryDelivery, retryingIds, ackDialogProps: retryAckDialogProps } = useRetryDelivery();
 
   // Tradução automática (v0.80): estado da conversa + preferência do visualizador.
   const translationSettings = useTranslationSettings(organizationId);
@@ -387,6 +390,8 @@ export function ConversationThread({
                       onTranslateAs={canReply ? (m, lang) => void handleTranslateAs(m, lang) : undefined}
                       onRetryOutbound={(m) => void handleRetryOutbound(m)}
                       onSendUntranslated={(m) => void handleSendUntranslated(m)}
+                      onRetryDelivery={canReply ? (m) => void retryDelivery(m) : undefined}
+                      retryingDelivery={retryingIds.has(message._id)}
                     />
                   )}
                 </div>
@@ -396,6 +401,7 @@ export function ConversationThread({
         </div>
       </div>
 
+      <ConfirmDialog {...retryAckDialogProps} />
       <ForwardModal
         open={!!forwardTarget}
         organizationId={organizationId}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { NotOnWhatsappBadge } from "@/components/inbox/NotOnWhatsappBadge";
 import { useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { ExternalLink, Link as LinkIcon, Search, X } from "lucide-react";
@@ -83,7 +84,10 @@ export function LeadContactBlock({ leadId, organizationId, lead }: LeadContactBl
             </div>
             <div className="flex justify-between">
               <span className="text-text-muted">Telefone</span>
-              <span className="text-text-primary">{lead.contact.phone || EMPTY}</span>
+              <span className="flex min-w-0 items-center gap-2 text-text-primary">
+                <NotOnWhatsappBadge contact={lead.contact} />
+                {lead.contact.phone || EMPTY}
+              </span>
             </div>
             <div className="flex justify-between">
               <span className="text-text-muted">Empresa</span>
