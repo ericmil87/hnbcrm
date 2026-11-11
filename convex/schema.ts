@@ -2712,6 +2712,26 @@ const applicationTables = {
     createdAt: v.number(),
   }).index("by_email", ["email"]),
 
+  // Onboarding v2 (P2.4): rate limit de janela fixa por chave (`user|org|ip:<id>:<janela>`).
+  onboardingRateLimits: defineTable({
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+  })
+    .index("by_key", ["key"])
+    .index("by_windowStart", ["windowStart"]),
+
+  // Onboarding v2 (P2.4): gasto de IA do onboarding por dia UTC, todas as orgs
+  // (corte global). `alertedAt` garante 1 alerta por dia; é o ÚNICO registro do
+  // alerta numa org cliente (o audit só vai para a org interna, se configurada).
+  onboardingSpendDaily: defineTable({
+    day: v.string(), // "AAAA-MM-DD" UTC
+    costUsdMicros: v.number(),
+    runs: v.number(),
+    alertedAt: v.optional(v.number()),
+    alertedByOrgId: v.optional(v.id("organizations")),
+  }).index("by_day", ["day"]),
+
   // Teto de e-mails de autenticação por endereço (janela fixa). O flow "reset"
   // é PÚBLICO e o Convex Auth só limita tentativas de código, não pedidos —
   // sem isto, qualquer um bombardeia uma caixa alheia usando o nosso domínio.
@@ -3069,7 +3089,9 @@ const applicationTables = {
       // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
       v.literal("attendant_draft"),
       // Tradução automática (F1): 1 chamada ao LLM por mensagem traduzida.
-      v.literal("translation")
+      v.literal("translation"),
+      // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
+      v.literal("onboarding")
     ),
     status: v.union(
       v.literal("running"),
@@ -3803,6 +3825,14 @@ const applicationTables = {
     messageCount: v.number(),
     // Gasto de IA da sessão em micro-US$ (mesma unidade de `aiUsageMonthly.costUsdMicros`).
     spentUsdMicros: v.number(),
+    // P2.4: saldo retido por reservas em andamento (somado ao gasto no teste do
+    // orçamento). `reservedAt` = última reserva; reserva com mais de 10 min é órfã e ignorada.
+    reservedUsdMicros: v.optional(v.number()),
+    reservedAt: v.optional(v.number()),
+    // Estimativa da última reserva: padrão do que o registro solta quando não informa a sua.
+    lastEstimateUsdMicros: v.optional(v.number()),
+    // P2.4: ids de registro de gasto já aplicados (idempotência), os últimos 20.
+    recordedRequestIds: v.optional(v.array(v.string())),
     appliedAt: v.optional(v.number()),
     appliedDraftHash: v.optional(v.string()),
     appliedBy: v.optional(v.id("teamMembers")),

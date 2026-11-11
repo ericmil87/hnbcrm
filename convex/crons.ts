@@ -55,6 +55,15 @@ crons.interval("channel health", { minutes: 15 }, internal.channelHealth.interna
 // 09:30 UTC = 06:30 BRT. Paginado por cursor; ver metaMessaging.internalHealthTick.
 crons.daily("meta messaging health", { hourUTC: 9, minuteUTC: 30 }, internal.metaMessaging.internalHealthTick, {});
 
+// Onboarding v2 (P2.4): apaga janelas de rate limit vencidas (> 2 dias); se houver mais de
+// um lote, a própria função se reagenda. 08:00 UTC = 05:00 BRT.
+crons.daily(
+  "onboarding rate limit prune",
+  { hourUTC: 8, minuteUTC: 0 },
+  internal.onboardingBudget.internalPruneOnboardingRateLimits,
+  { dryRun: false }
+);
+
 // Retenção (perf Convex I/O, fase 4a): apaga notificações lidas, fila/runs de
 // IA terminais, parciais abandonados e auditoria `low` além da janela.
 // 07:30 UTC = 04:30 BRT, depois do "expire deferred group media" (06:00 UTC).
