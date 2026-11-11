@@ -12,6 +12,10 @@ import schema from "./schema";
 import {
   EMAIL_CODE_MAX_ATTEMPTS,
   EMAIL_CODE_REQUESTS_PER_HOUR,
+  EMAIL_CODE_REQUESTS_PER_DAY,
+  EMAIL_CODE_MAX_FAILURES_PER_DAY,
+  EMAIL_CODE_DAY_MS,
+  hashEmailVerificationCode,
   EMAIL_CODE_RESEND_COOLDOWN_MS,
   EMAIL_CODE_TTL_MS,
   generateEmailVerificationCode,
@@ -41,6 +45,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-11-01T12:00:00Z"));
   vi.spyOn(console, "warn").mockImplementation(() => {});
+  vi.stubEnv("JWT_PRIVATE_KEY", "fake-jwt-key-for-tests");
   sent.length = 0;
   deliver = true;
   t = convexTest(schema, modules);
@@ -48,6 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -272,5 +278,114 @@ describe("getEmailVerificationStatus e limpeza", () => {
 
   test("gerador: 6 dígitos com zeros à esquerda preservados", () => {
     for (let i = 0; i < 200; i++) expect(generateEmailVerificationCode()).toMatch(/^\d{6}$/);
+  });
+});
+
+describe("endurecimento (revisão P2.6)", () => {
+  test("sem JWT_PRIVATE_KEY nem pepper o pedido é recusado e nada é enviado", async () => {
+    vi.stubEnv("JWT_PRIVATE_KEY", "");
+    vi.stubEnv("EMAIL_CODE_PEPPER", "");
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const { as } = await mkUser("a@example.com");
+    await expect(as.mutation(api.emailVerification.requestEmailVerificationCode, {})).rejects.toThrow();
+    expect(sent).toHaveLength(0);
+  });
+
+  test("pepper muda o hash e o e-mail entra no HMAC", async () => {
+    const base = await hashEmailVerificationCode("u1", "a@example.com", "123456");
+    expect(await hashEmailVerificationCode("u1", "b@example.com", "123456")).not.toBe(base);
+    vi.stubEnv("EMAIL_CODE_PEPPER", "fake-pepper");
+    expect(await hashEmailVerificationCode("u1", "a@example.com", "123456")).not.toBe(base);
+  });
+
+  test("código trocado de e-mail (a conta mudou de endereço) não confirma", async () => {
+    const { userId, as } = await mkUser("a@example.com");
+    await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    const code = lastCode();
+    await t.run(async (ctx) => ctx.db.patch(userId, { email: "novo@example.com" }));
+    const r = await as.mutation(api.emailVerification.confirmEmailVerificationCode, { code });
+    expect(r.verified).toBe(false);
+  });
+
+  test("teto diário de 10 pedidos por usuário (janela de 24 h)", async () => {
+    const { as } = await mkUser("a@example.com");
+    for (let i = 0; i < EMAIL_CODE_REQUESTS_PER_DAY; i++) {
+      const r = await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+      expect(r.sent).toBe(true);
+      wait(61 * 60 * 1000); // a janela horária reinicia, a diária não
+    }
+    const blocked = await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    expect(blocked).toEqual({ sent: false, reason: "rate_limited" });
+    wait(EMAIL_CODE_DAY_MS);
+    const later = await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    expect(later.sent).toBe(true);
+  });
+
+  test("formato inválido (após remover espaços) não gasta tentativa; com espaços válidos confirma", async () => {
+    const { as } = await mkUser("a@example.com");
+    await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    const code = lastCode();
+    for (const bad of ["12345", "abcdef", "1234567", ""]) {
+      const r = await as.mutation(api.emailVerification.confirmEmailVerificationCode, { code: bad });
+      expect(r).toEqual({ verified: false, reason: "wrong", attemptsLeft: EMAIL_CODE_MAX_ATTEMPTS });
+    }
+    const rows = await t.run(async (ctx) => ctx.db.query("emailVerificationCodes").collect());
+    expect(rows[0].attempts).toBe(0);
+    const ok = await as.mutation(api.emailVerification.confirmEmailVerificationCode, {
+      code: ` ${code.slice(0, 3)} ${code.slice(3)} `,
+    });
+    expect(ok.verified).toBe(true);
+  });
+
+  test("bloqueio após 5 erros grava audit medium", async () => {
+    const { userId, as } = await mkUser("a@example.com");
+    const orgId = await t.run(async (ctx) => {
+      const org = await ctx.db.insert("organizations", {
+        name: "O", slug: "o-lock", settings: { timezone: "America/Sao_Paulo", currency: "BRL" }, createdAt: 1, updatedAt: 1,
+      } as never);
+      await ctx.db.insert("teamMembers", {
+        organizationId: org, userId, name: "U", role: "admin", type: "human", status: "active", createdAt: 1, updatedAt: 1,
+      } as never);
+      return org;
+    });
+    await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    const wrong = lastCode() === "111111" ? "222222" : "111111";
+    for (let i = 0; i < EMAIL_CODE_MAX_ATTEMPTS; i++) {
+      await as.mutation(api.emailVerification.confirmEmailVerificationCode, { code: wrong });
+    }
+    const audits = await t.run(async (ctx) =>
+      ctx.db.query("auditLogs").withIndex("by_organization", (q) => q.eq("organizationId", orgId)).collect(),
+    );
+    expect(audits.map((a) => a.severity)).toEqual(["medium"]);
+  });
+
+  test("15 erros acumulados em 24 h bloqueiam novos pedidos até a janela fechar", async () => {
+    const { as } = await mkUser("a@example.com");
+    let failures = 0;
+    while (failures < EMAIL_CODE_MAX_FAILURES_PER_DAY) {
+      const req = await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+      expect(req.sent).toBe(true);
+      const wrong = lastCode() === "111111" ? "222222" : "111111";
+      for (let i = 0; i < EMAIL_CODE_MAX_ATTEMPTS && failures < EMAIL_CODE_MAX_FAILURES_PER_DAY; i++) {
+        await as.mutation(api.emailVerification.confirmEmailVerificationCode, { code: wrong });
+        failures++;
+      }
+      wait(EMAIL_CODE_RESEND_COOLDOWN_MS + 1);
+    }
+    const blocked = await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    expect(blocked).toEqual({ sent: false, reason: "rate_limited" });
+    wait(EMAIL_CODE_DAY_MS);
+    const later = await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
+    expect(later.sent).toBe(true);
+  });
+
+  test("cron também apaga contadores de janela vencidos e mantém os vivos", async () => {
+    await t.run(async (ctx) => {
+      await ctx.db.insert("authEmailThrottle", { email: "verify-user-d:x", windowStart: Date.now() - EMAIL_CODE_DAY_MS - 1, count: 3 });
+      await ctx.db.insert("authEmailThrottle", { email: "verify-user-d:y", windowStart: Date.now() - 1000, count: 3 });
+    });
+    await t.mutation(internal.emailVerification.internalPruneEmailVerificationCodes, {});
+    const rows = await t.run(async (ctx) => ctx.db.query("authEmailThrottle").collect());
+    expect(rows.map((r) => r.email)).toEqual(["verify-user-d:y"]);
   });
 });

@@ -1,7 +1,7 @@
 // Confirmação de e-mail por código de 6 dígitos (onboarding v2, decisão D2).
 // Só age quando o usuário pede; nada no login nem em fluxo existente exige isto.
 // A porta de leitura é `isEmailVerifiedForMaterials` (lib/emailVerification.ts).
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
@@ -13,7 +13,11 @@ import { cronsDisabled } from "./lib/cronGuard";
 import { internal } from "./_generated/api";
 import { maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 import {
+  EMAIL_CODE_DAY_MS,
   EMAIL_CODE_MAX_ATTEMPTS,
+  EMAIL_CODE_MAX_FAILURES_PER_DAY,
+  EMAIL_CODE_REQUESTS_PER_DAY,
+  emailCodeSecretMaterial,
   EMAIL_CODE_REQUESTS_PER_HOUR,
   EMAIL_CODE_RESEND_COOLDOWN_MS,
   EMAIL_CODE_TTL_MINUTES,
@@ -26,22 +30,34 @@ import {
 
 const PRUNE_BATCH = 200;
 
-/** Conta um pedido na janela fixa de `authEmailThrottle`; false = teto atingido. */
-async function checkWindow(ctx: MutationCtx, key: string, now: number, commit: boolean): Promise<boolean> {
+/** Conta um pedido numa janela fixa de `authEmailThrottle`; false = teto atingido. */
+async function checkWindow(
+  ctx: MutationCtx,
+  key: string,
+  now: number,
+  commit: boolean,
+  limit: number = EMAIL_CODE_REQUESTS_PER_HOUR,
+  windowMs: number = EMAIL_CODE_WINDOW_MS,
+): Promise<boolean> {
   const row = await ctx.db
     .query("authEmailThrottle")
     .withIndex("by_email", (q) => q.eq("email", key))
     .first();
-  if (!row || now - row.windowStart >= EMAIL_CODE_WINDOW_MS) {
+  if (!row || now - row.windowStart >= windowMs) {
     if (commit) {
       if (row) await ctx.db.patch(row._id, { windowStart: now, count: 1 });
       else await ctx.db.insert("authEmailThrottle", { email: key, windowStart: now, count: 1 });
     }
     return true;
   }
-  if (row.count >= EMAIL_CODE_REQUESTS_PER_HOUR) return false;
+  if (row.count >= limit) return false;
   if (commit) await ctx.db.patch(row._id, { count: row.count + 1 });
   return true;
+}
+
+/** Soma um erro de código na janela de 24 h do usuário (chave `verify-fail:`). */
+async function bumpFailure(ctx: MutationCtx, userId: Id<"users">, now: number) {
+  await checkWindow(ctx, `verify-fail:${userId}`, now, true, Number.MAX_SAFE_INTEGER, EMAIL_CODE_DAY_MS);
 }
 
 async function auditVerification(ctx: MutationCtx, userId: Id<"users">, description: string, severity: "low" | "medium") {
@@ -82,6 +98,11 @@ export const requestEmailVerificationCode = mutation({
     const userId = user._id;
     if (typeof user.emailVerificationTime === "number") return { sent: false, reason: "already_verified" as const };
 
+    if (!emailCodeSecretMaterial()) {
+      console.error("[email] emailVerification: sem JWT_PRIVATE_KEY nem EMAIL_CODE_PEPPER — pedido recusado");
+      throw new ConvexError("A confirmação de e-mail está indisponível no momento. Tente novamente mais tarde.");
+    }
+
     const now = Date.now();
     const email = normalizeEmail(user.email);
     const previous = await ctx.db
@@ -95,9 +116,20 @@ export const requestEmailVerificationCode = mutation({
     const userKey = `verify-user:${userId}`;
     const emailKey = `verify-email:${email}`;
     // Avalia os dois antes de gravar: recusa não consome cota de nenhum.
+    const userDayKey = `verify-user-d:${userId}`;
+    const emailDayKey = `verify-email-d:${email}`;
     const okUser = await checkWindow(ctx, userKey, now, false);
     const okEmail = await checkWindow(ctx, emailKey, now, false);
-    if (!okUser || !okEmail) {
+    const okUserDay = await checkWindow(ctx, userDayKey, now, false, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+    const okEmailDay = await checkWindow(ctx, emailDayKey, now, false, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+    // Erros demais de código em 24 h: bloqueia novos pedidos até a janela fechar.
+    const failures = await ctx.db
+      .query("authEmailThrottle")
+      .withIndex("by_email", (q) => q.eq("email", `verify-fail:${userId}`))
+      .first();
+    const blockedByFailures =
+      !!failures && now - failures.windowStart < EMAIL_CODE_DAY_MS && failures.count >= EMAIL_CODE_MAX_FAILURES_PER_DAY;
+    if (!okUser || !okEmail || !okUserDay || !okEmailDay || blockedByFailures) {
       console.warn(`[email] emailVerification: teto de pedidos atingido para ${maskEmailForLog(email)}`);
       return { sent: false, reason: "rate_limited" as const };
     }
@@ -114,6 +146,8 @@ export const requestEmailVerificationCode = mutation({
 
     await checkWindow(ctx, userKey, now, true);
     await checkWindow(ctx, emailKey, now, true);
+    await checkWindow(ctx, userDayKey, now, true, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+    await checkWindow(ctx, emailDayKey, now, true, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
     const old = await ctx.db
       .query("emailVerificationCodes")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -122,7 +156,7 @@ export const requestEmailVerificationCode = mutation({
     const expiresAt = now + EMAIL_CODE_TTL_MS;
     await ctx.db.insert("emailVerificationCodes", {
       userId,
-      codeHash: await hashEmailVerificationCode(userId, code),
+      codeHash: await hashEmailVerificationCode(userId, email, code),
       expiresAt,
       attempts: 0,
       createdAt: now,
@@ -153,12 +187,19 @@ export const confirmEmailVerificationCode = mutation({
       await ctx.db.delete(row._id);
       return { verified: false, reason: "expired" as const };
     }
+    // Formato inválido (não são 6 dígitos) não gasta tentativa: erro de digitação, não palpite.
+    const typed = args.code.replace(/\s+/g, "");
+    if (!/^\d{6}$/.test(typed)) {
+      return { verified: false, reason: "wrong" as const, attemptsLeft: EMAIL_CODE_MAX_ATTEMPTS - row.attempts };
+    }
     // Erro volta como resultado (não throw): o throw reverteria a contagem de tentativas.
     const attempts = row.attempts + 1;
-    const given = await hashEmailVerificationCode(user._id, args.code.trim());
+    const given = await hashEmailVerificationCode(user._id, normalizeEmail(user.email), typed);
     if (!constantTimeEqual(given, row.codeHash)) {
+      await bumpFailure(ctx, user._id, now);
       if (attempts >= EMAIL_CODE_MAX_ATTEMPTS) {
         await ctx.db.delete(row._id);
+        await auditVerification(ctx, user._id, "Código de confirmação de e-mail bloqueado após 5 erros", "medium");
         return { verified: false, reason: "locked" as const, attemptsLeft: 0 };
       }
       await ctx.db.patch(row._id, { attempts });
@@ -198,14 +239,21 @@ export const internalPruneEmailVerificationCodes = internalMutation({
   returns: v.number(),
   handler: async (ctx) => {
     if (cronsDisabled()) return 0;
+    const now = Date.now();
     const rows = await ctx.db
       .query("emailVerificationCodes")
-      .withIndex("by_expires_at", (q) => q.lte("expiresAt", Date.now()))
+      .withIndex("by_expires_at", (q) => q.lte("expiresAt", now))
       .take(PRUNE_BATCH);
     for (const row of rows) await ctx.db.delete(row._id);
-    if (rows.length === PRUNE_BATCH) {
+    // Contadores de janela vencidos (maior janela = 24 h; `verify-*` e reset de senha: linha vencida = linha ausente).
+    const throttles = await ctx.db
+      .query("authEmailThrottle")
+      .withIndex("by_window_start", (q) => q.lte("windowStart", now - EMAIL_CODE_DAY_MS))
+      .take(PRUNE_BATCH);
+    for (const row of throttles) await ctx.db.delete(row._id);
+    if (rows.length === PRUNE_BATCH || throttles.length === PRUNE_BATCH) {
       await ctx.scheduler.runAfter(0, internal.emailVerification.internalPruneEmailVerificationCodes, {});
     }
-    return rows.length;
+    return rows.length + throttles.length;
   },
 });

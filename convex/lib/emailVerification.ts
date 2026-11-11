@@ -13,6 +13,11 @@ export const EMAIL_CODE_RESEND_COOLDOWN_MS = 60 * 1000;
 /** Teto por hora, por usuário e por endereço (janela fixa em `authEmailThrottle`). */
 export const EMAIL_CODE_REQUESTS_PER_HOUR = 5;
 export const EMAIL_CODE_WINDOW_MS = 60 * 60 * 1000;
+/** Teto diário (janela de 24 h) por usuário e por endereço. */
+export const EMAIL_CODE_REQUESTS_PER_DAY = 10;
+export const EMAIL_CODE_DAY_MS = 24 * 60 * 60 * 1000;
+/** Erros de código acumulados em 24 h que bloqueiam novos pedidos até a janela fechar. */
+export const EMAIL_CODE_MAX_FAILURES_PER_DAY = 15;
 
 /**
  * Porta única para "este usuário confirmou o e-mail?". Usada pelo onboarding
@@ -36,17 +41,26 @@ export function generateEmailVerificationCode(): string {
   }
 }
 
-/** HMAC-SHA256 hex do código; sal = userId, pepper opcional em EMAIL_CODE_PEPPER. */
-export async function hashEmailVerificationCode(userId: string, code: string): Promise<string> {
+/**
+ * Material secreto do HMAC: SHA-256 de `JWT_PRIVATE_KEY` (o Convex Auth exige, então
+ * sempre existe em deployment funcional) com `EMAIL_CODE_PEPPER` opcional por cima.
+ * Sem nenhum dos dois devolve null: o pedido é recusado (nunca há chave fixa no código).
+ */
+export function emailCodeSecretMaterial(): string | null {
+  const jwt = process.env.JWT_PRIVATE_KEY ?? "";
+  const pepper = process.env.EMAIL_CODE_PEPPER ?? "";
+  if (!jwt && !pepper) return null;
+  return `hnbcrm-email-code-v1|${jwt}|${pepper}`;
+}
+
+/** HMAC-SHA256 hex de `userId:email:code` (e-mail normalizado). Lança sem segredo configurado. */
+export async function hashEmailVerificationCode(userId: string, email: string, code: string): Promise<string> {
+  const material = emailCodeSecretMaterial();
+  if (!material) throw new Error("emailVerification: sem JWT_PRIVATE_KEY nem EMAIL_CODE_PEPPER");
   const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(process.env.EMAIL_CODE_PEPPER ?? "hnbcrm-email-code"),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${userId}:${code}`));
+  const rawKey = await crypto.subtle.digest("SHA-256", enc.encode(material));
+  const key = await crypto.subtle.importKey("raw", rawKey, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`${userId}:${email}:${code}`));
   return Array.from(new Uint8Array(sig), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
