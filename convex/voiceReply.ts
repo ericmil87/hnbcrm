@@ -7,13 +7,19 @@
  *  - `internalInsertVoiceNoteFile`: linha de `files` do ogg gerado, SEM
  *    `messageId` (o commit do atendente vincula; commit recusado → a action
  *    descarta pela `attendantAgenda.internalDiscardUnlinkedFiles`).
+ *  - `internalInsertWebAudioFile` / `internalDiscardWebAudioFile` (P4.2b): o WAV
+ *    da resposta em áudio do chat do onboarding (tocado direto pelo navegador),
+ *    `fileType:"other"` + `metadata.kind:"onboarding_voice_reply"`. Quem vincula
+ *    é `onboardingChat.internalAttachReplyAudio`; a limpeza (7 dias) é
+ *    `onboardingChat.internalExpireOnboardingAudio`.
  *
  * Regras e cálculo: `lib/tts.ts`. Rede: `voiceReplyNode.ts`.
  */
 import { v } from "convex/values";
 import { internalMutation, query } from "./_generated/server";
 import { requirePermission } from "./lib/auth";
-import { insertFileRow } from "./lib/storageUsage";
+import { deleteFileRow, insertFileRow } from "./lib/storageUsage";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
 import { TTS_VOICES, VOICE_NOTICE_MAX_CHARS, getTtsConfig, resolveAttendantVoice } from "./lib/tts";
 import { orgAiActive } from "./lib/agentSecurity";
 import { voiceNoteConverterConfigured } from "./lib/voiceNoteConvert";
@@ -21,6 +27,10 @@ import { voiceNoteConverterConfigured } from "./lib/voiceNoteConvert";
 /** Nome do anexo gerado (o tipo `audio/ogg` sai como `data:audio/ogg;base64` no bridge). */
 export const VOICE_REPLY_FILE_NAME = "resposta-em-audio.ogg";
 export const VOICE_REPLY_FILE_MIME = "audio/ogg";
+/** Resposta em áudio do chat do onboarding: WAV (PCM 24 kHz mono), tocado direto pelo navegador. */
+export const WEB_VOICE_REPLY_FILE_NAME = "resposta-em-audio.wav";
+export const WEB_VOICE_REPLY_FILE_MIME = "audio/wav";
+export const WEB_VOICE_REPLY_FILE_KIND = "onboarding_voice_reply";
 
 export const getVoiceReplySettings = query({
   args: { organizationId: v.id("organizations") },
@@ -88,3 +98,78 @@ export const internalInsertVoiceNoteFile = internalMutation({
   },
 });
 
+
+/**
+ * Linha de `files` do WAV da resposta em áudio do chat do onboarding (P4.2b).
+ * O membro tem que ser da org (quem conduz a sessão). Conta na cota de storage
+ * pela porta `insertFileRow`.
+ */
+export const internalInsertWebAudioFile = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    storageId: v.id("_storage"),
+    size: v.number(),
+    /** Id da síntese no turno (`<turno>:tts`): acha o arquivo se a action lançar depois de gravar. */
+    requestId: v.optional(v.string()),
+  },
+  returns: v.id("files"),
+  handler: async (ctx, args) => {
+    const member = await ctx.db.get(args.memberId);
+    if (!member || member.organizationId !== args.organizationId) throw new Error("Membro não encontrado");
+    return await insertFileRow(ctx, {
+      organizationId: args.organizationId,
+      storageId: args.storageId,
+      name: WEB_VOICE_REPLY_FILE_NAME,
+      mimeType: WEB_VOICE_REPLY_FILE_MIME,
+      size: args.size,
+      fileType: "other",
+      uploadedBy: args.memberId,
+      metadata: { kind: WEB_VOICE_REPLY_FILE_KIND, ...(args.requestId ? { requestId: args.requestId.slice(0, 120) } : {}) },
+      createdAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Descarta o WAV de uma resposta em áudio que não chegou a ser vinculado (ou que
+ * venceu): linha de `files` + blob pela porta `lib/fileRefs.ts`. Só arquivo da
+ * org E do tipo do onboarding (nunca apaga outro anexo). Idempotente.
+ */
+export const internalDiscardWebAudioFile = internalMutation({
+  args: { organizationId: v.id("organizations"), fileId: v.id("files") },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    const file = await ctx.db.get(args.fileId);
+    if (!file || file.organizationId !== args.organizationId) return false;
+    if (file.metadata?.kind !== WEB_VOICE_REPLY_FILE_KIND) return false;
+    await deleteBlobIfUnreferenced(ctx, file);
+    await deleteFileRow(ctx, file);
+    return true;
+  },
+});
+
+/**
+ * Rede de segurança do turno (P4.2b): quando a action de síntese LANÇA depois de
+ * gravar (erro de plataforma), o turno não recebe o `fileId`. Acha o WAV pelo
+ * `metadata.requestId` entre os arquivos da org criados desde `since` (índice
+ * `by_organization_and_created`, no máximo 100 linhas lidas) e descarta.
+ */
+export const internalDiscardWebAudioByRequest = internalMutation({
+  args: { organizationId: v.id("organizations"), requestId: v.string(), since: v.number() },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("files")
+      .withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId).gte("createdAt", args.since))
+      .take(100);
+    let discarded = 0;
+    for (const file of rows) {
+      if (file.metadata?.kind !== WEB_VOICE_REPLY_FILE_KIND || file.metadata?.requestId !== args.requestId) continue;
+      await deleteBlobIfUnreferenced(ctx, file);
+      await deleteFileRow(ctx, file);
+      discarded += 1;
+    }
+    return discarded;
+  },
+});

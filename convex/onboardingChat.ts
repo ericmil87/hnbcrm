@@ -18,7 +18,8 @@
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { resolvePermissions, type Permissions, type Role } from "./lib/permissions";
@@ -32,6 +33,9 @@ import { HISTORY_FOR_PROMPT, USER_TEXT_MAX, REPLY_MAX } from "./lib/onboardingIn
 import { buildAuditDescription } from "./lib/auditDescription";
 import { runOnboardingTurn, turnInputValidator, turnResultValidator, type TurnResult } from "./lib/onboardingTurn";
 import { ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
+import { cronsDisabled } from "./lib/cronGuard";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { deleteFileRow } from "./lib/storageUsage";
 
 /** Teto por mensagem gravada (usuário até 4.000; assistente até 800 + folga). */
 const MESSAGE_TEXT_MAX = USER_TEXT_MAX;
@@ -60,10 +64,17 @@ const messageViewValidator = v.object({
   ),
   transcribed: v.boolean(),
   draftVersion: v.union(v.number(), v.null()),
+  /**
+   * P4.2b: resposta em áudio (só quando o usuário mandou áudio e a fala foi
+   * gerada). `url` do storage gerada AQUI, depois do RBAC da sessão; ausente
+   * quando não houve áudio ou ele já venceu (7 dias).
+   */
+  audio: v.optional(v.object({ url: v.string(), durationSec: v.number(), mimeType: v.string() })),
   createdAt: v.number(),
 });
 
-function toMessageView(m: Doc<"onboardingMessages">) {
+async function toMessageView(ctx: QueryCtx, m: Doc<"onboardingMessages">) {
+  const audioUrl = m.audio ? await ctx.storage.getUrl(m.audio.storageId) : null;
   return {
     _id: m._id,
     role: m.role,
@@ -74,6 +85,7 @@ function toMessageView(m: Doc<"onboardingMessages">) {
     attachment: m.attachment ? { kind: m.attachment.kind, label: m.attachment.label } : null,
     transcribed: m.transcribed === true,
     draftVersion: m.draftVersion ?? null,
+    ...(m.audio && audioUrl ? { audio: { url: audioUrl, durationSec: m.audio.durationSec, mimeType: m.audio.mimeType } } : {}),
     createdAt: m.createdAt,
   };
 }
@@ -144,7 +156,8 @@ export const listMessages = query({
           ? { ...args.paginationOpts, numItems: LIST_PAGE_MAX }
           : args.paginationOpts,
       );
-    return { ...result, page: result.page.map(toMessageView) };
+    const page = await Promise.all(result.page.map((m) => toMessageView(ctx, m)));
+    return { ...result, page };
   },
 });
 
@@ -494,6 +507,82 @@ export const internalAppendMessage = internalMutation({
       ...(args.draftVersion !== undefined ? { draftVersion: args.draftVersion } : {}),
       createdAt: Date.now(),
     });
+  },
+});
+
+// ── Resposta em áudio (P4.2b) ───────────────────────────────────────────────
+
+/** O áudio da resposta do onboarding some depois disto (blob + linha de `files` + campo). */
+export const ONBOARDING_AUDIO_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const AUDIO_EXPIRE_BATCH = 100;
+
+/**
+ * Vincula o WAV gerado à mensagem do assistente (ou grava por que não houve
+ * áudio). Confere org/sessão/papel da mensagem e que o arquivo é DA ORG; devolve
+ * a URL do storage para o evento SSE `audio` (o turno já passou pelo RBAC da
+ * sessão em `internalPrepareTurn`). Recusa = `{url:null}` e quem chama descarta
+ * o arquivo.
+ */
+export const internalRecordReplyAudio = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    messageId: v.id("onboardingMessages"),
+    audio: v.optional(
+      v.object({ fileId: v.id("files"), storageId: v.id("_storage"), durationSec: v.number(), mimeType: v.string() }),
+    ),
+    skipReason: v.optional(v.string()),
+  },
+  returns: v.object({ url: v.union(v.string(), v.null()) }),
+  handler: async (ctx, args) => {
+    const msg = await ctx.db.get(args.messageId);
+    if (!msg || msg.organizationId !== args.organizationId || msg.sessionId !== args.sessionId || msg.role !== "assistant") {
+      return { url: null };
+    }
+    if (!args.audio) {
+      if (args.skipReason) await ctx.db.patch(msg._id, { audioSkipReason: args.skipReason.slice(0, 40) });
+      return { url: null };
+    }
+    const file = await ctx.db.get(args.audio.fileId);
+    if (!file || file.organizationId !== args.organizationId || file.storageId !== args.audio.storageId) return { url: null };
+    await ctx.db.patch(msg._id, {
+      audio: args.audio,
+      audioExpiresAt: Date.now() + ONBOARDING_AUDIO_RETENTION_MS,
+      audioSkipReason: undefined,
+    });
+    return { url: await ctx.storage.getUrl(args.audio.storageId) };
+  },
+});
+
+/**
+ * Cron diário: apaga o áudio vencido das respostas do onboarding (blob pela
+ * porta `lib/fileRefs.ts`, linha de `files` por `deleteFileRow`) e tira o campo
+ * da mensagem (o texto fica). Lotes de 100, auto-reagendado enquanto houver.
+ */
+export const internalExpireOnboardingAudio = internalMutation({
+  args: {},
+  returns: v.number(),
+  handler: async (ctx) => {
+    if (cronsDisabled()) return 0;
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("onboardingMessages")
+      .withIndex("by_audio_expires_at", (q) => q.gte("audioExpiresAt", 0).lte("audioExpiresAt", now))
+      .take(AUDIO_EXPIRE_BATCH);
+    for (const m of rows) {
+      if (m.audio) {
+        const file = await ctx.db.get(m.audio.fileId);
+        if (file && file.organizationId === m.organizationId) {
+          await deleteBlobIfUnreferenced(ctx, file);
+          await deleteFileRow(ctx, file);
+        }
+      }
+      await ctx.db.patch(m._id, { audio: undefined, audioExpiresAt: undefined });
+    }
+    if (rows.length === AUDIO_EXPIRE_BATCH) {
+      await ctx.scheduler.runAfter(0, internal.onboardingChat.internalExpireOnboardingAudio, {});
+    }
+    return rows.length;
   },
 });
 

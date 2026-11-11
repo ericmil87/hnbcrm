@@ -47,6 +47,9 @@ crons.daily(
 // Códigos de confirmação de e-mail vencidos (vivem 10 min; a limpeza é só higiene). 07:00 UTC.
 crons.daily("prune email verification codes", { hourUTC: 7, minuteUTC: 0 }, internal.emailVerification.internalPruneEmailVerificationCodes, {});
 
+// Áudio das respostas do chat do onboarding (P4.2b): vive 7 dias; depois blob + linha de `files` somem. 07:15 UTC.
+crons.daily("expire onboarding reply audio", { hourUTC: 7, minuteUTC: 15 }, internal.onboardingChat.internalExpireOnboardingAudio, {});
+
 // Saúde dos canais bridge (T02): sonda GET /session/status de cada número e
 // notifica na transição (connected → fora do ar, só se persistir entre duas
 // execuções). Teto de 50 canais por execução, o resto segue por cursor.

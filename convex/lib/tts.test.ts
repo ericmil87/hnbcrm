@@ -9,6 +9,8 @@ import {
   parsePcmContentType,
   pcmDurationSeconds,
   pcmWaveform,
+  planOnboardingVoiceReply,
+  planSpokenPart,
   planVoiceReply,
   resolveAttendantVoice,
   toSpeakableText,
@@ -350,5 +352,39 @@ describe("envio de voice note no bridge (campos opcionais)", () => {
       }).body
     );
     expect(doc.PTT).toBeUndefined();
+  });
+});
+
+describe("chat do onboarding (planOnboardingVoiceReply, P4.2b)", () => {
+  const text = "Que bom ouvir você! Montei um funil inicial. Está certo assim?";
+
+  test("só fala quando o usuário mandou áudio; idioma fora do português fica no texto", () => {
+    expect(planOnboardingVoiceReply({ userSentAudio: false, text })).toEqual({ kind: "text", reason: "cliente_mandou_texto" });
+    expect(planOnboardingVoiceReply({ userSentAudio: true, text, language: "en" })).toEqual({ kind: "text", reason: "idioma" });
+    const plan = planOnboardingVoiceReply({ userSentAudio: true, text, language: "pt" });
+    expect(plan).toMatchObject({ kind: "voice", speakable: text, textPart: null, noticeIncluded: false });
+  });
+
+  test("mesma regra de dado do atendente: a fala perde Pix/valor; resposta só de dado não é falada", () => {
+    const plan = planOnboardingVoiceReply({
+      userSentAudio: true,
+      text: "Perfeito, anotei tudo. Você aceita Pix e a consulta custa R$ 150. Quer ajustar o funil?",
+    });
+    expect(plan.kind).toBe("voice");
+    if (plan.kind !== "voice") return;
+    expect(plan.speakable).not.toMatch(/pix|150|R\$/i);
+    expect(plan.textPart).toContain("R$ 150");
+    expect(planOnboardingVoiceReply({ userSentAudio: true, text: "A consulta custa R$ 150." })).toEqual({
+      kind: "text",
+      reason: "dado_sensivel",
+    });
+    expect(planOnboardingVoiceReply({ userSentAudio: true, text: "a ".repeat(VOICE_REPLY_MAX_CHARS) })).toEqual({
+      kind: "text",
+      reason: "longo",
+    });
+  });
+
+  test("planVoiceReply e o onboarding compartilham planSpokenPart (uma implementação)", () => {
+    expect(planVoiceReply(base)).toEqual(planSpokenPart(base.text, null));
   });
 });

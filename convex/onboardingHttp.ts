@@ -22,6 +22,10 @@
  *   {type:"block", block}                 — bloco rico montado pelo servidor (`OnboardingBlock`)
  *   {type:"chips", chips}                 — respostas sugeridas (2–6)
  *   {type:"draft", version, hash}         — rascunho gravado neste turno
+ *   {type:"audio", url, durationSec, mimeType} — P4.2b: a resposta falada (só quando o
+ *                                           usuário mandou áudio e a fala saiu; WAV, URL
+ *                                           do storage gerada depois do RBAC da sessão;
+ *                                           chega DEPOIS de `done`, que não espera o TTS)
  *   {type:"done", nextStage, askForMaterials}
  *   {type:"error", code, message}         — PT-BR, pronta para a tela
  */
@@ -122,6 +126,8 @@ export async function handleOnboardingStream(
   const stream = new ReadableStream<Uint8Array>({
     start: async (controller) => {
       const send = (payload: Record<string, unknown>) => controller.enqueue(sseEncode(payload));
+      // `done` sai ANTES da síntese da voz (o cliente destrava a entrada); `audio` pode vir depois.
+      let doneSent = false;
       try {
         const result = await runOnboardingTurn(ctx, input, {
           onSession: (sessionId) => send({ type: "session", sessionId }),
@@ -130,9 +136,15 @@ export async function handleOnboardingStream(
           onBlock: (block) => send({ type: "block", block }),
           onChips: (chips) => send({ type: "chips", chips }),
           onDraft: (d) => send({ type: "draft", version: d.version, hash: d.hash }),
+          onDone: (d) => {
+            doneSent = true;
+            send({ type: "done", nextStage: d.nextStage, askForMaterials: d.askForMaterials });
+          },
+          onAudio: (a) => send({ type: "audio", url: a.url, durationSec: a.durationSec, mimeType: a.mimeType }),
         });
-        if (result.ok) send({ type: "done", nextStage: result.nextStage, askForMaterials: result.askForMaterials });
-        else send({ type: "error", code: result.code, message: result.message });
+        if (result.ok) {
+          if (!doneSent) send({ type: "done", nextStage: result.nextStage, askForMaterials: result.askForMaterials });
+        } else send({ type: "error", code: result.code, message: result.message });
       } catch {
         send({ type: "error", code: "error", message: "Algo deu errado. Tente de novo em instantes." });
       } finally {

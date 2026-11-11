@@ -304,7 +304,8 @@ export const internalRecordOnboardingSpend = internalMutation({
     /** Papel (documental; o modelo usado vai em `model`). */
     // `transcription` (P2.3): Whisper do áudio do usuário; reservado antes para não
     // ocupar o serviço compartilhado com os clientes reais além do orçamento.
-    role: v.union(v.literal("interviewer"), v.literal("reader"), v.literal("vision"), v.literal("transcription")),
+    // `tts` (P4.2b): resposta em áudio do chat quando o usuário mandou áudio.
+    role: v.union(v.literal("interviewer"), v.literal("reader"), v.literal("vision"), v.literal("transcription"), v.literal("tts")),
     status: v.optional(v.union(v.literal("done"), v.literal("error"))),
     provider: v.optional(v.string()),
     model: v.optional(v.string()),
@@ -424,6 +425,32 @@ export const internalRecordOnboardingSpend = internalMutation({
       globalDayUsdMicros: globalDay,
       globalCapReached: capReached,
     };
+  },
+});
+
+/**
+ * Solta uma reserva sem registrar custo (P4.2b): só para quando o
+ * `internalRecordOnboardingSpend` falhou e a estimativa ficaria presa até o TTL
+ * de 10 min, travando o orçamento da sessão. Não cria run nem soma gasto.
+ */
+export const internalReleaseOnboardingReservation = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    estimateUsdMicros: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    const held = effectiveReserved(session.reservedUsdMicros, session.reservedAt, now);
+    const stillReserved = Math.max(0, held - clampEstimate(args.estimateUsdMicros));
+    await ctx.db.patch(session._id, {
+      reservedUsdMicros: stillReserved,
+      ...(stillReserved === 0 ? { reservedAt: undefined } : {}),
+      updatedAt: now,
+    });
+    return null;
   },
 });
 
