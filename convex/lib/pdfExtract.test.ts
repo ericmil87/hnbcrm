@@ -133,9 +133,9 @@ describe("extractPdfText", () => {
     expect(r.pagesRead).toBeLessThan(10);
   });
 
-  it("prazo checado por página → TIMEOUT (inline)", async () => {
+  it("prazo zero → TIMEOUT", async () => {
     const pages = Array.from({ length: 30 }, (_, i) => [`Página ${i}`]);
-    expect(await codeOf(extractPdfText(new Uint8Array(textPdf(pages)), { timeoutMs: 0, isolation: "inline" }))).toBe("TIMEOUT");
+    expect(await codeOf(extractPdfText(new Uint8Array(textPdf(pages)), { timeoutMs: 0 }))).toBe("TIMEOUT");
   });
 
   it("PDF com conteúdo Flate (normal) continua sendo lido", async () => {
@@ -146,13 +146,15 @@ describe("extractPdfText", () => {
 });
 
 describe("worker_threads com terminate no prazo (D4)", () => {
-  it("o pdf.js roda no worker por padrão; inline continua disponível", async () => {
-    const bytes = new Uint8Array(textPdf([PRICE_LINES]));
-    const w = await extractPdfText(bytes);
+  it("o pdf.js roda no worker", async () => {
+    const w = await extractPdfText(new Uint8Array(textPdf([PRICE_LINES])));
     expect(w.isolation).toBe("worker");
-    const i = await extractPdfText(bytes, { isolation: "inline" });
-    expect(i.isolation).toBe("inline");
-    expect(i.text).toBe(w.text);
+    expect(w.text).toContain("Corte feminino R$ 90,00 60 min");
+  });
+
+  it("worker indisponível → UNAVAILABLE (falha fechada, sem pdf.js na thread)", async () => {
+    const bytes = new Uint8Array(textPdf([PRICE_LINES]));
+    expect(await codeOf(extractPdfText(bytes, { unpdfPathForTests: "/caminho/inexistente/unpdf.mjs" }))).toBe("UNAVAILABLE");
   });
 
   it("prazo estourado no worker → TIMEOUT (thread terminada)", async () => {

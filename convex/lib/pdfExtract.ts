@@ -5,33 +5,29 @@
  *
  * `unpdf@2.1.0` (pdf.js embutido, sem binário nativo). Camadas:
  *  1. Tamanho (10 MB) e `%PDF-` nos primeiros 1024 bytes.
- *  2. Pré-varredura (`preflightPdf`), na thread principal, ANTES do pdf.js:
+ *  2. Pré-varredura (`preflightPdf`, PRIMEIRA barreira), na thread
+ *     principal, antes do pdf.js:
  *     - `/Encrypt` → recusa (inclusive só senha de dono);
- *     - TODA ocorrência de `stream` tem o dado farejado (zlib/hex/ASCII85,
- *       recursivo), sem depender da forma do dicionário;
- *     - para cada stream, lê também o `/Filter` do dicionário (direto ou indireto,
- *       nome ou cadeia) e DECODIFICA a cadeia com teto: ASCIIHex e ASCII85
- *       antes, Flate com qualquer cabeçalho zlib que o pdf.js aceitaria
- *       (`(cmf & 0x0f) === 8`, `((cmf<<8)|flg) % 31 === 0`, sem dicionário);
- *       LZW, RunLength, Crypt e filtros desconhecidos → recusa; filtros de
- *       imagem (DCT/JPX/CCITT/JBIG2) só no fim da cadeia;
- *     - o dado é decodificado do início do stream até o fim natural do
- *       codec (fim do deflate, `>` do ASCIIHex, `~>` do ASCII85) — nunca até
- *       `/Length` nem até o primeiro `endstream`: o pdf.js ignora `/Length`
- *       errado e um `endstream` literal no meio do dado enganaria a varredura;
+ *     - TODA ocorrência de `stream` (fora "endstream") tem o dado farejado
+ *       em dois inícios (logo após a palavra-chave e após o próximo fim de
+ *       linha, como o pdf.js) — zlib que o pdf.js aceitaria → infla com teto;
+ *       só hex/ASCII85 → decodifica e fareja de novo; a busca segue logo após
+ *       a palavra-chave (chamariz em comentário/string não esconde nada);
+ *     - o `/Filter` do dicionário (nome, cadeia, indireto, `#xx`) também é
+ *       decodificado; LZW, RunLength, Crypt e desconhecidos → recusa;
+ *     - saída descomprimida que contém `stream` (ex.: /ObjStm) é varrida de
+ *       novo (profundidade limitada);
  *     - tetos: 16 MB por stream e 48 MB somados (ver PDF_LIMITS).
- *  3. pdf.js num `worker_threads` com prazo: no fim do prazo, `terminate()`
- *     mata a thread mesmo no meio de trabalho síncrono (Promise.race não
- *     interrompe a descompressão/parse síncronos). O worker limita TEMPO, não
- *     memória: `resourceLimits` cobre o heap JS, mas ArrayBuffers ficam fora
- *     (medido na revisão: 760 MB–1,2 GB de pico) — a defesa de memória é a
- *     pré-varredura. O código do worker é uma
- *     string (`eval: true`, nada a empacotar) e importa o `unpdf` pelo caminho
- *     absoluto resolvido aqui — por isso `unpdf` está em
- *     `convex.json → node.externalPackages` (instalado no deploy). Se o
- *     worker não puder subir (pacote não resolvível, worker_threads
- *     indisponível), cai para a execução na própria thread com o mesmo prazo
- *     cooperativo por página (o comportamento anterior).
+ *  3. pdf.js SÓ num `worker_threads`, com duas travas na thread principal:
+ *     prazo (`terminate()` → TIMEOUT; Promise.race não interrompe trabalho
+ *     síncrono) e VIGIA DE MEMÓRIA — a DEFESA PRINCIPAL: a cada 20 ms mede o
+ *     RSS do processo; passou de RSS inicial + `PDF_WORKER_RSS_CAP_BYTES` →
+ *     `terminate()` → TOO_BIG_EXPANSION. (`resourceLimits` do worker só cobre o
+ *     heap JS; ArrayBuffers ficam fora — medido na revisão.) Worker
+ *     indisponível → UNAVAILABLE: falha fechada, o pdf.js nunca roda sem vigia.
+ *     O código do worker é uma string (`eval: true`, nada a empacotar) e
+ *     importa o `unpdf` pelo caminho absoluto resolvido aqui — por isso
+ *     `unpdf` está em `convex.json → node.externalPackages`.
  *  Configurações do pdf.js: sem fontes do SO, sem XFA, sem scripts, imagens
  *  não decodificadas (`maxImageSize`); `isEvalSupported:false` explícito
  *  (o pdf.js 6 já não tem o caminho de `eval`).
@@ -41,7 +37,6 @@
 import { inflateRawSync, constants as zlibConstants } from "node:zlib";
 import { Worker } from "node:worker_threads";
 import { createRequire } from "node:module";
-import { getDocumentProxy } from "unpdf";
 import { cleanUntrustedText } from "./untrustedText";
 
 /**
@@ -75,6 +70,7 @@ export type PdfErrorCode =
   | "TOO_BIG_EXPANSION"
   | "UNSUPPORTED_FILTER"
   | "TIMEOUT"
+  | "UNAVAILABLE"
   | "PARSE_FAILED";
 
 /** Mensagens curtas em PT-BR (podem ir ao usuário). */
@@ -88,6 +84,7 @@ export const PDF_ERROR_MESSAGES: Record<PdfErrorCode, string> = {
   TOO_BIG_EXPANSION: "Não consegui abrir esse arquivo com segurança.",
   UNSUPPORTED_FILTER: "Esse PDF usa um formato interno que não leio por segurança. Exporte de novo como PDF.",
   TIMEOUT: "O PDF demorou demais para ser lido.",
+  UNAVAILABLE: "A leitura de PDF está indisponível no momento. Tente de novo mais tarde ou envie prints das páginas.",
   PARSE_FAILED: "Não consegui ler esse PDF.",
 };
 
@@ -108,8 +105,8 @@ export type PdfExtractResult = {
   truncated: boolean;
   invisibleChars: number;
   tagChars: number;
-  /** Onde o pdf.js rodou (diagnóstico). */
-  isolation: "worker" | "inline";
+  /** Onde o pdf.js rodou (sempre "worker": sem worker a leitura falha fechada). */
+  isolation: "worker";
 };
 
 // ---------------------------------------------------------------------------
@@ -269,8 +266,12 @@ export function parseFilterChains(dict: string, s = "", objIndex = new Map<strin
   return chains;
 }
 
-/** Decodifica a cadeia com teto; devolve o tamanho final. Lança se perigoso. */
-export function measureFilterChain(data: Uint8Array, chain: string[], cap: number): number {
+/** Decodifica a cadeia com teto. `data` null = filtro de imagem no fim (não decodificado). Lança se perigoso. */
+export function decodeFilterChain(
+  data: Uint8Array,
+  chain: string[],
+  cap: number
+): { size: number; data: Uint8Array | null } {
   let cur = data;
   for (let i = 0; i < chain.length; i++) {
     const f = chain[i];
@@ -278,17 +279,22 @@ export function measureFilterChain(data: Uint8Array, chain: string[], cap: numbe
     else if (f === "ASCII85Decode") cur = decodeAscii85(cur, cap);
     else if (f === "FlateDecode") {
       const out = inflateLikePdfJs(cur, cap);
-      if (out === null) return 0; // o pdf.js trata como stream vazio
+      if (out === null) return { size: 0, data: null }; // o pdf.js trata como stream vazio
       cur = out;
     } else if (IMAGE_FILTERS.has(f)) {
       if (i !== chain.length - 1) throw new PdfExtractError("UNSUPPORTED_FILTER");
-      return cur.length; // imagem: não decodificada na extração de texto
+      return { size: cur.length, data: null }; // imagem: não decodificada na extração de texto
     } else {
       // LZWDecode, RunLengthDecode, Crypt e qualquer nome desconhecido
       throw new PdfExtractError("UNSUPPORTED_FILTER");
     }
   }
-  return chain.length ? cur.length : 0;
+  return chain.length ? { size: cur.length, data: cur } : { size: 0, data: null };
+}
+
+/** Compat: só o tamanho. */
+export function measureFilterChain(data: Uint8Array, chain: string[], cap: number): number {
+  return decodeFilterChain(data, chain, cap).size;
 }
 
 /** Fim do dado pelo /Length (número), null sem /Length, "unresolved" se indireto e não achado. */
@@ -337,6 +343,9 @@ function lastBefore(sorted: number[], pos: number): number {
 
 const SNIFF_PREFIX = 1024;
 const SNIFF_MAX_DEPTH = 4;
+/** Profundidade da re-varredura de saídas descomprimidas que contêm `stream` (ex.: /ObjStm). */
+const NESTED_SCAN_MAX_DEPTH = 3;
+const ASCII_SCAN_BUDGET = 64 * 1024 * 1024;
 
 function isWs(c: number): boolean {
   return c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
@@ -373,38 +382,124 @@ function looksZlib(d: Uint8Array): boolean {
   return d.length >= 2 && (d[0] & 0x0f) === 8 && ((d[0] << 8) | d[1]) % 31 === 0 && (d[1] & 0x20) === 0;
 }
 
-type SniffBudget = { asciiBytes: number };
-const ASCII_SCAN_BUDGET = 64 * 1024 * 1024;
+type ScanState = { total: number; asciiBytes: number; o: PreflightLimits };
 
 /**
- * Fareja o PRÓPRIO dado, sem depender do dicionário: zlib → infla com teto;
- * só hex/ASCII85 → decodifica e fareja de novo (profundidade limitada).
- * Devolve o maior tamanho decodificado visto.
+ * Fareja o PRÓPRIO dado (zlib → infla; só hex/ASCII85 → decodifica e fareja
+ * de novo). `zlibData` = dado para o zlib (até o fim natural do deflate),
+ * `asciiData` = região para hex/ASCII85. Guarda as saídas em `decoded`.
  */
-export function sniffExpansion(data: Uint8Array, cap: number, budget: SniffBudget = { asciiBytes: 0 }, depth = 0): number {
-  if (depth >= SNIFF_MAX_DEPTH || data.length < 2) return 0;
-  if (looksZlib(data)) {
-    const out = inflateLikePdfJs(data, cap);
+function sniffInto(
+  zlibData: Uint8Array,
+  asciiData: Uint8Array,
+  st: ScanState,
+  decoded: Uint8Array[],
+  depth = 0
+): number {
+  if (depth >= SNIFF_MAX_DEPTH || asciiData.length < 2) return 0;
+  const cap = st.o.maxStreamOutBytes;
+  if (looksZlib(zlibData)) {
+    const out = inflateLikePdfJs(zlibData, cap);
     if (!out) return 0;
-    return Math.max(out.length, sniffExpansion(out, cap, budget, depth + 1));
+    decoded.push(out);
+    return Math.max(out.length, sniffInto(out, out, st, decoded, depth + 1));
   }
-  const hex = looksHex(data);
-  if (hex || looksAscii85(data)) {
-    budget.asciiBytes += data.length;
-    if (budget.asciiBytes > ASCII_SCAN_BUDGET) throw new PdfExtractError("TOO_BIG_EXPANSION");
-    const decoded = hex ? decodeAsciiHex(data, cap) : decodeAscii85(data, cap);
-    return Math.max(decoded.length, sniffExpansion(decoded, cap, budget, depth + 1));
+  const hex = looksHex(asciiData);
+  if (hex || looksAscii85(asciiData)) {
+    st.asciiBytes += asciiData.length;
+    if (st.asciiBytes > ASCII_SCAN_BUDGET) throw new PdfExtractError("TOO_BIG_EXPANSION");
+    const out = hex ? decodeAsciiHex(asciiData, cap) : decodeAscii85(asciiData, cap);
+    decoded.push(out);
+    return Math.max(out.length, sniffInto(out, out, st, decoded, depth + 1));
   }
   return 0;
 }
 
+/** Compat/teste: maior tamanho decodificado pelo farejamento (lança acima do teto). */
+export function sniffExpansion(data: Uint8Array, cap: number): number {
+  const st: ScanState = { total: 0, asciiBytes: 0, o: { maxStreamOutBytes: cap, maxTotalInflateBytes: Infinity } };
+  return sniffInto(data, data, st, []);
+}
+
+/** Início do dado segundo o pdf.js: após a palavra-chave, pula até depois do próximo fim de linha. */
+function afterNextEol(s: string, from: number): number {
+  for (let i = from; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c === 0x0a) return i + 1;
+    if (c === 0x0d) return s.charCodeAt(i + 1) === 0x0a ? i + 2 : i + 1;
+  }
+  return s.length;
+}
+
 /**
- * Pré-varredura: criptografado recusado; TODA ocorrência de `stream` (não
- * precedida de "end") tem o dado farejado (zlib/hex/ASCII85, recursivo) E,
- * quando o dicionário do objeto declara `/Filter`, a cadeia declarada é
- * decodificada. Não depende de `>>` antes de `stream`, do formato da quebra de
- * linha nem de janela fixa do dicionário (revisão do P2.2: comentário entre
- * `>>` e `stream`, nome contendo "obj", `/Filter` longe, `stream \n`).
+ * Varre um buffer (o arquivo, ou uma saída descomprimida que contém
+ * `stream`): TODA ocorrência de `stream` (não precedida de "end") tem o dado
+ * farejado em DOIS inícios — logo após a palavra-chave (com no máximo uma
+ * quebra) e após o próximo fim de linha (como o `skipToNextLine` do pdf.js:
+ * `stream JUNK\n`, `stream%x\n`) — e a cadeia `/Filter` do dicionário, se
+ * houver, é decodificada. A busca continua logo após a palavra-chave (nunca
+ * pula até `endstream`), então chamarizes em comentário/string não escondem o
+ * stream real. Saídas que contêm `stream` (ex.: /ObjStm) são varridas de novo.
+ */
+function scanBuffer(raw: Buffer, st: ScanState, top: { s: string; objIndex: Map<string, number> }, depth: number): void {
+  const s = depth === 0 ? top.s : raw.toString("latin1");
+  const objIndex = depth === 0 ? top.objIndex : indexObjects(s);
+  const headers = objectHeaderEnds(s);
+  const cap = st.o.maxStreamOutBytes;
+  const kw = /stream/g;
+  let prevKwEnd = 0;
+  let cachedEnd = -2; // próximo "endstream" já achado (busca monotônica)
+  let m: RegExpExecArray | null;
+  while ((m = kw.exec(s))) {
+    const pos = m.index;
+    const kwEnd = pos + 6;
+    if (pos >= 3 && s.startsWith("end", pos - 3)) continue;
+    // Dois inícios possíveis do dado.
+    let a = kwEnd;
+    if (s.charCodeAt(a) === 0x0d) a++;
+    if (s.charCodeAt(a) === 0x0a) a++;
+    const b = afterNextEol(s, kwEnd);
+    // Dicionário: do cabeçalho `N G obj` mais próximo (ou da palavra-chave anterior) até aqui.
+    const dict = s.slice(Math.max(lastBefore(headers, pos), prevKwEnd, 0), pos);
+    prevKwEnd = kwEnd;
+    let chains = parseFilterChains(dict, top.s, top.objIndex);
+    if (chains === null) {
+      if (depth === 0) throw new PdfExtractError("UNSUPPORTED_FILTER");
+      chains = []; // dentro de saída descomprimida: o farejamento cobre
+    }
+    if (cachedEnd !== -1 && cachedEnd < kwEnd) cachedEnd = s.indexOf("endstream", kwEnd);
+    const decoded: Uint8Array[] = [];
+    let biggest = 0;
+    for (const start of a === b ? [a] : [a, b]) {
+      const firstEnd = cachedEnd === -1 ? s.length : cachedEnd;
+      const lenEnd = streamLengthEnd(dict, s, objIndex, start);
+      let regionEnd =
+        lenEnd === "unresolved" ? s.length : Math.max(firstEnd >= start ? firstEnd : s.length, lenEnd ?? 0);
+      regionEnd = Math.min(regionEnd, s.length);
+      const region = raw.subarray(start, regionEnd);
+      for (const chain of chains) {
+        const r = decodeFilterChain(region, chain, cap);
+        biggest = Math.max(biggest, r.size);
+        if (r.data) decoded.push(r.data);
+      }
+      // zlib até o fim natural do deflate (sem confiar em /Length nem endstream).
+      biggest = Math.max(biggest, sniffInto(raw.subarray(start), region, st, decoded));
+    }
+    st.total += biggest;
+    if (st.total > st.o.maxTotalInflateBytes) throw new PdfExtractError("TOO_BIG_EXPANSION");
+    if (depth < NESTED_SCAN_MAX_DEPTH) {
+      for (const out of decoded) {
+        const buf = Buffer.from(out.buffer, out.byteOffset, out.byteLength);
+        if (buf.indexOf("stream", 0, "latin1") !== -1) scanBuffer(buf, st, top, depth + 1);
+      }
+    }
+    kw.lastIndex = kwEnd;
+  }
+}
+
+/**
+ * Pré-varredura (PRIMEIRA barreira; a defesa principal é o vigia de memória
+ * do worker): criptografado recusado; streams farejados como em `scanBuffer`.
  */
 export function preflightPdf(bytes: Uint8Array, o: PreflightLimits): void {
   const raw = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -412,54 +507,22 @@ export function preflightPdf(bytes: Uint8Array, o: PreflightLimits): void {
   if (!head.includes("%PDF-")) throw new PdfExtractError("NOT_PDF");
   const s = raw.toString("latin1");
   if (/\/Encrypt\b/.test(s)) throw new PdfExtractError("ENCRYPTED");
-  const objIndex = indexObjects(s);
-  const headers = objectHeaderEnds(s);
-  const budget: SniffBudget = { asciiBytes: 0 };
-  const kw = /stream[ \t\f\0]*(\r\n|\r|\n)?/g;
-  let total = 0;
-  let cursor = 0;
-  let m: RegExpExecArray | null;
-  while ((m = kw.exec(s))) {
-    const pos = m.index;
-    if (pos >= 3 && s.startsWith("end", pos - 3)) continue;
-    const start = pos + m[0].length;
-    // Dicionário: do cabeçalho `N G obj` mais próximo (ou do fim do stream
-    // anterior) até "stream" — sem janela fixa; as fatias não se sobrepõem.
-    const dictStart = Math.max(lastBefore(headers, pos), cursor, 0);
-    const dict = s.slice(dictStart, pos);
-    const chains = parseFilterChains(dict, s, objIndex);
-    if (chains === null) throw new PdfExtractError("UNSUPPORTED_FILTER");
-    // Região que o pdf.js PODE ler (a maior): /Length direto ou indireto
-    // resolvido, ou o 1º "endstream"; /Length indireto não resolvível = EOF.
-    const firstEnd = s.indexOf("endstream", start);
-    const lenEnd = streamLengthEnd(dict, s, objIndex, start);
-    let regionEnd: number;
-    if (lenEnd === "unresolved") regionEnd = s.length;
-    else regionEnd = Math.max(firstEnd === -1 ? s.length : firstEnd, lenEnd ?? 0);
-    regionEnd = Math.min(regionEnd, s.length);
-    const region = raw.subarray(start, regionEnd);
-    let biggest = 0;
-    for (const chain of chains) {
-      biggest = Math.max(biggest, measureFilterChain(region, chain, o.maxStreamOutBytes));
-    }
-    // Farejamento: zlib do início até o fim natural do deflate (sem confiar
-    // em /Length nem em endstream); hex/ASCII85 dentro da região.
-    biggest = Math.max(
-      biggest,
-      looksZlib(region) ? sniffExpansion(raw.subarray(start), o.maxStreamOutBytes, budget) : sniffExpansion(region, o.maxStreamOutBytes, budget)
-    );
-    total += biggest;
-    if (total > o.maxTotalInflateBytes) throw new PdfExtractError("TOO_BIG_EXPANSION");
-    let next = firstEnd === -1 ? s.length : firstEnd;
-    if (typeof lenEnd === "number" && /^\s*endstream/.test(s.slice(lenEnd, lenEnd + 16))) next = lenEnd;
-    cursor = Math.max(next, start);
-    kw.lastIndex = cursor;
-  }
+  scanBuffer(raw, { total: 0, asciiBytes: 0, o }, { s, objIndex: indexObjects(s) }, 0);
 }
 
 // ---------------------------------------------------------------------------
-// Extração (worker com terminate no prazo; fallback na thread)
+// Extração: pdf.js SÓ no worker, com prazo e vigia de memória
 // ---------------------------------------------------------------------------
+
+/**
+ * Teto de crescimento do RSS do processo enquanto o worker do pdf.js roda
+ * (DEFESA PRINCIPAL contra bomba de descompressão: `resourceLimits` do worker
+ * não conta ArrayBuffers). A action Node tem 512 MB; o pico medido de um PDF
+ * normal de 200 páginas foi ~104 MB de RSS total.
+ */
+export const PDF_WORKER_RSS_CAP_BYTES = 250 * 1024 * 1024;
+/** Intervalo do vigia de memória. */
+export const PDF_WORKER_RSS_POLL_MS = 20;
 
 const PDFJS_OPTIONS = {
   disableFontFace: true,
@@ -524,7 +587,8 @@ function openErrorToCode(name: string | undefined): PdfErrorCode {
   return "PARSE_FAILED";
 }
 
-function resolveUnpdfPath(): string | null {
+function resolveUnpdfPath(override?: string): string | null {
+  if (override !== undefined && process.env.VITEST === "true") return override;
   try {
     return createRequire(import.meta.url).resolve("unpdf");
   } catch {
@@ -537,13 +601,25 @@ function rawCharBudget(o: PdfLimits): number {
   return Math.ceil(o.maxChars * 1.5);
 }
 
-/** Roda o pdf.js num worker. `null` = worker indisponível (o chamador cai para a thread). */
-function runInWorker(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<RawPages | null> {
-  const unpdfPath = resolveUnpdfPath();
-  if (!unpdfPath) return Promise.resolve(null);
-  return new Promise<RawPages | null>((resolve, reject) => {
-    let worker: Worker;
+/**
+ * Roda o pdf.js num worker com DUAS travas na thread principal: prazo
+ * (`terminate()` → TIMEOUT) e vigia de memória (RSS acima de rss inicial +
+ * teto → `terminate()` → TOO_BIG_EXPANSION). Worker indisponível → UNAVAILABLE
+ * (falha fechada: nunca roda o pdf.js sem vigia).
+ */
+function runInWorker(
+  copy: Uint8Array,
+  o: PdfLimits,
+  deadline: number,
+  rssCapBytes: number,
+  unpdfPathOverride?: string
+): Promise<RawPages> {
+  const unpdfPath = resolveUnpdfPath(unpdfPathOverride);
+  if (!unpdfPath) return Promise.reject(new PdfExtractError("UNAVAILABLE"));
+  return new Promise<RawPages>((resolve, reject) => {
     const buffer = copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength);
+    const rssStart = process.memoryUsage.rss();
+    let worker: Worker;
     try {
       worker = new Worker(WORKER_SOURCE, {
         eval: true,
@@ -559,11 +635,11 @@ function runInWorker(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<
           },
         },
         transferList: [buffer],
-        // Limita o heap JS; ArrayBuffers ficam fora — o worker limita TEMPO, não memória.
+        // Só o heap JS; ArrayBuffers ficam fora — por isso o vigia de RSS abaixo.
         resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 },
       });
     } catch {
-      resolve(null);
+      reject(new PdfExtractError("UNAVAILABLE"));
       return;
     }
     let settled = false;
@@ -571,10 +647,16 @@ function runInWorker(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(watchdog);
       void worker.terminate();
       fn();
     };
     const timer = setTimeout(() => finish(() => reject(new PdfExtractError("TIMEOUT"))), Math.max(0, deadline - Date.now()));
+    const watchdog = setInterval(() => {
+      if (process.memoryUsage.rss() - rssStart > rssCapBytes) {
+        finish(() => reject(new PdfExtractError("TOO_BIG_EXPANSION")));
+      }
+    }, PDF_WORKER_RSS_POLL_MS);
     worker.on("message", (msg: WorkerMsg) => {
       finish(() => {
         switch (msg.kind) {
@@ -582,7 +664,7 @@ function runInWorker(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<
             resolve({ numPages: msg.numPages, pages: msg.pages });
             break;
           case "setup":
-            resolve(null);
+            reject(new PdfExtractError("UNAVAILABLE"));
             break;
           case "open-error":
             reject(new PdfExtractError(openErrorToCode(msg.name)));
@@ -609,51 +691,7 @@ function runInWorker(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<
   });
 }
 
-/** Mesmo laço, na própria thread (fallback; prazo cooperativo por página). */
-async function runInline(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<RawPages> {
-  let pdf: Awaited<ReturnType<typeof getDocumentProxy>> | undefined;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new PdfExtractError("TIMEOUT")), Math.max(0, deadline - Date.now()));
-  });
-  const work = (async (): Promise<RawPages> => {
-    try {
-      pdf = await getDocumentProxy(copy, { ...({ isEvalSupported: false } as object), ...PDFJS_OPTIONS });
-    } catch (e) {
-      throw new PdfExtractError(openErrorToCode((e as { name?: string })?.name));
-    }
-    const numPages = pdf.numPages;
-    if (numPages > o.hardMaxPages) throw new PdfExtractError("TOO_MANY_PAGES");
-    const last = Math.min(numPages, o.maxPages);
-    const pages: string[] = [];
-    let chars = 0;
-    for (let i = 1; i <= last; i++) {
-      if (Date.now() > deadline) throw new PdfExtractError("TIMEOUT");
-      const page = await pdf.getPage(i);
-      const tc = await page.getTextContent();
-      page.cleanup();
-      const t = (tc.items as Array<{ str?: string; hasEOL?: boolean }>)
-        .map((it) => (it.str ?? "") + (it.hasEOL ? "\n" : " "))
-        .join("");
-      pages.push(t);
-      chars += t.length;
-      if (chars >= rawCharBudget(o)) break;
-    }
-    return { numPages, pages };
-  })();
-  try {
-    return await Promise.race([work, timeout]);
-  } finally {
-    clearTimeout(timer);
-    try {
-      await pdf?.loadingTask?.destroy();
-    } catch {
-      // já destruído
-    }
-  }
-}
-
-function assemble(raw: RawPages, o: PdfLimits, isolation: "worker" | "inline"): PdfExtractResult {
+function assemble(raw: RawPages, o: PdfLimits): PdfExtractResult {
   const parts: string[] = [];
   let invisibleChars = 0;
   let tagChars = 0;
@@ -688,28 +726,30 @@ function assemble(raw: RawPages, o: PdfLimits, isolation: "worker" | "inline"): 
     truncated: hasText ? truncated : false,
     invisibleChars,
     tagChars,
-    isolation,
+    isolation: "worker",
   };
 }
 
+export type PdfExtractOptions = Partial<PdfLimits> & {
+  /** Teto do vigia de memória (padrão PDF_WORKER_RSS_CAP_BYTES). */
+  rssCapBytes?: number;
+  /** Só em teste (VITEST): pula a pré-varredura para exercitar o vigia. */
+  skipPreflightForTests?: boolean;
+  /** Só em teste (VITEST): caminho do unpdf (inexistente = worker indisponível). */
+  unpdfPathForTests?: string;
+};
+
 /** `bytes` é copiado. Lança `PdfExtractError` (código tipado). */
-export async function extractPdfText(
-  bytes: Uint8Array,
-  opts: Partial<PdfLimits> & { isolation?: "worker" | "inline" } = {}
-): Promise<PdfExtractResult> {
-  const { isolation = "worker", ...limits } = opts;
+export async function extractPdfText(bytes: Uint8Array, opts: PdfExtractOptions = {}): Promise<PdfExtractResult> {
+  const { rssCapBytes = PDF_WORKER_RSS_CAP_BYTES, skipPreflightForTests, unpdfPathForTests, ...limits } = opts;
   const o: PdfLimits = { ...PDF_LIMITS, ...limits };
   if (bytes.byteLength === 0) throw new PdfExtractError("EMPTY");
   if (bytes.byteLength > o.maxBytes) throw new PdfExtractError("TOO_LARGE");
-  preflightPdf(bytes, o);
+  if (!(skipPreflightForTests && process.env.VITEST === "true")) preflightPdf(bytes, o);
   const deadline = Date.now() + o.timeoutMs;
-  const copy = new Uint8Array(bytes); // o pdf.js destaca o buffer que recebe
+  const copy = new Uint8Array(bytes); // o buffer vai transferido ao worker
   try {
-    if (isolation === "worker") {
-      const viaWorker = await runInWorker(copy, o, deadline);
-      if (viaWorker) return assemble(viaWorker, o, "worker");
-    }
-    return assemble(await runInline(copy, o, deadline), o, "inline");
+    return assemble(await runInWorker(copy, o, deadline, rssCapBytes, unpdfPathForTests), o);
   } catch (e) {
     if (e instanceof PdfExtractError) throw e;
     throw new PdfExtractError("PARSE_FAILED");

@@ -5,7 +5,7 @@
  * Arquivo de teste (não é módulo do Convex: o nome tem dois pontos e fica
  * fora do glob de módulos dos testes).
  */
-import { deflateRawSync, deflateSync } from "node:zlib";
+import { constants as zlibConstants, deflateRawSync, deflateSync } from "node:zlib";
 
 type Obj = string | Buffer;
 
@@ -121,6 +121,97 @@ export function pdfWithRawStreamPrefix(data: Buffer, prefix: (length: number) =>
     "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
     Buffer.concat([b(prefix(data.length)), data, b("\nendstream")]),
   ]);
+}
+
+/**
+ * zlib de `mb` MB de espaços SEM alocar `mb` MB: repete um bloco deflate de
+ * 1 MB fechado com Z_FULL_FLUSH (alinhado, independente) e fecha com um bloco
+ * final vazio. ~1 KB por MB.
+ */
+export function cheapZlibBomb(mb: number): Buffer {
+  const chunk = deflateRawSync(Buffer.alloc(1 << 20, 0x20), { level: 9, finishFlush: zlibConstants.Z_FULL_FLUSH });
+  const parts: Buffer[] = [Buffer.from([0x78, 0x9c])];
+  for (let i = 0; i < mb; i++) parts.push(chunk);
+  parts.push(Buffer.from([0x03, 0x00]));
+  return Buffer.concat(parts);
+}
+
+/**
+ * Como `pdfWithRawStreamPrefix`, com texto solto (`pre`) antes do objeto 4 —
+ * chamariz `%stream\n` em comentário ou `(stream\n)` num objeto string.
+ */
+export function pdfWithDecoy(data: Buffer, prefix: (length: number) => string, pre: string): Buffer {
+  const parts: Buffer[] = [b("%PDF-1.4\n")];
+  let len = parts[0].length;
+  const offsets: number[] = [];
+  const add = (n: number, body: Buffer) => {
+    offsets[n] = len;
+    const chunk = Buffer.concat([b(`${n} 0 obj\n`), body, b("\nendobj\n")]);
+    parts.push(chunk);
+    len += chunk.length;
+  };
+  add(1, b("<< /Type /Catalog /Pages 2 0 R >>"));
+  add(2, b("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"));
+  add(3, b("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>"));
+  const decoy = b(pre);
+  parts.push(decoy);
+  len += decoy.length;
+  add(4, Buffer.concat([b(prefix(data.length)), data, b("\nendstream")]));
+  let xref = `xref\n0 5\n0000000000 65535 f \n`;
+  for (let i = 1; i < 5; i++) xref += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  parts.push(b(`${xref}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${len}\n%%EOF\n`));
+  return Buffer.concat(parts);
+}
+
+/** Stream comprimido DENTRO de um /ObjStm comprimido (xref em stream), como a PoC da 3ª revisão. */
+export function objStmBombPdf(mb: number): Buffer {
+  const bomb = cheapZlibBomb(mb);
+  const inner = Buffer.concat([b(`<< /Length ${bomb.length} /Filter /FlateDecode >>\nstream\n`), bomb, b("\nendstream")]);
+  const hdr = b("5 0 ");
+  const objstmData = deflateSync(Buffer.concat([hdr, inner]));
+  const parts: Buffer[] = [];
+  let off = 0;
+  const offs: Record<number, number> = {};
+  const push = (x: Buffer) => {
+    parts.push(x);
+    off += x.length;
+  };
+  push(b("%PDF-1.5\n%\xe2\xe3\n"));
+  const add = (n: number, body: Buffer) => {
+    offs[n] = off;
+    push(Buffer.concat([b(`${n} 0 obj\n`), body, b("\nendobj\n")]));
+  };
+  add(1, b("<< /Type /Catalog /Pages 2 0 R >>"));
+  add(2, b("<< /Type /Pages /Kids [3 0 R] /Count 1 >>"));
+  add(3, b("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R >>"));
+  add(
+    4,
+    Buffer.concat([
+      b(`<< /Type /ObjStm /N 1 /First ${hdr.length} /Length ${objstmData.length} /Filter /FlateDecode >>\nstream\n`),
+      objstmData,
+      b("\nendstream"),
+    ])
+  );
+  const xoff = off;
+  const row = (t: number, a: number, c: number) => {
+    const r = Buffer.alloc(7);
+    r[0] = t;
+    r.writeUInt32BE(a, 1);
+    r.writeUInt16BE(c, 5);
+    return r;
+  };
+  const rows = Buffer.concat([row(0, 0, 65535), row(1, offs[1], 0), row(1, offs[2], 0), row(1, offs[3], 0), row(1, offs[4], 0), row(2, 4, 0), row(1, xoff, 0)]);
+  const xdata = deflateSync(rows);
+  add(
+    6,
+    Buffer.concat([
+      b(`<< /Type /XRef /Size 7 /W [1 4 2] /Root 1 0 R /Length ${xdata.length} /Filter /FlateDecode >>\nstream\n`),
+      xdata,
+      b("\nendstream"),
+    ])
+  );
+  push(b(`startxref\n${xoff}\n%%EOF\n`));
+  return Buffer.concat(parts);
 }
 
 /** zlib de `mb` MB de espaços (cabeçalho padrão 0x78). */
