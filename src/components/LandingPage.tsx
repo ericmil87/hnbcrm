@@ -80,7 +80,7 @@ export function LandingPage() {
     <>
       <SEO
         title="HNBCRM — CRM com atendimento IA no WhatsApp"
-        description="CRM para vender pelo WhatsApp: funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Usuários ilimitados. Teste 30 dias, sem cartão."
+        description={`CRM para vender pelo WhatsApp: funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Usuários ilimitados. Teste ${TRIAL.days} dias, sem cartão.`}
         keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas, tradução automática de mensagens, atendimento multilíngue"
       />
       <OrganizationStructuredData />
@@ -370,7 +370,7 @@ function FeaturesSection() {
             id="features-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Tudo que você precisa para vender mais
@@ -378,7 +378,7 @@ function FeaturesSection() {
           <p
             className={cn(
               "text-lg text-text-secondary",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             Funcionalidades prontas, sem configuração complicada.
@@ -473,7 +473,7 @@ function DeveloperSection() {
             id="developer-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4 mt-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Feito para desenvolvedores
@@ -481,7 +481,7 @@ function DeveloperSection() {
           <p
             className={cn(
               "text-lg text-text-secondary",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             Integre agentes de IA, automatize workflows e estenda seu CRM.
@@ -578,7 +578,7 @@ function ComingSoonSection() {
             id="coming-soon-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Estamos só começando
@@ -586,7 +586,7 @@ function ComingSoonSection() {
           <p
             className={cn(
               "text-lg text-text-secondary",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             Novas funcionalidades a cada semana.
@@ -663,7 +663,7 @@ function HowItWorksSection() {
             id="how-it-works-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Simples de começar
@@ -711,7 +711,7 @@ function CTASection() {
           id="cta-heading"
           className={cn(
             "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-            isInView && "animate-fade-in-up"
+            isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
           )}
         >
           Pronto para transformar suas vendas?
@@ -719,12 +719,12 @@ function CTASection() {
         <p
           className={cn(
             "text-lg text-text-secondary mb-8",
-            isInView && "animate-fade-in-up [animation-delay:100ms]"
+            isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
           )}
         >
           Junte-se a empresas que já usam o HNBCRM para vender mais.
         </p>
-        <div className={cn(isInView && "animate-fade-in-up [animation-delay:200ms]")}>
+        <div className={cn(isInView ? "animate-fade-in-up [animation-delay:200ms]" : "motion-safe:opacity-0")}>
           <Link to={signUpHref()}>
             <Button variant="primary" size="lg" className="min-h-[44px]">
               {CTA_LABEL}

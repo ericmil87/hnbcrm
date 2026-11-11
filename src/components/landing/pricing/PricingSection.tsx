@@ -71,7 +71,7 @@ function PlanCard({ plan, cycle }: { plan: PlanDisplay; cycle: BillingCycle }) {
         )}
       >
         {plan.featured && (
-          <Badge variant="brand" className="absolute -top-3 left-4 bg-brand-600 text-white">
+          <Badge variant="brand" className="absolute -top-3 left-4 bg-brand-700 text-white">
             Mais escolhido
           </Badge>
         )}

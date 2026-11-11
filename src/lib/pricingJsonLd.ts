@@ -14,14 +14,7 @@ export function buildLandingJsonLd(siteUrl: string) {
     inLanguage: "pt-BR",
     description:
       "CRM com atendente de IA no WhatsApp: funil de vendas, conversas, tarefas, equipe com usuários ilimitados e central de atendimento opcional.",
-    offers: offers.map((o) => ({
-      "@type": o["@type"],
-      name: o.name,
-      price: o.price,
-      priceCurrency: o.priceCurrency,
-      url: o.url,
-      availability: o.availability,
-    })),
+    offers,
   };
 }
 

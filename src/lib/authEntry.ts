@@ -3,7 +3,7 @@
  * "Cadastrar") e `?plano=<id>` (plano de interesse vindo dos botões de preço).
  * O plano é validado contra os ids reais de `convex/lib/plans.ts` e guardado em
  * sessionStorage até a criação da organização (hoje `createOrganization` ainda
- * não recebe plano; o encaixe é `OrgSwitcher.tsx`, após criar a org).
+ * não recebe plano; o encaixe é `src/components/org/OrgSwitcher.tsx`, após criar a org).
  */
 import { PLAN_KEYS, type PlanKey } from "../../convex/lib/plans";
 

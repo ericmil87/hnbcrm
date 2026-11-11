@@ -12,20 +12,21 @@
     <meta name="apple-mobile-web-app-title" content="HNBCRM" />
 
     <link rel="stylesheet" href="/src/index.css" />
-    <!-- Previews de link (WhatsApp etc.) não executam JS: estas tags vêm estáticas.
-         data-rh="true" faz o react-helmet-async substituí-las em vez de duplicar. -->
-    <title>HNBCRM — CRM com atendimento IA no WhatsApp</title>
-    <meta data-rh="true" name="description" content="CRM para vender pelo WhatsApp: funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Usuários ilimitados. Teste 30 dias, sem cartão." />
+    <!-- O index.html é servido para TODA rota (rewrite do vercel.json), inclusive /f/* (formulários
+         dos clientes): as tags estáticas são institucionais e neutras, sem og:url, sem preço/teste.
+         A copy de marketing vem do react-helmet na landing (SEO.tsx). data-rh="true" faz o
+         react-helmet-async substituir estas tags em vez de duplicar. -->
+    <title>HNBCRM</title>
+    <meta data-rh="true" name="description" content="HNBCRM: CRM com atendimento por IA no WhatsApp, em que equipe e agentes de IA trabalham juntos." />
     <meta data-rh="true" property="og:type" content="website" />
     <meta data-rh="true" property="og:site_name" content="HNBCRM" />
     <meta data-rh="true" property="og:locale" content="pt_BR" />
-    <meta data-rh="true" property="og:title" content="HNBCRM — CRM com atendimento IA no WhatsApp" />
-    <meta data-rh="true" property="og:description" content="Funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Teste 30 dias, sem cartão." />
-    <meta data-rh="true" property="og:url" content="https://hnbcrm.com" />
+    <meta data-rh="true" property="og:title" content="HNBCRM" />
+    <meta data-rh="true" property="og:description" content="CRM com atendimento por IA no WhatsApp, em que equipe e agentes de IA trabalham juntos." />
     <meta data-rh="true" property="og:image" content="https://hnbcrm.com/icon_logo_white_bg_full-700x700.png" />
-    <meta data-rh="true" name="twitter:card" content="summary_large_image" />
-    <meta data-rh="true" name="twitter:title" content="HNBCRM — CRM com atendimento IA no WhatsApp" />
-    <meta data-rh="true" name="twitter:description" content="Funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Teste 30 dias, sem cartão." />
+    <meta data-rh="true" name="twitter:card" content="summary" />
+    <meta data-rh="true" name="twitter:title" content="HNBCRM" />
+    <meta data-rh="true" name="twitter:description" content="CRM com atendimento por IA no WhatsApp, em que equipe e agentes de IA trabalham juntos." />
     <meta data-rh="true" name="twitter:image" content="https://hnbcrm.com/icon_logo_white_bg_full-700x700.png" />
     <!-- Demais meta tags por página: react-helmet-async (SEO.tsx) -->
   </head>
