@@ -167,7 +167,7 @@ export function PricingSection({ variant = "section" }: PricingSectionProps) {
     <section id="precos" className="py-16 md:py-24" aria-labelledby="pricing-heading">
       <div className="mx-auto max-w-6xl space-y-12 px-4">
         <div className="text-center">
-          <h2 id="pricing-heading" className="mb-4 text-3xl font-bold md:text-4xl lg:text-5xl">
+          <h2 id="pricing-heading" className="font-display mb-4 text-3xl font-bold md:text-4xl lg:text-5xl">
             Traga a equipe inteira. Pague só pelo que a IA atende.
           </h2>
           <p className="mx-auto max-w-2xl text-lg text-text-secondary">

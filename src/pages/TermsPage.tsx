@@ -36,8 +36,7 @@ export function TermsPage() {
         <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur-md border-b border-border">
           <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <Link to="/" className="flex items-center gap-2">
-              <BrandLogo className="h-7 w-7 object-contain" />
-              <span className="text-lg font-bold text-text-primary">HNBCRM</span>
+              <BrandLogo variant="wordmark" size="md" />
             </Link>
             <div className="flex items-center gap-1">
               <PublicThemeButton />

@@ -377,7 +377,7 @@ function FullScreenChrome({
   return (
     <header className="border-b border-border-subtle p-2 md:px-6">
       <div className="mx-auto flex max-w-5xl items-center justify-between gap-2">
-        <BrandLogo className="h-10 w-10" />
+        <BrandLogo size="lg" />
         <div className="flex min-w-0 items-center gap-1">
           <button
             type="button"

@@ -75,10 +75,7 @@ export function SidebarView({
     <aside className="hidden md:flex fixed left-0 top-0 bottom-0 z-20 flex-col bg-surface-raised border-r border-border w-16 lg:w-56 transition-all duration-200">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 h-16 border-b border-border shrink-0">
-        <BrandLogo className="h-8 w-8 shrink-0" />
-        <span className="hidden lg:block text-lg font-bold text-text-primary tracking-tight">
-          HNBCRM
-        </span>
+        <BrandLogo variant="responsive" breakpoint="lg" size="md" />
       </div>
 
       {/* Itens por grupo */}

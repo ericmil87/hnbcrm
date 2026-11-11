@@ -24,6 +24,15 @@ describe("index.html: metas estáticas", () => {
     expect(html).not.toMatch(/property="og:url"/);
   });
 
+  it("og:image/twitter:image estáticos são a imagem neutra (sem chamada), nunca a de marketing", () => {
+    const images = managed.filter((x) => /(property="og:image"|name="twitter:image")/.test(x));
+    expect(images.length).toBeGreaterThanOrEqual(2);
+    for (const tag of images) {
+      expect(tag).not.toContain("/og-image.png");
+      expect(tag).toContain("/og-neutral.png");
+    }
+  });
+
   it("copy estática é neutra: sem preço nem chamada de teste", () => {
     const text = managed.join("\n") + (html.match(/<title>[^<]*<\/title>/)?.[0] ?? "");
     expect(text).not.toMatch(/30 dias|R\$|grátis|teste|cartão/i);

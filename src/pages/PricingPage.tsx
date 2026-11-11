@@ -29,8 +29,7 @@ export function PricingPage() {
       <header className="px-4 pt-6">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
           <Link to="/" className="flex min-h-11 items-center gap-2">
-            <BrandLogo className="h-8 w-8 object-contain" />
-            <span className="text-xl font-bold text-text-primary">HNBCRM</span>
+            <BrandLogo variant="wordmark" size="md" />
           </Link>
           <div className="flex items-center gap-1 sm:gap-2">
             <PublicThemeButton />

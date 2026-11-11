@@ -79,6 +79,8 @@ export function LandingPage() {
   return (
     <>
       <SEO
+        ogImage="/og-image.png"
+        preloadDisplayFont
         title="HNBCRM — CRM com atendimento IA no WhatsApp"
         description={`CRM para vender pelo WhatsApp: funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Usuários ilimitados. Teste ${TRIAL.days} dias, sem cartão.`}
         keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas, tradução automática de mensagens, atendimento multilíngue"
@@ -94,8 +96,7 @@ export function LandingPage() {
         <header className="pt-6 px-4">
           <div className="flex items-center justify-between max-w-6xl mx-auto">
             <div className="flex items-center gap-2">
-              <BrandLogo className="h-8 w-8 object-contain" />
-              <span className="hidden sm:inline text-xl font-bold text-text-primary">HNBCRM</span>
+              <BrandLogo variant="responsive" size="md" />
             </div>
             <div className="flex items-center gap-1 sm:gap-4">
               <PublicThemeButton />
@@ -134,7 +135,7 @@ export function LandingPage() {
               <Badge variant="brand">Teste {TRIAL.days} dias, sem cartão</Badge>
             </div>
 
-            <h1 className="text-4xl md:text-6xl lg:text-7xl font-bold leading-tight animate-fade-in-up">
+            <h1 className="font-display text-4xl md:text-6xl lg:text-7xl font-bold leading-tight animate-fade-in-up">
               O CRM onde{" "}
               <span className="text-brand-500">Humanos e IA</span>{" "}
               trabalham juntos
@@ -369,7 +370,7 @@ function FeaturesSection() {
           <h2
             id="features-heading"
             className={cn(
-              "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
+              "font-display text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
               isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
@@ -472,7 +473,7 @@ function DeveloperSection() {
           <h2
             id="developer-heading"
             className={cn(
-              "text-3xl md:text-4xl lg:text-5xl font-bold mb-4 mt-4",
+              "font-display text-3xl md:text-4xl lg:text-5xl font-bold mb-4 mt-4",
               isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
@@ -577,7 +578,7 @@ function ComingSoonSection() {
           <h2
             id="coming-soon-heading"
             className={cn(
-              "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
+              "font-display text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
               isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
@@ -662,7 +663,7 @@ function HowItWorksSection() {
           <h2
             id="how-it-works-heading"
             className={cn(
-              "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
+              "font-display text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
               isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
@@ -710,7 +711,7 @@ function CTASection() {
         <h2
           id="cta-heading"
           className={cn(
-            "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
+            "font-display text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
             isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
           )}
         >

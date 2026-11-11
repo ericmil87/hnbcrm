@@ -41,6 +41,7 @@ const DARK_HEX: Record<string, string> = {
   "chat-header": "18181B",
   "composer": "18181B",
   "composer-field": "09090B",
+  "logo-ai": "00A884",
   "bubble-in": "18181B",
   "bubble-in-link": "FB923C",
   "bubble-out": "EA580C",
@@ -291,6 +292,15 @@ describe("themeTokens: contraste do WhatsApp escuro", () => {
   it("white text on primary buttons (brand-600) and the send button is readable", () => {
     expect(measureIn("whatsapp-dark", { fg: "white", bg: "brand-600", min: 4.5 })).toBeGreaterThanOrEqual(4.5);
     expect(measureIn("whatsapp-dark", { fg: "white", bg: "chat-send", min: 3 })).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("themeTokens: logo-ai (balão da IA do logo) contra as superfícies", () => {
+  // Graphical object: WCAG 1.4.11 asks for 3:1.
+  const themes = ["light", "whatsapp", "whatsapp-dark", "dark"] as const;
+  const surfaces = ["surface-base", "surface-raised", "surface-overlay"] as const;
+  it.each(themes.flatMap((th) => surfaces.map((s) => [th, s] as const)))("%s: logo-ai on %s >= 3", (theme, surface) => {
+    expect(measureIn(theme, { fg: "logo-ai", bg: surface, min: 3 })).toBeGreaterThanOrEqual(3);
   });
 });
 

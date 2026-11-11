@@ -37,6 +37,7 @@ export function AuthPage() {
   return (
     <>
       <SEO
+        preloadDisplayFont
         title="Entrar"
         description="Acesse sua conta HNBCRM"
         noindex={true}
@@ -54,8 +55,8 @@ export function AuthPage() {
             <ArrowLeft size={16} />
             Voltar ao início
           </Link>
-          <BrandLogo className="h-16 w-16 mx-auto mb-4" />
-          <h1 className="text-3xl md:text-4xl font-bold text-text-primary mb-2">
+          <BrandLogo size="xl" decorative className="mx-auto mb-4" />
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-text-primary mb-2">
             HNBCRM
           </h1>
           <p className="text-lg md:text-xl text-text-secondary">
