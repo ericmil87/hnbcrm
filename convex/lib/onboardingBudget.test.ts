@@ -116,9 +116,16 @@ describe("onboardingModels", () => {
     expect(getOnboardingModel("reader", { ONBOARDING_MODEL_READER: "deepseek/deepseek-v4-flash" })).toBe("deepseek/deepseek-v4-flash");
     expect(getOnboardingModel("vision", { ONBOARDING_MODEL_VISION: "glm-5.3-flash" })).toBe("glm-5.3-flash");
   });
-  test("TTS: só leitura, padrão undefined", () => {
-    expect(getOnboardingTts({})).toEqual({ model: undefined, voice: undefined });
-    expect(getOnboardingTts({ ONBOARDING_TTS_MODEL: "tts-x", ONBOARDING_TTS_VOICE: "<b>" })).toEqual({ model: "tts-x", voice: undefined });
+  test("TTS: padrão da porta (gemini-3.8-flash-tts + Kore), env só dentro da lista", () => {
+    // P4.1: padrão decidido pelo dono; env fora da lista da porta cai no padrão.
+    expect(getOnboardingTts({})).toEqual({ model: "google/gemini-3.8-flash-tts", voice: "Kore" });
+    expect(getOnboardingTts({ ONBOARDING_TTS_MODEL: "tts-x", ONBOARDING_TTS_VOICE: "<b>" })).toEqual({
+      model: "google/gemini-3.8-flash-tts",
+      voice: "Kore",
+    });
+    expect(
+      getOnboardingTts({ ONBOARDING_TTS_MODEL: "google/gemini-3.8-flash-lite-tts", ONBOARDING_TTS_VOICE: "Puck" })
+    ).toEqual({ model: "google/gemini-3.8-flash-lite-tts", voice: "Puck" });
   });
 });
 

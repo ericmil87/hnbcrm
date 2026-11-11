@@ -9,6 +9,7 @@
  * `agentRoutes`/`registry`.
  */
 import { DEFAULT_MODELS, MODEL_EQUIVALENCE, VISION_MODELS_BY_PROVIDER, registryModelIds } from "./llm/registry";
+import { getTtsConfig } from "./tts";
 
 export type OnboardingModelRole = "interviewer" | "reader" | "vision";
 
@@ -62,17 +63,13 @@ export function getOnboardingModel(role: OnboardingModelRole, env: EnvLike = pro
   return resolveOnboardingModel(role, env).model;
 }
 
-const TTS_VALUE_FORMAT = /^[A-Za-z0-9][A-Za-z0-9._~:/ -]{0,99}$/;
-
-function readTtsEnv(name: string, env: EnvLike): string | undefined {
-  const raw = env[name]?.trim();
-  return raw && TTS_VALUE_FORMAT.test(raw) ? raw : undefined;
-}
-
-/** Voz do onboarding: só leitura. Sem env (ou inválida) = `undefined` (provedor ainda não escolhido). */
-export function getOnboardingTts(env: EnvLike = process.env): { model: string | undefined; voice: string | undefined } {
-  return {
-    model: readTtsEnv("ONBOARDING_TTS_MODEL", env),
-    voice: readTtsEnv("ONBOARDING_TTS_VOICE", env),
-  };
+/**
+ * Voz do onboarding: mesma porta do atendente (`lib/tts.ts`, `getTtsConfig`).
+ * Padrão = `google/gemini-3.8-flash-tts` + `Kore` (decisão do dono, P4.1);
+ * `ONBOARDING_TTS_MODEL`/`ONBOARDING_TTS_VOICE` sobrescrevem quando estão na
+ * lista da porta (modelo de PCM conhecido, voz de catálogo); fora dela, padrão.
+ */
+export function getOnboardingTts(env: EnvLike = process.env): { model: string; voice: string } {
+  const { model, voice } = getTtsConfig("onboarding", env);
+  return { model, voice };
 }

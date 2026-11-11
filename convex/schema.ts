@@ -281,6 +281,9 @@ const aiConfigValidator = v.object({
   voiceReplyEnabled: v.optional(v.boolean()),
   // Voz escolhida (id do provedor de TTS, decidido no spike D6). Ausente = padrão da porta.
   voiceReplyVoice: v.optional(v.string()),
+  // P4.1: aviso de voz sintética, falado no INÍCIO do primeiro áudio de cada
+  // conversa (`conversations.aiVoiceNoticeAt`). Ausente = sem aviso (padrão).
+  voiceReplyNotice: v.optional(v.string()),
   // Aceite PRÓPRIO do autopilot em GRUPO (review de segurança nº 5). O
   // `autopilotEarlyAck` do atendente 1 a 1 foi assinado para outro risco:
   // responder sozinho a UMA pessoa que escreveu para a empresa. Publicar sozinho
@@ -1537,6 +1540,9 @@ const applicationTables = {
     // rejeitar repasse, turno instruído); itens skipped/failed da fila
     // anteriores a ele não descrevem mais o estado (o chip "IA em espera" some).
     aiResumedAt: v.optional(v.number()),
+    // P4.1: quando o aviso de voz sintética (`aiConfig.voiceReplyNotice`) já foi
+    // falado nesta conversa. Ausente = ainda não (o próximo áudio da IA o leva).
+    aiVoiceNoticeAt: v.optional(v.number()),
     // Informações passadas pela equipe humana à IA ("Devolver para IA" /
     // rejeitar repasse com instrução): persistem na conversa e entram como
     // fonte oficial em TODOS os turnos seguintes do atendente (cap 20, FIFO).
@@ -3108,7 +3114,9 @@ const applicationTables = {
       // Tradução automática (F1): 1 chamada ao LLM por mensagem traduzida.
       v.literal("translation"),
       // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
-      v.literal("onboarding")
+      v.literal("onboarding"),
+      // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
+      v.literal("tts")
     ),
     status: v.union(
       v.literal("running"),

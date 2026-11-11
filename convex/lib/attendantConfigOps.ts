@@ -6,7 +6,7 @@
  * `opsAgentProfile`), `activateOneFlow` e `demoSim`. Quem chama faz auth/permissão e carrega os docs; o
  * core valida, grava e audita. `via` vai para `auditLogs.metadata.via`.
  */
-import { v, Infer } from "convex/values";
+import { v, Infer, ConvexError } from "convex/values";
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import {
@@ -24,6 +24,7 @@ import {
   MAX_DAILY_CAP,
 } from "./followUpSettings";
 import { buildAuditDescription } from "./auditDescription";
+import { VOICE_NOTICE_MAX_CHARS, isTtsVoice } from "./tts";
 
 // `onboarding` = aplicação do Rascunho de Operação pelo clique do usuário
 // (`onboardingSessions.applyOnboardingDraft`, ver `lib/onboardingApply.ts`).
@@ -454,9 +455,12 @@ export type FeatureTogglesPatch = {
   attendantEnabled?: boolean;
   visionEnabled?: boolean;
   groupAgentEnabled?: boolean;
-  /** Resposta em áudio (seção 5 do plano; a lógica de TTS é de outro pacote). Ausente = desligada. */
+  /** Resposta em áudio (seção 5 do plano, porta `lib/tts.ts`). Ausente = desligada. */
   voiceReplyEnabled?: boolean;
+  /** Voz de catálogo (`TTS_VOICES`); outra coisa é recusada. */
   voiceReplyVoice?: string;
+  /** Aviso de voz sintética no 1º áudio da conversa; `""` remove (sem aviso). */
+  voiceReplyNotice?: string;
 };
 
 /** Liga/desliga os produtos de IA da org (sob o mestre `aiConfig.enabled`). */
@@ -468,13 +472,27 @@ export async function setFeatureTogglesCore(
   if (member.organizationId !== org._id) throw new Error("Organização não encontrada");
   if (!org.settings.aiConfig) throw new Error("Ative a IA primeiro");
   const current = org.settings.aiConfig;
+  if (toggles.voiceReplyVoice !== undefined && !isTtsVoice(toggles.voiceReplyVoice)) {
+    throw new ConvexError("Voz desconhecida: escolha uma das vozes da lista.");
+  }
+  let notice: string | null | undefined;
+  if (toggles.voiceReplyNotice !== undefined) {
+    const trimmed = toggles.voiceReplyNotice.replace(/\s+/g, " ").trim();
+    if (trimmed.length > VOICE_NOTICE_MAX_CHARS) {
+      throw new ConvexError(`O aviso de voz pode ter até ${VOICE_NOTICE_MAX_CHARS} caracteres.`);
+    }
+    notice = trimmed.length > 0 ? trimmed : null; // null = remover
+  }
+  // `""` remove o aviso: sai do objeto (patch de campo aninhado não aceita undefined).
+  const { voiceReplyNotice: _previousNotice, ...currentWithoutNotice } = current;
+  const base = notice === null ? currentWithoutNotice : current;
 
   const now = Date.now();
   await ctx.db.patch(org._id, {
     settings: {
       ...org.settings,
       aiConfig: {
-        ...current,
+        ...base,
         ...(toggles.copilotEnabled !== undefined ? { copilotEnabled: toggles.copilotEnabled } : {}),
         ...(toggles.attendantEnabled !== undefined
           ? { attendantEnabled: toggles.attendantEnabled }
@@ -489,6 +507,7 @@ export async function setFeatureTogglesCore(
         ...(toggles.voiceReplyVoice !== undefined
           ? { voiceReplyVoice: toggles.voiceReplyVoice }
           : {}),
+        ...(typeof notice === "string" ? { voiceReplyNotice: notice } : {}),
       },
     },
     updatedAt: now,
@@ -510,6 +529,8 @@ export async function setFeatureTogglesCore(
         ...(toggles.voiceReplyEnabled !== undefined
           ? { voiceReplyEnabled: current.voiceReplyEnabled === true }
           : {}),
+        ...(toggles.voiceReplyVoice !== undefined ? { voiceReplyVoice: current.voiceReplyVoice ?? null } : {}),
+        ...(notice !== undefined ? { voiceReplyNotice: current.voiceReplyNotice ?? null } : {}),
       },
       after: {
         copilotEnabled: toggles.copilotEnabled ?? current.copilotEnabled !== false,
@@ -519,10 +540,12 @@ export async function setFeatureTogglesCore(
         ...(toggles.voiceReplyEnabled !== undefined
           ? { voiceReplyEnabled: toggles.voiceReplyEnabled }
           : {}),
+        ...(toggles.voiceReplyVoice !== undefined ? { voiceReplyVoice: toggles.voiceReplyVoice } : {}),
+        ...(notice !== undefined ? { voiceReplyNotice: notice } : {}),
       },
     },
     metadata: { aiConfig: true, ...(params.via ? { via: params.via } : {}) },
-    description: "Atualizou os toggles dos produtos de IA (copiloto, atendente, imagens, grupos)",
+    description: "Atualizou os toggles dos produtos de IA (copiloto, atendente, imagens, grupos, resposta em áudio)",
     severity: "medium",
     createdAt: now,
   });

@@ -195,6 +195,12 @@ export const setFeatureToggles = mutation({
     attendantEnabled: v.optional(v.boolean()),
     visionEnabled: v.optional(v.boolean()),
     groupAgentEnabled: v.optional(v.boolean()),
+    // P4.1 — resposta em áudio (`lib/tts.ts`): ligar/desligar, voz de catálogo
+    // (`voiceReply.getVoiceReplySettings().voices`) e aviso de voz sintética
+    // opcional (`""` remove). Ausente = não mexe.
+    voiceReplyEnabled: v.optional(v.boolean()),
+    voiceReplyVoice: v.optional(v.string()),
+    voiceReplyNotice: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
