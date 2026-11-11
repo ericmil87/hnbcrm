@@ -2715,6 +2715,24 @@ const applicationTables = {
   // Teto de e-mails de autenticação por endereço (janela fixa). O flow "reset"
   // é PÚBLICO e o Convex Auth só limita tentativas de código, não pedidos —
   // sem isto, qualquer um bombardeia uma caixa alheia usando o nosso domínio.
+  // Onboarding v2 (P2.4): rate limit de janela fixa por chave (`user|org|ip:<id>:<janela>`).
+  onboardingRateLimits: defineTable({
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+  })
+    .index("by_key", ["key"])
+    .index("by_windowStart", ["windowStart"]),
+
+  // Onboarding v2 (P2.4): gasto de IA do onboarding por dia UTC, todas as orgs
+  // (corte global). `alertedAt` garante 1 alerta por dia.
+  onboardingSpendDaily: defineTable({
+    day: v.string(), // "AAAA-MM-DD" UTC
+    costUsdMicros: v.number(),
+    runs: v.number(),
+    alertedAt: v.optional(v.number()),
+  }).index("by_day", ["day"]),
+
   authEmailThrottle: defineTable({
     email: v.string(), // normalizado
     windowStart: v.number(),
@@ -3069,7 +3087,9 @@ const applicationTables = {
       // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
       v.literal("attendant_draft"),
       // Tradução automática (F1): 1 chamada ao LLM por mensagem traduzida.
-      v.literal("translation")
+      v.literal("translation"),
+      // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
+      v.literal("onboarding")
     ),
     status: v.union(
       v.literal("running"),

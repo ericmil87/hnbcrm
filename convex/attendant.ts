@@ -126,11 +126,19 @@ import {
 } from "./lib/botGuard";
 import { botTagFor, clearBotSuspicion, hasActiveBotSuspicion } from "./lib/botGuardOps";
 // ── Custo de IA + tetos do mês (v0.69, T04) — a lógica mora fora daqui ──
-import { attendantBudgetGate, onAttendantRunStarted } from "./aiSpend";
+import { attendantBudgetGate, onAttendantRunStarted, spendStatusFor } from "./aiSpend";
 import { recordCommittedAttendance } from "./lib/attendanceLedger";
 import { resolveEntitlements } from "./lib/entitlements";
 import { assertConversationSendAllowed } from "./lib/readOnly";
-import { addUsage, finishRunCostFields, newUsageTotals } from "./lib/aiSpend";
+import {
+  addUsage,
+  finishRunCostFields,
+  isValidMonthKey,
+  monthKeyUtc,
+  newUsageTotals,
+  READ_ONLY_AI_MESSAGE,
+  SPEND_CAP_BLOCKED_MESSAGE,
+} from "./lib/aiSpend";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { maybeScheduleAiReplyRelay, maybeScheduleHandoffCardsUpdate } from "./lib/telegramRelay";
@@ -5170,6 +5178,8 @@ export const internalQueueInstructedTurn = internalMutation({
 // Roda a persona SEM tocar o WhatsApp nem o banco: só inferência + relato.
 /** Maior instante que o `Date` representa (ECMA-262); além disso, Invalid Date. */
 const MAX_EPOCH_MS = 8.64e15;
+const SIMULATOR_AI_OFF_MESSAGE =
+  "Ative a IA da organização (e aceite os termos de IA) para testar o atendente.";
 
 export const simulateAttendant = action({
   args: {
@@ -5228,11 +5238,15 @@ export const simulateAttendant = action({
     imageUrl: v.optional(v.union(v.string(), v.null())),
   }),
   handler: async (ctx, args) => {
-    const setup = await ctx.runQuery(internal.attendant.internalGetSimulatorSetup, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const setup: any = await ctx.runQuery(internal.attendant.internalGetSimulatorSetup, {
       organizationId: args.organizationId,
       agentMemberId: args.agentMemberId,
+      month: monthKeyUtc(Date.now()),
+      now: Date.now(),
     });
     if (!setup) return { reply: null, actions: [], error: "Agente ou organização inválidos" };
+    if (typeof setup.blockedReason === "string") return { reply: null, actions: [], error: setup.blockedReason };
 
     const routes = await resolveOrgRoutes(
       ctx,
@@ -5370,6 +5384,23 @@ export const simulateAttendant = action({
             }`,
           },
         ];
+    // P2.4: o simulador agora é MEDIDO (agentRuns `simulator` + contador mensal),
+    // para o teto de gastos da org enxergar o custo. Falha ao registrar nunca
+    // derruba o teste.
+    const simUsage = newUsageTotals();
+    let simRequests = 0;
+    let simFailed = false;
+    let simRunId: Id<"agentRuns"> | null = null;
+    try {
+      simRunId = await ctx.runMutation(internal.agentRuns.internalStartRun, {
+        organizationId: args.organizationId,
+        memberId: args.agentMemberId,
+        kind: "simulator",
+        model: setup.model as string,
+      });
+    } catch {
+      simRunId = null;
+    }
     const actions: string[] = [];
     let reply: string | null = null;
     let replyImageUrl: string | null = null;
@@ -5389,6 +5420,11 @@ export const simulateAttendant = action({
           // teto pensando e o "Testar" voltava calado (reply null, sem erro)
           // enquanto a produção respondia normalmente.
           maxTokens: context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS,
+        });
+        simRequests += 1;
+        addUsage(simUsage, resp.usage, resp.usedRoute, setup.model as string, {
+          inputChars: JSON.stringify(messages).length,
+          outputChars: JSON.stringify(resp.message).length,
         });
         // Mesma regra do runtime para resposta CORTADA: descarta e refaz uma vez.
         if (isTruncatedResponse(resp, context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS)) {
@@ -5532,11 +5568,25 @@ export const simulateAttendant = action({
         imageUrl: reply === null ? null : replyImageUrl,
       };
     } catch (e) {
+      simFailed = true;
       return {
         reply: null,
         actions,
         error: sanitizeLlmError(e instanceof Error ? e.message : "Falha na simulação"),
       };
+    } finally {
+      if (simRunId) {
+        try {
+          await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+            runId: simRunId,
+            status: simFailed ? "error" : "done",
+            requestCount: simRequests,
+            ...finishRunCostFields(simUsage),
+          });
+        } catch {
+          // Registrar a run não pode impedir a resposta do teste.
+        }
+      }
     }
   },
 });
@@ -5545,6 +5595,9 @@ export const internalGetSimulatorSetup = internalQuery({
   args: {
     organizationId: v.id("organizations"),
     agentMemberId: v.id("teamMembers"),
+    // P2.4: relógio/mês do chamador (query não lê o relógio) para o gate de gasto.
+    month: v.string(),
+    now: v.number(),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -5553,6 +5606,13 @@ export const internalGetSimulatorSetup = internalQuery({
     const org = await ctx.db.get(args.organizationId);
     const agent = await ctx.db.get(args.agentMemberId);
     if (!org || !agent || agent.organizationId !== args.organizationId) return null;
+    // P2.4: o simulador gasta LLM da plataforma, então só roda com a IA ativa
+    // (ligada + aceite LGPD), fora do modo leitura e abaixo do teto de gastos.
+    if (!orgAiActive(org)) return { blockedReason: SIMULATOR_AI_OFF_MESSAGE };
+    if (isValidMonthKey(args.month)) {
+      if (!resolveEntitlements(org, args.now).aiAllowed) return { blockedReason: READ_ONLY_AI_MESSAGE };
+      if ((await spendStatusFor(ctx, org, args.month)).blocked) return { blockedReason: SPEND_CAP_BLOCKED_MESSAGE };
+    }
     const profile = agent.agentProfile;
     if (profile?.kind !== "attendant") return null;
     const providerConfig = org.settings.aiConfig?.providerConfig;

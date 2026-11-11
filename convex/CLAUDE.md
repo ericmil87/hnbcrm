@@ -75,6 +75,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `notificationPreferences.ts` / `apiKeys.ts` / `leadSources.ts` / `fieldDefinitions.ts` / `llmsTxt.ts` | Prefs / API keys / sources + custom fields / `/llms.txt` |
 | `onboarding.ts` / `onboardingSeed.ts` / `seed.ts` | Onboarding wizard + checklist / dev seed (`seed:seedMockData` is internal) |
 | `onboardingSessions.ts` | Conversational onboarding session + Rascunho de Operação (`lib/onboardingDraft*.ts`); applied only by the user click (`applyOnboardingDraft` → `lib/onboardingApply.ts`) |
+| `onboardingBudget.ts` | Onboarding v2 (P2.4) cost/abuse limits: `internalReserveOnboardingSpend` (before each LLM call: org read-only/`spendCap`, global daily cut, session and trial-org budgets, rate limit user/org/IP) and `internalRecordOnboardingSpend` (after: `agentRuns` `kind:"onboarding"` + `aiUsageMonthly` via `recordRunUsage`, session `spentUsdMicros`, `onboardingSpendDaily`); pure rules/envs in `lib/onboardingBudget.ts`, model envs in `lib/onboardingModels.ts` (`getOnboardingModel`); the simulator (`attendant.simulateAttendant`) also needs `orgAiActive` + spend gate and is metered (`kind:"simulator"`) |
 | `opsMigration.ts` | Dev/prod split and post-restore ops (bridge webhooks, HMAC, disarm channels, re-arm scheduled), all `dryRun` default true |
 
 ## Auth Pattern (copy this for every public function)
