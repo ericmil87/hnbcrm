@@ -50,6 +50,14 @@ export function clampEstimate(estimate: number | undefined): number {
   return Math.min(Math.round(estimate), MAX_TURN_ESTIMATE_USD_MICROS);
 }
 
+/** Reserva sem registro por mais que isto é órfã (o chamador caiu): deixa de segurar saldo. */
+export const RESERVATION_TTL_MS = 10 * 60 * 1000;
+
+export function effectiveReserved(reserved: number | undefined, reservedAt: number | undefined, now: number): number {
+  if (!reserved || reserved <= 0 || reservedAt === undefined) return 0;
+  return now - reservedAt >= RESERVATION_TTL_MS ? 0 : reserved;
+}
+
 /** Dia UTC "AAAA-MM-DD". */
 export function dayKeyUtc(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
@@ -100,15 +108,21 @@ const refuse = (code: OnboardingRefusalCode): BudgetDecision => ({
 export function evaluateOnboardingBudget(input: {
   estimateUsdMicros: number;
   sessionSpentUsdMicros: number;
+  /** Saldo retido por reservas em andamento (já sem as vencidas). */
+  sessionReservedUsdMicros?: number;
   orgMonthSpentUsdMicros: number;
+  orgReservedUsdMicros?: number;
   globalDaySpentUsdMicros: number;
   orgBudgetApplies: boolean;
   config: OnboardingBudgetConfig;
 }): BudgetDecision {
   const { config, estimateUsdMicros: est } = input;
   if (input.globalDaySpentUsdMicros + est > config.globalDailyUsdMicros) return refuse("global_daily_cap");
-  if (input.sessionSpentUsdMicros + est > config.sessionUsdMicros) return refuse("session_budget");
-  if (input.orgBudgetApplies && input.orgMonthSpentUsdMicros + est > config.trialOrgMonthlyUsdMicros) {
+  if (input.sessionSpentUsdMicros + (input.sessionReservedUsdMicros ?? 0) + est > config.sessionUsdMicros) return refuse("session_budget");
+  if (
+    input.orgBudgetApplies &&
+    input.orgMonthSpentUsdMicros + (input.orgReservedUsdMicros ?? 0) + est > config.trialOrgMonthlyUsdMicros
+  ) {
     return refuse("org_budget");
   }
   return { allowed: true };
@@ -162,12 +176,56 @@ export function rateKey(scope: RateScope, id: string, windowName: string): strin
   return `${scope}:${id}:${windowName}`;
 }
 
-/** Chave de IP vinda do chamador (rota HTTP): normaliza e limita o tamanho; vazia/inválida = sem limite por IP. */
+/**
+ * Chave de IP vinda do chamador (rota HTTP). `x-forwarded-for` é "cliente, proxy1, ...":
+ * o cliente pode FORJAR as entradas da esquerda; a borda acrescenta o IP real que ela
+ * viu na ÚLTIMA entrada. Por isso vale a mais à DIREITA. IPv6 agrupa por /64 (quem tem
+ * um /64 troca de endereço à vontade, então o limite é por prefixo). Vazia/inválida = null
+ * (sem limite por IP).
+ */
 export function normalizeIpKey(raw: string | undefined | null): string | null {
   if (!raw) return null;
-  const ip = raw.split(",")[0]!.trim().toLowerCase();
-  if (!ip || ip.length > 64 || !/^[0-9a-f:.]+$/.test(ip)) return null;
-  return ip;
+  const parts = raw.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
+  const ip = parts[parts.length - 1];
+  if (!ip || ip.length > 64) return null;
+  if (!ip.includes(":")) {
+    const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(ip);
+    if (!m || m.slice(1).some((x) => Number(x) > 255)) return null;
+    return m.slice(1).map(Number).join(".");
+  }
+  // IPv4 mapeado (::ffff:1.2.3.4) conta como o IPv4.
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(ip);
+  if (mapped) return normalizeIpKey(mapped[1]);
+  if (!/^[0-9a-f:]+$/.test(ip) || (ip.match(/::/g)?.length ?? 0) > 1) return null;
+  const [head, tail] = ip.includes("::") ? ip.split("::") : [ip, null];
+  const headGroups = head ? head.split(":") : [];
+  const tailGroups = tail ? tail.split(":") : [];
+  const missing = 8 - headGroups.length - tailGroups.length;
+  if (tail === null ? headGroups.length !== 8 : missing < 1) return null;
+  const groups = [...headGroups, ...Array(tail === null ? 0 : missing).fill("0"), ...tailGroups];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
+/** Lançamento do onboarding v2: `legacy` criada a partir daqui entra no orçamento de teste. */
+export const ONBOARDING_V2_LAUNCH_MS = Date.UTC(2026, 10, 11); // 11/11/2026 00:00 UTC
+
+/**
+ * Orçamento mensal de onboarding por org (o de teste). Vale para: `trial`; org sem `billing`;
+ * `legacy` criada em/depois de `ONBOARDING_V2_LAUNCH_MS` (cadastro novo sem teste ligado).
+ * NÃO vale para `legacy` anterior (cliente que já existia) nem para org paga
+ * (`active`/`past_due`): essas seguem só o `spendCap` da org. Org em modo leitura/cancelada
+ * nem chega aqui (a IA já está bloqueada pelo plano).
+ */
+export function onboardingOrgBudgetApplies(
+  org: { createdAt: number; billing?: { status: string; plan?: string } | null },
+  _now?: number,
+): boolean {
+  const billing = org.billing;
+  if (!billing) return true;
+  if (billing.status === "trial") return true;
+  if (billing.status === "legacy" || !billing.plan) return org.createdAt >= ONBOARDING_V2_LAUNCH_MS;
+  return false;
 }
 
 export function retryAfterText(ms: number): string {

@@ -5429,6 +5429,7 @@ export const simulateAttendant = action({
         // Mesma regra do runtime para resposta CORTADA: descarta e refaz uma vez.
         if (isTruncatedResponse(resp, context.followUp ? FOLLOW_UP_MAX_TOKENS : REACTIVE_MAX_TOKENS)) {
           if (truncatedOnce) {
+            simFailed = true;
             return {
               reply: null,
               actions,
@@ -5458,6 +5459,7 @@ export const simulateAttendant = action({
           });
           if (leak) {
             if (leakedOnce) {
+              simFailed = true;
               return {
                 reply: null,
                 actions,
@@ -5559,6 +5561,7 @@ export const simulateAttendant = action({
       // Mesma conversão do runtime: sem isto o "Testar" mostraria `**x**` onde a
       // produção manda `*x*`, e a simulação deixaria de valer como ensaio.
       if (reply === null && actions.length === 0 && !context.followUp) {
+        simFailed = true;
         return { reply: null, actions, error: "O modelo não produziu resposta nesta tentativa — tente de novo." };
       }
       return {

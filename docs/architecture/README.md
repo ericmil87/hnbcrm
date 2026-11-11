@@ -22,6 +22,7 @@ Cada arquivo tem **Estado atual** (curto) e **Decisões, pegadinhas medidas e hi
 | [`ai-attendant.md`](ai-attendant.md) | Atendente IA — repasses, follow-up, agenda externa, guardrails | `attendant.ts`, `attendantFollowUp.ts`, `handoffs.ts`, `lib/agentTools.ts`, `lib/botGuard*.ts`, `lib/llmOutputGuard.ts`, `attendantAgenda.ts`, `inboundLeadWelcome.ts` |
 | [`ai-vision-media.md`](ai-vision-media.md) | Atendente IA — visão de imagens e mídia inbound | `vision.ts`, `lib/mediaEnrichment.ts`, `internalSaveInboundAttachment`, `lib/fileRefs.ts`, simulador/goldens |
 | [`ai-copilot.md`](ai-copilot.md) | Copiloto in-app (e o loop `lib/copilotTurn.ts` que o Telegram reaproveita) | `copilot.ts`, `copilotHttp.ts`, `src/components/copilot/`, `src/lib/markdown.ts` |
+| [`onboarding.md`](onboarding.md) | Onboarding conversacional v2: orçamento de custo, rate limit, corte diário, modelos por env e simulador medido (o Rascunho de Operação está em `leads-pipeline.md`) | `onboardingBudget.ts`, `lib/onboardingBudget.ts`, `lib/onboardingModels.ts`, `attendant.simulateAttendant` |
 | [`leads-pipeline.md`](leads-pipeline.md) | Leads, funis e etapas | `leads.ts`, `boards.ts`, `lib/leadStageMove.ts`, `lib/leadCascade.ts`, `lib/leadAttribution.ts`, `LeadDetailPanel` |
 | [`phones-contacts.md`](phones-contacts.md) | Telefones e contatos | `lib/phone.ts`, `lib/orgPhone.ts`, `contacts.ts`, `lib/inboundRouting.ts` |
 | [`data-export-import.md`](data-export-import.md) | Export/Import de dados | `exports.ts`, `imports.ts`, `importRun.ts`, `lib/csv.ts`, `DataSection.tsx` |

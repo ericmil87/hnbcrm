@@ -10,17 +10,18 @@
  *      parcial: gasto é gasto).
  *
  * Respeita o que já existe: modo leitura do plano e `spendCap` da org
- * (`spendStatusFor`) valem para o onboarding; o gasto entra em `agentRuns`
+ * valem para o onboarding; o gasto entra em `agentRuns`
  * (`kind:"onboarding"`) e em `aiUsageMonthly` pela MESMA porta das demais runs
  * (`recordRunUsage`), então o teto em R$ da org o enxerga.
  *
- * Alerta do corte global: grava `auditLogs` (severidade `critical`,
- * `metadata.action:"onboarding_global_daily_cap_reached"`, 1×/dia). Nenhum e-mail
- * nem mensagem externa é enviado; o ponto para plugar o aviso de ops é
+ * Alerta do corte global: grava `alertedAt` + `alertedByOrgId` no doc diário
+ * `onboardingSpendDaily` (1×/dia) e, SE a env `HNBCRM_INTERNAL_ORG_ID` apontar para
+ * uma org válida, um `auditLogs` `critical` nessa org INTERNA (nunca no log de uma org
+ * cliente). Nenhum e-mail nem mensagem externa; o ponto para plugar o aviso de ops é
  * `raiseGlobalCapAlert`.
  *
  * Rate limit por IP: as funções aceitam `ipKey`. O onboarding ainda não tem rota
- * HTTP; quando houver, a `httpAction` lê o IP do cabeçalho (`x-forwarded-for`) e
+ * HTTP; quando houver, a `httpAction` lê o IP do cabeçalho (`x-forwarded-for`, entrada mais à direita: ver `normalizeIpKey`) e
  * chama `internalCheckOnboardingRateLimit` (antes de criar sessão) e passa o
  * mesmo `ipKey` na reserva.
  */
@@ -28,8 +29,10 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import { getMonthlyUsageDoc, recordRunUsage, spendStatusFor } from "./aiSpend";
-import { monthKeyUtc, usdToMicros } from "./lib/aiSpend";
+import { getMonthlyUsageDoc, recordRunUsage } from "./aiSpend";
+import { evaluateSpend, monthKeyUtc, resolveSpendCap, usdToMicros } from "./lib/aiSpend";
+import { cronsDisabled } from "./lib/cronGuard";
+import { internal } from "./_generated/api";
 import { resolveEntitlements } from "./lib/entitlements";
 import {
   ONBOARDING_RATE_LIMITS,
@@ -37,9 +40,11 @@ import {
   clampEstimate,
   dayKeyUtc,
   evaluateFixedWindow,
+  effectiveReserved,
   evaluateOnboardingBudget,
   getOnboardingBudgetConfig,
   normalizeIpKey,
+  onboardingOrgBudgetApplies,
   rateKey,
   retryAfterText,
   type OnboardingBudgetConfig,
@@ -165,12 +170,6 @@ async function loadSessionOfOrg(
   return session;
 }
 
-/** Org paga e ativa não tem o orçamento de teste (vale só o `spendCap` dela). */
-function orgBudgetApplies(org: Doc<"organizations">, now: number): boolean {
-  const ent = resolveEntitlements(org, now);
-  return !(ent.gated && (ent.status === "active" || ent.status === "past_due"));
-}
-
 /**
  * Alerta do corte global (1×/dia). Só REGISTRA (auditoria `critical`); nenhum
  * envio externo. Ponto para plugar o aviso de ops no futuro.
@@ -185,9 +184,14 @@ async function raiseGlobalCapAlert(
   },
 ) {
   if (args.dayDoc.alertedAt !== undefined) return;
-  await ctx.db.patch(args.dayDoc._id, { alertedAt: args.now });
+  await ctx.db.patch(args.dayDoc._id, { alertedAt: args.now, alertedByOrgId: args.organizationId });
+  // Auditoria só na org INTERNA (env opcional); sem env, o doc diário é o registro.
+  const raw = process.env.HNBCRM_INTERNAL_ORG_ID?.trim();
+  const internalOrgId = raw ? ctx.db.normalizeId("organizations", raw) : null;
+  const internalOrg = internalOrgId ? await ctx.db.get(internalOrgId) : null;
+  if (!internalOrg) return;
   await ctx.db.insert("auditLogs", {
-    organizationId: args.organizationId, // org que detectou o estouro
+    organizationId: internalOrg._id,
     entityType: "onboardingBudget",
     entityId: args.dayDoc.day,
     action: "update",
@@ -198,7 +202,8 @@ async function raiseGlobalCapAlert(
       spentUsdMicros: args.dayDoc.costUsdMicros,
       capUsdMicros: args.config.globalDailyUsdMicros,
     },
-    description: "Corte diário global do onboarding de IA atingido: o onboarding por conversa está pausado para todas as organizações até amanhã",
+    description:
+      "Corte diário global do onboarding de IA atingido: o onboarding por conversa está pausado para todas as organizações até amanhã",
     severity: "critical",
     createdAt: args.now,
   });
@@ -211,8 +216,9 @@ async function raiseGlobalCapAlert(
  * orçamento da sessão → orçamento da org em teste → rate limit (por último,
  * para só gastar cota de quem seria atendido). `estimateUsdMicros` (padrão
  * US$ 0,02, máx. US$ 0,50) é o custo previsto da chamada: recusa se
- * gasto + estimativa estourar. Não retém saldo: chamadas simultâneas podem
- * passar juntas (limitado pelo rate limit).
+ * gasto + reservas em voo + estimativa estourar, e SEGURA a estimativa na sessão
+ * (`reservedUsdMicros`) até o registro; reserva sem registro por 10 min vence.
+ * O corte global NÃO retém saldo (folga aceita, limitada pelo rate limit).
  */
 export const internalReserveOnboardingSpend = internalMutation({
   args: {
@@ -232,18 +238,32 @@ export const internalReserveOnboardingSpend = internalMutation({
     const estimate = clampEstimate(args.estimateUsdMicros);
 
     if (!resolveEntitlements(org, now).aiAllowed) return refused("plan_read_only");
-    const spend = await spendStatusFor(ctx, org, monthKeyUtc(now));
-    if (spend.blocked) return refused("org_spend_cap");
+    // Uma leitura só do medidor mensal: serve ao teto da org e ao orçamento de onboarding.
+    const month = monthKeyUtc(now);
+    const usage = await getMonthlyUsageDoc(ctx, org._id, month);
+    const cap = resolveSpendCap(org.settings.aiConfig?.spendCap);
+    if (evaluateSpend(usage?.costUsdMicros ?? 0, cap).blocked) return refused("org_spend_cap");
 
     const day = dayKeyUtc(now);
     const dayDoc = await globalDayDoc(ctx, day);
-    const usage = await getMonthlyUsageDoc(ctx, org._id, monthKeyUtc(now));
+    const sessionReserved = effectiveReserved(session.reservedUsdMicros, session.reservedAt, now);
+    // Reservas das outras sessões da org (sem disputa global; uma org tem poucas sessões).
+    let orgReserved = 0;
+    const orgSessions = await ctx.db
+      .query("onboardingSessions")
+      .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+      .order("desc")
+      .take(20);
+    for (const sess of orgSessions) orgReserved += effectiveReserved(sess.reservedUsdMicros, sess.reservedAt, now);
     const decision = evaluateOnboardingBudget({
       estimateUsdMicros: estimate,
       sessionSpentUsdMicros: session.spentUsdMicros,
+      sessionReservedUsdMicros: sessionReserved,
       orgMonthSpentUsdMicros: usage?.byKind.onboarding?.costUsdMicros ?? 0,
+      orgReservedUsdMicros: orgReserved,
+      // Corte global: sem reserva (aceita folga de chamadas em voo; ver docs/architecture/onboarding.md).
       globalDaySpentUsdMicros: dayDoc?.costUsdMicros ?? 0,
-      orgBudgetApplies: orgBudgetApplies(org, now),
+      orgBudgetApplies: onboardingOrgBudgetApplies(org),
       config,
     });
     if (!decision.allowed) {
@@ -260,6 +280,7 @@ export const internalReserveOnboardingSpend = internalMutation({
         message: `${ONBOARDING_REFUSAL_MESSAGES.rate_limited} ${retryAfterText(rate.retryAfterMs)}`,
       };
     }
+    await ctx.db.patch(session._id, { reservedUsdMicros: sessionReserved + estimate, reservedAt: now });
     return OK;
   },
 });
@@ -288,6 +309,10 @@ export const internalRecordOnboardingSpend = internalMutation({
     /** Custo em US$ (como `finishRunCostFields().costUsdEstimate`). */
     costUsdEstimate: v.number(),
     costEstimated: v.optional(v.boolean()),
+    /** Mesma estimativa passada na reserva (para soltar o saldo retido). Padrão = o da reserva. */
+    estimateUsdMicros: v.optional(v.number()),
+    /** Idempotência: o mesmo id registrado duas vezes soma uma só (guarda os últimos 20). */
+    requestId: v.optional(v.string()),
   },
   returns: v.object({
     sessionSpentUsdMicros: v.number(),
@@ -300,6 +325,24 @@ export const internalRecordOnboardingSpend = internalMutation({
     const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
     const config = getOnboardingBudgetConfig();
     const microsRaw = usdToMicros(args.costUsdEstimate);
+    if (args.memberId) {
+      const m = await ctx.db.get(args.memberId);
+      if (!m || m.organizationId !== args.organizationId) throw new ConvexError("Membro não encontrado");
+    }
+    const finishTotals = async () => {
+      const day = await globalDayDoc(ctx, dayKeyUtc(now));
+      const u = await getMonthlyUsageDoc(ctx, args.organizationId, monthKeyUtc(now));
+      const fresh = (await ctx.db.get(session._id))!;
+      return {
+        sessionSpentUsdMicros: fresh.spentUsdMicros,
+        orgMonthOnboardingUsdMicros: u?.byKind.onboarding?.costUsdMicros ?? 0,
+        globalDayUsdMicros: day?.costUsdMicros ?? 0,
+        globalCapReached: (day?.costUsdMicros ?? 0) >= config.globalDailyUsdMicros,
+      };
+    };
+    if (args.requestId !== undefined && session.recordedRequestIds?.includes(args.requestId)) {
+      return await finishTotals();
+    }
     const finite = (n: number | undefined) => (n !== undefined && Number.isFinite(n) && n >= 0 ? n : undefined);
 
     // Run + medidor mensal pela porta única (`recordRunUsage`).
@@ -340,7 +383,18 @@ export const internalRecordOnboardingSpend = internalMutation({
 
     // Sessão.
     const sessionSpent = session.spentUsdMicros + microsRaw;
-    await ctx.db.patch(session._id, { spentUsdMicros: sessionSpent, updatedAt: now });
+    // Solta a estimativa que a reserva segurou (reserva vencida já valia 0 e continua 0).
+    const held = effectiveReserved(session.reservedUsdMicros, session.reservedAt, now);
+    const stillReserved = Math.max(0, held - clampEstimate(args.estimateUsdMicros));
+    await ctx.db.patch(session._id, {
+      spentUsdMicros: sessionSpent,
+      reservedUsdMicros: stillReserved,
+      ...(stillReserved === 0 ? { reservedAt: undefined } : {}),
+      ...(args.requestId !== undefined
+        ? { recordedRequestIds: [...(session.recordedRequestIds ?? []), args.requestId].slice(-20) }
+        : {}),
+      updatedAt: now,
+    });
 
     // Corte global do dia.
     const day = dayKeyUtc(now);
@@ -367,18 +421,29 @@ export const internalRecordOnboardingSpend = internalMutation({
   },
 });
 
-/** Faxina de janelas de rate limit vencidas (> 2 dias). Lote pequeno; reagende até `done`. */
+/**
+ * Faxina de janelas de rate limit vencidas (> 2 dias), em lotes de 200. Com
+ * `dryRun:false` (cron diário) se reagenda (`runAfter(0)`) enquanto houver mais;
+ * o índice por `windowStart` faz de cursor (o que foi apagado sai do range).
+ */
 export const internalPruneOnboardingRateLimits = internalMutation({
   args: { dryRun: v.optional(v.boolean()) },
   returns: v.object({ deleted: v.number(), dryRun: v.boolean(), done: v.boolean() }),
   handler: async (ctx, args) => {
     const dryRun = args.dryRun !== false;
+    if (!dryRun && cronsDisabled()) return { deleted: 0, dryRun, done: true };
     const cutoff = Date.now() - 2 * 24 * 60 * 60 * 1000;
     const rows = await ctx.db
       .query("onboardingRateLimits")
       .withIndex("by_windowStart", (q) => q.lt("windowStart", cutoff))
       .take(200);
-    if (!dryRun) for (const r of rows) await ctx.db.delete(r._id);
-    return { deleted: dryRun ? 0 : rows.length, dryRun, done: rows.length < 200 };
+    const done = rows.length < 200;
+    if (!dryRun) {
+      for (const r of rows) await ctx.db.delete(r._id);
+      if (!done) {
+        await ctx.scheduler.runAfter(0, internal.onboardingBudget.internalPruneOnboardingRateLimits, { dryRun: false });
+      }
+    }
+    return { deleted: dryRun ? 0 : rows.length, dryRun, done };
   },
 });

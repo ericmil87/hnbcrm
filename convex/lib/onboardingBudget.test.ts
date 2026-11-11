@@ -10,6 +10,7 @@ import {
   normalizeIpKey,
   parseBudgetMicros,
 } from "./onboardingBudget";
+import { ONBOARDING_V2_LAUNCH_MS, onboardingOrgBudgetApplies } from "./onboardingBudget";
 import { getOnboardingModel, getOnboardingTts, resolveOnboardingModel } from "./onboardingModels";
 import { DEFAULT_MODELS } from "./llm/registry";
 
@@ -79,8 +80,16 @@ describe("janela fixa", () => {
     expect(evaluateFixedWindow(c.next, 1000, spec).allowed).toBe(true);
   });
   test("normalizeIpKey", () => {
-    expect(normalizeIpKey("203.0.113.5, 10.0.0.1")).toBe("203.0.113.5");
-    expect(normalizeIpKey("::1")).toBe("::1");
+    // entrada mais à direita (a que a borda acrescentou); a da esquerda pode ser forjada
+    expect(normalizeIpKey("1.1.1.1, 203.0.113.5")).toBe("203.0.113.5");
+    expect(normalizeIpKey("203.0.113.5")).toBe("203.0.113.5");
+    expect(normalizeIpKey("999.1.1.1")).toBeNull();
+    // IPv6 agrupa por /64
+    expect(normalizeIpKey("2001:db8:aaaa:bbbb:1:2:3:4")).toBe("2001:db8:aaaa:bbbb::/64");
+    expect(normalizeIpKey("2001:db8:aaaa:bbbb:ffff:ffff:ffff:ffff")).toBe("2001:db8:aaaa:bbbb::/64");
+    expect(normalizeIpKey("2001:0db8::1")).toBe("2001:db8:0:0::/64");
+    expect(normalizeIpKey("::ffff:203.0.113.5")).toBe("203.0.113.5");
+    expect(normalizeIpKey("::1")).toBe("0:0:0:0::/64");
     expect(normalizeIpKey("<script>")).toBeNull();
     expect(normalizeIpKey(undefined)).toBeNull();
   });
@@ -110,5 +119,17 @@ describe("onboardingModels", () => {
   test("TTS: só leitura, padrão undefined", () => {
     expect(getOnboardingTts({})).toEqual({ model: undefined, voice: undefined });
     expect(getOnboardingTts({ ONBOARDING_TTS_MODEL: "tts-x", ONBOARDING_TTS_VOICE: "<b>" })).toEqual({ model: "tts-x", voice: undefined });
+  });
+});
+
+describe("onboardingOrgBudgetApplies", () => {
+  const before = ONBOARDING_V2_LAUNCH_MS - 1;
+  test("regra", () => {
+    expect(onboardingOrgBudgetApplies({ createdAt: before })).toBe(true); // sem billing
+    expect(onboardingOrgBudgetApplies({ createdAt: before, billing: { status: "trial", plan: "profissional" } })).toBe(true);
+    expect(onboardingOrgBudgetApplies({ createdAt: before, billing: { status: "legacy" } })).toBe(false);
+    expect(onboardingOrgBudgetApplies({ createdAt: ONBOARDING_V2_LAUNCH_MS, billing: { status: "legacy" } })).toBe(true);
+    expect(onboardingOrgBudgetApplies({ createdAt: ONBOARDING_V2_LAUNCH_MS, billing: { status: "active", plan: "essencial" } })).toBe(false);
+    expect(onboardingOrgBudgetApplies({ createdAt: ONBOARDING_V2_LAUNCH_MS, billing: { status: "past_due", plan: "essencial" } })).toBe(false);
   });
 });

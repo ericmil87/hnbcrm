@@ -5,7 +5,7 @@ import { Bot, FlaskConical } from "lucide-react";
 import { Link, useNavigate } from "react-router";
 import { Select } from "@/components/ui/Select";
 import { Card } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
+import { Button, buttonClassName } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { Badge } from "@/components/ui/Badge";
 import { useOrgModules } from "@/hooks/useOrgModules";
@@ -119,6 +119,8 @@ function AttendantStatus({
   const canManage = can("settings", "manage");
   const metrics = useQuery(api.aiSettings.getAttendantMetrics, { organizationId, agentMemberId: attendant._id });
   const updateProfile = useMutation(api.aiSettings.updateAgentProfile);
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  const aiActive = aiStatus?.active === true;
   const [showSimulator, setShowSimulator] = useState(false);
   const profile = attendant.agentProfile;
   const mode = modeFromProfile(profile);
@@ -202,10 +204,23 @@ function AttendantStatus({
             )}
           </div>
         </div>
-        <Button variant="secondary" onClick={() => setShowSimulator(true)}>
-          <FlaskConical size={15} className="mr-1.5" />
-          Testar a IA
-        </Button>
+        {aiStatus !== undefined && !aiActive ? (
+          <div className="rounded-card border border-border bg-surface-raised p-3 sm:max-w-xs">
+            <p className="text-sm font-medium text-text-primary">Ative a IA para testar o atendente</p>
+            <p className="mt-1 text-xs text-text-muted">O teste só roda com a IA ativa e os termos aceitos.</p>
+            <Link
+              to={`${TAB_ROUTES.settings}?secao=ai`}
+              className={`${buttonClassName("secondary", "md")} mt-2 min-h-11`}
+            >
+              Ir para a ativação da IA
+            </Link>
+          </div>
+        ) : (
+          <Button variant="secondary" onClick={() => setShowSimulator(true)} disabled={aiStatus === undefined}>
+            <FlaskConical size={15} className="mr-1.5" />
+            Testar a IA
+          </Button>
+        )}
       </div>
 
       <div className="mt-4">

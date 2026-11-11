@@ -22,13 +22,13 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function stubLlm() {
+function stubLlm(content = "Olá, posso ajudar?") {
   vi.stubEnv("OPENCODE_GO_API", "sk-test-fake-key-000000");
   const fetchMock = vi.fn(
     async () =>
       new Response(
         JSON.stringify({
-          choices: [{ message: { role: "assistant", content: "Olá, posso ajudar?" }, finish_reason: "stop" }],
+          choices: [{ message: { role: "assistant", content }, finish_reason: "stop" }],
           usage: { prompt_tokens: 500, completion_tokens: 40 },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
@@ -136,5 +136,17 @@ describe("simulateAttendant: gate e medição", () => {
     const result = await simulate(t, s);
     expect(result.error).toMatch(/modo leitura/);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("sem resposta do modelo: run marcada como erro", async () => {
+    stubLlm("");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const result = await simulate(t, s);
+    expect(result.error).toMatch(/não produziu resposta/);
+    await t.run(async (ctx) => {
+      const runs = await ctx.db.query("agentRuns").collect();
+      expect(runs[0].status).toBe("error");
+    });
   });
 });
