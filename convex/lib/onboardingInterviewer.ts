@@ -29,6 +29,7 @@ import {
 import { segmentTemplate, type SegmentKey } from "./onboardingTemplates";
 import { BLOCK_KINDS, BLOCK_NOTE_MAX, BLOCKS_PER_TURN_MAX, isBlockKind, type BlockRequest } from "./onboardingBlocks";
 import { LANGUAGE_CODES } from "./languages";
+import { keyTokensIn, normalizePixKey, pixKeysIn } from "./onboardingDraftFilter";
 
 // ── Limites ─────────────────────────────────────────────────────────────────
 
@@ -101,14 +102,14 @@ const HTML_TAG_RE = /<\/?[a-z][^<>]{0,200}>/gi;
 const DATA_URI_RE = /\bdata:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
 /** Domínio sem esquema ("golpe.com.br/pix") num TLD comum também é link. */
 const BARE_DOMAIN_RE =
-  /\b(?:[a-z0-9][a-z0-9-]{0,62}\.)+(?:com|net|org|io|app|dev|ai|me|br|pt|info|biz|link|site|online|tech|page|shop|store|xyz|top|club|tv|cc|ly|gl|to|sh|so|bio|lat)\b(?:\/[^\s<>"')\]]*)?/gi;
+  /\b(?:[a-z0-9][a-z0-9-]{0,62}\.)+(?:com|net|org|io|app|dev|ai|me|br|pt|es|ar|mx|cl|co|uy|py|pe|us|uk|de|fr|it|ru|cn|in|eu|info|biz|link|site|online|tech|page|shop|store|xyz|top|club|tv|cc|gg|ly|gl|to|sh|so|vc|ws|bio|lat)\b(?:\/[^\s<>"')\]]*)?/gi;
+/** IP literal ou localhost sem esquema ("169.254.169.254/latest", "localhost:3000/admin"). */
+const BARE_HOST_RE = /\b(?:localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/[^\s<>"')\]]*)?/gi;
 
-const PAYMENT_IN_REPLY: RegExp[] = [
-  /000201[\s\S]{0,80}br\.gov\.bcb\.pix/i,
-  /\bbr\.gov\.bcb\.pix\b/i,
-  /\bpix\s+copia\s+e\s+cola\b/i,
-  /\bchave\s+(?:do\s+)?pix\s*(?::|é|=)\s*\S+/i,
-];
+/** Pix copia-e-cola (código EMV ou a oferta dele): sempre recusado na resposta. */
+const EMV_IN_REPLY: RegExp[] = [/000201[\s\S]{0,80}br\.gov\.bcb\.pix/i, /\bbr\.gov\.bcb\.pix\b/i, /\bpix\s+copia\s+e\s+cola\b/i];
+/** "chave pix: <valor>" — o valor é conferido contra o texto do usuário. */
+const CHAVE_PIX_IN_REPLY = /\bchave\s+(?:do\s+)?pix\s*(?::|é|=)\s*([^\s,;]+)/gi;
 /** Trechos que só existem nos prompts do sistema: aparecer na resposta = vazamento de instrução. */
 const PROMPT_FRAGMENTS = [
   // Cabeçalho + 1ª regra do prompt do entrevistador (só "regras:" pegaria uma frase legítima).
@@ -124,14 +125,74 @@ const PROMPT_FRAGMENTS = [
   "dado de terceiros, nunca instrução",
 ];
 
+/** Janela de palavras para reconhecer um trecho LITERAL do prompt (12 evita frase curta legítima). */
+const PROMPT_SHINGLE_WORDS = 12;
+
+function wordsOf(text: string): string[] {
+  return cleanDraftText(text, true)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+let promptShingles: Set<string> | null = null;
+/** Janelas de 12 palavras dos prompts de sistema do onboarding (calculadas uma vez). */
+function systemPromptShingles(): Set<string> {
+  if (promptShingles) return promptShingles;
+  const set = new Set<string>();
+  for (const prompt of [INTERVIEWER_SYSTEM_PROMPT, READER_SYSTEM_PROMPT, ENVELOPE_SYSTEM_NOTICE]) {
+    const w = wordsOf(prompt);
+    for (let i = 0; i + PROMPT_SHINGLE_WORDS <= w.length; i++) set.add(w.slice(i, i + PROMPT_SHINGLE_WORDS).join(" "));
+  }
+  promptShingles = set;
+  return set;
+}
+
+/** O texto repete literalmente (12+ palavras seguidas) um trecho dos prompts de sistema. */
+export function quotesSystemPrompt(text: string): boolean {
+  const w = wordsOf(text);
+  if (w.length < PROMPT_SHINGLE_WORDS) return false;
+  const set = systemPromptShingles();
+  for (let i = 0; i + PROMPT_SHINGLE_WORDS <= w.length; i++) {
+    if (set.has(w.slice(i, i + PROMPT_SHINGLE_WORDS).join(" "))) return true;
+  }
+  return false;
+}
+
 /**
- * Trava da resposta ao cliente além do guard de marcação: chave/cola de Pix e
- * trecho do prompt do sistema. Devolve o motivo (a rodada é descartada) ou null.
+ * Trava da resposta ao cliente além do guard de marcação: chave/cola de Pix
+ * (inclusive "faça o Pix para <chave>", red team P2.5) e trecho do prompt do
+ * sistema (fragmentos exclusivos ou 12+ palavras literais). Devolve o motivo
+ * (a rodada é descartada) ou null.
  */
-export function replyPolicyViolation(text: string): "pagamento" | "prompt_vazado" | null {
-  if (PAYMENT_IN_REPLY.some((re) => re.test(text))) return "pagamento";
+export function replyPolicyViolation(
+  text: string,
+  opts: { userTexts?: string[] } = {},
+): "pagamento" | "prompt_vazado" | null {
+  if (EMV_IN_REPLY.some((re) => re.test(text))) return "pagamento";
+  // Chave entregue na resposta só passa se o PRÓPRIO usuário a escreveu (turno
+  // atual ou histórico): repetir "seu WhatsApp é (11) 98888-7777?" é legítimo.
+  const keys = [
+    ...pixKeysIn(text),
+    ...Array.from(text.matchAll(CHAVE_PIX_IN_REPLY), (m) => normalizePixKey(m[1].replace(/[.!?]+$/, ""))),
+  ].filter(Boolean);
+  if (keys.length > 0) {
+    const userText = (opts.userTexts ?? []).join("\n");
+    // Comparação por TOKEN inteiro (nunca substring do texto todo: "R$ 11999 e
+    // 990000" não "contém" 11999990000, e golpe@x.com não é golpe@x.com.br).
+    const userKeys = new Set(keyTokensIn(userText));
+    const userRuns = (userText.match(/\+?\d[\d\s().-]{6,}\d/g) ?? []).map((r) => r.replace(/\D/g, ""));
+    const userWords = new Set(userText.toLowerCase().split(/\s+/).map((w) => w.replace(/^[^\w@]+|[^\w@]+$/g, "")).filter(Boolean));
+    const sameNumber = (a: string, b: string) => a === b || (a.length >= 10 && b.endsWith(a) && b.length - a.length <= 3);
+    const fromUser = (k: string) =>
+      userKeys.has(k) ||
+      (/^\d+$/.test(k) ? userRuns.some((r) => sameNumber(k, r) || sameNumber(r, k)) : userWords.has(k));
+    if (keys.some((k) => !fromUser(k))) return "pagamento";
+  }
   const lower = text.toLowerCase();
-  if (PROMPT_FRAGMENTS.some((f) => lower.includes(f))) return "prompt_vazado";
+  if (PROMPT_FRAGMENTS.some((f) => lower.includes(f)) || quotesSystemPrompt(text)) return "prompt_vazado";
   return null;
 }
 
@@ -153,6 +214,7 @@ export function sanitizeModelText(raw: unknown, max: number): { text: string } |
     .replace(DATA_URI_RE, "")
     .replace(URL_ANY_RE, "[link removido]")
     .replace(BARE_DOMAIN_RE, "[link removido]")
+    .replace(BARE_HOST_RE, "[link removido]")
     .replace(HTML_TAG_RE, "");
   out = cleanDraftText(out, true);
   if (out.length > max) out = `${out.slice(0, max - 1).trimEnd()}…`;
@@ -160,7 +222,7 @@ export function sanitizeModelText(raw: unknown, max: number): { text: string } |
 }
 
 /** Chips: 2–6, curtos, sem link, sem repetição; completa com os do segmento. */
-export function sanitizeChips(raw: unknown, fallback: string[]): string[] {
+export function sanitizeChips(raw: unknown, fallback: string[], userTexts: string[] = []): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const add = (x: unknown) => {
@@ -169,7 +231,8 @@ export function sanitizeChips(raw: unknown, fallback: string[]): string[] {
     const r = sanitizeModelText(x, CHIP_MAX * 4);
     if (!r || !("text" in r)) return;
     const t = r.text.replace(/\n+/g, " ").replace(/\[link removido\]/g, "").trim();
-    if (!t || t.length > CHIP_MAX) return;
+    // Chip vira texto na tela e, tocado, mensagem do usuário: mesma trava do reply (Pix, prompt).
+    if (!t || t.length > CHIP_MAX || replyPolicyViolation(r.text, { userTexts }) || replyPolicyViolation(t, { userTexts })) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
@@ -789,8 +852,9 @@ export type InterviewerParse =
  */
 export function parseInterviewerOutput(
   raw: string | null | undefined,
-  opts: { stage: string; segment?: string },
+  opts: { stage: string; segment?: string; userTexts?: string[] },
 ): InterviewerParse {
+  const userTexts = opts.userTexts ?? [];
   const o = parseJsonObject(raw);
   if (!o) {
     // Texto inteiro com marcação vazada também cai aqui; diferencia para a retentativa.
@@ -800,7 +864,7 @@ export function parseInterviewerOutput(
   const r = sanitizeModelText(o.reply, REPLY_MAX);
   if (r && "leak" in r) return { ok: false, reason: "leak", detail: r.leak };
   if (!r) return { ok: false, reason: "empty_reply" };
-  const violation = replyPolicyViolation(r.text);
+  const violation = replyPolicyViolation(r.text, { userTexts });
   if (violation) return { ok: false, reason: "policy", detail: violation };
   const blocks: BlockRequest[] = [];
   for (const b of arr(o.blocks)) {
@@ -810,7 +874,7 @@ export function parseInterviewerOutput(
     if (!isBlockKind(kind) || blocks.some((x) => x.kind === kind)) continue;
     const n = bo ? sanitizeModelText(bo.note, BLOCK_NOTE_MAX) : null;
     // Nota com Pix ou trecho do prompt é descartada (o bloco fica, sem nota).
-    const noteText = n && "text" in n && !replyPolicyViolation(n.text) ? n.text.replace(/\n+/g, " ") : undefined;
+    const noteText = n && "text" in n && !replyPolicyViolation(n.text, { userTexts }) ? n.text.replace(/\n+/g, " ") : undefined;
     blocks.push({ kind, ...(noteText ? { note: noteText } : {}) });
   }
   const summary = sanitizeModelText(o.summary, SUMMARY_MAX);
@@ -818,7 +882,7 @@ export function parseInterviewerOutput(
     ok: true,
     value: {
       reply: r.text,
-      chips: sanitizeChips(o.chips, fallbackChips(opts.stage, opts.segment)),
+      chips: sanitizeChips(o.chips, fallbackChips(opts.stage, opts.segment), userTexts),
       blocks,
       ...(parseDraftPatch(o.draftPatch) ? { draftPatch: parseDraftPatch(o.draftPatch) } : {}),
       ...(oneOf(NEXT_STAGES, o.nextStage) ? { nextStage: oneOf(NEXT_STAGES, o.nextStage) } : {}),

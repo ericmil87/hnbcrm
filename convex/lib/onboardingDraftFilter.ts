@@ -35,7 +35,8 @@ export type SuspicionCode =
   | "url_fora_da_origem"
   | "telefone_fora_da_origem"
   | "dado_sensivel"
-  | "pagamento";
+  | "pagamento"
+  | "link_interno";
 
 export const SUSPICION_LABELS: Record<SuspicionCode, string> = {
   instrucao_ao_modelo: "parece uma instrução para a IA",
@@ -44,6 +45,7 @@ export const SUSPICION_LABELS: Record<SuspicionCode, string> = {
   telefone_fora_da_origem: "tem telefone que não aparece na fonte",
   dado_sensivel: "pede ou contém dado sensível (senha, cartão, CPF)",
   pagamento: "tem chave ou link de pagamento",
+  link_interno: "tem link para endereço interno ou IP",
 };
 
 // Cirílico e grego que se passam por latim (os casos comuns de spoofing).
@@ -98,7 +100,66 @@ const INJECTION_PATTERNS: RegExp[] = [
   /\[\/?(inst|system|sys)\]/,
   /<<\s*\/?sys\s*>>/,
   /#{2,}\s*(instruction|instrucao|instruccion|system|sistema)/,
+  // Red team P2.5 — identidade: mandar negar que é IA / dizer que é humano.
+  /\b(diga|digam|dizer|fale|falar|afirme|afirmar|responda|garanta|confirme|minta|mentir|se apresente|apresente-se)\b[^.\n]{0,40}\b(humano|humana|pessoa (real|de verdade|fisica)|gente de verdade|carne e osso|nao (e|sou|eh) (uma? )?(ia|robo|bot|maquina|assistente virtual|inteligencia artificial))/,
+  /\b(nunca|nao|jamais)\b[^.\n]{0,15}\b(diga|dizer|admita|admitir|revele|revelar|conte|contar|informe|informar|mencione|mencionar|confesse|assuma|assumir)\b[^.\n]{0,30}\b(ia|inteligencia artificial|robo|bot|assistente virtual|virtual|automatizad\w*)\b/,
+  /\b(desligue|desligar|desative|desativar|desabilite|remova|remover|tire|oculte|esconda|disable|turn off|remove)\b[^.\n]{0,30}\b(apresentacao|divulgacao|identificacao|aviso de ia|disclosure|presentsasai)\b/,
+  /\b(tell|say|claim)\b[^.\n]{0,30}\b(you are|you're|you re|it is) (a )?(human|real person)\b/,
+  /\bnever (say|admit|reveal|disclose)\b[^.\n]{0,30}\b(ai|bot|robot|assistant)\b/,
+  // Configuração que só a pessoa liga: piloto automático, aplicar o rascunho.
+  /\b(ligue|ligar|ative|ativar|habilite|habilitar|coloque|colocar|enable|turn on|switch to|activate)\b[^.\n]{0,30}\b(piloto automatico|autopilot|auto-pilot|auto pilot|modo automatico|envio automatico)/,
+  /\b(aplique|aplicar|apply|publique|publicar)\b[^.\n]{0,20}\b(rascunho|draft|operacao|configuracao)\b/,
+  /\bsem (esperar|aguardar|pedir) (o |a |pelo |pela )?(clique|confirmacao|aprovacao|revisao)\b/,
+  /\bsem (revisao|aprovacao|supervisao) (humana|de ninguem)\b/,
+  /\bwithout (human )?(review|approval|confirmation)\b/,
+  // Ferramentas: pedir para chamar função, ou nomes das ferramentas internas.
+  /\b(chame|chamar|use|usar|execute|executar|acione|acionar|invoque|invocar|rode|rodar|dispare|disparar|call|invoke|run|trigger)\b[^.\n]{0,20}\b(ferramenta|funcao|tool|function)\b/,
+  /\b(replytocustomer|requesthandoff|movethislead|updatethiscontact|updatethisleadinfo|schedulefollowup|resolvefollowup|consultaragenda|flagautomatedsender|sendcustomerreply|instructattendant|applyonboardingdraft|internalapplyonboardingdraft|createboard|createquickreply|createfielddefinition|updateattendantpersona|setattendantmode|setaifeatures|draftpatch|tool_calls?|function_call)\b/,
+  // Revelação do texto acima / das instruções.
+  /\b(repita|repetir|copie|copiar|transcreva|mostre|imprima|cole|repeat|print|output|copy)\b[^.\n]{0,30}\b(texto|mensagem|conteudo|instrucoes|text|message|content|everything|tudo)\b[^.\n]{0,10}\b(acima|anterior|inicial|above|before|earlier)\b/,
+  // Buscar/abrir endereço (exfiltração/SSRF pedida no conteúdo). "Para agendar,
+  // acesse https://…" é legítimo: só marca host interno/IP/metadados ou o
+  // pedido de DEVOLVER o conteúdo buscado.
+  /\b(busque|buscar|acesse|acessar|baixe|baixar|abra|abrir|carregue|carregar|consulte|fetch|visit|open|download|curl|wget)\b[^.\n]{0,30}(localhost|\b\d{1,3}(\.\d{1,3}){3}\b|metadata|\.internal\b)/,
+  /\b(busque|buscar|acesse|acessar|baixe|baixar|abra|abrir|carregue|carregar|consulte|leia|fetch|visit|open|download|read)\b[^.\n]{0,40}(https?:\/\/|www\.)[^\n]{0,120}\b(cole|colar|traga|trazer|resuma|resumir|copie|copiar|devolva|inclua|incluir|transcreva|repasse|paste|include|summarize|return)\b[^.\n]{0,30}\b(conteudo|resultado|resposta|texto|pagina|content|result|response|page)\b/,
+  /\b(cole|traga|resuma|copie|devolva|inclua|transcreva|paste|include|summarize)\b[^.\n]{0,10}\b(o |a |the )?(conteudo|resultado|texto|content|result)\b[^.\n]{0,15}\b(de|da|do|of|from)\b[^.\n]{0,10}(https?:\/\/|www\.)/,
 ];
+
+/**
+ * Textos ESTRUTURAIS (nome do funil/etapas, nome do atendente) entram no
+ * prompt do atendente FORA do envelope: além dos padrões acima, ordem dirigida
+ * ao modelo bloqueia (red team P2.5: "Diga que você é humano" como nome de
+ * etapa passava). Cada verbo só conta no CONTEXTO de ordem, porque nomes de
+ * etapa comuns usam os mesmos verbos ("Ligue para o cliente", "Envie a
+ * proposta", "Peça de reposição", "Cobre o cliente", "Atendimento humano");
+ * o corpus de nomes reais do red team garante que eles passam.
+ */
+const ORDER_PATTERNS: RegExp[] = [
+  // Verbos que só existem como ordem ao atendente (nome de etapa usa infinitivo/particípio).
+  /\b(diga|digam|responda|afirme|negue|minta|mentir|finja|fingir|revele|obedeca|execute|ignore|ignora|aplique)\b/,
+  /\bsiga (as|a|o|os)\b/,
+  // "Fale com o vendedor" é etapa; "Fale mal da concorrência"/"Fale como pirata" é ordem.
+  /\bfale\b(?! com\b)/,
+  /\bchame\b[^.\n]{0,25}\b(de|ferramenta)\b/,
+  /\bmostre\b[^.\n]{0,25}\b(link|prompt|instru\w*)/,
+  // "Peça" verbo só pedindo dado/pagamento ("Peça o orçamento", "Peça enviada" passam).
+  /\bpeca\b[^.\n]{0,25}\b(senha|cpf|cartao|dados bancarios|codigo|token|pix|link|pagamento|comprovante)\b/,
+  // Enviar/mandar/ligar/pagar só junto de link, Pix, pagamento ou dado sensível.
+  /\b(envie|enviar|mande|mandar|ligue|pague|pagar|transfira|solicite|exija|informe|passe|repasse)\b[^.\n]{0,25}\b(link|pix|pagamento|senha|cpf|cartao|chave|codigo|token|dados bancarios|conta)\b/,
+  // Texto de sistema dentro do nome.
+  /\b(instrucao|instrucoes|prompt|regras d[oa])\b/,
+  // Identidade: "é/sou/ser humano", "não é robô"; "Atendimento humano" passa.
+  /\b(e|eh|sou|ser|seja|finja|fingir|se passe por)\b[^.\n]{0,15}\b(humano|humana|pessoa real|robo)\b/,
+  /\bnao (e|eh|sou) (uma? )?(ia|robo|bot|maquina)\b/,
+];
+const STRUCTURAL_PATTERNS: RegExp[] = [
+  ...ORDER_PATTERNS,
+  // "sempre" sozinho fica ("Cliente sempre ativo"); ordem com ele cai nos verbos acima.
+  /\b(nunca|jamais)\b/,
+  /\b(voce|voces|vc|tu)\b/,
+];
+/** Nome/opção de campo: só as ordens ("Você já é cliente?" e "Ferramenta atual" são legítimos). */
+const FIELD_PATTERNS: RegExp[] = ORDER_PATTERNS;
 
 const ROLE_TAG_RE = /<\/?\s*(system|assistant|user|developer|im_start|im_end|crm_data)\b[^>]*>/i;
 
@@ -109,6 +170,8 @@ const SENSITIVE_PATTERNS: RegExp[] = [
   /\b(credit card|card number|numero de tarjeta)\b/,
   /\bcpf\b/,
   /\b(codigo de verificacao|codigo de confirmacao|verification code|token de acesso)\b/,
+  // Red team P2.5: pedir cartão/dado bancário ao cliente ("peça o cartão de crédito").
+  /\b(peca|pedir|pede|solicite|solicitar|exija|exigir|colete|coletar|pergunte|perguntar|anote|anotar|ask for|request|collect)\b[^.\n]{0,40}\b(cartao|cvv|senha|cpf|rg|codigo|token|dados bancarios|conta bancaria|agencia|card|password)\b/,
 ];
 /** CPF/CNPJ formatado ou cru, cartão (13–19 dígitos). */
 const SENSITIVE_DIGITS_RE = /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b|\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b/;
@@ -121,7 +184,104 @@ const PAYMENT_PATTERNS: RegExp[] = [
   /\bchave (do )?pix\b/,
   /\bpix ?(key|:)/,
   /\b(mpago\.la|link\.mercadopago|pag\.ae|pagseguro\.uol|picpay\.me|nubank\.com\.br\/cobrar|buy\.stripe\.com|paypal\.me|checkout\.\w+)/i,
+  // Red team P2.5: link de pagamento genérico (inclusive com o link visível na
+  // própria fonte, onde a conferência de origem não pega).
+  /\blink (de|para) (pagamento|cobranca|pagar)\b/,
+  /\b(pague|pagar|pagamento|transfira|transferir|deposite|depositar)\b[^.\n]{0,40}(\blink\b|https?:\/\/|www\.)/,
+  /(https?:\/\/|www\.)[^\s<>"')]*(pix|pagar|pagamento|pague|checkout|cobranca|cobrar|boleto|fatura|invoice|billing|payment|pay)/i,
+  /\b(deposite|depositar|transfira|transferir|transferencia|ted)\b[^.\n]{0,40}\b(conta|agencia)\b/,
 ];
+
+/**
+ * Chave Pix ENTREGUE: a palavra "pix" e, na MESMA frase, um conector de
+ * entrega ("pix para", "pix:", "chave", "copia e cola", "pix no", "pix key",
+ * ou a chave colada logo depois) seguido de telefone, e-mail, chave aleatória
+ * (UUID), CPF ou CNPJ. "Faça o Pix para 11987654321" marca mesmo com o número
+ * visível na fonte; "Aceitamos Pix. WhatsApp (11) 98888-7777" e "Pix ou
+ * cartão. Atendimento: 11 3333-4444" não (outra frase, sem conector).
+ * Exportado: a trava da resposta do entrevistador usa a mesma regra.
+ */
+const PIX_KEY_SRC =
+  "(?:\\+?\\d[\\d\\s().-]{8,}\\d|[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}|\\d{2}\\.?\\d{3}\\.?\\d{3}\\/?\\d{4}-?\\d{2})";
+/** Um caractere da MESMA frase: ponto só conta como fim de frase antes de espaço/fim ("R$ 1.000", "x@y.com" seguem). */
+const SAME_SENTENCE = "(?:[^.!?\\n]|\\.(?=\\S))";
+/**
+ * Conector de entrega entre "pix" e a chave (janela maior). "é" só com espaço
+ * em volta (o `\b` do JS não vê letra acentuada); na forma dobrada vira "e" e
+ * não conta ("Pix e cartão" é forma de pagamento, não chave). Hífen só
+ * cercado de espaço (o de "3333-4444" não é conector).
+ */
+const PIX_CONNECTOR =
+  "(?:\\bpara\\b|\\bpra\\b|\\bpro\\b|\\bao\\b|:|=|\\s[-–]\\s|\\bchave\\b|\\bcopia e cola\\b|\\bkey\\b|\\bto\\b|\\beh\\b|\\sé\\s)";
+/** Janela curta: "pix" e a chave a até ~20 caracteres na mesma frase, em qualquer ordem, sem conector. */
+const PIX_NEAR = 20;
+const PIX_KEY_RES: RegExp[] = [
+  // pix … conector … chave (a chave logo depois do conector: "Pix: consulte
+  // condições pelo (11) 9…" e "Pix …, dúvidas no (11) 9…" não são entrega;
+  // "no"/"na" só valem na janela curta abaixo).
+  new RegExp(`\\bpix\\b${SAME_SENTENCE}{0,40}?${PIX_CONNECTOR}${SAME_SENTENCE}{0,15}?${PIX_KEY_SRC}`, "i"),
+  // Linha só com "Pix"/"Chave Pix:" e a chave na linha seguinte.
+  new RegExp(`(?:^|\\n)[ \\t]*(?:chave[ \\t]+)?pix[ \\t]*:?[ \\t]*\\n[ \\t]*${PIX_KEY_SRC}`, "i"),
+  // "O Pix é 1198…", "Pix (CPF) 123…", "pix no número 1198…" (perto, sem conector)
+  new RegExp(`\\bpix\\b${SAME_SENTENCE}{0,${PIX_NEAR}}?${PIX_KEY_SRC}`, "i"),
+  // "golpe@x.com é o nosso pix", "Chave: 1198… (Pix)" (chave antes, perto)
+  new RegExp(`${PIX_KEY_SRC}${SAME_SENTENCE}{0,${PIX_NEAR}}?\\bpix\\b`, "i"),
+  // chave … pix … chave ("chave do pix é x@y.com")
+  new RegExp(`\\bchave\\b${SAME_SENTENCE}{0,20}?\\bpix\\b${SAME_SENTENCE}{0,30}?${PIX_KEY_SRC}`, "i"),
+];
+const PIX_KEY_GLOBAL = new RegExp(PIX_KEY_SRC, "gi");
+
+function pixForms(text: string): string[] {
+  // Também na forma dobrada ("Рix" com Р cirílico) e com "P I X"/"p.i.x" juntado.
+  const cleaned = cleanDraftText(text, true);
+  const joined = cleaned.replace(/\bp[\s._-]+i[\s._-]+x\b/gi, "pix");
+  return [cleaned, foldForMatching(text), joined];
+}
+
+export function hasPixKey(text: string): boolean {
+  return pixForms(text).some((s) => PIX_KEY_RES.some((re) => re.test(s)));
+}
+
+/** Normaliza uma chave para comparar com o texto do usuário (dígitos, ou minúsculo). */
+export function normalizePixKey(key: string): string {
+  return /@|[a-f]/i.test(key) ? key.toLowerCase().trim() : key.replace(/\D/g, "");
+}
+
+/** Toda chave possível (telefone, e-mail, UUID, CPF/CNPJ) do texto, normalizada. */
+export function keyTokensIn(text: string): string[] {
+  const keys = new Set<string>();
+  for (const form of pixForms(text)) for (const k of form.match(PIX_KEY_GLOBAL) ?? []) keys.add(normalizePixKey(k));
+  return Array.from(keys);
+}
+
+/**
+ * Chaves (telefone, e-mail, UUID, CPF/CNPJ) que aparecem num trecho de Pix
+ * entregue (`hasPixKey`), normalizadas. A trava da resposta compara com o que
+ * o próprio usuário escreveu.
+ */
+export function pixKeysIn(text: string): string[] {
+  const keys = new Set<string>();
+  for (const form of pixForms(text)) {
+    for (const re of PIX_KEY_RES) {
+      const g = new RegExp(re.source, "gi");
+      for (const m of form.matchAll(g)) {
+        for (const k of m[0].match(PIX_KEY_GLOBAL) ?? []) keys.add(normalizePixKey(k));
+      }
+    }
+  }
+  return Array.from(keys);
+}
+
+/** Host interno, loopback, link-local/metadados ou IP literal: nunca é link legítimo de negócio. */
+function isInternalHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "");
+  if (/^(localhost|.*\.localhost|.*\.local|.*\.internal|.*\.lan|metadata(\..*)?)$/.test(h)) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true; // qualquer IPv4 literal
+  if (h.includes(":")) return true; // IPv6 literal
+  return /^\d+$/.test(h) || /^0x[0-9a-f]+$/.test(h); // decimal/hex ("http://2852039166")
+}
+const URL_SCHEME_RE = /\b(?:https?:\/\/|www\.)[^\s<>"')]+/gi;
+const BARE_IP_RE = /\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\/[^\s<>"')]*/;
 
 // URL com esquema/www, ou domínio sem esquema num TLD comum (genéricos,
 // encurtadores e ccTLDs frequentes no Brasil/LatAm/Europa).
@@ -185,7 +345,10 @@ export function scanDraftText(text: string, ctx: ScanContext = {}): ScanResult {
   if (SENSITIVE_PATTERNS.some((re) => re.test(folded)) || SENSITIVE_DIGITS_RE.test(cleaned)) {
     codes.add("dado_sensivel");
   }
-  if (PAYMENT_PATTERNS.some((re) => re.test(folded) || re.test(cleaned))) codes.add("pagamento");
+  if (PAYMENT_PATTERNS.some((re) => re.test(folded) || re.test(cleaned)) || hasPixKey(text)) codes.add("pagamento");
+  // Link para host interno/IP vale em qualquer origem (inclusive visível na fonte).
+  const schemeUrls = cleaned.match(URL_SCHEME_RE) ?? [];
+  if (schemeUrls.some((u) => isInternalHost(hostOf(u))) || BARE_IP_RE.test(cleaned)) codes.add("link_interno");
 
   const selfSourced = ctx.originKind === "usuario" || ctx.originKind === "template";
   if (!selfSourced) {
@@ -220,6 +383,27 @@ export function scanDraftText(text: string, ctx: ScanContext = {}): ScanResult {
     codes: list,
     reason: list.length > 0 ? list.map((c) => SUSPICION_LABELS[c]).join("; ") : undefined,
   };
+}
+
+/**
+ * Texto ESTRUTURAL (fora do envelope no prompt do atendente): o scan normal
+ * mais os padrões de ordem ao modelo. `field` usa a lista reduzida.
+ */
+export function scanStructuralText(text: string, kind: "structural" | "field" = "structural"): ScanResult {
+  let base = scanDraftText(text);
+  // Nome de etapa que só CITA pagamento ("Envio do link de pagamento") não é
+  // entrega: sem chave Pix, URL nem EMV, o código "pagamento" sai; a ordem
+  // ("Informe o link de pagamento") cai nos padrões de ordem abaixo.
+  if (base.codes.includes("pagamento") && !hasPixKey(text) && !/https?:\/\/|www\.|br\.gov\.bcb\.pix/i.test(text)) {
+    const codes = base.codes.filter((c) => c !== "pagamento");
+    base = { suspicious: codes.length > 0, codes, reason: codes.length > 0 ? codes.map((c) => SUSPICION_LABELS[c]).join("; ") : undefined };
+  }
+  const folded = foldForMatching(text);
+  const leet = foldForMatching(text, { leet: true });
+  const patterns = kind === "field" ? FIELD_PATTERNS : STRUCTURAL_PATTERNS;
+  if (base.codes.includes("instrucao_ao_modelo") || !patterns.some((re) => re.test(folded) || re.test(leet))) return base;
+  const codes: SuspicionCode[] = [...base.codes, "instrucao_ao_modelo"];
+  return { suspicious: true, codes, reason: codes.map((c) => SUSPICION_LABELS[c]).join("; ") };
 }
 
 export type DraftSourceText = { reference: string; text: string };
@@ -320,6 +504,12 @@ export function scanDraft(
     : input;
   // "Própria fonte" vale só para quem digitou: a pessoa (modo user).
   const ownKind: KnowledgeOriginKind | undefined = isAi ? undefined : "usuario";
+  // Caminho da IA: negócio, saudação, respostas rápidas e notas propostas pelo
+  // LEITOR junto com a fonte conferem link/telefone contra ela (antes, o
+  // WhatsApp do próprio site numa resposta rápida saía "fora da origem").
+  // Gravação sem fonte (entrevistador) segue sem fonte: todo link/telefone marca.
+  const allSources = isAi && sources.size > 0 ? Array.from(sources.values()).join("\n") : undefined;
+  const ownCtx: ScanContext = { originKind: ownKind, ...(allSources !== undefined ? { sourceText: allSources } : {}) };
 
   /**
    * Fecha um item: marca recalculada (+ sticky), verificação herdada e
@@ -383,7 +573,7 @@ export function scanDraft(
   const business = finish(
     "business",
     draft.business,
-    scanDraftText(businessText, { originKind: ownKind }),
+    scanDraftText(businessText, ownCtx),
     prevBusiness,
     false,
     prevBusiness,
@@ -393,7 +583,7 @@ export function scanDraft(
     ? finish(
         "greeting",
         draft.greeting,
-        scanDraftText(draft.greeting.text, { originKind: ownKind }),
+        scanDraftText(draft.greeting.text, ownCtx),
         prev?.greeting && prev.greeting.text === draft.greeting.text ? prev.greeting : undefined,
         false,
         prev?.greeting && prev.greeting.text === draft.greeting.text ? prev.greeting : undefined,
@@ -434,7 +624,7 @@ export function scanDraft(
     finish(
       `quickReplies[${i}]`,
       q,
-      scanDraftText(q.text, { originKind: ownKind }),
+      scanDraftText(q.text, ownCtx),
       prevReplies.get(`${q.shortcut}|${q.text}`),
       false,
       prevReplies.get(`${q.shortcut}|${q.text}`),
@@ -446,7 +636,7 @@ export function scanDraft(
     finish(
       `handoffRules[${i}]`,
       r,
-      r.note ? scanDraftText(r.note, { originKind: ownKind }) : { suspicious: false, codes: [] },
+      r.note ? scanDraftText(r.note, ownCtx) : { suspicious: false, codes: [] },
       prevRules.get(`${r.kind}|${r.note ?? ""}`),
       false,
       prevRules.get(`${r.kind}|${r.note ?? ""}`),
@@ -457,8 +647,8 @@ export function scanDraft(
   // campos de captura, nome do atendente). Sem fonte própria: link/telefone
   // também bloqueia. Sem liberação: a pessoa corrige editando.
   const blocked: Array<{ field: string; label: string; reason: string }> = [];
-  const check = (field: string, label: string, text: string) => {
-    const r = scanDraftText(text);
+  const check = (field: string, label: string, text: string, kind: "structural" | "field" = "structural") => {
+    const r = scanStructuralText(text, kind);
     if (r.suspicious && blocked.length < DRAFT_LIMITS.blockedMax) {
       blocked.push({ field, label, reason: (r.reason ?? "").slice(0, DRAFT_LIMITS.suspicionReason) });
     }
@@ -466,8 +656,10 @@ export function scanDraft(
   check("funnel.name", "Nome do funil", draft.funnel.name);
   draft.funnel.stages.forEach((st, i) => check(`funnel.stages[${i}].name`, `Etapa ${i + 1}`, st.name));
   draft.customFields.forEach((f, i) => {
-    check(`customFields[${i}].name`, `Campo ${i + 1}`, f.name);
-    (f.options ?? []).forEach((o, j) => check(`customFields[${i}].options[${j}]`, `Opção ${j + 1} do campo ${i + 1}`, o));
+    check(`customFields[${i}].name`, `Campo ${i + 1}`, f.name, "field");
+    (f.options ?? []).forEach((o, j) =>
+      check(`customFields[${i}].options[${j}]`, `Opção ${j + 1} do campo ${i + 1}`, o, "field"),
+    );
   });
   check("persona.attendantName", "Nome do atendente", draft.persona.attendantName);
 

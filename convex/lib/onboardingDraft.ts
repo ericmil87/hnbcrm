@@ -251,16 +251,31 @@ export type DraftFeatureKey = keyof OnboardingDraft["features"];
  * Invisíveis e formatação bidi (zero-width, joiners, marcas LTR/RTL,
  * isolates, BOM, soft hyphen, Mongolian vowel separator, word joiner,
  * caracteres "tag" U+E0000–U+E007F usados para esconder texto do humano).
- * Variation selectors (U+FE0E/F) ficam: compõem emoji legítimo.
+ * Variation selectors: só FE0E/FE0F isolado depois de emoji/tecla fica (ver
+ * `VARIATION_RUN_RE`); o resto some.
  */
 const INVISIBLE_RE =
   /[\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\u3164\uFEFF\uFFA0\u{E0000}-\u{E007F}]/gu;
 /** Controle C0/C1 exceto \n e \t. */
 const CONTROL_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g;
+/**
+ * Seletores de variação em sequência (FE00–FE0F e os suplementares
+ * E0100–E01EF) são o canal de "contrabando" de bytes invisíveis (red team
+ * P2.5): de uma sequência fica só o 1º, e só se for FE0E/FE0F…
+ */
+const VARIATION_RUN_RE = /[\uFE00-\uFE0F\u{E0100}-\u{E01EF}]+/gu;
+/** …e FE0E/FE0F só depois de emoji ou tecla (#, *, 0–9), onde compõem o símbolo. */
+const STRAY_VARIATION_RE = /(?<!\p{Extended_Pictographic}|[#*0-9])[\uFE0E\uFE0F]/gu;
 
 /** NFKC + remove invisíveis/controle + espaços. `multiline` preserva quebras (até 2 seguidas). */
 export function cleanDraftText(raw: string, multiline = false): string {
-  let s = raw.normalize("NFKC").replace(INVISIBLE_RE, "").replace(/\r\n?/g, "\n").replace(CONTROL_RE, "");
+  let s = raw
+    .normalize("NFKC")
+    .replace(INVISIBLE_RE, "")
+    .replace(VARIATION_RUN_RE, (run) => (run[0] === "\uFE0E" || run[0] === "\uFE0F" ? run[0] : ""))
+    .replace(STRAY_VARIATION_RE, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(CONTROL_RE, "");
   s = s.replace(/[\u2028\u2029]/g, "\n");
   if (multiline) {
     s = s
