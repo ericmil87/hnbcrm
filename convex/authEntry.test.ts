@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 /**
  * Entrada unificada: `authEntry.checkEmailForSignIn` (decisão D16).
- * Responde só `{ next }`, normaliza como o login, conta por e-mail e no teto global.
+ * Responde só `{ next }`, normaliza como o login, conta por e-mail (sem teto global).
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ConvexError } from "convex/values";
@@ -9,8 +9,6 @@ import { convexTest, TestConvex } from "convex-test";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import {
-  SIGNIN_CHECK_GLOBAL,
-  SIGNIN_CHECK_GLOBAL_KEY,
   SIGNIN_CHECK_PER_EMAIL,
   SIGNIN_CHECK_RATE_LIMITED_MESSAGE,
   SIGNIN_CHECK_WINDOW_MS,
@@ -115,28 +113,20 @@ describe("checkEmailForSignIn", () => {
     }
   });
 
-  test("teto global vale para qualquer e-mail", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      await t.run(async (ctx) => {
-        await ctx.db.insert("authEmailThrottle", {
-          email: SIGNIN_CHECK_GLOBAL_KEY,
-          windowStart: Date.now(),
-          count: SIGNIN_CHECK_GLOBAL,
-        });
-      });
-      await expectRateLimited("qualquer@empresa-teste.com");
-      // Recusado pelo global não grava contador por e-mail.
-      const row = await t.run((ctx) =>
-        ctx.db
-          .query("authEmailThrottle")
-          .withIndex("by_email", (q) => q.eq("email", signInCheckEmailKey("qualquer@empresa-teste.com")))
-          .first(),
-      );
-      expect(row).toBeNull();
-    } finally {
-      warn.mockRestore();
-    }
+  test("sem teto global: muitos e-mails diferentes não gravam documento compartilhado", async () => {
+    for (let i = 0; i < 15; i++) await check(`pessoa${i}@empresa-teste.com`);
+    const rows = await t.run((ctx) => ctx.db.query("authEmailThrottle").take(50));
+    expect(rows).toHaveLength(15);
+    expect(new Set(rows.map((r) => r.email)).size).toBe(15);
+    expect(rows.every((r) => r.count === 1)).toBe(true);
+  });
+
+  test("chave do contador tem espaço (nunca coincide com a chave do reset) e e-mail com espaço no meio é recusado", async () => {
+    await check("ana@empresa-teste.com");
+    const rows = await t.run((ctx) => ctx.db.query("authEmailThrottle").take(5));
+    expect(rows.map((r) => r.email)).toEqual([signInCheckEmailKey("ana@empresa-teste.com")]);
+    expect(rows[0].email).toContain(" ");
+    await expect(check("ana silva@empresa-teste.com")).rejects.toThrow();
   });
 
   test("não mexe no contador do reset de senha do mesmo endereço", async () => {

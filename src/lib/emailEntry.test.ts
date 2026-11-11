@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { ConvexError } from "convex/values";
 import {
+  CHECK_FALLBACK_MESSAGE,
   checkErrorView,
   convexErrorData,
   currentPasswordError,
   emailFieldError,
   flowForStep,
+  MANUAL_SIGN_IN_HINT,
   newPasswordError,
   passwordStepErrorMessage,
+  SIGN_IN_FAILED_MESSAGE,
   stepForNext,
 } from "./emailEntry";
 
@@ -49,24 +52,38 @@ describe("emailEntry", () => {
     expect(convexErrorData(new Error("x"))).toBeNull();
   });
 
-  it("checagem: rate limit, mensagem do servidor, rede e genérico", () => {
+  it("checagem: escolha manual em qualquer falha, menos e-mail inválido", () => {
     expect(checkErrorView(new ConvexError({ code: "rate_limited", message: "Calma." }))).toEqual({
       message: "Calma.",
-      rateLimited: true,
+      manualChoice: true,
     });
     expect(checkErrorView(new ConvexError({ code: "invalid_email", message: "Digite um e-mail válido." }))).toEqual({
       message: "Digite um e-mail válido.",
-      rateLimited: false,
+      manualChoice: false,
     });
-    expect(checkErrorView(new Error("Failed to fetch")).message).toMatch(/Sem conexão/);
-    expect(checkErrorView(new Error("Server Error")).message).toBe("Não foi possível continuar. Tente de novo.");
+    const network = checkErrorView(new Error("Failed to fetch"));
+    expect(network.message).toMatch(/Sem conexão/);
+    expect(network.manualChoice).toBe(true);
+    // OCC, função ausente num deploy antigo, erro de servidor: atalho falhou, caminho manual.
+    for (const err of [
+      new Error("Server Error"),
+      new Error("Could not find public function for 'authEntry:checkEmailForSignIn'"),
+      new ConvexError({ code: "outro", message: "x" }),
+    ]) {
+      expect(checkErrorView(err)).toEqual({ message: CHECK_FALLBACK_MESSAGE, manualChoice: true });
+    }
   });
 
-  it("passo 2: servidor vence; senha errada; senha curta; genérico", () => {
+  it("passo 2: servidor vence; entrar falhou é neutro (+ dica na escolha manual); senha curta; genérico", () => {
     expect(passwordStepErrorMessage(new ConvexError("Já existe uma conta com este e-mail."), "signup")).toBe(
       "Já existe uma conta com este e-mail.",
     );
-    expect(passwordStepErrorMessage(new Error("Invalid credentials"), "password")).toMatch(/Senha incorreta/);
+    expect(passwordStepErrorMessage(new Error("Invalid credentials"), "password")).toBe(SIGN_IN_FAILED_MESSAGE);
+    expect(passwordStepErrorMessage(new Error("Invalid credentials"), "password", { manual: true })).toBe(
+      `${SIGN_IN_FAILED_MESSAGE} ${MANUAL_SIGN_IN_HINT}`,
+    );
+    expect(SIGN_IN_FAILED_MESSAGE).toBe("Não foi possível entrar. Confira a senha ou use \"Esqueci a senha\".");
+    expect(MANUAL_SIGN_IN_HINT).toBe("Se ainda não tem conta, volte e escolha Criar conta.");
     expect(passwordStepErrorMessage(new Error("Uncaught Error: Invalid password"), "signup")).toMatch(/pelo menos 8/);
     expect(passwordStepErrorMessage(new Error("Server Error"), "signup")).toBe(
       "Não foi possível criar a conta. Tente de novo.",

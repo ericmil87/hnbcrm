@@ -74,30 +74,53 @@ export const NETWORK_ERROR_MESSAGE = "Sem conexão com o servidor. Confira sua i
 
 export interface CheckErrorView {
   message: string;
-  /** Teto da checagem: a tela oferece escolher o caminho à mão. */
-  rateLimited: boolean;
+  /**
+   * A tela oferece escolher o caminho à mão ("Já tenho conta" / "Criar conta"). Vale para
+   * QUALQUER falha da checagem (limite, rede, conflito, função ausente num deploy antigo),
+   * menos e-mail inválido: a checagem é só um atalho e nunca pode trancar alguém fora.
+   */
+  manualChoice: boolean;
 }
+
+export const CHECK_FALLBACK_MESSAGE = "Não foi possível verificar o e-mail agora. Escolha abaixo se já tem conta.";
 
 export function checkErrorView(error: unknown): CheckErrorView {
   const data = convexErrorData(error);
+  if (data?.code === "invalid_email") {
+    return { message: data.message ?? "Digite um e-mail válido.", manualChoice: false };
+  }
   if (data?.code === "rate_limited") {
     return {
-      message: data.message ?? "Muitas tentativas agora. Aguarde alguns minutos ou escolha abaixo se já tem conta.",
-      rateLimited: true,
+      message: data.message ?? "Muitas tentativas com este e-mail. Aguarde alguns minutos ou escolha abaixo se já tem conta.",
+      manualChoice: true,
     };
   }
-  if (data?.message) return { message: data.message, rateLimited: false };
-  if (isNetworkError(error)) return { message: NETWORK_ERROR_MESSAGE, rateLimited: false };
-  return { message: "Não foi possível continuar. Tente de novo.", rateLimited: false };
+  if (isNetworkError(error)) {
+    return { message: `${NETWORK_ERROR_MESSAGE} Ou escolha abaixo se já tem conta.`, manualChoice: true };
+  }
+  return { message: CHECK_FALLBACK_MESSAGE, manualChoice: true };
 }
 
-/** Mensagem do passo 2 (entrar ou criar conta). Mensagem de `ConvexError` do servidor vence. */
-export function passwordStepErrorMessage(error: unknown, step: Exclude<EmailEntryStep, "email">): string {
+export const SIGN_IN_FAILED_MESSAGE = "Não foi possível entrar. Confira a senha ou use \"Esqueci a senha\".";
+export const MANUAL_SIGN_IN_HINT = "Se ainda não tem conta, volte e escolha Criar conta.";
+
+/**
+ * Mensagem do passo 2 (entrar ou criar conta). Mensagem de `ConvexError` do servidor vence.
+ * Entrar falhou = texto neutro (o provider não distingue senha errada de conta inexistente);
+ * `manual` = o passo veio da escolha manual, então a conta pode nem existir.
+ */
+export function passwordStepErrorMessage(
+  error: unknown,
+  step: Exclude<EmailEntryStep, "email">,
+  options: { manual?: boolean } = {},
+): string {
   const data = convexErrorData(error);
   if (data?.message) return data.message;
   if (isNetworkError(error)) return NETWORK_ERROR_MESSAGE;
   const raw = error instanceof Error ? error.message : "";
-  if (step === "password") return "Senha incorreta. Tente de novo ou use \"Esqueci a senha\".";
+  if (step === "password") {
+    return options.manual ? `${SIGN_IN_FAILED_MESSAGE} ${MANUAL_SIGN_IN_HINT}` : SIGN_IN_FAILED_MESSAGE;
+  }
   if (raw.includes("Invalid password")) {
     return `A senha precisa ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres.`;
   }

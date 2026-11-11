@@ -13,8 +13,8 @@ function setup(overrides: Partial<EmailEntryCardViewProps> = {}) {
     ...overrides,
   };
   const user = userEvent.setup();
-  render(<EmailEntryCardView {...props} />);
-  return { props, user };
+  const view = render(<EmailEntryCardView {...props} />);
+  return { props, user, unmount: view.unmount };
 }
 
 const emailField = () => screen.getByLabelText("E-mail");
@@ -111,7 +111,10 @@ describe("EmailEntryCardView", () => {
     await user.click(screen.getByRole("button", { name: "Continuar" }));
     await user.type(await screen.findByLabelText("Senha"), "errada");
     await user.click(screen.getByRole("button", { name: "Entrar" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Senha incorreta");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Não foi possível entrar. Confira a senha ou use \"Esqueci a senha\".",
+    );
+    expect(screen.getByRole("alert")).not.toHaveTextContent("Criar conta");
     expect(props.onSuccess).not.toHaveBeenCalled();
     expect(screen.getByRole("heading", { name: "Bem-vindo de volta" })).toBeInTheDocument();
   });
@@ -148,16 +151,51 @@ describe("EmailEntryCardView", () => {
     expect(screen.queryByRole("button", { name: "Já tenho conta" })).toBeNull();
   });
 
-  it("falha de rede na checagem tem mensagem própria e não mostra a escolha manual", async () => {
+  it("qualquer falha da checagem (rede, deploy antigo) oferece a escolha manual", async () => {
+    for (const failure of [new Error("Failed to fetch"), new Error("Server Error")]) {
+      const { user, unmount } = setup({
+        checkEmail: vi.fn(async () => {
+          throw failure;
+        }),
+      });
+      await user.type(emailField(), "ana@empresa.com");
+      await user.click(screen.getByRole("button", { name: "Continuar" }));
+      expect(await screen.findByRole("alert")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Já tenho conta" })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Criar conta" })).toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  it("e-mail recusado pelo servidor não oferece a escolha manual", async () => {
     const { user } = setup({
       checkEmail: vi.fn(async () => {
-        throw new Error("Failed to fetch");
+        throw new ConvexError({ code: "invalid_email", message: "Digite um e-mail válido." });
       }),
     });
     await user.type(emailField(), "ana@empresa.com");
     await user.click(screen.getByRole("button", { name: "Continuar" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Sem conexão");
+    expect(await screen.findByRole("alert")).toHaveTextContent("Digite um e-mail válido.");
     expect(screen.queryByRole("button", { name: "Já tenho conta" })).toBeNull();
+  });
+
+  it("entrar pela escolha manual que falha sugere voltar e criar conta", async () => {
+    const { user } = setup({
+      checkEmail: vi.fn(async () => {
+        throw new Error("Server Error");
+      }),
+      submitPassword: vi.fn(async () => {
+        throw new Error("Invalid credentials");
+      }),
+    });
+    await user.type(emailField(), "ana@empresa.com");
+    await user.click(screen.getByRole("button", { name: "Continuar" }));
+    await user.click(await screen.findByRole("button", { name: "Já tenho conta" }));
+    await user.type(screen.getByLabelText("Senha"), "qualquer");
+    await user.click(screen.getByRole("button", { name: "Entrar" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Não foi possível entrar. Confira a senha ou use \"Esqueci a senha\". Se ainda não tem conta, volte e escolha Criar conta.",
+    );
   });
 
   it("título do primeiro passo segue ?modo=cadastro e o modo compacto mantém o fluxo", () => {

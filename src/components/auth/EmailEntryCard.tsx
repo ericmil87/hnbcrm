@@ -87,7 +87,9 @@ export function EmailEntryCardView({
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
-  const [rateLimited, setRateLimited] = useState(false);
+  const [manualChoice, setManualChoice] = useState(false);
+  /** O passo 2 veio da escolha manual (checagem falhou): a conta pode não existir. */
+  const [manualPath, setManualPath] = useState(false);
 
   const emailRef = useRef<HTMLInputElement>(null);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -113,14 +115,15 @@ export function EmailEntryCardView({
     setFormError(null);
   };
 
-  const goToStep = (next: EmailEntryStep) => {
+  const goToStep = (next: EmailEntryStep, manual = false) => {
     resetStepState();
-    setRateLimited(false);
+    setManualChoice(false);
+    setManualPath(manual);
     setEmailError(null);
     setStep(next);
   };
 
-  // Checagem limitada: a pessoa escolhe o caminho; o provider recusa o que não bater.
+  // Checagem falhou: a pessoa escolhe o caminho; o provider recusa o que não bater.
   const chooseManually = (next: PasswordStep) => {
     const error = emailFieldError(email);
     if (error) {
@@ -128,13 +131,13 @@ export function EmailEntryCardView({
       emailRef.current?.focus();
       return;
     }
-    goToStep(next);
+    goToStep(next, true);
   };
 
   const handleEmailSubmit = async () => {
     const error = emailFieldError(email);
     setFormError(null);
-    setRateLimited(false);
+    setManualChoice(false);
     if (error) {
       setEmailError(error);
       emailRef.current?.focus();
@@ -148,7 +151,7 @@ export function EmailEntryCardView({
     } catch (err) {
       const view = checkErrorView(err);
       setFormError(view.message);
-      setRateLimited(view.rateLimited);
+      setManualChoice(view.manualChoice);
     } finally {
       setBusy(false);
     }
@@ -170,7 +173,7 @@ export function EmailEntryCardView({
       await submitPassword({ email: trimmed, password, flow });
       onSuccess?.({ flow, email: trimmed });
     } catch (err) {
-      setFormError(passwordStepErrorMessage(err, current));
+      setFormError(passwordStepErrorMessage(err, current, { manual: manualPath }));
       passwordRef.current?.focus();
     } finally {
       setBusy(false);
@@ -311,7 +314,7 @@ export function EmailEntryCardView({
         </div>
       )}
 
-      {step === "email" && rateLimited && (
+      {step === "email" && manualChoice && (
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button type="button" variant="secondary" className="min-h-11 flex-1" onClick={() => chooseManually("password")}>
             Já tenho conta
