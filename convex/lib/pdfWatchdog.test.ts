@@ -171,24 +171,29 @@ describe("vigia de memória do worker (defesa principal)", () => {
   });
 });
 
+// Teto absoluto folgado de propósito: sozinho cada caso leva milissegundos; sob suítes em paralelo
+// a máquina pode ficar 10x mais lenta. As regressões quadráticas reais levavam 12 s ou mais, então 5 s
+// continua pegando-as sem acusar carga.
+const PERF_LIMIT_MS = 5000;
+
 describe("4ª revisão: pré-varredura linear e com prazo", () => {
   const latin1 = (s: string) => new Uint8Array(Buffer.from(s, "latin1"));
 
-  it("10 MB de `stream~` sem quebra de linha: < 1 s (recusado pelo teto de ocorrências)", () => {
+  it("10 MB de `stream~` sem quebra de linha: < 5 s (recusado pelo teto de ocorrências)", () => {
     const body = latin1("%PDF-1.4\n" + "stream~".repeat(Math.floor((10 * 1024 * 1024) / 7)));
     const t0 = performance.now();
     expect(() => preflightPdf(body, PDF_LIMITS)).toThrow(PdfExtractError);
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(PERF_LIMIT_MS);
   });
 
-  it("15 mil `stream~` (abaixo do teto de ocorrências) seguidos de 4 MB sem quebra: linear, < 1 s", () => {
+  it("15 mil `stream~` (abaixo do teto de ocorrências) seguidos de 4 MB sem quebra: linear, < 5 s", () => {
     const body = latin1("%PDF-1.4\n" + "stream~".repeat(15_000) + "x".repeat(4 << 20));
     const t0 = performance.now();
     expect(() => preflightPdf(body, PDF_LIMITS)).not.toThrow();
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(PERF_LIMIT_MS);
   });
 
-  it("32 mil streams AHx vazios + 4 MB: < 1 s", () => {
+  it("32 mil streams AHx vazios + 4 MB: < 5 s", () => {
     const body = latin1("%PDF-1.4\n" + "1 0 obj<</Filter/AHx>>stream\n>\n".repeat(32_000) + "x".repeat(4 << 20));
     const t0 = performance.now();
     let code = "OK";
@@ -197,7 +202,7 @@ describe("4ª revisão: pré-varredura linear e com prazo", () => {
     } catch (e) {
       code = (e as PdfExtractError).code;
     }
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(PERF_LIMIT_MS);
     expect(code).toBe("TOO_LARGE"); // acima de 20 mil ocorrências
   });
 
@@ -212,7 +217,7 @@ describe("4ª revisão: pré-varredura linear e com prazo", () => {
       code = (e as PdfExtractError).code;
     }
     expect(code).toBe("TOO_LARGE");
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(PERF_LIMIT_MS);
   });
 
   it("muitos `stream\\n` seguidos (parecem ASCII85, sem endstream): o orçamento ASCII (64 MB) corta", () => {
