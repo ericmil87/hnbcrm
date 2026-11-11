@@ -55,4 +55,30 @@ describe("PricingCalculator", () => {
     renderWithRouter(<PricingCalculator cycle="annual" />);
     expect(screen.getByRole("status").textContent).toMatch(/R\$\s*164/);
   });
+
+  it("aceita campo vazio enquanto digita e normaliza ao sair do campo", () => {
+    renderWithRouter(<PricingCalculator cycle="monthly" />);
+    const field = screen.getByLabelText("Atendimentos IA por mês") as HTMLInputElement;
+    expect(field.value).toBe("100");
+    fireEvent.change(field, { target: { value: "" } });
+    expect(field.value).toBe("");
+    fireEvent.change(field, { target: { value: "1500" } });
+    expect(field.value).toBe("1500");
+    fireEvent.change(field, { target: { value: "" } });
+    fireEvent.blur(field);
+    expect(field.value).toBe("0");
+  });
+
+  it("canais vazio volta ao minimo so no blur e atalhos atualizam o texto", () => {
+    renderWithRouter(<PricingCalculator cycle="monthly" />);
+    const channels = screen.getByRole("textbox", { name: /Canais/ }) as HTMLInputElement;
+    fireEvent.change(channels, { target: { value: "" } });
+    expect(channels.value).toBe("");
+    fireEvent.blur(channels);
+    expect(channels.value).toBe("1");
+    const field = screen.getByLabelText("Atendimentos IA por mês") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "2.500" }));
+    expect(field.value).toBe("2500");
+  });
 });

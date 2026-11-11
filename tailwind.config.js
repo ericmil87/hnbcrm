@@ -86,7 +86,7 @@ export default {
       },
       animation: {
         'fade-in':       'fadeIn 200ms ease-out',
-        'fade-in-up':    'fadeInUp 200ms ease-out',
+        'fade-in-up':    'fadeInUp 200ms ease-out backwards',
         'slide-in-right': 'slideInRight 300ms ease-out',
         'slide-in-up':   'slideInUp 300ms ease-out',
         'shimmer':       'shimmer 1.5s ease-in-out infinite',

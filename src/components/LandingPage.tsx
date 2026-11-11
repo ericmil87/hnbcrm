@@ -50,6 +50,7 @@ import { CTA_LABEL } from "@/components/landing/pricing/pricingCopy";
 import { PLANS, TRIAL } from "../../convex/lib/plans";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
+import { signUpHref } from "@/lib/authEntry";
 
 export function LandingPage() {
   const [showFloatingCta, setShowFloatingCta] = useState(false);
@@ -78,8 +79,8 @@ export function LandingPage() {
   return (
     <>
       <SEO
-        title="HNBCRM — CRM com Colaboração Humano-IA"
-        description="CRM multi-tenancy com automação de IA. Gerencie leads, pipeline, contatos e central de atendimento no WhatsApp, e integre agentes de IA via API REST e MCP. Atenda clientes em outros idiomas com tradução automática de mensagens."
+        title="HNBCRM — CRM com atendimento IA no WhatsApp"
+        description={`CRM para vender pelo WhatsApp: funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Usuários ilimitados. Teste ${TRIAL.days} dias, sem cartão.`}
         keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas, tradução automática de mensagens, atendimento multilíngue"
       />
       <OrganizationStructuredData />
@@ -145,7 +146,7 @@ export function LandingPage() {
             </p>
 
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 animate-fade-in-up [animation-delay:200ms]">
-              <Link to="/entrar">
+              <Link to={signUpHref()}>
                 <Button variant="primary" size="lg" className="min-h-[44px]">
                   {CTA_LABEL}
                 </Button>
@@ -170,7 +171,7 @@ export function LandingPage() {
       </section>
 
       {/* Floating CTA Pill */}
-      <Link to="/entrar">
+      <Link to={signUpHref()}>
         <button
           className={cn(
             "fixed bottom-6 left-1/2 -translate-x-1/2 z-40",
@@ -369,7 +370,7 @@ function FeaturesSection() {
             id="features-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Tudo que você precisa para vender mais
@@ -377,7 +378,7 @@ function FeaturesSection() {
           <p
             className={cn(
               "text-lg text-text-secondary",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             Funcionalidades prontas, sem configuração complicada.
@@ -390,9 +391,9 @@ function FeaturesSection() {
               key={index}
               className={cn(
                 "p-6",
-                isInView && "animate-fade-in-up",
-                isInView && `[animation-delay:${index * 50}ms]`
+                isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
               )}
+              style={{ animationDelay: `${index * 50}ms` }}
             >
               <div className="flex items-start gap-4">
                 <div className="w-10 h-10 rounded-xl bg-brand-500/10 flex items-center justify-center flex-shrink-0">
@@ -472,7 +473,7 @@ function DeveloperSection() {
             id="developer-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4 mt-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Feito para desenvolvedores
@@ -480,7 +481,7 @@ function DeveloperSection() {
           <p
             className={cn(
               "text-lg text-text-secondary",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             Integre agentes de IA, automatize workflows e estenda seu CRM.
@@ -494,9 +495,9 @@ function DeveloperSection() {
               className={cn(
                 "p-8 flex flex-col",
                 card.primary && "border-brand-500",
-                isInView && "animate-fade-in-up",
-                isInView && `[animation-delay:${index * 100}ms]`
+                isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
               )}
+              style={{ animationDelay: `${index * 100}ms` }}
             >
               <div className="w-12 h-12 rounded-xl bg-brand-500/10 flex items-center justify-center mb-4">
                 <card.icon className="text-brand-500" size={24} />
@@ -577,7 +578,7 @@ function ComingSoonSection() {
             id="coming-soon-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Estamos só começando
@@ -585,7 +586,7 @@ function ComingSoonSection() {
           <p
             className={cn(
               "text-lg text-text-secondary",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             Novas funcionalidades a cada semana.
@@ -598,9 +599,9 @@ function ComingSoonSection() {
               key={index}
               className={cn(
                 "p-6 opacity-70 relative",
-                isInView && "animate-fade-in-up",
-                isInView && `[animation-delay:${index * 50}ms]`
+                isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
               )}
+              style={{ animationDelay: `${index * 50}ms` }}
             >
               <div className="absolute top-4 right-4">
                 <Badge variant="warning">Em Breve</Badge>
@@ -662,7 +663,7 @@ function HowItWorksSection() {
             id="how-it-works-heading"
             className={cn(
               "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Simples de começar
@@ -675,9 +676,9 @@ function HowItWorksSection() {
               key={index}
               className={cn(
                 "p-8 text-center",
-                isInView && "animate-fade-in-up",
-                isInView && `[animation-delay:${index * 100}ms]`
+                isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
               )}
+              style={{ animationDelay: `${index * 100}ms` }}
             >
               <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-brand-500/10 border-2 border-brand-500 flex items-center justify-center">
                 <span className="text-2xl font-bold text-brand-500">
@@ -710,7 +711,7 @@ function CTASection() {
           id="cta-heading"
           className={cn(
             "text-3xl md:text-4xl lg:text-5xl font-bold mb-4",
-            isInView && "animate-fade-in-up"
+            isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
           )}
         >
           Pronto para transformar suas vendas?
@@ -718,13 +719,13 @@ function CTASection() {
         <p
           className={cn(
             "text-lg text-text-secondary mb-8",
-            isInView && "animate-fade-in-up [animation-delay:100ms]"
+            isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
           )}
         >
           Junte-se a empresas que já usam o HNBCRM para vender mais.
         </p>
-        <div className={cn(isInView && "animate-fade-in-up [animation-delay:200ms]")}>
-          <Link to="/entrar">
+        <div className={cn(isInView ? "animate-fade-in-up [animation-delay:200ms]" : "motion-safe:opacity-0")}>
+          <Link to={signUpHref()}>
             <Button variant="primary" size="lg" className="min-h-[44px]">
               {CTA_LABEL}
             </Button>

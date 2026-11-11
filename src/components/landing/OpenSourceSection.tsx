@@ -38,7 +38,7 @@ export function OpenSourceSection() {
           <h2
             className={cn(
               "text-2xl md:text-3xl lg:text-4xl font-bold",
-              isInView && "animate-fade-in-up"
+              isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >
             Construido abertamente
@@ -46,7 +46,7 @@ export function OpenSourceSection() {
           <p
             className={cn(
               "text-text-secondary max-w-xl mx-auto",
-              isInView && "animate-fade-in-up [animation-delay:100ms]"
+              isInView ? "animate-fade-in-up [animation-delay:100ms]" : "motion-safe:opacity-0"
             )}
           >
             100% do código é aberto, auditável e extensível. Faça fork, contribua
@@ -57,7 +57,7 @@ export function OpenSourceSection() {
         <div
           className={cn(
             "grid grid-cols-3 gap-4 md:gap-6 max-w-lg mx-auto mb-8",
-            isInView && "animate-fade-in-up [animation-delay:150ms]"
+            isInView ? "animate-fade-in-up [animation-delay:150ms]" : "motion-safe:opacity-0"
           )}
         >
           {stats.map((stat) => {
@@ -93,7 +93,7 @@ export function OpenSourceSection() {
         <div
           className={cn(
             "flex flex-wrap items-center justify-center gap-2 mb-8",
-            isInView && "animate-fade-in-up [animation-delay:200ms]"
+            isInView ? "animate-fade-in-up [animation-delay:200ms]" : "motion-safe:opacity-0"
           )}
         >
           {techStack.map((tech) => (
@@ -109,7 +109,7 @@ export function OpenSourceSection() {
         <div
           className={cn(
             "text-center",
-            isInView && "animate-fade-in-up [animation-delay:250ms]"
+            isInView ? "animate-fade-in-up [animation-delay:250ms]" : "motion-safe:opacity-0"
           )}
         >
           <a

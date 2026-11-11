@@ -10,6 +10,7 @@ import { formatCount, formatMoney } from "@/lib/format";
 import { allPlanDisplays, type PlanDisplay } from "@/lib/pricingCatalog";
 import type { BillingCycle } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
+import { signUpHref } from "@/lib/authEntry";
 import { ANNUAL_MONTHS_CHARGED, EXTRA_CHANNEL_BRL, GROUPS_ADDON_BRL } from "../../../../convex/lib/plans";
 import { PricingCalculator } from "./PricingCalculator";
 import {
@@ -70,7 +71,7 @@ function PlanCard({ plan, cycle }: { plan: PlanDisplay; cycle: BillingCycle }) {
         )}
       >
         {plan.featured && (
-          <Badge variant="brand" className="absolute -top-3 left-4">
+          <Badge variant="brand" className="absolute -top-3 left-4 bg-brand-700 text-white">
             Mais escolhido
           </Badge>
         )}
@@ -124,13 +125,13 @@ function PlanCard({ plan, cycle }: { plan: PlanDisplay; cycle: BillingCycle }) {
         </ul>
 
         {plan.key === "empresa" ? (
-          <Link to="/entrar?plano=empresa" className="block">
+          <Link to={signUpHref("empresa")} className="block">
             <Button variant="secondary" size="lg" className="w-full">
               Falar com a gente
             </Button>
           </Link>
         ) : (
-          <Link to={`/entrar?plano=${plan.key}`} className="block">
+          <Link to={signUpHref(plan.key)} className="block">
             <Button variant={plan.featured ? "primary" : "secondary"} size="lg" className="w-full">
               {CTA_LABEL}
             </Button>
@@ -242,7 +243,7 @@ export function PricingSection({ variant = "section" }: PricingSectionProps) {
         </div>
 
         <div className="text-center">
-          <Link to="/entrar">
+          <Link to={signUpHref()}>
             <Button variant="primary" size="lg">
               {CTA_LABEL}
             </Button>

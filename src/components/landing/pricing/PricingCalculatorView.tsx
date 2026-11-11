@@ -1,6 +1,8 @@
+import { useEffect, useState, type ComponentProps } from "react";
 import { Link } from "react-router";
 import { Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { signUpHref } from "@/lib/authEntry";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
 import { formatCount, formatMoney } from "@/lib/format";
@@ -47,6 +49,49 @@ function parseCount(raw: string, min: number, max: number): number {
   const n = Number.parseInt(raw.replace(/\D/g, ""), 10);
   if (!Number.isFinite(n)) return min;
   return Math.min(max, Math.max(min, n));
+}
+
+type InputProps = ComponentProps<typeof Input>;
+
+interface CountFieldProps extends Omit<InputProps, "value" | "onChange" | "min" | "max"> {
+  value: number;
+  min: number;
+  max: number;
+  onValueChange: (n: number) => void;
+}
+
+/**
+ * Campo numérico que aceita ficar vazio enquanto a pessoa digita: o texto é
+ * estado local; só números válidos sobem a cada tecla e o texto é normalizado
+ * (mínimo/máximo) ao sair do campo.
+ */
+function CountField({ value, min, max, onValueChange, onBlur, ...rest }: CountFieldProps) {
+  const [text, setText] = useState(String(value));
+
+  // Mudança externa (botões -/+, atalhos, exemplos) substitui o texto, exceto
+  // quando o texto atual já representa o valor (ex.: "007" ou campo em edição).
+  useEffect(() => {
+    setText((t) => (t !== "" && parseCount(t, min, max) === value ? t : String(value)));
+  }, [value, min, max]);
+
+  return (
+    <Input
+      {...rest}
+      inputMode="numeric"
+      value={text}
+      onChange={(e) => {
+        const digits = e.target.value.replace(/\D/g, "");
+        setText(digits);
+        if (digits !== "") onValueChange(parseCount(digits, min, max));
+      }}
+      onBlur={(e) => {
+        const n = parseCount(text, min, max);
+        setText(String(n));
+        if (n !== value) onValueChange(n);
+        onBlur?.(e);
+      }}
+    />
+  );
 }
 
 function lineText(id: PricingLineId, quantity: number, plan: PricingOption["plan"]): string {
@@ -107,13 +152,14 @@ export function PricingCalculatorView({
             >
               <Minus size={16} />
             </Button>
-            <Input
+            <CountField
               id="calc-channels"
               aria-labelledby="calc-channels-label"
-              inputMode="numeric"
               className="text-center tabular-nums"
-              value={String(value.channels)}
-              onChange={(e) => onChange({ channels: parseCount(e.target.value, 1, 30) })}
+              value={value.channels}
+              min={1}
+              max={30}
+              onValueChange={(channels) => onChange({ channels })}
             />
             <Button
               variant="secondary"
@@ -128,13 +174,14 @@ export function PricingCalculatorView({
         </div>
 
         <div>
-          <Input
+          <CountField
             id="calc-attendances"
             label="Atendimentos IA por mês"
-            inputMode="numeric"
             className="tabular-nums"
-            value={String(value.attendances)}
-            onChange={(e) => onChange({ attendances: parseCount(e.target.value, 0, 20000) })}
+            value={value.attendances}
+            min={0}
+            max={20000}
+            onValueChange={(attendances) => onChange({ attendances })}
           />
           <div className="mt-2 flex flex-wrap gap-2">
             {ATTENDANCE_SHORTCUTS.map((n) => (
@@ -174,13 +221,14 @@ export function PricingCalculatorView({
             onCheckedChange={(multiUnit) => onChange({ multiUnit })}
           />
           {value.multiUnit && (
-            <Input
+            <CountField
               id="calc-units"
               label="Quantas unidades?"
-              inputMode="numeric"
               className="tabular-nums"
-              value={String(value.units)}
-              onChange={(e) => onChange({ units: parseCount(e.target.value, 2, 50) })}
+              value={value.units}
+              min={2}
+              max={50}
+              onValueChange={(units) => onChange({ units })}
             />
           )}
         </div>
@@ -234,7 +282,7 @@ export function PricingCalculatorView({
         <p className="mt-4 text-caption text-text-muted">
           O excedente só é cobrado se você ligar, com o teto que escolher. Valor estimado.
         </p>
-        <Link to="/entrar" className="mt-4 block">
+        <Link to={signUpHref()} className="mt-4 block">
           <Button variant="primary" size="lg" className="w-full">
             {CTA_LABEL}
           </Button>

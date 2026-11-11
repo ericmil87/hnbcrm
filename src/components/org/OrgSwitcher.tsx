@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { orgNewsLabel } from "@/lib/notificationInbox";
+import { clearPlanIntent } from "@/lib/authEntry";
 
 /** Forma mínima de uma org da lista `getUserOrganizations` usada pela UI. */
 export interface OrgSummary {
@@ -89,6 +90,8 @@ export function CreateOrganizationForm({
     setIsCreating(true);
     try {
       const orgId = await createOrganization({ name: name.trim(), slug: cleanSlug, acceptedTermsVersion: TERMS_VERSION });
+      // O plano de interesse (?plano=) só vale até a criação da org.
+      clearPlanIntent();
       toast.success(`Organização "${name.trim()}" criada!`);
       onCreated(orgId);
     } catch (error) {
