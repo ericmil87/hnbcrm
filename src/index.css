@@ -104,6 +104,10 @@
   --rgb-code-number: 255 166 87;
   --rgb-code-keyword: 210 168 255;
 
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
+
   /* Full-color aliases for raw CSS and inline styles */
   --surface-base:    rgb(var(--rgb-surface-base));
   --surface-raised:  rgb(var(--rgb-surface-raised));
@@ -124,6 +128,8 @@
   --color-semantic-info:    rgb(var(--rgb-semantic-info));
   --color-brand-500:        rgb(var(--rgb-brand-500));
   --color-brand-600:        rgb(var(--rgb-brand-600));
+  --qr-fg:                  rgb(var(--rgb-qr-fg));
+  --qr-bg:                  rgb(var(--rgb-qr-bg));
 
   --chat-wallpaper: none;
 
@@ -201,6 +207,10 @@
   --rgb-code-number: 149 56 0;
   --rgb-code-keyword: 102 57 186;
 
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
+
   --chat-wallpaper: none;
 
   --shadow-card:       0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
@@ -276,6 +286,10 @@
   --rgb-code-string: 17 99 41;
   --rgb-code-number: 149 56 0;
   --rgb-code-keyword: 102 57 186;
+
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
 
   --chat-wallpaper:
     radial-gradient(rgb(84 101 111 / 0.1) 0.6px, transparent 0.6px),
@@ -354,6 +368,10 @@
   --rgb-code-string: 126 231 135;
   --rgb-code-number: 255 166 87;
   --rgb-code-keyword: 210 168 255;
+
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
 
   --chat-wallpaper:
     radial-gradient(rgb(233 237 239 / 0.06) 0.6px, transparent 0.6px),

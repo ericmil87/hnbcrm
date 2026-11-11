@@ -68,6 +68,8 @@ const DARK_HEX: Record<string, string> = {
   "code-string": "7EE787",
   "code-number": "FFA657",
   "code-keyword": "D2A8FF",
+  "qr-fg": "111B21",
+  "qr-bg": "FFFFFF",
 };
 
 type Block = Record<string, string>;
@@ -177,6 +179,8 @@ const PAIRS: Pair[] = [
   // Code blocks: every readable color on the code background, in all four themes (comments included).
   ...["code-fg", "code-muted", "code-key", "code-string", "code-number", "code-keyword"].map((fg) => ({ fg, bg: "code-bg", min: 4.5 })),
   { fg: "code-muted", bg: "code-header", min: 4.5 },
+  // QR code: fixed dark on white, same in all four themes (AAA-level contrast for scanners).
+  { fg: "qr-fg", bg: "qr-bg", min: 7 },
   // Not checked in Escuro (its brand text and semantic colors are frozen, see DARK_KNOWN_FAILURES notes).
   ...["brand-300", "brand-400", "brand-500"].flatMap((fg) =>
     ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, notDark: true })),

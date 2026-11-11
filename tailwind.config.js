@@ -61,6 +61,7 @@ export default {
           key: c("code-key"), string: c("code-string"), number: c("code-number"), keyword: c("code-keyword"),
         },
         badge: { unread: c("badge-unread"), "unread-fg": c("badge-unread-fg") },
+        qr: { fg: c("qr-fg"), bg: c("qr-bg") },
       },
       fontFamily: {
         sans: ['"Inter Variable"', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
