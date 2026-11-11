@@ -107,20 +107,26 @@ export const queryUserByEmail = internalQuery({
 // no login/cadastro/reset (ver `withCanonicalEmail` em auth.ts): a conta que
 // JÁ existe em qualquer caixa (preferindo a digitada exata), senão a forma
 // minúscula. `exists` diz ao cadastro público que há conta — aí ele recusa em
-// vez de criar uma segunda que tomaria o login da antiga.
+// vez de criar uma segunda que tomaria o login da antiga. A entrada unificada
+// (`authEntry.checkEmailForSignIn`) usa o MESMO resolvedor para decidir o passo.
+export async function resolvePasswordAccount(
+  ctx: QueryCtx | MutationCtx,
+  rawEmail: string,
+): Promise<{ email: string; exists: boolean }> {
+  const account = pickPreferred(
+    await findPasswordAccountsAnyCase(ctx, rawEmail),
+    (a) => a.providerAccountId,
+    rawEmail,
+  );
+  return account
+    ? { email: account.providerAccountId, exists: true }
+    : { email: normalizeEmail(rawEmail), exists: false };
+}
+
 export const resolvePasswordAccountEmail = internalQuery({
   args: { email: v.string() },
   returns: v.object({ email: v.string(), exists: v.boolean() }),
-  handler: async (ctx, args) => {
-    const account = pickPreferred(
-      await findPasswordAccountsAnyCase(ctx, args.email),
-      (a) => a.providerAccountId,
-      args.email,
-    );
-    return account
-      ? { email: account.providerAccountId, exists: true }
-      : { email: normalizeEmail(args.email), exists: false };
-  },
+  handler: async (ctx, args) => resolvePasswordAccount(ctx, args.email),
 });
 
 // Internal query: get auth account (password provider) for current user

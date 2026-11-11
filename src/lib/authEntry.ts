@@ -1,6 +1,7 @@
 /**
- * Parâmetros de entrada em /entrar: `?modo=cadastro` (abre o formulário em
- * "Cadastrar") e `?plano=<id>` (plano de interesse vindo dos botões de preço).
+ * Parâmetros de entrada em /entrar: `?modo=cadastro` (só muda o título do primeiro
+ * passo da entrada unificada, `components/auth/EmailEntryCard.tsx`; o caminho é decidido
+ * pela checagem do e-mail) e `?plano=<id>` (plano de interesse vindo dos botões de preço).
  * O plano é validado contra os ids reais de `convex/lib/plans.ts` e guardado em
  * sessionStorage até a criação da organização (hoje `createOrganization` ainda
  * não recebe plano; o encaixe é `src/components/org/OrgSwitcher.tsx`, após criar a org).
