@@ -37,6 +37,7 @@ import {
   BridgeQuote,
   BridgeSendRequest,
   bridgeSendKindForMime,
+  voiceNoteConvertFilename,
   buildBridgeMarkReadRequest,
   buildBridgeMediaSendRequest,
   buildBridgePresenceRequest,
@@ -456,7 +457,7 @@ async function convertVoiceNoteToOggOpus(
     form.append(
       "file",
       new Blob([bytes], { type: mimeType || "application/octet-stream" }),
-      "voice-note"
+      voiceNoteConvertFilename(mimeType)
     );
     const response = await fetch(`${serviceUrl.replace(/\/$/, "")}/convert?target=ogg-opus`, {
       method: "POST",
@@ -672,7 +673,8 @@ async function sendViaBridge(
     let bytes = new Uint8Array(await blob.arrayBuffer());
     let sendMime = file.mimeType;
 
-    // Voice notes: the browser records audio/webm (or ogg) but WhatsApp/whatsmeow
+    // Voice notes: the browser records audio/webm, audio/ogg or (Safari/iPhone)
+    // audio/mp4 (AAC, saved as .m4a), but WhatsApp/whatsmeow
     // expects a PTT as audio/ogg; codecs=opus. When the Whisper service is
     // configured, transcode non-ogg audio via its /convert endpoint; otherwise
     // (or on failure) fall back to sending the original and note it.

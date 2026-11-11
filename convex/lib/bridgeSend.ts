@@ -231,6 +231,26 @@ export function bridgeSendKindForMime(mimeType: string): BridgeMediaSendKind {
   return "document";
 }
 
+/**
+ * File name sent to the Whisper service `/convert` with a voice note. The
+ * extension follows the stored mime so the converter (ffmpeg behind it) gets a
+ * hint for the input container — Safari records mp4/AAC (`audio/mp4` → .m4a),
+ * Chrome webm/opus, Firefox ogg/opus. Unknown types keep the bare name.
+ */
+export function voiceNoteConvertFilename(mimeType: string): string {
+  const base = (mimeType || "").split(";")[0].trim().toLowerCase();
+  const ext: Record<string, string> = {
+    "audio/mp4": "m4a",
+    "audio/x-m4a": "m4a",
+    "audio/aac": "aac",
+    "audio/webm": "webm",
+    "audio/ogg": "ogg",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+  };
+  return ext[base] ? `voice-note.${ext[base]}` : "voice-note";
+}
+
 // Endpoint path + JSON body field carrying the base64 data-URI, per kind.
 // VALIDAR: paths `/chat/send/{image,audio,document,video}` and the PascalCase
 // body field names (Image/Audio/Document/Video) against the live wuzapi in U6.

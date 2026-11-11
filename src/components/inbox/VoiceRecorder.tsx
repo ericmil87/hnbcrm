@@ -9,6 +9,14 @@ import { SendDeferredError } from "@/lib/messageDelivery";
 import { cn } from "@/lib/utils";
 import { AudioPlayer } from "./AudioPlayer";
 import type { UploadedFile } from "@/components/ui/FileUploadButton";
+import {
+  VOICE_MESSAGES,
+  pickVoiceRecordingType,
+  resolveVoiceUploadFormat,
+  voiceNoteFileName,
+  voiceStartErrorMessage,
+  voiceUploadErrorMessage,
+} from "@/lib/voiceRecordingFormat";
 
 interface VoiceRecorderProps {
   organizationId: Id<"organizations">;
@@ -20,22 +28,6 @@ interface VoiceRecorderProps {
 }
 
 type Mode = "idle" | "recording" | "preview";
-
-// Prefer ogg/opus (what WhatsApp expects); the backend converts as needed. Fall
-// back to webm/opus which every evergreen browser records.
-function pickMimeType(): { mimeType: string; ext: string } | null {
-  const candidates: Array<{ mimeType: string; ext: string }> = [
-    { mimeType: "audio/ogg;codecs=opus", ext: "ogg" },
-    { mimeType: "audio/webm;codecs=opus", ext: "webm" },
-    { mimeType: "audio/webm", ext: "webm" },
-  ];
-  const MR = typeof MediaRecorder !== "undefined" ? MediaRecorder : null;
-  if (!MR) return null;
-  for (const c of candidates) {
-    if (MR.isTypeSupported(c.mimeType)) return c;
-  }
-  return { mimeType: "", ext: "webm" };
-}
 
 function formatTimer(seconds: number): string {
   const mins = Math.floor(seconds / 60);
@@ -59,7 +51,9 @@ export function VoiceRecorder({
   const chunksRef = useRef<Blob[]>([]);
   const blobRef = useRef<Blob | null>(null);
   const uploadedRef = useRef<{ blob: Blob; file: UploadedFile } | null>(null);
-  const extRef = useRef<string>("webm");
+  // Type requested from MediaRecorder; the upload format comes from the real recording.
+  const requestedTypeRef = useRef<string>("");
+  const recorderTypeRef = useRef<string>("");
   const timerRef = useRef<number | null>(null);
   const previewUrlRef = useRef<string | null>(null);
 
@@ -100,6 +94,22 @@ export function VoiceRecorder({
 
   const resetToIdle = () => {
     clearTimer();
+    // Cancel during recording: detach the handlers first so the late `stop`
+    // event does not reopen the preview.
+    const recorder = recorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          // already stopped
+        }
+      }
+      recorderRef.current = null;
+    }
     cleanupStream();
     revokePreview();
     chunksRef.current = [];
@@ -110,32 +120,63 @@ export function VoiceRecorder({
   };
 
   const startRecording = async () => {
-    const picked = pickMimeType();
-    if (!picked) {
-      toast.error("Seu navegador não suporta gravação de áudio");
+    const isTypeSupported =
+      typeof MediaRecorder !== "undefined" && typeof MediaRecorder.isTypeSupported === "function"
+        ? (type: string) => MediaRecorder.isTypeSupported(type)
+        : typeof MediaRecorder !== "undefined"
+          ? () => false
+          : null;
+    const picked = pickVoiceRecordingType(isTypeSupported);
+    if (!picked.ok) {
+      toast.error(VOICE_MESSAGES.noMediaRecorder);
       return;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
-      toast.error("Gravação de áudio indisponível neste dispositivo");
+      toast.error(VOICE_MESSAGES.noGetUserMedia);
+      return;
+    }
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      console.error("Microfone indisponível para a nota de voz.", err);
+      toast.error(voiceStartErrorMessage(err));
       return;
     }
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      extRef.current = picked.ext;
       chunksRef.current = [];
 
-      const recorder = picked.mimeType
-        ? new MediaRecorder(stream, { mimeType: picked.mimeType })
-        : new MediaRecorder(stream);
+      let recorder: MediaRecorder;
+      let requested = picked.mimeType;
+      try {
+        recorder = requested ? new MediaRecorder(stream, { mimeType: requested }) : new MediaRecorder(stream);
+      } catch {
+        // Some Safari versions report a type as supported and then refuse it:
+        // fall back to the browser default and let the real type decide.
+        requested = "";
+        recorder = new MediaRecorder(stream);
+      }
       recorderRef.current = recorder;
+      requestedTypeRef.current = requested;
 
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunksRef.current.push(e.data);
       };
+      let failed = false;
+      recorder.onerror = (e) => {
+        failed = true;
+        console.error("A gravação da nota de voz falhou.", e);
+        toast.error(VOICE_MESSAGES.recordingFailed);
+        resetToIdle();
+      };
       recorder.onstop = () => {
-        const type = recorder.mimeType || picked.mimeType || "audio/webm";
-        const blob = new Blob(chunksRef.current, { type });
+        // The recorder may still fire stop after an error: stay idle.
+        if (failed) return;
+        // Real type of the recording (Safari may ignore the requested one).
+        const realType = recorder.mimeType || chunksRef.current[0]?.type || requested;
+        recorderTypeRef.current = recorder.mimeType || "";
+        const blob = new Blob(chunksRef.current, realType ? { type: realType } : undefined);
         blobRef.current = blob;
         const url = URL.createObjectURL(blob);
         previewUrlRef.current = url;
@@ -149,8 +190,9 @@ export function VoiceRecorder({
       setMode("recording");
       timerRef.current = window.setInterval(() => setElapsed((s) => s + 1), 1000);
     } catch (err) {
+      console.error("Não foi possível iniciar a gravação da nota de voz.", err);
       cleanupStream();
-      toast.error("Permissão de microfone negada");
+      toast.error(voiceStartErrorMessage(err));
     }
   };
 
@@ -167,9 +209,23 @@ export function VoiceRecorder({
     if (!blob) return;
     setSending(true);
     try {
-      const ext = extRef.current;
-      const mimeType = blob.type || (ext === "ogg" ? "audio/ogg" : "audio/webm");
-      const name = `nota-de-voz-${Date.now()}.${ext}`;
+      // Upload format from what was ACTUALLY recorded (bytes + labels), never
+      // from the requested type: Safari records mp4/AAC → audio/mp4 + .m4a.
+      const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+      const format = resolveVoiceUploadFormat({
+        head,
+        size: blob.size,
+        recorderMimeType: recorderTypeRef.current,
+        blobType: blob.type,
+        requestedMimeType: requestedTypeRef.current,
+      });
+      if (!format.ok) {
+        console.error("Formato de nota de voz não suportado.", format.detectedType, blob.size);
+        toast.error(voiceUploadErrorMessage(format.error));
+        return;
+      }
+      const mimeType = format.mimeType;
+      const name = voiceNoteFileName(format, Date.now());
 
       // Reenvio da mesma gravação (ex.: depois de cancelar um diálogo): reusa o arquivo já enviado.
       let file = uploadedRef.current?.blob === blob ? uploadedRef.current.file : null;

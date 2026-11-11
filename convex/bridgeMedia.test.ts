@@ -11,6 +11,7 @@ import {
 import {
   bridgeSendKindForMime,
   buildBridgeMediaSendRequest,
+  voiceNoteConvertFilename,
 } from "./lib/bridgeSend";
 
 // ── Fake fixtures only. VALIDAR com gateway real no piloto (U6). ──
@@ -122,6 +123,17 @@ describe("bridgeSend media builders (pure)", () => {
     expect(bridgeSendKindForMime("audio/ogg")).toBe("audio");
     expect(bridgeSendKindForMime("video/mp4")).toBe("video");
     expect(bridgeSendKindForMime("application/pdf")).toBe("document");
+  });
+
+  test("voiceNoteConvertFilename: extensão do formato real para o /convert", () => {
+    // Safari/iPhone grava mp4/AAC; Chrome webm/opus; Firefox ogg/opus.
+    expect(voiceNoteConvertFilename("audio/mp4")).toBe("voice-note.m4a");
+    expect(voiceNoteConvertFilename("audio/mp4;codecs=mp4a.40.2")).toBe("voice-note.m4a");
+    expect(voiceNoteConvertFilename("audio/webm;codecs=opus")).toBe("voice-note.webm");
+    expect(voiceNoteConvertFilename("audio/ogg; codecs=opus")).toBe("voice-note.ogg");
+    expect(voiceNoteConvertFilename("audio/x-m4a")).toBe("voice-note.m4a");
+    expect(voiceNoteConvertFilename("application/octet-stream")).toBe("voice-note");
+    expect(voiceNoteConvertFilename("")).toBe("voice-note");
   });
 
   test("buildBridgeMediaSendRequest — image with caption", () => {
