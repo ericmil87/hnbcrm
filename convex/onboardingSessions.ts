@@ -255,6 +255,45 @@ async function writeDraft(
   return { draftHash: hash, draftVersion, flagged: scanned.flagged, blocked: scanned.blocked, released: scanned.releases.length };
 }
 
+/**
+ * Sessão mais recente da org; cria (com audit `low`) se não houver. O CHAMADOR
+ * já resolveu `settings:manage` + conta com e-mail (também usada pelo turno do
+ * onboarding por conversa, `onboardingChat.internalPrepareTurn`).
+ */
+export async function ensureOnboardingSession(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  member: Doc<"teamMembers">,
+): Promise<Doc<"onboardingSessions">> {
+  const existing = await latestSession(ctx, organizationId);
+  if (existing) return existing;
+  const now = Date.now();
+  const id = await ctx.db.insert("onboardingSessions", {
+    organizationId,
+    createdBy: member._id,
+    stage: "interview",
+    draftVersion: 0,
+    messageCount: 0,
+    spentUsdMicros: 0,
+    createdAt: now,
+    updatedAt: now,
+  });
+  const metadata = { action: "onboarding_session_created" };
+  await ctx.db.insert("auditLogs", {
+    organizationId,
+    entityType: "onboardingSession",
+    entityId: id,
+    action: "create",
+    actorId: member._id,
+    actorType: "human",
+    metadata,
+    description: buildAuditDescription({ action: "create", entityType: "onboardingSession", metadata }),
+    severity: "low",
+    createdAt: now,
+  });
+  return (await ctx.db.get(id))!;
+}
+
 // ── API pública ─────────────────────────────────────────────────────────────
 
 /** Sessão mais recente da org do chamador; cria uma se não houver. */
@@ -264,33 +303,7 @@ export const getOrCreateSession = mutation({
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
     await requireAccountWithEmail(ctx);
-    const existing = await latestSession(ctx, args.organizationId);
-    if (existing) return toView(existing);
-    const now = Date.now();
-    const id = await ctx.db.insert("onboardingSessions", {
-      organizationId: args.organizationId,
-      createdBy: member._id,
-      stage: "interview",
-      draftVersion: 0,
-      messageCount: 0,
-      spentUsdMicros: 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-    const metadata = { action: "onboarding_session_created" };
-    await ctx.db.insert("auditLogs", {
-      organizationId: args.organizationId,
-      entityType: "onboardingSession",
-      entityId: id,
-      action: "create",
-      actorId: member._id,
-      actorType: "human",
-      metadata,
-      description: buildAuditDescription({ action: "create", entityType: "onboardingSession", metadata }),
-      severity: "low",
-      createdAt: now,
-    });
-    return toView((await ctx.db.get(id))!);
+    return toView(await ensureOnboardingSession(ctx, args.organizationId, member));
   },
 });
 
