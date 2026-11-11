@@ -135,21 +135,27 @@ const INJECTION_PATTERNS: RegExp[] = [
  * o corpus de nomes reais do red team garante que eles passam.
  */
 const ORDER_PATTERNS: RegExp[] = [
-  // Dizer/responder algo ao cliente: só com "que", advérbio de ordem ou tema perigoso.
-  /\b(diga|digam|fale|responda|afirme|negue|minta)\b[^.\n]{0,20}\b(que|sempre|nunca|jamais|link|pix|humano|humana|robo|ia|senha|cpf|cartao)\b/,
-  // "Peça" verbo (pedir), não substantivo ("Peça enviada", "Peça de reposição").
-  /\bpeca (o|a|os|as|ao|aos|que|para|pra|pro|seu|sua|dados|senha|cpf|cartao)\b/,
-  // Enviar/mandar/ligar/pagar só junto de link, Pix, pagamento ou dado.
-  /\b(envie|enviar|mande|mandar|ligue|pague|pagar|transfira|solicite|exija)\b[^.\n]{0,25}\b(link|pix|pagamento|dados?|senha|cpf|cartao|chave|codigo|token)\b/,
-  /\b(finja|fingir|ignore|ignora|obedeca|revele|minta|mentir)\b/,
+  // Verbos que só existem como ordem ao atendente (nome de etapa usa infinitivo/particípio).
+  /\b(diga|digam|responda|afirme|negue|minta|mentir|finja|fingir|revele|obedeca|execute|ignore|ignora|aplique)\b/,
+  /\bsiga (as|a|o|os)\b/,
+  // "Fale com o vendedor" é etapa; "Fale mal da concorrência"/"Fale como pirata" é ordem.
+  /\bfale\b(?! com\b)/,
+  /\bchame\b[^.\n]{0,25}\b(de|ferramenta)\b/,
+  /\bmostre\b[^.\n]{0,25}\b(link|prompt|instru\w*)/,
+  // "Peça" verbo só pedindo dado/pagamento ("Peça o orçamento", "Peça enviada" passam).
+  /\bpeca\b[^.\n]{0,25}\b(senha|cpf|cartao|dados bancarios|codigo|token|pix|link|pagamento|comprovante)\b/,
+  // Enviar/mandar/ligar/pagar só junto de link, Pix, pagamento ou dado sensível.
+  /\b(envie|enviar|mande|mandar|ligue|pague|pagar|transfira|solicite|exija|informe|passe|repasse)\b[^.\n]{0,25}\b(link|pix|pagamento|senha|cpf|cartao|chave|codigo|token|dados bancarios|conta)\b/,
+  // Texto de sistema dentro do nome.
+  /\b(instrucao|instrucoes|prompt|regras d[oa])\b/,
   // Identidade: "é/sou/ser humano", "não é robô"; "Atendimento humano" passa.
   /\b(e|eh|sou|ser|seja|finja|fingir|se passe por)\b[^.\n]{0,15}\b(humano|humana|pessoa real|robo)\b/,
   /\bnao (e|eh|sou) (uma? )?(ia|robo|bot|maquina)\b/,
-  /\bprompt\b/,
 ];
 const STRUCTURAL_PATTERNS: RegExp[] = [
   ...ORDER_PATTERNS,
-  /\b(nunca|sempre|jamais)\b/,
+  // "sempre" sozinho fica ("Cliente sempre ativo"); ordem com ele cai nos verbos acima.
+  /\b(nunca|jamais)\b/,
   /\b(voce|voces|vc|tu)\b/,
 ];
 /** Nome/opção de campo: só as ordens ("Você já é cliente?" e "Ferramenta atual" são legítimos). */
@@ -199,20 +205,37 @@ const PIX_KEY_SRC =
   "(?:\\+?\\d[\\d\\s().-]{8,}\\d|[a-z0-9._%+-]+@[a-z0-9.-]+\\.[a-z]{2,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|\\d{3}\\.?\\d{3}\\.?\\d{3}-?\\d{2}|\\d{2}\\.?\\d{3}\\.?\\d{3}\\/?\\d{4}-?\\d{2})";
 /** Um caractere da MESMA frase: ponto só conta como fim de frase antes de espaço/fim ("R$ 1.000", "x@y.com" seguem). */
 const SAME_SENTENCE = "(?:[^.!?\\n]|\\.(?=\\S))";
-const PIX_CONNECTOR = "(?:\\bpara\\b|\\bpra\\b|:|\\bchave\\b|\\bcopia e cola\\b|\\bkey\\b|\\bto\\b)";
+/**
+ * Conector de entrega entre "pix" e a chave (janela maior). "é" só com espaço
+ * em volta (o `\b` do JS não vê letra acentuada); na forma dobrada vira "e" e
+ * não conta ("Pix e cartão" é forma de pagamento, não chave). Hífen só
+ * cercado de espaço (o de "3333-4444" não é conector).
+ */
+const PIX_CONNECTOR =
+  "(?:\\bpara\\b|\\bpra\\b|\\bpro\\b|\\bao\\b|:|=|\\s[-–]\\s|\\bchave\\b|\\bcopia e cola\\b|\\bkey\\b|\\bto\\b|\\beh\\b|\\sé\\s)";
+/** Janela curta: "pix" e a chave a até ~20 caracteres na mesma frase, em qualquer ordem, sem conector. */
+const PIX_NEAR = 20;
 const PIX_KEY_RES: RegExp[] = [
-  // pix … conector … chave
-  new RegExp(`\\bpix\\b${SAME_SENTENCE}{0,40}?${PIX_CONNECTOR}${SAME_SENTENCE}{0,30}?${PIX_KEY_SRC}`, "i"),
-  // "pix no 1198…", "pix 1198…" (chave colada logo depois)
-  new RegExp(`\\bpix(?:\\s+no)?\\s*[-–]?\\s*${PIX_KEY_SRC}`, "i"),
+  // pix … conector … chave (a chave logo depois do conector: "Pix: consulte
+  // condições pelo (11) 9…" e "Pix …, dúvidas no (11) 9…" não são entrega;
+  // "no"/"na" só valem na janela curta abaixo).
+  new RegExp(`\\bpix\\b${SAME_SENTENCE}{0,40}?${PIX_CONNECTOR}${SAME_SENTENCE}{0,15}?${PIX_KEY_SRC}`, "i"),
+  // Linha só com "Pix"/"Chave Pix:" e a chave na linha seguinte.
+  new RegExp(`(?:^|\\n)[ \\t]*(?:chave[ \\t]+)?pix[ \\t]*:?[ \\t]*\\n[ \\t]*${PIX_KEY_SRC}`, "i"),
+  // "O Pix é 1198…", "Pix (CPF) 123…", "pix no número 1198…" (perto, sem conector)
+  new RegExp(`\\bpix\\b${SAME_SENTENCE}{0,${PIX_NEAR}}?${PIX_KEY_SRC}`, "i"),
+  // "golpe@x.com é o nosso pix", "Chave: 1198… (Pix)" (chave antes, perto)
+  new RegExp(`${PIX_KEY_SRC}${SAME_SENTENCE}{0,${PIX_NEAR}}?\\bpix\\b`, "i"),
   // chave … pix … chave ("chave do pix é x@y.com")
   new RegExp(`\\bchave\\b${SAME_SENTENCE}{0,20}?\\bpix\\b${SAME_SENTENCE}{0,30}?${PIX_KEY_SRC}`, "i"),
 ];
 const PIX_KEY_GLOBAL = new RegExp(PIX_KEY_SRC, "gi");
 
 function pixForms(text: string): string[] {
-  // Também na forma dobrada: "Рix" com Р cirílico é o mesmo pedido.
-  return [cleanDraftText(text, true), foldForMatching(text)];
+  // Também na forma dobrada ("Рix" com Р cirílico) e com "P I X"/"p.i.x" juntado.
+  const cleaned = cleanDraftText(text, true);
+  const joined = cleaned.replace(/\bp[\s._-]+i[\s._-]+x\b/gi, "pix");
+  return [cleaned, foldForMatching(text), joined];
 }
 
 export function hasPixKey(text: string): boolean {
@@ -367,7 +390,14 @@ export function scanDraftText(text: string, ctx: ScanContext = {}): ScanResult {
  * mais os padrões de ordem ao modelo. `field` usa a lista reduzida.
  */
 export function scanStructuralText(text: string, kind: "structural" | "field" = "structural"): ScanResult {
-  const base = scanDraftText(text);
+  let base = scanDraftText(text);
+  // Nome de etapa que só CITA pagamento ("Envio do link de pagamento") não é
+  // entrega: sem chave Pix, URL nem EMV, o código "pagamento" sai; a ordem
+  // ("Informe o link de pagamento") cai nos padrões de ordem abaixo.
+  if (base.codes.includes("pagamento") && !hasPixKey(text) && !/https?:\/\/|www\.|br\.gov\.bcb\.pix/i.test(text)) {
+    const codes = base.codes.filter((c) => c !== "pagamento");
+    base = { suspicious: codes.length > 0, codes, reason: codes.length > 0 ? codes.map((c) => SUSPICION_LABELS[c]).join("; ") : undefined };
+  }
   const folded = foldForMatching(text);
   const leet = foldForMatching(text, { leet: true });
   const patterns = kind === "field" ? FIELD_PATTERNS : STRUCTURAL_PATTERNS;

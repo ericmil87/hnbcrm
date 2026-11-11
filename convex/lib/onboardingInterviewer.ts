@@ -180,10 +180,15 @@ export function replyPolicyViolation(
   ].filter(Boolean);
   if (keys.length > 0) {
     const userText = (opts.userTexts ?? []).join("\n");
+    // Comparação por TOKEN inteiro (nunca substring do texto todo: "R$ 11999 e
+    // 990000" não "contém" 11999990000, e golpe@x.com não é golpe@x.com.br).
     const userKeys = new Set(keyTokensIn(userText));
-    const userDigits = userText.replace(/\D/g, "");
-    const userLower = userText.toLowerCase();
-    const fromUser = (k: string) => userKeys.has(k) || (/^\d+$/.test(k) ? k.length >= 8 && userDigits.includes(k) : userLower.includes(k));
+    const userRuns = (userText.match(/\+?\d[\d\s().-]{6,}\d/g) ?? []).map((r) => r.replace(/\D/g, ""));
+    const userWords = new Set(userText.toLowerCase().split(/\s+/).map((w) => w.replace(/^[^\w@]+|[^\w@]+$/g, "")).filter(Boolean));
+    const sameNumber = (a: string, b: string) => a === b || (a.length >= 10 && b.endsWith(a) && b.length - a.length <= 3);
+    const fromUser = (k: string) =>
+      userKeys.has(k) ||
+      (/^\d+$/.test(k) ? userRuns.some((r) => sameNumber(k, r) || sameNumber(r, k)) : userWords.has(k));
     if (keys.some((k) => !fromUser(k))) return "pagamento";
   }
   const lower = text.toLowerCase();
