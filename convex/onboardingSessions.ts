@@ -1,24 +1,20 @@
 /**
  * Onboarding conversacional v2 (P2.1): sessão por org + Rascunho de Operação.
  *
- * - Gravar o rascunho (`saveDraft`, `internalSaveDraft`) só VALIDA, normaliza,
- *   passa o filtro anti-instrução e grava. Nunca aplica configuração.
- * - A única escrita de configuração é `applyOnboardingDraft` (clique do
- *   usuário) → `lib/onboardingApply.ts`, pelas portas existentes.
- * - Tudo exige `settings:manage` na org do chamador; sessão de outra org é
- *   recusada como "não encontrada".
+ * - Gravar o rascunho (`saveDraft` pela pessoa, `internalSaveDraft` pelo
+ *   pipeline de IA) só VALIDA, normaliza, passa o filtro anti-instrução e
+ *   grava. Nunca aplica configuração.
+ * - A ÚNICA escrita de configuração é a mutation pública
+ *   `applyOnboardingDraft` (clique do usuário) → `lib/onboardingApply.ts`,
+ *   pelas portas existentes. Não existe caminho interno de aplicação.
+ * - Tudo exige `settings:manage` + conta com e-mail na org do chamador;
+ *   sessão de outra org é recusada como "não encontrada".
  */
 import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalMutation, internalQuery, mutation, query, MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  getActiveMembership,
-  isMembershipRevoked,
-  requireAccountWithEmail,
-  requirePermission,
-} from "./lib/auth";
-import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { assertValidDraft, draftHash, onboardingDraftValidator, type OnboardingDraft } from "./lib/onboardingDraft";
 import { scanDraft, type DraftSourceText } from "./lib/onboardingDraftFilter";
 import { applyOnboardingDraftCore, type ApplyResult } from "./lib/onboardingApply";
@@ -58,8 +54,12 @@ const sessionValidator = v.object({
 const saveResultValidator = v.object({
   draftHash: v.string(),
   draftVersion: v.number(),
-  /** Itens marcados pelo filtro anti-instrução (não entram na aplicação). */
+  /** Itens marcados pelo filtro anti-instrução (só entram se liberados por uma pessoa). */
   flagged: v.number(),
+  /** Textos estruturais marcados (etapas, campos, nome): bloqueiam a aplicação até serem editados. */
+  blocked: v.number(),
+  /** Liberações novas registradas nesta gravação (só `saveDraft`). */
+  released: v.number(),
 });
 
 const featureOutcomeValidator = v.union(
@@ -86,8 +86,15 @@ const applyResultValidator = v.object({
   fieldsUpdated: v.number(),
   quickRepliesCreated: v.number(),
   quickRepliesSkipped: v.number(),
+  attendant: v.union(
+    v.literal("created"),
+    v.literal("updated"),
+    v.literal("overwritten"),
+    v.literal("skipped_existing"),
+    v.literal("pending_consent"),
+    v.literal("unchanged"),
+  ),
   attendantId: v.union(v.id("teamMembers"), v.null()),
-  attendantCreated: v.boolean(),
   attendantModeReset: v.boolean(),
   skippedSuspicious: v.object({
     knowledge: v.number(),
@@ -148,36 +155,19 @@ async function loadSessionOfOrg(
   return session;
 }
 
-/** Membro ativo, humano, com `settings:manage` e conta com e-mail (caminho interno). */
-async function requireActorMember(
-  ctx: MutationCtx,
-  organizationId: Id<"organizations">,
-  actorMemberId: Id<"teamMembers">,
-): Promise<Doc<"teamMembers">> {
-  const member = await ctx.db.get(actorMemberId);
-  if (!member || member.organizationId !== organizationId || isMembershipRevoked(member)) {
-    throw new ConvexError("Membro não encontrado nesta organização");
-  }
-  if (member.type !== "human" || !member.userId) throw new ConvexError("Só uma pessoa da equipe pode fazer isso");
-  const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
-  if (!hasPermission(perms, "settings", "manage")) throw new Error("Permissão insuficiente");
-  await requireAccountWithEmail(ctx, member.userId);
-  return member;
-}
-
 async function writeDraft(
   ctx: MutationCtx,
   params: {
     session: Doc<"onboardingSessions">;
     draft: OnboardingDraft;
     by: "user" | "ai";
+    expectedVersion: number;
     sourceTexts?: DraftSourceText[];
-    expectedVersion?: number;
-    actorId?: Id<"teamMembers">;
+    actor?: Doc<"teamMembers">;
   },
 ) {
   const { session } = params;
-  if (params.expectedVersion !== undefined && params.expectedVersion !== session.draftVersion) {
+  if (params.expectedVersion !== session.draftVersion) {
     throw new ConvexError("O rascunho foi alterado em outro lugar. Recarregue e tente de novo.");
   }
   if ((params.sourceTexts?.length ?? 0) > SOURCE_TEXTS_MAX) {
@@ -187,13 +177,24 @@ async function writeDraft(
     reference: s.reference,
     text: s.text.slice(0, SOURCE_TEXT_MAX),
   }));
-  const normalized = assertValidDraft(params.draft);
-  // As marcas `suspicious` são SEMPRE recalculadas aqui (o valor de entrada é ignorado).
-  const { draft, flagged } = scanDraft(normalized, { sourceTexts, previous: session.draft ?? null });
-  const hash = await draftHash(draft);
   const now = Date.now();
+  const normalized = assertValidDraft(params.draft);
+  // Marcas, verificação na fonte, liberações e bloqueios são SEMPRE
+  // recalculados aqui; o valor de entrada não vale.
+  const scanned = scanDraft(normalized, {
+    mode: params.by,
+    sourceTexts,
+    previous: session.draft ?? null,
+    actorId: params.actor?._id,
+    now,
+  });
+  // Renormaliza o resultado do filtro: o que é gravado é o que o hash cobre.
+  const draft = assertValidDraft(scanned.draft);
+  const hash = await draftHash(draft);
   const nextStage =
-    session.stage === "interview" || session.stage === "materials" || (session.stage === "applied" && hash !== session.appliedDraftHash)
+    session.stage === "interview" ||
+    session.stage === "materials" ||
+    (session.stage === "applied" && hash !== session.appliedDraftHash)
       ? "draft"
       : session.stage;
   const draftVersion = session.draftVersion + 1;
@@ -205,7 +206,53 @@ async function writeDraft(
     stage: nextStage,
     updatedAt: now,
   });
-  return { draftHash: hash, draftVersion, flagged };
+
+  const actorFields = params.actor
+    ? { actorId: params.actor._id, actorType: "human" as const }
+    : { actorType: "system" as const };
+  const metadata = {
+    action: "onboarding_draft_saved",
+    by: params.by,
+    draftVersion,
+    draftHash: hash.slice(0, 16),
+    flagged: scanned.flagged,
+    blocked: scanned.blocked,
+  };
+  await ctx.db.insert("auditLogs", {
+    organizationId: session.organizationId,
+    entityType: "onboardingSession",
+    entityId: session._id,
+    action: "update",
+    ...actorFields,
+    metadata,
+    description: buildAuditDescription({ action: "update", entityType: "onboardingSession", metadata }),
+    severity: "low",
+    createdAt: now,
+  });
+  // Liberação humana de item marcado: aviso aceito explicitamente, auditado
+  // com o motivo (o texto do item fica fora do log).
+  if (scanned.releases.length > 0) {
+    await ctx.db.insert("auditLogs", {
+      organizationId: session.organizationId,
+      entityType: "onboardingSession",
+      entityId: session._id,
+      action: "update",
+      ...actorFields,
+      metadata: {
+        action: "onboarding_items_released",
+        draftVersion,
+        releases: scanned.releases.map((r) => ({
+          field: r.field,
+          reason: r.reason,
+          ...(r.suspicionReason ? { suspicionReason: r.suspicionReason } : {}),
+        })),
+      },
+      description: `Liberou ${scanned.releases.length} item(ns) marcado(s) pelo filtro do onboarding para entrar na operação`,
+      severity: "high",
+      createdAt: now,
+    });
+  }
+  return { draftHash: hash, draftVersion, flagged: scanned.flagged, blocked: scanned.blocked, released: scanned.releases.length };
 }
 
 // ── API pública ─────────────────────────────────────────────────────────────
@@ -261,15 +308,16 @@ export const getSession = query({
 });
 
 /**
- * Grava o rascunho editado pelo usuário ("Ajustar"). Só valida e grava; nunca
- * aplica. `expectedVersion` (opcional) recusa gravar sobre uma versão mais nova.
+ * Grava o rascunho editado pela pessoa ("Ajustar" / "Liberar mesmo assim").
+ * Só valida e grava; nunca aplica. `expectedVersion` = `draftVersion` que a
+ * tela tinha (recusa gravar sobre uma versão mais nova).
  */
 export const saveDraft = mutation({
   args: {
     organizationId: v.id("organizations"),
     sessionId: v.id("onboardingSessions"),
     draft: onboardingDraftValidator,
-    expectedVersion: v.optional(v.number()),
+    expectedVersion: v.number(),
   },
   returns: saveResultValidator,
   handler: async (ctx, args) => {
@@ -281,7 +329,7 @@ export const saveDraft = mutation({
       draft: args.draft,
       by: "user",
       expectedVersion: args.expectedVersion,
-      actorId: member._id,
+      actor: member,
     });
   },
 });
@@ -292,30 +340,32 @@ export const applyOnboardingDraft = mutation({
     organizationId: v.id("organizations"),
     sessionId: v.id("onboardingSessions"),
     /** Hash do rascunho que a pessoa revisou; diferente do gravado = recusa. */
-    expectedDraftHash: v.optional(v.string()),
+    expectedDraftHash: v.string(),
+    /**
+     * A org já tinha atendente (não criado por esta sessão): só sobrescreve a
+     * persona/conhecimento dele com este `true` explícito (audit `high` com o
+     * texto anterior). Ausente = mantém o atendente e devolve `skipped_existing`.
+     */
+    overwriteExistingAttendant: v.optional(v.boolean()),
   },
   returns: applyResultValidator,
   handler: async (ctx, args): Promise<ApplyResult> => {
     const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
     await requireAccountWithEmail(ctx);
-    return await applyAsMember(ctx, args.organizationId, args.sessionId, member, args.expectedDraftHash);
+    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) throw new ConvexError("Organização não encontrada");
+    return await applyOnboardingDraftCore(ctx, {
+      org,
+      member,
+      session,
+      expectedDraftHash: args.expectedDraftHash,
+      overwriteExistingAttendant: args.overwriteExistingAttendant === true,
+    });
   },
 });
 
-async function applyAsMember(
-  ctx: MutationCtx,
-  organizationId: Id<"organizations">,
-  sessionId: Id<"onboardingSessions">,
-  member: Doc<"teamMembers">,
-  expectedDraftHash: string | undefined,
-): Promise<ApplyResult> {
-  const session = await loadSessionOfOrg(ctx, organizationId, sessionId);
-  const org = await ctx.db.get(organizationId);
-  if (!org) throw new ConvexError("Organização não encontrada");
-  return await applyOnboardingDraftCore(ctx, { org, member, session, expectedDraftHash });
-}
-
-// ── API interna (pipeline de IA do P2.3 e testes) ───────────────────────────
+// ── API interna (pipeline de IA do P2.3) — nunca aplica ─────────────────────
 
 /** Leitura da sessão para o pipeline (já resolvido o membro/org no chamador). */
 export const internalGetSession = internalQuery({
@@ -330,17 +380,18 @@ export const internalGetSession = internalQuery({
 
 /**
  * Proposta do entrevistador/leitor (P2.3): mesma validação e filtro do
- * caminho do usuário; `sourceTexts` (texto extraído de site/PDF/áudio/imagem,
- * casado por `origin.reference`) permite reconhecer URL/telefone vistos na
- * fonte. Nunca aplica configuração.
+ * caminho da pessoa, com três diferenças: a origem "usuario"/"template" é
+ * rebaixada para externa, liberações são zeradas e `sourceTexts` (texto
+ * extraído de site/PDF/áudio/imagem, casado por `origin.reference`) permite
+ * reconhecer link/telefone vistos na fonte (`verifiedInSource`).
  */
 export const internalSaveDraft = internalMutation({
   args: {
     organizationId: v.id("organizations"),
     sessionId: v.id("onboardingSessions"),
     draft: onboardingDraftValidator,
+    expectedVersion: v.number(),
     sourceTexts: v.optional(v.array(v.object({ reference: v.string(), text: v.string() }))),
-    expectedVersion: v.optional(v.number()),
   },
   returns: saveResultValidator,
   handler: async (ctx, args) => {
@@ -379,24 +430,5 @@ export const internalUpdateSummary = internalMutation({
       updatedAt: Date.now(),
     });
     return null;
-  },
-});
-
-/**
- * Aplicação pelo caminho interno (mesmo core do clique). Exige um membro
- * humano ativo com `settings:manage` e conta com e-mail; não existe caminho
- * sem pessoa por trás.
- */
-export const internalApplyOnboardingDraft = internalMutation({
-  args: {
-    organizationId: v.id("organizations"),
-    sessionId: v.id("onboardingSessions"),
-    actorMemberId: v.id("teamMembers"),
-    expectedDraftHash: v.optional(v.string()),
-  },
-  returns: applyResultValidator,
-  handler: async (ctx, args): Promise<ApplyResult> => {
-    const member = await requireActorMember(ctx, args.organizationId, args.actorMemberId);
-    return await applyAsMember(ctx, args.organizationId, args.sessionId, member, args.expectedDraftHash);
   },
 });

@@ -11,6 +11,7 @@
  * invisíveis/controle e REJEITA o que excede: nada é truncado em silêncio).
  */
 import { ConvexError, v, type Infer } from "convex/values";
+import type { Id } from "../_generated/dataModel";
 import { languageCodeValidator } from "./languages";
 
 // ── Limites (tamanho em code units após a normalização; contagem por lista) ──
@@ -35,6 +36,8 @@ export const DRAFT_LIMITS = {
   knowledgeText: 500,
   originReference: 300,
   suspicionReason: 200,
+  releaseReason: 200,
+  blockedMax: 40,
   quickRepliesMax: 20,
   quickReplyShortcut: 24,
   quickReplyText: 1000,
@@ -109,7 +112,36 @@ const originValidator = v.object({
 const flagFields = {
   suspicious: v.boolean(),
   suspicionReason: v.optional(v.string()),
+  /**
+   * Definido SÓ pelo servidor: o leitor gravou com a fonte e todo link/telefone
+   * do item aparece nela. Preservado enquanto texto e origem não mudam.
+   */
+  verifiedInSource: v.optional(v.boolean()),
+  /**
+   * Liberação HUMANA de um item marcado ("avisar, não travar"): só pelo
+   * `saveDraft` do usuário (o caminho da IA zera o campo); `by`/`at` são
+   * preenchidos pelo servidor e auditados. Item liberado entra na aplicação.
+   */
+  release: v.optional(
+    v.object({
+      reason: v.string(),
+      by: v.optional(v.id("teamMembers")),
+      at: v.optional(v.number()),
+    }),
+  ),
 };
+
+export type DraftFlags = {
+  suspicious: boolean;
+  suspicionReason?: string;
+  verifiedInSource?: boolean;
+  release?: { reason: string; by?: Id<"teamMembers">; at?: number };
+};
+
+/** Item entra na aplicação: não marcado, ou marcado e liberado por uma pessoa. */
+export function isApplicable(item: DraftFlags): boolean {
+  return !item.suspicious || item.release?.at !== undefined;
+}
 
 const handoffKindValidator = v.union(
   v.literal("pedido_humano"),
@@ -193,6 +225,13 @@ export const onboardingDraftValidator = v.object({
     translation: v.boolean(),
     voice: v.boolean(),
   }),
+  /**
+   * Marcas BLOQUEANTES em textos que entram no prompt fora do envelope (nome
+   * do funil e das etapas, campos e opções, nome do atendente). Calculadas só
+   * pelo servidor; com qualquer item aqui a aplicação é recusada até a pessoa
+   * EDITAR o texto (não há liberação para estes).
+   */
+  blocked: v.optional(v.array(v.object({ field: v.string(), label: v.string(), reason: v.string() }))),
   planInterest: v.optional(
     v.union(
       v.literal("essencial"),
@@ -276,6 +315,21 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
   };
   const reason = (raw: string | undefined) =>
     raw === undefined ? undefined : cleanDraftText(raw).slice(0, L.suspicionReason) || undefined;
+  const flags = (label: string, item: DraftFlags): DraftFlags => {
+    const out: DraftFlags = { suspicious: item.suspicious };
+    const r = reason(item.suspicionReason);
+    if (r) out.suspicionReason = r;
+    if (item.verifiedInSource === true) out.verifiedInSource = true;
+    if (item.release) {
+      const why = text(`Motivo da liberação (${label})`, item.release.reason, L.releaseReason, { required: true });
+      out.release = {
+        reason: why,
+        ...(item.release.by !== undefined ? { by: item.release.by } : {}),
+        ...(item.release.at !== undefined ? { at: item.release.at } : {}),
+      };
+    }
+    return out;
+  };
   const count = (label: string, n: number, max: number, min = 0) => {
     if (n > max) errors.push(`${label}: no máximo ${max}`);
     if (n < min) errors.push(`${label}: no mínimo ${min}`);
@@ -289,8 +343,7 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
       multiline: true,
     }),
     city: optText("Cidade", input.business.city, L.businessCity),
-    suspicious: input.business.suspicious,
-    suspicionReason: reason(input.business.suspicionReason),
+    ...flags("negócio", input.business),
   };
 
   // Funil
@@ -360,8 +413,7 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
   const greeting = input.greeting
     ? {
         text: text("Saudação", input.greeting.text, L.greeting, { required: true, multiline: true }),
-        suspicious: input.greeting.suspicious,
-        suspicionReason: reason(input.greeting.suspicionReason),
+        ...flags("saudação", input.greeting),
       }
     : undefined;
 
@@ -374,8 +426,7 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
         ? { reference: optText(`Origem do conhecimento ${i + 1}`, k.origin.reference, L.originReference) }
         : {}),
     },
-    suspicious: k.suspicious,
-    suspicionReason: reason(k.suspicionReason),
+    ...flags(`conhecimento ${i + 1}`, k),
   }));
   for (const k of knowledge) if (k.origin.reference === undefined) delete k.origin.reference;
 
@@ -388,8 +439,7 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
     return {
       shortcut,
       text: text(`Resposta rápida ${i + 1}`, q.text, L.quickReplyText, { required: true, multiline: true }),
-      suspicious: q.suspicious,
-      suspicionReason: reason(q.suspicionReason),
+      ...flags(`resposta rápida ${i + 1}`, q),
     };
   });
   if (new Set(quickReplies.map((q) => q.shortcut)).size !== quickReplies.length) {
@@ -416,8 +466,13 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
   const handoffRules = input.handoffRules.map((r, i) => ({
     kind: r.kind,
     note: optText(`Regra de repasse ${i + 1}`, r.note, L.handoffNote),
-    suspicious: r.suspicious,
-    suspicionReason: reason(r.suspicionReason),
+    ...flags(`regra de repasse ${i + 1}`, r),
+  }));
+
+  const blocked = input.blocked?.slice(0, L.blockedMax).map((b) => ({
+    field: cleanDraftText(b.field).slice(0, 80),
+    label: cleanDraftText(b.label).slice(0, 120),
+    reason: cleanDraftText(b.reason).slice(0, L.suspicionReason),
   }));
 
   if (errors.length > 0) return { ok: false, errors };
@@ -440,6 +495,7 @@ export function normalizeDraft(input: OnboardingDraft): NormalizeResult {
       translation: input.features.translation,
       voice: input.features.voice,
     },
+    ...(blocked && blocked.length > 0 ? { blocked } : {}),
     ...(input.planInterest ? { planInterest: input.planInterest } : {}),
   };
   return { ok: true, draft };

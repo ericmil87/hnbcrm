@@ -21,7 +21,9 @@
  * acentos: "іgnоre" (cirílico) e "ig\u200Bnore" caem no mesmo padrão.
  */
 import { detectLeakedModelMarkup } from "./llmOutputGuard";
+import type { Id } from "../_generated/dataModel";
 import {
+  DRAFT_LIMITS,
   cleanDraftText,
   type KnowledgeOriginKind,
   type OnboardingDraft,
@@ -121,16 +123,21 @@ const PAYMENT_PATTERNS: RegExp[] = [
   /\b(mpago\.la|link\.mercadopago|pag\.ae|pagseguro\.uol|picpay\.me|nubank\.com\.br\/cobrar|buy\.stripe\.com|paypal\.me|checkout\.\w+)/i,
 ];
 
+// URL com esquema/www, ou domínio sem esquema num TLD comum (genéricos,
+// encurtadores e ccTLDs frequentes no Brasil/LatAm/Europa).
 const URL_RE =
-  /\b(?:https?:\/\/|www\.)[^\s<>"')]+|\b[a-z0-9][a-z0-9-]{1,62}\.(?:com|net|org|io|app|me|br|co|info|biz|link|site|shop|store|xyz|ly|gl|to)(?:\.[a-z]{2})?(?:\/[^\s<>"')]*)?/gi;
+  /\b(?:https?:\/\/|www\.)[^\s<>"')]+|\b(?:[a-z0-9][a-z0-9-]{0,62}\.)+(?:com|net|org|io|app|dev|ai|me|br|pt|es|ar|mx|cl|co|uy|py|pe|us|uk|de|fr|it|ru|cn|in|eu|info|biz|link|site|online|tech|page|shop|store|xyz|top|club|tv|cc|gg|ly|gl|to|sh|so|vc|ws|bio|lat)\b(?:\/[^\s<>"')]*)?/gi;
 const PHONE_RE = /(?:\+?\d[\d\s().-]{6,}\d)/g;
 
-function normalizeUrl(u: string): string {
+/** Host de uma URL (com ou sem esquema), minúsculo, sem `www.` nem porta. */
+export function hostOf(u: string): string {
   return u
     .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
-    .replace(/[/.,;:!?]+$/, "");
+    .split(/[/?#]/)[0]
+    .replace(/:\d+$/, "")
+    .replace(/[.,;:!]+$/, "");
 }
 
 /** Cartão de verdade passa no Luhn; telefone com 13 dígitos quase nunca. */
@@ -183,10 +190,12 @@ export function scanDraftText(text: string, ctx: ScanContext = {}): ScanResult {
   const selfSourced = ctx.originKind === "usuario" || ctx.originKind === "template";
   if (!selfSourced) {
     const source = ctx.sourceText ? cleanDraftText(ctx.sourceText, true) : "";
-    const sourceUrls = source.toLowerCase();
+    // Comparação por HOST: "exemplo.com.golpe.ru" não passa só porque a fonte
+    // cita "exemplo.com".
+    const sourceHosts = new Set((source.match(URL_RE) ?? []).map(hostOf));
     const sourceDigits = digitsOf(source);
     for (const m of cleaned.match(URL_RE) ?? []) {
-      if (!sourceUrls.includes(normalizeUrl(m))) {
+      if (!sourceHosts.has(hostOf(m))) {
         codes.add("url_fora_da_origem");
         break;
       }
@@ -215,99 +224,213 @@ export function scanDraftText(text: string, ctx: ScanContext = {}): ScanResult {
 
 export type DraftSourceText = { reference: string; text: string };
 
-function flag<T extends { suspicious: boolean; suspicionReason?: string }>(item: T, result: ScanResult): T {
+/** Liberação nova feita por uma pessoa nesta gravação (vai para o audit). */
+export type ReleaseEvent = { field: string; reason: string; suspicionReason?: string };
+
+type Flagged = {
+  suspicious: boolean;
+  suspicionReason?: string;
+  verifiedInSource?: boolean;
+  release?: { reason: string; by?: Id<"teamMembers">; at?: number };
+};
+
+const EXTERNAL_KINDS: KnowledgeOriginKind[] = ["site", "pdf", "imagem", "audio"];
+
+/**
+ * Origem que o MODELO pode alegar: nunca "usuario" nem "template" (isso
+ * dispensaria a checagem de link/telefone). Rebaixa para uma origem externa
+ * deduzida da referência (extensão do arquivo; o resto vira "site").
+ */
+export function externalOriginFor(origin: { kind: KnowledgeOriginKind; reference?: string }): {
+  kind: KnowledgeOriginKind;
+  reference?: string;
+} {
+  if (EXTERNAL_KINDS.includes(origin.kind)) return origin;
+  const ref = (origin.reference ?? "").toLowerCase();
+  const kind: KnowledgeOriginKind = /\.pdf(\b|$)/.test(ref)
+    ? "pdf"
+    : /\.(png|jpe?g|webp|gif|heic)(\b|$)/.test(ref)
+      ? "imagem"
+      : /\.(mp3|m4a|ogg|opus|wav|aac|webm)(\b|$)/.test(ref)
+        ? "audio"
+        : "site";
+  return { ...origin, kind };
+}
+
+function flag<T extends Flagged>(item: T, result: ScanResult): T {
   const out = { ...item, suspicious: result.suspicious };
-  if (result.reason) out.suspicionReason = result.reason;
+  // Cortado no limite do rascunho: o hash fica estável ao renormalizar.
+  if (result.reason) out.suspicionReason = cleanDraftText(result.reason).slice(0, DRAFT_LIMITS.suspicionReason).trim();
   else delete out.suspicionReason;
   return out;
 }
 
+export type ScanOptions = {
+  /** `user` = `saveDraft` (pessoa); `ai` = proposta do entrevistador/leitor. */
+  mode: "user" | "ai";
+  sourceTexts?: DraftSourceText[];
+  previous?: OnboardingDraft | null;
+  /** Quem libera (modo `user`). */
+  actorId?: Id<"teamMembers">;
+  now?: number;
+};
+
 /**
  * Recalcula TODAS as marcas do rascunho (o valor que veio do cliente/modelo é
- * descartado). `sourceTexts` casa por `origin.reference` (ou por posição, sem
- * referência, nunca). `sticky` mantém marcado um item cujo texto e origem não
- * mudaram desde uma marcação anterior que tinha mais contexto (ex.: o leitor
- * marcou com a fonte; o usuário regrava o rascunho sem a fonte): só editar o
- * texto limpa a marca.
+ * descartado) e as marcas bloqueantes dos textos estruturais.
+ *
+ * - `sourceTexts` casa por `origin.reference`. No modo `ai`, item com fonte e
+ *   sem link/telefone fora dela recebe `verifiedInSource` (só o servidor marca).
+ * - `previous`: item com texto e origem iguais herda a marca anterior
+ *   (`sticky`), o `verifiedInSource` e a liberação já registrada.
+ * - Liberação: só no modo `user`, só para item marcado; nova liberação recebe
+ *   `by`/`at` e entra em `releases` (audit). No modo `ai` é sempre zerada.
  */
 export function scanDraft(
-  draft: OnboardingDraft,
-  opts: { sourceTexts?: DraftSourceText[]; previous?: OnboardingDraft | null } = {},
-): { draft: OnboardingDraft; flagged: number } {
+  input: OnboardingDraft,
+  opts: ScanOptions,
+): { draft: OnboardingDraft; flagged: number; blocked: number; releases: ReleaseEvent[] } {
+  const isAi = opts.mode === "ai";
+  const now = opts.now ?? 0;
   const sources = new Map<string, string>();
   for (const s of opts.sourceTexts ?? []) {
     const key = cleanDraftText(s.reference);
     sources.set(key, `${sources.get(key) ?? ""}\n${s.text}`);
   }
   const prev = opts.previous ?? null;
-  const prevKnowledge = new Map(
-    (prev?.knowledge ?? [])
-      .filter((k) => k.suspicious)
-      .map((k) => [`${k.origin.kind}|${k.origin.reference ?? ""}|${k.text}`, k.suspicionReason]),
-  );
-  const sticky = (result: ScanResult, prevReason: string | undefined, wasFlagged: boolean): ScanResult => {
-    if (result.suspicious || !wasFlagged) return result;
-    return { suspicious: true, codes: [], reason: prevReason ?? "marcado para revisão antes" };
-  };
+  const releases: ReleaseEvent[] = [];
   let flagged = 0;
-  const count = <T extends { suspicious: boolean }>(item: T): T => {
-    if (item.suspicious) flagged++;
-    return item;
+
+  // Origem: no caminho da IA nunca "usuario"/"template".
+  const draft: OnboardingDraft = isAi
+    ? { ...input, knowledge: input.knowledge.map((k) => ({ ...k, origin: externalOriginFor(k.origin) })) }
+    : input;
+  // "Própria fonte" vale só para quem digitou: a pessoa (modo user).
+  const ownKind: KnowledgeOriginKind | undefined = isAi ? undefined : "usuario";
+
+  /**
+   * Fecha um item: marca recalculada (+ sticky), verificação herdada e
+   * liberação (só pessoa, só item marcado).
+   */
+  const finish = <T extends Flagged>(
+    field: string,
+    item: T,
+    result: ScanResult,
+    previousItem: Flagged | undefined,
+    verifiedNow = false,
+  ): T => {
+    let r = result;
+    if (!r.suspicious && previousItem?.suspicious) {
+      r = { suspicious: true, codes: [], reason: previousItem.suspicionReason ?? "marcado para revisão antes" };
+    }
+    const out = flag(item, r);
+    delete out.verifiedInSource;
+    if (verifiedNow || (!isAi && previousItem?.verifiedInSource === true)) out.verifiedInSource = true;
+    const wanted = isAi ? undefined : item.release;
+    delete out.release;
+    if (out.suspicious && wanted) {
+      const prevRelease = previousItem?.release;
+      if (prevRelease?.at !== undefined && prevRelease.reason === wanted.reason) {
+        out.release = prevRelease;
+      } else {
+        out.release = { reason: wanted.reason, ...(opts.actorId ? { by: opts.actorId } : {}), at: now };
+        releases.push({ field, reason: wanted.reason, suspicionReason: out.suspicionReason });
+      }
+    }
+    if (out.suspicious) flagged++;
+    return out;
   };
 
-  // Dados do negócio e notas: digitados/confirmados no chat (sem fonte própria).
+  // Negócio
   const businessText = [draft.business.name, draft.business.description, draft.business.city ?? ""].join("\n");
-  const prevBusinessFlag =
-    prev?.business.suspicious === true &&
+  const prevBusiness =
+    prev &&
     prev.business.name === draft.business.name &&
     prev.business.description === draft.business.description &&
-    prev.business.city === draft.business.city;
-  const business = count(
-    flag(draft.business, sticky(scanDraftText(businessText), prev?.business.suspicionReason, prevBusinessFlag)),
+    prev.business.city === draft.business.city
+      ? prev.business
+      : undefined;
+  const business = finish(
+    "business",
+    draft.business,
+    scanDraftText(businessText, { originKind: ownKind }),
+    prevBusiness,
   );
 
   const greeting = draft.greeting
-    ? count(
-        flag(
-          draft.greeting,
-          sticky(
-            scanDraftText(draft.greeting.text),
-            prev?.greeting?.suspicionReason,
-            prev?.greeting?.suspicious === true && prev.greeting.text === draft.greeting.text,
-          ),
-        ),
+    ? finish(
+        "greeting",
+        draft.greeting,
+        scanDraftText(draft.greeting.text, { originKind: ownKind }),
+        prev?.greeting && prev.greeting.text === draft.greeting.text ? prev.greeting : undefined,
       )
     : undefined;
 
-  const knowledge = draft.knowledge.map((k) => {
-    const sourceText = k.origin.reference ? sources.get(cleanDraftText(k.origin.reference)) : undefined;
-    const key = `${k.origin.kind}|${k.origin.reference ?? ""}|${k.text}`;
+  const kKey = (k: OnboardingDraft["knowledge"][number]) => `${k.origin.kind}|${k.origin.reference ?? ""}|${k.text}`;
+  const prevKnowledge = new Map((prev?.knowledge ?? []).map((k) => [kKey(k), k]));
+  const knowledge = draft.knowledge.map((k, i) => {
+    const previousItem = prevKnowledge.get(kKey(k));
+    let sourceText = k.origin.reference ? sources.get(cleanDraftText(k.origin.reference)) : undefined;
+    // Já conferido na fonte numa gravação anterior e inalterado: o próprio
+    // texto conta como fonte (a pessoa regrava sem reenviar o material).
+    if (!isAi && sourceText === undefined && previousItem?.verifiedInSource) sourceText = k.text;
     const result = scanDraftText(k.text, { originKind: k.origin.kind, sourceText });
-    return count(flag(k, sticky(result, prevKnowledge.get(key), prevKnowledge.has(key))));
+    const offSource = result.codes.some((c) => c === "url_fora_da_origem" || c === "telefone_fora_da_origem");
+    const verifiedNow = isAi && sourceText !== undefined && !offSource;
+    return finish(`knowledge[${i}]`, k, result, previousItem, verifiedNow);
   });
 
-  const prevReplies = new Map((prev?.quickReplies ?? []).filter((q) => q.suspicious).map((q) => [`${q.shortcut}|${q.text}`, q.suspicionReason]));
-  const quickReplies = draft.quickReplies.map((q) => {
-    const key = `${q.shortcut}|${q.text}`;
-    return count(flag(q, sticky(scanDraftText(q.text), prevReplies.get(key), prevReplies.has(key))));
-  });
+  const prevReplies = new Map((prev?.quickReplies ?? []).map((q) => [`${q.shortcut}|${q.text}`, q]));
+  const quickReplies = draft.quickReplies.map((q, i) =>
+    finish(
+      `quickReplies[${i}]`,
+      q,
+      scanDraftText(q.text, { originKind: ownKind }),
+      prevReplies.get(`${q.shortcut}|${q.text}`),
+    ),
+  );
 
-  const prevRules = new Map((prev?.handoffRules ?? []).filter((r) => r.suspicious).map((r) => [`${r.kind}|${r.note ?? ""}`, r.suspicionReason]));
-  const handoffRules = draft.handoffRules.map((r) => {
-    const key = `${r.kind}|${r.note ?? ""}`;
-    const result = r.note ? scanDraftText(r.note) : { suspicious: false, codes: [] };
-    return count(flag(r, sticky(result, prevRules.get(key), prevRules.has(key))));
-  });
+  const prevRules = new Map((prev?.handoffRules ?? []).map((r) => [`${r.kind}|${r.note ?? ""}`, r]));
+  const handoffRules = draft.handoffRules.map((r, i) =>
+    finish(
+      `handoffRules[${i}]`,
+      r,
+      r.note ? scanDraftText(r.note, { originKind: ownKind }) : { suspicious: false, codes: [] },
+      prevRules.get(`${r.kind}|${r.note ?? ""}`),
+    ),
+  );
 
+  // Textos estruturais (entram no prompt FORA do envelope: nomes de etapa e
+  // campos de captura, nome do atendente). Sem fonte própria: link/telefone
+  // também bloqueia. Sem liberação: a pessoa corrige editando.
+  const blocked: Array<{ field: string; label: string; reason: string }> = [];
+  const check = (field: string, label: string, text: string) => {
+    const r = scanDraftText(text);
+    if (r.suspicious && blocked.length < DRAFT_LIMITS.blockedMax) {
+      blocked.push({ field, label, reason: (r.reason ?? "").slice(0, DRAFT_LIMITS.suspicionReason) });
+    }
+  };
+  check("funnel.name", "Nome do funil", draft.funnel.name);
+  draft.funnel.stages.forEach((st, i) => check(`funnel.stages[${i}].name`, `Etapa ${i + 1}`, st.name));
+  draft.customFields.forEach((f, i) => {
+    check(`customFields[${i}].name`, `Campo ${i + 1}`, f.name);
+    (f.options ?? []).forEach((o, j) => check(`customFields[${i}].options[${j}]`, `Opção ${j + 1} do campo ${i + 1}`, o));
+  });
+  check("persona.attendantName", "Nome do atendente", draft.persona.attendantName);
+
+  const { blocked: _ignored, ...rest } = draft;
   return {
     draft: {
-      ...draft,
+      ...rest,
       business,
       ...(greeting ? { greeting } : {}),
       knowledge,
       quickReplies,
       handoffRules,
+      ...(blocked.length > 0 ? { blocked } : {}),
     },
     flagged,
+    blocked: blocked.length,
+    releases,
   };
 }

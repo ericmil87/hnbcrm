@@ -23,6 +23,7 @@ const ENTITY_LABELS: Record<string, { article: string; label: string }> = {
   form: { article: "o", label: "formulário" },
   formSubmission: { article: "a", label: "submissão de formulário" },
   channelConfig: { article: "a", label: "conexão de canal" },
+  onboardingSession: { article: "a", label: "sessão de onboarding" },
 };
 
 const ACTION_VERBS: Record<string, string> = {

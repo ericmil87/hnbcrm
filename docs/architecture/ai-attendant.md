@@ -86,3 +86,8 @@ Na divisão, em vez de um `settings/ai/AiOverviewPanel.tsx` monolítico, foram c
 O chat de teste do Atendente IA (`src/components/ai/AttendantSimulator.tsx`, variantes `inline` e `modal`) chama a mesma action `simulateAttendant` do `SimulatorModal`, com sugestões de perguntas por segmento.
 
 **Aviso de rascunho (B1).** O dedupe do `ai_draft_pending` (attendant e `groupAgent`) é "aviso NÃO LIDO do membro na conversa E outro rascunho ainda pendente" (`draftNotificationAlreadyPending`, varre as não lidas da mais nova para a mais antiga, até 5 lotes de 200). Aprovar, descartar, regenerar ou o envio direto que "revisa" o rascunho resolvem o aviso antigo pela porta `resolveEntityNotifications` (toda resolução de aviso passa por ela), então o próximo rascunho volta a notificar.
+
+## Resposta em áudio: campos de configuração (onboarding v2, P2.1)
+
+`settings.aiConfig.voiceReplyEnabled?` (boolean) e `voiceReplyVoice?` (id da voz do provedor de TTS, escolhido no spike D6). **Ausente = desligado**, como `visionEnabled`: orgs existentes não mudam e não há migração. Por enquanto é só o campo: quem lê é a porta de TTS (`lib/tts.ts`, pacote próprio, ainda não existe), com as regras fixas do plano (só responde em áudio a quem mandou áudio, nunca Pix/link/valor/endereço/código, nunca em grupo, falha cai em texto, output guard antes de sintetizar). Escrita só por `setFeatureTogglesCore` (`lib/attendantConfigOps.ts`), que aceita os dois campos e audita `voiceReplyEnabled` antes/depois; o único chamador hoje é a aplicação do Rascunho de Operação (`via:"onboarding"`), e só com `orgAiActive` (IA ligada + aceite LGPD dados por clique humano). A mutation pública `aiSettings.setFeatureToggles` não expõe os campos ainda (a UI vem com o pacote de TTS).
+

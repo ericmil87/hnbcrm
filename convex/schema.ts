@@ -3806,6 +3806,10 @@ const applicationTables = {
     appliedAt: v.optional(v.number()),
     appliedDraftHash: v.optional(v.string()),
     appliedBy: v.optional(v.id("teamMembers")),
+    // Atendente criado POR ESTA sessão: só ele tem persona/conhecimento
+    // regerados ao reaplicar. Atendente pré-existente nunca é sobrescrito sem
+    // `overwriteExistingAttendant` explícito no clique.
+    attendantId: v.optional(v.id("teamMembers")),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
