@@ -215,12 +215,12 @@ describe("4ª revisão: pré-varredura linear e com prazo", () => {
     expect(performance.now() - t0).toBeLessThan(1000);
   });
 
-  it("muitos `stream\\n` seguidos (parecem ASCII85, sem endstream): o orçamento ASCII (32 MB) corta", () => {
+  it("muitos `stream\\n` seguidos (parecem ASCII85, sem endstream): o orçamento ASCII (64 MB) corta", () => {
     const body = latin1("%PDF-1.4\n" + "stream\n".repeat(19_000));
     const t0 = performance.now();
     expect(() => preflightPdf(body, PDF_LIMITS)).toThrow(PdfExtractError);
-    // limitado pelo orçamento; folga para a suíte inteira em paralelo
-    expect(performance.now() - t0).toBeLessThan(2000);
+    // limitado pelo orçamento (64 MB: ~0,83 s sozinho; eram ~0,43 s com 32 MB); folga para a suíte inteira em paralelo
+    expect(performance.now() - t0).toBeLessThan(5000);
   });
 
   it("o prazo vale para a pré-varredura (TIMEOUT checado a cada `stream`)", async () => {

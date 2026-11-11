@@ -31,6 +31,7 @@ import { siteKeyOf, MAX_PAGES_PER_SITE } from "./lib/htmlExtract";
 import { HISTORY_FOR_PROMPT, USER_TEXT_MAX, REPLY_MAX } from "./lib/onboardingInterviewer";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { runOnboardingTurn, turnInputValidator, turnResultValidator, type TurnResult } from "./lib/onboardingTurn";
+import { ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
 
 /** Teto por mensagem gravada (usuário até 4.000; assistente até 800 + folga). */
 const MESSAGE_TEXT_MAX = USER_TEXT_MAX;
@@ -42,7 +43,7 @@ const ATTACHMENT_LABEL_MAX = 200;
  * serviço da transcrição dos clientes reais.
  */
 const AUDIO_MAX_BYTES = 2 * 1024 * 1024;
-const PDF_MAX_BYTES = 10 * 1024 * 1024;
+const PDF_MAX_BYTES = ONBOARDING_PDF_MAX_BYTES;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 const attachmentKindValidator = v.union(v.literal("site"), v.literal("pdf"), v.literal("imagem"), v.literal("audio"));
@@ -370,7 +371,7 @@ export const internalPrepareTurn = internalMutation({
           "invalid_input",
           kind === "audio"
             ? "Áudio longo demais: mande até uns 3 minutos (2 MB)."
-            : `Arquivo grande demais (máximo ${Math.round(cap / 1024 / 1024)} MB)`,
+            : `Arquivo grande demais (até ${Math.round(cap / 1024 / 1024)} MB).`,
         );
       }
       const okType =
