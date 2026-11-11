@@ -12,7 +12,11 @@ import {
   bridgeSendKindForMime,
   buildBridgeMediaSendRequest,
   voiceNoteConvertFilename,
+  bridgeAudioNeedsConversion,
+  planBridgeAudioSend,
+  BRIDGE_AUDIO_AS_DOCUMENT_NOTE,
 } from "./lib/bridgeSend";
+import { checkMetaWhatsappAudio } from "./lib/metaWhatsappAudio";
 
 // ── Fake fixtures only. VALIDAR com gateway real no piloto (U6). ──
 const BASE_URL = "https://wuzapi.example.com";
@@ -125,15 +129,68 @@ describe("bridgeSend media builders (pure)", () => {
     expect(bridgeSendKindForMime("application/pdf")).toBe("document");
   });
 
-  test("voiceNoteConvertFilename: extensão do formato real para o /convert", () => {
-    // Safari/iPhone grava mp4/AAC; Chrome webm/opus; Firefox ogg/opus.
+  test("voiceNoteConvertFilename: extensão só para mp4/m4a/aac; webm segue voice-note", () => {
+    // Safari/iPhone grava mp4/AAC; Chrome webm/opus (caminho que já funciona).
     expect(voiceNoteConvertFilename("audio/mp4")).toBe("voice-note.m4a");
     expect(voiceNoteConvertFilename("audio/mp4;codecs=mp4a.40.2")).toBe("voice-note.m4a");
-    expect(voiceNoteConvertFilename("audio/webm;codecs=opus")).toBe("voice-note.webm");
-    expect(voiceNoteConvertFilename("audio/ogg; codecs=opus")).toBe("voice-note.ogg");
     expect(voiceNoteConvertFilename("audio/x-m4a")).toBe("voice-note.m4a");
+    expect(voiceNoteConvertFilename("audio/aac")).toBe("voice-note.aac");
+    expect(voiceNoteConvertFilename("audio/webm;codecs=opus")).toBe("voice-note");
+    expect(voiceNoteConvertFilename("audio/ogg; codecs=opus")).toBe("voice-note");
     expect(voiceNoteConvertFilename("application/octet-stream")).toBe("voice-note");
     expect(voiceNoteConvertFilename("")).toBe("voice-note");
+  });
+
+  test("bridgeAudioNeedsConversion: só ogg dispensa o /convert", () => {
+    expect(bridgeAudioNeedsConversion("audio/ogg; codecs=opus")).toBe(false);
+    expect(bridgeAudioNeedsConversion("audio/mp4")).toBe(true);
+    expect(bridgeAudioNeedsConversion("audio/webm;codecs=opus")).toBe(true);
+  });
+
+  test("planBridgeAudioSend: ogg e convertido vão como áudio; sem conversão vira documento", () => {
+    expect(planBridgeAudioSend({ fileMimeType: "audio/ogg", fileName: "a.ogg", converted: false })).toEqual({
+      kind: "audio",
+      sendMime: "audio/ogg",
+      useConverted: false,
+    });
+    expect(planBridgeAudioSend({ fileMimeType: "audio/mp4", fileName: "a.m4a", converted: true })).toEqual({
+      kind: "audio",
+      sendMime: "audio/ogg; codecs=opus",
+      useConverted: true,
+    });
+    expect(planBridgeAudioSend({ fileMimeType: "audio/mp4", fileName: "nota-de-voz-1.m4a", converted: false })).toEqual({
+      kind: "document",
+      sendMime: "audio/mp4",
+      useConverted: false,
+      filename: "nota-de-voz-1.m4a",
+      note: BRIDGE_AUDIO_AS_DOCUMENT_NOTE,
+    });
+    // Gravação antiga do iPhone (audio/mp4 com nome .webm): o nome segue o tipo real.
+    expect(
+      planBridgeAudioSend({ fileMimeType: "audio/mp4;codecs=mp4a.40.2", fileName: "nota-de-voz-2.webm", converted: false })
+    ).toMatchObject({ kind: "document", sendMime: "audio/mp4", filename: "nota-de-voz-2.m4a" });
+    expect(
+      planBridgeAudioSend({ fileMimeType: "audio/webm;codecs=opus", fileName: "nota-de-voz-3.webm", converted: false })
+    ).toMatchObject({ kind: "document", sendMime: "audio/webm", filename: "nota-de-voz-3.webm" });
+    expect(planBridgeAudioSend({ fileMimeType: "audio/mpeg", fileName: "musica", converted: false })).toMatchObject({
+      kind: "document",
+      filename: "musica.mp3",
+    });
+    expect(planBridgeAudioSend({ fileMimeType: "audio/x-desconhecido", fileName: "", converted: false })).toMatchObject({
+      kind: "document",
+      filename: "nota-de-voz",
+    });
+  });
+
+  test("checkMetaWhatsappAudio: mp4/ogg/mpeg passam, webm falha com motivo claro", () => {
+    expect(checkMetaWhatsappAudio("audio/mp4")).toEqual({ ok: true });
+    expect(checkMetaWhatsappAudio("audio/ogg; codecs=opus")).toEqual({ ok: true });
+    expect(checkMetaWhatsappAudio("audio/mpeg")).toEqual({ ok: true });
+    const webm = checkMetaWhatsappAudio("audio/webm;codecs=opus");
+    expect(webm.ok).toBe(false);
+    expect(webm.ok ? "" : webm.detail).toMatch(/webm/);
+    const wav = checkMetaWhatsappAudio("audio/wav");
+    expect(wav.ok ? "" : wav.detail).toMatch(/audio\/wav/);
   });
 
   test("buildBridgeMediaSendRequest — image with caption", () => {

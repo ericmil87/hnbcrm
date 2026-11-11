@@ -231,24 +231,88 @@ export function bridgeSendKindForMime(mimeType: string): BridgeMediaSendKind {
   return "document";
 }
 
+const baseMime = (mimeType: string): string => (mimeType || "").split(";")[0].trim().toLowerCase();
+
 /**
- * File name sent to the Whisper service `/convert` with a voice note. The
- * extension follows the stored mime so the converter (ffmpeg behind it) gets a
- * hint for the input container — Safari records mp4/AAC (`audio/mp4` → .m4a),
- * Chrome webm/opus, Firefox ogg/opus. Unknown types keep the bare name.
+ * File name sent to the Whisper service `/convert` with a voice note.
+ *
+ * Only Safari's mp4/AAC recordings (`audio/mp4`, `.m4a`) get an extension, as a
+ * hint for the converter's input container. Everything else, including the
+ * Chrome webm path that works today, keeps the bare `voice-note` name: changing
+ * it would need validation against the live service.
  */
 export function voiceNoteConvertFilename(mimeType: string): string {
-  const base = (mimeType || "").split(";")[0].trim().toLowerCase();
-  const ext: Record<string, string> = {
-    "audio/mp4": "m4a",
-    "audio/x-m4a": "m4a",
-    "audio/aac": "aac",
-    "audio/webm": "webm",
-    "audio/ogg": "ogg",
-    "audio/mpeg": "mp3",
-    "audio/wav": "wav",
+  const base = baseMime(mimeType);
+  if (base === "audio/mp4" || base === "audio/x-m4a" || base === "audio/m4a") return "voice-note.m4a";
+  if (base === "audio/aac") return "voice-note.aac";
+  return "voice-note";
+}
+
+/** Extension (without dot) for an audio sent as a document, by base mime. */
+const AUDIO_DOCUMENT_EXT: Record<string, string> = {
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/m4a": "m4a",
+  "audio/aac": "aac",
+  "audio/webm": "webm",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/amr": "amr",
+};
+
+export const BRIDGE_AUDIO_AS_DOCUMENT_NOTE =
+  "Nota de voz enviada como arquivo de áudio: a conversão para ogg/opus não estava disponível";
+
+/** `true` when a voice note needs the `/convert` pass before going out. */
+export function bridgeAudioNeedsConversion(fileMimeType: string): boolean {
+  return baseMime(fileMimeType) !== "audio/ogg";
+}
+
+export type BridgeAudioSendPlan = {
+  kind: BridgeMediaSendKind;
+  /** Mime of the data-URI that goes to the gateway. */
+  sendMime: string;
+  /** Use the converted ogg/opus bytes instead of the stored original. */
+  useConverted: boolean;
+  /** File name (documents only). */
+  filename?: string;
+  /** Dispatch note shown on the message when the plan degrades. */
+  note?: string;
+};
+
+/**
+ * How a voice note (`contentType: "audio"`) goes out through the bridge.
+ *
+ * - ogg original → `/chat/send/audio` as is (voice note).
+ * - converted to ogg/opus → `/chat/send/audio` with the converted bytes.
+ * - not ogg and not converted → `/chat/send/document` with the original bytes
+ *   and a name whose extension matches the REAL mime (an old iPhone recording
+ *   may be stored as `.webm` with `audio/mp4`). The audio endpoint is never
+ *   fed `data:audio/mp4`/`webm` (wuzapi expects ogg there); the document
+ *   endpoint is the one already used for every PDF/Office attachment.
+ */
+export function planBridgeAudioSend(input: {
+  fileMimeType: string;
+  fileName: string;
+  converted: boolean;
+}): BridgeAudioSendPlan {
+  const base = baseMime(input.fileMimeType);
+  if (base === "audio/ogg") {
+    return { kind: "audio", sendMime: input.fileMimeType, useConverted: false };
+  }
+  if (input.converted) {
+    return { kind: "audio", sendMime: "audio/ogg; codecs=opus", useConverted: true };
+  }
+  const ext = AUDIO_DOCUMENT_EXT[base];
+  const name = (input.fileName || "").trim() || "nota-de-voz";
+  const stem = name.replace(/\.[A-Za-z0-9]{1,8}$/, "") || "nota-de-voz";
+  return {
+    kind: "document",
+    sendMime: base || "application/octet-stream",
+    useConverted: false,
+    filename: ext ? `${stem}.${ext}` : name,
+    note: BRIDGE_AUDIO_AS_DOCUMENT_NOTE,
   };
-  return ext[base] ? `voice-note.${ext[base]}` : "voice-note";
 }
 
 // Endpoint path + JSON body field carrying the base64 data-URI, per kind.
