@@ -76,7 +76,7 @@ describe("portas de voz", () => {
     const fn = turn.slice(turn.indexOf("async function speakReply("));
     const reserveAt = fn.indexOf('reserve(ctx, b, "tts")');
     const synthAt = fn.indexOf("internal.voiceReplyNode.internalSynthesizeWebAudio");
-    const recordAt = fn.indexOf('record(ctx, b, "tts"', synthAt);
+    const recordAt = fn.indexOf("await safeRecord(", synthAt);
     expect(reserveAt).toBeGreaterThan(0);
     expect(synthAt).toBeGreaterThan(reserveAt);
     expect(recordAt).toBeGreaterThan(synthAt);

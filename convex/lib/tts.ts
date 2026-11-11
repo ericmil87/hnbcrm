@@ -283,6 +283,8 @@ export type VoiceTextReason =
   | "rota_sem_openrouter"
   | "sem_conversor"
   | "teto_de_gastos"
+  // Chat do onboarding (P4.2b): a reserva do orçamento do onboarding recusou.
+  | "orcamento_onboarding"
   | "falha_tts"
   | "formato_tts"
   | "audio_longo"
@@ -292,7 +294,7 @@ export type VoiceTextReason =
 export const VOICE_TEXT_REASONS: readonly VoiceTextReason[] = [
   "desligado", "canal", "grupo", "cliente_mandou_texto", "rascunho", "follow_up", "imagem",
   "dado_sensivel", "longo", "vazio", "marcacao", "idioma", "zdr_nao_validado", "sem_tempo", "sem_chave",
-  "rota_sem_openrouter", "sem_conversor", "teto_de_gastos", "falha_tts", "formato_tts", "audio_longo",
+  "rota_sem_openrouter", "sem_conversor", "teto_de_gastos", "orcamento_onboarding", "falha_tts", "formato_tts", "audio_longo",
   "falha_conversao", "falha_armazenamento",
 ];
 

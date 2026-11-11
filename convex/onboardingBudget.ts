@@ -429,6 +429,32 @@ export const internalRecordOnboardingSpend = internalMutation({
 });
 
 /**
+ * Solta uma reserva sem registrar custo (P4.2b): só para quando o
+ * `internalRecordOnboardingSpend` falhou e a estimativa ficaria presa até o TTL
+ * de 10 min, travando o orçamento da sessão. Não cria run nem soma gasto.
+ */
+export const internalReleaseOnboardingReservation = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    estimateUsdMicros: v.number(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    const held = effectiveReserved(session.reservedUsdMicros, session.reservedAt, now);
+    const stillReserved = Math.max(0, held - clampEstimate(args.estimateUsdMicros));
+    await ctx.db.patch(session._id, {
+      reservedUsdMicros: stillReserved,
+      ...(stillReserved === 0 ? { reservedAt: undefined } : {}),
+      updatedAt: now,
+    });
+    return null;
+  },
+});
+
+/**
  * Faxina de janelas de rate limit vencidas (> 2 dias), em lotes de 200. Com
  * `dryRun:false` (cron diário) se reagenda (`runAfter(0)`) enquanto houver mais;
  * o índice por `windowStart` faz de cursor (o que foi apagado sai do range).

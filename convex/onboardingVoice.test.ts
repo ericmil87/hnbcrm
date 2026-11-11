@@ -9,7 +9,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { ESTIMATE_USD_MICROS } from "./lib/onboardingTurn";
+import { onboardingTtsEstimateUsdMicros } from "./lib/onboardingTurn";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -215,7 +215,7 @@ describe("resposta em áudio no chat do onboarding", () => {
     expect(st.session!.reservedUsdMicros ?? 0).toBe(0);
   });
 
-  test("SSE: evento `audio` depois do texto (delta) e antes do done", async () => {
+  test("SSE: `done` antes da síntese e o evento `audio` depois", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     stubNet();
@@ -234,8 +234,11 @@ describe("resposta em áudio no chat do onboarding", () => {
       .map((l) => JSON.parse(l.slice(6)) as Record<string, unknown>);
     const types = events.map((e) => e.type);
     const audioAt = types.indexOf("audio");
+    // `done` sai antes da síntese (o cliente destrava a entrada); `audio` chega depois.
     expect(audioAt).toBeGreaterThan(types.lastIndexOf("delta"));
-    expect(types.slice(-2)).toEqual(["audio", "done"]);
+    expect(audioAt).toBeGreaterThan(types.indexOf("done"));
+    expect(types.slice(-2)).toEqual(["done", "audio"]);
+    expect(types.filter((x) => x === "done")).toHaveLength(1);
     const audio = events[audioAt];
     expect(Object.keys(audio).sort()).toEqual(["durationSec", "mimeType", "type", "url"]);
     expect(audio.mimeType).toBe("audio/wav");
@@ -361,7 +364,7 @@ describe("resposta em áudio no chat do onboarding", () => {
     expect(st.files.some((f) => f.metadata?.kind === "onboarding_voice_reply")).toBe(false);
   });
 
-  test("orçamento esgotado depois do entrevistador: sem TTS (teto_de_gastos)", async () => {
+  test("orçamento esgotado depois do entrevistador: sem TTS (orcamento_onboarding)", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     // Entrevistador caro: o gasto real passa do orçamento da sessão; a reserva do TTS é recusada.
@@ -370,9 +373,10 @@ describe("resposta em áudio no chat do onboarding", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.audio).toBeUndefined();
-    expect(r.audioSkipReason).toBe("teto_de_gastos");
+    expect(r.audioSkipReason).toBe("orcamento_onboarding");
     expect(net.speech).toHaveLength(0);
-    expect(ESTIMATE_USD_MICROS.tts).toBeGreaterThan(0);
+    // Reserva = pior caso da porta (600 caracteres, 45 s) no modelo padrão.
+    expect(onboardingTtsEstimateUsdMicros()).toBe(10_200);
   });
 });
 

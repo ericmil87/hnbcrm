@@ -77,21 +77,42 @@ import type { ChatMessage } from "./llm/types";
 import { segmentTemplate } from "./onboardingTemplates";
 import { platformTtsAllowed } from "./agentRoutes";
 import { detectLanguage } from "./languageDetect";
-import { planOnboardingVoiceReply, type VoiceTextReason } from "./tts";
+import {
+  VOICE_REPLY_MAX_CHARS,
+  VOICE_REPLY_MAX_SECONDS,
+  estimateTtsCost,
+  getTtsConfig,
+  planOnboardingVoiceReply,
+  type VoiceTextReason,
+} from "./tts";
 
 export type SpendRole = "interviewer" | "reader" | "vision" | "transcription" | "tts";
 
 // Estimativas por chamada (micro-US$) segurando saldo na reserva. A transcrição
 // roda no Whisper próprio (custo de LLM zero), mas passa pela reserva para que
 // orçamento/limites cortem ANTES de ocupar o serviço compartilhado.
-export const ESTIMATE_USD_MICROS: Record<SpendRole, number> = {
+export const ESTIMATE_USD_MICROS: Record<Exclude<SpendRole, "tts">, number> = {
   interviewer: 20_000,
   reader: 10_000,
   vision: 5_000,
   transcription: 2_000,
-  // Teto da fala (600 caracteres, ~45 s) no modelo padrão: ~US$ 0,0102 (`estimateTtsCost`).
-  tts: 12_000,
 };
+
+/**
+ * Reserva da fala (P4.2b): o pior caso da porta (`VOICE_REPLY_MAX_CHARS`
+ * caracteres e `VOICE_REPLY_MAX_SECONDS` segundos) no modelo de TTS do
+ * onboarding (env), pelo mesmo cálculo do custo real (`estimateTtsCost`).
+ * No modelo padrão: ~10.200 micro-US$.
+ */
+export function onboardingTtsEstimateUsdMicros(): number {
+  const { model } = getTtsConfig("onboarding");
+  const { costUsd } = estimateTtsCost(model, { chars: VOICE_REPLY_MAX_CHARS, seconds: VOICE_REPLY_MAX_SECONDS });
+  return Math.ceil(costUsd * 1_000_000);
+}
+
+function estimateFor(role: SpendRole): number {
+  return role === "tts" ? onboardingTtsEstimateUsdMicros() : ESTIMATE_USD_MICROS[role];
+}
 const LLM_TIMEOUT_MS = 45_000;
 const MAX_TOKENS: Record<"interviewer" | "reader", number> = { interviewer: 1800, reader: 2500 };
 /** Fonte guardada só durante o turno, para a conferência de link/telefone (`sourceTexts`). */
@@ -189,7 +210,12 @@ export type TurnEvents = {
   onBlock?: (block: OnboardingBlock) => void | Promise<void>;
   onChips?: (chips: string[]) => void | Promise<void>;
   onDraft?: (draft: { version: number; hash: string }) => void | Promise<void>;
-  /** P4.2b: resposta em áudio, DEPOIS de `delta`/`block`/`chips`/`draft` (o texto já está na tela). */
+  /**
+   * Turno concluído (texto, blocos, chips e rascunho já enviados). Vem ANTES da
+   * síntese da voz: o cliente destrava a entrada sem esperar o TTS.
+   */
+  onDone?: (done: { nextStage: string | null; askForMaterials: boolean }) => void | Promise<void>;
+  /** P4.2b: resposta em áudio, DEPOIS de `done` (o texto já está na tela). */
   onAudio?: (audio: ReplyAudio) => void | Promise<void>;
 };
 
@@ -231,7 +257,7 @@ async function reserve(ctx: ActionCtx, b: BudgetCtx, role: SpendRole) {
   return await ctx.runMutation(internal.onboardingBudget.internalReserveOnboardingSpend, {
     organizationId: b.organizationId,
     sessionId: b.sessionId,
-    estimateUsdMicros: ESTIMATE_USD_MICROS[role],
+    estimateUsdMicros: estimateFor(role),
     rateLimitConsumed: true,
   });
 }
@@ -256,7 +282,7 @@ async function record(ctx: ActionCtx, b: BudgetCtx, role: SpendRole, fields: Rec
     memberId: b.memberId,
     role,
     ...fields,
-    estimateUsdMicros: ESTIMATE_USD_MICROS[role],
+    estimateUsdMicros: estimateFor(role),
     requestId: `${b.turnId}:${role}:${b.calls}`,
   });
 }
@@ -765,7 +791,10 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
   const draftInfo = final?.draftHash ? { version: final.draftVersion, hash: final.draftHash } : null;
   if (draftInfo) await events.onDraft?.(draftInfo);
 
-  // 7. Resposta em áudio (só quando o usuário mandou áudio). Nunca derruba o turno.
+  const doneInfo = { nextStage: nextStage ?? final?.stage ?? null, askForMaterials: out.askForMaterials && prep.emailVerified };
+  await events.onDone?.(doneInfo);
+
+  // 7. Resposta em áudio (só quando o usuário mandou áudio), DEPOIS do `done`. Nunca derruba o turno.
   const voice = transcribed
     ? await speakReply(ctx, b, { reply: out.reply, messageId: assistantMessageId, routing: prep.routing })
     : null;
@@ -778,8 +807,8 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     chips: out.chips,
     blocks,
     draft: draftInfo,
-    nextStage: nextStage ?? final?.stage ?? null,
-    askForMaterials: out.askForMaterials && prep.emailVerified,
+    nextStage: doneInfo.nextStage,
+    askForMaterials: doneInfo.askForMaterials,
     ...(voice?.kind === "audio" ? { audio: voice.audio } : {}),
     ...(voice?.kind === "text" ? { audioSkipReason: voice.reason } : {}),
   };
@@ -816,6 +845,55 @@ async function speakReply(
     console.log(JSON.stringify({ event: "onboardingVoiceReply", mode: "text", reason }));
     return { kind: "text", reason };
   };
+  // Estado fora dos try: o catch de fora descarta o WAV órfão e solta a reserva presa.
+  const requestId = `${b.turnId}:tts`;
+  const since = Date.now();
+  let reserved = false;
+  let settled = false; // reserva resolvida (registrada ou solta)
+  let fileId: Id<"files"> | null = null;
+  let linked = false;
+  let actionThrew = false;
+
+  /** Registro de custo em try/catch próprio: falha de medição não impede o vínculo. */
+  const safeRecord = async (fields: RecordFields): Promise<void> => {
+    try {
+      await record(ctx, b, "tts", fields);
+      settled = true;
+    } catch (e) {
+      console.log(JSON.stringify({ event: "onboardingVoiceRecordFailed", reason: shortReason(e) }));
+    }
+  };
+  /** Reserva que o registro não soltou: solta sem custo (senão segura o orçamento por 10 min). */
+  const releaseIfStuck = async () => {
+    if (!reserved || settled) return;
+    try {
+      await ctx.runMutation(internal.onboardingBudget.internalReleaseOnboardingReservation, {
+        organizationId: b.organizationId,
+        sessionId: b.sessionId,
+        estimateUsdMicros: estimateFor("tts"),
+      });
+      settled = true;
+    } catch {
+      // vence sozinha pelo TTL da reserva
+    }
+  };
+  const discardOrphan = async () => {
+    if (linked) return;
+    try {
+      if (fileId) {
+        await ctx.runMutation(internal.voiceReply.internalDiscardWebAudioFile, { organizationId: b.organizationId, fileId });
+      } else if (actionThrew) {
+        await ctx.runMutation(internal.voiceReply.internalDiscardWebAudioByRequest, {
+          organizationId: b.organizationId,
+          requestId,
+          since,
+        });
+      }
+    } catch {
+      // best-effort
+    }
+  };
+
   try {
     const plan = planOnboardingVoiceReply({
       userSentAudio: true,
@@ -828,7 +906,8 @@ async function speakReply(
     if (!platformTtsAllowed(onboardingProviderConfig(input.routing))) return await skip("rota_sem_openrouter");
 
     const decision = await reserve(ctx, b, "tts");
-    if (!decision.ok) return await skip("teto_de_gastos");
+    if (!decision.ok) return await skip("orcamento_onboarding");
+    reserved = true;
     let synth;
     try {
       synth = await ctx.runAction(internal.voiceReplyNode.internalSynthesizeWebAudio, {
@@ -837,13 +916,22 @@ async function speakReply(
         text: plan.speakable,
         strictZdr: input.routing.strictZdr,
         routingAllowed: true,
+        requestId,
       });
     } catch {
-      await record(ctx, b, "tts", { status: "error", requestCount: 1, costUsdEstimate: 0 });
+      // A action "nunca lança"; se lançou (erro de plataforma), não sabemos se o
+      // provedor chegou a cobrar. Registra com custo 0 (subestima no máximo UMA
+      // síntese por turno, limitada pelo rate limit) só para soltar a reserva e
+      // deixar a falha na run; o WAV que ela possa ter gravado é achado pelo requestId.
+      actionThrew = true;
+      await safeRecord({ status: "error", requestCount: 1, costUsdEstimate: 0 });
+      await discardOrphan();
+      await releaseIfStuck();
       return await skip("falha_tts");
     }
+    if (synth.ok) fileId = synth.fileId;
     const cost = synth.cost;
-    await record(ctx, b, "tts", {
+    await safeRecord({
       status: synth.ok ? "done" : "error",
       provider: "openrouter",
       model: synth.model,
@@ -852,18 +940,9 @@ async function speakReply(
       costUsdEstimate: cost?.costUsd ?? 0,
       ...(cost?.estimated ? { costEstimated: true } : {}),
     });
+    await releaseIfStuck();
     if (!synth.ok) return await skip(synth.reason as VoiceTextReason);
 
-    const discard = async () => {
-      try {
-        await ctx.runMutation(internal.voiceReply.internalDiscardWebAudioFile, {
-          organizationId: b.organizationId,
-          fileId: synth.fileId,
-        });
-      } catch {
-        // best-effort
-      }
-    };
     let url: string | null = null;
     try {
       ({ url } = await ctx.runMutation(internal.onboardingChat.internalRecordReplyAudio, {
@@ -876,13 +955,16 @@ async function speakReply(
       url = null;
     }
     if (!url) {
-      await discard();
+      await discardOrphan();
       return await skip("falha_armazenamento");
     }
+    linked = true;
     console.log(JSON.stringify({ event: "onboardingVoiceReply", mode: "audio", seconds: synth.durationSec }));
     return { kind: "audio", audio: { url, durationSec: synth.durationSec, mimeType: synth.mimeType } };
   } catch (e) {
     console.log(JSON.stringify({ event: "onboardingVoiceReplyError", reason: shortReason(e) }));
+    await discardOrphan();
+    await releaseIfStuck();
     return { kind: "text", reason: "falha_tts" };
   }
 }

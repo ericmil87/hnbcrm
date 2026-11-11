@@ -278,6 +278,8 @@ export const internalSynthesizeWebAudio = internalAction({
     strictZdr: v.boolean(),
     /** `platformTtsAllowed(...)` (`opencode-only` = false). */
     routingAllowed: v.boolean(),
+    /** Id da síntese no turno: vai em `files.metadata.requestId` (descarte se esta action lançar). */
+    requestId: v.optional(v.string()),
   },
   returns: webResultValidator,
   handler: async (ctx, args): Promise<WebSynthResult> => {
@@ -313,6 +315,7 @@ export const internalSynthesizeWebAudio = internalAction({
         memberId: args.memberId,
         storageId,
         size: wav.byteLength,
+        ...(args.requestId ? { requestId: args.requestId } : {}),
       });
     } catch {
       try {

@@ -110,6 +110,8 @@ export const internalInsertWebAudioFile = internalMutation({
     memberId: v.id("teamMembers"),
     storageId: v.id("_storage"),
     size: v.number(),
+    /** Id da síntese no turno (`<turno>:tts`): acha o arquivo se a action lançar depois de gravar. */
+    requestId: v.optional(v.string()),
   },
   returns: v.id("files"),
   handler: async (ctx, args) => {
@@ -123,7 +125,7 @@ export const internalInsertWebAudioFile = internalMutation({
       size: args.size,
       fileType: "other",
       uploadedBy: args.memberId,
-      metadata: { kind: WEB_VOICE_REPLY_FILE_KIND },
+      metadata: { kind: WEB_VOICE_REPLY_FILE_KIND, ...(args.requestId ? { requestId: args.requestId.slice(0, 120) } : {}) },
       createdAt: Date.now(),
     });
   },
@@ -144,5 +146,30 @@ export const internalDiscardWebAudioFile = internalMutation({
     await deleteBlobIfUnreferenced(ctx, file);
     await deleteFileRow(ctx, file);
     return true;
+  },
+});
+
+/**
+ * Rede de segurança do turno (P4.2b): quando a action de síntese LANÇA depois de
+ * gravar (erro de plataforma), o turno não recebe o `fileId`. Acha o WAV pelo
+ * `metadata.requestId` entre os arquivos da org criados desde `since` (índice
+ * `by_organization_and_created`, no máximo 100 linhas lidas) e descarta.
+ */
+export const internalDiscardWebAudioByRequest = internalMutation({
+  args: { organizationId: v.id("organizations"), requestId: v.string(), since: v.number() },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("files")
+      .withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId).gte("createdAt", args.since))
+      .take(100);
+    let discarded = 0;
+    for (const file of rows) {
+      if (file.metadata?.kind !== WEB_VOICE_REPLY_FILE_KIND || file.metadata?.requestId !== args.requestId) continue;
+      await deleteBlobIfUnreferenced(ctx, file);
+      await deleteFileRow(ctx, file);
+      discarded += 1;
+    }
+    return discarded;
   },
 });
