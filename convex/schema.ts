@@ -3871,6 +3871,11 @@ const applicationTables = {
       ),
     ),
     appliedAttendantPending: v.optional(v.boolean()),
+    // P2.3: ciência do aviso de materiais (LGPD / IA de provedores fora do
+    // Brasil), gravada só pelo clique em `onboardingChat.ackMaterialsNotice`.
+    // Ausente = o 1º material da sessão é recusado (`notice_required`).
+    materialsNoticeAckAt: v.optional(v.number()),
+    materialsNoticeAckBy: v.optional(v.id("teamMembers")),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),

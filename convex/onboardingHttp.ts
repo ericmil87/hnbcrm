@@ -9,8 +9,10 @@
  * estruturada com blocos. Compartilhar o endpoint obrigaria a desligar tools
  * e gates por flag dentro do loop do Copiloto (risco de regressão nos dois).
  *
- * Este arquivo é só o ADAPTADOR: auth + gate de rota + rate limit por IP; o
- * loop vive em `lib/onboardingTurn.ts` (o mesmo da action `onboardingChat.sendTurn`).
+ * Este arquivo é só o ADAPTADOR: auth (401 sem gravar nada) → gate de rota
+ * (403) → rate limit por IP (429); o loop vive em `lib/onboardingTurn.ts`
+ * (o mesmo da interna `onboardingChat.internalSendTurn`). É a ÚNICA porta do
+ * frontend para o turno.
  *
  * Corpo: `{organizationId, sessionId?, text?, attachment?}` (ver `turnInputValidator`).
  * Eventos SSE (linhas `data: {...}`):
@@ -96,24 +98,25 @@ export async function handleOnboardingStream(
   const input = parseTurnBody(raw);
   if (!input) return json(400, { error: "Corpo inválido: organizationId e text ou attachment" });
 
-  // Rate limit por IP antes de qualquer outra coisa (entrada mais à direita do x-forwarded-for).
-  const ipKey = request.headers.get("x-forwarded-for") ?? request.headers.get("cf-connecting-ip") ?? undefined;
-  if (ipKey) {
-    const rate = await ctx.runMutation(internal.onboardingBudget.internalCheckOnboardingRateLimit, { ipKey });
-    if (!rate.ok) return json(429, { error: rate.message, code: "rate_limited", retryAfterMs: rate.retryAfterMs });
-  }
-
-  // Auth do usuário (JWT do Convex auth no Authorization, propagado ao runQuery).
-  let actor: { userId: Id<"users">; memberId: Id<"teamMembers">; permissions: Permissions } | null;
+  // 1. Auth do usuário (JWT do Convex auth no Authorization, propagado ao runQuery).
+  //    Sem login = 401 sem gravar nada (nem contador de IP).
+  let actor: { userId: Id<"users">; permissions: Permissions } | null;
   try {
     actor = await ctx.runQuery(internal.onboardingChat.internalResolveTurnActor, { organizationId: input.organizationId });
   } catch {
     return json(400, { error: "organizationId inválido" });
   }
   if (!actor) return json(401, { error: "Entre na sua conta para continuar." });
+  // 2. Gate de rota (`ROUTE_PERMISSIONS`, fail-closed). Não-membro chega sem permissão nenhuma → 403.
   const denied = routeGate(actor.permissions);
   if (denied) {
     return new Response(denied.body, { status: denied.status, headers: { "Content-Type": "application/json", ...CORS } });
+  }
+  // 3. Rate limit por IP (entrada mais à direita do x-forwarded-for), antes do turno.
+  const ipKey = request.headers.get("x-forwarded-for") ?? request.headers.get("cf-connecting-ip") ?? undefined;
+  if (ipKey) {
+    const rate = await ctx.runMutation(internal.onboardingBudget.internalCheckOnboardingRateLimit, { ipKey });
+    if (!rate.ok) return json(429, { error: rate.message, code: "rate_limited", retryAfterMs: rate.retryAfterMs });
   }
 
   const stream = new ReadableStream<Uint8Array>({

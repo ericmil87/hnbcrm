@@ -29,10 +29,15 @@ export const BLOCK_KINDS = [
   "conectarCanal",
   "proximosPassos",
   "traducaoCartao",
+  "avisoMateriais",
 ] as const;
 export type OnboardingBlockKind = (typeof BLOCK_KINDS)[number];
 
 export const BLOCK_NOTE_MAX = 140;
+
+/** Aviso antes do 1º material da sessão (LGPD / transferência internacional). Texto fixo do servidor. */
+export const MATERIALS_NOTICE_TEXT =
+  "O material que você enviar é lido por IA de provedores parceiros, inclusive fora do Brasil. Não envie dados pessoais de clientes.";
 export const BLOCKS_PER_TURN_MAX = 4;
 
 const note = { note: v.optional(v.string()) };
@@ -167,6 +172,11 @@ export const onboardingBlockValidator = v.union(
     ...note,
   }),
   v.object({ kind: v.literal("traducaoCartao"), enabled: v.boolean(), ...note }),
+  /**
+   * Aviso obrigatório antes do 1º material: o botão de ciência chama
+   * `onboardingChat.ackMaterialsNotice` (clique do usuário; nunca automático).
+   */
+  v.object({ kind: v.literal("avisoMateriais"), text: v.string(), acknowledged: v.boolean(), ...note }),
 );
 
 export type OnboardingBlock = Infer<typeof onboardingBlockValidator>;
@@ -190,6 +200,8 @@ export type BlockContext = {
   appliedDraftHash: string | null;
   emailVerified: boolean;
   aiActive: boolean;
+  /** Ciência do aviso de materiais já registrada nesta sessão. */
+  materialsNoticeAck?: boolean;
   upload?: UploadOutcome;
 };
 
@@ -373,6 +385,11 @@ export function buildBlock(req: BlockRequest, ctx: BlockContext, chips: string[]
       );
     case "traducaoCartao":
       return withNote({ kind: "traducaoCartao" as const, enabled: d?.features.translation ?? true }, n);
+    case "avisoMateriais":
+      return withNote(
+        { kind: "avisoMateriais" as const, text: MATERIALS_NOTICE_TEXT, acknowledged: ctx.materialsNoticeAck === true },
+        n,
+      );
   }
 }
 

@@ -8,14 +8,17 @@
  * escreve o rascunho (`onboardingSessions.internalSaveDraft`); configuração
  * só pelo clique `applyOnboardingDraft`.
  *
- * Duas portas para o frontend, mesmo loop:
- *  - SSE `POST /api/onboarding/stream` (`onboardingHttp.ts`, rota em `router.ts`);
- *  - action `sendTurn` (sem stream), que devolve o turno inteiro.
+ * Porta do frontend: SSE `POST /api/onboarding/stream` (`onboardingHttp.ts`,
+ * rota em `router.ts`). `internalSendTurn` roda o MESMO loop sem stream, só
+ * para testes/ops (não é público: o limite por IP vive na rota HTTP).
+ *
+ * Aviso de materiais: o 1º material de uma sessão exige a ciência explícita
+ * (`ackMaterialsNotice`, clique; audit `medium`); sem ela, `notice_required`.
  */
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { action, internalMutation, internalQuery, query } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { resolvePermissions, type Permissions, type Role } from "./lib/permissions";
@@ -33,8 +36,12 @@ import { runOnboardingTurn, turnInputValidator, turnResultValidator, type TurnRe
 const MESSAGE_TEXT_MAX = USER_TEXT_MAX;
 const CHIPS_STORED_MAX = 6;
 const ATTACHMENT_LABEL_MAX = 200;
-/** Áudio do usuário: teto igual ao da allowlist geral de arquivos. */
-const AUDIO_MAX_BYTES = 10 * 1024 * 1024;
+/**
+ * Áudio do usuário: ~2 MB (≈ 3 min de voz em opus/webm). O navegador não
+ * manda duração confiável; o teto em bytes protege o Whisper, que é o MESMO
+ * serviço da transcrição dos clientes reais.
+ */
+const AUDIO_MAX_BYTES = 2 * 1024 * 1024;
 const PDF_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -71,10 +78,32 @@ function toMessageView(m: Doc<"onboardingMessages">) {
 }
 
 /** D2: texto da recusa de material sem e-mail confirmado (a conversa por texto segue liberada). */
+export const MATERIALS_NOTICE_REQUIRED_MESSAGE =
+  "Antes do primeiro material, confirme que leu o aviso sobre como ele é lido (toque em \"Entendi\").";
+
 export const MATERIALS_EMAIL_UNVERIFIED_MESSAGE =
   "Para eu ler site, PDF, imagem ou áudio, confirme primeiro o código que enviamos para o seu e-mail. Enquanto isso, podemos continuar por texto.";
 
+const NO_PERMISSIONS: Permissions = {
+  leads: "none",
+  contacts: "none",
+  inbox: "none",
+  tasks: "none",
+  reports: "none",
+  team: "none",
+  settings: "none",
+  auditLogs: "none",
+  apiKeys: "none",
+  campaigns: "none",
+};
+
 const EMPTY_PAGE = { page: [], isDone: true, continueCursor: "" };
+const LIST_PAGE_MAX = 50;
+
+/** Recusa com código estável (o turno devolve `code` + `message`). */
+function refuse(code: "forbidden" | "invalid_input" | "email_unverified" | "notice_required", message: string): never {
+  throw new ConvexError({ code, message });
+}
 
 // ── Queries públicas (frontend) ─────────────────────────────────────────────
 
@@ -109,7 +138,11 @@ export const listMessages = query({
       .query("onboardingMessages")
       .withIndex("by_session", (q) => q.eq("sessionId", args.sessionId))
       .order("desc")
-      .paginate(args.paginationOpts);
+      .paginate(
+        args.paginationOpts.numItems > LIST_PAGE_MAX
+          ? { ...args.paginationOpts, numItems: LIST_PAGE_MAX }
+          : args.paginationOpts,
+      );
     return { ...result, page: result.page.map(toMessageView) };
   },
 });
@@ -127,6 +160,8 @@ export const getChatState = query({
       messageCount: v.number(),
       /** D2: e-mail confirmado libera site/PDF/imagem/áudio. */
       materialsUnlocked: v.boolean(),
+      /** Ciência do aviso de materiais já dada nesta sessão (senão, mostrar `avisoMateriais`). */
+      materialsNoticeAcknowledged: v.boolean(),
       aiActive: v.boolean(),
       lastChips: v.array(v.string()),
     }),
@@ -156,20 +191,59 @@ export const getChatState = query({
       draftHash: session?.draftHash ?? null,
       messageCount: session?.messageCount ?? 0,
       materialsUnlocked: await isEmailVerifiedForMaterials(ctx, userId),
+      materialsNoticeAcknowledged: session?.materialsNoticeAckAt !== undefined,
       aiActive: orgAiActive(org),
       lastChips: last?.role === "assistant" ? (last.chips ?? []) : [],
     };
   },
 });
 
-// ── Turno (sem stream) ──────────────────────────────────────────────────────
+// ── Aviso de materiais (clique) ─────────────────────────────────────────────
 
 /**
- * Um turno inteiro do onboarding, sem stream (mesmo loop do SSE). Erros de
- * gate/orçamento voltam em `{ok:false, code, message}` (PT-BR), nunca como
- * exceção, para a conversa mostrar o motivo.
+ * Ciência do aviso antes do 1º material ("lido por IA de provedores parceiros,
+ * inclusive fora do Brasil"). Só por este clique; idempotente (a 1ª ciência
+ * vale). Audit `medium`.
  */
-export const sendTurn = action({
+export const ackMaterialsNotice = mutation({
+  args: { organizationId: v.id("organizations"), sessionId: v.id("onboardingSessions") },
+  returns: v.object({ acknowledgedAt: v.number() }),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+    await requireAccountWithEmail(ctx);
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.organizationId !== args.organizationId) {
+      throw new ConvexError("Sessão de onboarding não encontrada");
+    }
+    if (session.materialsNoticeAckAt !== undefined) return { acknowledgedAt: session.materialsNoticeAckAt };
+    const now = Date.now();
+    await ctx.db.patch(session._id, { materialsNoticeAckAt: now, materialsNoticeAckBy: member._id, updatedAt: now });
+    const metadata = { action: "onboarding_materials_notice_ack" };
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "onboardingSession",
+      entityId: session._id,
+      action: "update",
+      actorId: member._id,
+      actorType: "human",
+      metadata,
+      description:
+        "Deu ciência do aviso de materiais do onboarding (lidos por IA de provedores parceiros, inclusive fora do Brasil)",
+      severity: "medium",
+      createdAt: now,
+    });
+    return { acknowledgedAt: now };
+  },
+});
+
+// ── Turno sem stream (testes/ops) ───────────────────────────────────────────
+
+/**
+ * Um turno inteiro do onboarding, sem stream (mesmo loop do SSE). Interna: o
+ * frontend usa só o SSE (que aplica o limite por IP). Erros voltam em
+ * `{ok:false, code, message}` (PT-BR), nunca como exceção.
+ */
+export const internalSendTurn = internalAction({
   args: turnInputValidator,
   returns: turnResultValidator,
   handler: async (ctx, args): Promise<TurnResult> => {
@@ -182,17 +256,16 @@ export const sendTurn = action({
 /** Permissões do membro chamador (auth do request): alimenta o gate de rota HTTP. */
 export const internalResolveTurnActor = internalQuery({
   args: { organizationId: v.id("organizations") },
-  returns: v.union(
-    v.null(),
-    v.object({ userId: v.id("users"), memberId: v.id("teamMembers"), permissions: v.any() }),
-  ),
+  returns: v.union(v.null(), v.object({ userId: v.id("users"), permissions: v.any() })),
   handler: async (ctx, args) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return null;
     const member = await getActiveMembership(ctx, args.organizationId, userId);
-    if (!member) return null;
-    const permissions: Permissions = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
-    return { userId, memberId: member._id, permissions };
+    // Logado mas fora da org: nenhuma permissão (o gate de rota responde 403).
+    const permissions: Permissions = member
+      ? resolvePermissions(member.role as Role, member.permissions as Permissions | undefined)
+      : NO_PERMISSIONS;
+    return { userId, permissions };
   },
 });
 
@@ -229,27 +302,55 @@ export const internalPrepareTurn = internalMutation({
     aiActive: v.boolean(),
     orgName: v.string(),
     orgSegment: v.union(v.string(), v.null()),
-    history: v.array(v.object({ role: v.union(v.literal("user"), v.literal("assistant")), text: v.string() })),
+    history: v.array(
+      v.object({
+        role: v.union(v.literal("user"), v.literal("assistant")),
+        text: v.string(),
+        transcribed: v.boolean(),
+      }),
+    ),
+    /** Roteamento da org SEM BYO (o onboarding usa a chave da plataforma): ZDR estrito e ordem de provedores. */
+    routing: v.object({
+      strictZdr: v.boolean(),
+      platformOrder: v.optional(
+        v.union(v.literal("auto"), v.literal("openrouter-first"), v.literal("opencode-only"), v.literal("openrouter-only")),
+      ),
+    }),
     file: v.union(
       v.null(),
       v.object({ size: v.number(), mimeType: v.string(), label: v.string() }),
     ),
     siteKey: v.union(v.string(), v.null()),
+    materialsNoticeAck: v.boolean(),
   }),
   handler: async (ctx, args) => {
-    const member = await requirePermission(ctx, args.organizationId, "settings", "manage");
-    const user = await requireAccountWithEmail(ctx);
+    let member: Doc<"teamMembers">;
+    let user: Doc<"users">;
+    try {
+      member = await requirePermission(ctx, args.organizationId, "settings", "manage");
+      user = await requireAccountWithEmail(ctx);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "";
+      refuse(
+        "forbidden",
+        /Not authenticated/i.test(msg)
+          ? "Entre na sua conta para continuar."
+          : /e-mail/i.test(msg)
+            ? "Esta ação exige uma conta com e-mail."
+            : "Você não tem permissão para configurar esta organização.",
+      );
+    }
     const org = await ctx.db.get(args.organizationId);
-    if (!org) throw new ConvexError("Organização não encontrada");
+    if (!org) refuse("invalid_input", "Organização não encontrada");
     const emailVerified = await isEmailVerifiedForMaterials(ctx, user._id);
-    if (args.attachment && !emailVerified) throw new ConvexError(MATERIALS_EMAIL_UNVERIFIED_MESSAGE);
+    if (args.attachment && !emailVerified) refuse("email_unverified", MATERIALS_EMAIL_UNVERIFIED_MESSAGE);
 
     let file: { size: number; mimeType: string; label: string } | null = null;
     let siteKey: string | null = null;
     if (args.attachment?.kind === "url") {
       const url = args.attachment.url.trim();
       if (url.length > 2000 || !/^https:\/\//i.test(url) || !siteKeyOf(url)) {
-        throw new ConvexError("Envie um endereço que comece com https://");
+        refuse("invalid_input", "Envie um endereço que comece com https://");
       }
       siteKey = siteKeyOf(url);
     } else if (args.attachment) {
@@ -260,25 +361,37 @@ export const internalPrepareTurn = internalMutation({
         .take(20);
       const row = rows.find((r) => r.organizationId === args.organizationId);
       const meta = row ? await ctx.db.system.get(storageId) : null;
-      if (!row || !meta) throw new ConvexError("Arquivo não encontrado");
+      if (!row || !meta) refuse("invalid_input", "Arquivo não encontrado");
       const mimeType = (meta.contentType ?? row.mimeType ?? "").split(";")[0].trim().toLowerCase();
       const kind = args.attachment.kind;
       const cap = kind === "audio" ? AUDIO_MAX_BYTES : kind === "pdf" ? PDF_MAX_BYTES : IMAGE_MAX_BYTES;
-      if (meta.size > cap) throw new ConvexError(`Arquivo grande demais (máximo ${Math.round(cap / 1024 / 1024)} MB)`);
+      if (meta.size > cap) {
+        refuse(
+          "invalid_input",
+          kind === "audio"
+            ? "Áudio longo demais: mande até uns 3 minutos (2 MB)."
+            : `Arquivo grande demais (máximo ${Math.round(cap / 1024 / 1024)} MB)`,
+        );
+      }
       const okType =
         kind === "pdf" ? mimeType === "application/pdf" : kind === "image" ? mimeType.startsWith("image/") : mimeType.startsWith("audio/");
-      if (!okType) throw new ConvexError("Tipo de arquivo não aceito para este envio");
+      if (!okType) refuse("invalid_input", "Tipo de arquivo não aceito para este envio");
       file = { size: meta.size, mimeType, label: (row.name ?? kind).slice(0, ATTACHMENT_LABEL_MAX) };
     }
 
     let session: Doc<"onboardingSessions">;
     if (args.sessionId) {
       const s = await ctx.db.get(args.sessionId);
-      if (!s || s.organizationId !== args.organizationId) throw new ConvexError("Sessão de onboarding não encontrada");
+      if (!s || s.organizationId !== args.organizationId) refuse("invalid_input", "Sessão de onboarding não encontrada");
       session = s;
     } else {
       session = await ensureOnboardingSession(ctx, args.organizationId, member);
     }
+    // Aviso de materiais: o 1º material da sessão só depois da ciência explícita.
+    if (args.attachment && session.materialsNoticeAckAt === undefined) {
+      refuse("notice_required", MATERIALS_NOTICE_REQUIRED_MESSAGE);
+    }
+    const providerConfig = org.settings.aiConfig?.providerConfig;
     const recent = await ctx.db
       .query("onboardingMessages")
       .withIndex("by_session", (q) => q.eq("sessionId", session._id))
@@ -298,9 +411,14 @@ export const internalPrepareTurn = internalMutation({
       aiActive: orgAiActive(org),
       orgName: org.name,
       orgSegment: org.onboardingMeta?.industry ?? null,
-      history: recent.reverse().map((m) => ({ role: m.role, text: m.text })),
+      history: recent.reverse().map((m) => ({ role: m.role, text: m.text, transcribed: m.transcribed === true })),
+      routing: {
+        strictZdr: providerConfig?.strictZdr === true,
+        ...(providerConfig?.platformOrder ? { platformOrder: providerConfig.platformOrder } : {}),
+      },
       file,
       siteKey,
+      materialsNoticeAck: session.materialsNoticeAckAt !== undefined,
     };
   },
 });

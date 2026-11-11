@@ -393,8 +393,10 @@ export const internalGetSession = internalQuery({
 
 /**
  * Proposta do entrevistador/leitor (P2.3): mesma validação e filtro do
- * caminho da pessoa, com três diferenças: a origem "usuario"/"template" é
- * rebaixada para externa, liberações são zeradas e `sourceTexts` (texto
+ * caminho da pessoa, com três diferenças: em item NOVO ou ALTERADO nesta
+ * gravação a origem "usuario"/"template" é rebaixada para externa e a
+ * liberação é zerada (item idêntico ao anterior — mesmo texto e mesma
+ * origem — mantém origem, marca, `verifiedInSource` e liberação), e `sourceTexts` (texto
  * extraído de site/PDF/áudio/imagem, casado por `origin.reference`) permite
  * reconhecer link/telefone vistos na fonte (`verifiedInSource`).
  */

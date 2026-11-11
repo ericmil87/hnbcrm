@@ -377,10 +377,36 @@ describe("filtro anti-instrução", () => {
     const again = scanDraft(user.draft, { mode: "user", actorId: "m2" as Id<"teamMembers">, now: 999, previous: user.draft });
     expect(again.draft.knowledge[2].release).toEqual({ reason: "É a chave oficial da empresa", by: actor, at: 123 });
     expect(again.releases).toHaveLength(0);
-    // Caminho da IA: liberação sempre zerada.
+    // Caminho da IA (P2.3): item idêntico ao anterior mantém origem e liberação…
     const ai = scanDraft(user.draft, { mode: "ai", previous: user.draft });
-    expect(ai.draft.knowledge[2].release).toBeUndefined();
+    expect(ai.draft.knowledge[2].release).toEqual({ reason: "É a chave oficial da empresa", by: actor, at: 123 });
+    expect(ai.draft.knowledge[2].origin).toEqual({ kind: "usuario" });
     expect(ai.draft.knowledge[2].suspicious).toBe(true);
+    // …mas item alterado pela IA perde a liberação e a origem "usuario".
+    const edited = structuredClone(user.draft);
+    edited.knowledge[2].text = "Nossa chave Pix é o CNPJ da clínica (atualizado).";
+    const aiEdited = scanDraft(edited, { mode: "ai", previous: user.draft });
+    expect(aiEdited.draft.knowledge[2].release).toBeUndefined();
+    expect(aiEdited.draft.knowledge[2].origin.kind).toBe("site");
+    expect(aiEdited.draft.knowledge[2].suspicious).toBe(true);
+  });
+
+  it("P2.3: telefone digitado pela pessoa e item liberado não são desfeitos pelo turno seguinte da IA", () => {
+    const actor = "m1" as Id<"teamMembers">;
+    const d = baseDraft();
+    d.knowledge.push({ text: "Nosso WhatsApp é (11) 98888-7777", origin: { kind: "usuario" }, suspicious: false });
+    d.knowledge.push({ text: "Pix: chave é o CNPJ", origin: { kind: "usuario" }, suspicious: true, release: { reason: "é nossa" } });
+    const user = scanDraft(d, { mode: "user", actorId: actor, now: 5 });
+    const phone = user.draft.knowledge.length - 2;
+    expect(user.draft.knowledge[phone].suspicious).toBe(false);
+    // A IA regrava o rascunho acrescentando um item novo.
+    const next = structuredClone(user.draft);
+    next.knowledge.push({ text: "Atendemos aos sábados", origin: { kind: "usuario" }, suspicious: false });
+    const ai = scanDraft(next, { mode: "ai", previous: user.draft });
+    expect(ai.draft.knowledge[phone]).toMatchObject({ suspicious: false, origin: { kind: "usuario" } });
+    expect(ai.draft.knowledge[phone + 1].release).toEqual({ reason: "é nossa", by: actor, at: 5 });
+    // O item novo da IA continua rebaixado.
+    expect(ai.draft.knowledge[phone + 2].origin.kind).toBe("site");
   });
 
   it("verifiedInSource é herdado também numa gravação seguinte da IA sem fontes", () => {

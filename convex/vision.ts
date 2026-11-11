@@ -539,7 +539,9 @@ export const internalDescribeImageForCopilot = internalAction({
  *    do aceite de IA (como o leitor e o entrevistador). Os gates do
  *    onboarding ficam com o chamador: conta com e-mail confirmado (D2) e
  *    reserva de orçamento (`onboardingBudget.internalReserveOnboardingSpend`).
- *  - Sempre a chave da PLATAFORMA (sem BYO): é o custo de aquisição.
+ *  - Sempre a chave da PLATAFORMA (sem BYO): é o custo de aquisição. O ZDR
+ *    estrito e a ordem de provedores da org (`strictZdr`, `platformOrder`)
+ *    continuam valendo.
  *  - Não grava `agentRuns`: devolve uso/custo e o chamador registra pela
  *    porta do onboarding (`internalRecordOnboardingSpend`, `role:"vision"`).
  * O modelo vem de `getOnboardingModel("vision")` (env); sem env, a cadeia inteira.
@@ -565,6 +567,11 @@ export const internalDescribeImageForOnboarding = internalAction({
     storageId: v.id("_storage"),
     mimeType: v.string(),
     size: v.number(),
+    /** Roteamento da org (sem BYO). */
+    strictZdr: v.optional(v.boolean()),
+    platformOrder: v.optional(
+      v.union(v.literal("auto"), v.literal("openrouter-first"), v.literal("opencode-only"), v.literal("openrouter-only")),
+    ),
   },
   returns: v.object({
     status: v.union(v.literal("done"), v.literal("failed")),
@@ -587,11 +594,16 @@ export const internalDescribeImageForOnboarding = internalAction({
     const choice = resolveOnboardingModel("vision");
     let attempts: ResolvedRoute[];
     try {
+      const providerConfig: OrgProviderConfig = {
+        mode: "platform",
+        ...(args.strictZdr ? { strictZdr: true } : {}),
+        ...(args.platformOrder ? { platformOrder: args.platformOrder } : {}),
+        ...(choice.source === "env" ? { products: { vision: { model: choice.model } } } : {}),
+      };
       attempts = await buildVisionAttempts(ctx, {
         organizationId: args.organizationId,
-        providerConfig:
-          choice.source === "env" ? ({ products: { vision: { model: choice.model } } } as OrgProviderConfig) : null,
-        strictZdr: false,
+        providerConfig,
+        strictZdr: args.strictZdr === true,
       });
     } catch (e) {
       return failed(visionError(e));

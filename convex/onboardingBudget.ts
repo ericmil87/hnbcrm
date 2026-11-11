@@ -227,6 +227,8 @@ export const internalReserveOnboardingSpend = internalMutation({
     userId: v.optional(v.id("users")),
     ipKey: v.optional(v.string()),
     estimateUsdMicros: v.optional(v.number()),
+    /** O turno já consumiu user+org no começo; a reserva só confere/segura orçamento. */
+    rateLimitConsumed: v.optional(v.boolean()),
   },
   returns: decisionValidator,
   handler: async (ctx, args) => {
@@ -273,7 +275,9 @@ export const internalReserveOnboardingSpend = internalMutation({
       return refused(decision.code);
     }
 
-    const rate = await consumeRate(ctx, now, subjectsFor(args));
+    // `rateLimitConsumed`: o chamador já consumiu o rate limit deste turno no
+    // começo (P2.3, `internalCheckOnboardingRateLimit` logo após a abertura).
+    const rate = args.rateLimitConsumed === true ? ({ allowed: true } as const) : await consumeRate(ctx, now, subjectsFor(args));
     if (!rate.allowed) {
       return {
         ...refused("rate_limited", rate.retryAfterMs),
@@ -298,7 +302,9 @@ export const internalRecordOnboardingSpend = internalMutation({
     /** Membro humano que conduz a sessão (opcional; padrão = quem abriu a sessão). */
     memberId: v.optional(v.id("teamMembers")),
     /** Papel (documental; o modelo usado vai em `model`). */
-    role: v.union(v.literal("interviewer"), v.literal("reader"), v.literal("vision")),
+    // `transcription` (P2.3): Whisper do áudio do usuário; reservado antes para não
+    // ocupar o serviço compartilhado com os clientes reais além do orçamento.
+    role: v.union(v.literal("interviewer"), v.literal("reader"), v.literal("vision"), v.literal("transcription")),
     status: v.optional(v.union(v.literal("done"), v.literal("error"))),
     provider: v.optional(v.string()),
     model: v.optional(v.string()),

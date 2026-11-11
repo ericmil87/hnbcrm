@@ -284,7 +284,10 @@ export type ScanOptions = {
  * - `previous`: item com texto e origem iguais herda a marca anterior
  *   (`sticky`), o `verifiedInSource` e a liberação já registrada.
  * - Liberação: só no modo `user`, só para item marcado; nova liberação recebe
- *   `by`/`at` e entra em `releases` (audit). No modo `ai` é sempre zerada.
+ *   `by`/`at` e entra em `releases` (audit). No modo `ai`, item NOVO ou ALTERADO
+ *   tem a liberação zerada e a origem rebaixada; item idêntico ao anterior
+ *   (mesmo texto e, no conhecimento, mesma origem) mantém origem, marca,
+ *   `verifiedInSource` e liberação (a IA regravando não desfaz o que a pessoa fez).
  */
 export function scanDraft(
   input: OnboardingDraft,
@@ -301,9 +304,19 @@ export function scanDraft(
   const releases: ReleaseEvent[] = [];
   let flagged = 0;
 
-  // Origem: no caminho da IA nunca "usuario"/"template".
+  type KnowledgeItem = OnboardingDraft["knowledge"][number];
+  const sameOrigin = (a: KnowledgeItem, b: KnowledgeItem) =>
+    a.origin.kind === b.origin.kind && (a.origin.reference ?? "") === (b.origin.reference ?? "");
+  /** Item idêntico (texto E origem) no rascunho anterior: não foi tocado nesta gravação. */
+  const unchangedKnowledge = (k: KnowledgeItem) => prev?.knowledge.find((p) => p.text === k.text && sameOrigin(p, k));
+  // Origem: no caminho da IA nunca "usuario"/"template" para item NOVO ou
+  // ALTERADO. Item idêntico ao anterior (mesmo texto e mesma origem) mantém a
+  // origem: a IA regravando o rascunho não rebaixa o que a pessoa digitou.
   const draft: OnboardingDraft = isAi
-    ? { ...input, knowledge: input.knowledge.map((k) => ({ ...k, origin: externalOriginFor(k.origin) })) }
+    ? {
+        ...input,
+        knowledge: input.knowledge.map((k) => (unchangedKnowledge(k) ? k : { ...k, origin: externalOriginFor(k.origin) })),
+      }
     : input;
   // "Própria fonte" vale só para quem digitou: a pessoa (modo user).
   const ownKind: KnowledgeOriginKind | undefined = isAi ? undefined : "usuario";
@@ -318,7 +331,22 @@ export function scanDraft(
     result: ScanResult,
     previousItem: Flagged | undefined,
     verifiedNow = false,
+    /** Modo IA: o item é idêntico ao anterior (não tocado nesta gravação). */
+    untouched?: Flagged,
   ): T => {
+    if (isAi && untouched) {
+      // A IA não reavalia o que não mudou: mantém marca, verificação e a
+      // liberação humana já registrada (antes, um turno da IA desfazia isso).
+      const kept: T = { ...item, suspicious: untouched.suspicious };
+      delete kept.suspicionReason;
+      delete kept.verifiedInSource;
+      delete kept.release;
+      if (untouched.suspicionReason) kept.suspicionReason = untouched.suspicionReason;
+      if (untouched.verifiedInSource === true) kept.verifiedInSource = true;
+      if (untouched.release) kept.release = untouched.release;
+      if (kept.suspicious) flagged++;
+      return kept;
+    }
     let r = result;
     if (!r.suspicious && previousItem?.suspicious) {
       r = { suspicious: true, codes: [], reason: previousItem.suspicionReason ?? "marcado para revisão antes" };
@@ -357,6 +385,8 @@ export function scanDraft(
     draft.business,
     scanDraftText(businessText, { originKind: ownKind }),
     prevBusiness,
+    false,
+    prevBusiness,
   );
 
   const greeting = draft.greeting
@@ -365,15 +395,14 @@ export function scanDraft(
         draft.greeting,
         scanDraftText(draft.greeting.text, { originKind: ownKind }),
         prev?.greeting && prev.greeting.text === draft.greeting.text ? prev.greeting : undefined,
+        false,
+        prev?.greeting && prev.greeting.text === draft.greeting.text ? prev.greeting : undefined,
       )
     : undefined;
 
   // Item anterior casado pelo TEXTO, ignorando a origem: trocar só a origem
   // (ex.: de "site" para "usuario") não limpa uma marca nem uma liberação. A
   // verificação na fonte, essa sim, só é herdada com texto E origem iguais.
-  type KnowledgeItem = OnboardingDraft["knowledge"][number];
-  const sameOrigin = (a: KnowledgeItem, b: KnowledgeItem) =>
-    a.origin.kind === b.origin.kind && (a.origin.reference ?? "") === (b.origin.reference ?? "");
   const prevByText = new Map<string, KnowledgeItem[]>();
   for (const k of prev?.knowledge ?? []) prevByText.set(k.text, [...(prevByText.get(k.text) ?? []), k]);
   const previousFor = (k: KnowledgeItem): Flagged | undefined => {
@@ -397,7 +426,7 @@ export function scanDraft(
     const result = scanDraftText(k.text, { originKind: k.origin.kind, sourceText });
     const offSource = result.codes.some((c) => c === "url_fora_da_origem" || c === "telefone_fora_da_origem");
     const verifiedNow = isAi && sourceText !== undefined && !offSource;
-    return finish(`knowledge[${i}]`, k, result, previousItem, verifiedNow);
+    return finish(`knowledge[${i}]`, k, result, previousItem, verifiedNow, unchangedKnowledge(k));
   });
 
   const prevReplies = new Map((prev?.quickReplies ?? []).map((q) => [`${q.shortcut}|${q.text}`, q]));
@@ -406,6 +435,8 @@ export function scanDraft(
       `quickReplies[${i}]`,
       q,
       scanDraftText(q.text, { originKind: ownKind }),
+      prevReplies.get(`${q.shortcut}|${q.text}`),
+      false,
       prevReplies.get(`${q.shortcut}|${q.text}`),
     ),
   );
@@ -416,6 +447,8 @@ export function scanDraft(
       `handoffRules[${i}]`,
       r,
       r.note ? scanDraftText(r.note, { originKind: ownKind }) : { suspicious: false, codes: [] },
+      prevRules.get(`${r.kind}|${r.note ?? ""}`),
+      false,
       prevRules.get(`${r.kind}|${r.note ?? ""}`),
     ),
   );
