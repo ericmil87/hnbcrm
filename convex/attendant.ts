@@ -29,6 +29,7 @@ import {
   internalQuery,
   mutation,
   query,
+  ActionCtx,
   MutationCtx,
   QueryCtx,
 } from "./_generated/server";
@@ -49,7 +50,8 @@ import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./lib/promptEnvelope"
 import { buildSearchText } from "./lib/searchText";
 import { ChatMessage, flattenContent } from "./lib/llm/types";
 import { chatWithFallback, withReasoningEffort } from "./lib/llm";
-import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
+import { resolveOrgRoutes, OrgProviderConfig, platformTtsAllowed } from "./lib/agentRoutes";
+import { normalizeVoiceNotice, planVoiceReply, resolveAttendantVoice, type VoiceTextReason } from "./lib/tts";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { createHandoffCore } from "./handoffs";
@@ -1073,6 +1075,11 @@ function historyTextBase(
   }
 
   if (m.contentType === "audio") {
+    // P4.1: resposta em áudio da própria IA — o texto falado está no `content`.
+    const voiceReply = m.metadata?.voiceReply as { mode?: unknown } | undefined;
+    if (m.direction === "outbound" && voiceReply?.mode === "audio" && m.content.trim().length > 0) {
+      return `[resposta em áudio]: ${m.content.trim()}`;
+    }
     const transcript = m.transcriptText?.trim();
     if (transcript) return `[áudio transcrito]: ${transcript}`;
     return m.direction === "outbound"
@@ -1686,10 +1693,37 @@ export const internalClaimForProcessing = internalMutation({
         // Meta Messaging F3: decide o formato da saída (texto puro no IG/Messenger).
         transport: transportOf(channelConfig),
         channelLabel: channelLabelFor(transportOf(channelConfig)),
+        // P4.1: fatos para as regras da resposta em áudio (`lib/tts.planVoiceReply`).
+        voiceReply: voiceReplyContextFor(org!, conversation, rawHistory),
       },
     };
   },
 });
+
+/**
+ * Resposta em áudio (P4.1): `null` com a voz desligada na org (ausente =
+ * desligada). Ligada, leva os FATOS que as regras fixas precisam; quem decide
+ * é `planVoiceReply` na action, depois do output guard.
+ */
+function voiceReplyContextFor(
+  org: Doc<"organizations">,
+  conversation: Doc<"conversations">,
+  recentDesc: Doc<"messages">[]
+): RunContext["voiceReply"] {
+  const ai = org.settings.aiConfig;
+  if (ai?.voiceReplyEnabled !== true) return null;
+  // Última mensagem DO CLIENTE (inbound, não interna); `recentDesc` vem do mais novo.
+  const lastInbound = recentDesc.find(
+    (m) => m.direction === "inbound" && m.senderType === "contact" && !m.isInternal
+  );
+  return {
+    voice: resolveAttendantVoice(ai.voiceReplyVoice),
+    lastInboundWasAudio: lastInbound?.contentType === "audio",
+    isGroup: conversation.kind === "group",
+    // Aviso de voz sintética: só no primeiro áudio da IA nesta conversa.
+    notice: conversation.aiVoiceNoticeAt === undefined ? normalizeVoiceNotice(ai.voiceReplyNotice) : null,
+  };
+}
 
 /**
  * Campos capturados (subconjunto de `customFields` nas chaves de
@@ -2693,8 +2727,19 @@ export const internalCommitAiReply = internalMutation({
     // v0.64 — flyer da agenda externa: linha de `files` já preparada pela
     // action (sem messageId); o texto vira a LEGENDA.
     attachments: v.optional(v.array(v.id("files"))),
-    contentType: v.optional(v.union(v.literal("text"), v.literal("image"))),
+    // P4.1: "audio" = resposta em áudio (o anexo é o ogg gerado; `text` é a parte falada).
+    contentType: v.optional(v.union(v.literal("text"), v.literal("image"), v.literal("audio"))),
     imageRejected: v.optional(v.boolean()), // imageUrl fora da agenda consultada
+    // P4.1 — resposta em áudio: duração/waveform (viram PTT/Seconds/Waveform no
+    // bridge) e se o aviso de voz sintética foi falado neste áudio.
+    voiceNote: v.optional(
+      v.object({ seconds: v.number(), waveform: v.array(v.number()), notice: v.boolean() })
+    ),
+    // Dados (Pix, link, valor, endereço, código…) que nunca vão na voz: segunda
+    // mensagem, em TEXTO, logo depois do áudio.
+    textAfterVoice: v.optional(v.string()),
+    // Voz ligada mas a resposta saiu em texto: o motivo (regra ou falha).
+    voiceFallbackReason: v.optional(v.string()),
   },
   returns: v.union(
     v.object({ committed: v.literal(true), messageId: v.id("messages") }),
@@ -2879,6 +2924,19 @@ export const internalCommitAiReply = internalMutation({
         // Commit ≠ entregue: aqui a tarefa NÃO é concluída.
         ...(queueItem?.followUpId ? { followUp: { followUpId: queueItem.followUpId } } : {}),
         ...(args.imageRejected ? { aiImageRejected: true } : {}),
+        // P4.1: o dispatcher do bridge lê `voiceNote`; `voiceReply` é o rastro da decisão.
+        ...(args.voiceNote && args.contentType === "audio"
+          ? {
+              voiceNote: { seconds: args.voiceNote.seconds, waveform: args.voiceNote.waveform },
+              voiceReply: {
+                mode: "audio",
+                ...(args.textAfterVoice ? { split: true } : {}),
+                ...(args.voiceNote.notice ? { notice: true } : {}),
+              },
+            }
+          : args.voiceFallbackReason
+            ? { voiceReply: { mode: "text", reason: args.voiceFallbackReason } }
+            : {}),
         // Telegram (0.77.2): the reply to an instruction/regeneration asked from the bot —
         // the ONLY AI reply relayed to Telegram (to that member, once).
         ...(queueItem?.requestedVia && queueItem.instructedBy
@@ -2912,6 +2970,41 @@ export const internalCommitAiReply = internalMutation({
       }
       // Teto diário POR NÚMERO, contado no envio (não no agendamento).
       await bumpFollowUpChannelCounter(ctx, conversation, now);
+    }
+
+    // P4.1: os dados que não vão na voz saem em TEXTO, logo depois do áudio
+    // (mesma porta de envio; o pacing por conversa mantém a ordem).
+    if (args.voiceNote && args.contentType === "audio") {
+      if (args.voiceNote.notice) {
+        await ctx.db.patch(conversation._id, { aiVoiceNoticeAt: now });
+      }
+      if (args.textAfterVoice && args.textAfterVoice.trim().length > 0) {
+        const fresh = await ctx.db.get(conversation._id);
+        const textMessageId = await ctx.db.insert("messages", withMessageSearch({
+          organizationId: conversation.organizationId,
+          conversationId: conversation._id,
+          leadId: conversation.leadId,
+          direction: "outbound",
+          senderId: agent!._id,
+          senderType: "ai",
+          content: args.textAfterVoice,
+          contentType: "text",
+          isInternal: false,
+          metadata: {
+            agentRunId: args.agentRunId,
+            voiceReply: { mode: "text", reason: "dado_em_texto", audioMessageId: messageId },
+          },
+          createdAt: now + 1,
+        }));
+        await applyOutboundMessageSideEffects(ctx, {
+          conversation: fresh ?? conversation,
+          member: agent!,
+          messageId: textMessageId,
+          now: now + 1,
+          activityContent: `Dados da resposta em áudio enviados em texto pelo atendente IA via ${channelLabelFor(transportOf(channelConfig), conversation.channel)}`,
+        });
+        await scheduleMessageTranslation(ctx, { messageId: textMessageId, role: "display", conversation });
+      }
     }
 
     // Billing (B2): a resposta saiu, então o contato conta no mês (1× por contato).
@@ -3365,7 +3458,103 @@ type RunContext = {
   transport?: ChannelTransport | null;
   /** Nome do canal na persona padrão ("WhatsApp", "Instagram", "Messenger"). */
   channelLabel?: string;
+  /** P4.1: resposta em áudio ligada na org (null/ausente = desligada). */
+  voiceReply?: {
+    voice: string;
+    lastInboundWasAudio: boolean;
+    isGroup: boolean;
+    notice: string | null;
+  } | null;
 };
+
+/** Resultado da decisão de áudio (P4.1); `null` = voz desligada na org. */
+type VoiceReplyOutcome =
+  | null
+  | { kind: "text"; reason: VoiceTextReason }
+  | {
+      kind: "audio";
+      /** Texto da mensagem de áudio (parte falada, com aviso/divulgação se houver). */
+      text: string;
+      fileId: Id<"files">;
+      seconds: number;
+      waveform: number[];
+      noticeIncluded: boolean;
+      /** Dados que seguem em TEXTO logo depois do áudio (Pix, link, valor…). */
+      textAfter: string | null;
+    };
+
+/**
+ * Resposta em áudio do atendente (P4.1). Chamada no runtime DEPOIS do output
+ * guard e de `formatReplyForTransport`, ANTES do commit: regras fixas em
+ * `planVoiceReply` (puro) e síntese/conversão na action Node — qualquer falha
+ * vira `{kind:"text"}` e a resposta segue em texto pelo mesmo commit.
+ */
+async function prepareVoiceReply(
+  ctx: ActionCtx,
+  context: RunContext,
+  input: { text: string; draft: boolean; hasImage: boolean }
+): Promise<VoiceReplyOutcome> {
+  const voiceCtx = context.voiceReply;
+  if (!voiceCtx) return null;
+  // A divulgação entra no texto falado do mesmo jeito que o commit a prependeria
+  // e, quando existe, TAMBÉM sai por escrito (mensagem de texto depois do áudio).
+  const disclosureAdded = context.needsDisclosure && !input.text.includes(context.disclosure);
+  const fullText = disclosureAdded ? `${context.disclosure}\n\n${input.text}` : input.text;
+  const plan = planVoiceReply({
+    enabled: true,
+    transport: context.transport ?? null,
+    isGroup: voiceCtx.isGroup,
+    lastInboundWasAudio: voiceCtx.lastInboundWasAudio,
+    draft: input.draft,
+    followUp: context.followUp !== null,
+    hasImage: input.hasImage,
+    text: fullText,
+    notice: voiceCtx.notice,
+    language: context.language === "auto" ? context.conversationLang ?? null : context.language,
+  });
+  if (plan.kind === "text") return plan;
+  // A trava `provider` no endpoint de áudio não foi validada ao vivo: um campo
+  // IGNORADO (não recusado) mandaria o texto sem ZDR. Org estrita fica no texto.
+  if (context.strictZdr) return { kind: "text", reason: "zdr_nao_validado" };
+  // Síntese (até 30 s) + conversão (até 20 s) dentro do lease do lock: sem folga
+  // de 1 min, o commit perderia o lock depois de pagar o TTS.
+  if (Date.now() - context.runStartedAt > LEASE_MS - 60_000) return { kind: "text", reason: "sem_tempo" };
+  let synth;
+  try {
+    synth = await ctx.runAction(internal.voiceReplyNode.internalSynthesizeVoiceNote, {
+      organizationId: context.organizationId,
+      conversationId: context.conversationId,
+      agentMemberId: context.agentMemberId,
+      leadId: context.leadId,
+      text: plan.speakable,
+      voice: voiceCtx.voice,
+      strictZdr: context.strictZdr,
+      routingAllowed: platformTtsAllowed(context.providerConfig),
+    });
+  } catch (e) {
+    // A action "nunca lança", mas um erro de runtime (OOM, timeout da plataforma)
+    // não pode derrubar o turno: a resposta sai em texto.
+    console.log(`[voiceReply] resposta em texto: falha_tts (${e instanceof Error ? e.name : "erro"})`);
+    return { kind: "text", reason: "falha_tts" };
+  }
+  if (!synth.ok) {
+    console.log(`[voiceReply] resposta em texto: ${synth.reason}`);
+    return { kind: "text", reason: synth.reason as VoiceTextReason };
+  }
+  const textParts = [
+    ...(disclosureAdded && !(plan.textPart ?? "").includes(context.disclosure) ? [context.disclosure] : []),
+    ...(plan.textPart ? [plan.textPart] : []),
+  ];
+  return {
+    kind: "audio",
+    text: plan.spokenText,
+    fileId: synth.fileId,
+    seconds: synth.seconds,
+    waveform: synth.waveform,
+    noticeIncluded: plan.noticeIncluded,
+    textAfter: textParts.length > 0 ? textParts.join("\n\n") : null,
+  };
+}
 
 // Subconjunto do contexto que o prompt de sistema realmente usa — permite que o
 // simulador (sem conversa/lead reais) reuse o mesmo prompt do runtime.
@@ -3583,6 +3772,10 @@ export const internalProcessQueueItem = internalAction({
     // o caminho de falha também gravar o que já foi gasto.
     const usage = newUsageTotals();
     let runFinished = false;
+    // P4.1: ogg da resposta em áudio já gravado (linha de `files` sem mensagem).
+    // Fora do try: se o commit (ou algo depois da síntese) lançar, o `catch`
+    // descarta o arquivo em vez de deixá-lo órfão no storage.
+    let voiceFileId: Id<"files"> | null = null;
 
     try {
       // Rotas da org: platform chain OU BYO (key própria, sem fallback);
@@ -4139,6 +4332,18 @@ export const internalProcessQueueItem = internalAction({
         }
       }
 
+      // Resposta em áudio (P4.1): decidida AQUI, depois do output guard e da
+      // formatação, antes do commit/dispatch. A síntese é a única chamada de TTS
+      // (`voiceReplyNode`); qualquer falha devolve motivo e a resposta sai em
+      // TEXTO pelo mesmo commit. O áudio vira anexo da mensagem (o texto fica
+      // no `content` para histórico e busca) e sai pela porta única de envio.
+      const voice = await prepareVoiceReply(ctx, context, {
+        text: replyText,
+        draft: effectiveMode === "suggest",
+        hasImage: imageFileId !== null,
+      });
+      if (voice?.kind === "audio") voiceFileId = voice.fileId;
+
       // Commit transacional (a checagem que conta).
       const commitArgsBase = {
         queueItemId: args.queueItemId,
@@ -4146,12 +4351,25 @@ export const internalProcessQueueItem = internalAction({
         agentMemberId: context.agentMemberId,
         runId,
         agentRunId: context.agentRunId,
-        text: replyText,
+        text: voice?.kind === "audio" ? voice.text : replyText,
         needsDisclosure: context.needsDisclosure,
         disclosure: context.disclosure,
         ...(imageFileId ? { attachments: [imageFileId], contentType: "image" as const } : {}),
         ...(imageRejected ? { imageRejected: true } : {}),
       };
+      const voiceCommitArgs =
+        voice?.kind === "audio"
+          ? {
+              attachments: [voice.fileId],
+              contentType: "audio" as const,
+              voiceNote: { seconds: voice.seconds, waveform: voice.waveform, notice: voice.noticeIncluded },
+              // A divulgação já foi resolvida no texto falado (prepareVoiceReply).
+              needsDisclosure: false,
+              ...(voice.textAfter ? { textAfterVoice: voice.textAfter } : {}),
+            }
+          : voice?.kind === "text"
+            ? { voiceFallbackReason: voice.reason }
+            : {};
       const commit =
         effectiveMode === "suggest"
           ? await ctx.runMutation(internal.attendant.internalCommitAiSuggestion, {
@@ -4167,6 +4385,7 @@ export const internalProcessQueueItem = internalAction({
             })
           : await ctx.runMutation(internal.attendant.internalCommitAiReply, {
               ...commitArgsBase,
+              ...voiceCommitArgs,
               runStartedAt: context.runStartedAt,
               allowPendingHandoff: handoffRequestedThisRun,
               ...(context.humanInitiated ? { humanInitiated: true } : {}),
@@ -4185,10 +4404,14 @@ export const internalProcessQueueItem = internalAction({
       runFinished = true;
 
       if (!commit.committed) {
-        // A linha do flyer preparada ficou sem mensagem — não deixa órfã.
-        if (imageFileId) {
+        // A linha do flyer (ou do áudio) preparada ficou sem mensagem — não deixa órfã.
+        const unlinked = [
+          ...(imageFileId ? [imageFileId] : []),
+          ...(voice?.kind === "audio" ? [voice.fileId] : []),
+        ];
+        if (unlinked.length > 0) {
           await ctx.runMutation(internal.attendantAgenda.internalDiscardUnlinkedFiles, {
-            fileIds: [imageFileId],
+            fileIds: unlinked,
           });
         }
         // Elegibilidade caiu durante a geração — item encerrado sem envio.
@@ -4207,6 +4430,17 @@ export const internalProcessQueueItem = internalAction({
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro inesperado no atendente";
+      // Áudio sintetizado que não virou mensagem (commit lançou): descarta. A
+      // mutation ignora arquivo já vinculado (`messageId`), então é segura sempre.
+      if (voiceFileId) {
+        try {
+          await ctx.runMutation(internal.attendantAgenda.internalDiscardUnlinkedFiles, {
+            fileIds: [voiceFileId],
+          });
+        } catch {
+          // limpeza best-effort: não troca o erro original
+        }
+      }
       // O que já foi gasto antes da falha entra no medidor (idempotente por run).
       if (!runFinished && usage.promptTokens + usage.completionTokens > 0) {
         await ctx.runMutation(internal.agentRuns.internalFinishRun, {

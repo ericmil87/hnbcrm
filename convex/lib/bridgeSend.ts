@@ -13,6 +13,8 @@
  * so it survives whichever serialization wuzapi emits.
  */
 
+import { isValidWaveform, waveformToBase64 } from "./tts";
+
 export interface BridgeSendRequest {
   url: string;
   headers: Record<string, string>;
@@ -278,7 +280,46 @@ export type BridgeAudioSendPlan = {
   filename?: string;
   /** Dispatch note shown on the message when the plan degrades. */
   note?: string;
+  /**
+   * Voice note fields for `/chat/send/audio` (AI voice reply, P4.1): only when the
+   * message carries a valid `metadata.voiceNote` AND the plan stays on the audio
+   * endpoint. Human recordings carry none, so their request is unchanged.
+   */
+  voiceFields?: BridgeVoiceNoteFields;
 };
+
+/**
+ * Extra body fields of the wuzapi `SendAudio` handler (read from upstream
+ * `handlers.go`, spike P0.4): `ptt` (default true upstream), `mimetype`,
+ * `Seconds` (uint32) and `Waveform` (`[]byte` = base64 string in JSON). Go's
+ * JSON decoder matches keys case-insensitively, so `PTT`/`MimeType` reach the
+ * `ptt`/`mimetype` tags. The version running on the managed VPS was NOT
+ * verified: an older gateway ignores unknown fields (Go default).
+ */
+export type BridgeVoiceNoteFields = {
+  PTT: true;
+  MimeType: string;
+  Seconds: number;
+  Waveform?: string;
+};
+
+/** Mime declared to WhatsApp for a voice note. */
+export const VOICE_NOTE_MIME = "audio/ogg; codecs=opus";
+
+/**
+ * `metadata.voiceNote` ({ seconds, waveform }) → wuzapi fields, or undefined when
+ * absent/invalid. `seconds` must be an integer 1–3600; `waveform` is optional and
+ * must be 64 integers 0–100 (anything else is dropped, never sent half-valid).
+ */
+export function bridgeVoiceNoteFields(voiceNote: unknown): BridgeVoiceNoteFields | undefined {
+  if (!voiceNote || typeof voiceNote !== "object") return undefined;
+  const { seconds, waveform } = voiceNote as { seconds?: unknown; waveform?: unknown };
+  if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600) {
+    return undefined;
+  }
+  const wave = isValidWaveform(waveform) ? waveformToBase64(waveform) : undefined;
+  return { PTT: true, MimeType: VOICE_NOTE_MIME, Seconds: seconds, ...(wave ? { Waveform: wave } : {}) };
+}
 
 /**
  * How a voice note (`contentType: "audio"`) goes out through the bridge.
@@ -295,13 +336,16 @@ export function planBridgeAudioSend(input: {
   fileMimeType: string;
   fileName: string;
   converted: boolean;
+  /** `message.metadata.voiceNote` (AI voice reply): adds PTT/Seconds/Waveform/MimeType. */
+  voiceNote?: unknown;
 }): BridgeAudioSendPlan {
   const base = baseMime(input.fileMimeType);
+  const voiceFields = bridgeVoiceNoteFields(input.voiceNote);
   if (base === "audio/ogg") {
-    return { kind: "audio", sendMime: input.fileMimeType, useConverted: false };
+    return { kind: "audio", sendMime: input.fileMimeType, useConverted: false, ...(voiceFields ? { voiceFields } : {}) };
   }
   if (input.converted) {
-    return { kind: "audio", sendMime: "audio/ogg; codecs=opus", useConverted: true };
+    return { kind: "audio", sendMime: "audio/ogg; codecs=opus", useConverted: true, ...(voiceFields ? { voiceFields } : {}) };
   }
   const ext = AUDIO_DOCUMENT_EXT[base];
   const name = (input.fileName || "").trim() || "nota-de-voz";
@@ -346,6 +390,8 @@ export function buildBridgeMediaSendRequest(params: {
   filename?: string;
   quote?: BridgeQuote;
   mentions?: string[];
+  /** Voice note fields (audio only; ignored for the other kinds). */
+  voiceFields?: BridgeVoiceNoteFields;
 }): BridgeSendRequest {
   const base = params.baseUrl.replace(/\/+$/, "");
   const { path, field } = MEDIA_ENDPOINT[params.kind];
@@ -353,6 +399,7 @@ export function buildBridgeMediaSendRequest(params: {
   const body: Record<string, unknown> = {
     Phone: params.toPhone,
     [field]: params.dataUri,
+    ...(params.kind === "audio" && params.voiceFields ? params.voiceFields : {}),
   };
   // Audio (voice note) takes no caption; the others do when we have real text.
   if (params.kind !== "audio" && params.caption && params.caption.length > 0) {

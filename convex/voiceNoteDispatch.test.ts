@@ -256,9 +256,79 @@ describe("nota de voz no bridge", () => {
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
     expect(callTo(fetchMock, "/convert")).toBeUndefined();
-    expect(String(jsonBody(callTo(fetchMock, "/chat/send/audio")).Audio)).toMatch(/^data:audio\/ogg;base64,/);
+    const body = jsonBody(callTo(fetchMock, "/chat/send/audio"));
+    expect(String(body.Audio)).toMatch(/^data:audio\/ogg;base64,/);
+    // Áudio humano: o corpo não ganhou campos novos (PTT segue o padrão do gateway).
+    expect(body.PTT).toBeUndefined();
+    expect(body.Seconds).toBeUndefined();
+    expect(body.Waveform).toBeUndefined();
+    expect(body.MimeType).toBeUndefined();
+  });
+
+  test("resposta em áudio da IA (P4.1): PTT + Seconds + Waveform (base64 de 64 bytes) + MimeType", async () => {
+    withWhisper();
+    const t = convexTest(schema, modules);
+    const seeded = await seedChannel(t, "bridge");
+    const waveform = Array.from({ length: 64 }, (_, i) => (i * 3) % 101);
+    const messageId = await insertAiVoiceReply(t, seeded, { seconds: 7, waveform });
+
+    const fetchMock = networkMock(true);
+    vi.stubGlobal("fetch", fetchMock);
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    // Já é ogg: nada de /convert no envio (a conversão aconteceu na geração).
+    expect(callTo(fetchMock, "/convert")).toBeUndefined();
+    const body = jsonBody(callTo(fetchMock, "/chat/send/audio"));
+    expect(String(body.Audio)).toMatch(/^data:audio\/ogg;base64,/);
+    expect(body.PTT).toBe(true);
+    expect(body.Seconds).toBe(7);
+    expect(body.MimeType).toBe("audio/ogg; codecs=opus");
+    const decoded = atob(String(body.Waveform));
+    expect(decoded.length).toBe(64);
+    expect(Array.from(decoded, (c) => c.charCodeAt(0))).toEqual(waveform);
+    // Áudio não leva legenda: o texto falado fica só no histórico.
+    expect(body.Caption).toBeUndefined();
+    const message = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(message!.deliveryStatus).toBe("sent");
   });
 });
+
+/** Mensagem como o commit do atendente grava a resposta em áudio (P4.1). */
+async function insertAiVoiceReply(
+  t: TestConvex<typeof schema>,
+  seeded: { organizationId: Id<"organizations">; aiMemberId: Id<"teamMembers">; conversationId: Id<"conversations">; leadId: Id<"leads"> },
+  voiceNote: { seconds: number; waveform: number[] }
+): Promise<Id<"messages">> {
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    const storageId = await ctx.storage.store(new Blob([new Uint8Array([0x4f, 0x67, 0x67, 0x53, 9, 9])], { type: "audio/ogg" }));
+    const messageId = await ctx.db.insert("messages", {
+      organizationId: seeded.organizationId,
+      conversationId: seeded.conversationId,
+      leadId: seeded.leadId,
+      direction: "outbound",
+      senderId: seeded.aiMemberId,
+      senderType: "ai",
+      content: "Tenho sim, amanhã às dez.",
+      contentType: "audio",
+      isInternal: false,
+      metadata: { voiceNote, voiceReply: { mode: "audio" } },
+      createdAt: now,
+    });
+    const fileId = await ctx.db.insert("files", {
+      organizationId: seeded.organizationId,
+      storageId,
+      name: "resposta-em-audio.ogg",
+      mimeType: "audio/ogg",
+      size: 6,
+      fileType: "message_attachment",
+      messageId,
+      createdAt: now,
+    });
+    await ctx.db.patch(messageId, { attachments: [fileId] });
+    return messageId;
+  });
+}
 
 describe("nota de voz na API oficial (Meta)", () => {
   test("m4a do iPhone vai direto como link de áudio", async () => {
@@ -275,6 +345,22 @@ describe("nota de voz na API oficial (Meta)", () => {
     expect(typeof body.audio.link).toBe("string");
     const message = await t.run(async (ctx) => ctx.db.get(messageId));
     expect(message!.deliveryStatus).toBe("sent");
+  });
+
+  test("resposta em áudio da IA sai como áudio (link do ogg), sem campos do bridge", async () => {
+    const t = convexTest(schema, modules);
+    const seeded = await seedChannel(t, "meta");
+    const messageId = await insertAiVoiceReply(t, seeded, { seconds: 4, waveform: new Array(64).fill(10) });
+
+    const fetchMock = networkMock();
+    vi.stubGlobal("fetch", fetchMock);
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    const body = jsonBody(callTo(fetchMock, "graph.facebook.com")) as Record<string, any>;
+    expect(body.type).toBe("audio");
+    expect(typeof body.audio.link).toBe("string");
+    expect(body.audio.caption).toBeUndefined();
+    expect(body.PTT).toBeUndefined();
   });
 
   test("webm do Chrome falha antes do envio, sem chamar a Graph", async () => {
