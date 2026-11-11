@@ -37,6 +37,7 @@ export function AuthPage() {
   return (
     <>
       <SEO
+        preloadDisplayFont
         title="Entrar"
         description="Acesse sua conta HNBCRM"
         noindex={true}

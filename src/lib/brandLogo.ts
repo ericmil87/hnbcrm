@@ -1,6 +1,6 @@
 // Single source of the HNBCRM "Encaixe" logo geometry (two interlocking chat bubbles: the human one is an
 // outline, the AI one is solid with a spark cut out). Consumed by ui/BrandLogo (inline SVG, theme tokens) and
-// kept in sync with public/brand/*.svg by brandLogo.test.ts. Do not hand-edit the numbers.
+// kept in sync with public/brand/*.svg by brandAssets.test.ts. Do not hand-edit the numbers.
 export const BRAND_ICON_VIEWBOX = "0 0 64 64";
 export const BRAND_WORDMARK_VIEWBOX = "0 0 229 64";
 /** Silhouette of the AI bubble, grown by a stroke, used to cut the human outline around it. */

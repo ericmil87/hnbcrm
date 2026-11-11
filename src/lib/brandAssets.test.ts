@@ -51,8 +51,10 @@ describe("brand assets in public/", () => {
   });
 
   it("og-image.png is 1200x630 and light enough for link previews", () => {
-    expect(pngSize("public/og-image.png")).toEqual({ w: 1200, h: 630 });
-    expect(statSync(join(root, "public/og-image.png")).size).toBeLessThan(300 * 1024);
+    for (const f of ["public/og-image.png", "public/og-neutral.png"]) {
+      expect(pngSize(f), f).toEqual({ w: 1200, h: 630 });
+      expect(statSync(join(root, f)).size, f).toBeLessThan(300 * 1024);
+    }
   });
 
   it("self-hosted fonts exist and the CSS points at them (swap, local files)", () => {
@@ -80,13 +82,15 @@ describe("index.html and SEO point at files that exist", () => {
     }
   });
 
-  it("og:image and twitter:image are the 1200x630 og-image with summary_large_image", () => {
-    expect(localHref(/property="og:image" content="([^"]+)"/)).toBe("/og-image.png");
-    expect(localHref(/name="twitter:image" content="([^"]+)"/)).toBe("/og-image.png");
+  it("static og:image/twitter:image are the NEUTRAL 1200x630 card (never the marketing og-image), summary_large_image", () => {
+    // index.html is served for every route, client forms (/f/*) included: no marketing copy in the static preview.
+    expect(localHref(/property="og:image" content="([^"]+)"/)).toBe("/og-neutral.png");
+    expect(localHref(/name="twitter:image" content="([^"]+)"/)).toBe("/og-neutral.png");
     expect(html).toContain('name="twitter:card" content="summary_large_image"');
     expect(html).toContain('property="og:image:width" content="1200"');
     expect(html).toContain('property="og:image:height" content="630"');
-    expect(read("src/components/SEO.tsx")).toContain("'/og-image.png'");
+    expect(read("src/components/SEO.tsx")).toContain("ogImage = '/og-neutral.png'");
+    expect(read("src/components/LandingPage.tsx")).toContain('ogImage="/og-image.png"');
   });
 
   it("preloads only the body font, with crossorigin", () => {
@@ -95,6 +99,20 @@ describe("index.html and SEO point at files that exist", () => {
     expect(links[0]).toContain("inter-latin-wght-normal.woff2");
     expect(links[0]).toContain("crossorigin");
     expect(existsSync(join(root, "public/fonts/inter-latin-wght-normal.woff2"))).toBe(true);
+  });
+
+  it("SEO.tsx has no Google Fonts hints and can preload the display font that exists", () => {
+    const seo = read("src/components/SEO.tsx");
+    expect(seo).not.toMatch(/googleapis|gstatic/);
+    expect(seo).toContain("/fonts/plus-jakarta-sans-latin-wght-normal.woff2");
+    expect(read("src/components/LandingPage.tsx")).toContain("preloadDisplayFont");
+    expect(read("src/components/AuthPage.tsx")).toContain("preloadDisplayFont");
+  });
+
+  it("vercel.json caches /fonts as immutable", () => {
+    const cfg = JSON.parse(read("vercel.json")) as { headers: { source: string; headers: { key: string; value: string }[] }[] };
+    const fonts = cfg.headers.find((h) => h.source === "/fonts/(.*)");
+    expect(fonts?.headers).toContainEqual({ key: "Cache-Control", value: "public, max-age=31536000, immutable" });
   });
 
   it("no source file references the removed legacy logo PNGs", () => {

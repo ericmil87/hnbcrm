@@ -5,6 +5,8 @@ interface SEOProps {
   description?: string;
   keywords?: string;
   ogImage?: string;
+  /** Preload the display font (Plus Jakarta Sans) for pages whose h1 uses it above the fold (avoids layout shift). */
+  preloadDisplayFont?: boolean;
   ogType?: 'website' | 'article';
   canonical?: string;
   noindex?: boolean;
@@ -14,10 +16,13 @@ export function SEO({
   title = 'HNBCRM — Humans & Bots CRM',
   description = 'CRM multi-tenancy com colaboração humano-IA. Gerencie leads, pipeline, contatos e conversas com agentes de IA integrados.',
   keywords = 'crm, ai, automation, leads, pipeline, multi-tenant, webhook, api',
-  ogImage = '/og-image.png',
+  // Neutral wordmark-only card: index.html is served for every route (client forms included), so the
+  // default must never carry marketing copy. Pages that want the marketing image pass it explicitly.
+  ogImage = '/og-neutral.png',
   ogType = 'website',
   canonical,
   noindex = false,
+  preloadDisplayFont = false,
 }: SEOProps) {
   const siteUrl = import.meta.env.VITE_SITE_URL || 'https://hnbcrm.com';
   const fullTitle = title.includes('HNBCRM') ? title : `${title} | HNBCRM`;
@@ -48,9 +53,9 @@ export function SEO({
       <meta name="twitter:description" content={description} />
       <meta name="twitter:image" content={ogImageUrl} />
 
-      {/* Preconnect hints */}
-      <link rel="preconnect" href="https://fonts.googleapis.com" />
-      <link rel="dns-prefetch" href="https://fonts.googleapis.com" />
+      {preloadDisplayFont && (
+        <link rel="preload" href="/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
+      )}
     </Helmet>
   );
 }

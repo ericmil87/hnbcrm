@@ -295,6 +295,15 @@ describe("themeTokens: contraste do WhatsApp escuro", () => {
   });
 });
 
+describe("themeTokens: logo-ai (balão da IA do logo) contra as superfícies", () => {
+  // Graphical object: WCAG 1.4.11 asks for 3:1.
+  const themes = ["light", "whatsapp", "whatsapp-dark", "dark"] as const;
+  const surfaces = ["surface-base", "surface-raised", "surface-overlay"] as const;
+  it.each(themes.flatMap((th) => surfaces.map((s) => [th, s] as const)))("%s: logo-ai on %s >= 3", (theme, surface) => {
+    expect(measureIn(theme, { fg: "logo-ai", bg: surface, min: 3 })).toBeGreaterThanOrEqual(3);
+  });
+});
+
 describe("themeTokens: overlay distinto de raised", () => {
   // hover:bg-surface-overlay on raised cards and Badge default need a visible step.
   it.each(["whatsapp", "whatsapp-dark"] as const)("%s: surface-overlay differs from surface-raised", (theme) => {

@@ -112,10 +112,12 @@ async function main() {
     `</g></svg>`;
   await png(badge, 96, "badge-96x96.png");
 
-  await ogImage();
+  await ogImage(false); // marketing card: landing only (SEO.tsx ogImage)
+  await ogImage(true); // neutral wordmark-only card: static index.html, served for every route incl. /f/*
 }
 
-async function ogImage() {
+async function ogImage(neutral) {
+  const name = neutral ? "og-neutral.png" : "og-image.png";
   const dir = mkdtempSync(join(tmpdir(), "hnbcrm-og-"));
   const fonts = resolve(root, "public/fonts");
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
@@ -127,26 +129,29 @@ body{width:1200px;height:630px;background:${GREEN};color:#fff;font-family:"Inter
 .ring.b{right:-60px;top:260px;width:420px;height:420px;background:rgba(255,255,255,.05)}
 .wrap{position:relative;padding:64px 80px;height:100%;display:flex;flex-direction:column}
 .logo{height:60px;width:215px;flex:none;color:#fff}
-h1{font-family:"Jakarta",sans-serif;font-weight:800;font-size:68px;line-height:1.08;letter-spacing:-1.5px;margin-top:56px;max-width:980px}
+.dot{margin-left:-0.09em}
+.neutral .wrap{align-items:center;justify-content:center}
+.neutral .logo{height:150px;width:536px}
+h1{font-family:"Jakarta",sans-serif;font-weight:800;font-size:68px;line-height:1.08;letter-spacing:-0.5px;word-spacing:2px;margin-top:56px;max-width:980px}
 .bubble{margin-top:auto;align-self:flex-start;background:#fff;color:${INK};border-radius:30px 30px 30px 8px;padding:24px 34px 28px;max-width:760px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
 .who{font-size:22px;font-weight:600;color:${GREEN};margin-bottom:6px}
 .msg{font-size:32px;line-height:1.3;font-weight:500}
-</style></head><body><div class="ring"></div><div class="ring b"></div><div class="wrap">
+</style></head><body class="${neutral ? "neutral" : ""}"><div class="ring"></div><div class="ring b"></div><div class="wrap">
 <svg class="logo" viewBox="0 0 229 64" xmlns="http://www.w3.org/2000/svg">${iconShapes({ human: "#fff", ai: "#fff" })}${wordPath("#fff")}</svg>
-<h1>Conte como é o seu negócio. Sua IA começa daí.</h1>
-<div class="bubble"><div class="who">Copiloto</div><div class="msg">Oi! Me conta: o que você vende e como atende hoje?</div></div>
+${neutral ? "" : `<h1>Conte como é o seu negócio<span class="dot">.</span> Sua IA começa daí<span class="dot">.</span></h1>
+<div class="bubble"><div class="who">Copiloto</div><div class="msg">Oi! Me conta: o que você vende e como atende hoje?</div></div>`}
 </div></body></html>`;
   const file = join(dir, "og.html");
   writeFileSync(file, html);
   const chrome = process.env.CHROME_BIN || "google-chrome";
-  const out = join(dir, "og.png");
+  const out = join(dir, name);
   execFileSync(
     chrome,
     ["--headless=new", "--no-sandbox", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1", "--window-size=1200,630", "--virtual-time-budget=4000", `--screenshot=${out}`, `file://${file}`],
     { stdio: "ignore" },
   );
-  await sharp(out).resize(1200, 630).png({ compressionLevel: 9, palette: true, quality: 90 }).toFile(pub("og-image.png"));
-  console.log("wrote og-image.png");
+  await sharp(out).resize(1200, 630).png({ compressionLevel: 9, palette: true, quality: 90 }).toFile(pub(name));
+  console.log("wrote", name);
 }
 
 await main();
