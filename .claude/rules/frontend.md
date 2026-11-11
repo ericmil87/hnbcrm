@@ -32,7 +32,7 @@ paths:
 - Brand: `brand-50..900`. Primary action is `bg-brand-600` (AA with white text), not `brand-500`. Selected state: `border-brand-500 bg-brand-500/10`.
 - Semantic: `semantic-success|error|warning|info` (`text-semantic-error`, `bg-semantic-error/10`). Warning is amber, distinct from the brand (orange in Escuro/Claro, green in the WhatsApp themes).
 - Radius: `rounded-card` (12px) for cards, `rounded-field` (8px) for inputs, `rounded-full` for buttons and badges.
-- Shadows: `shadow-card`, `shadow-card-hover`, `shadow-elevated`. Animations: `animate-fade-in`, `fade-in-up`, `slide-in-right`, `slide-in-up`, `shimmer`.
+- Shadows: `shadow-card`, `shadow-card-hover`, `shadow-elevated`. Animations: `animate-fade-in`, `fade-in-up`, `slide-in-right`, `slide-in-up`, `shimmer`; scenes (landing/onboarding) use the kit in `src/components/landing/kit/` (`scene-in`, `notify-in`, `typing-dot`, `ring-pulse`, `caret-blink`, `SceneLoop` with pause button and reduced motion = final state).
 - Typography (Inter Variable `font-sans` in the app; Plus Jakarta Sans `font-display` for public-page headings; both self-hosted in `public/fonts/`): body 14px, small 13px, caption 11-12px, H1 22px (md 28), H2 18px (md 22), H3 16px (md 18). Weights 400/500/600/700 only.
 - Conditional classes via `cn()` from `@/lib/utils`.
 

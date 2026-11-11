@@ -23,6 +23,10 @@ const NotFoundPage = lazy(() => import("./pages/NotFoundPage").then(m => ({ defa
 const PublicFormPage = lazy(() => import("./pages/PublicFormPage").then(m => ({ default: m.PublicFormPage })));
 const TermsPage = lazy(() => import("./pages/TermsPage").then(m => ({ default: m.TermsPage })));
 const PrivacyPage = lazy(() => import("./pages/PrivacyPage").then(m => ({ default: m.PrivacyPage })));
+// Vitrine do kit de cena: só em DEV (no build de produção o ramo vira `null` e o chunk não é gerado).
+const DevKitPage = import.meta.env.DEV
+  ? lazy(() => import("./pages/DevKitPage").then(m => ({ default: m.DevKitPage })))
+  : null;
 
 // Lazy load authenticated routes
 const DashboardOverview = lazy(() => import("./components/DashboardOverview").then(m => ({ default: m.DashboardOverview })));
@@ -68,6 +72,7 @@ const router = createBrowserRouter([
   { path: "/termos", element: <LazyRoute Component={TermsPage} />, errorElement: <RouteErrorPage /> },
   { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} />, errorElement: <RouteErrorPage /> },
   { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} />, errorElement: <RouteErrorPage /> },
+  ...(DevKitPage ? [{ path: "/dev/kit", element: <LazyRoute Component={DevKitPage} />, errorElement: <RouteErrorPage /> }] : []),
   {
     path: "/app",
     element: <AuthLayout />,

@@ -77,7 +77,9 @@ src/
     ├── copilot/ConfigPreview.tsx # Pure "Antes/Depois" preview of a pendingAction (bold labels, -/+ diff colors)
     ├── SEO.tsx, StructuredData.tsx  # Dynamic meta tags (react-helmet-async); JSON-LD
     ├── layout/                 # AuthLayout (auth → org → onboarding → ScrollRestoration → AppShell + Outlet), AppShell (Sidebar md+ / BottomTabBar mobile), Sidebar, BottomTabBar
-    ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at /; auth screen at /entrar
+    ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at / (only composes LandingHeader + landing/sections/*); auth screen at /entrar
+    ├── landing/sections/       # one file per landing section (S1Hero … S9Faq, FinalCta, Footer); anchors/shared copy in landingCopy.ts, shell LandingSection.tsx
+    ├── landing/kit/            # scene kit (no Convex): ChatWindow, Bubble, TypingDots, AudioBubble, AttachmentBubble, Composer, RotatingPlaceholder, ChipRow, MiniFunnel, PhoneNotification, SceneLoop/useSceneTimeline; DEV showcase at /dev/kit
     ├── landing/PublicThemeButton.tsx  # icon button (Palette) in every public header: Menu of THEME_OPTIONS (menuitemradio), saves hnbcrm:public-theme per device
     ├── DashboardOverview.tsx   # Metrics (/app/painel)
     ├── KanbanBoard.tsx         # re-export of funnel/FunnelPage (main.tsx lazy import, route /app/pipeline)

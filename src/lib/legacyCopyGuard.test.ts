@@ -3,6 +3,8 @@
  * Guarda: o texto do beta grátis e a tabela antiga (Starter/Pro/Enterprise)
  * não podem voltar à landing nem à página de preços. Preços vêm de
  * `convex/lib/plans.ts`, nunca digitados no componente.
+ * Vigia `LandingPage.tsx`, `PricingPage.tsx` e TODO `src/components/landing/**`
+ * (seções, kit de cena, preços, cabeçalho e rodapé): arquivo novo ali já nasce vigiado.
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -34,12 +36,17 @@ function walk(rel: string): string[] {
 const FILES = [
   "src/components/LandingPage.tsx",
   "src/pages/PricingPage.tsx",
-  ...walk("src/components/landing/pricing"),
+  ...walk("src/components/landing"),
 ].filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f));
 
 describe("legacyCopyGuard", () => {
-  it("encontra os arquivos a vigiar", () => {
-    expect(FILES.length).toBeGreaterThanOrEqual(6);
+  it("encontra os arquivos a vigiar (landing inteira, seções, kit e preços)", () => {
+    // Âncoras em vez de contagem fixa: criar ou juntar arquivos não quebra a guarda à toa.
+    expect(FILES).toContain("src/components/LandingPage.tsx");
+    expect(FILES).toContain("src/pages/PricingPage.tsx");
+    for (const dir of ["sections", "kit", "pricing"]) {
+      expect(FILES.some((f) => f.startsWith(join("src/components/landing", dir)))).toBe(true);
+    }
   });
 
   for (const file of FILES) {
