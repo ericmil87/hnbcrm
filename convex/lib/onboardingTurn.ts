@@ -650,6 +650,11 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     turnIndex: Math.floor(prep.messageCount / 2),
     ...(materialNote ? { materialNote } : {}),
   }) as ChatMessage[];
+  // Texto DIGITADO pelo próprio usuário (turno + histórico): a trava da resposta
+  // não acusa chave/telefone que ele mesmo escreveu. Transcrição de áudio fica
+  // de fora (pode ser áudio repassado de terceiros: é dado não confiável).
+  const typedNow = transcribed ? (input.text ?? "").trim() : userText;
+  const userTexts = [typedNow, ...prep.history.filter((h) => h.role === "user" && !h.transcribed).map((h) => h.text)];
   let output: InterviewerOutput | null = null;
   for (let attempt = 0; attempt < 2 && !output; attempt++) {
     const call = await callJsonModel(
@@ -661,7 +666,7 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     );
     if (!call.ok && call.refused) break; // sem orçamento para a retentativa: resposta de reserva
     if (!call.ok) continue;
-    const parsed = parseInterviewerOutput(call.content, { stage: prep.stage, segment });
+    const parsed = parseInterviewerOutput(call.content, { stage: prep.stage, segment, userTexts });
     if (parsed.ok) output = parsed.value;
     else console.log(JSON.stringify({ event: "onboardingInterviewerDiscarded", reason: parsed.reason, detail: parsed.detail }));
   }

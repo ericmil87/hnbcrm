@@ -29,7 +29,7 @@ import {
 import { segmentTemplate, type SegmentKey } from "./onboardingTemplates";
 import { BLOCK_KINDS, BLOCK_NOTE_MAX, BLOCKS_PER_TURN_MAX, isBlockKind, type BlockRequest } from "./onboardingBlocks";
 import { LANGUAGE_CODES } from "./languages";
-import { hasPixKey } from "./onboardingDraftFilter";
+import { keyTokensIn, normalizePixKey, pixKeysIn } from "./onboardingDraftFilter";
 
 // ── Limites ─────────────────────────────────────────────────────────────────
 
@@ -106,12 +106,10 @@ const BARE_DOMAIN_RE =
 /** IP literal ou localhost sem esquema ("169.254.169.254/latest", "localhost:3000/admin"). */
 const BARE_HOST_RE = /\b(?:localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/[^\s<>"')\]]*)?/gi;
 
-const PAYMENT_IN_REPLY: RegExp[] = [
-  /000201[\s\S]{0,80}br\.gov\.bcb\.pix/i,
-  /\bbr\.gov\.bcb\.pix\b/i,
-  /\bpix\s+copia\s+e\s+cola\b/i,
-  /\bchave\s+(?:do\s+)?pix\s*(?::|é|=)\s*\S+/i,
-];
+/** Pix copia-e-cola (código EMV ou a oferta dele): sempre recusado na resposta. */
+const EMV_IN_REPLY: RegExp[] = [/000201[\s\S]{0,80}br\.gov\.bcb\.pix/i, /\bbr\.gov\.bcb\.pix\b/i, /\bpix\s+copia\s+e\s+cola\b/i];
+/** "chave pix: <valor>" — o valor é conferido contra o texto do usuário. */
+const CHAVE_PIX_IN_REPLY = /\bchave\s+(?:do\s+)?pix\s*(?::|é|=)\s*([^\s,;]+)/gi;
 /** Trechos que só existem nos prompts do sistema: aparecer na resposta = vazamento de instrução. */
 const PROMPT_FRAGMENTS = [
   // Cabeçalho + 1ª regra do prompt do entrevistador (só "regras:" pegaria uma frase legítima).
@@ -169,8 +167,25 @@ export function quotesSystemPrompt(text: string): boolean {
  * sistema (fragmentos exclusivos ou 12+ palavras literais). Devolve o motivo
  * (a rodada é descartada) ou null.
  */
-export function replyPolicyViolation(text: string): "pagamento" | "prompt_vazado" | null {
-  if (PAYMENT_IN_REPLY.some((re) => re.test(text)) || hasPixKey(text)) return "pagamento";
+export function replyPolicyViolation(
+  text: string,
+  opts: { userTexts?: string[] } = {},
+): "pagamento" | "prompt_vazado" | null {
+  if (EMV_IN_REPLY.some((re) => re.test(text))) return "pagamento";
+  // Chave entregue na resposta só passa se o PRÓPRIO usuário a escreveu (turno
+  // atual ou histórico): repetir "seu WhatsApp é (11) 98888-7777?" é legítimo.
+  const keys = [
+    ...pixKeysIn(text),
+    ...Array.from(text.matchAll(CHAVE_PIX_IN_REPLY), (m) => normalizePixKey(m[1].replace(/[.!?]+$/, ""))),
+  ].filter(Boolean);
+  if (keys.length > 0) {
+    const userText = (opts.userTexts ?? []).join("\n");
+    const userKeys = new Set(keyTokensIn(userText));
+    const userDigits = userText.replace(/\D/g, "");
+    const userLower = userText.toLowerCase();
+    const fromUser = (k: string) => userKeys.has(k) || (/^\d+$/.test(k) ? k.length >= 8 && userDigits.includes(k) : userLower.includes(k));
+    if (keys.some((k) => !fromUser(k))) return "pagamento";
+  }
   const lower = text.toLowerCase();
   if (PROMPT_FRAGMENTS.some((f) => lower.includes(f)) || quotesSystemPrompt(text)) return "prompt_vazado";
   return null;
@@ -202,7 +217,7 @@ export function sanitizeModelText(raw: unknown, max: number): { text: string } |
 }
 
 /** Chips: 2–6, curtos, sem link, sem repetição; completa com os do segmento. */
-export function sanitizeChips(raw: unknown, fallback: string[]): string[] {
+export function sanitizeChips(raw: unknown, fallback: string[], userTexts: string[] = []): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   const add = (x: unknown) => {
@@ -212,7 +227,7 @@ export function sanitizeChips(raw: unknown, fallback: string[]): string[] {
     if (!r || !("text" in r)) return;
     const t = r.text.replace(/\n+/g, " ").replace(/\[link removido\]/g, "").trim();
     // Chip vira texto na tela e, tocado, mensagem do usuário: mesma trava do reply (Pix, prompt).
-    if (!t || t.length > CHIP_MAX || replyPolicyViolation(r.text) || replyPolicyViolation(t)) return;
+    if (!t || t.length > CHIP_MAX || replyPolicyViolation(r.text, { userTexts }) || replyPolicyViolation(t, { userTexts })) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
@@ -832,8 +847,9 @@ export type InterviewerParse =
  */
 export function parseInterviewerOutput(
   raw: string | null | undefined,
-  opts: { stage: string; segment?: string },
+  opts: { stage: string; segment?: string; userTexts?: string[] },
 ): InterviewerParse {
+  const userTexts = opts.userTexts ?? [];
   const o = parseJsonObject(raw);
   if (!o) {
     // Texto inteiro com marcação vazada também cai aqui; diferencia para a retentativa.
@@ -843,7 +859,7 @@ export function parseInterviewerOutput(
   const r = sanitizeModelText(o.reply, REPLY_MAX);
   if (r && "leak" in r) return { ok: false, reason: "leak", detail: r.leak };
   if (!r) return { ok: false, reason: "empty_reply" };
-  const violation = replyPolicyViolation(r.text);
+  const violation = replyPolicyViolation(r.text, { userTexts });
   if (violation) return { ok: false, reason: "policy", detail: violation };
   const blocks: BlockRequest[] = [];
   for (const b of arr(o.blocks)) {
@@ -853,7 +869,7 @@ export function parseInterviewerOutput(
     if (!isBlockKind(kind) || blocks.some((x) => x.kind === kind)) continue;
     const n = bo ? sanitizeModelText(bo.note, BLOCK_NOTE_MAX) : null;
     // Nota com Pix ou trecho do prompt é descartada (o bloco fica, sem nota).
-    const noteText = n && "text" in n && !replyPolicyViolation(n.text) ? n.text.replace(/\n+/g, " ") : undefined;
+    const noteText = n && "text" in n && !replyPolicyViolation(n.text, { userTexts }) ? n.text.replace(/\n+/g, " ") : undefined;
     blocks.push({ kind, ...(noteText ? { note: noteText } : {}) });
   }
   const summary = sanitizeModelText(o.summary, SUMMARY_MAX);
@@ -861,7 +877,7 @@ export function parseInterviewerOutput(
     ok: true,
     value: {
       reply: r.text,
-      chips: sanitizeChips(o.chips, fallbackChips(opts.stage, opts.segment)),
+      chips: sanitizeChips(o.chips, fallbackChips(opts.stage, opts.segment), userTexts),
       blocks,
       ...(parseDraftPatch(o.draftPatch) ? { draftPatch: parseDraftPatch(o.draftPatch) } : {}),
       ...(oneOf(NEXT_STAGES, o.nextStage) ? { nextStage: oneOf(NEXT_STAGES, o.nextStage) } : {}),
