@@ -186,9 +186,13 @@ describe("bridgeSend media builders (pure)", () => {
     expect(checkMetaWhatsappAudio("audio/mp4")).toEqual({ ok: true });
     expect(checkMetaWhatsappAudio("audio/ogg; codecs=opus")).toEqual({ ok: true });
     expect(checkMetaWhatsappAudio("audio/mpeg")).toEqual({ ok: true });
+    // Mesmo contêiner mp4 com outro rótulo: segue saindo como antes.
+    expect(checkMetaWhatsappAudio("audio/x-m4a")).toEqual({ ok: true });
+    expect(checkMetaWhatsappAudio("audio/m4a")).toEqual({ ok: true });
     const webm = checkMetaWhatsappAudio("audio/webm;codecs=opus");
     expect(webm.ok).toBe(false);
     expect(webm.ok ? "" : webm.detail).toMatch(/webm/);
+    expect(webm.ok ? "" : webm.detail).toContain("WhatsApp oficial (Meta)");
     const wav = checkMetaWhatsappAudio("audio/wav");
     expect(wav.ok ? "" : wav.detail).toMatch(/audio\/wav/);
   });
