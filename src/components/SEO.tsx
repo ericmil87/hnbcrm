@@ -3,7 +3,6 @@ import { Helmet } from 'react-helmet-async';
 interface SEOProps {
   title?: string;
   description?: string;
-  keywords?: string;
   ogImage?: string;
   /** Preload the display font (Plus Jakarta Sans) for pages whose h1 uses it above the fold (avoids layout shift). */
   preloadDisplayFont?: boolean;
@@ -15,7 +14,6 @@ interface SEOProps {
 export function SEO({
   title = 'HNBCRM — Humans & Bots CRM',
   description = 'CRM multi-tenancy com colaboração humano-IA. Gerencie leads, pipeline, contatos e conversas com agentes de IA integrados.',
-  keywords = 'crm, ai, automation, leads, pipeline, multi-tenant, webhook, api',
   // Neutral wordmark-only card: index.html is served for every route (client forms included), so the
   // default must never carry marketing copy. Pages that want the marketing image pass it explicitly.
   ogImage = '/og-neutral.png',
@@ -34,7 +32,6 @@ export function SEO({
       {/* Basic meta */}
       <title>{fullTitle}</title>
       <meta name="description" content={description} />
-      <meta name="keywords" content={keywords} />
       <meta name="author" content="HNBCRM Team" />
       {noindex && <meta name="robots" content="noindex, nofollow" />}
       <link rel="canonical" href={canonicalUrl} />

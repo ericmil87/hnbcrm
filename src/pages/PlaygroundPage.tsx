@@ -24,7 +24,6 @@ export function PlaygroundPage() {
       <SEO
         title="API Playground"
         description="Teste a API REST do HNBCRM interativamente. 113 endpoints para leads, contatos, conversas, campanhas, grupos, tarefas e webhooks."
-        keywords="api playground, rest api, testing, developer tools"
       />
       <PlaygroundConfigProvider>
         <div className="h-screen flex flex-col bg-surface-base text-text-primary">

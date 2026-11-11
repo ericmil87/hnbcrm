@@ -20,7 +20,6 @@ export function PricingPage() {
       <SEO
         title={`Preços — a partir de ${from}/mês, usuários ilimitados`}
         description="Planos do HNBCRM por canal e por atendimento IA. Usuários ilimitados, teste de 30 dias sem cartão e excedente só se você ligar, com teto."
-        keywords="preço crm whatsapp, crm com ia preço, crm usuários ilimitados"
         canonical={`${SITE_URL}/precos`}
       />
       <Helmet>

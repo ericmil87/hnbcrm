@@ -25,7 +25,6 @@ export function PrivacyPage() {
       <SEO
         title="Política de Privacidade"
         description="Política de Privacidade do HNBCRM — quais dados tratamos, como atuamos como operador em nome da sua organização, o canal WhatsApp, Instagram e Facebook Messenger, os grupos de WhatsApp e seus direitos sob a LGPD."
-        keywords="política de privacidade, lgpd, proteção de dados, hnbcrm, privacidade, grupos de whatsapp, instagram, messenger, exclusão de dados"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
