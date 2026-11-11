@@ -74,6 +74,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `authHelpers.ts` / `nodeActions.ts` / `forms.ts` / `formSubmissions.ts` | Auth-table ops / Node actions (API key hash, webhooks, invite) / form builder / submissions |
 | `notificationPreferences.ts` / `apiKeys.ts` / `leadSources.ts` / `fieldDefinitions.ts` / `llmsTxt.ts` | Prefs / API keys / sources + custom fields / `/llms.txt` |
 | `onboarding.ts` / `onboardingSeed.ts` / `seed.ts` | Onboarding wizard + checklist / dev seed (`seed:seedMockData` is internal) |
+| `onboardingSessions.ts` | Conversational onboarding session + Rascunho de Operação (`lib/onboardingDraft*.ts`); applied only by the user click (`applyOnboardingDraft` → `lib/onboardingApply.ts`) |
 | `opsMigration.ts` | Dev/prod split and post-restore ops (bridge webhooks, HMAC, disarm channels, re-arm scheduled), all `dryRun` default true |
 
 ## Auth Pattern (copy this for every public function)
