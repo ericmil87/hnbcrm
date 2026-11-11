@@ -241,6 +241,11 @@ describe("revisão P2.2 — barra de autofechamento (B2)", () => {
   });
 });
 
+// Teto absoluto folgado de propósito: sozinho cada caso leva milissegundos; sob suítes em paralelo
+// a máquina pode ficar 10x mais lenta. As regressões quadráticas reais levavam 12 s ou mais, então 5 s
+// continua pegando-as sem acusar carga.
+const PERF_LIMIT_MS = 5000;
+
 describe("revisão P2.2 — desempenho com entrada hostil (B3)", () => {
   const TWO_MB = 2 * 1024 * 1024;
   const fill = (unit: string) => unit.repeat(Math.ceil(TWO_MB / unit.length)).slice(0, TWO_MB);
@@ -260,10 +265,10 @@ describe("revisão P2.2 — desempenho com entrada hostil (B3)", () => {
     ["estilo inline gigante", `<p style="font-size:${fill("1")}px">x</p>`],
     ["entidades", fill("&amp;&#x41;&eacute;")],
     ["texto com < solto", fill("a < b ")],
-  ])("%s: 2 MB em menos de 1 s", (_label, html) => {
+  ])("%s: 2 MB em menos de 5 s", (_label, html) => {
     const t0 = performance.now();
     extractHtml(html, { baseUrl: "https://salao.com.br/" });
-    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(performance.now() - t0).toBeLessThan(PERF_LIMIT_MS);
   });
 
   it("CSS somado acima de 256 KB é ignorado além do teto", () => {
