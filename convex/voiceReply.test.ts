@@ -32,6 +32,9 @@ type VoiceOrgOpts = {
   voiceName?: string;
   notice?: string;
   mode?: "suggest" | "autopilot";
+  strictZdr?: boolean;
+  language?: string;
+  disclosureFirstReply?: boolean;
 };
 
 async function seedOrg(t: TestConvex<typeof schema>, opts: VoiceOrgOpts = {}) {
@@ -50,6 +53,16 @@ async function seedOrg(t: TestConvex<typeof schema>, opts: VoiceOrgOpts = {}) {
           ...(opts.voice === "absent" ? {} : { voiceReplyEnabled: opts.voice ?? true }),
           ...(opts.voiceName ? { voiceReplyVoice: opts.voiceName } : {}),
           ...(opts.notice ? { voiceReplyNotice: opts.notice } : {}),
+          ...(opts.strictZdr
+            ? {
+                providerConfig: {
+                  mode: "platform" as const,
+                  zdr: true,
+                  strictZdr: true,
+                  models: { copilot: "kimi-k2.7-code", attendant: "deepseek-v4-flash", classify: "deepseek-v4-flash" },
+                },
+              }
+            : {}),
         },
       },
       createdAt: now,
@@ -72,7 +85,12 @@ async function seedOrg(t: TestConvex<typeof schema>, opts: VoiceOrgOpts = {}) {
       role: "ai",
       type: "ai",
       status: "active",
-      agentProfile: { kind: "attendant", mode: opts.mode ?? "autopilot", disclosureMode: "on_demand" },
+      agentProfile: {
+        kind: "attendant",
+        mode: opts.mode ?? "autopilot",
+        disclosureMode: opts.disclosureFirstReply ? "first_reply" : "on_demand",
+        ...(opts.language ? { language: opts.language } : {}),
+      },
       createdAt: now,
       updatedAt: now,
     });
@@ -80,15 +98,21 @@ async function seedOrg(t: TestConvex<typeof schema>, opts: VoiceOrgOpts = {}) {
     await ctx.db.patch(organizationId, {
       settings: {
         ...org.settings,
-        aiConfig: { ...org.settings.aiConfig!, lgpdAck: { acceptedAt: now, acceptedBy: humanId } },
+        aiConfig: {
+          ...org.settings.aiConfig!,
+          lgpdAck: { acceptedAt: now, acceptedBy: humanId },
+          // Voz só no bridge (até a validação viva na Meta): canal bridge com aceite.
+          bridgeAiAck: { acceptedAt: now, acceptedBy: humanId },
+        },
       },
     });
     const configId = await ctx.db.insert("channelConfigs", {
       organizationId,
       channel: "whatsapp",
-      provider: "meta",
+      provider: "bridge",
       displayName: "Número principal",
-      phoneNumberId: "555000333",
+      bridgeBaseUrl: "https://bridge.example.com",
+      bridgeInstanceId: "org_fake_instance",
       status: "active",
       createdAt: now,
       updatedAt: now,
@@ -553,6 +577,63 @@ describe("resposta em áudio no runtime do atendente", () => {
   });
 });
 
+describe("travas da revisão do P4.1", () => {
+  test("org com strictZdr → texto (zdr_nao_validado), sem chamar o TTS", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedOrg(t, { strictZdr: true });
+    const itemId = await enqueueInbound(t, seed, "audio");
+    const fetchMock = stubNetwork({ llm: [reply(PLAIN_REPLY)] });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    expect(callsTo(fetchMock, "/audio/speech")).toHaveLength(0);
+    const [msg] = await outbound(t, seed);
+    expect(msg.contentType).toBe("text");
+    expect(msg.metadata?.voiceReply).toEqual({ mode: "text", reason: "zdr_nao_validado" });
+  });
+
+  test("atendente em outro idioma → texto (idioma)", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedOrg(t, { language: "en" });
+    const itemId = await enqueueInbound(t, seed, "audio");
+    const fetchMock = stubNetwork({ llm: [reply("Sure! Tomorrow at ten works. Shall I book it?")] });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    expect(callsTo(fetchMock, "/audio/speech")).toHaveLength(0);
+    const [msg] = await outbound(t, seed);
+    expect(msg.metadata?.voiceReply).toEqual({ mode: "text", reason: "idioma" });
+  });
+
+  test("divulgação de IA na primeira resposta: falada E por escrito", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedOrg(t, { disclosureFirstReply: true });
+    const itemId = await enqueueInbound(t, seed, "audio");
+    const fetchMock = stubNetwork({ llm: [reply(PLAIN_REPLY)] });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    const [body] = ttsBodies(fetchMock);
+    expect(body.input).toContain("assistente virtual");
+    const msgs = (await outbound(t, seed)).sort((a, b) => a.createdAt - b.createdAt);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].contentType).toBe("audio");
+    expect(msgs[1].contentType).toBe("text");
+    expect(msgs[1].content).toContain("assistente virtual");
+    // Nada duplicado no áudio: a divulgação aparece uma vez no texto falado.
+    expect(msgs[0].content.split("assistente virtual").length).toBe(2);
+  });
+
+  test("Cloud API (Meta) fica no texto até a validação viva", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedOrg(t);
+    await t.run(async (ctx) => {
+      const conv = (await ctx.db.get(seed.conversationId))!;
+      await ctx.db.patch(conv.channelConfigId!, { provider: "meta", phoneNumberId: "555000333" });
+    });
+    const itemId = await enqueueInbound(t, seed, "audio");
+    const fetchMock = stubNetwork({ llm: [reply(PLAIN_REPLY)] });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    expect(callsTo(fetchMock, "/audio/speech")).toHaveLength(0);
+    const [msg] = await outbound(t, seed);
+    expect(msg.metadata?.voiceReply).toEqual({ mode: "text", reason: "canal" });
+  });
+});
+
 describe("configuração (aiSettings.setFeatureToggles + voiceReply.getVoiceReplySettings)", () => {
   test("liga, escolhe voz e aviso; voz fora do catálogo é recusada; aviso vazio remove; tudo auditado", async () => {
     const t = convexTest(schema, modules);
@@ -584,6 +665,14 @@ describe("configuração (aiSettings.setFeatureToggles + voiceReply.getVoiceRepl
         voiceReplyNotice: "x".repeat(201),
       })
     ).rejects.toThrow(/até 200/);
+
+    // O aviso é falado: dado (número, link, e-mail…) é recusado.
+    await expect(
+      asAdmin.mutation(api.aiSettings.setFeatureToggles, {
+        organizationId: seed.organizationId,
+        voiceReplyNotice: "Voz gerada por IA. Dúvidas: www.clinica.example",
+      })
+    ).rejects.toThrow(/não pode ter números, links/);
 
     await asAdmin.mutation(api.aiSettings.setFeatureToggles, {
       organizationId: seed.organizationId,

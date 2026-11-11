@@ -90,13 +90,64 @@ describe("regras fixas (planVoiceReply)", () => {
     expect(planVoiceReply({ ...base, draft: true })).toEqual({ kind: "text", reason: "rascunho" });
     expect(planVoiceReply({ ...base, followUp: true })).toEqual({ kind: "text", reason: "follow_up" });
     expect(planVoiceReply({ ...base, hasImage: true })).toEqual({ kind: "text", reason: "imagem" });
+    expect(planVoiceReply({ ...base, language: "en" })).toEqual({ kind: "text", reason: "idioma" });
     expect(planVoiceReply({ ...base, text: "   " })).toEqual({ kind: "text", reason: "vazio" });
     expect(planVoiceReply({ ...base, text: "<tool_call>{\"name\":\"x\"}</tool_call>" })).toEqual({ kind: "text", reason: "marcacao" });
     expect(planVoiceReply({ ...base, text: "a ".repeat(VOICE_REPLY_MAX_CHARS) })).toEqual({ kind: "text", reason: "longo" });
   });
 
-  test("Cloud API (meta) também tem voice note", () => {
-    expect(planVoiceReply({ ...base, transport: "meta" }).kind).toBe("voice");
+  test("Cloud API (meta) fica no texto até a validação viva; só o bridge fala", () => {
+    expect(planVoiceReply({ ...base, transport: "meta" })).toEqual({ kind: "text", reason: "canal" });
+    expect(planVoiceReply({ ...base, transport: "bridge" }).kind).toBe("voice");
+  });
+
+  test("idioma fora do português → texto", () => {
+    expect(planVoiceReply({ ...base, language: "en" })).toEqual({ kind: "text", reason: "idioma" });
+    expect(planVoiceReply({ ...base, language: "es-ES" })).toEqual({ kind: "text", reason: "idioma" });
+    expect(planVoiceReply({ ...base, language: "pt-BR" }).kind).toBe("voice");
+    expect(planVoiceReply({ ...base, language: "pt" }).kind).toBe("voice");
+    expect(planVoiceReply({ ...base, language: null }).kind).toBe("voice");
+  });
+
+  // Revisão do P4.1: frases reais que vazavam dado para a voz. Nenhum dado pode
+  // ser falado: ou tudo vai em texto, ou a fala não tem dígito/símbolo/endereço.
+  const LEAKS = [
+    "O corte sai por 50 e a barba por 30. Quer agendar?",
+    "O total fica 150 no débito",
+    "Mensalidade de 99 e matrícula grátis",
+    "Total:\n150\nPosso confirmar?",
+    "ficamos na Av Paulista 1000",
+    "joao arroba gmail ponto com",
+    "Nosso Instagram é @lojadamaria",
+    "It costs $150 per month",
+    "Cuesta 150 pesos al mes",
+    // do script da revisão
+    "Oi! O corte sai por 50 e a barba por 30. Quer agendar para amanhã?",
+    "Claro! O total fica 150 no débito. Posso reservar seu horário?",
+    "Perfeito, ficamos na Av Paulista 1000, perto do metrô. Te espero lá às 15h!",
+    "Pode mandar para joao arroba gmail ponto com que eu confirmo, tá bom?",
+    "Fica cento e cinquenta por mês, parcelado em três vezes. Fechamos?",
+    "A chave é o meu CPF mesmo, 123.456.789-00. Assim que cair te aviso, combinado?",
+    "Pode transferir para a chave 11987654321 que eu confirmo. Combinado?",
+    "Estamos na Rua das Flores. Abrimos às 9h. Quer que eu te mande a localização?",
+  ];
+  test.each(LEAKS)("nenhum dado falado: %s", (text) => {
+    const plan = planVoiceReply({ ...base, text });
+    if (plan.kind === "text") {
+      expect(plan.reason).toBe("dado_sensivel");
+      return;
+    }
+    const spoken = plan.speakable.replace(/\b\d{1,2}(?::\d{2}|h\d{2}|h)\b/gi, "");
+    expect(spoken).not.toMatch(/\d|\$|@|arroba|ponto com|\bav\b|rua|cpf|chave|total|d[ée]bito|mensalidade|por m[eê]s|parcel/i);
+    expect(plan.textPart).toBeTruthy();
+  });
+
+  test("conversa sem dado continua falada (horários liberados)", () => {
+    const plan = planVoiceReply({ ...base, text: "Entendi, vou verificar com a equipe e já te retorno em instantes, tudo bem?" });
+    expect(plan.kind).toBe("voice");
+    const withTime = planVoiceReply({ ...base, text: "Tenho às 15h, às 10h30 ou às 14:30. Qual fica melhor?" });
+    if (withTime.kind !== "voice") throw new Error("esperava voz");
+    expect(withTime.textPart).toBeNull();
   });
 
   test("Pix/link/valor: fala o resto e manda o dado em texto", () => {
@@ -134,9 +185,16 @@ describe("regras fixas (planVoiceReply)", () => {
     expect(voiceDataKinds("me escreve em a@b.co")).toContain("email");
     expect(voiceDataKinds("liga no (11) 98888-7777")).toContain("telefone");
     expect(voiceDataKinds("| plano | preço |")).toContain("tabela");
-    // Conversa comum continua falável (hora, dia, ano).
-    expect(voiceDataKinds("Tenho vaga amanhã às 14h ou na quinta, 18/10.")).toEqual([]);
-    expect(voiceDataKinds("Em 2026 abrimos aos sábados.")).toEqual([]);
+    expect(voiceDataKinds("ficamos na Av Paulista 1000")).toContain("endereco");
+    expect(voiceDataKinds("R. Augusta, perto do metrô")).toContain("endereco");
+    expect(voiceDataKinds("joao arroba gmail ponto com")).toEqual(expect.arrayContaining(["email", "link"]));
+    expect(voiceDataKinds("Nosso Instagram é @lojadamaria")).toContain("link");
+    expect(voiceDataKinds("It costs $150 per month")).toContain("valor");
+    // Qualquer dígito fora de horário é dado (data, ano, quantia sem moeda)…
+    expect(voiceDataKinds("O corte sai por 50")).toEqual(["numero"]);
+    expect(voiceDataKinds("na quinta, 18/10")).toEqual(["numero"]);
+    // …e horário continua falável.
+    expect(voiceDataKinds("Tenho vaga amanhã às 14h, 10h30 ou 14:30.")).toEqual([]);
   });
 
   test("aviso de voz sintética vai na frente da fala e no texto do histórico", () => {

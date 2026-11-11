@@ -3496,11 +3496,10 @@ async function prepareVoiceReply(
 ): Promise<VoiceReplyOutcome> {
   const voiceCtx = context.voiceReply;
   if (!voiceCtx) return null;
-  // A divulgação entra no texto falado do mesmo jeito que o commit a prependeria.
-  const fullText =
-    context.needsDisclosure && !input.text.includes(context.disclosure)
-      ? `${context.disclosure}\n\n${input.text}`
-      : input.text;
+  // A divulgação entra no texto falado do mesmo jeito que o commit a prependeria
+  // e, quando existe, TAMBÉM sai por escrito (mensagem de texto depois do áudio).
+  const disclosureAdded = context.needsDisclosure && !input.text.includes(context.disclosure);
+  const fullText = disclosureAdded ? `${context.disclosure}\n\n${input.text}` : input.text;
   const plan = planVoiceReply({
     enabled: true,
     transport: context.transport ?? null,
@@ -3511,22 +3510,41 @@ async function prepareVoiceReply(
     hasImage: input.hasImage,
     text: fullText,
     notice: voiceCtx.notice,
+    language: context.language === "auto" ? context.conversationLang ?? null : context.language,
   });
   if (plan.kind === "text") return plan;
-  const synth = await ctx.runAction(internal.voiceReplyNode.internalSynthesizeVoiceNote, {
-    organizationId: context.organizationId,
-    conversationId: context.conversationId,
-    agentMemberId: context.agentMemberId,
-    leadId: context.leadId,
-    text: plan.speakable,
-    voice: voiceCtx.voice,
-    strictZdr: context.strictZdr,
-    routingAllowed: platformTtsAllowed(context.providerConfig),
-  });
+  // A trava `provider` no endpoint de áudio não foi validada ao vivo: um campo
+  // IGNORADO (não recusado) mandaria o texto sem ZDR. Org estrita fica no texto.
+  if (context.strictZdr) return { kind: "text", reason: "zdr_nao_validado" };
+  // Síntese (até 30 s) + conversão (até 20 s) dentro do lease do lock: sem folga
+  // de 1 min, o commit perderia o lock depois de pagar o TTS.
+  if (Date.now() - context.runStartedAt > LEASE_MS - 60_000) return { kind: "text", reason: "sem_tempo" };
+  let synth;
+  try {
+    synth = await ctx.runAction(internal.voiceReplyNode.internalSynthesizeVoiceNote, {
+      organizationId: context.organizationId,
+      conversationId: context.conversationId,
+      agentMemberId: context.agentMemberId,
+      leadId: context.leadId,
+      text: plan.speakable,
+      voice: voiceCtx.voice,
+      strictZdr: context.strictZdr,
+      routingAllowed: platformTtsAllowed(context.providerConfig),
+    });
+  } catch (e) {
+    // A action "nunca lança", mas um erro de runtime (OOM, timeout da plataforma)
+    // não pode derrubar o turno: a resposta sai em texto.
+    console.log(`[voiceReply] resposta em texto: falha_tts (${e instanceof Error ? e.name : "erro"})`);
+    return { kind: "text", reason: "falha_tts" };
+  }
   if (!synth.ok) {
     console.log(`[voiceReply] resposta em texto: ${synth.reason}`);
     return { kind: "text", reason: synth.reason as VoiceTextReason };
   }
+  const textParts = [
+    ...(disclosureAdded && !(plan.textPart ?? "").includes(context.disclosure) ? [context.disclosure] : []),
+    ...(plan.textPart ? [plan.textPart] : []),
+  ];
   return {
     kind: "audio",
     text: plan.spokenText,
@@ -3534,7 +3552,7 @@ async function prepareVoiceReply(
     seconds: synth.seconds,
     waveform: synth.waveform,
     noticeIncluded: plan.noticeIncluded,
-    textAfter: plan.textPart,
+    textAfter: textParts.length > 0 ? textParts.join("\n\n") : null,
   };
 }
 
@@ -3754,6 +3772,10 @@ export const internalProcessQueueItem = internalAction({
     // o caminho de falha também gravar o que já foi gasto.
     const usage = newUsageTotals();
     let runFinished = false;
+    // P4.1: ogg da resposta em áudio já gravado (linha de `files` sem mensagem).
+    // Fora do try: se o commit (ou algo depois da síntese) lançar, o `catch`
+    // descarta o arquivo em vez de deixá-lo órfão no storage.
+    let voiceFileId: Id<"files"> | null = null;
 
     try {
       // Rotas da org: platform chain OU BYO (key própria, sem fallback);
@@ -4320,6 +4342,7 @@ export const internalProcessQueueItem = internalAction({
         draft: effectiveMode === "suggest",
         hasImage: imageFileId !== null,
       });
+      if (voice?.kind === "audio") voiceFileId = voice.fileId;
 
       // Commit transacional (a checagem que conta).
       const commitArgsBase = {
@@ -4407,6 +4430,17 @@ export const internalProcessQueueItem = internalAction({
       });
     } catch (e) {
       const message = e instanceof Error ? e.message : "Erro inesperado no atendente";
+      // Áudio sintetizado que não virou mensagem (commit lançou): descarta. A
+      // mutation ignora arquivo já vinculado (`messageId`), então é segura sempre.
+      if (voiceFileId) {
+        try {
+          await ctx.runMutation(internal.attendantAgenda.internalDiscardUnlinkedFiles, {
+            fileIds: [voiceFileId],
+          });
+        } catch {
+          // limpeza best-effort: não troca o erro original
+        }
+      }
       // O que já foi gasto antes da falha entra no medidor (idempotente por run).
       if (!runFinished && usage.promptTokens + usage.completionTokens > 0) {
         await ctx.runMutation(internal.agentRuns.internalFinishRun, {

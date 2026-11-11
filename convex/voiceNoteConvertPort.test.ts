@@ -37,7 +37,7 @@ describe("portas de voz", () => {
   });
 
   test("TTS `/audio/speech` só em voiceReplyNode.ts", () => {
-    const offenders = sources.filter((f) => /\/audio\/speech/.test(f.src) && f.rel !== "voiceReplyNode.ts" && f.rel !== "lib/tts.ts");
+    const offenders = sources.filter((f) => /\/audio\/speech/.test(f.src) && f.rel !== "voiceReplyNode.ts");
     expect(offenders.map((f) => f.rel)).toEqual([]);
   });
 

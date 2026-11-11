@@ -9,8 +9,10 @@
  *     `lib/voiceNoteConvert.ts`; a VPS não muda)
  *   → ogg no storage + linha de `files` sem `messageId`.
  *
- * Nunca lança: qualquer falha devolve `{ok:false, reason}` e o atendente manda
- * a resposta em TEXTO. Custo: run `kind:"tts"` + `aiUsageMonthly` pela porta
+ * Não lança por falha de rede/provedor/armazenamento: devolve `{ok:false, reason}`
+ * e o atendente manda a resposta em TEXTO (o runtime ainda envolve a chamada em
+ * try/catch para erro de plataforma). Org com `strictZdr` não chega aqui
+ * (`zdr_nao_validado` no runtime). Custo: run `kind:"tts"` + `aiUsageMonthly` pela porta
  * `agentRuns.internalFinishRun` → `recordRunUsage`; o teto em R$ e o modo
  * leitura são checados ANTES de pagar (`internalSpendGate`).
  */
@@ -164,13 +166,29 @@ export const internalSynthesizeVoiceNote = internalAction({
     });
     if (!ogg) return { ok: false, reason: "falha_conversao" };
 
-    const storageId = await ctx.storage.store(new Blob([ogg as BlobPart], { type: "audio/ogg" }));
-    const fileId: Id<"files"> = await ctx.runMutation(internal.voiceReply.internalInsertVoiceNoteFile, {
-      organizationId: args.organizationId,
-      agentMemberId: args.agentMemberId,
-      storageId,
-      size: ogg.byteLength,
-    });
+    let storageId: Id<"_storage">;
+    try {
+      storageId = await ctx.storage.store(new Blob([ogg as BlobPart], { type: "audio/ogg" }));
+    } catch {
+      return { ok: false, reason: "falha_armazenamento" };
+    }
+    let fileId: Id<"files">;
+    try {
+      fileId = await ctx.runMutation(internal.voiceReply.internalInsertVoiceNoteFile, {
+        organizationId: args.organizationId,
+        agentMemberId: args.agentMemberId,
+        storageId,
+        size: ogg.byteLength,
+      });
+    } catch {
+      // Sem linha de `files` ninguém mais acha o blob: apaga aqui.
+      try {
+        await ctx.storage.delete(storageId);
+      } catch {
+        // best-effort
+      }
+      return { ok: false, reason: "falha_armazenamento" };
+    }
     return {
       ok: true,
       fileId,

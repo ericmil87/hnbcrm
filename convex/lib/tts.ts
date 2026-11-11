@@ -95,13 +95,16 @@ export function resolveAttendantVoice(orgVoice: string | undefined, env: EnvLike
 }
 
 /**
- * Trava de retenção no corpo do `POST /api/v1/audio/speech`. Mesma política do
- * texto (`OPENROUTER_ZDR_PROVIDER_BODY`): `data_collection:"deny"` sempre e
- * `allow_fallbacks:true`. SEM `require_parameters`: os modelos de fala listam
- * `supported_parameters: []`, e a trava recusaria todo provedor. Org com
- * `strictZdr` pede também `zdr:true`. NÃO VALIDADO no endpoint de áudio (o spike
- * chamou sem `provider`): se o OpenRouter recusar o campo, a chamada falha e a
- * resposta sai em texto — nunca sai áudio sem a trava.
+ * Trava de retenção no corpo do pedido de fala do OpenRouter (endpoint de áudio).
+ * Mesma política do texto (`OPENROUTER_ZDR_PROVIDER_BODY`): `data_collection:"deny"`
+ * e `allow_fallbacks:true`. SEM `require_parameters`: os modelos de fala listam
+ * `supported_parameters: []`, e a trava recusaria todo provedor.
+ *
+ * NÃO VALIDADO no endpoint de áudio (o spike chamou sem `provider`). Recusar o
+ * campo seria seguro (a chamada falha e a resposta sai em texto), mas IGNORAR o
+ * campo não aparece em lugar nenhum: o áudio sairia sem a trava. Por isso org
+ * com `strictZdr` nem chega aqui (o runtime manda texto, `zdr_nao_validado`) até
+ * o teste vivo confirmar; `zdr:true` fica pronto para quando isso mudar.
  */
 export function ttsProviderBody(strictZdr: boolean): Record<string, unknown> {
   return {
@@ -144,29 +147,42 @@ export type VoiceDataKind =
   | "codigo"
   | "email"
   | "telefone"
-  | "tabela";
+  | "tabela"
+  /** Qualquer outro dígito fora de um horário ("50", "150", "1000", "18/10"). */
+  | "numero";
+
+/**
+ * Horários continuam falados: "15h", "10h30", "14:30". Todo OUTRO dígito torna o
+ * trecho "de dado" (revisão do P4.1: preço sem "R$" — "o corte sai por 50" —,
+ * número de endereço, total numa linha solta e valores em outra língua vazavam).
+ */
+const TIME_TOKEN = /\b\d{1,2}(?::\d{2}|h\d{2}|h)\b/gi;
+
+function hasNonTimeDigit(segment: string): boolean {
+  return /\d/.test(segment.replace(TIME_TOKEN, " "));
+}
 
 const DATA_PATTERNS: Array<{ kind: VoiceDataKind; re: RegExp }> = [
   { kind: "pix", re: /\b(pix|boleto|chave\s+(aleat[óo]ria|pix)|copia\s+e\s+cola|qr\s*code)\b/i },
   {
     kind: "link",
-    re: /(https?:\/\/|www\.|\blink\b|\b[a-z0-9-]+\.(com|net|org|io|app|br|me|ly|site|store|shop|link)(\.[a-z]{2})?\b)/i,
+    re: /(https?:\/\/|www\.|\blink\b|\b[a-z0-9-]+\.(com|net|org|io|app|br|me|ly|site|store|shop|link)(\.[a-z]{2})?\b|@\w+|\bponto\s+(com|br|net|org)\b)/i,
   },
   {
     kind: "valor",
-    re: /(R\$|US\$|€|\breais\b|\bcentavos\b|\bd[óo]lares\b|\bvalor(es)?\b|\bpre[çc]os?\b|\bcusta(m)?\b|\bcusto\b|\d+,\d{2}\b)/i,
+    re: /(R\$|US\$|\$|€|\breais\b|\bcentavos\b|\bd[óo]lar(es)?\b|\bdollars?\b|\beuros?\b|\bpesos\b|\bvalor(es)?\b|\bpre[çc]os?\b|\bprecio\b|\bprice\b|\bcusta(m)?\b|\bcusto\b|\bcuesta\b|\bcosts?\b|\btotal\b|\bmensalidade\b|\bparcel\w*|\bpor\s+m[eê]s\b|\bper\s+month\b|\b[àa]\s+vista\b|\bd[ée]bito\b|\bcr[ée]dito\b)/i,
   },
   {
     kind: "endereco",
-    re: /(\b(rua|avenida|av\.|alameda|travessa|rodovia|estrada|pra[çc]a|bairro|cep|endere[çc]o)\b|\bn[º°]\s*\d|\bn[úu]mero\s+\d|\b\d{5}-\d{3}\b)/i,
+    re: /(\b(rua|avenida|av|alameda|travessa|rodovia|estrada|pra[çc]a|bairro|cep|endere[çc]o)\b|\br\.\s|\bn[º°]\s*\d|\bn[úu]mero\s+\d|\b\d{5}-\d{3}\b)/i,
   },
-  { kind: "email", re: /[^\s@]+@[^\s@]+\.[^\s@]+|\be-?mail\b/i },
+  { kind: "email", re: /[^\s@]+@[^\s@]+\.[^\s@]+|\be-?mail\b|\barroba\b/i },
   // 8+ dígitos (com separadores de telefone) = telefone; vem antes do código.
   { kind: "telefone", re: /\+?\d(?:[\s().-]{0,2}\d){7,}/ },
   // 5+ dígitos seguidos (com . - /), código alfanumérico em caixa alta, crase.
   {
     kind: "codigo",
-    re: /(\d(?:[./-]?\d){4,}|\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,}\b|`|\b(c[óo]digo|cupom|protocolo|senha|cpf|cnpj)\b)/,
+    re: /(\d(?:[./-]?\d){4,}|\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{5,}\b|`)/,
   },
   { kind: "tabela", re: /\|.*\||\t/ },
 ];
@@ -181,6 +197,7 @@ export function voiceDataKinds(segment: string): VoiceDataKind[] {
   if (!kinds.includes("codigo") && /\b(c[óo]digo|cupom|protocolo|senha|cpf|cnpj)\b/i.test(segment)) {
     kinds.push("codigo");
   }
+  if (kinds.length === 0 && hasNonTimeDigit(segment)) kinds.push("numero");
   return kinds;
 }
 
@@ -256,6 +273,11 @@ export type VoiceTextReason =
   | "longo"
   | "vazio"
   | "marcacao"
+  | "idioma"
+  // Antes da síntese, no runtime: org com strictZdr (trava não validada no endpoint
+  // de áudio) e turno sem folga no lease do lock.
+  | "zdr_nao_validado"
+  | "sem_tempo"
   // Da action (depois da decisão): rede/provedor/conversor/teto.
   | "sem_chave"
   | "rota_sem_openrouter"
@@ -264,12 +286,14 @@ export type VoiceTextReason =
   | "falha_tts"
   | "formato_tts"
   | "audio_longo"
-  | "falha_conversao";
+  | "falha_conversao"
+  | "falha_armazenamento";
 
 export const VOICE_TEXT_REASONS: readonly VoiceTextReason[] = [
   "desligado", "canal", "grupo", "cliente_mandou_texto", "rascunho", "follow_up", "imagem",
-  "dado_sensivel", "longo", "vazio", "marcacao", "sem_chave", "rota_sem_openrouter", "sem_conversor",
-  "teto_de_gastos", "falha_tts", "formato_tts", "audio_longo", "falha_conversao",
+  "dado_sensivel", "longo", "vazio", "marcacao", "idioma", "zdr_nao_validado", "sem_tempo", "sem_chave",
+  "rota_sem_openrouter", "sem_conversor", "teto_de_gastos", "falha_tts", "formato_tts", "audio_longo",
+  "falha_conversao", "falha_armazenamento",
 ];
 
 export type VoiceReplyInput = {
@@ -290,6 +314,12 @@ export type VoiceReplyInput = {
   text: string;
   /** Aviso de voz sintética a falar ANTES (primeiro áudio da conversa), ou null. */
   notice: string | null;
+  /**
+   * Idioma em que a resposta sai (perfil do atendente; com `"auto"`, o idioma
+   * detectado da conversa). Ausente/null = pt-BR. Fora do português = texto: os
+   * padrões de dado são em português e a voz não foi ouvida em outra língua.
+   */
+  language?: string | null;
 };
 
 export type VoiceReplyPlan =
@@ -305,9 +335,20 @@ export type VoiceReplyPlan =
       noticeIncluded: boolean;
     };
 
-/** Só WhatsApp (Cloud API ou bridge) entrega voice note. */
+/**
+ * Só o bridge por enquanto: é onde o voice note (PTT + duração + waveform) foi
+ * montado e será validado no aparelho. A Cloud API (Meta) entrega o ogg como
+ * áudio, mas ninguém conferiu ao vivo se aparece como mensagem de voz: até lá,
+ * texto.
+ */
 export function voiceTransportSupported(transport: string | null | undefined): boolean {
-  return transport === "meta" || transport === "bridge";
+  return transport === "bridge";
+}
+
+/** pt, pt-BR, pt-PT… (ausente = pt-BR, o padrão do atendente). */
+export function isPortugueseLanguage(language: string | null | undefined): boolean {
+  if (!language || language === "auto") return true;
+  return /^pt(\b|[-_])/i.test(language);
 }
 
 /** Aviso configurado → texto pronto (aparado, teto), ou null. */
@@ -320,9 +361,10 @@ export function normalizeVoiceNotice(raw: unknown): string | null {
 
 /**
  * Decide se a resposta do atendente sai em áudio. Regras fixas, nesta ordem:
- * desligado → canal sem voice note → grupo → cliente não mandou áudio →
- * rascunho → follow-up → imagem → texto vazio → marcação técnica (defesa em
- * profundidade: o guard já rodou) → dados (separa ou tudo em texto) → longo.
+ * desligado → canal sem voice note (só bridge) → grupo → cliente não mandou
+ * áudio → rascunho → follow-up → imagem → idioma fora do português → texto
+ * vazio → marcação técnica (defesa em profundidade: o guard já rodou) → dados
+ * (separa ou tudo em texto) → longo.
  */
 export function planVoiceReply(input: VoiceReplyInput): VoiceReplyPlan {
   if (!input.enabled) return { kind: "text", reason: "desligado" };
@@ -332,6 +374,7 @@ export function planVoiceReply(input: VoiceReplyInput): VoiceReplyPlan {
   if (input.draft) return { kind: "text", reason: "rascunho" };
   if (input.followUp) return { kind: "text", reason: "follow_up" };
   if (input.hasImage) return { kind: "text", reason: "imagem" };
+  if (!isPortugueseLanguage(input.language)) return { kind: "text", reason: "idioma" };
   const text = input.text.trim();
   if (text.length === 0) return { kind: "text", reason: "vazio" };
   if (detectLeakedModelMarkup(text)) return { kind: "text", reason: "marcacao" };
