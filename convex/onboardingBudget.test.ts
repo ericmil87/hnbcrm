@@ -219,6 +219,20 @@ describe("reserva que segura saldo", () => {
     expect(await reserve(t, s, est)).toMatchObject({ ok: false, code: "session_budget" });
   });
 
+  test("registro sem estimativa solta a da última reserva (sessão não trava no turno seguinte)", async () => {
+    vi.stubEnv("ONBOARDING_SESSION_BUDGET_USD_MICROS", "500000");
+    const t = convexTest(schema, modules);
+    const s = await seedOrg(t, "A");
+    expect((await reserve(t, s, { estimateUsdMicros: 200_000 })).ok).toBe(true);
+    await t.mutation(internal.onboardingBudget.internalRecordOnboardingSpend, {
+      organizationId: s.organizationId, sessionId: s.sessionId, role: "interviewer", costUsdEstimate: 0.01,
+    });
+    const doc = await t.run((ctx) => ctx.db.get(s.sessionId));
+    expect(doc!.reservedUsdMicros).toBe(0);
+    expect(doc!.spentUsdMicros).toBe(10_000);
+    expect((await reserve(t, s, { estimateUsdMicros: 200_000 })).ok).toBe(true);
+  });
+
   test("reserva órfã vence em 10 min", async () => {
     vi.stubEnv("ONBOARDING_SESSION_BUDGET_USD_MICROS", "100000");
     const t = convexTest(schema, modules);

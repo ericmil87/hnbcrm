@@ -3829,6 +3829,8 @@ const applicationTables = {
     // orçamento). `reservedAt` = última reserva; reserva com mais de 10 min é órfã e ignorada.
     reservedUsdMicros: v.optional(v.number()),
     reservedAt: v.optional(v.number()),
+    // Estimativa da última reserva: padrão do que o registro solta quando não informa a sua.
+    lastEstimateUsdMicros: v.optional(v.number()),
     // P2.4: ids de registro de gasto já aplicados (idempotência), os últimos 20.
     recordedRequestIds: v.optional(v.array(v.string())),
     appliedAt: v.optional(v.number()),

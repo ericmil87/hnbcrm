@@ -280,7 +280,7 @@ export const internalReserveOnboardingSpend = internalMutation({
         message: `${ONBOARDING_REFUSAL_MESSAGES.rate_limited} ${retryAfterText(rate.retryAfterMs)}`,
       };
     }
-    await ctx.db.patch(session._id, { reservedUsdMicros: sessionReserved + estimate, reservedAt: now });
+    await ctx.db.patch(session._id, { reservedUsdMicros: sessionReserved + estimate, reservedAt: now, lastEstimateUsdMicros: estimate });
     return OK;
   },
 });
@@ -309,7 +309,7 @@ export const internalRecordOnboardingSpend = internalMutation({
     /** Custo em US$ (como `finishRunCostFields().costUsdEstimate`). */
     costUsdEstimate: v.number(),
     costEstimated: v.optional(v.boolean()),
-    /** Mesma estimativa passada na reserva (para soltar o saldo retido). Padrão = o da reserva. */
+    /** Estimativa a soltar. Sem ele vale a da última reserva da sessão (`lastEstimateUsdMicros`); sem reserva, o padrão. */
     estimateUsdMicros: v.optional(v.number()),
     /** Idempotência: o mesmo id registrado duas vezes soma uma só (guarda os últimos 20). */
     requestId: v.optional(v.string()),
@@ -385,7 +385,7 @@ export const internalRecordOnboardingSpend = internalMutation({
     const sessionSpent = session.spentUsdMicros + microsRaw;
     // Solta a estimativa que a reserva segurou (reserva vencida já valia 0 e continua 0).
     const held = effectiveReserved(session.reservedUsdMicros, session.reservedAt, now);
-    const stillReserved = Math.max(0, held - clampEstimate(args.estimateUsdMicros));
+    const stillReserved = Math.max(0, held - (args.estimateUsdMicros !== undefined ? clampEstimate(args.estimateUsdMicros) : session.lastEstimateUsdMicros ?? clampEstimate(undefined)));
     await ctx.db.patch(session._id, {
       spentUsdMicros: sessionSpent,
       reservedUsdMicros: stillReserved,
