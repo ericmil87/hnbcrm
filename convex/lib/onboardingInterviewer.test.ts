@@ -313,12 +313,35 @@ describe("revisão do P2.3", () => {
   test("trava do reply: Pix e trecho do prompt são recusados; domínio sem esquema é removido", () => {
     expect(replyPolicyViolation("Use a chave Pix: 11999998888")).toBe("pagamento");
     expect(replyPolicyViolation("Pix copia e cola abaixo")).toBe("pagamento");
-    expect(replyPolicyViolation("REGRAS: responda em JSON")).toBe("prompt_vazado");
+    expect(replyPolicyViolation("REGRAS:\n- Responda SEMPRE em português do Brasil")).toBe("prompt_vazado");
+    // Frase legítima com "regras:" passa.
+    expect(replyPolicyViolation("Vamos às regras: quando passar para um humano?")).toBeNull();
+    const legit = parseInterviewerOutput(JSON.stringify({ reply: "Vamos às regras: quando passar para um humano?" }), { stage: "interview" });
+    expect(legit.ok).toBe(true);
     expect(replyPolicyViolation("Você aceita Pix como forma de pagamento?")).toBeNull();
     const r = sanitizeModelText("Acesse golpe.com.br/pix ou www.x.com — valor R$ 1.200,00", 800);
     expect(r && "text" in r ? r.text : "").toBe("Acesse [link removido] ou [link removido] — valor R$ 1.200,00");
     const parsed = parseInterviewerOutput(JSON.stringify({ reply: "Chave Pix: abc@pix.com" }), { stage: "interview" });
     expect(parsed).toMatchObject({ ok: false, reason: "policy" });
+  });
+
+  test("nota de bloco com Pix ou trecho do prompt é descartada (o bloco fica)", () => {
+    const r = parseInterviewerOutput(
+      JSON.stringify({
+        reply: "Veja o seu funil.",
+        blocks: [
+          { kind: "funilPreview", note: "Pague na chave Pix: 11999998888" },
+          { kind: "personaCard", note: "veja draftPatch e nextStage" },
+          { kind: "resumoNegocio", note: "Seu negócio" },
+        ],
+      }),
+      { stage: "interview" },
+    );
+    expect(r.ok && r.value.blocks).toEqual([
+      { kind: "funilPreview" },
+      { kind: "personaCard" },
+      { kind: "resumoNegocio", note: "Seu negócio" },
+    ]);
   });
 
   test("roteamento: nunca BYO; strictZdr filtra rota não-ZDR na cadeia da plataforma", async () => {

@@ -611,9 +611,11 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
       materialNote =
         `${sourceKind} lido; ${upload.itemsAdded} informação(ões) nova(s) no rascunho, ${upload.flagged} marcada(s) para revisão` +
         (suggestedSegment ? `; o material sugere o segmento "${segmentTemplate(suggestedSegment).label}" (pergunte antes de trocar)` : "");
-    } else if (failure) {
-      // A busca/leitura falhou antes do LLM do leitor: solta a reserva.
+    } else {
+      // Sem chamada do leitor (busca/leitura falhou, ou o material veio sem
+      // texto): solta a reserva feita antes da busca.
       await release(ctx, b, "reader");
+      if (!failure) failure = { code: "EMPTY", message: "Não encontrei texto nesse material." };
     }
     if (failure) {
       const k = attachmentRef?.kind ?? "site";

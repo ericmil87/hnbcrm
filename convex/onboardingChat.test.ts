@@ -603,6 +603,25 @@ describe("leitor em quarentena (site)", () => {
     expect(r.ok && r.blocks.find((b) => b.kind === "uploadProgresso")).toMatchObject({ itemsAdded: 0 });
   });
 
+  test("site sem texto: o leitor não é chamado e a reserva dele é solta", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { verified: true });
+    await ackNotice(t, s.organizationId, s.adminUserId);
+    fakeSite({ "https://vazio.example/": "<html><head></head><body><script>x()</script></body></html>" });
+    const calls = stubLlm(() => interviewerJson());
+    const r = await as(t, s.adminUserId).action(internal.onboardingChat.internalSendTurn, {
+      organizationId: s.organizationId,
+      attachment: { kind: "url", url: "https://vazio.example/" },
+    });
+    expect(r.ok).toBe(true);
+    expect(calls.map((c) => c.role)).toEqual(["interviewer"]);
+    expect(r.ok && r.blocks.find((b) => b.kind === "uploadProgresso")).toMatchObject({ status: "falhou" });
+    const { session, runs } = await sessionOf(t, s.organizationId);
+    expect(session?.reservedUsdMicros ?? 0).toBe(0);
+    // Registro de custo 0 do leitor (soltura) + entrevistador.
+    expect(runs.filter((x) => x.kind === "onboarding")).toHaveLength(2);
+  });
+
   test("teto de 5 páginas por site é do servidor: a 6ª nem conecta", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t, { verified: true });

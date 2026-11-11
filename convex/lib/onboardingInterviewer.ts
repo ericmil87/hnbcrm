@@ -111,7 +111,8 @@ const PAYMENT_IN_REPLY: RegExp[] = [
 ];
 /** Trechos que só existem nos prompts do sistema: aparecer na resposta = vazamento de instrução. */
 const PROMPT_FRAGMENTS = [
-  "regras:",
+  // Cabeçalho + 1ª regra do prompt do entrevistador (só "regras:" pegaria uma frase legítima).
+  "regras:\n- responda sempre",
   "saída: responda somente",
   "draftpatch",
   "crm_data",
@@ -808,7 +809,9 @@ export function parseInterviewerOutput(
     const kind = bo ? bo.kind : b;
     if (!isBlockKind(kind) || blocks.some((x) => x.kind === kind)) continue;
     const n = bo ? sanitizeModelText(bo.note, BLOCK_NOTE_MAX) : null;
-    blocks.push({ kind, ...(n && "text" in n ? { note: n.text.replace(/\n+/g, " ") } : {}) });
+    // Nota com Pix ou trecho do prompt é descartada (o bloco fica, sem nota).
+    const noteText = n && "text" in n && !replyPolicyViolation(n.text) ? n.text.replace(/\n+/g, " ") : undefined;
+    blocks.push({ kind, ...(noteText ? { note: noteText } : {}) });
   }
   const summary = sanitizeModelText(o.summary, SUMMARY_MAX);
   return {
