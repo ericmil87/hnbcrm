@@ -47,7 +47,7 @@ describe("VoiceReplyCardView", () => {
     const onSave = setup({ notice: "Sou a assistente da Loja" });
     const input = screen.getByLabelText("Aviso de voz sintética (opcional)");
     expect(input).toHaveAttribute("maxLength", "80");
-    expect(input).toHaveAttribute("placeholder", "Sou a assistente virtual da {empresa}");
+    expect(input).toHaveAttribute("placeholder", "Sou a assistente virtual da Loja Exemplo");
     expect(screen.getByText("24/80")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Salvar aviso" })).not.toBeInTheDocument();
     await userEvent.clear(input);
@@ -58,10 +58,15 @@ describe("VoiceReplyCardView", () => {
     expect(onSave).toHaveBeenLastCalledWith({ voiceReplyNotice: "Olá" });
   });
 
-  it("IA inativa: interruptor travado, explicação e link para ativar", () => {
-    setup({ aiActive: false });
-    expect(screen.getByRole("switch", { name: "Responder em áudio" })).toBeDisabled();
-    expect(screen.getByText(/A IA está desligada/)).toBeInTheDocument();
+  it("IA inativa: interruptor travado (clique não grava), campos travados, explicação e link", async () => {
+    const onSave = setup({ aiActive: false });
+    const sw = screen.getByRole("switch", { name: "Responder em áudio" });
+    expect(sw).toBeDisabled();
+    await userEvent.click(sw);
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Voz")).toBeDisabled();
+    expect(screen.getByText("As mudanças deste bloco são salvas na hora.")).toBeInTheDocument();
+    expect(screen.getByText(/A IA não está ativa/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Ativar a IA" })).toHaveAttribute("href", expect.stringContaining("secao=ai"));
   });
 
@@ -76,6 +81,25 @@ describe("VoiceReplyCardView", () => {
     expect(screen.getByRole("switch", { name: "Responder em áudio" })).toBeEnabled();
   });
 
+  it("IA inativa com recurso ligado ainda permite desligar", async () => {
+    const onSave = setup({ aiActive: false, enabled: true });
+    await userEvent.click(screen.getByRole("switch", { name: "Responder em áudio" }));
+    expect(onSave).toHaveBeenCalledWith({ voiceReplyEnabled: false });
+  });
+
+  it("aviso: só espaços diferentes não é alteração; salva normalizado e avisa o painel", async () => {
+    const onDirtyChange = vi.fn();
+    const onSave = vi.fn().mockResolvedValue(true);
+    setup({ notice: "Sou a assistente" }, { onDirtyChange, onSave });
+    const input = screen.getByLabelText("Aviso de voz sintética (opcional)");
+    await userEvent.type(input, "  ");
+    expect(screen.queryByRole("button", { name: "Salvar aviso" })).not.toBeInTheDocument();
+    await userEvent.type(input, "  da   Loja");
+    expect(onDirtyChange).toHaveBeenLastCalledWith(true);
+    await userEvent.click(screen.getByRole("button", { name: "Salvar aviso" }));
+    expect(onSave).toHaveBeenCalledWith({ voiceReplyNotice: "Sou a assistente da Loja" });
+  });
+
   it("somente leitura: tudo travado, sem botões de salvar", () => {
     setup({ enabled: true, notice: "Aviso" }, { canManage: false });
     expect(screen.getByRole("switch", { name: "Responder em áudio" })).toBeDisabled();
@@ -85,9 +109,30 @@ describe("VoiceReplyCardView", () => {
     expect(screen.queryByRole("button", { name: "Salvar aviso" })).not.toBeInTheDocument();
   });
 
-  it("salvando trava os controles; erro do servidor aparece", () => {
-    setup({ enabled: true }, { saving: true, error: "O aviso não pode conter números." });
+  it("salvando trava os controles", () => {
+    setup({ enabled: true }, { saving: true });
     expect(screen.getByRole("switch", { name: "Responder em áudio" })).toBeDisabled();
-    expect(screen.getByRole("alert")).toHaveTextContent("O aviso não pode conter números.");
+  });
+
+  it("erro do servidor aparece e some ao editar o aviso; no campo vira aria-invalid", async () => {
+    const onSave = vi.fn().mockResolvedValue(false);
+    renderWithRouter(
+      <VoiceReplyCardView settings={{ ...base, enabled: true }} canManage onSave={onSave} error="O aviso não pode conter números." />,
+    );
+    const input = screen.getByLabelText("Aviso de voz sintética (opcional)");
+    await userEvent.type(input, "Ligue 123");
+    await userEvent.click(screen.getByRole("button", { name: "Salvar aviso" }));
+    expect(onSave).toHaveBeenCalledWith({ voiceReplyNotice: "Ligue 123" });
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(screen.getByText("O aviso não pode conter números.")).toBeInTheDocument();
+    await userEvent.type(input, "x");
+    expect(screen.queryByText("O aviso não pode conter números.")).not.toBeInTheDocument();
+  });
+
+  it("erro de outra ação aparece em alerta", async () => {
+    renderWithRouter(
+      <VoiceReplyCardView settings={{ ...base, enabled: true }} canManage onSave={vi.fn()} error="Não foi possível salvar a resposta em áudio." />,
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível salvar");
   });
 });
