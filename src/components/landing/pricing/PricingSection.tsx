@@ -48,12 +48,14 @@ export function PricingSection({ variant = "section" }: PricingSectionProps) {
               <strong className="font-semibold text-text-primary">Uma pessoa atendida pela IA</strong> é cada pessoa com
               quem a IA conversou no mês.{" "}
               <strong className="font-semibold text-text-primary">O mesmo cliente falando 20 vezes conta 1.</strong>{" "}
-              <a
-                href="#definicoes"
-                className="inline-flex min-h-11 items-center text-text-primary underline underline-offset-2 md:min-h-0"
-              >
-                O que conta e o que não conta
-              </a>
+              {variant === "page" && (
+                <a
+                  href="#definicoes"
+                  className="inline-flex min-h-11 items-center text-text-primary underline underline-offset-2 md:min-h-0"
+                >
+                  O que conta e o que não conta
+                </a>
+              )}
             </p>
           </div>
 
@@ -87,9 +89,13 @@ export function PricingSection({ variant = "section" }: PricingSectionProps) {
 
         <CompareTable />
         <AddonsBlock />
-        <DefinitionsBlock />
-        <ServicesBlock />
-        <PricingFaq firstOpen={variant === "page"} />
+        {variant === "page" && (
+          <>
+            <DefinitionsBlock />
+            <ServicesBlock />
+            <PricingFaq firstOpen />
+          </>
+        )}
 
         <div className="text-center">
           <Link to={signUpHref()}>

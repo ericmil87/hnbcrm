@@ -11,6 +11,7 @@ import {
   type GatedModule,
   type PlanKey,
 } from "../../../../convex/lib/plans";
+import { PLAN_SUPPORT } from "./pricingCopy";
 import { formatCount, formatMoney } from "@/lib/format";
 
 export type CompareRow = {
@@ -24,12 +25,6 @@ const brl2 = (v: number) => formatMoney(v, "BRL", { fractionDigits: 2 });
 
 const INCLUDED = "Incluído";
 const NOT_INCLUDED = "Não incluído";
-const SUPPORT: Record<PlanKey, string> = {
-  essencial: "E-mail",
-  profissional: "E-mail e WhatsApp",
-  escala: "Prioritário",
-  empresa: "Gerente de conta, contrato e SLA",
-};
 
 const perPlan = (fn: (k: PlanKey) => string) => PLAN_KEYS.map(fn);
 const moduleCell = (m: GatedModule) => perPlan((k) => (PLANS[k].modules.includes(m) ? INCLUDED : NOT_INCLUDED));
@@ -101,6 +96,6 @@ export function compareRows(): CompareRow[] {
     { label: "API, webhooks e MCP", cells: moduleCell("api") },
     { label: "Central com várias unidades e custo por unidade", cells: moduleCell("central") },
     { label: "Exportação dos dados", cells: perPlan(() => "Sempre liberada") },
-    { label: "Suporte", cells: perPlan((k) => SUPPORT[k]) },
+    { label: "Suporte", cells: perPlan((k) => PLAN_SUPPORT[k]) },
   ];
 }

@@ -9,6 +9,8 @@ import { FEATURED_PLAN, type PlanDisplay } from "@/lib/pricingCatalog";
 import type { BillingCycle } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { signUpHref } from "@/lib/authEntry";
+import { contactHref } from "@/lib/contactHref";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PLANS, TRIAL } from "../../../../convex/lib/plans";
 import { CTA_LABEL, PLAN_AUDIENCE, planCardLines } from "./pricingCopy";
 
@@ -30,7 +32,7 @@ function PlanCard({ plan, cycle }: { plan: PlanDisplay; cycle: BillingCycle }) {
             {plan.label}
           </h3>
           {plan.featured && (
-            <span className="inline-flex items-center rounded-full bg-brand-600 px-2.5 py-0.5 text-xs font-semibold text-white">
+            <span className="inline-flex items-center rounded-full bg-brand-700 px-2.5 py-0.5 text-xs font-semibold text-white">
               Mais escolhido
             </span>
           )}
@@ -68,15 +70,19 @@ function PlanCard({ plan, cycle }: { plan: PlanDisplay; cycle: BillingCycle }) {
         </ul>
 
         <div>
-          <Link to={signUpHref(plan.key)} className="block">
-            <Button
-              variant={plan.key === "empresa" ? "secondary" : plan.featured ? "primary" : "secondary"}
-              size="lg"
-              className="w-full"
-            >
-              {plan.key === "empresa" ? "Falar com a gente" : CTA_LABEL}
-            </Button>
-          </Link>
+          {plan.key === "empresa" ? (
+            <a href={contactHref("empresa")} className="block">
+              <Button variant="secondary" size="lg" className="w-full">
+                Falar com a gente
+              </Button>
+            </a>
+          ) : (
+            <Link to={signUpHref(plan.key)} className="block">
+              <Button variant={plan.featured ? "primary" : "secondary"} size="lg" className="w-full">
+                {CTA_LABEL}
+              </Button>
+            </Link>
+          )}
           {isTrialPlan && plan.featured && (
             <p className="mt-2 text-center text-caption text-text-muted">É o plano do teste grátis.</p>
           )}
@@ -97,6 +103,8 @@ interface PlanCardsProps {
  */
 export function PlanCards({ plans, cycle }: PlanCardsProps) {
   const [selected, setSelected] = useState<string>(FEATURED_PLAN);
+  // O papel de tabpanel só existe onde as abas aparecem (abaixo de md).
+  const mobile = useMediaQuery("(max-width: 767px)");
 
   return (
     <div>
@@ -117,7 +125,7 @@ export function PlanCards({ plans, cycle }: PlanCardsProps) {
           const card = <PlanCard plan={p} cycle={cycle} />;
           return (
             <div key={p.key} data-plan={p.key} className={cn("h-full", !active && "hidden md:block")}>
-              {active ? (
+              {active && mobile ? (
                 <TabPanel id={p.key} idPrefix="plan-tabs" className="h-full rounded-card">
                   {card}
                 </TabPanel>

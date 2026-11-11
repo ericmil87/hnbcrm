@@ -1,11 +1,10 @@
-import { Link } from "react-router";
 import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { formatMoney } from "@/lib/format";
 import { serviceDisplays } from "@/lib/pricingCatalog";
-import { signUpHref } from "@/lib/authEntry";
+import { contactHref } from "@/lib/contactHref";
 import { SERVICES } from "../../../../convex/lib/plans";
 import { CUSTOM_SERVICE_COPY, SERVICES_FOOTER, SERVICE_COPY, followUpText, servicesSubtitle } from "./pricingCopy";
 
@@ -26,11 +25,11 @@ function IncludesList({ items }: { items: readonly string[] }) {
 
 /**
  * "Implantação e consultoria": pacotes e acompanhamento vêm de `SERVICES` (catálogo).
- * Os botões usam a mesma ação de contato do plano Empresa; o formulário que cria lead vem na Onda 5.
+ * Os botões abrem um e-mail (`contactHref`); o formulário que cria lead vem na Onda 5.
  */
 export function ServicesBlock() {
   const packages = serviceDisplays();
-  const contactHref = signUpHref("empresa");
+  const href = contactHref("implantacao");
 
   return (
     <section id="implantacao" aria-labelledby="services-heading" className="space-y-6">
@@ -75,16 +74,16 @@ export function ServicesBlock() {
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <Link to={contactHref}>
+        <a href={href} className="inline-block">
           <Button variant="primary" size="lg" className="w-full sm:w-auto">
             Falar com a gente
           </Button>
-        </Link>
-        <Link to={contactHref}>
+        </a>
+        <a href={href} className="inline-block">
           <Button variant="secondary" size="lg" className="w-full sm:w-auto">
             Pedir orçamento
           </Button>
-        </Link>
+        </a>
       </div>
 
       <p className="text-sm text-text-muted">{SERVICES_FOOTER}</p>

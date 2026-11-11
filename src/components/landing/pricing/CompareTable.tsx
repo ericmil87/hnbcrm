@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { compareRows } from "./pricingCompare";
@@ -12,6 +12,19 @@ const PANEL_ID = "compare-plans-panel";
 export function CompareTable() {
   const [open, setOpen] = useState(false);
   const rows = compareRows();
+  const scroller = useRef<HTMLDivElement>(null);
+  const [scrolls, setScrolls] = useState(false);
+
+  // A dica só aparece quando a tabela realmente rola (largura do quadro menor que a da tabela).
+  useEffect(() => {
+    const el = scroller.current;
+    if (!open || !el) return;
+    const measure = () => setScrolls(el.scrollWidth > el.clientWidth + 1);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open]);
 
   return (
     <div className="text-center">
@@ -29,15 +42,15 @@ export function CompareTable() {
       <div id={PANEL_ID} className="mt-4 text-left">
         {open && (
           <>
-            <p className="mb-2 text-caption text-text-muted md:hidden">Deslize para ver todos os planos</p>
-            <div className="overflow-x-auto rounded-card border border-border bg-surface-raised">
+            {scrolls && <p className="mb-2 text-caption text-text-muted">Deslize para ver todos os planos</p>}
+            <div ref={scroller} className="overflow-x-auto rounded-card border border-border bg-surface-raised">
               <table className="w-full min-w-[44rem] border-collapse text-sm">
                 <caption className="sr-only">Comparação dos planos</caption>
                 <thead>
                   <tr className="border-b border-border">
                     <th
                       scope="col"
-                      className="sticky left-0 z-10 w-40 bg-surface-raised px-3 py-3 text-left text-caption font-medium text-text-muted"
+                      className="sticky left-0 z-10 w-32 md:w-40 bg-surface-raised px-3 py-3 text-left text-caption font-medium text-text-muted"
                     >
                       <span className="sr-only">Item</span>
                     </th>
@@ -53,7 +66,7 @@ export function CompareTable() {
                     <tr key={r.label} className="border-b border-border-subtle last:border-b-0">
                       <th
                         scope="row"
-                        className="sticky left-0 z-10 w-40 bg-surface-raised px-3 py-3 text-left font-semibold text-text-primary"
+                        className="sticky left-0 z-10 w-32 md:w-40 bg-surface-raised px-3 py-3 text-left font-semibold text-text-primary"
                       >
                         {r.label}
                       </th>
