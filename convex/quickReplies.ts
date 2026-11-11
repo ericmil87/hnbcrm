@@ -1,15 +1,14 @@
 import { v } from "convex/values";
 import { query, mutation } from "./_generated/server";
 import { requireAuth, requirePermission } from "./lib/auth";
+import {
+  QUICK_REPLY_SHORTCUT_RE as SHORTCUT_RE,
+  createQuickReplyCore,
+  normalizeShortcut,
+} from "./lib/quickReplyOps";
 
 // Respostas rápidas do inbox — texto reutilizável inserido via "/" no composer.
 // CRUD exige permissão de resposta no inbox; leitura basta ser membro da org.
-
-const SHORTCUT_RE = /^[a-z0-9][a-z0-9-_]{0,23}$/;
-
-function normalizeShortcut(raw: string): string {
-  return raw.trim().replace(/^\//, "").toLowerCase();
-}
 
 export const list = query({
   args: { organizationId: v.id("organizations") },
@@ -40,33 +39,15 @@ export const create = mutation({
   returns: v.id("quickReplies"),
   handler: async (ctx, args) => {
     const userMember = await requirePermission(ctx, args.organizationId, "inbox", "reply");
-
-    const shortcut = normalizeShortcut(args.shortcut);
-    if (!SHORTCUT_RE.test(shortcut)) {
-      throw new Error("Atalho inválido — use letras, números, hífen (até 24 caracteres)");
-    }
-    const content = args.content.trim();
-    if (!content || content.length > 2000) {
-      throw new Error("Conteúdo obrigatório (até 2000 caracteres)");
-    }
-
-    const existing = await ctx.db
-      .query("quickReplies")
-      .withIndex("by_organization_and_shortcut", (q) =>
-        q.eq("organizationId", args.organizationId).eq("shortcut", shortcut)
-      )
-      .first();
-    if (existing) throw new Error(`Já existe uma resposta com o atalho /${shortcut}`);
-
-    const now = Date.now();
-    return await ctx.db.insert("quickReplies", {
+    const id = await createQuickReplyCore(ctx, {
       organizationId: args.organizationId,
-      shortcut,
-      content,
-      createdBy: userMember._id,
-      createdAt: now,
-      updatedAt: now,
+      member: userMember,
+      shortcut: args.shortcut,
+      content: args.content,
     });
+    // `onDuplicate` padrão lança; nunca devolve null aqui.
+    if (!id) throw new Error("Resposta rápida não criada");
+    return id;
   },
 });
 

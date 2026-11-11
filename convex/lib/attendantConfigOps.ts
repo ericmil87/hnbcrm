@@ -25,7 +25,9 @@ import {
 } from "./followUpSettings";
 import { buildAuditDescription } from "./auditDescription";
 
-export type ConfigVia = "settings" | "copilot" | "wizard" | "telegram";
+// `onboarding` = aplicação do Rascunho de Operação pelo clique do usuário
+// (`onboardingSessions.applyOnboardingDraft`, ver `lib/onboardingApply.ts`).
+export type ConfigVia = "settings" | "copilot" | "wizard" | "telegram" | "onboarding";
 
 export const agentProfilePatchValidator = v.object({
   mode: v.optional(v.union(v.literal("suggest"), v.literal("autopilot"))),
@@ -452,6 +454,9 @@ export type FeatureTogglesPatch = {
   attendantEnabled?: boolean;
   visionEnabled?: boolean;
   groupAgentEnabled?: boolean;
+  /** Resposta em áudio (seção 5 do plano; a lógica de TTS é de outro pacote). Ausente = desligada. */
+  voiceReplyEnabled?: boolean;
+  voiceReplyVoice?: string;
 };
 
 /** Liga/desliga os produtos de IA da org (sob o mestre `aiConfig.enabled`). */
@@ -478,6 +483,12 @@ export async function setFeatureTogglesCore(
         ...(toggles.groupAgentEnabled !== undefined
           ? { groupAgentEnabled: toggles.groupAgentEnabled }
           : {}),
+        ...(toggles.voiceReplyEnabled !== undefined
+          ? { voiceReplyEnabled: toggles.voiceReplyEnabled }
+          : {}),
+        ...(toggles.voiceReplyVoice !== undefined
+          ? { voiceReplyVoice: toggles.voiceReplyVoice }
+          : {}),
       },
     },
     updatedAt: now,
@@ -496,12 +507,18 @@ export async function setFeatureTogglesCore(
         attendantEnabled: current.attendantEnabled !== false,
         visionEnabled: current.visionEnabled === true,
         groupAgentEnabled: current.groupAgentEnabled === true,
+        ...(toggles.voiceReplyEnabled !== undefined
+          ? { voiceReplyEnabled: current.voiceReplyEnabled === true }
+          : {}),
       },
       after: {
         copilotEnabled: toggles.copilotEnabled ?? current.copilotEnabled !== false,
         attendantEnabled: toggles.attendantEnabled ?? current.attendantEnabled !== false,
         visionEnabled: toggles.visionEnabled ?? current.visionEnabled === true,
         groupAgentEnabled: toggles.groupAgentEnabled ?? current.groupAgentEnabled === true,
+        ...(toggles.voiceReplyEnabled !== undefined
+          ? { voiceReplyEnabled: toggles.voiceReplyEnabled }
+          : {}),
       },
     },
     metadata: { aiConfig: true, ...(params.via ? { via: params.via } : {}) },
