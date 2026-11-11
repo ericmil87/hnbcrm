@@ -22,6 +22,10 @@
  *   {type:"block", block}                 — bloco rico montado pelo servidor (`OnboardingBlock`)
  *   {type:"chips", chips}                 — respostas sugeridas (2–6)
  *   {type:"draft", version, hash}         — rascunho gravado neste turno
+ *   {type:"audio", url, durationSec, mimeType} — P4.2b: a resposta falada (só quando o
+ *                                           usuário mandou áudio e a fala saiu; WAV, URL
+ *                                           do storage gerada depois do RBAC da sessão;
+ *                                           vem depois de delta/block/chips/draft)
  *   {type:"done", nextStage, askForMaterials}
  *   {type:"error", code, message}         — PT-BR, pronta para a tela
  */
@@ -130,6 +134,7 @@ export async function handleOnboardingStream(
           onBlock: (block) => send({ type: "block", block }),
           onChips: (chips) => send({ type: "chips", chips }),
           onDraft: (d) => send({ type: "draft", version: d.version, hash: d.hash }),
+          onAudio: (a) => send({ type: "audio", url: a.url, durationSec: a.durationSec, mimeType: a.mimeType }),
         });
         if (result.ok) send({ type: "done", nextStage: result.nextStage, askForMaterials: result.askForMaterials });
         else send({ type: "error", code: result.code, message: result.message });

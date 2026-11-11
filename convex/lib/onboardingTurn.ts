@@ -24,6 +24,10 @@
  *     com itens marcados substituídos por marcador) → `draftPatch` gravado por
  *     `internalSaveDraft` (versão esperada);
  *  6. blocos montados pelo SERVIDOR a partir do rascunho gravado; mensagem gravada.
+ *  7. (P4.2b) turno com áudio do usuário transcrito: a resposta aprovada é
+ *     falada pela porta única de TTS (`speakReply`: regras de `lib/tts.ts`,
+ *     strictZdr → texto, reserva `tts` antes, registro depois) e sai como
+ *     evento `audio` depois do texto. Falha = só texto, o turno não falha.
  *
  * Cada chamada de LLM: reserva antes (recusa = sem chamada, mensagem PT-BR) e
  * `internalRecordOnboardingSpend` depois, também em erro ou quando a busca do
@@ -71,8 +75,11 @@ import {
 } from "./onboardingInterviewer";
 import type { ChatMessage } from "./llm/types";
 import { segmentTemplate } from "./onboardingTemplates";
+import { platformTtsAllowed } from "./agentRoutes";
+import { detectLanguage } from "./languageDetect";
+import { planOnboardingVoiceReply, type VoiceTextReason } from "./tts";
 
-export type SpendRole = "interviewer" | "reader" | "vision" | "transcription";
+export type SpendRole = "interviewer" | "reader" | "vision" | "transcription" | "tts";
 
 // Estimativas por chamada (micro-US$) segurando saldo na reserva. A transcrição
 // roda no Whisper próprio (custo de LLM zero), mas passa pela reserva para que
@@ -82,6 +89,8 @@ export const ESTIMATE_USD_MICROS: Record<SpendRole, number> = {
   reader: 10_000,
   vision: 5_000,
   transcription: 2_000,
+  // Teto da fala (600 caracteres, ~45 s) no modelo padrão: ~US$ 0,0102 (`estimateTtsCost`).
+  tts: 12_000,
 };
 const LLM_TIMEOUT_MS = 45_000;
 const MAX_TOKENS: Record<"interviewer" | "reader", number> = { interviewer: 1800, reader: 2500 };
@@ -119,6 +128,10 @@ export const TURN_ERROR_CODES = [
 ] as const;
 export type TurnErrorCode = (typeof TURN_ERROR_CODES)[number];
 
+/** Evento SSE `audio` e campo do resultado: URL do storage (gerada com o RBAC da sessão). */
+export const replyAudioValidator = v.object({ url: v.string(), durationSec: v.number(), mimeType: v.string() });
+export type ReplyAudio = { url: string; durationSec: number; mimeType: string };
+
 export const turnResultValidator = v.union(
   v.object({
     ok: v.literal(true),
@@ -129,6 +142,10 @@ export const turnResultValidator = v.union(
     draft: v.union(v.null(), v.object({ version: v.number(), hash: v.string() })),
     nextStage: v.union(v.string(), v.null()),
     askForMaterials: v.boolean(),
+    /** P4.2b: resposta em áudio (o usuário mandou áudio e a fala saiu). */
+    audio: v.optional(replyAudioValidator),
+    /** P4.2b: o usuário mandou áudio, mas a resposta ficou só em texto (motivo). */
+    audioSkipReason: v.optional(v.string()),
   }),
   v.object({
     ok: v.literal(false),
@@ -159,6 +176,8 @@ export type TurnResult =
       draft: { version: number; hash: string } | null;
       nextStage: string | null;
       askForMaterials: boolean;
+      audio?: ReplyAudio;
+      audioSkipReason?: string;
     }
   | { ok: false; code: TurnErrorCode; message: string; sessionId: Id<"onboardingSessions"> | null };
 
@@ -170,6 +189,8 @@ export type TurnEvents = {
   onBlock?: (block: OnboardingBlock) => void | Promise<void>;
   onChips?: (chips: string[]) => void | Promise<void>;
   onDraft?: (draft: { version: number; hash: string }) => void | Promise<void>;
+  /** P4.2b: resposta em áudio, DEPOIS de `delta`/`block`/`chips`/`draft` (o texto já está na tela). */
+  onAudio?: (audio: ReplyAudio) => void | Promise<void>;
 };
 
 // ── Roteamento ──────────────────────────────────────────────────────────────
@@ -728,7 +749,7 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     ...(out.summary && !usedFallback ? { summary: maskFreeText(out.summary) } : {}),
     ...(nextStage ? { stage: nextStage } : {}),
   });
-  await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
+  const assistantMessageId = await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
     organizationId: input.organizationId,
     sessionId,
     role: "assistant",
@@ -744,6 +765,12 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
   const draftInfo = final?.draftHash ? { version: final.draftVersion, hash: final.draftHash } : null;
   if (draftInfo) await events.onDraft?.(draftInfo);
 
+  // 7. Resposta em áudio (só quando o usuário mandou áudio). Nunca derruba o turno.
+  const voice = transcribed
+    ? await speakReply(ctx, b, { reply: out.reply, messageId: assistantMessageId, routing: prep.routing })
+    : null;
+  if (voice?.kind === "audio") await events.onAudio?.(voice.audio);
+
   return {
     ok: true,
     sessionId,
@@ -753,5 +780,109 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     draft: draftInfo,
     nextStage: nextStage ?? final?.stage ?? null,
     askForMaterials: out.askForMaterials && prep.emailVerified,
+    ...(voice?.kind === "audio" ? { audio: voice.audio } : {}),
+    ...(voice?.kind === "text" ? { audioSkipReason: voice.reason } : {}),
   };
+}
+
+// ── Resposta em áudio (P4.2b) ───────────────────────────────────────────────
+
+type VoiceOutcome = { kind: "audio"; audio: ReplyAudio } | { kind: "text"; reason: VoiceTextReason };
+
+/**
+ * Fala a resposta JÁ aprovada pelo guard (`parseInterviewerOutput`), pela porta
+ * única de TTS (`voiceReplyNode.internalSynthesizeWebAudio`). Ordem: regras
+ * puras (`planOnboardingVoiceReply`: idioma, dado, tamanho) → strictZdr da org
+ * (`zdr_nao_validado`, como no atendente) → rota da plataforma → reserva do
+ * orçamento (`tts`) → síntese → registro do custo (também em falha) → vínculo
+ * na mensagem. Qualquer falha = só texto (motivo em `audioSkipReason`).
+ */
+async function speakReply(
+  ctx: ActionCtx,
+  b: BudgetCtx,
+  input: { reply: string; messageId: Id<"onboardingMessages">; routing: OnboardingRouting },
+): Promise<VoiceOutcome> {
+  const skip = async (reason: VoiceTextReason): Promise<VoiceOutcome> => {
+    try {
+      await ctx.runMutation(internal.onboardingChat.internalRecordReplyAudio, {
+        organizationId: b.organizationId,
+        sessionId: b.sessionId,
+        messageId: input.messageId,
+        skipReason: reason,
+      });
+    } catch {
+      // diagnóstico apenas
+    }
+    console.log(JSON.stringify({ event: "onboardingVoiceReply", mode: "text", reason }));
+    return { kind: "text", reason };
+  };
+  try {
+    const plan = planOnboardingVoiceReply({
+      userSentAudio: true,
+      text: input.reply,
+      language: detectLanguage(input.reply)?.lang ?? null,
+    });
+    if (plan.kind === "text") return await skip(plan.reason);
+    // Trava `provider` no endpoint de áudio não validada ao vivo (ver ai-attendant.md).
+    if (input.routing.strictZdr) return await skip("zdr_nao_validado");
+    if (!platformTtsAllowed(onboardingProviderConfig(input.routing))) return await skip("rota_sem_openrouter");
+
+    const decision = await reserve(ctx, b, "tts");
+    if (!decision.ok) return await skip("teto_de_gastos");
+    let synth;
+    try {
+      synth = await ctx.runAction(internal.voiceReplyNode.internalSynthesizeWebAudio, {
+        organizationId: b.organizationId,
+        memberId: b.memberId,
+        text: plan.speakable,
+        strictZdr: input.routing.strictZdr,
+        routingAllowed: true,
+      });
+    } catch {
+      await record(ctx, b, "tts", { status: "error", requestCount: 1, costUsdEstimate: 0 });
+      return await skip("falha_tts");
+    }
+    const cost = synth.cost;
+    await record(ctx, b, "tts", {
+      status: synth.ok ? "done" : "error",
+      provider: "openrouter",
+      model: synth.model,
+      requestCount: synth.ok ? 1 : synth.requestCount,
+      ...(cost ? { promptTokens: cost.promptTokens, completionTokens: cost.completionTokens } : {}),
+      costUsdEstimate: cost?.costUsd ?? 0,
+      ...(cost?.estimated ? { costEstimated: true } : {}),
+    });
+    if (!synth.ok) return await skip(synth.reason as VoiceTextReason);
+
+    const discard = async () => {
+      try {
+        await ctx.runMutation(internal.voiceReply.internalDiscardWebAudioFile, {
+          organizationId: b.organizationId,
+          fileId: synth.fileId,
+        });
+      } catch {
+        // best-effort
+      }
+    };
+    let url: string | null = null;
+    try {
+      ({ url } = await ctx.runMutation(internal.onboardingChat.internalRecordReplyAudio, {
+        organizationId: b.organizationId,
+        sessionId: b.sessionId,
+        messageId: input.messageId,
+        audio: { fileId: synth.fileId, storageId: synth.storageId, durationSec: synth.durationSec, mimeType: synth.mimeType },
+      }));
+    } catch {
+      url = null;
+    }
+    if (!url) {
+      await discard();
+      return await skip("falha_armazenamento");
+    }
+    console.log(JSON.stringify({ event: "onboardingVoiceReply", mode: "audio", seconds: synth.durationSec }));
+    return { kind: "audio", audio: { url, durationSec: synth.durationSec, mimeType: synth.mimeType } };
+  } catch (e) {
+    console.log(JSON.stringify({ event: "onboardingVoiceReplyError", reason: shortReason(e) }));
+    return { kind: "text", reason: "falha_tts" };
+  }
 }

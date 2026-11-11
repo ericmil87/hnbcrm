@@ -55,4 +55,30 @@ describe("portas de voz", () => {
     expect(decide).toBeGreaterThan(format);
     expect(commit).toBeGreaterThan(decide);
   });
+
+  test("uma única requisição de fala; o chat do onboarding fala pela mesma porta, depois do guard, sem o conversor", () => {
+    const node = sources.find((f) => f.rel === "voiceReplyNode.ts")!.src;
+    expect((node.match(/fetch\(OPENROUTER_SPEECH_URL/g) ?? []).length).toBe(1);
+    const webStart = node.indexOf("export const internalSynthesizeWebAudio");
+    expect(webStart).toBeGreaterThan(0);
+    expect(node.slice(webStart)).not.toMatch(/convertVoiceNoteToOggOpus/);
+    const turn = sources.find((f) => f.rel === "lib/onboardingTurn.ts")!.src;
+    expect(turn).toMatch(/planOnboardingVoiceReply\(/);
+    expect(turn).toMatch(/internal\.voiceReplyNode\.internalSynthesizeWebAudio/);
+    // Fala só depois da resposta final aprovada (parse do entrevistador) e gravada.
+    const parsed = turn.indexOf("parseInterviewerOutput(call.content");
+    const appended = turn.indexOf("const assistantMessageId = await ctx.runMutation(internal.onboardingChat.internalAppendMessage");
+    const spoken = turn.indexOf("await speakReply(ctx, b,");
+    expect(parsed).toBeGreaterThan(0);
+    expect(appended).toBeGreaterThan(parsed);
+    expect(spoken).toBeGreaterThan(appended);
+    // Reserva do orçamento ANTES da síntese, registro DEPOIS.
+    const fn = turn.slice(turn.indexOf("async function speakReply("));
+    const reserveAt = fn.indexOf('reserve(ctx, b, "tts")');
+    const synthAt = fn.indexOf("internal.voiceReplyNode.internalSynthesizeWebAudio");
+    const recordAt = fn.indexOf('record(ctx, b, "tts"', synthAt);
+    expect(reserveAt).toBeGreaterThan(0);
+    expect(synthAt).toBeGreaterThan(reserveAt);
+    expect(recordAt).toBeGreaterThan(synthAt);
+  });
 });

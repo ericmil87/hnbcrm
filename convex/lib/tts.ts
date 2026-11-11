@@ -375,7 +375,17 @@ export function planVoiceReply(input: VoiceReplyInput): VoiceReplyPlan {
   if (input.followUp) return { kind: "text", reason: "follow_up" };
   if (input.hasImage) return { kind: "text", reason: "imagem" };
   if (!isPortugueseLanguage(input.language)) return { kind: "text", reason: "idioma" };
-  const text = input.text.trim();
+  return planSpokenPart(input.text, input.notice);
+}
+
+/**
+ * Parte comum das regras de dado e tamanho (atendente e chat do onboarding):
+ * texto vazio → marcação técnica (defesa em profundidade: o guard já rodou) →
+ * dados (separa por frase ou tudo em texto) → longo. Uma implementação só:
+ * `voiceDataKinds` decide o que nunca vai na voz nas duas superfícies.
+ */
+export function planSpokenPart(rawText: string, rawNotice: string | null): VoiceReplyPlan {
+  const text = rawText.trim();
   if (text.length === 0) return { kind: "text", reason: "vazio" };
   if (detectLeakedModelMarkup(text)) return { kind: "text", reason: "marcacao" };
 
@@ -403,7 +413,7 @@ export function planVoiceReply(input: VoiceReplyInput): VoiceReplyPlan {
     }
   }
 
-  const notice = input.notice ? normalizeVoiceNotice(input.notice) : null;
+  const notice = rawNotice ? normalizeVoiceNotice(rawNotice) : null;
   const speakableBody = toSpeakableText(spokenText);
   if (speakableBody.length === 0) return { kind: "text", reason: "vazio" };
   const speakable = notice ? `${toSpeakableText(notice)} ${speakableBody}` : speakableBody;
@@ -415,6 +425,29 @@ export function planVoiceReply(input: VoiceReplyInput): VoiceReplyPlan {
     textPart,
     noticeIncluded: notice !== null,
   };
+}
+
+/**
+ * Chat do onboarding (P4.2b; plano seção 5: "o Copiloto responde em áudio quando
+ * o usuário manda áudio — o navegador toca direto"). Regras, nesta ordem: o
+ * usuário NÃO mandou áudio neste turno (`cliente_mandou_texto`) → idioma fora do
+ * português → as mesmas regras de dado/tamanho do atendente (`planSpokenPart`).
+ * O texto inteiro já aparece na tela; o áudio fala só a parte sem dado
+ * (`speakable`), e o dado fica na bolha de texto. Sem canal, grupo, rascunho,
+ * follow-up nem imagem: não existem no chat do onboarding. Sem aviso de voz
+ * falado: a tela já é do próprio Copiloto da plataforma.
+ */
+export function planOnboardingVoiceReply(input: {
+  /** O turno teve áudio do usuário TRANSCRITO (`attachment.kind === "audio"`). */
+  userSentAudio: boolean;
+  /** Resposta final, já aprovada pelo guard (`parseInterviewerOutput`). */
+  text: string;
+  /** Idioma detectado da resposta (ausente/null = pt-BR). */
+  language?: string | null;
+}): VoiceReplyPlan {
+  if (!input.userSentAudio) return { kind: "text", reason: "cliente_mandou_texto" };
+  if (!isPortugueseLanguage(input.language)) return { kind: "text", reason: "idioma" };
+  return planSpokenPart(input.text, null);
 }
 
 // ── Custo ───────────────────────────────────────────────────────────────────

@@ -304,7 +304,8 @@ export const internalRecordOnboardingSpend = internalMutation({
     /** Papel (documental; o modelo usado vai em `model`). */
     // `transcription` (P2.3): Whisper do áudio do usuário; reservado antes para não
     // ocupar o serviço compartilhado com os clientes reais além do orçamento.
-    role: v.union(v.literal("interviewer"), v.literal("reader"), v.literal("vision"), v.literal("transcription")),
+    // `tts` (P4.2b): resposta em áudio do chat quando o usuário mandou áudio.
+    role: v.union(v.literal("interviewer"), v.literal("reader"), v.literal("vision"), v.literal("transcription"), v.literal("tts")),
     status: v.optional(v.union(v.literal("done"), v.literal("error"))),
     provider: v.optional(v.string()),
     model: v.optional(v.string()),

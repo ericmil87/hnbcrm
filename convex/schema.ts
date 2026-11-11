@@ -3911,10 +3911,26 @@ const applicationTables = {
     /** O texto do usuário veio da transcrição de um áudio. */
     transcribed: v.optional(v.boolean()),
     draftVersion: v.optional(v.number()),
+    // P4.2b: resposta do assistente em áudio (o usuário mandou áudio). WAV no
+    // storage da org com linha em `files` (`metadata.kind:"onboarding_voice_reply"`);
+    // a URL é gerada na leitura, com o RBAC da sessão. Some (blob + linha + campo)
+    // em `audioExpiresAt` pelo cron `onboardingChat.internalExpireOnboardingAudio`.
+    audio: v.optional(
+      v.object({
+        fileId: v.id("files"),
+        storageId: v.id("_storage"),
+        durationSec: v.number(),
+        mimeType: v.string(),
+      }),
+    ),
+    audioExpiresAt: v.optional(v.number()),
+    /** Motivo de a resposta NÃO ter saído em áudio quando o usuário mandou áudio (diagnóstico; fora da view). */
+    audioSkipReason: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_session", ["sessionId"])
-    .index("by_organization", ["organizationId"]),
+    .index("by_organization", ["organizationId"])
+    .index("by_audio_expires_at", ["audioExpiresAt"]),
 
   // Onboarding v2 (P2.3): páginas lidas por site numa sessão (teto de 5 por
   // site, contado NO SERVIDOR e reservado antes da busca; nunca vem do LLM).
