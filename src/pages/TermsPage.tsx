@@ -29,7 +29,6 @@ export function TermsPage() {
       <SEO
         title="Termos de Uso e Assinatura"
         description="Termos de Uso e Assinatura do HNBCRM: planos, atendimentos de IA, excedente, teste, troca de plano, cancelamento, reembolso de 7 dias, só leitura, WhatsApp não oficial e proteção de dados."
-        keywords="termos de uso, termos de assinatura, hnbcrm, planos, reembolso, whatsapp, saas"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}

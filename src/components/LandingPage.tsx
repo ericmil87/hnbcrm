@@ -83,7 +83,6 @@ export function LandingPage() {
         preloadDisplayFont
         title="HNBCRM — CRM com atendimento IA no WhatsApp"
         description={`CRM para vender pelo WhatsApp: funil, conversas e tarefas num lugar só, com atendente de IA que sugere respostas e chama a equipe na hora certa. Usuários ilimitados. Teste ${TRIAL.days} dias, sem cartão.`}
-        keywords="crm, ai, automation, leads, pipeline, multi-tenant, webhook, mcp, api rest, gestão de tarefas, kanban de tarefas, central de atendimento, whatsapp, setores, roas, tradução automática de mensagens, atendimento multilíngue"
       />
       <OrganizationStructuredData />
       <div className="min-h-screen bg-surface-base text-text-primary">

@@ -100,7 +100,6 @@ export function DevelopersPage() {
       <SEO
         title="Developer Documentation"
         description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 113 endpoints documentados com playground interativo."
-        keywords="api, rest, mcp, webhooks, developer, integration, ai agents"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}

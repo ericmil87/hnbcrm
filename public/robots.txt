@@ -1,6 +1,19 @@
+# Páginas públicas: indexáveis, inclusive para bots de IA (ser citado em respostas de IA é desejado).
+# Área logada, tela de login e formulários públicos de clientes (/f/*) ficam fora.
 User-agent: *
 Allow: /
 Disallow: /app/
 Disallow: /entrar
+Disallow: /f/
+
+# Os grupos de bots de IA repetem os Disallow porque um grupo específico substitui o grupo *.
+User-agent: GPTBot
+User-agent: ClaudeBot
+User-agent: PerplexityBot
+User-agent: Google-Extended
+Allow: /
+Disallow: /app/
+Disallow: /entrar
+Disallow: /f/
 
 Sitemap: https://hnbcrm.com/sitemap.xml
