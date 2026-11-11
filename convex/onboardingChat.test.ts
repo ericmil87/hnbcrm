@@ -14,6 +14,7 @@ import schema from "./schema";
 import { setSafeFetchDepsForTests } from "./lib/safeFetchNode";
 import type { SafeFetchDeps } from "./lib/safeFetch";
 import { MATERIALS_EMAIL_UNVERIFIED_MESSAGE, MATERIALS_NOTICE_REQUIRED_MESSAGE } from "./onboardingChat";
+import { ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
 import { MATERIALS_NOTICE_TEXT } from "./lib/onboardingBlocks";
 import { INTERVIEWER_FALLBACK_REPLY } from "./lib/onboardingInterviewer";
 
@@ -388,6 +389,27 @@ describe("gates", () => {
       attachment: { kind: "audio", storageId },
     });
     expect(r).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(calls).toHaveLength(0);
+  });
+
+  test("PDF: teto de 20 MB (ONBOARDING_PDF_MAX_BYTES); acima disso é recusado com a mensagem do limite, antes de qualquer LLM", async () => {
+    expect(ONBOARDING_PDF_MAX_BYTES).toBe(20 * 1024 * 1024);
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { verified: true });
+    await ackNotice(t, s.organizationId, s.adminUserId);
+    const calls = stubLlm(() => interviewerJson());
+    const size = ONBOARDING_PDF_MAX_BYTES + 1;
+    const storageId = await t.run(async (ctx) => {
+      const id = await ctx.storage.store(new Blob([new Uint8Array(size)], { type: "application/pdf" }));
+      await ctx.db.insert("files", { organizationId: s.organizationId, storageId: id, name: "tabela.pdf", mimeType: "application/pdf", size, fileType: "other", createdAt: Date.now() });
+      return id;
+    });
+    const r = await as(t, s.adminUserId).action(internal.onboardingChat.internalSendTurn, {
+      organizationId: s.organizationId,
+      attachment: { kind: "pdf", storageId },
+    });
+    expect(r).toMatchObject({ ok: false, code: "invalid_input" });
+    expect(JSON.stringify(r)).toContain("até 20 MB");
     expect(calls).toHaveLength(0);
   });
 

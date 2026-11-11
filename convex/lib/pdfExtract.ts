@@ -4,7 +4,7 @@
  * (temp/landing-onboarding-v2/spikes/pdf/RELATORIO.md) e da revisão do P2.2.
  *
  * `unpdf@2.1.0` (pdf.js embutido, sem binário nativo). Camadas:
- *  1. Tamanho (10 MB) e `%PDF-` nos primeiros 1024 bytes.
+ *  1. Tamanho (20 MB, `ONBOARDING_PDF_MAX_BYTES`) e `%PDF-` nos primeiros 1024 bytes.
  *  2. Pré-varredura (`preflightPdf`, PRIMEIRA barreira), na thread
  *     principal, antes do pdf.js:
  *     - `/Encrypt` → recusa (inclusive só senha de dono);
@@ -19,7 +19,7 @@
  *       novo (profundidade limitada);
  *     - tetos: 16 MB por stream e 48 MB somados (ver PDF_LIMITS); streams de
  *       imagem (`/Subtype /Image`) não são decodificados nem contados;
- *     - custo linear: fim de linha e `endstream` em cache, orçamento de 32 MB
+ *     - custo linear: fim de linha e `endstream` em cache, orçamento de 64 MB
  *       para os decodificadores ASCII, até 20 mil `stream` e o MESMO prazo da
  *       leitura, checado a cada `stream` (TIMEOUT).
  *  3. pdf.js SÓ num `worker_threads`, com duas travas na thread principal:
@@ -43,6 +43,7 @@ import { inflateRawSync, constants as zlibConstants } from "node:zlib";
 import { Worker } from "node:worker_threads";
 import { createRequire } from "node:module";
 import { cleanUntrustedText } from "./untrustedText";
+import { ONBOARDING_PDF_MAX_BYTES, ONBOARDING_PDF_MAX_MB } from "./onboardingLimits";
 
 /**
  * Tetos da pré-varredura: 16 MB por stream e 48 MB somados. A action Node tem
@@ -54,7 +55,7 @@ import { cleanUntrustedText } from "./untrustedText";
  * (TOO_BIG_EXPANSION) — o caminho para esse material é foto/print na visão.
  */
 export const PDF_LIMITS = {
-  maxBytes: 10 * 1024 * 1024,
+  maxBytes: ONBOARDING_PDF_MAX_BYTES,
   maxPages: 40,
   hardMaxPages: 300,
   maxChars: 60_000,
@@ -82,7 +83,7 @@ export type PdfErrorCode =
 export const PDF_ERROR_MESSAGES: Record<PdfErrorCode, string> = {
   EMPTY: "O arquivo está vazio.",
   NOT_PDF: "Não consegui abrir esse arquivo.",
-  TOO_LARGE: "Arquivo grande demais; envie só as páginas com serviços e preços.",
+  TOO_LARGE: `Arquivo grande demais (o limite é de até ${ONBOARDING_PDF_MAX_MB} MB); envie só as páginas com serviços e preços.`,
   ENCRYPTED: "O PDF tem senha ou proteção. Exporte uma cópia sem proteção.",
   CORRUPT: "Não consegui abrir esse arquivo.",
   TOO_MANY_PAGES: "Arquivo grande demais; envie só as páginas com serviços e preços.",
@@ -381,8 +382,8 @@ const SNIFF_PREFIX = 1024;
 const SNIFF_MAX_DEPTH = 4;
 /** Profundidade da re-varredura de saídas descomprimidas que contêm `stream` (ex.: /ObjStm). */
 const NESTED_SCAN_MAX_DEPTH = 3;
-// Um PDF legítimo varre ~1× o arquivo (≤ 10 MB) aqui; 32 MB dá folga e corta abuso.
-const ASCII_SCAN_BUDGET = 32 * 1024 * 1024;
+// Um PDF legítimo varre ~1× o arquivo (≤ 20 MB; ~2× com os dois inícios de busca por stream) aqui; 64 MB (era 32 MB para 10 MB de arquivo: mesma folga de ~3×) corta abuso.
+const ASCII_SCAN_BUDGET = 64 * 1024 * 1024;
 /** Ocorrências de `stream` aceitas (somando as varreduras aninhadas). */
 export const MAX_STREAM_KEYWORDS = 20_000;
 
@@ -862,9 +863,10 @@ export async function extractPdfText(bytes: Uint8Array, opts: PdfExtractOptions 
       throw e;
     }
   }
-  const copy = new Uint8Array(bytes); // o buffer vai transferido ao worker
+  // `runInWorker` já fatia uma cópia do buffer para transferir ao worker; uma
+  // cópia extra aqui custaria mais um arquivo inteiro (20 MB) de RSS.
   try {
-    return assemble(await runInWorker(copy, o, deadline, rssCapBytes, rssAbsMaxBytes, unpdfPathForTests), o);
+    return assemble(await runInWorker(bytes, o, deadline, rssCapBytes, rssAbsMaxBytes, unpdfPathForTests), o);
   } catch (e) {
     if (e instanceof PdfExtractError) throw e;
     throw new PdfExtractError("PARSE_FAILED");

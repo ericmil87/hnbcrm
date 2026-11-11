@@ -11,6 +11,8 @@ import schema from "./schema";
 import { setSafeFetchDepsForTests } from "./lib/safeFetchNode";
 import { SafeFetchConnectRequest, SafeFetchDeps } from "./lib/safeFetch";
 import { scannedPdf, textPdf } from "./lib/pdfTestFixtures.test-helper";
+import { bigLegitPdf } from "./lib/pdfBigFixture.test-helper";
+import { ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -222,6 +224,31 @@ describe("internalFetchAndExtract — arquivo enviado", () => {
     });
     expect(s).toMatchObject({ ok: true, text: "", scanned: true });
   });
+
+  test("teto de 20 MB: PDF legítimo de ~19 MB passa; 20 MB + 1 é recusado com a mensagem do limite", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId } = await seed(t);
+    const big = new Uint8Array(bigLegitPdf({ targetMb: 19 }));
+    expect(big.byteLength).toBeGreaterThan(18.5 * 1024 * 1024);
+    expect(big.byteLength).toBeLessThan(ONBOARDING_PDF_MAX_BYTES);
+    const okId = await storeFile(t, organizationId, big, "application/pdf");
+    const ok = await t.action(internal.onboardingExtract.internalFetchAndExtract, {
+      organizationId,
+      kind: "pdf",
+      storageId: okId,
+    });
+    expect(ok).toMatchObject({ ok: true, source: { kind: "pdf" } });
+    if (ok.ok) expect(ok.text).toContain("Pizza margherita");
+
+    const tooBigId = await storeFile(t, organizationId, new Uint8Array(ONBOARDING_PDF_MAX_BYTES + 1), "application/pdf");
+    const refused = await t.action(internal.onboardingExtract.internalFetchAndExtract, {
+      organizationId,
+      kind: "pdf",
+      storageId: tooBigId,
+    });
+    expect(refused).toMatchObject({ ok: false, code: "TOO_LARGE" });
+    if (!refused.ok) expect(refused.message).toContain("até 20 MB");
+  }, 60_000);
 
   test("blob de outra org ou sem linha em files → NOT_FOUND", async () => {
     const t = convexTest(schema, modules);
