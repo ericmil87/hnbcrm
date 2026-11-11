@@ -63,6 +63,12 @@ Dois transportes no mesmo canal `whatsapp` (`channelConfigs.provider`), ingest/d
 
 **Fora de escopo / observado:** JID de grupo de 18 dígitos (`1203…`) já foi enviado como telefone (18/09); não corrigido aqui. Não coberto: o limbo "action morreu entre o envio e o registro" (segue com `internalRedispatchStuckOutbound`).
 
+### Nota de voz do navegador: /convert e reserva (nov/2026, áudio no iPhone)
+
+O gravador do inbox sobe `audio/ogg` (Firefox), `audio/webm` (Chrome/Edge) ou `audio/mp4` com `.m4a` (Safari, inclusive o app instalado no iPhone). No `dispatchViaBridge`, nota de voz (`contentType:"audio"`) que não é ogg passa pelo `/convert?target=ogg-opus` do serviço Whisper (VPS, fora do repo). O arquivo vai no form com o nome de `voiceNoteConvertFilename` (`lib/bridgeSend.ts`): `voice-note.m4a` (ou `.aac`) SÓ para mp4/m4a/aac, como dica do contêiner de entrada; webm e o resto seguem `voice-note` sem extensão, que é o caminho do Chrome já em uso (mudar exigiria validar no serviço). Nunca se verificou no serviço se ele aceita mp4/AAC: é a primeira coisa a olhar se o iPhone falhar.
+
+**Reserva (`planBridgeAudioSend`, puro):** ogg sai como está por `/chat/send/audio`; convertido sai por `/chat/send/audio` como `audio/ogg; codecs=opus`; sem conversão (serviço sem env ou com erro) o original sai como DOCUMENTO por `/chat/send/document`, com nome cuja extensão segue o tipo REAL (`audio/mp4` → `.m4a`, mesmo que o arquivo antigo do iPhone se chame `.webm`), e a mensagem ganha `metadata.dispatchNote` ("Nota de voz enviada como arquivo de áudio…"). O endpoint de áudio nunca recebe `data:audio/mp4`/`data:audio/webm` (o wuzapi espera ogg ali). Escolhemos documento em vez de falhar porque o endpoint de documento já é o de todo PDF/Office do inbox, coberto por `bridgeDispatch.test.ts`, e o contato ainda recebe um áudio tocável. Testes: `voiceNoteDispatch.test.ts`, `bridgeMedia.test.ts`.
+
 ## Notas vindas de convex/CLAUDE.md (22/10/2026)
 
 Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadores que não existiam em nenhum outro lugar).
