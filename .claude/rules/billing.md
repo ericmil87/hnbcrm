@@ -6,7 +6,7 @@ paths:
 
 # Planos, entitlements e medição
 
-Contexto e histórico: `docs/architecture/billing.md`. Números: `convex/lib/plans.ts` (fonte única; o front importa, nunca copia).
+Contexto e histórico: `docs/architecture/billing.md`. Números: `convex/lib/plans.ts` (fonte única; o front importa, nunca copia). Vale também para os serviços de vitrine (`SERVICES`: implantação, parcelas, acompanhamento), que não entram em cobrança nem em entitlements.
 
 - Ler o plano só por `resolveEntitlements`/`loadEntitlements` (`convex/lib/entitlements.ts`). Org sem `billing`, `legacy` ou sem plano = `gated:false`: todo gate novo precisa passar nesse caso sem mudar nada.
 - Escrever `organizations.billing` ou `orgSubscriptions` só por `applySubscriptionChange`/`setBillingStatus` (`convex/lib/entitlementsOps.ts`); o cadastro usa `initialOrgBilling`. `source:"customer"` só mexe em `overage`. Guard: `convex/entitlementsPort.test.ts`.

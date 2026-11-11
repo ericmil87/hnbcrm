@@ -158,7 +158,7 @@ interface Pair {
 const surfaces = ["surface-base", "surface-raised", "surface-overlay", "surface-sunken"];
 const PAIRS: Pair[] = [
   ...["text-primary", "text-secondary", "text-muted"].flatMap((fg) => surfaces.map((bg) => ({ fg, bg, min: 4.5 }))),
-  ...["brand-600", "semantic-success", "semantic-error", "semantic-warning", "semantic-info"].map((bg) => ({ fg: "white", bg, min: 4.5 })),
+  ...["brand-600", "brand-700", "semantic-success", "semantic-error", "semantic-warning", "semantic-info"].map((bg) => ({ fg: "white", bg, min: 4.5 })),
   ...["ai-300", "ai-400"].flatMap((fg) => ["surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5 }))),
   ...["bubble-in", "bubble-note", "chat-bg"].map((bg) => ({ fg: "text-primary", bg, min: 4.5 })),
   ...["bubble-out", "bubble-ai"].map((bg) => ({ fg: "bubble-out-fg", bg, min: 4.5 })),

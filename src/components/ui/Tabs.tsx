@@ -116,7 +116,7 @@ export function Tabs({
                 : cn(
                     "rounded-full px-4",
                     selected
-                      ? "bg-brand-600 text-white"
+                      ? "bg-brand-700 text-white"
                       : "bg-surface-overlay text-text-secondary hover:bg-surface-raised"
                   )
             )}

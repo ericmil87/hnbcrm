@@ -110,6 +110,34 @@ export const ANNUAL_MONTHS_CHARGED = 10;
 export const USAGE_WARN_PCT = 80;
 
 /**
+ * Serviços de vitrine (implantação e acompanhamento): só catálogo para a página
+ * de preços. Não entram em cobrança, medição nem entitlements; o pagamento é
+ * combinado fora do app. Valores em R$ inteiros. `quoteOnly` = sem preço público.
+ */
+export type ServiceKey = "express" | "completa" | "empresa";
+
+export type ServicePackage = {
+  label: string;
+  brl: number;
+  /** Empresa: valor por unidade adicional. */
+  perUnitBrl?: number;
+};
+
+export const SERVICES = {
+  /** Parcelas máximas da implantação. */
+  installments: 3,
+  implantacao: {
+    express: { label: "Express", brl: 1490 },
+    completa: { label: "Completa", brl: 3900 },
+    empresa: { label: "Empresa", brl: 6900, perUnitBrl: 2400 },
+  } satisfies Record<ServiceKey, ServicePackage>,
+  acompanhamento: { monthlyBrl: 390, hours: 2 },
+  consultoria: { label: "Consultoria sob medida", quoteOnly: true as const },
+};
+
+export const SERVICE_KEYS: readonly ServiceKey[] = ["express", "completa", "empresa"];
+
+/**
  * Módulo de `settings.modules` → módulo com gate de plano. `metaMessaging` e
  * `telegram` NÃO têm gate: canal conta como canal e o Telegram da equipe é de
  * todos os planos.

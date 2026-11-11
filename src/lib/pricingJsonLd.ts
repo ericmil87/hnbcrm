@@ -23,7 +23,7 @@ export function buildPricingJsonLd(siteUrl: string) {
     "@context": "https://schema.org",
     "@type": "Product",
     name: "HNBCRM",
-    description: "CRM com atendente de IA, usuários ilimitados e plano por canal e por atendimento IA.",
+    description: "CRM com atendente de IA, usuários ilimitados e plano por canal e por pessoas atendidas pela IA.",
     url: `${siteUrl}/precos`,
     offers: PLAN_KEYS.map((key) => ({
       "@type": "Offer",
