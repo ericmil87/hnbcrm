@@ -13,6 +13,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { ConversationBehaviorForm } from "./ConversationBehaviorForm";
 import { FunnelRulesForm } from "./FunnelRulesForm";
 import { AttendantPanelFrame, SaveBar, usePanelSave, type ReadyProfileCtx } from "./AttendantPanelFrame";
+import { VoiceReplyCard } from "./VoiceReplyCard";
 import { useFormDraft } from "./useAttendantProfile";
 
 function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: Id<"organizations"> }) {
@@ -60,6 +61,7 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
           options={{ boards: boards ?? [], stages: stages ?? [], leadFields }}
         />
       </SectionCard>
+      <VoiceReplyCard organizationId={organizationId} canManage={ctx.canManage} />
       {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>
