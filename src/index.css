@@ -490,6 +490,14 @@ body {
   }
 }
 
+/* === Kit de cena (landing/onboarding): pausar a cena congela também as animações CSS internas
+   (pontos de "digitando…", pulsos), não só a linha do tempo. Ver SceneLoop. === */
+[data-scene-paused="true"] *,
+[data-scene-paused="true"] *::before,
+[data-scene-paused="true"] *::after {
+  animation-play-state: paused !important;
+}
+
 /* === Safe area utility === */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);

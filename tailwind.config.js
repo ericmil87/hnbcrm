@@ -99,6 +99,13 @@ export default {
         'slide-in-left': 'slideInLeft 200ms ease-out',
         'bounce-in':     'bounceIn 500ms ease-out',
         'shake':         'shake 400ms ease-out',
+        // Kit de cena da landing/onboarding (src/components/landing/kit): só transform/opacity.
+        // `both` = invisível durante o atraso (sem piscar) e fica no estado final.
+        'scene-in':      'sceneIn 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both',
+        'notify-in':     'notifyIn 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both',
+        'typing-dot':    'typingDot 1.2s ease-in-out infinite both',
+        'ring-pulse':    'ringPulse 4s ease-out infinite both',
+        'caret-blink':   'caretBlink 1s steps(1, end) infinite',
       },
       keyframes: {
         fadeIn: {
@@ -153,6 +160,28 @@ export default {
           '40%':      { transform: 'translateX(4px)' },
           '60%':      { transform: 'translateX(-2px)' },
           '80%':      { transform: 'translateX(2px)' },
+        },
+        sceneIn: {
+          from: { opacity: '0', transform: 'translateY(8px) scale(0.98)' },
+          to:   { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+        notifyIn: {
+          from: { opacity: '0', transform: 'translateY(-16px) scale(0.96)' },
+          to:   { opacity: '1', transform: 'translateY(0) scale(1)' },
+        },
+        typingDot: {
+          '0%, 60%, 100%': { opacity: '0.35', transform: 'translateY(0)' },
+          '30%':           { opacity: '1', transform: 'translateY(-3px)' },
+        },
+        // Anel que sai do botão e some; o resto do ciclo fica parado (pulso em sequência com atraso).
+        ringPulse: {
+          '0%':        { opacity: '0', transform: 'scale(1)' },
+          '4%':        { opacity: '0.55', transform: 'scale(1)' },
+          '28%, 100%': { opacity: '0', transform: 'scale(1.6)' },
+        },
+        caretBlink: {
+          '0%, 100%': { opacity: '1' },
+          '50%':      { opacity: '0' },
         },
       },
     },
