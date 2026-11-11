@@ -164,7 +164,7 @@ export function pdfWithDecoy(data: Buffer, prefix: (length: number) => string, p
 }
 
 /** Stream comprimido DENTRO de um /ObjStm comprimido (xref em stream), como a PoC da 3ª revisão. */
-export function objStmBombPdf(mb: number): Buffer {
+export function objStmBombPdf(mb: number, opts: { labelImage?: boolean } = {}): Buffer {
   const bomb = cheapZlibBomb(mb);
   const inner = Buffer.concat([b(`<< /Length ${bomb.length} /Filter /FlateDecode >>\nstream\n`), bomb, b("\nendstream")]);
   const hdr = b("5 0 ");
@@ -187,7 +187,9 @@ export function objStmBombPdf(mb: number): Buffer {
   add(
     4,
     Buffer.concat([
-      b(`<< /Type /ObjStm /N 1 /First ${hdr.length} /Length ${objstmData.length} /Filter /FlateDecode >>\nstream\n`),
+      b(
+        `<< ${opts.labelImage ? "/Subtype /Image " : ""}/Type /ObjStm /N 1 /First ${hdr.length} /Length ${objstmData.length} /Filter /FlateDecode >>\nstream\n`
+      ),
       objstmData,
       b("\nendstream"),
     ])

@@ -93,6 +93,19 @@ export const PDF_ERROR_MESSAGES: Record<PdfErrorCode, string> = {
   PARSE_FAILED: "Não consegui ler esse PDF.",
 };
 
+/** Por que um PDF foi recusado por expansão (para log/diagnóstico). */
+export type ExpansionReason = "preflight" | "watchdog_growth" | "watchdog_abs" | "worker_oom";
+
+const MB = 1024 * 1024;
+
+/**
+ * Log do motivo de TOO_BIG_EXPANSION: só o motivo e a base de RSS em MB —
+ * nunca conteúdo, nome do arquivo nem URL.
+ */
+export function logExpansionRefusal(reason: ExpansionReason, rssBaseBytes: number): void {
+  console.log(JSON.stringify({ event: "pdfExpansionRefused", reason, rssBaseMB: Math.round(rssBaseBytes / MB) }));
+}
+
 export class PdfExtractError extends Error {
   readonly code: PdfErrorCode;
   constructor(code: PdfErrorCode) {
@@ -734,6 +747,7 @@ function runInWorker(
     const watchdog = setInterval(() => {
       const rss = process.memoryUsage.rss();
       if (rss - rssStart > rssCapBytes || rss > rssAbsMaxBytes) {
+        logExpansionRefusal(rss - rssStart > rssCapBytes ? "watchdog_growth" : "watchdog_abs", rssStart);
         finish(() => reject(new PdfExtractError("TOO_BIG_EXPANSION")));
       }
     }, PDF_WORKER_RSS_POLL_MS);
@@ -762,7 +776,10 @@ function runInWorker(
     });
     worker.on("error", (e: Error & { code?: string }) => {
       finish(() =>
-        reject(new PdfExtractError(e?.code === "ERR_WORKER_OUT_OF_MEMORY" ? "TOO_BIG_EXPANSION" : "PARSE_FAILED"))
+        {
+          if (e?.code === "ERR_WORKER_OUT_OF_MEMORY") logExpansionRefusal("worker_oom", rssStart);
+          reject(new PdfExtractError(e?.code === "ERR_WORKER_OUT_OF_MEMORY" ? "TOO_BIG_EXPANSION" : "PARSE_FAILED"));
+        }
       );
     });
     worker.on("exit", () => {
@@ -835,7 +852,16 @@ export async function extractPdfText(bytes: Uint8Array, opts: PdfExtractOptions 
   if (bytes.byteLength > o.maxBytes) throw new PdfExtractError("TOO_LARGE");
   // O prazo começa ANTES da pré-varredura e vale para ela (checado a cada `stream`).
   const deadline = Date.now() + o.timeoutMs;
-  if (!(skipPreflightForTests && process.env.VITEST === "true")) preflightPdf(bytes, o, deadline);
+  if (!(skipPreflightForTests && process.env.VITEST === "true")) {
+    try {
+      preflightPdf(bytes, o, deadline);
+    } catch (e) {
+      if (e instanceof PdfExtractError && e.code === "TOO_BIG_EXPANSION") {
+        logExpansionRefusal("preflight", process.memoryUsage.rss());
+      }
+      throw e;
+    }
+  }
   const copy = new Uint8Array(bytes); // o buffer vai transferido ao worker
   try {
     return assemble(await runInWorker(copy, o, deadline, rssCapBytes, rssAbsMaxBytes, unpdfPathForTests), o);

@@ -10,7 +10,7 @@
  * Arquivo próprio: o vitest roda cada arquivo num processo (pool forks), então
  * o RSS medido aqui não mistura com outros testes.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   decodeAsciiHex,
   extractPdfText,
@@ -240,6 +240,57 @@ describe("4ª revisão: pré-varredura linear e com prazo", () => {
     const scan = { bytes: 0 };
     expect(decodeAsciiHex(big, 16 * 1024 * 1024, scan).byteLength).toBe(0);
     expect(scan.bytes).toBe(0);
+  });
+});
+
+describe("5ª revisão: /ObjStm rotulado como imagem (t15) e log do motivo", () => {
+  function refusalLogs(spy: ReturnType<typeof vi.spyOn>): Array<{ reason: string; rssBaseMB: number }> {
+    return spy.mock.calls
+      .map((c: unknown[]) => String(c[0]))
+      .filter((l: string) => l.includes("pdfExpansionRefused"))
+      .map((l: string) => JSON.parse(l));
+  }
+
+  it("/ObjStm com /Subtype /Image e bomba dentro: a pré-varredura pula, o vigia corta (watchdog_growth)", async () => {
+    const pdf = new Uint8Array(objStmBombPdf(400, { labelImage: true }));
+    expect(() => preflightPdf(pdf, PDF_LIMITS)).not.toThrow();
+    const spy = vi.spyOn(console, "log");
+    try {
+      const code = await codeOf(
+        extractPdfText(pdf, { rssCapBytes: 150 * 1024 * 1024, timeoutMs: 60_000, rssAbsMaxBytes: Number.MAX_SAFE_INTEGER })
+      );
+      expect(code).toBe("TOO_BIG_EXPANSION");
+      const logs = refusalLogs(spy);
+      expect(logs).toHaveLength(1);
+      expect(logs[0].reason).toBe("watchdog_growth");
+      expect(Number.isInteger(logs[0].rssBaseMB)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("log com o motivo preflight e watchdog_abs, sem conteúdo nem nome", async () => {
+    const spy = vi.spyOn(console, "log");
+    try {
+      const viaPreflight = build(200, D, "");
+      expect(await codeOf(extractPdfText(viaPreflight))).toBe("TOO_BIG_EXPANSION");
+      const viaAbs = build(400, D, "");
+      expect(
+        await codeOf(
+          extractPdfText(viaAbs, {
+            skipPreflightForTests: true,
+            rssCapBytes: Number.MAX_SAFE_INTEGER,
+            rssAbsMaxBytes: process.memoryUsage.rss() + 60 * 1024 * 1024,
+            timeoutMs: 60_000,
+          })
+        )
+      ).toBe("TOO_BIG_EXPANSION");
+      const logs = refusalLogs(spy);
+      expect(logs.map((l) => l.reason)).toEqual(["preflight", "watchdog_abs"]);
+      for (const l of logs) expect(Object.keys(l).sort()).toEqual(["event", "reason", "rssBaseMB"]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
