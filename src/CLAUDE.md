@@ -7,7 +7,7 @@ Rules (tokens, primitives, mobile-first, anti-patterns): `.claude/rules/frontend
 ```
 src/
 ├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
-├── SignInForm.tsx              # Password sign-in; links to components/auth/ForgotPasswordForm.tsx (password reset)
+├── components/auth/EmailEntryCard.tsx # unified entry at /entrar (replaced SignInForm.tsx): e-mail → `authEntry.checkEmailForSignIn` → password or create password in the same form; EmailEntryCardView (presentational, `compact` for the onboarding chat, `onSuccess`) + container; "Esqueci a senha" opens ForgotPasswordForm in place; pure rules in lib/emailEntry.ts (+ test)
 ├── SignOutButton.tsx           # Sign-out button
 ├── index.css                   # --rgb-* color channels + full-color aliases (:root = dark base; light/whatsapp/whatsapp-dark blocks; default whatsapp), shadows, auth classes, shimmer, .chat-wallpaper
 ├── lib/utils.ts, routes.ts     # cn() (clsx + tailwind-merge); TAB_ROUTES + activeTabForPath() (longest-prefix active tab)

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Link, Navigate, useLocation, useSearchParams } from "react-router";
 import { useConvexAuth } from "convex/react";
-import { SignInForm } from "@/SignInForm";
+import { EmailEntryCard } from "@/components/auth/EmailEntryCard";
 import { Spinner } from "@/components/ui/Spinner";
 import { ArrowLeft } from "lucide-react";
 import { SEO } from "@/components/SEO";
@@ -17,7 +17,8 @@ export function AuthPage() {
   const initialFlow = parseAuthFlow(searchParams.get("modo"));
   const planIntent = parsePlanKey(searchParams.get("plano"));
 
-  // Preserva o plano de interesse até a criação da organização.
+  // Preserva o plano de interesse até a criação da organização (vale para entrar e para
+  // criar conta: a entrada unificada decide o caminho depois, sem sair desta tela).
   useEffect(() => {
     storePlanIntent(planIntent);
   }, [planIntent]);
@@ -64,7 +65,7 @@ export function AuthPage() {
           </p>
         </div>
         <div className="animate-fade-in-up rounded-card border border-border-subtle bg-surface-raised p-5 shadow-card sm:p-6">
-          <SignInForm initialFlow={initialFlow} />
+          <EmailEntryCard intent={initialFlow} autoFocus />
         </div>
       </div>
     </div>

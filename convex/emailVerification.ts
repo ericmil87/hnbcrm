@@ -245,7 +245,7 @@ export const internalPruneEmailVerificationCodes = internalMutation({
       .withIndex("by_expires_at", (q) => q.lte("expiresAt", now))
       .take(PRUNE_BATCH);
     for (const row of rows) await ctx.db.delete(row._id);
-    // Contadores de janela vencidos (maior janela = 24 h; `verify-*` e reset de senha: linha vencida = linha ausente).
+    // Contadores de janela vencidos (maior janela = 24 h; `verify-*`, `signin-check <e-mail>` e reset de senha: linha vencida = linha ausente).
     const throttles = await ctx.db
       .query("authEmailThrottle")
       .withIndex("by_window_start", (q) => q.lte("windowStart", now - EMAIL_CODE_DAY_MS))
