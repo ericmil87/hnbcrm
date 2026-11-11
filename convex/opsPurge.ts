@@ -49,6 +49,10 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "calendarEvents", index: "by_organization" },
   { table: "savedViews", index: "by_organization" },
   { table: "onboardingProgress", index: "by_organization" },
+  // Onboarding v2: filhos da sessão antes do pai (P2.3), sessão com o rascunho (P2.1).
+  { table: "onboardingMessages", index: "by_organization" },
+  { table: "onboardingSiteReads", index: "by_organization" },
+  { table: "onboardingSessions", index: "by_organization" },
   { table: "notificationPreferences", index: "by_organization" },
   { table: "formSubmissions", index: "by_organization_and_created" },
   { table: "formPartials", index: "by_organization_and_created" },

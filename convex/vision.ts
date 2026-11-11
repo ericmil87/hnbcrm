@@ -73,6 +73,7 @@ import {
 } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
+import { resolveOnboardingModel } from "./lib/onboardingModels";
 import { ChatMessage } from "./lib/llm/types";
 // Custo por modelo + teto de gastos em R$ (v0.69, T04).
 import {
@@ -527,6 +528,102 @@ export const internalDescribeImageForCopilot = internalAction({
       ...finishRunCostFields(outcome.usage),
     });
     return outcome.ok ? { status: "done" as const, text: outcome.text } : failed(outcome.lastError);
+  },
+});
+
+/**
+ * Onboarding conversacional v2 (P2.3): flyer/print enviado na configuração
+ * inicial. Mesma cadeia de visão (mesmos prompts anti-injeção, failover e
+ * detecção de imagem descartada), com três diferenças deliberadas:
+ *  - NÃO exige `orgAiActive` nem `visionEnabled`: a entrevista acontece antes
+ *    do aceite de IA (como o leitor e o entrevistador). Os gates do
+ *    onboarding ficam com o chamador: conta com e-mail confirmado (D2) e
+ *    reserva de orçamento (`onboardingBudget.internalReserveOnboardingSpend`).
+ *  - Sempre a chave da PLATAFORMA (sem BYO): é o custo de aquisição. O ZDR
+ *    estrito e a ordem de provedores da org (`strictZdr`, `platformOrder`)
+ *    continuam valendo.
+ *  - Não grava `agentRuns`: devolve uso/custo e o chamador registra pela
+ *    porta do onboarding (`internalRecordOnboardingSpend`, `role:"vision"`).
+ * O modelo vem de `getOnboardingModel("vision")` (env); sem env, a cadeia inteira.
+ * A descrição é DADO não confiável: vai para o leitor em quarentena.
+ */
+type OnboardingVisionResult = {
+  status: "done" | "failed";
+  text?: string;
+  error?: string;
+  provider?: string;
+  model?: string;
+  requestCount: number;
+  promptTokens: number;
+  completionTokens: number;
+  cachedPromptTokens: number;
+  costUsdEstimate: number;
+  costEstimated?: boolean;
+};
+
+export const internalDescribeImageForOnboarding = internalAction({
+  args: {
+    organizationId: v.id("organizations"),
+    storageId: v.id("_storage"),
+    mimeType: v.string(),
+    size: v.number(),
+    /** Roteamento da org (sem BYO). */
+    strictZdr: v.optional(v.boolean()),
+    platformOrder: v.optional(
+      v.union(v.literal("auto"), v.literal("openrouter-first"), v.literal("opencode-only"), v.literal("openrouter-only")),
+    ),
+  },
+  returns: v.object({
+    status: v.union(v.literal("done"), v.literal("failed")),
+    text: v.optional(v.string()),
+    error: v.optional(v.string()),
+    provider: v.optional(v.string()),
+    model: v.optional(v.string()),
+    requestCount: v.number(),
+    promptTokens: v.number(),
+    completionTokens: v.number(),
+    cachedPromptTokens: v.number(),
+    costUsdEstimate: v.number(),
+    costEstimated: v.optional(v.boolean()),
+  }),
+  handler: async (ctx, args): Promise<OnboardingVisionResult> => {
+    const zero = finishRunCostFields(newUsageTotals());
+    const failed = (error: string) => ({ status: "failed" as const, error, requestCount: 0, ...zero });
+    if (args.size > MAX_IMAGE_BYTES) return failed("Imagem maior que 5MB — não lida");
+    if (!SUPPORTED_MIME.includes(args.mimeType.toLowerCase())) return failed(`Formato não suportado para leitura (${args.mimeType})`);
+    const choice = resolveOnboardingModel("vision");
+    let attempts: ResolvedRoute[];
+    try {
+      const providerConfig: OrgProviderConfig = {
+        mode: "platform",
+        ...(args.strictZdr ? { strictZdr: true } : {}),
+        ...(args.platformOrder ? { platformOrder: args.platformOrder } : {}),
+        ...(choice.source === "env" ? { products: { vision: { model: choice.model } } } : {}),
+      };
+      attempts = await buildVisionAttempts(ctx, {
+        organizationId: args.organizationId,
+        providerConfig,
+        strictZdr: args.strictZdr === true,
+      });
+    } catch (e) {
+      return failed(visionError(e));
+    }
+    if (attempts.length === 0) return failed("Nenhum modelo de visão disponível");
+    const blob = await ctx.storage.get(args.storageId);
+    if (!blob) return failed("Imagem não encontrada no storage");
+    const dataUri = toDataUri(new Uint8Array(await blob.arrayBuffer()), args.mimeType);
+    const outcome = await runVisionAttempts(attempts, dataUri);
+    const cost = finishRunCostFields(outcome.usage);
+    return outcome.ok
+      ? {
+          status: "done" as const,
+          text: outcome.text,
+          provider: outcome.attempt.providerId,
+          model: outcome.attempt.canonicalModel,
+          requestCount: outcome.requestCount,
+          ...cost,
+        }
+      : { status: "failed" as const, error: outcome.lastError, requestCount: outcome.requestCount, ...cost };
   },
 });
 

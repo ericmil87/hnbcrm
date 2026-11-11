@@ -51,6 +51,9 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "agentEvals",
   "copilotThreads",
   "copilotMessages",
+  // Onboarding v2 (P2.3): conversa da configuração inicial e contador de páginas lidas.
+  "onboardingMessages",
+  "onboardingSiteReads",
   "pendingActions",
   "notifications",
   "notificationSeen",

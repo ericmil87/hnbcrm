@@ -33,6 +33,7 @@ import {
   deletionStatusPage as metaDeletionStatusPage,
 } from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
+import { handleOnboardingStream, onboardingStreamPreflight } from "./onboardingHttp";
 import { telegramWebhook } from "./telegramHttp";
 import { asaasWebhook } from "./billingHttp";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
@@ -154,6 +155,8 @@ export const PERMISSION_DENIED_MESSAGE = "Permissão insuficiente";
  * O comentário de cada entrada aponta a função do app que ditou o nível.
  */
 export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
+  // Onboarding conversacional (JWT do usuário, não API key) — onboardingSessions.* (settings:manage)
+  "POST /api/onboarding/stream": { category: "settings", level: "manage" },
   // Leads — convex/leads.ts
   "POST /api/v1/inbound/lead": { category: "leads", level: "edit_own" }, // leads.createLead (captura universal)
   "GET /api/v1/leads": { category: "leads", level: "view_own" }, // leads.getLeads (requireAuth)
@@ -332,6 +335,24 @@ export function requireRoutePermission(
   }
   return errorResponse(PERMISSION_DENIED_MESSAGE, 403);
 }
+
+// ---- Onboarding conversacional v2 (P2.3): SSE autenticado por JWT do usuário ----
+// Não é REST de API key: a rota resolve o membro pelo JWT e aplica o MESMO gate
+// fail-closed (`ROUTE_PERMISSIONS` + `requireRoutePermission`) às permissões dele.
+http.route({
+  path: "/api/onboarding/stream",
+  method: "POST",
+  handler: httpAction(async (ctx, request) =>
+    handleOnboardingStream(ctx, request, (permissions) =>
+      requireRoutePermission({ permissions }, "POST", "/api/onboarding/stream")
+    )
+  ),
+});
+http.route({
+  path: "/api/onboarding/stream",
+  method: "OPTIONS",
+  handler: httpAction(async () => onboardingStreamPreflight()),
+});
 
 // ---- Lead Endpoints ----
 

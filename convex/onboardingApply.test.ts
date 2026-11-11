@@ -320,8 +320,8 @@ describe("sessão e rascunho", () => {
     expect(items[2]).toMatchObject({ suspicious: false, verifiedInSource: true });
     expect(items[3].origin.kind).toBe("site");
     expect(items[3].suspicious).toBe(true);
-    // Itens "usuario" da pessoa também viraram externos ao passar pela IA.
-    expect(items[0].origin.kind).toBe("site");
+    // P2.3: item da pessoa que a IA não tocou (mesmo texto e origem) mantém "usuario".
+    expect(items[0].origin.kind).toBe("usuario");
     await expect(
       t.mutation(internal.onboardingSessions.internalSaveDraft, {
         organizationId: s.a.orgId,
@@ -460,7 +460,7 @@ describe("aplicação", () => {
     expect(JSON.stringify(audit?.metadata)).toContain("É a chave oficial da clínica");
     expect(JSON.stringify(audit)).not.toContain("11999998888");
 
-    // A IA regrava: liberação zerada, o item volta a ficar de fora.
+    // P2.3: a IA regravando SEM tocar no item mantém a liberação humana…
     const stored = (await as(t, s.adminA.userId).query(api.onboardingSessions.getSession, { organizationId: s.a.orgId }))!;
     await t.mutation(internal.onboardingSessions.internalSaveDraft, {
       organizationId: s.a.orgId,
@@ -469,7 +469,18 @@ describe("aplicação", () => {
       expectedVersion: stored.draftVersion,
     });
     const afterAi = await t.query(internal.onboardingSessions.internalGetSession, { organizationId: s.a.orgId, sessionId });
-    expect(afterAi!.draft!.quickReplies[1].release).toBeUndefined();
+    expect(afterAi!.draft!.quickReplies[1].release?.at).toBeDefined();
+    // …e alterando o texto do item, a liberação é zerada (o item volta a ficar de fora).
+    const altered = structuredClone(afterAi!.draft!);
+    altered.quickReplies[1].text = `${altered.quickReplies[1].text} (novo)`;
+    await t.mutation(internal.onboardingSessions.internalSaveDraft, {
+      organizationId: s.a.orgId,
+      sessionId,
+      draft: altered,
+      expectedVersion: afterAi!.draftVersion,
+    });
+    const afterEdit = await t.query(internal.onboardingSessions.internalGetSession, { organizationId: s.a.orgId, sessionId });
+    expect(afterEdit!.draft!.quickReplies[1].release).toBeUndefined();
   });
 
   test("etapa com instrução bloqueia a aplicação até ser editada", async () => {

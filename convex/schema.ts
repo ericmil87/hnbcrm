@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 import { uiThemeValidator } from "./lib/uiTheme";
 import { onboardingDraftValidator } from "./lib/onboardingDraft";
+import { onboardingBlockValidator } from "./lib/onboardingBlocks";
 
 // Shared saved-view filters validator — single source of truth, reused by
 // convex/savedViews.ts arg validators (never duplicate this shape inline).
@@ -3870,9 +3871,54 @@ const applicationTables = {
       ),
     ),
     appliedAttendantPending: v.optional(v.boolean()),
+    // P2.3: ciência do aviso de materiais (LGPD / IA de provedores fora do
+    // Brasil), gravada só pelo clique em `onboardingChat.ackMaterialsNotice`.
+    // Ausente = o 1º material da sessão é recusado (`notice_required`).
+    materialsNoticeAckAt: v.optional(v.number()),
+    materialsNoticeAckBy: v.optional(v.id("teamMembers")),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
+
+  // Onboarding conversacional v2 (P2.3): histórico da conversa (tabela filha da
+  // sessão; o doc da sessão guarda só resumo e contagem). Texto do usuário até
+  // 4.000, resposta do assistente já saneada (guard de saída, sem link/imagem
+  // do modelo). Blocos montados pelo SERVIDOR a partir do rascunho (snapshot do
+  // turno). Material: só a referência (tipo, rótulo, storageId) — o texto
+  // extraído de terceiros NÃO é persistido (retenção só durante o turno).
+  onboardingMessages: defineTable({
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    text: v.string(),
+    blocks: v.optional(v.array(onboardingBlockValidator)),
+    chips: v.optional(v.array(v.string())),
+    attachment: v.optional(
+      v.object({
+        kind: v.union(v.literal("site"), v.literal("pdf"), v.literal("imagem"), v.literal("audio")),
+        label: v.string(),
+        storageId: v.optional(v.id("_storage")),
+      }),
+    ),
+    /** O texto do usuário veio da transcrição de um áudio. */
+    transcribed: v.optional(v.boolean()),
+    draftVersion: v.optional(v.number()),
+    createdAt: v.number(),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_organization", ["organizationId"]),
+
+  // Onboarding v2 (P2.3): páginas lidas por site numa sessão (teto de 5 por
+  // site, contado NO SERVIDOR e reservado antes da busca; nunca vem do LLM).
+  onboardingSiteReads: defineTable({
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    siteKey: v.string(),
+    pages: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_session_and_site", ["sessionId", "siteKey"])
+    .index("by_organization", ["organizationId"]),
 
   // Ações destrutivas propostas pelo copiloto — two-phase server-side: a tool
   // grava a proposta; a execução real é uma mutation disparada por humano.

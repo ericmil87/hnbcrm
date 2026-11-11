@@ -54,8 +54,14 @@ function parseRegisteredRoutes(source: string): RegisteredRoute[] {
 }
 
 const REGISTERED = parseRegisteredRoutes(ROUTER_SOURCE);
-/** Rotas de negócio: `/api/v1/*` fora do preflight CORS. */
-const V1_ROUTES = REGISTERED.filter((r) => r.path.startsWith("/api/v1") && r.method !== "OPTIONS");
+/**
+ * Rotas de negócio fora do preflight CORS: `/api/v1/*` (API key) e
+ * `/api/onboarding/*` (onboarding v2, JWT do usuário com o MESMO gate
+ * `requireRoutePermission` sobre as permissões do membro).
+ */
+const V1_ROUTES = REGISTERED.filter(
+  (r) => (r.path.startsWith("/api/v1") || r.path.startsWith("/api/onboarding/")) && r.method !== "OPTIONS"
+);
 const PUBLIC_SET = new Set(PUBLIC_API_ROUTES);
 const AUTHENTICATED = V1_ROUTES.filter((r) => !PUBLIC_SET.has(r.key));
 

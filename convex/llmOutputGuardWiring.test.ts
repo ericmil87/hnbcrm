@@ -24,6 +24,8 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     ["lib/groupAgentCore.ts", 1],
     // tradução automática: saída do LLM (texto do JSON e resposta crua)
     ["lib/translationCore.ts", 2],
+    // onboarding v2 (P2.3): reply/notas/chips do entrevistador (campo e resposta inteira)
+    ["lib/onboardingInterviewer.ts", 2],
   ])("%s importa e usa detectLeakedModelMarkup", (file, minUses) => {
     const src = read(file);
     expect(IMPORT_RE.test(src), `${file} não importa detectLeakedModelMarkup`).toBe(true);
