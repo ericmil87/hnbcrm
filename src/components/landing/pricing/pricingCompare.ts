@@ -80,7 +80,7 @@ export function compareRows(): CompareRow[] {
       }),
     },
     {
-      label: "Atendente, Copiloto, áudio, imagem, follow-up, Repasse, avisos no celular",
+      label: "Atendente, Copiloto, áudio, imagem, follow-up, pedido de ajuda à equipe, avisos no celular",
       cells: perPlan(() => INCLUDED),
     },
     {
@@ -91,7 +91,7 @@ export function compareRows(): CompareRow[] {
         return max === undefined ? NOT_INCLUDED : `Add-on de ${brl0(GROUPS_ADDON_BRL)}/mês (até ${max} grupos com IA)`;
       }),
     },
-    { label: "Setores e filas", cells: moduleCell("departments") },
+    { label: "Departamentos e filas", cells: moduleCell("departments") },
     { label: "Tradução automática", cells: moduleCell("translation") },
     { label: "API, webhooks e MCP", cells: moduleCell("api") },
     { label: "Central com várias unidades e custo por unidade", cells: moduleCell("central") },

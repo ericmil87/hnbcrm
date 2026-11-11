@@ -211,7 +211,7 @@ describe("PricingCalculator", () => {
     expect(chip("Grupos de WhatsApp")).toHaveAttribute("aria-pressed", "true");
     expect(announced()).toMatch(new RegExp(`${groups.plan === "essencial" ? "Essencial" : "Profissional"}, R\\$\\s*${groups.totalMonthlyBrl}`));
 
-    fireEvent.click(chip("Setores, tradução ou API"));
+    fireEvent.click(chip("Departamentos, tradução ou API"));
     settle();
     const team = calculatePricing(valueToInput({ ...base, groups: true, teamModules: true }, "monthly"));
     expect(team.plan).toBe("profissional");

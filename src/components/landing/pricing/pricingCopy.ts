@@ -56,7 +56,7 @@ export function planCardLines(plan: PlanDisplay): string[] {
 }
 
 export const ALL_PLANS_BAND =
-  "Em todos os planos: Atendente de IA, Copiloto, leitura de áudio e de imagem, follow-up que a IA executa, Repasse para a equipe e avisos no celular.";
+  "Em todos os planos: Atendente de IA, Copiloto, leitura de áudio e de imagem, follow-up que a IA executa, pedido de ajuda à equipe e avisos no celular.";
 
 export const COMPARE_NOTE =
   "Grupos funcionam só na conexão por QR code. Instagram e Messenger contam como canal e estão em liberação gradual, conforme a aprovação da Meta.";
@@ -214,7 +214,7 @@ export const SERVICE_COPY: Record<"express" | "completa" | "empresa", { audience
     audience: "Redes com várias unidades",
     includes: [
       "Diagnóstico e duas semanas de medição",
-      "Fluxos por unidade, setores e acessos",
+      "Fluxos por unidade, departamentos e acessos",
       "Treinamento por equipe",
     ],
   },
@@ -224,7 +224,7 @@ export const CUSTOM_SERVICE_COPY = {
   audience: "Quando o caso não cabe num pacote",
   includes: [
     "Diagnóstico do atendimento",
-    "Funil e regras de Repasse",
+    "Funil e regras de pedido de ajuda",
     "Jeito de falar e conhecimento da IA",
     "Integrações (site, formulários, API)",
     "Treinamento",

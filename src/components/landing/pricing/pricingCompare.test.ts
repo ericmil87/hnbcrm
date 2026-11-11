@@ -28,7 +28,7 @@ describe("compareRows", () => {
   it("modulos por plano", () => {
     expect(row("Grupos")[0]).toBe("Add-on de R$ 99/mês (até 3 grupos com IA)");
     expect(row("Grupos").slice(1)).toEqual(["Incluído", "Incluído", "Incluído"]);
-    expect(row("Setores")).toEqual(["Não incluído", "Incluído", "Incluído", "Incluído"]);
+    expect(row("Departamentos")).toEqual(["Não incluído", "Incluído", "Incluído", "Incluído"]);
     expect(row("Central")).toEqual(["Não incluído", "Não incluído", "Não incluído", "Incluído"]);
   });
 });

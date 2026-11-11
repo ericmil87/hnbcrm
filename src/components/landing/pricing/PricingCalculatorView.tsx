@@ -344,7 +344,7 @@ export function PricingCalculatorView({
               Grupos de WhatsApp
             </Chip>
             <Chip pressed={value.teamModules} onToggle={() => onChange({ teamModules: !value.teamModules })}>
-              Setores, tradução ou API
+              Departamentos, tradução ou API
             </Chip>
             <Chip pressed={value.multiUnit} onToggle={() => onChange({ multiUnit: !value.multiUnit })}>
               Várias unidades (filiais, casas, hotéis)

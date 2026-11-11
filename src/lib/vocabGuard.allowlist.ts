@@ -14,8 +14,7 @@ export const ALLOWED_PATHS: readonly string[] = [
   "src/components/settings/advanced/**",
   "src/embed/**",
   // Landing (P1.1): seções, kit, cabeçalho e LandingPage saíram da lista e seguem o glossário.
-  // Fica só a tabela de preços antiga (`PricingSection`: "Setores"), refeita no P1.4.
-  "src/components/landing/pricing/**",
+  // P1.6: `landing/pricing/**` também saiu (Setores/Repasse trocados pelos termos do produto).
 ];
 
 export interface AllowedTerm {
