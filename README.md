@@ -228,6 +228,7 @@ The backend runs on [Convex Cloud](https://convex.dev) — no infrastructure to 
    | Variable | Value |
    |----------|-------|
    | `VITE_CONVEX_URL` | Your Convex deployment URL (e.g. `https://your-app.convex.cloud`) |
+   | `VITE_COMMUNITY_URL` | Optional: `https://` invite link of your community group, shown on the landing (unset = hidden) |
 
 3. Deploy — Vercel auto-detects Vite, uses `npm run build`, outputs from `dist/`
 

@@ -82,8 +82,9 @@ When opening an issue, include:
 |----------|-------|-------------|
 | `VITE_CONVEX_URL` | `.env.local` | Convex deployment URL (auto-set by `npx convex dev`) |
 | `CONVEX_DEPLOYMENT` | `.env.local` | Convex deployment name (auto-set) |
+| `VITE_COMMUNITY_URL` | `.env.local` / Vercel (optional) | `https://` invite link of the community WhatsApp group shown on the landing (nav link + Comunidade section). Unset, empty or not `https://` = hidden. Read via `src/lib/communityLink.ts`. Example: `VITE_COMMUNITY_URL=https://chat.whatsapp.com/<invite-code>` |
 
-For production deployment on Vercel, only `VITE_CONVEX_URL` needs to be set in the project settings.
+For production deployment on Vercel, only `VITE_CONVEX_URL` is required in the project settings; `VITE_COMMUNITY_URL` is optional (build-time, so a redeploy is needed after changing it).
 
 ## Notes
 

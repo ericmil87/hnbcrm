@@ -46,7 +46,12 @@ export interface SceneLoopState extends SceneTimeline {
 
 export interface SceneLoopProps {
   steps: readonly SceneStep[];
-  /** Padrão: `true`. */
+  /**
+   * Padrão: `true`. Sem loop a cena termina sozinha no último passo e NÃO
+   * mostra botão de pausa (o movimento acaba; WCAG 2.2.2 só exige pausa para
+   * movimento automático que dura mais de 5 s). Cena sem loop e mais longa que
+   * 5 s precisa de loop ou de uma pausa do chamador (`paused`).
+   */
   loop?: boolean;
   /** Desenha a cena para o passo atual. */
   children: (scene: SceneLoopState) => ReactNode;
@@ -61,7 +66,7 @@ export interface SceneLoopProps {
   paused?: boolean;
   /** Força o movimento reduzido (testes, demonstração). */
   reducedMotion?: boolean;
-  /** Desenha o botão de pausa abaixo da cena. Padrão: `true` (só aparece com loop e movimento). */
+  /** Desenha o botão de pausa abaixo da cena. Padrão: `true` (só aparece com `loop` e sem movimento reduzido). */
   renderControl?: boolean;
   pauseLabel?: string;
   resumeLabel?: string;

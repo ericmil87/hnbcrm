@@ -101,4 +101,34 @@ describe("Composer", () => {
       restore();
     }
   });
+
+  it("sem pausa externa desenha o próprio controle de pausa, que para o placeholder e o pulso", () => {
+    const { container } = render(<Harness onSubmit={vi.fn()} />);
+    expect(overlay(container)).not.toBeNull();
+    expect(container.querySelector(".motion-safe\\:animate-ring-pulse")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Pausar animação" }));
+    expect(overlay(container)).toBeNull();
+    expect(container.querySelector(".motion-safe\\:animate-ring-pulse")).toBeNull();
+    expect(field()).toHaveAttribute("placeholder", "Conte sobre o seu negócio");
+    fireEvent.click(screen.getByRole("button", { name: "Retomar animação" }));
+    expect(overlay(container)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Pausar animação" })).toBeInTheDocument();
+  });
+
+  it("com pausa externa não desenha controle próprio e obedece à prop", () => {
+    const { container, rerender } = render(<Harness onSubmit={vi.fn()} paused={false} />);
+    expect(screen.queryByRole("button", { name: "Pausar animação" })).toBeNull();
+    expect(overlay(container)).not.toBeNull();
+    rerender(<Harness onSubmit={vi.fn()} paused />);
+    expect(overlay(container)).toBeNull();
+    expect(container.querySelector(".motion-safe\\:animate-ring-pulse")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retomar animação" })).toBeNull();
+  });
+
+  it("sem nada que se mexa (sem frases e sem pulso) ou com movimento reduzido, não há controle de pausa", () => {
+    const { rerender } = render(<Harness onSubmit={vi.fn()} placeholders={[]} pulse={false} />);
+    expect(screen.queryByRole("button", { name: "Pausar animação" })).toBeNull();
+    rerender(<Harness onSubmit={vi.fn()} reducedMotion />);
+    expect(screen.queryByRole("button", { name: "Pausar animação" })).toBeNull();
+  });
 });

@@ -13,6 +13,12 @@ export interface UseInViewOptions extends IntersectionObserverInit {
  * Observa se o elemento de `ref` está visível. Sem `IntersectionObserver`
  * (ambiente antigo, prerender, testes) considera visível, para nada ficar
  * escondido nem parado à espera de um evento que não vem.
+ *
+ * Limite: só observa o elemento presente em `ref.current` na primeira execução
+ * do efeito (e de novo apenas quando `once`/`root`/`rootMargin`/`threshold`
+ * mudam). Prenda `ref` num elemento que monta junto com o componente e não é
+ * trocado depois; se ele só aparecer mais tarde (render condicional) ou for
+ * substituído, o novo elemento não é observado.
  */
 export function useInView<T extends Element = HTMLDivElement>(options: UseInViewOptions = {}) {
   const { once = true, root, rootMargin, threshold } = options;

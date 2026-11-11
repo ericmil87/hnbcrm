@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import { Mic, Paperclip, SendHorizontal } from "lucide-react";
+import { Mic, Pause, Paperclip, Play, SendHorizontal } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/Button";
 import { autoGrowHeight, isSendKeyFor } from "@/lib/composerRules";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useInView } from "@/hooks/useInView";
@@ -37,6 +38,17 @@ export interface ComposerProps {
   onFocusChange?: (focused: boolean) => void;
   /** Força o movimento reduzido. Padrão: a preferência do aparelho. */
   reducedMotion?: boolean;
+  /**
+   * Pausa vinda de fora (ex.: o `ScenePauseButton` do hero, que pausa a cena e
+   * o composer juntos). Com a prop definida (`true` ou `false`) quem manda é o
+   * chamador e o composer não desenha controle próprio. Sem ela, e havendo
+   * movimento (placeholder animado ou pulso), o composer desenha o próprio
+   * "Pausar animação / Retomar animação" (WCAG 2.2.2).
+   */
+  paused?: boolean;
+  /** Rótulos do controle próprio de pausa. */
+  pauseLabel?: string;
+  resumeLabel?: string;
   className?: string;
 }
 
@@ -46,8 +58,10 @@ const PADDING_Y = 24; // py-3
 /**
  * Composer de verdade, no visual do WhatsApp: campo controlado que cresce com
  * o texto, clipe à esquerda, microfone (vira "Enviar" quando há texto) e
- * placeholder animado. A animação para no foco, com texto, fora da tela e com
- * movimento reduzido. Enter envia no computador; no toque Enter quebra linha.
+ * placeholder animado. A animação para no foco, com texto, fora da tela, com
+ * movimento reduzido e pela pausa (externa via `paused`, ou o controle próprio
+ * "Pausar animação" quando não há pausa externa). Enter envia no computador; no
+ * toque Enter quebra linha.
  */
 export function Composer({
   value,
@@ -68,9 +82,13 @@ export function Composer({
   autoFocus,
   onFocusChange,
   reducedMotion,
+  paused,
+  pauseLabel = "Pausar animação",
+  resumeLabel = "Retomar animação",
   className,
 }: ComposerProps) {
   const [focused, setFocused] = useState(false);
+  const [ownPaused, setOwnPaused] = useState(false);
   const fieldRef = useRef<HTMLTextAreaElement>(null);
   const hintId = useId();
   const coarse = useMediaQuery("(pointer: coarse)");
@@ -79,8 +97,14 @@ export function Composer({
   const { ref: rootRef, isInView } = useInView<HTMLFormElement>({ once: false });
   const hasText = value.trim().length > 0;
   const idle = !focused && value === "" && !disabled;
-  const animating = idle && isInView && !reduced && placeholders.length > 0;
-  const pulsing = pulse && idle && isInView && !reduced;
+  const externalPause = paused !== undefined;
+  const stopped = externalPause ? paused : ownPaused;
+  const hasMotion = !reduced && (placeholders.length > 0 || pulse);
+  // Controle próprio só sem pausa externa e com algo que de fato se mexe.
+  const showOwnControl = !externalPause && hasMotion;
+  const animating = idle && isInView && !reduced && !stopped && placeholders.length > 0;
+  const pulsing = pulse && idle && isInView && !reduced && !stopped;
+  const showHint = Boolean(hint) && focused;
 
   useLayoutEffect(() => {
     const el = fieldRef.current;
@@ -158,7 +182,7 @@ export function Composer({
               onBlur={() => setFocus(false)}
               placeholder={placeholder}
               aria-label={label}
-              aria-describedby={hint && focused ? hintId : undefined}
+              aria-describedby={showHint ? hintId : undefined}
               disabled={disabled}
               maxLength={maxLength}
               autoFocus={autoFocus}
@@ -197,10 +221,28 @@ export function Composer({
           </button>
         )}
       </div>
-      {hint && focused && (
-        <p id={hintId} className="px-3 pt-1.5 text-caption text-text-muted">
-          {hint}
-        </p>
+      {(showHint || showOwnControl) && (
+        <div className="flex items-start justify-between gap-2 pt-1">
+          {showHint ? (
+            <p id={hintId} className="min-w-0 px-3 pt-1.5 text-caption text-text-muted">
+              {hint}
+            </p>
+          ) : (
+            <span />
+          )}
+          {showOwnControl && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setOwnPaused((p) => !p)}
+              className="shrink-0 text-caption"
+            >
+              {ownPaused ? <Play className="size-3.5" aria-hidden="true" /> : <Pause className="size-3.5" aria-hidden="true" />}
+              {ownPaused ? resumeLabel : pauseLabel}
+            </Button>
+          )}
+        </div>
       )}
     </form>
   );
