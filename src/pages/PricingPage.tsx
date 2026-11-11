@@ -5,6 +5,7 @@ import { SEO } from "@/components/SEO";
 import { Button } from "@/components/ui/Button";
 import { Footer } from "@/components/landing/Footer";
 import { PricingSection } from "@/components/landing/pricing/PricingSection";
+import { SEO_DESCRIPTION, SEO_TITLE } from "@/components/landing/pricing/pricingCopy";
 import { formatMoney } from "@/lib/format";
 import { buildPricingJsonLd } from "@/lib/pricingJsonLd";
 import { PLANS } from "../../convex/lib/plans";
@@ -18,8 +19,8 @@ export function PricingPage() {
   return (
     <div className="min-h-screen bg-surface-base text-text-primary">
       <SEO
-        title={`Preços — a partir de ${from}/mês, usuários ilimitados`}
-        description="Planos do HNBCRM por canal e por atendimento IA. Usuários ilimitados, teste de 30 dias sem cartão e excedente só se você ligar, com teto."
+        title={SEO_TITLE(from)}
+        description={SEO_DESCRIPTION}
         canonical={`${SITE_URL}/precos`}
       />
       <Helmet>
@@ -48,7 +49,6 @@ export function PricingPage() {
         </div>
       </header>
       <main>
-        <h1 className="sr-only">Preços do HNBCRM</h1>
         <PricingSection variant="page" />
       </main>
       <Footer />

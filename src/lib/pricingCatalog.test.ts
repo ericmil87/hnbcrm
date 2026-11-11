@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { allPlanDisplays, planDisplay } from "./pricingCatalog";
+import { SERVICES } from "../../convex/lib/plans";
+import { allPlanDisplays, followUpDisplay, planDisplay, serviceDisplays } from "./pricingCatalog";
+
+describe("servicos de vitrine", () => {
+  it("implantacao, parcelas e acompanhamento vem do catalogo", () => {
+    expect(serviceDisplays().map((s) => [s.key, s.brl, s.perUnitBrl])).toEqual([
+      ["express", 1490, null],
+      ["completa", 3900, null],
+      ["empresa", 6900, 2400],
+    ]);
+    expect(SERVICES.installments).toBe(3);
+    expect(followUpDisplay()).toEqual({ monthlyBrl: 390, hours: 2 });
+    expect(SERVICES.consultoria.quoteOnly).toBe(true);
+  });
+});
 
 describe("pricingCatalog", () => {
   it("mensal mostra a tabela", () => {

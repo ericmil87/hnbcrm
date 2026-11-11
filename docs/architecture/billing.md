@@ -4,6 +4,8 @@
 
 Modelo comercial: **"Traga a equipe inteira. Pague só pelo que a IA atende."** Quatro planos (Essencial, Profissional, Escala, Empresa), usuários ilimitados em todos, preço definido por **canais** e **atendimentos IA/mês** (contato distinto que a IA respondeu ou rascunhou no mês; grupos, campanhas e Copiloto não contam). Excedente opt-in com teto em R$, desligado por padrão. O catálogo com os números vive em `convex/lib/plans.ts` (o front importa o mesmo arquivo) e os cálculos em `convex/lib/billingMath.ts`.
 
+**Serviços de vitrine (P1.4, nov/2026):** `SERVICES` em `convex/lib/plans.ts` (implantação Express/Completa/Empresa + valor por unidade adicional, `installments`, acompanhamento mensal com horas, consultoria sob medida `quoteOnly`) alimenta o bloco "Implantação e consultoria" de `/precos` via `serviceDisplays`/`followUpDisplay` (`src/lib/pricingCatalog.ts`). É só catálogo de vitrine: nenhuma cobrança, medição ou entitlement lê esses valores; o pagamento é combinado fora do app. A tabela "Compare os planos" sai de `compareRows` (`src/components/landing/pricing/pricingCompare.ts`), também só do catálogo.
+
 Implementado (nov/2026): plano gravado na org, porta de entitlements e ops (B1, #85); calculadora e projeção no front, lógica pura (F1, #86); medidor por contato e de envios de campanha (B2); queries da tela "Uso e fatura" (B3). Também (B7, nov/2026): Termos versionados (7b), cadastro em teste de 30 dias por env (B7a) e **modo leitura de verdade** (B7). Org sem plano ou `legacy` funciona exatamente como antes (nenhum gate age nela). Gates de módulo/canal/grupo (B5), limite/excedente (B6), cobrança pelo Asaas (F3) e parceiros (F4) vêm depois.
 
 ## Modelo de dados

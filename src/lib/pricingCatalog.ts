@@ -4,7 +4,16 @@
  * mostrar. A formatação (R$, milhar) fica na UI, via `lib/format.ts`.
  */
 import { annualMonthlyBrl, annualTotalBrl, overageUnitCents } from "../../convex/lib/billingMath";
-import { PLAN_KEYS, PLANS, type GatedModule, type PlanKey } from "../../convex/lib/plans";
+import {
+  PLAN_KEYS,
+  PLANS,
+  SERVICES,
+  SERVICE_KEYS,
+  type GatedModule,
+  type PlanKey,
+  type ServiceKey,
+  type ServicePackage,
+} from "../../convex/lib/plans";
 import type { BillingCycle } from "./pricing";
 
 export const FEATURED_PLAN: PlanKey = "profissional";
@@ -68,6 +77,25 @@ export function planDisplay(plan: PlanKey, cycle: BillingCycle): PlanDisplay {
     hasCentral: def.modules.includes("central"),
     hasTeamModules: TEAM_MODULES.every((m) => def.modules.includes(m)),
   };
+}
+
+export type ServiceDisplay = {
+  key: ServiceKey;
+  label: string;
+  brl: number;
+  perUnitBrl: number | null;
+};
+
+/** Pacotes de implantação da vitrine, na ordem do catálogo (nada de valor digitado na UI). */
+export function serviceDisplays(): ServiceDisplay[] {
+  return SERVICE_KEYS.map((key) => {
+    const s: ServicePackage = SERVICES.implantacao[key];
+    return { key, label: s.label, brl: s.brl, perUnitBrl: s.perUnitBrl ?? null };
+  });
+}
+
+export function followUpDisplay() {
+  return { monthlyBrl: SERVICES.acompanhamento.monthlyBrl, hours: SERVICES.acompanhamento.hours };
 }
 
 export function allPlanDisplays(cycle: BillingCycle): PlanDisplay[] {
