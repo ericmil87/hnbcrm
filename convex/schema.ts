@@ -2739,7 +2739,23 @@ const applicationTables = {
     email: v.string(), // normalizado
     windowStart: v.number(),
     count: v.number(),
-  }).index("by_email", ["email"]),
+  })
+    .index("by_email", ["email"])
+    .index("by_window_start", ["windowStart"]),
+
+  // Código de 6 dígitos para confirmar o e-mail da conta (onboarding v2: materiais
+  // só liberam depois disso). Guarda só o HASH (HMAC-SHA256, userId como sal e
+  // pepper opcional por env, ligado ao e-mail normalizado); um código ativo por usuário (o pedido novo apaga o
+  // anterior). Vencidos saem pelo cron diário `internalPruneEmailVerificationCodes`.
+  emailVerificationCodes: defineTable({
+    userId: v.id("users"),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    attempts: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_expires_at", ["expiresAt"]),
 
   // Forms (embeddable lead capture)
   forms: defineTable({
