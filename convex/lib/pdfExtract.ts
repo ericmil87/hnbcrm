@@ -7,7 +7,9 @@
  *  1. Tamanho (10 MB) e `%PDF-` nos primeiros 1024 bytes.
  *  2. Pré-varredura (`preflightPdf`), na thread principal, ANTES do pdf.js:
  *     - `/Encrypt` → recusa (inclusive só senha de dono);
- *     - para cada stream, lê o `/Filter` do dicionário (direto ou indireto,
+ *     - TODA ocorrência de `stream` tem o dado farejado (zlib/hex/ASCII85,
+ *       recursivo), sem depender da forma do dicionário;
+ *     - para cada stream, lê também o `/Filter` do dicionário (direto ou indireto,
  *       nome ou cadeia) e DECODIFICA a cadeia com teto: ASCIIHex e ASCII85
  *       antes, Flate com qualquer cabeçalho zlib que o pdf.js aceitaria
  *       (`(cmf & 0x0f) === 8`, `((cmf<<8)|flg) % 31 === 0`, sem dicionário);
@@ -20,7 +22,10 @@
  *     - tetos: 16 MB por stream e 48 MB somados (ver PDF_LIMITS).
  *  3. pdf.js num `worker_threads` com prazo: no fim do prazo, `terminate()`
  *     mata a thread mesmo no meio de trabalho síncrono (Promise.race não
- *     interrompe a descompressão/parse síncronos). O código do worker é uma
+ *     interrompe a descompressão/parse síncronos). O worker limita TEMPO, não
+ *     memória: `resourceLimits` cobre o heap JS, mas ArrayBuffers ficam fora
+ *     (medido na revisão: 760 MB–1,2 GB de pico) — a defesa de memória é a
+ *     pré-varredura. O código do worker é uma
  *     string (`eval: true`, nada a empacotar) e importa o `unpdf` pelo caminho
  *     absoluto resolvido aqui — por isso `unpdf` está em
  *     `convex.json → node.externalPackages` (instalado no deploy). Se o
@@ -219,6 +224,11 @@ export function inflateLikePdfJs(input: Uint8Array, cap: number): Uint8Array | n
   }
 }
 
+/** Nome PDF com escapes `#xx` decodificados (o pdf.js decodifica). */
+export function decodePdfName(name: string): string {
+  return name.replace(/#([0-9A-Fa-f]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16)));
+}
+
 /** Índice "num gen" → posição do corpo do objeto (último vence, como em atualização incremental). */
 function indexObjects(s: string): Map<string, number> {
   const idx = new Map<string, number>();
@@ -250,7 +260,7 @@ export function parseFilterChains(dict: string, s = "", objIndex = new Map<strin
       value = inner[1];
     }
     const names = (value.match(/\/[A-Za-z0-9.#_-]+/g) ?? []).map((x) => {
-      const name = x.slice(1);
+      const name = decodePdfName(x.slice(1));
       return FILTER_ALIASES[name] ?? name;
     });
     if (value.startsWith("[") && /\d+\s+\d+\s+R/.test(value)) return null; // referência dentro da cadeia
@@ -302,9 +312,99 @@ function streamLengthEnd(
   return Number.isFinite(len) ? Math.min(start + len, s.length) : null;
 }
 
+/** Fins dos cabeçalhos `N G obj` em ordem (busca binária do objeto que contém um stream). */
+function objectHeaderEnds(s: string): number[] {
+  const out: number[] = [];
+  const re = /\d{1,10}\s+\d{1,5}\s+obj\b/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s))) out.push(m.index + m[0].length);
+  return out;
+}
+
+function lastBefore(sorted: number[], pos: number): number {
+  let lo = 0;
+  let hi = sorted.length - 1;
+  let ans = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (sorted[mid] <= pos) {
+      ans = sorted[mid];
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return ans;
+}
+
+const SNIFF_PREFIX = 1024;
+const SNIFF_MAX_DEPTH = 4;
+
+function isWs(c: number): boolean {
+  return c === 0x20 || c === 0x0a || c === 0x0d || c === 0x09 || c === 0x0c || c === 0x00;
+}
+
+/** Os primeiros bytes (sem espaço) são só do alfabeto hex (até `>`)? */
+function looksHex(d: Uint8Array): boolean {
+  let seen = 0;
+  for (let i = 0; i < d.length && i < SNIFF_PREFIX; i++) {
+    const c = d[i];
+    if (isWs(c)) continue;
+    if (c === 0x3e) return seen >= 2;
+    if (!isHex(c)) return false;
+    seen++;
+  }
+  return seen >= 16;
+}
+
+/** Os primeiros bytes (sem espaço) são só do alfabeto ASCII85 (até `~`)? */
+function looksAscii85(d: Uint8Array): boolean {
+  let seen = 0;
+  for (let i = 0; i < d.length && i < SNIFF_PREFIX; i++) {
+    const c = d[i];
+    if (isWs(c)) continue;
+    if (c === 0x7e) return seen >= 5;
+    if (!((c >= 0x21 && c <= 0x75) || c === 0x7a)) return false;
+    seen++;
+  }
+  return seen >= 16;
+}
+
+/** Cabeçalho zlib que o pdf.js aceitaria. */
+function looksZlib(d: Uint8Array): boolean {
+  return d.length >= 2 && (d[0] & 0x0f) === 8 && ((d[0] << 8) | d[1]) % 31 === 0 && (d[1] & 0x20) === 0;
+}
+
+type SniffBudget = { asciiBytes: number };
+const ASCII_SCAN_BUDGET = 64 * 1024 * 1024;
+
 /**
- * Pré-varredura: criptografado recusado; cada stream com filtro é
- * decodificado (com teto) do início até o fim natural do codec.
+ * Fareja o PRÓPRIO dado, sem depender do dicionário: zlib → infla com teto;
+ * só hex/ASCII85 → decodifica e fareja de novo (profundidade limitada).
+ * Devolve o maior tamanho decodificado visto.
+ */
+export function sniffExpansion(data: Uint8Array, cap: number, budget: SniffBudget = { asciiBytes: 0 }, depth = 0): number {
+  if (depth >= SNIFF_MAX_DEPTH || data.length < 2) return 0;
+  if (looksZlib(data)) {
+    const out = inflateLikePdfJs(data, cap);
+    if (!out) return 0;
+    return Math.max(out.length, sniffExpansion(out, cap, budget, depth + 1));
+  }
+  const hex = looksHex(data);
+  if (hex || looksAscii85(data)) {
+    budget.asciiBytes += data.length;
+    if (budget.asciiBytes > ASCII_SCAN_BUDGET) throw new PdfExtractError("TOO_BIG_EXPANSION");
+    const decoded = hex ? decodeAsciiHex(data, cap) : decodeAscii85(data, cap);
+    return Math.max(decoded.length, sniffExpansion(decoded, cap, budget, depth + 1));
+  }
+  return 0;
+}
+
+/**
+ * Pré-varredura: criptografado recusado; TODA ocorrência de `stream` (não
+ * precedida de "end") tem o dado farejado (zlib/hex/ASCII85, recursivo) E,
+ * quando o dicionário do objeto declara `/Filter`, a cadeia declarada é
+ * decodificada. Não depende de `>>` antes de `stream`, do formato da quebra de
+ * linha nem de janela fixa do dicionário (revisão do P2.2: comentário entre
+ * `>>` e `stream`, nome contendo "obj", `/Filter` longe, `stream \n`).
  */
 export function preflightPdf(bytes: Uint8Array, o: PreflightLimits): void {
   const raw = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -313,41 +413,47 @@ export function preflightPdf(bytes: Uint8Array, o: PreflightLimits): void {
   const s = raw.toString("latin1");
   if (/\/Encrypt\b/.test(s)) throw new PdfExtractError("ENCRYPTED");
   const objIndex = indexObjects(s);
-  const kw = /stream(\r\n|\n|\r)/g;
+  const headers = objectHeaderEnds(s);
+  const budget: SniffBudget = { asciiBytes: 0 };
+  const kw = /stream[ \t\f\0]*(\r\n|\r|\n)?/g;
   let total = 0;
+  let cursor = 0;
   let m: RegExpExecArray | null;
   while ((m = kw.exec(s))) {
     const pos = m.index;
     if (pos >= 3 && s.startsWith("end", pos - 3)) continue;
-    // Dicionário: do último "obj" (janela de 4 KB) até a palavra "stream".
-    const windowStart = Math.max(0, pos - 4096);
-    let dict = s.slice(windowStart, pos);
-    const objAt = dict.lastIndexOf("obj");
-    if (objAt !== -1) dict = dict.slice(objAt + 3);
-    if (!dict.trimEnd().endsWith(">>")) continue; // não é palavra-chave de stream
     const start = pos + m[0].length;
+    // Dicionário: do cabeçalho `N G obj` mais próximo (ou do fim do stream
+    // anterior) até "stream" — sem janela fixa; as fatias não se sobrepõem.
+    const dictStart = Math.max(lastBefore(headers, pos), cursor, 0);
+    const dict = s.slice(dictStart, pos);
     const chains = parseFilterChains(dict, s, objIndex);
     if (chains === null) throw new PdfExtractError("UNSUPPORTED_FILTER");
-    // Região que o pdf.js PODE ler: até start+/Length (direto ou indireto
-    // resolvido) ou até o 1º "endstream" — usamos a MAIOR (um "endstream"
-    // literal cedo não encurta a checagem). /Length indireto não resolvível
-    // (ex.: dentro de object stream) → até o fim do arquivo.
+    // Região que o pdf.js PODE ler (a maior): /Length direto ou indireto
+    // resolvido, ou o 1º "endstream"; /Length indireto não resolvível = EOF.
     const firstEnd = s.indexOf("endstream", start);
     const lenEnd = streamLengthEnd(dict, s, objIndex, start);
     let regionEnd: number;
     if (lenEnd === "unresolved") regionEnd = s.length;
     else regionEnd = Math.max(firstEnd === -1 ? s.length : firstEnd, lenEnd ?? 0);
     regionEnd = Math.min(regionEnd, s.length);
+    const region = raw.subarray(start, regionEnd);
     let biggest = 0;
     for (const chain of chains) {
-      biggest = Math.max(biggest, measureFilterChain(raw.subarray(start, regionEnd), chain, o.maxStreamOutBytes));
+      biggest = Math.max(biggest, measureFilterChain(region, chain, o.maxStreamOutBytes));
     }
+    // Farejamento: zlib do início até o fim natural do deflate (sem confiar
+    // em /Length nem em endstream); hex/ASCII85 dentro da região.
+    biggest = Math.max(
+      biggest,
+      looksZlib(region) ? sniffExpansion(raw.subarray(start), o.maxStreamOutBytes, budget) : sniffExpansion(region, o.maxStreamOutBytes, budget)
+    );
     total += biggest;
     if (total > o.maxTotalInflateBytes) throw new PdfExtractError("TOO_BIG_EXPANSION");
-    // Próxima busca: depois do /Length confirmado por "endstream", senão do 1º "endstream".
     let next = firstEnd === -1 ? s.length : firstEnd;
     if (typeof lenEnd === "number" && /^\s*endstream/.test(s.slice(lenEnd, lenEnd + 16))) next = lenEnd;
-    kw.lastIndex = Math.max(next, start);
+    cursor = Math.max(next, start);
+    kw.lastIndex = cursor;
   }
 }
 
@@ -453,9 +559,8 @@ function runInWorker(copy: Uint8Array, o: PdfLimits, deadline: number): Promise<
           },
         },
         transferList: [buffer],
+        // Limita o heap JS; ArrayBuffers ficam fora — o worker limita TEMPO, não memória.
         resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 },
-        stdout: true,
-        stderr: true,
       });
     } catch {
       resolve(null);

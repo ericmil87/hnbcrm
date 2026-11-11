@@ -196,11 +196,21 @@ describe("internalFetchAndExtract — arquivo enviado", () => {
       new Uint8Array(textPdf([["Depilação com cera R$ 40,00", "Sobrancelha com henna R$ 35,00"]])),
       "application/pdf"
     );
-    const r = await t.action(internal.onboardingExtract.internalFetchAndExtract, {
-      organizationId,
-      kind: "auto",
-      storageId: pdfId,
-    });
+    const logSpy = vi.spyOn(console, "log");
+    let r;
+    try {
+      r = await t.action(internal.onboardingExtract.internalFetchAndExtract, {
+        organizationId,
+        kind: "auto",
+        storageId: pdfId,
+      });
+      // o log diz onde o pdf.js rodou, sem conteúdo
+      const lines = logSpy.mock.calls.map((c) => String(c[0])).filter((l) => l.includes("onboardingExtract"));
+      expect(lines.some((l) => /"isolation":"(worker|inline)"/.test(l))).toBe(true);
+      expect(lines.join("\n")).not.toContain("Depilação");
+    } finally {
+      logSpy.mockRestore();
+    }
     expect(r).toMatchObject({ ok: true, source: { kind: "pdf", storageId: pdfId, truncated: false } });
     if (r.ok) expect(r.text).toContain("Depilação com cera R$ 40,00");
 

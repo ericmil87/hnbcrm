@@ -147,7 +147,7 @@ export async function extractByKind(
   kind: ExtractKind,
   input: ExtractInput
 ): Promise<
-  | { ok: true; text: string; title?: string; description?: string; links?: HtmlLink[]; scanned?: boolean; truncated: boolean; pages?: { total: number; read: number }; removed: Removed }
+  | { ok: true; text: string; title?: string; description?: string; links?: HtmlLink[]; scanned?: boolean; truncated: boolean; pages?: { total: number; read: number }; removed: Removed; isolation?: "worker" | "inline" }
   | Fail
 > {
   if (kind === "pdf") {
@@ -162,6 +162,7 @@ export async function extractByKind(
         scanned: r.scanned,
         truncated: r.truncated,
         pages: { total: r.numPages, read: r.pagesRead },
+        isolation: r.isolation,
         removed,
       };
     } catch (e) {
@@ -234,8 +235,18 @@ export const internalFetchAndExtract = internalAction({
       EXTRACT_MAX_CHARS,
       Math.max(EXTRACT_MIN_CHARS, Number.isFinite(args.maxChars) ? Math.floor(args.maxChars!) : EXTRACT_MAX_CHARS)
     );
-    const log = (kind: string, code: string, bytes: number) =>
-      console.log(JSON.stringify({ event: "onboardingExtract", kind, code, bytes, ms: Date.now() - started }));
+    // Só tipo, código, bytes, duração e onde o pdf.js rodou — nunca URL nem conteúdo.
+    const log = (kind: string, code: string, bytes: number, isolation?: "worker" | "inline") =>
+      console.log(
+        JSON.stringify({
+          event: "onboardingExtract",
+          kind,
+          code,
+          bytes,
+          ms: Date.now() - started,
+          ...(isolation ? { isolation } : {}),
+        })
+      );
 
     if ((args.url === undefined) === (args.storageId === undefined)) {
       return fail("BAD_ARGS", "Informe um endereço ou um arquivo.");
@@ -268,9 +279,9 @@ export const internalFetchAndExtract = internalAction({
         bytesTruncated: res.truncated,
         maxChars,
       });
-      log(kind, r.ok ? "OK" : r.code, res.bytes.byteLength);
+      log(kind, r.ok ? "OK" : r.code, res.bytes.byteLength, r.ok ? r.isolation : undefined);
       if (!r.ok) return r;
-      const { ok: _ok, truncated, pages, removed, ...rest } = r;
+      const { ok: _ok, truncated, pages, removed, isolation: _iso, ...rest } = r;
       return {
         ok: true,
         ...rest,
@@ -315,9 +326,9 @@ export const internalFetchAndExtract = internalAction({
       bytesTruncated: false,
       maxChars,
     });
-    log(kind, r.ok ? "OK" : r.code, bytes.byteLength);
+    log(kind, r.ok ? "OK" : r.code, bytes.byteLength, r.ok ? r.isolation : undefined);
     if (!r.ok) return r;
-    const { ok: _ok, truncated, pages, removed, links: _links, ...rest } = r;
+    const { ok: _ok, truncated, pages, removed, links: _links, isolation: _iso, ...rest } = r;
     return {
       ok: true,
       ...rest,

@@ -376,7 +376,9 @@ function* tokenize(html: string): Generator<Token> {
     // "/>" só fecha elemento VOID (como no HTML): `<div hidden/>x</div>` e
     // `<script/>x</script>` continuam abertos até a tag de fechamento.
     const slash = inner.endsWith("/");
-    const selfClosing = slash && VOID.has(name);
+    // svg/math (conteúdo estrangeiro) aceitam "/>" de verdade; os dois são
+    // removidos inteiros, então "<svg/>" só não abre um pulo até o fim.
+    const selfClosing = slash && (VOID.has(name) || name === "svg" || name === "math");
     const attrs = parseAttrs(inner.slice(nm[1].length, slash ? -1 : undefined));
     i = end + 1;
     if (RAW_TEXT.has(name) && !selfClosing) {

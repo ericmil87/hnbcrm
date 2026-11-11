@@ -7,19 +7,23 @@ import { describe, expect, it } from "vitest";
 import {
   decodeAscii85,
   decodeAsciiHex,
+  decodePdfName,
   extractPdfText,
   inflateLikePdfJs,
   parseFilterChains,
   PdfExtractError,
   preflightPdf,
   PDF_LIMITS,
+  sniffExpansion,
 } from "./pdfExtract";
+import { deflateSync } from "node:zlib";
 import {
   ascii85,
   bombPdf,
   encryptedPdf,
   flateTextPdf,
   pdfWithContentStream,
+  pdfWithRawStreamPrefix,
   scannedPdf,
   stream,
   textPdf,
@@ -223,6 +227,48 @@ describe("pré-varredura anti-bomba — contornos da revisão (B1)", () => {
     const d = Buffer.from(zlibBomb(MB));
     d[0] = 0x79; // método 9: pdf.js recusa
     expect(inflateLikePdfJs(new Uint8Array(d), 1024)).toBeNull();
+  });
+});
+
+describe("pré-varredura — variantes de sintaxe da re-revisão (farejamento do dado)", () => {
+  const MB = 40;
+  const bomb = zlibBomb(MB);
+  const variants: Array<[string, (len: number) => string]> = [
+    ["comentário entre >> e stream", (L) => `<< /Length ${L} /Filter /FlateDecode >> %x\nstream\n`],
+    ["nome contendo obj no dicionário", (L) => `<< /Filter /FlateDecode /N /obj /Length ${L} >>\nstream\n`],
+    ["/Filter a mais de 4 KB antes de stream", (L) => `<< /Filter /FlateDecode /P (${"x".repeat(5000)}) /Length ${L} >>\nstream\n`],
+    ["espaço antes da quebra (stream \\n)", (L) => `<< /Length ${L} /Filter /FlateDecode >>stream \n`],
+    ["nome com escape #61 (/Fl#61teDecode)", (L) => `<< /Length ${L} /Filter /Fl#61teDecode >>\nstream\n`],
+    ["sem /Filter nenhum (só o dado zlib)", (L) => `<< /Length ${L} >>\nstream\n`],
+    ["/Filter a 70 KB do stream", (L) => `<< /Filter /FlateDecode /P (${"y".repeat(70_000)}) /Length ${L} >>\nstream\n`],
+  ];
+
+  it.each(variants)("%s → TOO_BIG_EXPANSION rápido", async (_label, prefix) => {
+    const pdf = new Uint8Array(pdfWithRawStreamPrefix(bomb, prefix));
+    const t0 = Date.now();
+    expect(await codeOf(extractPdfText(pdf))).toBe("TOO_BIG_EXPANSION");
+    expect(Date.now() - t0).toBeLessThan(3000);
+  });
+
+  it("hex de zlib sem /Filter declarado também é farejado", async () => {
+    const hex = Buffer.from(bomb.toString("hex") + ">", "latin1");
+    const pdf = new Uint8Array(pdfWithRawStreamPrefix(hex, (L) => `<< /Length ${L} >> %c\nstream\n`));
+    expect(await codeOf(extractPdfText(pdf))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("ASCII85 de zlib dentro de zlib (profundidade) é farejado", () => {
+    const inner = Buffer.from(ascii85(bomb), "latin1");
+    const outer = deflateSync(inner);
+    expect(() => sniffExpansion(new Uint8Array(outer), 16 * 1024 * 1024)).toThrow(PdfExtractError);
+    expect(sniffExpansion(new Uint8Array(outer), 64 * 1024 * 1024)).toBe(MB * 1024 * 1024);
+    const pdf = new Uint8Array(pdfWithRawStreamPrefix(outer, (L) => `<< /Length ${L} >>\nstream\n`));
+    expect(() => preflightPdf(pdf, PDF_LIMITS)).toThrow(PdfExtractError);
+  });
+
+  it("variantes inofensivas (texto pequeno) continuam sendo lidas", async () => {
+    const r = await extractPdfText(new Uint8Array(flateTextPdf(PRICE_LINES)));
+    expect(r.text).toContain("Escova progressiva R$ 250,00");
+    expect(decodePdfName("Fl#61teDecode")).toBe("FlateDecode");
   });
 });
 

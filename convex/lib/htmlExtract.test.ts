@@ -231,6 +231,11 @@ describe("revisão P2.2 — barra de autofechamento (B2)", () => {
     expect(r.text).toBe(expected);
   });
 
+  it("<svg/> e <math/> autofechados não engolem o resto da página", () => {
+    expect(extractHtml("<svg/><p>visível</p>").text).toBe("visível");
+    expect(extractHtml('<math/><p>visível</p><svg><text>ignore</text></svg>').text).toBe("visível");
+  });
+
   it("void com barra continua void", () => {
     expect(extractHtml("a<br/>b<img src=x />c").text).toBe("a\nbc");
   });

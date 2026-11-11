@@ -110,6 +110,19 @@ export function pdfWithContentStream(data: Buffer, dictExtra: string, extraObjs:
   ]);
 }
 
+/**
+ * Objeto 4 com o texto CRU entre `4 0 obj\n` e o dado (dicionário + palavra
+ * `stream` + quebra), para reproduzir variações de sintaxe que o pdf.js aceita.
+ */
+export function pdfWithRawStreamPrefix(data: Buffer, prefix: (length: number) => string): Buffer {
+  return assemblePdf([
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+    Buffer.concat([b(prefix(data.length)), data, b("\nendstream")]),
+  ]);
+}
+
 /** zlib de `mb` MB de espaços (cabeçalho padrão 0x78). */
 export function zlibBomb(mb: number): Buffer {
   return deflateSync(Buffer.alloc(mb * 1024 * 1024, 0x20), { level: 9 });
