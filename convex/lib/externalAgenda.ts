@@ -6,6 +6,7 @@
  * tetos de tamanho — nada além do que o atendente precisa para falar de data,
  * valor, vaga, local e inscrição chega ao modelo.
  */
+import { checkUrl, PortPolicy, SAFE_FETCH_MESSAGES } from "./safeFetch";
 
 export const DEFAULT_AGENDA_HEADER = "X-API-Key";
 export const AGENDA_FETCH_TIMEOUT_MS = 8000;
@@ -162,13 +163,28 @@ export function isAllowedImageUrl(url: string, events: AgendaEvent[]): boolean {
   return events.some((e) => e.image !== null && e.image === url);
 }
 
-/** URL do endpoint aceita na configuração: só https. */
+/**
+ * Política de porta da agenda externa (P2.2): 443 ou qualquer porta ≥ 1024
+ * (sites de cliente em `:8443`, `:3000`…). A MESMA regra vale ao salvar e no
+ * `safeFetch` do runtime (`attendantAgendaFetch.ts`).
+ */
+export const AGENDA_PORT_POLICY: PortPolicy = { allowUnprivilegedPorts: true };
+
+/**
+ * Por que a URL da agenda seria recusada pelo `safeFetch` (PT-BR, para a tela),
+ * ou null se passa. Checa só a URL (sem DNS): o IP é validado a cada consulta.
+ */
+export function agendaUrlProblem(url: string): string | null {
+  const r = checkUrl(url, AGENDA_PORT_POLICY);
+  if (r.ok) return null;
+  if (r.code === "PORT") return "Porta não permitida: use a 443 (padrão do https) ou uma porta a partir de 1024.";
+  if (r.code === "SCHEME") return "A URL da agenda precisa começar com https://";
+  return `URL da agenda recusada: ${SAFE_FETCH_MESSAGES[r.code]}`;
+}
+
+/** URL do endpoint aceita na configuração (mesmas regras do `safeFetch`). */
 export function isValidAgendaUrl(url: string): boolean {
-  try {
-    return new URL(url).protocol === "https:";
-  } catch {
-    return false;
-  }
+  return agendaUrlProblem(url) === null;
 }
 
 /** Nome de header HTTP válido (token RFC 7230), sem espaço nem dois-pontos. */

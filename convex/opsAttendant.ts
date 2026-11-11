@@ -24,11 +24,13 @@
  *   npx convex run opsAttendant:internalBackfillAiResumedAt '{"dryRun":true}'
  */
 import { v } from "convex/values";
-import { internalMutation, MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery, MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { getLeadRef } from "./lib/leadRef";
 import { latestReactiveQueueItem } from "./lib/aiStateQueue";
+import { checkUrl } from "./lib/safeFetch";
+import { AGENDA_PORT_POLICY } from "./lib/externalAgenda";
 
 const DEFAULT_PAGE_SIZE = 25;
 // Cada conversa lê até 5 × 100 itens da fila (mesma janela do chip): 30 por
@@ -198,6 +200,89 @@ export const internalBackfillAiResumedAt = internalMutation({
       isDone: page.isDone,
       continueCursor: page.continueCursor,
       scheduledNext,
+    };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Agenda externa × safeFetch (P2.2)
+// ---------------------------------------------------------------------------
+
+/** Host mascarado para saída de ops: 3 primeiros caracteres + último rótulo. */
+export function maskAgendaHost(url: string): string {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return "(inválida)";
+  }
+  const labels = host.replace(/\.$/, "").split(".");
+  const last = labels.length > 1 ? `.${labels[labels.length - 1]}` : "";
+  return host.length <= 6 ? `${host.slice(0, 1)}…` : `${host.slice(0, 3)}…${last}`;
+}
+
+/**
+ * SÓ LEITURA (não há modo real): lista agendas externas salvas cuja URL o
+ * `checkUrl` do P2.2 recusaria (http, porta < 1024 que não seja 443, IP
+ * privado literal, `localhost`/`*.internal`, formato numérico alternativo…).
+ * Varre `teamMembers` por cursor; a saída tem só org, membro, host mascarado
+ * e o código — nunca a URL completa nem a chave. Não checa DNS.
+ *
+ *   npx convex run opsAttendant:internalAuditAgendaUrls '{}'
+ *   npx convex run opsAttendant:internalAuditAgendaUrls '{"cursor":"<continueCursor>"}'
+ */
+export const internalAuditAgendaUrls = internalQuery({
+  args: {
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    scanned: v.number(),
+    withAgenda: v.number(),
+    refused: v.array(
+      v.object({
+        organizationId: v.id("organizations"),
+        agentMemberId: v.id("teamMembers"),
+        enabled: v.boolean(),
+        host: v.string(),
+        code: v.string(),
+      })
+    ),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const raw = Number.isFinite(args.pageSize) ? Math.floor(args.pageSize!) : 200;
+    const numItems = Math.min(500, Math.max(1, raw));
+    const result = await ctx.db.query("teamMembers").paginate({ numItems, cursor: args.cursor ?? null });
+    let withAgenda = 0;
+    const refused: Array<{
+      organizationId: Id<"organizations">;
+      agentMemberId: Id<"teamMembers">;
+      enabled: boolean;
+      host: string;
+      code: string;
+    }> = [];
+    for (const member of result.page) {
+      const agenda = member.agentProfile?.externalAgenda;
+      if (!agenda) continue;
+      withAgenda++;
+      const check = checkUrl(agenda.url, AGENDA_PORT_POLICY);
+      if (check.ok) continue;
+      refused.push({
+        organizationId: member.organizationId,
+        agentMemberId: member._id,
+        enabled: agenda.enabled,
+        host: maskAgendaHost(agenda.url),
+        code: check.code,
+      });
+    }
+    return {
+      scanned: result.page.length,
+      withAgenda,
+      refused,
+      continueCursor: result.continueCursor,
+      isDone: result.isDone,
     };
   },
 });

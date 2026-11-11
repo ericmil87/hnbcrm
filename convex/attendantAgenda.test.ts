@@ -11,12 +11,16 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { setSafeFetchDepsForTests } from "./lib/safeFetchNode";
+import { useFetchBackedSafeFetchForTests } from "./lib/safeFetchNode.test-helper";
 import { encryptSecret } from "./lib/secretCrypto";
 import { runConsultarAgenda } from "./attendantAgenda";
 import {
+  agendaUrlProblem,
   availableCategories,
   filterByCategory,
   isAllowedImageUrl,
+  isValidAgendaUrl,
   normalizeAgendaEvents,
 } from "./lib/externalAgenda";
 
@@ -67,11 +71,15 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("OPENCODE_GO_API", "sk-test-fake-key-000000");
   vi.stubEnv("CHANNEL_ENCRYPTION_KEY", TEST_ENCRYPTION_KEY);
+  // A rede da agenda passa pelo safeFetch (action Node): aqui ele usa o
+  // `fetch` global simulado, com todo nome resolvendo para um IP público.
+  useFetchBackedSafeFetchForTests();
 });
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
+  setSafeFetchDepsForTests(null);
 });
 
 function setup() {
@@ -484,6 +492,171 @@ describe("consultarAgenda no turno do atendente", () => {
     const [result] = toolResultsOf(llmCalls(fetchMock)[1]);
     expect(result).toEqual({ status: "erro", erro: "agenda_indisponivel" });
     expect(await outboundMessages(t, seed)).toHaveLength(1);
+  });
+});
+
+describe("safeFetch na agenda externa (P2.2)", () => {
+  test.each([
+    ["10.0.0.5"],
+    ["169.254.169.254"],
+    ["127.0.0.1"],
+    ["::ffff:192.168.0.10"],
+  ])("endpoint cujo DNS aponta para %s → recusado sem conexão", async (ip) => {
+    useFetchBackedSafeFetchForTests({ resolveTo: ip });
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: true });
+    const itemId = await enqueueTurn(t, seed, "Quando é o próximo?");
+    const fetchMock = stubNetwork({
+      llm: [
+        { tools: [{ name: "consultarAgenda", args: {} }] },
+        { tools: [{ name: "replyToCustomer", args: { text: "Vou confirmar com a casa." } }] },
+      ],
+    });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    const [result] = toolResultsOf(llmCalls(fetchMock)[1]);
+    expect(result).toEqual({ status: "erro", erro: "agenda_indisponivel" });
+    expect(agendaCalls(fetchMock)).toHaveLength(0);
+  });
+
+  test("endpoint com IP privado literal ou http é recusado (runConsultarAgenda direto)", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: false });
+    const fetchMock = stubNetwork({ llm: [] });
+    for (const url of ["https://192.168.0.1/agenda", "https://[::1]/agenda", "https://2130706433/agenda", "http://agenda.example.com/api"]) {
+      const out = await t.action(internal.attendantAgendaFetch.internalFetchAgendaJson, {
+        organizationId: seed.organizationId,
+        url,
+        headerName: "X-API-Key",
+        apiKeyRef: null,
+      });
+      expect(out.ok).toBe(false);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test("redirect do endpoint para a rede interna é recusado e a chave não vai para outro host", async () => {
+    const hosts: string[] = [];
+    useFetchBackedSafeFetchForTests({
+      resolveTo: (host) => (host === "interno.example.com" ? ["10.1.2.3"] : ["93.184.216.34"]),
+      onConnect: (req) => hosts.push(req.url.hostname),
+    });
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: true });
+    const itemId = await enqueueTurn(t, seed, "Quando é o próximo?");
+    const fetchMock = stubNetwork({
+      agenda: () => new Response(null, { status: 302, headers: { Location: "https://interno.example.com/x" } }),
+      llm: [
+        { tools: [{ name: "consultarAgenda", args: {} }] },
+        { tools: [{ name: "replyToCustomer", args: { text: "Vou confirmar." } }] },
+      ],
+    });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    const [result] = toolResultsOf(llmCalls(fetchMock)[1]);
+    expect(result).toEqual({ status: "erro", erro: "agenda_indisponivel" });
+    expect(hosts).toEqual(["agenda.example.com"]);
+  });
+
+  test("flyer cujo host resolve para metadados → sai só o texto", async () => {
+    useFetchBackedSafeFetchForTests({
+      resolveTo: (host) => (host === "cdn.example.com" ? ["169.254.169.254"] : ["93.184.216.34"]),
+    });
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: true });
+    const itemId = await enqueueTurn(t, seed, "Me manda o flyer");
+    const fetchMock = stubNetwork({
+      llm: [
+        { tools: [{ name: "consultarAgenda", args: {} }] },
+        { tools: [{ name: "replyToCustomer", args: { text: "Segue!", imageUrl: FLYER_URL } }] },
+      ],
+    });
+    await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: itemId });
+    const outbound = await outboundMessages(t, seed);
+    expect(outbound).toHaveLength(1);
+    expect(outbound[0].contentType).toBe("text");
+    expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith("https://cdn.example.com/"))).toBe(false);
+  });
+});
+
+describe("agenda externa: portas e auditoria (revisão P2.2, D1)", () => {
+  test("agendaUrlProblem: 443 e portas ≥ 1024 passam; < 1024, http e privados recusam com mensagem clara", () => {
+    expect(agendaUrlProblem("https://agenda.example.com/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:443/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:8443/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:3000/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:80/api")).toMatch(/Porta não permitida/);
+    expect(agendaUrlProblem("https://agenda.example.com:22/api")).toMatch(/1024/);
+    expect(agendaUrlProblem("http://agenda.example.com/api")).toMatch(/https:\/\//);
+    expect(agendaUrlProblem("https://192.168.0.10/api")).toMatch(/rede interna/);
+    expect(agendaUrlProblem("https://localhost:8443/api")).toMatch(/não é público/);
+    expect(isValidAgendaUrl("https://2130706433/api")).toBe(false);
+  });
+
+  test("salvar com porta < 1024 é recusado na hora", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: false });
+    await expect(
+      t.action(internal.aiSettings.internalSetExternalAgenda, {
+        organizationId: seed.organizationId,
+        agentMemberId: seed.agentId,
+        enabled: true,
+        url: "https://site.example.com:81/agenda",
+        dryRun: false,
+      })
+    ).rejects.toThrow(/Porta não permitida/);
+  });
+
+  test("fetch da agenda aceita porta ≥ 1024", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: false });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(AGENDA_JSON), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await t.action(internal.attendantAgendaFetch.internalFetchAgendaJson, {
+      organizationId: seed.organizationId,
+      url: "https://agenda.example.com:8443/api",
+      headerName: "X-API-Key",
+      apiKeyRef: null,
+    });
+    expect(out.ok).toBe(true);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe("https://agenda.example.com:8443/api");
+  });
+
+  test("internalAuditAgendaUrls lista só as recusadas, com host mascarado e sem URL/chave", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: true });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (const url of ["http://velha.example.com/agenda?token=segredo123", "https://10.0.0.5:8443/x", "https://ok.example.com:8443/x"]) {
+        await ctx.db.insert("teamMembers", {
+          organizationId: seed.organizationId,
+          name: "Outra IA",
+          role: "ai",
+          type: "ai",
+          status: "active",
+          agentProfile: { kind: "attendant", mode: "suggest", externalAgenda: { enabled: false, url } },
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+    const first = await t.query(internal.opsAttendant.internalAuditAgendaUrls, { pageSize: 2 });
+    const all = [...first.refused];
+    let cursor: string | null = first.continueCursor;
+    let done = first.isDone;
+    let withAgenda = first.withAgenda;
+    while (!done) {
+      const next: typeof first = await t.query(internal.opsAttendant.internalAuditAgendaUrls, { pageSize: 2, cursor });
+      all.push(...next.refused);
+      withAgenda += next.withAgenda;
+      cursor = next.continueCursor;
+      done = next.isDone;
+    }
+    expect(withAgenda).toBe(4);
+    expect(all.map((r) => r.code).sort()).toEqual(["IP_BLOCKED", "SCHEME"]);
+    const dump = JSON.stringify(all);
+    expect(dump).not.toContain("segredo123");
+    expect(dump).not.toContain("velha.example.com");
+    expect(dump).not.toContain("/agenda");
+    expect(all.find((r) => r.code === "SCHEME")?.host).toBe("vel….com");
   });
 });
 

@@ -18,11 +18,7 @@ import { deleteFileRow, insertFileRow } from "./lib/storageUsage";
 import { ActionCtx, internalMutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
-import { decryptSecret } from "./lib/secretCrypto";
 import {
-  AGENDA_FETCH_TIMEOUT_MS,
-  AGENDA_IMAGE_MAX_BYTES,
-  AGENDA_IMAGE_TIMEOUT_MS,
   AgendaEvent,
   availableCategories,
   filterByCategory,
@@ -42,7 +38,7 @@ export type ExternalAgendaFetchConfig = {
  * AGENDA EXTERNA do prompt (avisar que confirma e abrir repasse).
  */
 export async function runConsultarAgenda(
-  ctx: Pick<ActionCtx, "runQuery">,
+  ctx: Pick<ActionCtx, "runAction">,
   organizationId: Id<"organizations">,
   config: ExternalAgendaFetchConfig | null | undefined,
   argsJson: string | undefined
@@ -58,32 +54,23 @@ export async function runConsultarAgenda(
     // argumento malformado = consulta sem filtro
   }
 
-  const headers: Record<string, string> = { Accept: "application/json" };
-  if (config.apiKeyRef) {
-    try {
-      const encrypted = await ctx.runQuery(internal.orgSecrets.internalGetOrgSecretEncrypted, {
-        secretId: config.apiKeyRef,
-        organizationId,
-      });
-      if (encrypted) headers[config.headerName] = await decryptSecret(encrypted);
-    } catch {
-      console.warn("[agenda] chave da agenda externa indisponível");
-      return { result: { status: "erro", erro: "agenda_indisponivel" }, events: [] };
-    }
-  }
-
+  // Rede pelo safeFetch (P2.2): URL/DNS/IP validados e conexão no IP
+  // validado; a chave é decifrada dentro da action Node.
   let json: unknown;
   try {
-    const res = await fetch(config.url, {
-      method: "GET",
-      headers,
-      signal: AbortSignal.timeout(AGENDA_FETCH_TIMEOUT_MS),
+    const res = await ctx.runAction(internal.attendantAgendaFetch.internalFetchAgendaJson, {
+      organizationId,
+      url: config.url,
+      headerName: config.headerName,
+      apiKeyRef: config.apiKeyRef,
     });
     if (!res.ok) {
-      console.warn(`[agenda] endpoint respondeu HTTP ${res.status}`);
+      if (res.code === "SECRET_UNAVAILABLE") console.warn("[agenda] chave da agenda externa indisponível");
+      else if (res.code === "HTTP_STATUS") console.warn(`[agenda] endpoint respondeu HTTP ${res.status ?? "?"}`);
+      else console.warn(`[agenda] falha ao consultar a agenda externa (${res.code})`);
       return { result: { status: "erro", erro: "agenda_indisponivel" }, events: [] };
     }
-    json = await res.json();
+    json = JSON.parse(res.body);
   } catch (e) {
     const kind = e instanceof Error ? e.name : "erro";
     console.warn(`[agenda] falha ao consultar a agenda externa (${kind})`);
@@ -127,11 +114,11 @@ function fileNameFromUrl(url: string, mimeType: string): string {
 /**
  * Garante uma linha de `files` (sem `messageId` ainda) com o flyer da URL.
  * Reaproveita o blob de um envio anterior da mesma org+URL; senão baixa
- * (10 s, ≤ 5 MB, `image/*`). Devolve null em qualquer falha — o turno segue
+ * pelo `safeFetch` (só https público, 10 s, ≤ 5 MB, `image/*`). Devolve null em qualquer falha — o turno segue
  * só com texto, nunca falha por causa da imagem.
  */
 export async function prepareAgendaImageFile(
-  ctx: Pick<ActionCtx, "runMutation" | "storage">,
+  ctx: Pick<ActionCtx, "runMutation" | "runAction">,
   args: {
     organizationId: Id<"organizations">;
     agentMemberId: Id<"teamMembers">;
@@ -142,28 +129,16 @@ export async function prepareAgendaImageFile(
   if (reused) return reused;
 
   try {
-    if (!/^https?:\/\//i.test(args.url)) return null;
-    const res = await fetch(args.url, { signal: AbortSignal.timeout(AGENDA_IMAGE_TIMEOUT_MS) });
+    // safeFetch (P2.2): só https público, `image/*`, ≤ 5 MB, 10 s.
+    const res = await ctx.runAction(internal.attendantAgendaFetch.internalDownloadAgendaImage, {
+      url: args.url,
+    });
     if (!res.ok) {
-      console.warn(`[agenda] download do flyer respondeu HTTP ${res.status}`);
+      if (res.code === "HTTP_STATUS") console.warn(`[agenda] download do flyer respondeu HTTP ${res.status ?? "?"}`);
+      else console.warn(`[agenda] flyer recusado (${res.code})`);
       return null;
     }
-    const mimeType = (res.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
-    if (!mimeType.startsWith("image/")) {
-      console.warn("[agenda] flyer recusado: content-type não é imagem");
-      return null;
-    }
-    const declared = Number(res.headers.get("content-length") ?? "0");
-    if (declared > AGENDA_IMAGE_MAX_BYTES) {
-      console.warn("[agenda] flyer recusado: maior que 5 MB");
-      return null;
-    }
-    const buffer = await res.arrayBuffer();
-    if (buffer.byteLength === 0 || buffer.byteLength > AGENDA_IMAGE_MAX_BYTES) {
-      console.warn("[agenda] flyer recusado: tamanho inválido");
-      return null;
-    }
-    const storageId = await ctx.storage.store(new Blob([buffer], { type: mimeType }));
+    const { storageId, mimeType, size } = res;
     return await ctx.runMutation(internal.attendantAgenda.internalInsertAgendaImageFile, {
       organizationId: args.organizationId,
       agentMemberId: args.agentMemberId,
@@ -171,7 +146,7 @@ export async function prepareAgendaImageFile(
       storageId,
       name: fileNameFromUrl(args.url, mimeType),
       mimeType,
-      size: buffer.byteLength,
+      size,
     });
   } catch (e) {
     const kind = e instanceof Error ? e.name : "erro";
