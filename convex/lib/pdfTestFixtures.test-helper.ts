@@ -276,3 +276,28 @@ export function flateTextPdf(lines: string[]): Buffer {
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
   ]);
 }
+
+/**
+ * Cardápio com uma foto Flate RGB `w`×`h` (caso t12 da 4ª revisão:
+ * 2500×2500 = 19 MB descomprimidos, PDF legítimo). Gradiente + ruído leve.
+ */
+export function photoPdf(w: number, h: number): Buffer {
+  const raw = Buffer.alloc(w * h * 3);
+  let seed = 12345;
+  for (let p = 0; p < raw.length; p++) {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    raw[p] = ((((p / 3) | 0) % w) * 255 / w + (seed & 1)) & 255;
+  }
+  const img = deflateSync(raw, { level: 6 });
+  const content = deflateSync(
+    b("BT /F1 12 Tf 72 720 Td (Cardapio: Pizza margherita R$ 45,00 - Lasanha bolonhesa R$ 52,00 - Tiramisu R$ 22,00) Tj ET\nq 100 0 0 100 0 0 cm /Im0 Do Q\n")
+  );
+  return assemblePdf([
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 6 0 R >> /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>",
+    stream("/Filter /FlateDecode", content),
+    stream(`/Type /XObject /Subtype /Image /Width ${w} /Height ${h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /FlateDecode`, img),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+  ]);
+}
