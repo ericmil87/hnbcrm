@@ -36,34 +36,42 @@ export function valueToInput(value: CalculatorValue, cycle: BillingCycle): Prici
 /** Marcas do slider da pergunta 1; a última é "N ou mais". */
 export const ATTENDANCE_MARKS = [100, 300, 1000, 2500, 5000] as const;
 
-const STEPS_PER_SEGMENT = 100;
-export const SLIDER_MAX = (ATTENDANCE_MARKS.length - 1) * STEPS_PER_SEGMENT;
-
-function niceRound(n: number): number {
-  const step = n < 1000 ? 10 : n < 2500 ? 50 : 100;
-  return Math.round(n / step) * step;
+function stepFor(n: number): number {
+  return n < 1000 ? 10 : n < 2500 ? 50 : 100;
 }
 
-/** Posição do slider (0..SLIDER_MAX, linear entre as marcas) -> pessoas por mês. */
-export function sliderToAttendances(position: number): number {
-  const p = Math.min(SLIDER_MAX, Math.max(0, position));
-  const seg = Math.min(ATTENDANCE_MARKS.length - 2, Math.floor(p / STEPS_PER_SEGMENT));
-  const frac = (p - seg * STEPS_PER_SEGMENT) / STEPS_PER_SEGMENT;
-  const from = ATTENDANCE_MARKS[seg];
-  const to = ATTENDANCE_MARKS[seg + 1];
-  return niceRound(from + (to - from) * frac);
-}
-
-/** Pessoas por mês -> posição do slider (abaixo da 1ª marca = início; acima da última = fim). */
-export function attendancesToSlider(attendances: number): number {
-  if (attendances <= ATTENDANCE_MARKS[0]) return 0;
+/**
+ * Valores alcançáveis pelo slider, em ordem: das marcas, andando pelo passo de
+ * arredondamento de cada faixa. A posição do slider é o índice nesta lista,
+ * então toda posição tem um valor distinto (o teclado sempre anda).
+ */
+export const SLIDER_VALUES: readonly number[] = (() => {
+  const out: number[] = [];
+  let v: number = ATTENDANCE_MARKS[0];
   const last = ATTENDANCE_MARKS[ATTENDANCE_MARKS.length - 1];
-  if (attendances >= last) return SLIDER_MAX;
-  let seg = 0;
-  while (attendances >= ATTENDANCE_MARKS[seg + 1]) seg++;
-  const from = ATTENDANCE_MARKS[seg];
-  const to = ATTENDANCE_MARKS[seg + 1];
-  return Math.round(seg * STEPS_PER_SEGMENT + ((attendances - from) / (to - from)) * STEPS_PER_SEGMENT);
+  while (v < last) {
+    out.push(v);
+    v += stepFor(v);
+  }
+  out.push(last);
+  return out;
+})();
+
+export const SLIDER_MAX = SLIDER_VALUES.length - 1;
+
+/** Posição (índice) do slider -> pessoas por mês. */
+export function sliderToAttendances(position: number): number {
+  const i = Math.min(SLIDER_MAX, Math.max(0, Math.round(position)));
+  return SLIDER_VALUES[i];
+}
+
+/** Pessoas por mês -> posição mais próxima (abaixo da 1ª marca = início; acima da última = fim). */
+export function attendancesToSlider(attendances: number): number {
+  let best = 0;
+  for (let i = 1; i < SLIDER_VALUES.length; i++) {
+    if (Math.abs(SLIDER_VALUES[i] - attendances) < Math.abs(SLIDER_VALUES[best] - attendances)) best = i;
+  }
+  return best;
 }
 
 /**

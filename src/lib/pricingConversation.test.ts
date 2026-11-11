@@ -3,6 +3,7 @@ import { calculatePricing } from "./pricing";
 import {
   ATTENDANCE_MARKS,
   SLIDER_MAX,
+  SLIDER_VALUES,
   attendancesToSlider,
   channelOverflowPlan,
   perPersonBrl,
@@ -22,12 +23,21 @@ const base: CalculatorValue = {
 };
 
 describe("slider", () => {
-  it("as marcas caem em posições exatas e voltam ao mesmo valor", () => {
-    ATTENDANCE_MARKS.forEach((mark, i) => {
-      expect(sliderToAttendances(i * 100)).toBe(mark);
-      expect(attendancesToSlider(mark)).toBe(i * 100);
-    });
-    expect(SLIDER_MAX).toBe(400);
+  it("as marcas existem na lista e voltam ao mesmo valor", () => {
+    for (const mark of ATTENDANCE_MARKS) {
+      expect(SLIDER_VALUES).toContain(mark);
+      expect(sliderToAttendances(attendancesToSlider(mark))).toBe(mark);
+    }
+    expect(SLIDER_MAX).toBe(SLIDER_VALUES.length - 1);
+    expect(sliderToAttendances(0)).toBe(100);
+    expect(sliderToAttendances(SLIDER_MAX)).toBe(5000);
+  });
+
+  it("toda posição anda: pos(valor(p+1)) > p (o teclado nunca fica preso)", () => {
+    for (let p = 0; p < SLIDER_MAX; p++) {
+      expect(attendancesToSlider(sliderToAttendances(p + 1))).toBeGreaterThan(p);
+      expect(sliderToAttendances(p + 1)).toBeGreaterThan(sliderToAttendances(p));
+    }
   });
 
   it("valores fora da faixa ficam nas pontas", () => {
@@ -35,16 +45,6 @@ describe("slider", () => {
     expect(attendancesToSlider(20000)).toBe(SLIDER_MAX);
     expect(sliderToAttendances(-5)).toBe(100);
     expect(sliderToAttendances(9999)).toBe(5000);
-  });
-
-  it("é monotônico e arredonda para números redondos", () => {
-    let prev = 0;
-    for (let p = 0; p <= SLIDER_MAX; p++) {
-      const v = sliderToAttendances(p);
-      expect(v).toBeGreaterThanOrEqual(prev);
-      expect(v % 10).toBe(0);
-      prev = v;
-    }
   });
 });
 

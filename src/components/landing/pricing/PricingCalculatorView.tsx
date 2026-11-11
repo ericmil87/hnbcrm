@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { Link } from "react-router";
 import { Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -18,6 +18,7 @@ import {
   valueToInput,
   type CalculatorValue,
 } from "@/lib/pricingConversation";
+import { planDisplay } from "@/lib/pricingCatalog";
 import { cn } from "@/lib/utils";
 import { EXTRA_CHANNEL_BRL, PLANS } from "../../../../convex/lib/plans";
 import { CTA_LABEL } from "./pricingCopy";
@@ -39,7 +40,7 @@ interface PricingCalculatorViewProps {
   cycle?: BillingCycle;
   /** `compact`: só as perguntas 1 e 2, a frase e o botão (resumo da landing). */
   variant?: "full" | "compact";
-  /** Destino do link "Ver tabela completa" (variante compacta). */
+  /** Destino do link "Ajustar mais opções" (variante compacta). */
   fullTableHref?: string;
 }
 
@@ -132,6 +133,9 @@ interface PeopleQuestionProps {
  * normalizado ao sair e, vazio, mostra a dica sem inventar um valor.
  */
 function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
+  const uid = useId();
+  const labelId = `${uid}-label`;
+  const fieldId = `${uid}-field`;
   const [text, setText] = useState(String(value));
   const [emptyHint, setEmptyHint] = useState(false);
 
@@ -141,11 +145,12 @@ function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
 
   const last = ATTENDANCE_MARKS[ATTENDANCE_MARKS.length - 1];
   const position = attendancesToSlider(value);
+  const maxPosition = SLIDER_MAX;
   const valueText = value >= last ? `${formatCount(last)} pessoas ou mais` : `${formatCount(value)} pessoas`;
 
   return (
     <div>
-      <p id="calc-people-label" className="text-lg font-semibold text-text-primary">
+      <p id={labelId} className="text-lg font-semibold text-text-primary">
         Quantas pessoas diferentes falam com você no WhatsApp por mês?
       </p>
       <p className="mt-1 text-sm text-text-secondary">
@@ -159,7 +164,7 @@ function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
           max={SLIDER_MAX}
           step={1}
           value={position}
-          aria-labelledby="calc-people-label"
+          aria-labelledby={labelId}
           aria-valuetext={valueText}
           onChange={(e) => {
             setEmptyHint(false);
@@ -185,7 +190,7 @@ function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
                   isLast && "right-0 text-right",
                   !isLast && i > 0 && "-translate-x-1/2 text-center",
                 )}
-                style={!isLast && i > 0 ? { left: `${(i / (ATTENDANCE_MARKS.length - 1)) * 100}%` } : undefined}
+                style={!isLast && i > 0 ? { left: `${(attendancesToSlider(mark) / maxPosition) * 100}%` } : undefined}
               >
                 {formatCount(mark)}
                 {isLast ? "+" : ""}
@@ -198,7 +203,7 @@ function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
       <div className="mt-2 flex items-start gap-2">
         <div className="w-36">
           <Input
-            id="calc-people"
+            id={fieldId}
             label="Ou digite"
             inputMode="numeric"
             className="tabular-nums"
@@ -210,7 +215,10 @@ function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
               setText(digits);
               setEmptyHint(false);
               const n = parseDigits(digits, 0, ATTENDANCE_MAX);
-              if (n !== null) onChange(n);
+              if (n === null) return;
+              // Texto que diverge do valor usado no cálculo (teto, zeros à esquerda) é corrigido na hora.
+              if (String(n) !== digits) setText(String(n));
+              onChange(n);
             }}
             onBlur={() => {
               const n = parseDigits(text, 0, ATTENDANCE_MAX);
@@ -256,9 +264,10 @@ export function PricingCalculatorView({
   onPickExample,
   cycle = "monthly",
   variant = "full",
-  fullTableHref = "/precos",
+  fullTableHref = "/precos#calculadora",
 }: PricingCalculatorViewProps) {
   const compact = variant === "compact";
+  const optionsId = `${useId()}-options`;
   const planLabel = PLANS[result.plan].label;
   const animatedTotal = useCountUp(result.totalMonthlyBrl);
   const totalText =
@@ -267,14 +276,16 @@ export function PricingCalculatorView({
   const perPerson = perPersonBrl(result, value.attendances);
   const perDay =
     perPerson === null && result.plan === "essencial" && cycle === "monthly"
-      ? Math.round(((PLANS.essencial.monthlyBrl * 12) / 365) * 10) / 10
+      ? planDisplay("essencial", cycle).perDayBrl
       : null;
   const overflowPlan = channelOverflowPlan(valueToInput(value, cycle), result);
   const hasUpgrade = result.upgradePlan !== null && result.upgradeAtAttendances !== null;
   const isEmpresa = result.plan === "empresa";
 
   const announcement = useSettled(
-    `Plano sugerido: ${planLabel}, ${money(result.totalMonthlyBrl)} por mês.`,
+    `Plano sugerido: ${planLabel}, ${money(result.totalMonthlyBrl)} por mês${
+      result.overageAttendances > 0 ? `, já com excedente estimado de ${money(result.overageBrl)}` : ""
+    }${cycle === "annual" ? ", no plano anual" : ""}.`,
     SETTLE_MS,
   );
 
@@ -325,10 +336,10 @@ export function PricingCalculatorView({
 
       {!compact && (
         <div>
-          <p id="calc-options-label" className="text-lg font-semibold text-text-primary">
+          <p id={optionsId} className="text-lg font-semibold text-text-primary">
             Precisa de algum destes?
           </p>
-          <div className="mt-3 flex flex-wrap gap-2" role="group" aria-labelledby="calc-options-label">
+          <div className="mt-3 flex flex-wrap gap-2" role="group" aria-labelledby={optionsId}>
             <Chip pressed={value.groups} onToggle={() => onChange({ groups: !value.groups })}>
               Grupos de WhatsApp
             </Chip>
@@ -343,7 +354,7 @@ export function PricingCalculatorView({
             </Chip>
           </div>
           {value.byo && (
-            <p className="mt-2 text-sm text-text-secondary">O excedente fica mais barato do Profissional em diante.</p>
+            <p className="mt-2 text-sm text-text-secondary">O excedente fica mais barato do {PLANS.profissional.label} em diante.</p>
           )}
           {value.multiUnit && (
             <div className="mt-4">
@@ -390,7 +401,7 @@ export function PricingCalculatorView({
         data-testid="calculator-result"
         className={cn(
           "rounded-card border border-brand-500 bg-surface-raised p-4 md:p-5",
-          !compact && "sticky bottom-0 z-10 shadow-elevated pb-[max(1rem,env(safe-area-inset-bottom))]",
+          !compact && "sticky bottom-0 z-10 shadow-elevated pb-[max(1rem,env(safe-area-inset-bottom))] md:static md:pb-5 md:shadow-none",
         )}
       >
         <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">
@@ -436,7 +447,7 @@ export function PricingCalculatorView({
         {compact ? (
           <p className="mt-3 text-center text-sm">
             <Link to={fullTableHref} className="inline-flex min-h-11 items-center text-brand-500 underline underline-offset-2 hover:text-brand-400">
-              Ver tabela completa
+              Ajustar mais opções
             </Link>
           </p>
         ) : (

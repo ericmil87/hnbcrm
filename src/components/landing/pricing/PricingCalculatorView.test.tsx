@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { renderWithRouter } from "@/test/render";
 import { calculatePricing } from "@/lib/pricing";
-import { valueToInput } from "@/lib/pricingConversation";
+import { attendancesToSlider, sliderToAttendances, valueToInput } from "@/lib/pricingConversation";
 import { PricingCalculator } from "./PricingCalculator";
 import { PricingCalculatorView, type CalculatorValue } from "./PricingCalculatorView";
 
@@ -120,19 +120,23 @@ describe("PricingCalculatorView", () => {
     expect(screen.queryByRole("button", { name: "Grupos de WhatsApp" })).toBeNull();
     expect(screen.queryByText("Ver a conta")).toBeNull();
     expect(screen.getByRole("link", { name: "Testar 30 dias grátis" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Ver tabela completa" }).getAttribute("href")).toBe("/precos");
+    expect(screen.getByRole("link", { name: "Ajustar mais opções" }).getAttribute("href")).toBe("/precos#calculadora");
   });
 
   it("slider e campo andam juntos (campo vazio vira dica sem inventar valor)", () => {
     renderWithRouter(<PricingCalculator cycle="monthly" />);
     expect(people().value).toBe("100");
-    fireEvent.change(slider(), { target: { value: "200" } });
+    fireEvent.change(slider(), { target: { value: String(attendancesToSlider(1000)) } });
     expect(people().value).toBe("1000");
     fireEvent.change(people(), { target: { value: "2500" } });
-    expect(slider().value).toBe("300");
+    expect(slider().value).toBe(String(attendancesToSlider(2500)));
+    // um passo à frente (o que a seta do teclado faz) muda o valor
+    fireEvent.change(slider(), { target: { value: String(Number(slider().value) + 1) } });
+    expect(people().value).toBe(String(sliderToAttendances(attendancesToSlider(2500) + 1)));
+    expect(people().value).not.toBe("2500");
     fireEvent.click(screen.getByRole("button", { name: "5.000 pessoas ou mais" }));
     expect(people().value).toBe("5000");
-    expect(slider().value).toBe("400");
+    expect(slider().value).toBe(String(attendancesToSlider(5000)));
     fireEvent.change(people(), { target: { value: "" } });
     expect(people().value).toBe("");
     fireEvent.blur(people());
@@ -140,17 +144,24 @@ describe("PricingCalculatorView", () => {
     expect(screen.getByText("Digite um número ou use a barra.")).toBeInTheDocument();
     fireEvent.change(people(), { target: { value: "300" } });
     expect(screen.queryByText("Digite um número ou use a barra.")).toBeNull();
-    expect(slider().value).toBe("100");
+    expect(slider().value).toBe(String(attendancesToSlider(300)));
   });
 
-  it("normaliza o campo ao sair (zeros à esquerda e teto)", () => {
+  it("normaliza o texto na hora quando diverge do valor do cálculo (zeros e teto)", () => {
     renderWithRouter(<PricingCalculator cycle="monthly" />);
     fireEvent.change(people(), { target: { value: "0450" } });
-    fireEvent.blur(people());
     expect(people().value).toBe("450");
     fireEvent.change(people(), { target: { value: "99999" } });
-    fireEvent.blur(people());
     expect(people().value).toBe("20000");
+  });
+
+  it("anúncio inclui excedente estimado e o ciclo anual", () => {
+    const value = { ...base, attendances: 400 };
+    const result = calculatePricing(valueToInput(value, "annual"));
+    expect(result.overageAttendances).toBeGreaterThan(0);
+    renderWithRouter(<PricingCalculatorView value={value} result={result} cycle="annual" onChange={() => {}} />);
+    expect(announced()).toMatch(/já com excedente estimado de R\$/);
+    expect(announced()).toContain("no plano anual");
   });
 });
 
