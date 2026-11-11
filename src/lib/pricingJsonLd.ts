@@ -1,6 +1,30 @@
 /** JSON-LD (schema.org Product + Offer) da página de preços, gerado do catálogo. */
 import { PLAN_KEYS, PLANS } from "../../convex/lib/plans";
 
+/** JSON-LD (schema.org SoftwareApplication) da landing: ofertas reais, nunca preço digitado. */
+export function buildLandingJsonLd(siteUrl: string) {
+  const offers = buildPricingJsonLd(siteUrl).offers;
+  return {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "HNBCRM",
+    applicationCategory: "BusinessApplication",
+    operatingSystem: "Web",
+    url: siteUrl,
+    inLanguage: "pt-BR",
+    description:
+      "CRM com atendente de IA no WhatsApp: funil de vendas, conversas, tarefas, equipe com usuários ilimitados e central de atendimento opcional.",
+    offers: offers.map((o) => ({
+      "@type": o["@type"],
+      name: o.name,
+      price: o.price,
+      priceCurrency: o.priceCurrency,
+      url: o.url,
+      availability: o.availability,
+    })),
+  };
+}
+
 export function buildPricingJsonLd(siteUrl: string) {
   return {
     "@context": "https://schema.org",

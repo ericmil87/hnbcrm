@@ -4,10 +4,11 @@ import { toast } from "sonner";
 import { ConvexError } from "convex/values";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ForgotPasswordForm } from "@/components/auth/ForgotPasswordForm";
+import type { AuthFlow } from "@/lib/authEntry";
 
-export function SignInForm() {
+export function SignInForm({ initialFlow = "signIn" }: { initialFlow?: AuthFlow }) {
   const { signIn } = useAuthActions();
-  const [flow, setFlow] = useState<"signIn" | "signUp">("signIn");
+  const [flow, setFlow] = useState<AuthFlow>(initialFlow);
   const [submitting, setSubmitting] = useState(false);
   const [email, setEmail] = useState("");
   const [showForgotPassword, setShowForgotPassword] = useState(false);

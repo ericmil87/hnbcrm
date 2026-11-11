@@ -14,7 +14,7 @@ export function SEO({
   title = 'HNBCRM — Humans & Bots CRM',
   description = 'CRM multi-tenancy com colaboração humano-IA. Gerencie leads, pipeline, contatos e conversas com agentes de IA integrados.',
   keywords = 'crm, ai, automation, leads, pipeline, multi-tenant, webhook, api',
-  ogImage = '/orange_icon_logo_transparent_bg_full-700x700.png',
+  ogImage = '/icon_logo_white_bg_full-700x700.png',
   ogType = 'website',
   canonical,
   noindex = false,
