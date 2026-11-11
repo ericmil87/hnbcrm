@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "convex/react";
 import { SectionCard } from "@/components/ui/SectionCard";
 import {
@@ -13,6 +14,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { ConversationBehaviorForm } from "./ConversationBehaviorForm";
 import { FunnelRulesForm } from "./FunnelRulesForm";
 import { AttendantPanelFrame, SaveBar, usePanelSave, type ReadyProfileCtx } from "./AttendantPanelFrame";
+import { VoiceReplyCard } from "./VoiceReplyCard";
 import { useFormDraft } from "./useAttendantProfile";
 
 function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: Id<"organizations"> }) {
@@ -30,12 +32,14 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
     | { name: string; key: string }[]
     | undefined;
 
+  const [voiceDirty, setVoiceDirty] = useState(false);
   const { dirty, saving, onSave, onDiscard, guardDialog } = usePanelSave(
     [
       { dirty: behavior.dirty, errors: behaviorErr, patch: () => behaviorToPatch(behavior.value), reset: behavior.reset },
       { dirty: funnel.dirty, errors: funnelErr, patch: () => pipelineToPatch(funnel.value), reset: funnel.reset },
     ],
     ctx.save,
+    voiceDirty,
   );
 
   return (
@@ -60,6 +64,7 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
           options={{ boards: boards ?? [], stages: stages ?? [], leadFields }}
         />
       </SectionCard>
+      <VoiceReplyCard organizationId={organizationId} canManage={ctx.canManage} onDirtyChange={setVoiceDirty} />
       {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>
