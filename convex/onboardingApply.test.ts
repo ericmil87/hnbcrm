@@ -620,6 +620,39 @@ describe("aplicação", () => {
     expect((await snapshot(t, s.a.orgId)).org.settings.aiConfig?.voiceReplyEnabled).toBe(true);
   });
 
+  test("mesmo rascunho reaplicado depois do aceite de IA completa atendente e recursos", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const { sessionId } = await openSession(t, s);
+    const first = await apply(t, s, sessionId);
+    expect(first.attendant).toBe("pending_consent");
+    expect(first.pendingConsent.length).toBeGreaterThan(0);
+    // Sem aceite, reaplicar o mesmo hash não faz nada.
+    expect((await apply(t, s, sessionId)).alreadyApplied).toBe(true);
+
+    // A pessoa dá o aceite pela porta real.
+    await as(t, s.adminA.userId).mutation(api.aiSettings.setAiEnabled, {
+      organizationId: s.a.orgId,
+      enabled: true,
+      lgpdAck: true,
+    });
+    const second = await apply(t, s, sessionId);
+    expect(second.alreadyApplied).toBe(false);
+    expect(second.attendant).toBe("created");
+    expect(second.features.vision).toBe("applied");
+    expect(second.features.voice).toBe("applied");
+    expect(second.pendingConsent).toEqual([]);
+    const snap = await snapshot(t, s.a.orgId);
+    expect(snap.ai).toHaveLength(1);
+    expect(snap.boards).toHaveLength(1);
+    expect(snap.stages).toHaveLength(4);
+    expect(snap.fields).toHaveLength(2);
+    expect(snap.quickReplies).toHaveLength(1);
+    expect(snap.org.settings.aiConfig?.visionEnabled).toBe(true);
+    // Sem pendência, o terceiro clique volta a ser nada.
+    expect((await apply(t, s, sessionId)).alreadyApplied).toBe(true);
+  });
+
   test("hash: revisado diferente do gravado é recusado; documento adulterado também", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

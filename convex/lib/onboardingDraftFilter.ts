@@ -325,7 +325,9 @@ export function scanDraft(
     }
     const out = flag(item, r);
     delete out.verifiedInSource;
-    if (verifiedNow || (!isAi && previousItem?.verifiedInSource === true)) out.verifiedInSource = true;
+    // Nos dois modos: a conferência foi feita pelo servidor sobre o MESMO texto
+    // e a mesma origem (quem chama só passa `verifiedInSource` nesse caso).
+    if (verifiedNow || previousItem?.verifiedInSource === true) out.verifiedInSource = true;
     const wanted = isAi ? undefined : item.release;
     delete out.release;
     if (out.suspicious && wanted) {
@@ -366,14 +368,32 @@ export function scanDraft(
       )
     : undefined;
 
-  const kKey = (k: OnboardingDraft["knowledge"][number]) => `${k.origin.kind}|${k.origin.reference ?? ""}|${k.text}`;
-  const prevKnowledge = new Map((prev?.knowledge ?? []).map((k) => [kKey(k), k]));
+  // Item anterior casado pelo TEXTO, ignorando a origem: trocar só a origem
+  // (ex.: de "site" para "usuario") não limpa uma marca nem uma liberação. A
+  // verificação na fonte, essa sim, só é herdada com texto E origem iguais.
+  type KnowledgeItem = OnboardingDraft["knowledge"][number];
+  const sameOrigin = (a: KnowledgeItem, b: KnowledgeItem) =>
+    a.origin.kind === b.origin.kind && (a.origin.reference ?? "") === (b.origin.reference ?? "");
+  const prevByText = new Map<string, KnowledgeItem[]>();
+  for (const k of prev?.knowledge ?? []) prevByText.set(k.text, [...(prevByText.get(k.text) ?? []), k]);
+  const previousFor = (k: KnowledgeItem): Flagged | undefined => {
+    const list = prevByText.get(k.text);
+    if (!list || list.length === 0) return undefined;
+    const base = list.find((p) => p.suspicious) ?? list.find((p) => sameOrigin(p, k)) ?? list[0];
+    const verified = list.some((p) => sameOrigin(p, k) && p.verifiedInSource === true);
+    return {
+      suspicious: base.suspicious,
+      ...(base.suspicionReason ? { suspicionReason: base.suspicionReason } : {}),
+      ...(base.release ? { release: base.release } : {}),
+      ...(verified ? { verifiedInSource: true } : {}),
+    };
+  };
   const knowledge = draft.knowledge.map((k, i) => {
-    const previousItem = prevKnowledge.get(kKey(k));
+    const previousItem = previousFor(k);
     let sourceText = k.origin.reference ? sources.get(cleanDraftText(k.origin.reference)) : undefined;
-    // Já conferido na fonte numa gravação anterior e inalterado: o próprio
-    // texto conta como fonte (a pessoa regrava sem reenviar o material).
-    if (!isAi && sourceText === undefined && previousItem?.verifiedInSource) sourceText = k.text;
+    // Já conferido na fonte numa gravação anterior, com texto e origem iguais:
+    // o próprio texto conta como fonte (regravação sem reenviar o material).
+    if (sourceText === undefined && previousItem?.verifiedInSource) sourceText = k.text;
     const result = scanDraftText(k.text, { originKind: k.origin.kind, sourceText });
     const offSource = result.codes.some((c) => c === "url_fora_da_origem" || c === "telefone_fora_da_origem");
     const verifiedNow = isAi && sourceText !== undefined && !offSource;

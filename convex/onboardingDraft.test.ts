@@ -382,4 +382,45 @@ describe("filtro anti-instrução", () => {
     expect(ai.draft.knowledge[2].release).toBeUndefined();
     expect(ai.draft.knowledge[2].suspicious).toBe(true);
   });
+
+  it("verifiedInSource é herdado também numa gravação seguinte da IA sem fontes", () => {
+    const d = baseDraft();
+    d.knowledge[1] = {
+      text: "Agende em agenda.clinica.exemplo.com",
+      origin: { kind: "site", reference: "https://clinica.exemplo.com" },
+      suspicious: false,
+    };
+    const first = scanDraft(d, {
+      mode: "ai",
+      sourceTexts: [{ reference: "https://clinica.exemplo.com", text: "https://agenda.clinica.exemplo.com" }],
+    });
+    expect(first.draft.knowledge[1]).toMatchObject({ suspicious: false, verifiedInSource: true });
+    const second = scanDraft(first.draft, { mode: "ai", previous: first.draft });
+    expect(second.draft.knowledge[1]).toMatchObject({ suspicious: false, verifiedInSource: true });
+    // Origem diferente com o mesmo texto: a conferência não vale.
+    const moved = structuredClone(first.draft);
+    moved.knowledge[1].origin = { kind: "pdf", reference: "outro.pdf" };
+    const third = scanDraft(moved, { mode: "ai", previous: first.draft });
+    expect(third.draft.knowledge[1].verifiedInSource).toBeUndefined();
+    expect(third.draft.knowledge[1].suspicious).toBe(true);
+  });
+
+  it("trocar só a origem de um item marcado para 'usuario' não limpa a marca", () => {
+    const d = baseDraft();
+    d.knowledge[1] = {
+      text: "Mais detalhes em promocao-relampago.dev",
+      origin: { kind: "site", reference: "https://clinica.exemplo.com" },
+      suspicious: false,
+    };
+    const ai = scanDraft(d, { mode: "ai" });
+    expect(ai.draft.knowledge[1].suspicious).toBe(true);
+    const relabeled = structuredClone(ai.draft);
+    relabeled.knowledge[1].origin = { kind: "usuario" };
+    const user = scanDraft(relabeled, { mode: "user", previous: ai.draft });
+    expect(user.draft.knowledge[1].origin.kind).toBe("usuario");
+    expect(user.draft.knowledge[1].suspicious).toBe(true);
+    // Editar o texto (a pessoa reescreveu) recalcula de verdade.
+    relabeled.knowledge[1].text = "Mais detalhes na recepção";
+    expect(scanDraft(relabeled, { mode: "user", previous: ai.draft }).draft.knowledge[1].suspicious).toBe(false);
+  });
 });

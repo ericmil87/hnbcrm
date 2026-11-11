@@ -296,7 +296,12 @@ export async function applyOnboardingDraftCore(
     business: !isApplicable(draft.business),
   };
 
-  if (session.appliedDraftHash === hash) {
+  // Mesmo rascunho já aplicado: nada a fazer, SALVO se a última aplicação
+  // deixou algo pendente de aceite e a IA agora está ativa (o aceite veio
+  // depois pela porta própria). Aí segue o fluxo normal, que é idempotente.
+  const hadPending =
+    (session.appliedPendingConsent?.length ?? 0) > 0 || session.appliedAttendantPending === true;
+  if (session.appliedDraftHash === hash && (!hadPending || !orgAiActive(org))) {
     return {
       alreadyApplied: true,
       draftHash: hash,
@@ -550,6 +555,8 @@ export async function applyOnboardingDraftCore(
     appliedDraftHash: hash,
     appliedBy: member._id,
     ...(createdAttendantId ? { attendantId: createdAttendantId } : {}),
+    appliedPendingConsent: pendingConsent,
+    appliedAttendantPending: attendant === "pending_consent",
     updatedAt: now,
   });
   const aiFeaturesTurnedOn = FEATURE_KEYS.filter((k) => features[k] === "applied");

@@ -3810,6 +3810,20 @@ const applicationTables = {
     // regerados ao reaplicar. Atendente pré-existente nunca é sobrescrito sem
     // `overwriteExistingAttendant` explícito no clique.
     attendantId: v.optional(v.id("teamMembers")),
+    // Pendências de aceite da última aplicação: com elas, reaplicar o MESMO
+    // rascunho depois do aceite de IA completa o que ficou de fora.
+    appliedPendingConsent: v.optional(
+      v.array(
+        v.union(
+          v.literal("vision"),
+          v.literal("transcription"),
+          v.literal("dateTime"),
+          v.literal("translation"),
+          v.literal("voice"),
+        ),
+      ),
+    ),
+    appliedAttendantPending: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
