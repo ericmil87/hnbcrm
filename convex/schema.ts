@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 import { uiThemeValidator } from "./lib/uiTheme";
+import { onboardingDraftValidator } from "./lib/onboardingDraft";
 
 // Shared saved-view filters validator — single source of truth, reused by
 // convex/savedViews.ts arg validators (never duplicate this shape inline).
@@ -272,6 +273,13 @@ const aiConfigValidator = v.object({
   // dentro de um grupo alcança gente que nunca falou com a empresa. A F1 só
   // declara o campo; quem o lê é a F4.
   groupAgentEnabled: v.optional(v.boolean()),
+  // Resposta em áudio (onboarding v2, seção 5). DEFAULT FALSE como
+  // `visionEnabled`: ausente = desligada (orgs existentes não mudam, sem
+  // migração). Só o campo: quem lê é a porta de TTS (outro pacote). Ligada pelo
+  // pacote recomendado do onboarding SÓ com a IA ativa e o aceite LGPD.
+  voiceReplyEnabled: v.optional(v.boolean()),
+  // Voz escolhida (id do provedor de TTS, decidido no spike D6). Ausente = padrão da porta.
+  voiceReplyVoice: v.optional(v.string()),
   // Aceite PRÓPRIO do autopilot em GRUPO (review de segurança nº 5). O
   // `autopilotEarlyAck` do atendente 1 a 1 foi assinado para outro risco:
   // responder sozinho a UMA pessoa que escreveu para a empresa. Publicar sozinho
@@ -3766,6 +3774,38 @@ const applicationTables = {
     encryptedValue: v.string(),
     last4: v.string(),
     createdBy: v.id("teamMembers"),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Onboarding conversacional v2 (P2.1): sessão por org com o Rascunho de
+  // Operação. Gravar o rascunho NUNCA aplica configuração: a única escrita é
+  // `onboardingSessions.applyOnboardingDraft` (clique do usuário). Mensagens da
+  // conversa NÃO moram aqui (doc limitado a 1 MiB e regravado a cada turno):
+  // só `summary` (resumo curto) e `messageCount`; o histórico completo, se o
+  // P2.3 precisar, vai para uma tabela filha com `sessionId`.
+  onboardingSessions: defineTable({
+    organizationId: v.id("organizations"),
+    createdBy: v.id("teamMembers"), // membro humano que abriu a sessão
+    stage: v.union(
+      v.literal("interview"),
+      v.literal("materials"),
+      v.literal("draft"),
+      v.literal("applied"),
+      v.literal("test"),
+      v.literal("next_steps"),
+    ),
+    draft: v.optional(onboardingDraftValidator), // validado + filtrado no servidor
+    draftHash: v.optional(v.string()), // sha256 do rascunho normalizado
+    draftVersion: v.number(), // +1 a cada gravação
+    draftUpdatedBy: v.optional(v.union(v.literal("user"), v.literal("ai"))),
+    summary: v.optional(v.string()), // resumo da conversa (≤ 2.000)
+    messageCount: v.number(),
+    // Gasto de IA da sessão em micro-US$ (mesma unidade de `aiUsageMonthly.costUsdMicros`).
+    spentUsdMicros: v.number(),
+    appliedAt: v.optional(v.number()),
+    appliedDraftHash: v.optional(v.string()),
+    appliedBy: v.optional(v.id("teamMembers")),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
