@@ -71,7 +71,7 @@ describe("extractHtml — injeção oculta", () => {
     expect(r.text).toContain("Agendar horário");
     expect(r.text).not.toMatch(PAYLOAD);
     expect(r.text).not.toContain("Contato oculto");
-    expect(r.text).not.toMatch(/[​-‏‪-‮﻿]/);
+    expect(r.text).not.toMatch(/[\u200B-\u200F\u202A-\u202E\uFEFF]/);
     expect(r.text).not.toMatch(/[\udb40]/);
   });
 
@@ -203,7 +203,7 @@ describe("helpers", () => {
   });
 
   it("cleanUntrustedText: NFKC, invisíveis, tags e espaços", () => {
-    const r = cleanUntrustedText(`Ｐｒｅçｏ${ZW}${ZWJ}  R$ 90${tags("hi")}\r\n\r\n\r\n\r\nfim`);
+    const r = cleanUntrustedText(`Ｐｒｅçｏ${ZW}${ZWJ}  R$\u00A090${tags("hi")}\r\n\r\n\r\n\r\nfim`);
     expect(r.text).toBe("Preço R$ 90\n\nfim");
     expect(r.stats.tagChars).toBe(2);
     expect(r.stats.invisibleChars).toBe(2);
@@ -213,5 +213,84 @@ describe("helpers", () => {
     const s = `ab${String.fromCodePoint(0x1f600)}`;
     expect(truncateText(s, 3)).toEqual({ text: "ab", truncated: true });
     expect(truncateText("abc", 3)).toEqual({ text: "abc", truncated: false });
+  });
+});
+
+describe("revisão P2.2 — barra de autofechamento (B2)", () => {
+  it.each([
+    ['<p>ok</p><div style="display:none"/>X</div><p>fim</p>', "ok\n\nfim"],
+    ["<p>ok</p><script/>X</script><p>fim</p>", "ok\n\nfim"],
+    ["<style/>X</style><p>fim</p>", "fim"],
+    ["<noscript/>X</noscript><p>fim</p>", "fim"],
+    ["<template/>X</template><p>fim</p>", "fim"],
+    ["<div hidden/>X</div><p>fim</p>", "fim"],
+    ['<span aria-hidden="true"/>X</span>fim', "fim"],
+  ])("%s → sem X", (html, expected) => {
+    const r = extractHtml(html);
+    expect(r.text).not.toContain("X");
+    expect(r.text).toBe(expected);
+  });
+
+  it("void com barra continua void", () => {
+    expect(extractHtml("a<br/>b<img src=x />c").text).toBe("a\nbc");
+  });
+});
+
+describe("revisão P2.2 — desempenho com entrada hostil (B3)", () => {
+  const TWO_MB = 2 * 1024 * 1024;
+  const fill = (unit: string) => unit.repeat(Math.ceil(TWO_MB / unit.length)).slice(0, TWO_MB);
+  it.each([
+    ["CSS sem chaves", `<style>${fill("a")}</style>`],
+    ["CSS só com chaves abertas", `<style>${fill("{")}</style>`],
+    ["CSS só com chaves fechadas", `<style>${fill("}")}</style>`],
+    ["CSS {{{ ... }", `<style>${fill("{a")}}</style>`],
+    ["CSS comentários sem fim", `<style>${fill("/*")}</style>`],
+    ["muitas regras escondidas", `<style>${fill(".a{display:none}")}</style>`],
+    ["<style> sem fechar", fill("<style>")],
+    ["aspas sem fechar", fill('<a x="')],
+    ["<script> sem fechar", fill("<script>")],
+    ["divs escondidas aninhadas", fill("<div hidden>")],
+    ["comentários sem fim", fill("<!--")],
+    ["tags de fechamento soltas", fill("</a")],
+    ["estilo inline gigante", `<p style="font-size:${fill("1")}px">x</p>`],
+    ["entidades", fill("&amp;&#x41;&eacute;")],
+    ["texto com < solto", fill("a < b ")],
+  ])("%s: 2 MB em menos de 1 s", (_label, html) => {
+    const t0 = performance.now();
+    extractHtml(html, { baseUrl: "https://salao.com.br/" });
+    expect(performance.now() - t0).toBeLessThan(1000);
+  });
+
+  it("CSS somado acima de 256 KB é ignorado além do teto", () => {
+    const pad = `/* ${"x".repeat(300 * 1024)} */`;
+    const r = extractHtml(`<style>${pad}</style><style>.z{display:none}</style><p class="z">visível</p>`);
+    expect(r.text).toBe("visível");
+  });
+
+  it("regra dentro de @media é aplicada", () => {
+    const r = extractHtml('<style>@media screen { .esc { display:none } } .ok{color:red}</style><p class="esc">X</p><p class="ok">fim</p>');
+    expect(r.text).toBe("fim");
+  });
+
+  it("limitação documentada: seletor por id/atributo não é avaliado", () => {
+    const r = extractHtml('<style>#x{display:none} [data-y]{display:none}</style><p id="x">A</p><p data-y="1">B</p>');
+    expect(r.text).toBe("A\n\nB");
+  });
+});
+
+describe("revisão P2.2 — invisíveis extras (D2)", () => {
+  const VS = (n: number) => String.fromCodePoint(n);
+  it("seletores de variação, ALM e formatação musical são removidos e contados", () => {
+    const smuggled = ["a", VS(0xe0100), VS(0xe0101), VS(0xe01ef), VS(0xfe0f), VS(0xfe00), VS(0x061c), VS(0x1d173), VS(0x1d17a), "b"].join("");
+    const r = cleanUntrustedText(smuggled);
+    expect(r.text).toBe("ab");
+    expect(r.stats.invisibleChars).toBe(8);
+    expect(r.stats.tagChars).toBe(0);
+  });
+
+  it("vale também no extrator de HTML", () => {
+    const r = extractHtml(`<p>Pre${VS(0xe0100)}${VS(0xe0101)}ço${VS(0xfe0f)}</p>`);
+    expect(r.text).toBe("Preço");
+    expect(r.removed.invisibleChars).toBe(3);
   });
 });

@@ -4,8 +4,29 @@
  * sintéticos gerados no próprio teste.
  */
 import { describe, expect, it } from "vitest";
-import { extractPdfText, PdfExtractError, preflightPdf, PDF_LIMITS } from "./pdfExtract";
-import { bombPdf, encryptedPdf, scannedPdf, textPdf } from "./pdfTestFixtures.test-helper";
+import {
+  decodeAscii85,
+  decodeAsciiHex,
+  extractPdfText,
+  inflateLikePdfJs,
+  parseFilterChains,
+  PdfExtractError,
+  preflightPdf,
+  PDF_LIMITS,
+} from "./pdfExtract";
+import {
+  ascii85,
+  bombPdf,
+  encryptedPdf,
+  flateTextPdf,
+  pdfWithContentStream,
+  scannedPdf,
+  stream,
+  textPdf,
+  zlibBomb,
+  zlibBombCmf68,
+  zlibBombWithFakeEndstream,
+} from "./pdfTestFixtures.test-helper";
 
 async function codeOf(p: Promise<unknown>): Promise<string> {
   try {
@@ -108,8 +129,122 @@ describe("extractPdfText", () => {
     expect(r.pagesRead).toBeLessThan(10);
   });
 
-  it("prazo checado por página → TIMEOUT", async () => {
+  it("prazo checado por página → TIMEOUT (inline)", async () => {
     const pages = Array.from({ length: 30 }, (_, i) => [`Página ${i}`]);
-    expect(await codeOf(extractPdfText(new Uint8Array(textPdf(pages)), { timeoutMs: 0 }))).toBe("TIMEOUT");
+    expect(await codeOf(extractPdfText(new Uint8Array(textPdf(pages)), { timeoutMs: 0, isolation: "inline" }))).toBe("TIMEOUT");
+  });
+
+  it("PDF com conteúdo Flate (normal) continua sendo lido", async () => {
+    const r = await extractPdfText(new Uint8Array(flateTextPdf(PRICE_LINES)));
+    expect(r.scanned).toBe(false);
+    expect(r.text).toContain("Corte feminino R$ 90,00 60 min");
+  });
+});
+
+describe("worker_threads com terminate no prazo (D4)", () => {
+  it("o pdf.js roda no worker por padrão; inline continua disponível", async () => {
+    const bytes = new Uint8Array(textPdf([PRICE_LINES]));
+    const w = await extractPdfText(bytes);
+    expect(w.isolation).toBe("worker");
+    const i = await extractPdfText(bytes, { isolation: "inline" });
+    expect(i.isolation).toBe("inline");
+    expect(i.text).toBe(w.text);
+  });
+
+  it("prazo estourado no worker → TIMEOUT (thread terminada)", async () => {
+    const pages = Array.from({ length: 60 }, (_, k) => [`Página ${k}`]);
+    const t0 = Date.now();
+    expect(await codeOf(extractPdfText(new Uint8Array(textPdf(pages)), { timeoutMs: 5 }))).toBe("TIMEOUT");
+    expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  it("erros do pdf.js no worker mantêm o código tipado", async () => {
+    const pages = Array.from({ length: 301 }, () => ["x"]);
+    expect(await codeOf(extractPdfText(new Uint8Array(textPdf(pages, { shareContent: true }))))).toBe("TOO_MANY_PAGES");
+  });
+});
+
+describe("pré-varredura anti-bomba — contornos da revisão (B1)", () => {
+  const MB = 40; // > 16 MB por stream
+
+  it("(a) cabeçalho zlib com CMF 0x68 (aceito pelo pdf.js) → recusado", async () => {
+    const pdf = pdfWithContentStream(zlibBombCmf68(MB), "/Filter /FlateDecode");
+    expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("(b) cadeia [/ASCIIHexDecode /FlateDecode] → recusada", async () => {
+    const hex = Buffer.from(zlibBomb(MB).toString("hex") + ">", "latin1");
+    const pdf = pdfWithContentStream(hex, "/Filter [/ASCIIHexDecode /FlateDecode]");
+    expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("(b) cadeia [/A85 /Fl] (abreviada) → recusada", async () => {
+    const a85 = Buffer.from(ascii85(zlibBomb(MB)), "latin1");
+    const pdf = pdfWithContentStream(a85, "/Filter [/A85 /Fl]");
+    expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("(c) `endstream` literal cedo no dado não encurta a checagem (/Length direto)", async () => {
+    const data = zlibBombWithFakeEndstream(MB);
+    expect(data.indexOf("endstream")).toBeLessThan(40);
+    const pdf = pdfWithContentStream(data, "/Filter /FlateDecode");
+    expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("(c) /Length indireto não resolvível + `endstream` falso → checa até o fim do arquivo", async () => {
+    const data = zlibBombWithFakeEndstream(MB);
+    const pdf = pdfWithContentStream(data, "/Length 99 0 R /Filter /FlateDecode", [], false);
+    expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("/Filter indireto é resolvido", async () => {
+    const pdf = pdfWithContentStream(zlibBomb(MB), "/Filter 5 0 R", ["/FlateDecode"]);
+    expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("TOO_BIG_EXPANSION");
+  });
+
+  it("(d) soma acima de 48 MB em streams de 12 MB cada → recusada", () => {
+    const parts = [1, 2, 3, 4, 5].map(() => zlibBomb(12));
+    const extra = parts.map((z) => stream("/Filter /FlateDecode", z));
+    const pdf = new Uint8Array(textPdf([["Folheto"]], { extra }));
+    expect(() => preflightPdf(pdf, PDF_LIMITS)).toThrow(PdfExtractError);
+    const four = new Uint8Array(textPdf([["Folheto"]], { extra: extra.slice(0, 3) }));
+    expect(() => preflightPdf(four, PDF_LIMITS)).not.toThrow();
+  });
+
+  it.each([["/LZWDecode"], ["/RunLengthDecode"], ["/LZW"], ["/RL"], ["/Crypt"], ["/QualquerCoisa"], ["[/DCTDecode /FlateDecode]"]])(
+    "filtro %s → UNSUPPORTED_FILTER",
+    async (filter) => {
+      const pdf = pdfWithContentStream(Buffer.from("abc"), `/Filter ${filter}`);
+      expect(await codeOf(extractPdfText(new Uint8Array(pdf)))).toBe("UNSUPPORTED_FILTER");
+    }
+  );
+
+  it("cabeçalho zlib inválido para o pdf.js não é inflado (pdf.js também não expande)", () => {
+    const d = Buffer.from(zlibBomb(MB));
+    d[0] = 0x79; // método 9: pdf.js recusa
+    expect(inflateLikePdfJs(new Uint8Array(d), 1024)).toBeNull();
+  });
+});
+
+describe("decodificadores ASCII", () => {
+  it("ASCIIHex e ASCII85", () => {
+    expect(Buffer.from(decodeAsciiHex(Buffer.from("48 65 6C6c 6F>lixo"), 100)).toString()).toBe("Hello");
+    expect(Buffer.from(decodeAsciiHex(Buffer.from("486>"), 100))).toEqual(Buffer.from([0x48, 0x60]));
+    expect(Buffer.from(decodeAscii85(Buffer.from("87cURD]i,\"Ebo80~>"), 100)).toString()).toBe("Hello World!");
+    const zeros = Buffer.alloc(8);
+    expect(Buffer.from(decodeAscii85(Buffer.from(ascii85(zeros)), 100))).toEqual(zeros);
+    const sample = Buffer.from("Tabela de preços R$ 90,00", "latin1");
+    expect(Buffer.from(decodeAscii85(Buffer.from(ascii85(sample)), 100))).toEqual(sample);
+  });
+
+  it("teto vale também para o ASCII85 com 'z' (4 bytes por caractere)", () => {
+    expect(() => decodeAscii85(Buffer.from("z".repeat(1000) + "~>"), 100)).toThrow(PdfExtractError);
+  });
+
+  it("parseFilterChains lê nome, cadeia e abreviações", () => {
+    expect(parseFilterChains("<< /Length 5 /Filter /FlateDecode >>")).toEqual([["FlateDecode"]]);
+    expect(parseFilterChains("<< /Filter [ /AHx /Fl ] >>")).toEqual([["ASCIIHexDecode", "FlateDecode"]]);
+    expect(parseFilterChains("<< /Length 5 >>")).toEqual([]);
+    expect(parseFilterChains("<< /Filter 7 0 R >>")).toBeNull(); // sem o objeto 7
   });
 });

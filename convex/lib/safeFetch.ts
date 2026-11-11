@@ -264,12 +264,22 @@ function rawAuthorityHost(raw: string): string | null {
 const NUMERIC_LABEL = /^(0x[0-9a-f]*|[0-9]+)$/i;
 
 /**
- * Valida a URL (sem rede). `allowedPorts` padrão [443].
+ * Valida a URL (sem rede). Porta: 443, mais `allowedPorts` explícitas e,
+ * com `allowUnprivilegedPorts`, qualquer porta 1024–65535 (agenda externa:
+ * sites de clientes em `:8443`/`:3000`; o IP continua validado como público).
  * O parser WHATWG converte `2130706433`, `0x7f.1`, `0177.0.0.1` e `１２７.０.０.１`
  * em `127.0.0.1`: por isso o host CRU é comparado com o normalizado e qualquer
  * forma numérica não canônica é recusada (IP_FORMAT), mesmo que pública.
  */
-export function checkUrl(raw: string, opts: { allowedPorts?: number[] } = {}): UrlCheck {
+export type PortPolicy = { allowedPorts?: number[]; allowUnprivilegedPorts?: boolean };
+
+export function portAllowed(port: number, policy: PortPolicy = {}): boolean {
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return false;
+  if (port === 443 || (policy.allowedPorts ?? []).includes(port)) return true;
+  return policy.allowUnprivilegedPorts === true && port >= 1024;
+}
+
+export function checkUrl(raw: string, opts: PortPolicy = {}): UrlCheck {
   if (typeof raw !== "string" || !raw.trim() || raw.length > SAFE_FETCH_MAX_URL_LENGTH) {
     return { ok: false, code: "INVALID_URL" };
   }
@@ -286,9 +296,8 @@ export function checkUrl(raw: string, opts: { allowedPorts?: number[] } = {}): U
   if (rawHost === null) return { ok: false, code: "INVALID_URL" };
   if (rawHost.includes("%")) return { ok: false, code: "IP_FORMAT", reason: "percent-encoded host" };
 
-  const allowedPorts = opts.allowedPorts ?? [443];
   const port = url.port ? Number(url.port) : 443;
-  if (!allowedPorts.includes(port)) return { ok: false, code: "PORT" };
+  if (!portAllowed(port, opts)) return { ok: false, code: "PORT" };
 
   const hostname = url.hostname.toLowerCase();
   // IPv6 literal
@@ -395,6 +404,8 @@ export type SafeFetchOptions = {
   onOverflow?: "abort" | "truncate";
   maxRedirects?: number;
   allowedPorts?: number[];
+  /** Aceita também 1024–65535 (só a agenda externa usa). */
+  allowUnprivilegedPorts?: boolean;
   /** Cabeçalhos extras; vão SÓ para a origem inicial (redirect para outra origem os descarta). */
   headers?: Record<string, string>;
   accept?: string;
@@ -498,7 +509,10 @@ export async function safeFetchCore(
   let response: SafeFetchRawResponse | null = null;
   try {
     for (let hop = 0; ; hop++) {
-      const check = checkUrl(current, { allowedPorts: opts.allowedPorts });
+      const check = checkUrl(current, {
+        allowedPorts: opts.allowedPorts,
+        allowUnprivilegedPorts: opts.allowUnprivilegedPorts,
+      });
       if (!check.ok) return fail(check.code, { reason: check.reason });
       if (originalOrigin === null) originalOrigin = check.url.origin;
 

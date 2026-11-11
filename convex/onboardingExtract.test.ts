@@ -228,7 +228,7 @@ describe("internalFetchAndExtract — arquivo enviado", () => {
   test("texto puro e argumentos inválidos", async () => {
     const t = convexTest(schema, modules);
     const { organizationId } = await seed(t);
-    const id = await storeFile(t, organizationId, new TextEncoder().encode("Horário:​ 9h às 18h"), "text/plain");
+    const id = await storeFile(t, organizationId, new TextEncoder().encode("Horário:\u200B 9h às 18h"), "text/plain");
     const r = await t.action(internal.onboardingExtract.internalFetchAndExtract, { organizationId, kind: "auto", storageId: id });
     expect(r).toMatchObject({ ok: true, text: "Horário: 9h às 18h", source: { kind: "text" } });
     if (r.ok) expect(r.removed.invisibleChars).toBe(1);

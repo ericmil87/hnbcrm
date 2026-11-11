@@ -142,7 +142,9 @@ function parseDecls(style: string): Map<string, string> {
 }
 
 function lengthPx(value: string): number | null {
-  const m = /^(-?[0-9]*\.?[0-9]+)\s*(px|pt|em|rem|%|vw|vh|ex|ch|)?$/.exec(value.trim());
+  const v = value.trim();
+  if (v.length > 32) return null;
+  const m = /^(-?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))\s*(px|pt|em|rem|%|vw|vh|ex|ch|)?$/.exec(v);
   if (!m) return null;
   const n = Number(m[1]);
   switch (m[2]) {
@@ -183,7 +185,7 @@ function colorTransparent(value: string | undefined): boolean {
 
 /** Motivo pelo qual a declaração esconde o conteúdo, ou null. */
 export function styleHides(style: string): "hidden" | "tiny" | null {
-  const d = parseDecls(style);
+  const d = parseDecls(style.length > 4000 ? style.slice(0, 4000) : style);
   if (d.get("display") === "none") return "hidden";
   const vis = d.get("visibility");
   if (vis === "hidden" || vis === "collapse") return "hidden";
@@ -223,18 +225,63 @@ export function styleHides(style: string): "hidden" | "tiny" | null {
   return null;
 }
 
-/** Classes que o `<style>` da página esconde (seletor `.classe` simples). */
+/** Teto do CSS somado analisado por página (o resto é ignorado). */
+export const CSS_MAX_CHARS = 256 * 1024;
+
+function stripCssComments(css: string): string {
+  const parts: string[] = [];
+  let i = 0;
+  for (;;) {
+    const open = css.indexOf("/*", i);
+    if (open === -1) {
+      parts.push(css.slice(i));
+      break;
+    }
+    parts.push(css.slice(i, open));
+    const close = css.indexOf("*/", open + 2);
+    if (close === -1) break; // comentário sem fim: o resto é comentário
+    i = close + 2;
+  }
+  return parts.join("");
+}
+
+/**
+ * Classes que o `<style>` da página esconde. Só seletores `.classe` e
+ * `tag.classe` simples: seletor por id, atributo, descendente ou
+ * pseudo-classe NÃO é avaliado (limitação conhecida — o texto escondido assim
+ * passa; o leitor do P2.3 não tem tools e o filtro anti-instrução cobre o que
+ * persiste). Varredura linear por `indexOf` (sem regex com retrocesso).
+ */
 export function hiddenClassesFromCss(css: string): Map<string, "hidden" | "tiny"> {
   const out = new Map<string, "hidden" | "tiny">();
-  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
-  let m: RegExpExecArray | null;
-  while ((m = ruleRe.exec(noComments))) {
-    const reason = styleHides(m[2]);
+  const text = stripCssComments(css.length > CSS_MAX_CHARS ? css.slice(0, CSS_MAX_CHARS) : css);
+  // Cada regra = o "}" seguinte e o ÚLTIMO "{" antes dele (blocos @media
+  // aninhados caem no bloco interno). Só varreduras para frente: linear.
+  let i = 0;
+  while (i < text.length) {
+    const close = text.indexOf("}", i);
+    if (close === -1) break;
+    let open = text.indexOf("{", i);
+    if (open === -1) break; // sem mais regras
+    if (open > close) {
+      i = close + 1; // "}" sobrando
+      continue;
+    }
+    for (let next = text.indexOf("{", open + 1); next !== -1 && next < close; next = text.indexOf("{", next + 1)) {
+      open = next;
+    }
+    const selRaw = text.slice(i, open);
+    const cut = Math.max(selRaw.lastIndexOf("{"), selRaw.lastIndexOf("}"), selRaw.lastIndexOf(";"));
+    const selector = selRaw.slice(cut + 1);
+    const body = text.slice(open + 1, close);
+    i = close + 1;
+    if (body.length > 2000) continue;
+    const reason = styleHides(body);
     if (!reason) continue;
-    for (const sel of m[1].split(",")) {
-      const s = sel.trim();
-      const cm = /^(?:[a-z0-9]*)\.([a-z0-9_-]+)$/i.exec(s);
+    for (const sel of selector.split(",")) {
+      const t = sel.trim();
+      if (t.length > 200) continue;
+      const cm = /^[a-z0-9]*\.([a-z0-9_-]+)$/i.exec(t);
       if (cm) out.set(cm[1].toLowerCase(), reason);
     }
   }
@@ -326,8 +373,11 @@ function* tokenize(html: string): Generator<Token> {
     const inner = html.slice(i + 1, end);
     const nm = /^([a-zA-Z][a-zA-Z0-9:-]*)/.exec(inner)!;
     const name = nm[1].toLowerCase();
-    const selfClosing = inner.endsWith("/");
-    const attrs = parseAttrs(inner.slice(nm[1].length, selfClosing ? -1 : undefined));
+    // "/>" só fecha elemento VOID (como no HTML): `<div hidden/>x</div>` e
+    // `<script/>x</script>` continuam abertos até a tag de fechamento.
+    const slash = inner.endsWith("/");
+    const selfClosing = slash && VOID.has(name);
+    const attrs = parseAttrs(inner.slice(nm[1].length, slash ? -1 : undefined));
     i = end + 1;
     if (RAW_TEXT.has(name) && !selfClosing) {
       const closeRe = new RegExp(`</${name}[\\s/>]`, "ig");
@@ -406,10 +456,13 @@ export function extractHtml(
 
   // 1ª passada: classes escondidas pelo CSS da própria página.
   const cssHidden = new Map<string, "hidden" | "tiny">();
-  const styleRe = /<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi;
-  let sm: RegExpExecArray | null;
-  while ((sm = styleRe.exec(html))) {
-    for (const [k, r] of hiddenClassesFromCss(sm[1])) cssHidden.set(k, r);
+  let cssBudget = CSS_MAX_CHARS;
+  for (const tok of tokenize(html)) {
+    if (cssBudget <= 0) break;
+    if (tok.t !== "start" || tok.name !== "style" || !tok.raw) continue;
+    const css = tok.raw.slice(0, cssBudget);
+    cssBudget -= css.length;
+    for (const [k, r] of hiddenClassesFromCss(css)) cssHidden.set(k, r);
   }
 
   const out: string[] = [];

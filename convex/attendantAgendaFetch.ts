@@ -19,6 +19,7 @@ import {
   AGENDA_FETCH_TIMEOUT_MS,
   AGENDA_IMAGE_MAX_BYTES,
   AGENDA_IMAGE_TIMEOUT_MS,
+  AGENDA_PORT_POLICY,
 } from "./lib/externalAgenda";
 
 /** Teto do JSON da agenda (antes não havia; 20 eventos cabem com folga). */
@@ -60,6 +61,7 @@ export const internalFetchAgendaJson = internalAction({
       accept: "application/json",
       maxBytes: AGENDA_JSON_MAX_BYTES,
       timeoutMs: AGENDA_FETCH_TIMEOUT_MS,
+      ...AGENDA_PORT_POLICY,
       headers,
     });
     if (!res.ok) {

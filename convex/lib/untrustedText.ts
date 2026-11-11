@@ -12,8 +12,12 @@
 // Hangul fillers, Mongolian vowel sep, ZW*, LRM/RLM, separadores de linha/
 // parágrafo (tratados à parte), bidi embeddings/overrides/isolates, word
 // joiner e invisíveis matemáticos, BOM, anotações interlineares.
+// Também: seletores de variação (U+FE00–FE0F e U+E0100–E01EF, usados para
+// contrabandear bytes invisíveis), Arabic Letter Mark (U+061C) e os
+// controles de formatação musical U+1D173–1D17A. Efeito colateral aceito:
+// emoji perde o seletor VS16 (o coração vermelho vira o de texto).
 const INVISIBLE_RE =
-  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFEFF\uFFA0\uFFF9-\uFFFB]|\uDB40[\uDC00-\uDC7F]/g;
+  /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u00AD\u034F\u061C\u115F\u1160\u17B4\u17B5\u180B-\u180F\u200B-\u200F\u202A-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB]|\uDB40[\uDC00-\uDC7F\uDD00-\uDDEF]|\uD834[\uDD73-\uDD7A]/g;
 
 const TAG_CHAR_RE = /\uDB40[\uDC00-\uDC7F]/g;
 

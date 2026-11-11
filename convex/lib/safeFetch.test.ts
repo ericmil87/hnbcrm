@@ -6,6 +6,7 @@ import {
   decodeBody,
   parseIPv6,
   pickValidatedAddress,
+  portAllowed,
   ResolvedAddress,
   SafeFetchConnectRequest,
   SafeFetchDeps,
@@ -464,5 +465,33 @@ describe("safeFetchCore", () => {
       expect(r.ok).toBe(false);
     }
     expect(resolved).toBe(0);
+  });
+});
+
+describe("política de porta (agenda: 443 ou ≥ 1024)", () => {
+  it("portAllowed", () => {
+    expect(portAllowed(443)).toBe(true);
+    expect(portAllowed(8443)).toBe(false);
+    expect(portAllowed(8443, { allowedPorts: [8443] })).toBe(true);
+    expect(portAllowed(8443, { allowUnprivilegedPorts: true })).toBe(true);
+    expect(portAllowed(1024, { allowUnprivilegedPorts: true })).toBe(true);
+    expect(portAllowed(1023, { allowUnprivilegedPorts: true })).toBe(false);
+    expect(portAllowed(80, { allowUnprivilegedPorts: true })).toBe(false);
+    expect(portAllowed(22, { allowUnprivilegedPorts: true })).toBe(false);
+    expect(portAllowed(65536, { allowUnprivilegedPorts: true })).toBe(false);
+  });
+
+  it("checkUrl e o núcleo seguem a política (redirect também)", async () => {
+    expect(checkUrl("https://a.com:3000/", { allowUnprivilegedPorts: true }).ok).toBe(true);
+    expect(checkUrl("https://a.com:3000/").ok).toBe(false);
+    const net = fakeNet({
+      dns: { "a.com": ["93.184.216.34"] },
+      routes: {
+        "https://a.com:8443/": { status: 302, headers: { location: "https://a.com:25/" } },
+      },
+    });
+    const r = await safeFetchCore("https://a.com:8443/", { ...HTML_OPTS, allowUnprivilegedPorts: true }, net.deps);
+    expect(r).toMatchObject({ ok: false, code: "PORT" });
+    expect(net.connects).toHaveLength(1);
   });
 });

@@ -126,8 +126,9 @@ function isPdfMagic(bytes: Uint8Array): boolean {
 function decideKind(requested: "auto" | ExtractKind, mime: string, bytes: Uint8Array): ExtractKind | null {
   if (requested === "pdf") return isPdfMagic(bytes) ? "pdf" : null;
   if (requested !== "auto") return requested;
-  if (isPdfMagic(bytes) || mime === "application/pdf") return "pdf";
+  // MIME HTML declarado vence (uma página que cita "%PDF-" no começo continua HTML).
   if (HTML_TYPES.includes(mime)) return "html";
+  if (isPdfMagic(bytes) || mime === "application/pdf") return "pdf";
   if (mime.startsWith("text/")) return "text";
   return null;
 }

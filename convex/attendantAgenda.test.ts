@@ -11,13 +11,16 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { setSafeFetchDepsForTests, useFetchBackedSafeFetchForTests } from "./lib/safeFetchNode";
+import { setSafeFetchDepsForTests } from "./lib/safeFetchNode";
+import { useFetchBackedSafeFetchForTests } from "./lib/safeFetchNode.test-helper";
 import { encryptSecret } from "./lib/secretCrypto";
 import { runConsultarAgenda } from "./attendantAgenda";
 import {
+  agendaUrlProblem,
   availableCategories,
   filterByCategory,
   isAllowedImageUrl,
+  isValidAgendaUrl,
   normalizeAgendaEvents,
 } from "./lib/externalAgenda";
 
@@ -571,6 +574,89 @@ describe("safeFetch na agenda externa (P2.2)", () => {
     expect(outbound).toHaveLength(1);
     expect(outbound[0].contentType).toBe("text");
     expect(fetchMock.mock.calls.some((c) => String(c[0]).startsWith("https://cdn.example.com/"))).toBe(false);
+  });
+});
+
+describe("agenda externa: portas e auditoria (revisão P2.2, D1)", () => {
+  test("agendaUrlProblem: 443 e portas ≥ 1024 passam; < 1024, http e privados recusam com mensagem clara", () => {
+    expect(agendaUrlProblem("https://agenda.example.com/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:443/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:8443/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:3000/api")).toBeNull();
+    expect(agendaUrlProblem("https://agenda.example.com:80/api")).toMatch(/Porta não permitida/);
+    expect(agendaUrlProblem("https://agenda.example.com:22/api")).toMatch(/1024/);
+    expect(agendaUrlProblem("http://agenda.example.com/api")).toMatch(/https:\/\//);
+    expect(agendaUrlProblem("https://192.168.0.10/api")).toMatch(/rede interna/);
+    expect(agendaUrlProblem("https://localhost:8443/api")).toMatch(/não é público/);
+    expect(isValidAgendaUrl("https://2130706433/api")).toBe(false);
+  });
+
+  test("salvar com porta < 1024 é recusado na hora", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: false });
+    await expect(
+      t.action(internal.aiSettings.internalSetExternalAgenda, {
+        organizationId: seed.organizationId,
+        agentMemberId: seed.agentId,
+        enabled: true,
+        url: "https://site.example.com:81/agenda",
+        dryRun: false,
+      })
+    ).rejects.toThrow(/Porta não permitida/);
+  });
+
+  test("fetch da agenda aceita porta ≥ 1024", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: false });
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(AGENDA_JSON), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await t.action(internal.attendantAgendaFetch.internalFetchAgendaJson, {
+      organizationId: seed.organizationId,
+      url: "https://agenda.example.com:8443/api",
+      headerName: "X-API-Key",
+      apiKeyRef: null,
+    });
+    expect(out.ok).toBe(true);
+    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe("https://agenda.example.com:8443/api");
+  });
+
+  test("internalAuditAgendaUrls lista só as recusadas, com host mascarado e sem URL/chave", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, { agenda: true });
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (const url of ["http://velha.example.com/agenda?token=segredo123", "https://10.0.0.5:8443/x", "https://ok.example.com:8443/x"]) {
+        await ctx.db.insert("teamMembers", {
+          organizationId: seed.organizationId,
+          name: "Outra IA",
+          role: "ai",
+          type: "ai",
+          status: "active",
+          agentProfile: { kind: "attendant", mode: "suggest", externalAgenda: { enabled: false, url } },
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    });
+    const first = await t.query(internal.opsAttendant.internalAuditAgendaUrls, { pageSize: 2 });
+    const all = [...first.refused];
+    let cursor: string | null = first.continueCursor;
+    let done = first.isDone;
+    let withAgenda = first.withAgenda;
+    while (!done) {
+      const next: typeof first = await t.query(internal.opsAttendant.internalAuditAgendaUrls, { pageSize: 2, cursor });
+      all.push(...next.refused);
+      withAgenda += next.withAgenda;
+      cursor = next.continueCursor;
+      done = next.isDone;
+    }
+    expect(withAgenda).toBe(4);
+    expect(all.map((r) => r.code).sort()).toEqual(["IP_BLOCKED", "SCHEME"]);
+    const dump = JSON.stringify(all);
+    expect(dump).not.toContain("segredo123");
+    expect(dump).not.toContain("velha.example.com");
+    expect(dump).not.toContain("/agenda");
+    expect(all.find((r) => r.code === "SCHEME")?.host).toBe("vel….com");
   });
 });
 

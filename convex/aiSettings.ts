@@ -21,7 +21,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { encryptSecret, secretLast4 } from "./lib/secretCrypto";
 import {
   DEFAULT_AGENDA_HEADER,
-  isValidAgendaUrl,
+  agendaUrlProblem,
   isValidHeaderName,
 } from "./lib/externalAgenda";
 import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
@@ -1550,7 +1550,8 @@ function validateExternalAgendaInput(args: { url: string; headerName?: string; a
   apiKey: string | null;
 } {
   const url = args.url.trim();
-  if (!isValidAgendaUrl(url)) throw new Error("A URL da agenda precisa começar com https://");
+  const urlProblem = agendaUrlProblem(url);
+  if (urlProblem) throw new Error(urlProblem);
   const headerName = args.headerName?.trim() || undefined;
   if (headerName && !isValidHeaderName(headerName)) {
     throw new Error("Nome de header inválido (use letras, números e hífen, ex.: X-API-Key)");

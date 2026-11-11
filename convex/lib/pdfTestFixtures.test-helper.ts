@@ -5,7 +5,7 @@
  * Arquivo de teste (não é módulo do Convex: o nome tem dois pontos e fica
  * fora do glob de módulos dos testes).
  */
-import { deflateSync } from "node:zlib";
+import { deflateRawSync, deflateSync } from "node:zlib";
 
 type Obj = string | Buffer;
 
@@ -96,4 +96,79 @@ export function bombPdf(mb: number): Buffer {
     extra: [stream("/Filter /FlateDecode", zeros)],
   });
   return base;
+}
+
+/** Página cujo conteúdo é UM stream com o dicionário dado (como as PoCs da revisão). */
+export function pdfWithContentStream(data: Buffer, dictExtra: string, extraObjs: Obj[] = [], withLength = true): Buffer {
+  const dict = `${withLength ? `/Length ${data.length} ` : ""}${dictExtra}`;
+  return assemblePdf([
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>",
+    Buffer.concat([b(`<< ${dict} >>\nstream\n`), data, b("\nendstream")]),
+    ...extraObjs,
+  ]);
+}
+
+/** zlib de `mb` MB de espaços (cabeçalho padrão 0x78). */
+export function zlibBomb(mb: number): Buffer {
+  return deflateSync(Buffer.alloc(mb * 1024 * 1024, 0x20), { level: 9 });
+}
+
+/** Mesmo deflate com CMF 0x68 (janela menor; o pdf.js aceita, a checagem antiga pulava). */
+export function zlibBombCmf68(mb: number): Buffer {
+  const d = Buffer.from(zlibBomb(mb));
+  d[0] = 0x68;
+  let flg = d[1] & 0xe0;
+  while (((0x68 << 8) + flg) % 31 !== 0) flg++;
+  d[1] = flg;
+  return d;
+}
+
+/**
+ * zlib cujo 1º bloco é "stored" com o texto literal "endstream endobj" (um
+ * `endstream` falso cedo no dado), seguido do deflate da bomba.
+ */
+export function zlibBombWithFakeEndstream(mb: number): Buffer {
+  const literal = b("\nendstream\nendobj\n");
+  const stored = Buffer.alloc(5);
+  stored[0] = 0x00; // BFINAL=0, BTYPE=00
+  stored.writeUInt16LE(literal.length, 1);
+  stored.writeUInt16LE(~literal.length & 0xffff, 3);
+  const rest = deflateRawSync(Buffer.alloc(mb * 1024 * 1024, 0x20), { level: 9 });
+  return Buffer.concat([Buffer.from([0x78, 0xda]), stored, literal, rest]);
+}
+
+/** ASCII85 (Adobe) sem o "<~" inicial, com "~>" final. */
+export function ascii85(data: Buffer): string {
+  let out = "";
+  for (let i = 0; i < data.length; i += 4) {
+    const chunk = Buffer.alloc(4);
+    data.copy(chunk, 0, i, Math.min(i + 4, data.length));
+    const n = Math.min(4, data.length - i);
+    let v = chunk.readUInt32BE(0);
+    if (v === 0 && n === 4) {
+      out += "z";
+      continue;
+    }
+    const chars: string[] = [];
+    for (let k = 0; k < 5; k++) {
+      chars.unshift(String.fromCharCode((v % 85) + 33));
+      v = Math.floor(v / 85);
+    }
+    out += chars.slice(0, n + 1).join("");
+  }
+  return out + "~>";
+}
+
+/** Conteúdo de página com texto, comprimido com Flate (PDF "normal" moderno). */
+export function flateTextPdf(lines: string[]): Buffer {
+  const content = b(`BT /F1 12 Tf 14 TL 50 780 Td ${lines.map((l) => `${pdfString(l)} Tj T*`).join(" ")} ET`);
+  return assemblePdf([
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    stream("/Filter /FlateDecode", deflateSync(content)),
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+  ]);
 }

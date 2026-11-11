@@ -57,6 +57,8 @@ describe("porta única do safeFetch", () => {
     expect(pkg.dependencies.unpdf).toBe("2.1.0");
     const cfg = JSON.parse(readFileSync(join(root, "..", "convex.json"), "utf8"));
     expect(cfg.node?.nodeVersion).toBe("24");
-    expect(cfg.node?.externalPackages ?? []).not.toContain("unpdf");
+    // unpdf instalado no deploy: o worker do pdf.js o importa pelo caminho
+    // absoluto (lib/pdfExtract.ts, WORKER_SOURCE com eval:true).
+    expect(cfg.node?.externalPackages ?? []).toContain("unpdf");
   });
 });

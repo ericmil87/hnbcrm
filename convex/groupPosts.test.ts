@@ -26,7 +26,8 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { setSafeFetchDepsForTests, useFetchBackedSafeFetchForTests } from "./lib/safeFetchNode";
+import { setSafeFetchDepsForTests } from "./lib/safeFetchNode";
+import { useFetchBackedSafeFetchForTests } from "./lib/safeFetchNode.test-helper";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 

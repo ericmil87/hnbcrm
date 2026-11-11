@@ -18,7 +18,7 @@ npm run deploy:prod      # Publica backend no PROD (lê a chave de convex-prod-k
 
 Tests: `npm run test` (vitest + convex-test; `*.test.ts` em `convex/`). Seed data is available via `convex/seed.ts`.
 
-**CI (GitHub Actions, `.github/workflows/ci.yml`, v0.69):** roda em push/PR para `main` e em push de `ci/**`: `npm ci` → 3× `tsc` (convex, app, node) → `npm run test` (inclui `secretScan.test.ts`) → `npx vite build`, ~1,5 min, Node do `.nvmrc` (22). **Sem** `convex dev --once` de propósito — não há deployment nem chave no CI, por isso `npm run lint` NÃO serve de CI. A suíte não depende de `.env.local` (o build lê `VITE_CONVEX_URL` com fallback vazio). Único teste sensível a carga com `{ retry: 2 }` pontual: `groupMediaPolicy.test.ts` ("fetch do sob demanda tem timeout menor que a trava") — não mudar o tempo. O `visualizer` do `vite.config.ts` só abre o `stats.html` fora do CI (`open: !process.env.CI`).
+**CI (GitHub Actions, `.github/workflows/ci.yml`, v0.69):** roda em push/PR para `main` e em push de `ci/**`: `npm ci` → 3× `tsc` (convex, app, node) → `npm run test` (inclui `secretScan.test.ts`) → `npx vite build`, ~1,5 min, Node do `.nvmrc` (22). Atualização 11/2026 (P2.2): o `.nvmrc` passou para 24, igual ao runtime das actions Node fixado em `convex.json` (ver "Versão do Node" abaixo). **Sem** `convex dev --once` de propósito — não há deployment nem chave no CI, por isso `npm run lint` NÃO serve de CI. A suíte não depende de `.env.local` (o build lê `VITE_CONVEX_URL` com fallback vazio). Único teste sensível a carga com `{ retry: 2 }` pontual: `groupMediaPolicy.test.ts` ("fetch do sob demanda tem timeout menor que a trava") — não mudar o tempo. O `visualizer` do `vite.config.ts` só abre o `stats.html` fora do CI (`open: !process.env.CI`).
 
 ## Deployments: dev × prod (separados desde 02/10/2026)
 
@@ -41,3 +41,9 @@ Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadore
 > `--prod`. `convex data`/`convex logs` ignoram a deploy key — use `--prod`. Detalhes na seção "Deployments" do CLAUDE.md
 > da raiz e em `docs/OPS-SEPARAR-DEV-PROD.md`.
 - `opsMigration.ts` — Ops internas de separação dev/prod e pós-restore (re-apontar webhooks do bridge — `webhookurl`! —, reaplicar HMAC nas instâncias, desarmar canais do deployment-cópia, cancelar/re-armar agendadas, re-armar publicações de grupo, reenviar saídas travadas); todas com `dryRun` default true
+
+## Versão do Node (11/2026, P2.2)
+
+- `convex.json` fixa `node.nodeVersion: "24"` para as actions Node (o `unpdf@2.1.0` do extrator de PDF declara `engines >=24`) e `.nvmrc` está em 24, então CI e máquina local rodam a mesma versão das actions. A suíte inteira passou em Node 24.22.2 e em 22.15.0.
+- Node 25 está BLOQUEADO por enquanto: o `web-push@3.6.7` (`pushNode.ts`) depende de `jws` → `jwa` → `buffer-equal-constant-time@1.0.1`, que usa `SlowBuffer` (removido no Node 25). Subir para 25 exige trocar/atualizar o `web-push` antes.
+- `convex.json` também declara `node.externalPackages: ["unpdf"]` (o worker do pdf.js importa o pacote pelo caminho absoluto; ver `security.md`). Validação no primeiro push: `npx convex dev --once` deve aceitar a versão e instalar o pacote; se o servidor recusar 24, voltar para `"22"` (o spike rodou igual em 22).
