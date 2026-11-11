@@ -13,6 +13,7 @@ export default {
   theme: {
     extend: {
       colors: {
+        logo: { ai: c("logo-ai") },
         brand: scale("brand", [50, 100, 200, 300, 400, 500, 600, 700, 800, 900]),
         ai: scale("ai", [300, 400, 500, 600, 700]),
         surface: {
@@ -63,6 +64,7 @@ export default {
       },
       fontFamily: {
         sans: ['"Inter Variable"', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['"Plus Jakarta Sans Variable"', '"Plus Jakarta Sans"', '"Inter Variable"', 'Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         btn:   '9999px',

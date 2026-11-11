@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/orange_icon_logo_transparent-bg-528x488.png" alt="HNBCRM" width="120" />
+  <img src="public/pwa-512x512.png" alt="HNBCRM" width="120" />
 </p>
 
 <h1 align="center">HNBCRM</h1>

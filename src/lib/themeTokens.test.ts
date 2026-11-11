@@ -41,6 +41,7 @@ const DARK_HEX: Record<string, string> = {
   "chat-header": "18181B",
   "composer": "18181B",
   "composer-field": "09090B",
+  "logo-ai": "00A884",
   "bubble-in": "18181B",
   "bubble-in-link": "FB923C",
   "bubble-out": "EA580C",

@@ -530,7 +530,7 @@ function WelcomeScreen({
     <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
-          <BrandLogo className="h-20 w-20 mx-auto mb-6" />
+          <BrandLogo size="2xl" decorative className="mx-auto mb-6" />
           <h1 className="text-2xl md:text-3xl font-bold text-text-primary mb-2">
             Bem-vindo ao HNBCRM
           </h1>

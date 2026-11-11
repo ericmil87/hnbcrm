@@ -37,7 +37,7 @@ export function OpenSourceSection() {
           </div>
           <h2
             className={cn(
-              "text-2xl md:text-3xl lg:text-4xl font-bold",
+              "font-display text-2xl md:text-3xl lg:text-4xl font-bold",
               isInView ? "animate-fade-in-up" : "motion-safe:opacity-0"
             )}
           >

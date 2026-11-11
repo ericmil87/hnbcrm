@@ -14,7 +14,7 @@ export function SEO({
   title = 'HNBCRM — Humans & Bots CRM',
   description = 'CRM multi-tenancy com colaboração humano-IA. Gerencie leads, pipeline, contatos e conversas com agentes de IA integrados.',
   keywords = 'crm, ai, automation, leads, pipeline, multi-tenant, webhook, api',
-  ogImage = '/icon_logo_white_bg_full-700x700.png',
+  ogImage = '/og-image.png',
   ogType = 'website',
   canonical,
   noindex = false,
@@ -43,7 +43,7 @@ export function SEO({
       <meta property="og:site_name" content="HNBCRM" />
 
       {/* Twitter Card */}
-      <meta name="twitter:card" content="summary" />
+      <meta name="twitter:card" content="summary_large_image" />
       <meta name="twitter:title" content={fullTitle} />
       <meta name="twitter:description" content={description} />
       <meta name="twitter:image" content={ogImageUrl} />

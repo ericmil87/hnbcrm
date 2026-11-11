@@ -68,7 +68,7 @@ src/
 ├── hooks/useCopilotStream.ts   # SSE client hook for the Copilot chat (tool-call loop)
 └── components/
     ├── ui/                     # Primitives: Button, Input, Badge, Card, Modal (bottom sheet/dialog), SlideOver, Spinner, Skeleton, Avatar,
-    │                           #   BrandLogo (icon black on light/whatsapp, white on whatsapp-dark, orange on dark; the only logo entry point in the app shell),
+    │                           #   BrandLogo (inline SVG "Encaixe", variants icon|wordmark|responsive, human = currentColor, AI = `logo-ai` token; the only logo entry point),
     │                           #   ConfirmDialog, Checkbox, FileDropZone (drag/click .csv, >10 MB warning), ApiKeyRevealModal,
     │                           #   form controls: Switch, Select (native), SegmentedControl, Tabs/TabPanel, FormField, Textarea
     │                           #   structure: PageHeader, SectionCard, EmptyState, Stepper, SearchInput (`variant="pill"`), Popover, Menu, Tooltip (+ lib/popoverPosition.ts), FilterChips (toolbar of aria-pressed chips, horizontal scroll)
