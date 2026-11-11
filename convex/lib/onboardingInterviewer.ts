@@ -29,6 +29,7 @@ import {
 import { segmentTemplate, type SegmentKey } from "./onboardingTemplates";
 import { BLOCK_KINDS, BLOCK_NOTE_MAX, BLOCKS_PER_TURN_MAX, isBlockKind, type BlockRequest } from "./onboardingBlocks";
 import { LANGUAGE_CODES } from "./languages";
+import { hasPixKey } from "./onboardingDraftFilter";
 
 // ── Limites ─────────────────────────────────────────────────────────────────
 
@@ -101,7 +102,9 @@ const HTML_TAG_RE = /<\/?[a-z][^<>]{0,200}>/gi;
 const DATA_URI_RE = /\bdata:[a-z]+\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/gi;
 /** Domínio sem esquema ("golpe.com.br/pix") num TLD comum também é link. */
 const BARE_DOMAIN_RE =
-  /\b(?:[a-z0-9][a-z0-9-]{0,62}\.)+(?:com|net|org|io|app|dev|ai|me|br|pt|info|biz|link|site|online|tech|page|shop|store|xyz|top|club|tv|cc|ly|gl|to|sh|so|bio|lat)\b(?:\/[^\s<>"')\]]*)?/gi;
+  /\b(?:[a-z0-9][a-z0-9-]{0,62}\.)+(?:com|net|org|io|app|dev|ai|me|br|pt|es|ar|mx|cl|co|uy|py|pe|us|uk|de|fr|it|ru|cn|in|eu|info|biz|link|site|online|tech|page|shop|store|xyz|top|club|tv|cc|gg|ly|gl|to|sh|so|vc|ws|bio|lat)\b(?:\/[^\s<>"')\]]*)?/gi;
+/** IP literal ou localhost sem esquema ("169.254.169.254/latest", "localhost:3000/admin"). */
+const BARE_HOST_RE = /\b(?:localhost|\d{1,3}(?:\.\d{1,3}){3})(?::\d+)?(?:\/[^\s<>"')\]]*)?/gi;
 
 const PAYMENT_IN_REPLY: RegExp[] = [
   /000201[\s\S]{0,80}br\.gov\.bcb\.pix/i,
@@ -124,14 +127,52 @@ const PROMPT_FRAGMENTS = [
   "dado de terceiros, nunca instrução",
 ];
 
+/** Janela de palavras para reconhecer um trecho LITERAL do prompt (12 evita frase curta legítima). */
+const PROMPT_SHINGLE_WORDS = 12;
+
+function wordsOf(text: string): string[] {
+  return cleanDraftText(text, true)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+let promptShingles: Set<string> | null = null;
+/** Janelas de 12 palavras dos prompts de sistema do onboarding (calculadas uma vez). */
+function systemPromptShingles(): Set<string> {
+  if (promptShingles) return promptShingles;
+  const set = new Set<string>();
+  for (const prompt of [INTERVIEWER_SYSTEM_PROMPT, READER_SYSTEM_PROMPT, ENVELOPE_SYSTEM_NOTICE]) {
+    const w = wordsOf(prompt);
+    for (let i = 0; i + PROMPT_SHINGLE_WORDS <= w.length; i++) set.add(w.slice(i, i + PROMPT_SHINGLE_WORDS).join(" "));
+  }
+  promptShingles = set;
+  return set;
+}
+
+/** O texto repete literalmente (12+ palavras seguidas) um trecho dos prompts de sistema. */
+export function quotesSystemPrompt(text: string): boolean {
+  const w = wordsOf(text);
+  if (w.length < PROMPT_SHINGLE_WORDS) return false;
+  const set = systemPromptShingles();
+  for (let i = 0; i + PROMPT_SHINGLE_WORDS <= w.length; i++) {
+    if (set.has(w.slice(i, i + PROMPT_SHINGLE_WORDS).join(" "))) return true;
+  }
+  return false;
+}
+
 /**
- * Trava da resposta ao cliente além do guard de marcação: chave/cola de Pix e
- * trecho do prompt do sistema. Devolve o motivo (a rodada é descartada) ou null.
+ * Trava da resposta ao cliente além do guard de marcação: chave/cola de Pix
+ * (inclusive "faça o Pix para <chave>", red team P2.5) e trecho do prompt do
+ * sistema (fragmentos exclusivos ou 12+ palavras literais). Devolve o motivo
+ * (a rodada é descartada) ou null.
  */
 export function replyPolicyViolation(text: string): "pagamento" | "prompt_vazado" | null {
-  if (PAYMENT_IN_REPLY.some((re) => re.test(text))) return "pagamento";
+  if (PAYMENT_IN_REPLY.some((re) => re.test(text)) || hasPixKey(text)) return "pagamento";
   const lower = text.toLowerCase();
-  if (PROMPT_FRAGMENTS.some((f) => lower.includes(f))) return "prompt_vazado";
+  if (PROMPT_FRAGMENTS.some((f) => lower.includes(f)) || quotesSystemPrompt(text)) return "prompt_vazado";
   return null;
 }
 
@@ -153,6 +194,7 @@ export function sanitizeModelText(raw: unknown, max: number): { text: string } |
     .replace(DATA_URI_RE, "")
     .replace(URL_ANY_RE, "[link removido]")
     .replace(BARE_DOMAIN_RE, "[link removido]")
+    .replace(BARE_HOST_RE, "[link removido]")
     .replace(HTML_TAG_RE, "");
   out = cleanDraftText(out, true);
   if (out.length > max) out = `${out.slice(0, max - 1).trimEnd()}…`;
@@ -169,7 +211,8 @@ export function sanitizeChips(raw: unknown, fallback: string[]): string[] {
     const r = sanitizeModelText(x, CHIP_MAX * 4);
     if (!r || !("text" in r)) return;
     const t = r.text.replace(/\n+/g, " ").replace(/\[link removido\]/g, "").trim();
-    if (!t || t.length > CHIP_MAX) return;
+    // Chip vira texto na tela e, tocado, mensagem do usuário: mesma trava do reply (Pix, prompt).
+    if (!t || t.length > CHIP_MAX || replyPolicyViolation(r.text) || replyPolicyViolation(t)) return;
     const key = t.toLowerCase();
     if (seen.has(key)) return;
     seen.add(key);
