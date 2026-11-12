@@ -38,7 +38,7 @@ describe("vercel.json: X-Robots-Tag", () => {
   });
 
   it("páginas públicas não recebem X-Robots-Tag", () => {
-    for (const path of ["/", "/precos", "/developers", "/termos", "/privacidade"]) {
+    for (const path of ["/", "/precos", "/funcionalidades", "/manifesto", "/developers", "/termos", "/privacidade"]) {
       expect(headersFor(path)["X-Robots-Tag"], path).toBeUndefined();
     }
   });
@@ -114,6 +114,8 @@ describe("sitemap.xml", () => {
       [
         "https://hnbcrm.com/",
         "https://hnbcrm.com/precos",
+        "https://hnbcrm.com/funcionalidades",
+        "https://hnbcrm.com/manifesto",
         "https://hnbcrm.com/developers",
         "https://hnbcrm.com/termos",
         "https://hnbcrm.com/privacidade",
@@ -130,9 +132,12 @@ describe("sitemap.xml", () => {
     expect(xml).not.toMatch(/<priority>/);
   });
 
-  it("todas as URLs têm lastmod 2026-11-11", () => {
+  it("todas as URLs têm lastmod; a home e as páginas novas são de 2026-11-12, as demais de 2026-11-11", () => {
+    const fresh = ["https://hnbcrm.com/", "https://hnbcrm.com/funcionalidades", "https://hnbcrm.com/manifesto"];
     for (const u of urls) {
-      expect(u).toMatch(/<lastmod>2026-11-11<\/lastmod>/);
+      const loc = u.match(/<loc>([^<]+)<\/loc>/)?.[1] ?? "";
+      const want = fresh.includes(loc) ? "2026-11-12" : "2026-11-11";
+      expect(u, loc).toMatch(new RegExp(`<lastmod>${want}</lastmod>`));
     }
   });
 });

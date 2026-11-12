@@ -118,29 +118,45 @@ describe("S7b", () => {
 });
 
 describe("S8", () => {
-  it("some sem a env", () => {
+  it("sem a env a seção continua: só newsletter e código aberto, sem grupo", () => {
     vi.stubEnv("VITE_COMMUNITY_URL", "");
     const { container } = render(<S8Community />);
-    expect(container.innerHTML).toBe("");
+    expect(container.querySelector("#comunidade")).not.toBeNull();
+    expect(screen.queryByRole("heading", { level: 3, name: "Grupo no WhatsApp" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Entrar no grupo do WhatsApp" })).toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "Novidades por e-mail" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 3, name: "Código aberto" })).toBeTruthy();
   });
 
-  it("some com env inválida (http, texto solto)", () => {
+  it("com env inválida (http, texto solto) também some só o grupo", () => {
     for (const bad of ["http://chat.whatsapp.com/x", "grupo", "javascript:alert(1)"]) {
       vi.stubEnv("VITE_COMMUNITY_URL", bad);
-      const { container, unmount } = render(<S8Community />);
-      expect(container.innerHTML).toBe("");
+      const { unmount } = render(<S8Community />);
+      expect(screen.queryByRole("link", { name: "Entrar no grupo do WhatsApp" })).toBeNull();
+      expect(screen.getByRole("button", { name: "Quero receber" })).toBeTruthy();
       unmount();
     }
   });
 
-  it("com env válida mostra o botão, as três linhas e não a linha da IA", () => {
+  it("com env válida mostra o grupo, as três linhas e os três cartões", () => {
     vi.stubEnv("VITE_COMMUNITY_URL", GROUP);
     render(<S8Community />);
     const a = screen.getByRole("link", { name: "Entrar no grupo do WhatsApp" });
     expect(a.getAttribute("href")).toBe(GROUP);
     expect(a.getAttribute("rel")).toContain("noopener");
     expect(screen.getByText("Regras simples, fixadas na descrição")).toBeTruthy();
-    expect(screen.queryByText(/Tem IA no grupo/)).toBeNull();
+    expect(screen.getAllByRole("heading", { level: 3 })).toHaveLength(3);
+  });
+
+  it("código aberto: links externos para o repositório e o changelog", () => {
+    vi.stubEnv("VITE_COMMUNITY_URL", "");
+    render(<S8Community />);
+    for (const name of ["Ver no GitHub", "O que mudou em cada versão"]) {
+      const l = screen.getByRole("link", { name });
+      expect(l.getAttribute("target")).toBe("_blank");
+      expect(l.getAttribute("rel")).toContain("noopener");
+    }
+    expect(screen.getByRole("link", { name: "Ver no GitHub" }).getAttribute("href")).toBe("https://github.com/ericmil87/hnbcrm");
   });
 
   it("no computador mostra o QR code em SVG", async () => {
@@ -204,11 +220,18 @@ describe("CTA final e rodapé", () => {
     expect(screen.getByRole("link", { name: "Versão 1.2.3" }).getAttribute("href")).toContain("CHANGELOG");
     expect(screen.getByRole("link", { name: "Termos" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Privacidade" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Comunidade" })).toBeNull();
+    // Comunidade aparece sempre (a seção existe por causa da newsletter).
+    expect(screen.getByRole("link", { name: "Comunidade" }).getAttribute("href")).toBe("#comunidade");
   });
 
-  it("rodapé mostra Comunidade com a env válida e omite a versão quando não há", () => {
-    vi.stubEnv("VITE_COMMUNITY_URL", GROUP);
+  it("rodapé: Funcionalidades, Manifesto e Quem faz", () => {
+    renderWithRouter(<LandingFooter version="1.2.3" />);
+    expect(screen.getByRole("link", { name: "Funcionalidades" }).getAttribute("href")).toBe("/funcionalidades");
+    expect(screen.getByRole("link", { name: "Manifesto" }).getAttribute("href")).toBe("/manifesto");
+    expect(screen.getByRole("link", { name: "Quem faz" }).getAttribute("href")).toBe("#quem-faz");
+  });
+
+  it("rodapé omite a versão quando não há", () => {
     renderWithRouter(<LandingFooter version={null} />);
     expect(screen.getByRole("link", { name: "Comunidade" })).toBeTruthy();
     expect(screen.queryByText(/^Versão/)).toBeNull();

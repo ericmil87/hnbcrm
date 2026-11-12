@@ -13,8 +13,10 @@ const template = readFileSync(resolve(__dirname, "../../index.html"), "utf8");
 const SITE = "https://hnbcrm.com";
 
 const EXPECTED: Record<PrerenderPath, { title: RegExp; h1: RegExp; ogImage: string; jsonLd: boolean }> = {
-  "/": { title: /CRM com atendimento IA no WhatsApp/, h1: /Conte como é o seu negócio/, ogImage: "/og-image.png", jsonLd: true },
+  "/": { title: /CRM com atendimento IA no WhatsApp/, h1: /Seu WhatsApp atende na hora/, ogImage: "/og-image.png", jsonLd: true },
   "/precos": { title: /^Preços do HNBCRM/, h1: /.+/, ogImage: "/og-neutral.png", jsonLd: true },
+  "/funcionalidades": { title: /^Funcionalidades do HNBCRM/, h1: /Tudo o que o HNBCRM faz hoje/, ogImage: "/og-neutral.png", jsonLd: false },
+  "/manifesto": { title: /.+/, h1: /.+/, ogImage: "/og-neutral.png", jsonLd: false },
   "/developers": { title: /HNBCRM/, h1: /.+/, ogImage: "/og-neutral.png", jsonLd: false },
   "/termos": { title: /Termos/i, h1: /Termos/i, ogImage: "/og-neutral.png", jsonLd: false },
   "/privacidade": { title: /Privacidade/i, h1: /Privacidade/i, ogImage: "/og-neutral.png", jsonLd: false },

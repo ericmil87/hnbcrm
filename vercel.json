@@ -2,6 +2,8 @@
   "rewrites": [
     { "source": "/", "destination": "/index.html" },
     { "source": "/precos", "destination": "/precos/index.html" },
+    { "source": "/funcionalidades", "destination": "/funcionalidades/index.html" },
+    { "source": "/manifesto", "destination": "/manifesto/index.html" },
     { "source": "/developers", "destination": "/developers/index.html" },
     { "source": "/termos", "destination": "/termos/index.html" },
     { "source": "/privacidade", "destination": "/privacidade/index.html" },

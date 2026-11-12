@@ -309,6 +309,7 @@ export const PUBLIC_API_ROUTES: readonly string[] = [
   "POST /api/v1/forms/public/partial",
   "POST /api/v1/forms/experiment/view",
   "POST /api/v1/public/contact", // pedido de contato/consultoria → lead na org interna (hnbcrmLeads.ts)
+  "POST /api/v1/public/newsletter", // inscrição na newsletter → lead com etiqueta `newsletter` na org interna
   "GET /api/v1/embed.js",
   "GET /api/v1/openapi.json",
   "POST /api/v1/webhooks/resend",
@@ -2633,6 +2634,47 @@ http.route({
   }),
 });
 
+// Inscrição na newsletter — POST /api/v1/public/newsletter
+// Mesmo tratamento do contato: sem API key, corpo limitado, honeypot `_honeypot` (preenchido =
+// 200 {ok:true} sem gravar), rate limit na mutation, sem org interna = 503 unavailable.
+http.route({
+  path: "/api/v1/public/newsletter",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const declared = Number(request.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > 2_000) {
+        return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
+      }
+      const text = await request.text();
+      if (text.length > 2_000) return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
+      let body: unknown;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return jsonResponse({ ok: false, code: "invalid", message: "Corpo inválido." }, 400);
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return jsonResponse({ ok: false, code: "invalid", message: "Corpo inválido." }, 400);
+      }
+      const b = body as Record<string, unknown>;
+      if (typeof b._honeypot === "string" && b._honeypot.trim() !== "") return jsonResponse({ ok: true });
+      const result = await ctx.runMutation(internal.hnbcrmLeads.internalSubscribeNewsletter, {
+        email: typeof b.email === "string" ? b.email : "",
+        ...(typeof b.name === "string" ? { name: b.name } : {}),
+        ...(typeof b.source === "string" ? { source: b.source } : {}),
+        ipKey: clientIpKey(request) ?? undefined,
+      });
+      if (result.ok) return jsonResponse({ ok: true });
+      const status = result.code === "rate_limited" ? 429 : result.code === "unavailable" ? 503 : 400;
+      return jsonResponse(result, status);
+    } catch (err) {
+      console.error("[newsletter]", err instanceof Error ? err.message : "erro");
+      return jsonResponse({ ok: false, code: "error", message: "Não foi possível inscrever agora." }, 500);
+    }
+  }),
+});
+
 // Save partial form submission — POST /api/v1/forms/public/partial
 http.route({
   path: "/api/v1/forms/public/partial",
@@ -4522,6 +4564,7 @@ http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHa
 http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/partial", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/public/contact", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/public/newsletter", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns/get", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns/report", method: "OPTIONS", handler: optionsHandler });

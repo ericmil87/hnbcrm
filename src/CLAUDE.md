@@ -81,6 +81,7 @@ src/
     ├── layout/                 # AuthLayout (auth → org → onboarding → ScrollRestoration → AppShell + Outlet), AppShell (Sidebar md+ / BottomTabBar mobile), Sidebar, BottomTabBar
     ├── LandingPage.tsx, AuthPage.tsx  # Public sales page at / (only composes LandingHeader + landing/sections/*); auth screen at /entrar
     ├── landing/sections/       # one file per landing section (S1Hero … S9Faq, FinalCta, Footer; CommunityQr lazy); landing/socialProof.ts = social-proof data (PROD only real items); anchors/shared copy in landingCopy.ts, shell LandingSection.tsx
+    ├── landing/features/       # /funcionalidades presentational parts (FeatureAreaSection, FeatureItemCard, FeatureStatusBadge, FeatureStatusLegend, FeatureRoadmap); data in landing/featuresCatalog.ts (single source; also feeds sections/SFeatures)
     ├── landing/kit/            # scene kit (no Convex): ChatWindow, Bubble, TypingDots, AudioBubble, AttachmentBubble, Composer, RotatingPlaceholder, ChipRow, MiniFunnel, PhoneNotification, SceneLoop/useSceneTimeline; DEV showcase at /dev/kit
     ├── landing/PublicThemeButton.tsx  # icon button (Palette) in every public header: Menu of THEME_OPTIONS (menuitemradio), saves hnbcrm:public-theme per device
     ├── DashboardOverview.tsx   # Metrics (/app/painel)
@@ -139,7 +140,7 @@ src/
     │   └── renderer/           # FormRenderer, FormField, FormSuccess (public renderer)
     ├── ErrorBoundary.tsx
     └── org/OrgSwitcher.tsx     # Org switcher modal (list, new organization, sign out)
-└── pages/                      # DevelopersPage (/developers), PlaygroundPage (/developers/playground), PrivacyPage (/privacidade), TermsPage (/termos), PublicFormPage (/f/:slug)
+└── pages/                      # FeaturesPage (/funcionalidades), ManifestoPage (/manifesto), DevelopersPage (/developers), PlaygroundPage (/developers/playground), PrivacyPage (/privacidade), TermsPage (/termos), PublicFormPage (/f/:slug)
 ```
 
 ## Patterns

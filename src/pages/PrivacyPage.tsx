@@ -288,6 +288,19 @@ export function PrivacyPage() {
                 </a>
                 . Avisos de cobrança e do contrato continuam sendo enviados.
               </p>
+              <p>
+                <span className="text-text-primary font-medium">Lista de novidades.</span> Quem se inscreve
+                na lista de novidades do HNBCRM informa o e-mail (e o nome, se quiser). Usamos esses dados
+                só para enviar novidades do HNBCRM, com base no consentimento, e você pode sair a qualquer
+                momento respondendo a um e-mail ou escrevendo para{" "}
+                <a
+                  href={`mailto:${LEGAL_ENTITY.dpoEmail}`}
+                  className="text-brand-400 hover:text-brand-300 transition-colors"
+                >
+                  {LEGAL_ENTITY.dpoEmail}
+                </a>
+                .
+              </p>
             </LegalSection>
 
             <LegalSection id="compartilhamento" title="7. Compartilhamento com terceiros">

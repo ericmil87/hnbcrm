@@ -4,11 +4,13 @@ import { LandingHeader } from "@/components/landing/LandingHeader";
 import { S1Hero } from "@/components/landing/sections/S1Hero";
 import { S2Machine } from "@/components/landing/sections/S2Machine";
 import { S3Team } from "@/components/landing/sections/S3Team";
+import { SFeatures } from "@/components/landing/sections/SFeatures";
 import { S4Profiles } from "@/components/landing/sections/S4Profiles";
 import { S5HowItStarts } from "@/components/landing/sections/S5HowItStarts";
 import { S6PriceSummary } from "@/components/landing/sections/S6PriceSummary";
 import { S7Services } from "@/components/landing/sections/S7Services";
 import { S7bSocialProof } from "@/components/landing/sections/S7bSocialProof";
+import { SAuthor } from "@/components/landing/sections/SAuthor";
 import { S8Community } from "@/components/landing/sections/S8Community";
 import { S9Faq } from "@/components/landing/sections/S9Faq";
 import { FinalCta } from "@/components/landing/sections/FinalCta";
@@ -37,11 +39,13 @@ export function LandingPage() {
           <S1Hero />
           <S2Machine />
           <S3Team />
+          <SFeatures />
           <S4Profiles />
           <S5HowItStarts />
           <S6PriceSummary />
           <S7Services />
           <S7bSocialProof />
+          <SAuthor />
           <S8Community />
           <S9Faq />
           <FinalCta />

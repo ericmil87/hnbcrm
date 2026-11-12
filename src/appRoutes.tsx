@@ -64,9 +64,11 @@ function LazyRoute({ Component }: { Component: LazyExoticComponent<ComponentType
 }
 
 export const ROUTES: RouteObject[] = [
-  // Public, no Convex. "/", "/precos", "/developers", "/termos", "/privacidade" are also prerendered.
+  // Public, no Convex. "/", "/precos", "/funcionalidades", "/manifesto", "/developers", "/termos", "/privacidade" are also prerendered.
   { path: "/", ...publicPage(() => import("./components/LandingPage").then(m => m.LandingPage)), errorElement: <RouteErrorPage /> },
   { path: "/precos", ...publicPage(() => import("./pages/PricingPage").then(m => m.PricingPage)), errorElement: <RouteErrorPage /> },
+  { path: "/funcionalidades", ...publicPage(() => import("./pages/FeaturesPage").then(m => m.FeaturesPage)), errorElement: <RouteErrorPage /> },
+  { path: "/manifesto", ...publicPage(() => import("./pages/ManifestoPage").then(m => m.ManifestoPage)), errorElement: <RouteErrorPage /> },
   { path: "/developers", ...publicPage(() => import("./pages/DevelopersPage").then(m => m.DevelopersPage)), errorElement: <RouteErrorPage /> },
   { path: "/developers/playground", ...publicPage(() => import("./pages/PlaygroundPage").then(m => m.PlaygroundPage)), errorElement: <RouteErrorPage /> },
   { path: "/termos", ...publicPage(() => import("./pages/TermsPage").then(m => m.TermsPage)), errorElement: <RouteErrorPage /> },

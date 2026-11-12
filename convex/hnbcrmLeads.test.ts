@@ -9,7 +9,7 @@ import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import type { OnboardingDraft } from "./lib/onboardingDraft";
-import { parseContactRequest } from "./lib/hnbcrmLeads";
+import { parseContactRequest, parseNewsletterSignup } from "./lib/hnbcrmLeads";
 import { ROUTE_PERMISSIONS, PUBLIC_API_ROUTES } from "./router";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
@@ -450,5 +450,86 @@ describe("contato/consultoria", () => {
   test("a rota é pública declarada (não usa API key)", () => {
     expect(PUBLIC_API_ROUTES).toContain("POST /api/v1/public/contact");
     expect(ROUTE_PERMISSIONS["POST /api/v1/public/contact"]).toBeUndefined();
+  });
+});
+
+describe("newsletter", () => {
+  const sub = (a: { email: string; name?: string; source?: string; ipKey?: string }) =>
+    t.mutation(internal.hnbcrmLeads.internalSubscribeNewsletter, a);
+
+  test("parser puro: e-mail obrigatório, nome saneado e limitado", () => {
+    expect(parseNewsletterSignup({ email: "x" }).ok).toBe(false);
+    expect(parseNewsletterSignup({}).ok).toBe(false);
+    const r = parseNewsletterSignup({ email: "  Ana@Site.TEST ", name: "  Ana​   Maria " + "x".repeat(200) });
+    expect(r.ok && r.value.email).toBe("ana@site.test");
+    expect(r.ok && r.value.name.length).toBe(80);
+    expect(r.ok && r.value.name.startsWith("Ana Maria")).toBe(true);
+  });
+
+  test("cria contato + lead com a etiqueta, origem e nota; segunda inscrição não duplica", async () => {
+    const org = await seedInternal();
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", org.orgId);
+    expect(await sub({ email: "Leitora@Site.test", name: "Leitora", source: "rodape" })).toEqual({ ok: true });
+    const [lead] = await internalLeads(org.orgId);
+    expect(lead.tags).toEqual(["newsletter"]);
+    expect(lead.title).toBe("Newsletter: Leitora");
+    expect((await t.run((ctx) => ctx.db.get(lead.sourceId!)))?.name).toBe("Site – newsletter");
+    const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", lead._id)).collect());
+    const note = acts.find((a) => a.type === "note")?.content;
+    expect(note).toContain("(rodape)");
+    expect(note).toContain("Consentimento registrado em 2026-11-12");
+    expect(await sub({ email: "leitora@site.test" })).toEqual({ ok: true });
+    expect(await internalLeads(org.orgId)).toHaveLength(1);
+  });
+
+  test("sem nome usa a parte local; contato existente não é alterado", async () => {
+    const org = await seedInternal();
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", org.orgId);
+    const existing = await t.run((ctx) =>
+      ctx.db.insert("contacts", { organizationId: org.orgId, firstName: "Antigo", email: "velho@site.test", tags: [], createdAt: 1, updatedAt: 1 }),
+    );
+    await sub({ email: "velho@site.test", name: "Outro Nome" });
+    await sub({ email: "semnome@site.test" });
+    expect((await t.run((ctx) => ctx.db.get(existing)))?.firstName).toBe("Antigo");
+    const titles = (await internalLeads(org.orgId)).map((l) => l.title).sort();
+    expect(titles).toEqual(["Newsletter: Outro Nome", "Newsletter: semnome"]);
+  });
+
+  test("e-mail inválido = invalid; sem env = unavailable", async () => {
+    expect(await sub({ email: "nao-e-email" })).toMatchObject({ ok: false, code: "invalid" });
+    expect(await sub({ email: "ok@site.test" })).toMatchObject({ ok: false, code: "unavailable" });
+  });
+
+  test("rate limit por e-mail (3/h) e chaves próprias", async () => {
+    const org = await seedInternal();
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", org.orgId);
+    for (let i = 0; i < 3; i++) expect(await sub({ email: "a@site.test", ipKey: `203.0.113.${i + 1}` })).toEqual({ ok: true });
+    expect(await sub({ email: "a@site.test", ipKey: "203.0.113.50" })).toMatchObject({ ok: false, code: "rate_limited" });
+    const keys = (await t.run((ctx) => ctx.db.query("onboardingRateLimits").collect())).map((r) => r.key);
+    expect(keys).toContain("newsletter:global");
+    expect(keys.some((k) => k.startsWith("contact:"))).toBe(false);
+    expect(keys.some((k) => k.includes("a@site.test"))).toBe(false);
+  });
+
+  test("rota HTTP: honeypot não grava, sem env 503, com env 200, JSON inválido 400", async () => {
+    const org = await seedInternal();
+    const post = (body: unknown) =>
+      t.fetch("/api/v1/public/newsletter", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
+    expect((await post({ email: "h@site.test" })).status).toBe(503);
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", org.orgId);
+    const trap = await post({ email: "h@site.test", _honeypot: "spam" });
+    expect(trap.status).toBe(200);
+    expect(await internalLeads(org.orgId)).toHaveLength(0);
+    const ok = await post({ email: "h@site.test", name: "H" });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ ok: true });
+    expect(await internalLeads(org.orgId)).toHaveLength(1);
+    expect((await post({ email: "ruim" })).status).toBe(400);
+    expect((await t.fetch("/api/v1/public/newsletter", { method: "POST", body: "x{" })).status).toBe(400);
+  });
+
+  test("rota listada como pública", () => {
+    expect(PUBLIC_API_ROUTES).toContain("POST /api/v1/public/newsletter");
+    expect(ROUTE_PERMISSIONS["POST /api/v1/public/newsletter"]).toBeUndefined();
   });
 });

@@ -1,6 +1,5 @@
 import { Link } from "react-router";
 import { BrandLogo } from "@/components/ui/BrandLogo";
-import { communityUrl } from "@/lib/communityLink";
 import { LEGAL_ENTITY, legalIdentification } from "@/lib/legalEntity";
 import { APP_BUILD } from "@/lib/pwa/appBuild";
 import { versionFromBuild } from "@/lib/pwa/buildVersion";
@@ -20,12 +19,11 @@ interface LandingFooterProps {
  * Rodapé da landing (copy aprovada): marca e frase, colunas Produto e Mais,
  * linha de código aberto e desenvolvedores, identificação legal (fonte única
  * `legalEntity.ts`), Termos, Privacidade e versão com link para o CHANGELOG.
- * "Comunidade" só aparece com `VITE_COMMUNITY_URL` válida.
+ * "Comunidade" aparece sempre (a seção existe por causa da newsletter).
  */
 export function LandingFooter({ version }: LandingFooterProps) {
   const legal = legalIdentification();
   const appVersion = version === undefined ? versionFromBuild(APP_BUILD) : version;
-  const hasCommunity = communityUrl() !== null;
   return (
     <footer className="border-t border-border bg-surface-base px-4 py-12">
       <div className="mx-auto max-w-6xl">
@@ -43,6 +41,11 @@ export function LandingFooter({ version }: LandingFooterProps) {
                 </a>
               </li>
               <li>
+                <Link to="/funcionalidades" className={linkClass}>
+                  Funcionalidades
+                </Link>
+              </li>
+              <li>
                 <Link to="/precos" className={linkClass}>
                   Preços
                 </Link>
@@ -57,13 +60,21 @@ export function LandingFooter({ version }: LandingFooterProps) {
           <nav aria-label="Mais" className="space-y-1">
             <h2 className="text-sm font-semibold text-text-primary">Mais</h2>
             <ul>
-              {hasCommunity && (
-                <li>
-                  <a href={`#${LANDING_ANCHORS.community}`} className={linkClass}>
-                    Comunidade
-                  </a>
-                </li>
-              )}
+              <li>
+                <a href={`#${LANDING_ANCHORS.community}`} className={linkClass}>
+                  Comunidade
+                </a>
+              </li>
+              <li>
+                <Link to="/manifesto" className={linkClass}>
+                  Manifesto
+                </Link>
+              </li>
+              <li>
+                <a href={`#${LANDING_ANCHORS.author}`} className={linkClass}>
+                  Quem faz
+                </a>
+              </li>
               <li>
                 <a href={`#${LANDING_ANCHORS.faq}`} className={linkClass}>
                   Perguntas

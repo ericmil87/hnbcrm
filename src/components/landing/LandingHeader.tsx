@@ -3,7 +3,6 @@ import { BrandLogo } from "@/components/ui/BrandLogo";
 import { buttonClassName } from "@/components/ui/Button";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { startHref } from "@/lib/onboardingEntry";
-import { communityUrl } from "@/lib/communityLink";
 import { cn } from "@/lib/utils";
 import { LANDING_ANCHORS, PRIMARY_CTA_LABEL } from "./sections/landingCopy";
 
@@ -12,15 +11,15 @@ interface NavLink {
   label: string;
 }
 
-/** Links da navegação (copy aprovada). "Comunidade" só com `VITE_COMMUNITY_URL`. */
-export function landingNavLinks(hasCommunity: boolean): NavLink[] {
-  const links: NavLink[] = [
+/** Links da navegação (copy aprovada). */
+export function landingNavLinks(): NavLink[] {
+  return [
     { href: `#${LANDING_ANCHORS.machine}`, label: "Como funciona" },
+    { href: `#${LANDING_ANCHORS.features}`, label: "Funcionalidades" },
     { href: `#${LANDING_ANCHORS.price}`, label: "Preços" },
     { href: `#${LANDING_ANCHORS.services}`, label: "Feito com você" },
+    { href: `#${LANDING_ANCHORS.community}`, label: "Comunidade" },
   ];
-  if (hasCommunity) links.push({ href: `#${LANDING_ANCHORS.community}`, label: "Comunidade" });
-  return links;
 }
 
 const linkClass = cn(
@@ -34,7 +33,7 @@ const linkClass = cn(
  * "Testar grátis" vai para `/comecar` (`startHref`).
  */
 export function LandingHeader() {
-  const links = landingNavLinks(communityUrl() !== null);
+  const links = landingNavLinks();
   return (
     <header className="sticky top-0 z-40 border-b border-border-subtle bg-surface-base/95 backdrop-blur supports-[backdrop-filter]:bg-surface-base/80">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-2 px-4 pt-2 md:flex-nowrap md:py-2">

@@ -22,21 +22,31 @@ describe("LandingPage (esqueleto)", () => {
     renderLanding();
     const h1s = screen.getAllByRole("heading", { level: 1 });
     expect(h1s).toHaveLength(1);
-    expect(h1s[0]).toHaveTextContent("Conte como é o seu negócio. Em minutos, sua IA já atende no WhatsApp.");
+    expect(h1s[0]).toHaveTextContent("Seu WhatsApp atende na hora. Até quando você não pode.");
   });
 
   it("navegação aponta para as âncoras das seções que existem", () => {
     const { container } = renderLanding();
     const nav = screen.getByRole("navigation", { name: "Seções da página" });
     const hrefs = Array.from(nav.querySelectorAll("a")).map((a) => a.getAttribute("href"));
-    expect(hrefs).toEqual(["#como-funciona", "#precos", "#feito-com-voce"]);
+    expect(hrefs).toEqual(["#como-funciona", "#funcionalidades", "#precos", "#feito-com-voce", "#comunidade"]);
+    // A seção de comunidade agora aparece sempre (sem a env só some o cartão do grupo).
     for (const href of hrefs) expect(container.querySelector(href!)).not.toBeNull();
+    expect(screen.queryByRole("link", { name: "Entrar no grupo do WhatsApp" })).toBeNull();
   });
 
-  it("sem VITE_COMMUNITY_URL não mostra a seção nem o link Comunidade", () => {
+  it("o link Comunidade da navegação aparece sempre, mesmo sem VITE_COMMUNITY_URL", () => {
+    renderLanding();
+    const nav = within(screen.getByRole("navigation", { name: "Seções da página" }));
+    expect(nav.getByRole("link", { name: "Comunidade" })).toHaveAttribute("href", "#comunidade");
+  });
+
+  it("a seção Funcionalidades fica depois do time e leva a /funcionalidades", () => {
     const { container } = renderLanding();
-    expect(container.querySelector("#comunidade")).toBeNull();
-    expect(screen.queryByRole("link", { name: "Comunidade" })).toBeNull();
+    const features = container.querySelector("#funcionalidades");
+    expect(features).not.toBeNull();
+    expect(container.querySelector("#time")!.compareDocumentPosition(features!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Ver todas as funcionalidades" })).toHaveAttribute("href", "/funcionalidades");
   });
 
   it("Testar grátis leva ao /comecar e Entrar ao login", () => {

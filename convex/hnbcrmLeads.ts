@@ -6,6 +6,8 @@
  * - `internalApplySignupSummary`: gancho de `applyOnboardingDraft` (nicho e plano de interesse).
  * - `internalSubmitContactRequest`: formulário público de contato/consultoria
  *   (`POST /api/v1/public/contact`, `router.ts`).
+ * - `internalSubscribeNewsletter`: inscrição pública na newsletter
+ *   (`POST /api/v1/public/newsletter`, `router.ts`): lead com a etiqueta `newsletter`.
  *
  * Nenhuma função daqui envia e-mail, WhatsApp ou webhook.
  */
@@ -19,6 +21,9 @@ import { evaluateFixedWindow, normalizeIpKey } from "./lib/onboardingBudget";
 import {
   CONTACT_KIND_LABEL,
   CONTACT_SOURCE_NAME,
+  NEWSLETTER_LIMITS,
+  NEWSLETTER_SOURCE_NAME,
+  NEWSLETTER_TAG,
   SIGNUP_MARKER,
   SIGNUP_SOURCE_NAME,
   SIGNUP_TAG,
@@ -29,6 +34,7 @@ import {
   findOrCreateInternalContact,
   insertInternalLead,
   parseContactRequest,
+  parseNewsletterSignup,
   resolveInternalTarget,
 } from "./lib/hnbcrmLeads";
 
@@ -41,6 +47,13 @@ const CONTACT_RATE = {
   ipUnknown: { windowMs: MS_HOUR, limit: 10 },
   email: { windowMs: MS_HOUR, limit: 3 },
   global: { windowMs: MS_DAY, limit: 300 },
+} as const;
+
+const NEWSLETTER_RATE = {
+  ip: { windowMs: MS_HOUR, limit: 5 },
+  ipUnknown: { windowMs: MS_HOUR, limit: 10 },
+  email: { windowMs: MS_HOUR, limit: 3 },
+  global: { windowMs: MS_DAY, limit: 500 },
 } as const;
 
 async function consumeContactRate(
@@ -267,6 +280,66 @@ export const internalSubmitContactRequest = internalMutation({
         sourceName: CONTACT_SOURCE_NAME,
       });
     }
+    return { ok: true as const };
+  },
+});
+
+export const internalSubscribeNewsletter = internalMutation({
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+    source: v.optional(v.string()),
+    ipKey: v.optional(v.string()),
+  },
+  returns: v.union(
+    v.object({ ok: v.literal(true) }),
+    v.object({ ok: v.literal(false), code: v.string(), message: v.string() }),
+  ),
+  handler: async (ctx, args) => {
+    const parsed = parseNewsletterSignup(args);
+    if (!parsed.ok) return { ok: false as const, code: "invalid", message: parsed.message };
+    const { email, name } = parsed.value;
+
+    const target = await resolveInternalTarget(ctx);
+    if (!target) {
+      return { ok: false as const, code: "unavailable", message: "Inscrição indisponível agora. Tente de novo mais tarde." };
+    }
+
+    const now = Date.now();
+    const ip = normalizeIpKey(args.ipKey);
+    const emailHash = (await sha256Hex(email)).slice(0, 32);
+    const subjects = [
+      ip ? { key: `newsletter:ip:${ip}`, spec: NEWSLETTER_RATE.ip } : { key: "newsletter:ip:unknown", spec: NEWSLETTER_RATE.ipUnknown },
+      { key: `newsletter:email:${emailHash}`, spec: NEWSLETTER_RATE.email },
+      { key: "newsletter:global", spec: NEWSLETTER_RATE.global },
+    ];
+    if (!(await consumeContactRate(ctx, now, subjects))) {
+      console.warn(`[newsletter] teto atingido (${maskEmailForLog(email)})`);
+      return { ok: false as const, code: "rate_limited", message: "Muitas inscrições em pouco tempo. Tente de novo mais tarde." };
+    }
+
+    const localPart = email.split("@")[0];
+    const displayName = name || cleanFormText(localPart, 80) || "Assinante";
+    // Só por e-mail: contato existente não é alterado.
+    const { contactId } = await findOrCreateInternalContact(ctx, target, { name: displayName, email });
+
+    // Idempotente: lead aberto com a etiqueta já existe = sucesso silencioso (não revela ao chamador).
+    for await (const l of ctx.db.query("leads").withIndex("by_contact", (q) => q.eq("contactId", contactId))) {
+      if (l.organizationId === target.org._id && l.closedAt === undefined && l.tags.includes(NEWSLETTER_TAG)) {
+        return { ok: true as const };
+      }
+    }
+
+    const source = cleanFormText(args.source, NEWSLETTER_LIMITS.source);
+    await insertInternalLead(ctx, target, {
+      title: `Newsletter: ${displayName}`,
+      contactId,
+      tags: [NEWSLETTER_TAG],
+      customFields: {},
+      note: `Inscrição na newsletter pelo site${source ? ` (${source})` : ""}. Consentimento registrado em ${new Date(now).toISOString()}.`,
+      via: "newsletter",
+      sourceName: NEWSLETTER_SOURCE_NAME,
+    });
     return { ok: true as const };
   },
 });

@@ -2,6 +2,17 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não publicada]
+
+### Site: funcionalidades, manifesto, quem faz e novidades por e-mail
+
+- **Página de funcionalidades (`/funcionalidades`).** Tudo o que o HNBCRM faz hoje, organizado por área, com a situação de cada item: pronto, pronto mas desligado até você ligar, em liberação, em breve ou no radar. O que ainda não existe fica num bloco separado, "O que vem depois". A página inicial ganhou um resumo com oito destaques e o link para a lista completa.
+- **Manifesto (`/manifesto`).** Por que o HNBCRM existe, por que junta pessoas e IA no mesmo time, por que o código é aberto e por que tudo acontece em tempo real.
+- **Quem faz.** A página inicial agora apresenta o autor do HNBCRM e a Inovaway, com um trecho do manifesto.
+- **Comunidade com novidades por e-mail.** A seção de comunidade aparece sempre e traz três caminhos: o grupo no WhatsApp (quando configurado), a inscrição para receber novidades por e-mail e o código no GitHub. A inscrição pede só o e-mail (nome opcional); para sair, basta responder a qualquer e-mail pedindo.
+- **Título novo no topo da página inicial:** "Seu WhatsApp atende na hora. Até quando você não pode."
+- O link "Roadmap" do rodapé, que estava quebrado, agora leva à página de funcionalidades.
+
 ## [0.81.0] - 2026-11-12
 
 _Landing e preços novas, configuração por conversa (`/comecar`), entrada por e-mail e PWA atualizado._
