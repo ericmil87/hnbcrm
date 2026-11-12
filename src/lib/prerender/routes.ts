@@ -7,7 +7,7 @@
  *   `dist/spa-fallback.html` and every other route (`/app/*`, `/f/*`, `/entrar`, `/comecar`,
  *   `/developers/playground`, unknown paths) is rewritten to it.
  */
-export const PRERENDER_PATHS = ["/", "/precos", "/developers", "/termos", "/privacidade"] as const;
+export const PRERENDER_PATHS = ["/", "/precos", "/funcionalidades", "/manifesto", "/developers", "/termos", "/privacidade"] as const;
 export type PrerenderPath = (typeof PRERENDER_PATHS)[number];
 
 /** Neutral SPA shell served by the catch-all rewrite and used by the service worker under /app/. */

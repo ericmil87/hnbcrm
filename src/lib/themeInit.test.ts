@@ -33,7 +33,7 @@ afterEach(() => {
 });
 
 describe("public/theme-init.js", () => {
-  const PUBLIC_PATHS = ["/", "/entrar", "/developers", "/developers/playground", "/privacidade", "/termos", "/precos", "/nao-existe", "/apple"];
+  const PUBLIC_PATHS = ["/", "/entrar", "/developers", "/developers/playground", "/privacidade", "/termos", "/precos", "/funcionalidades", "/manifesto", "/nao-existe", "/apple"];
 
   it.each(PUBLIC_PATHS)("public page %s without any stored theme gets whatsapp", (path) => {
     expect(runInit(path, null)).toEqual({ theme: "whatsapp", color: THEME_COLOR.whatsapp });

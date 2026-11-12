@@ -1,5 +1,6 @@
 /**
- * Textos do hero (S1), literais da copy aprovada (`copy/landing.md`, versão final).
+ * Textos do hero (S1). Título e subtítulo reescritos em 12/11/2026 (benefício primeiro, depois o como);
+ * o restante segue a copy aprovada (`copy/landing.md`).
  * Dias de teste e reembolso vêm do catálogo via `trustLine()`, nunca digitados.
  */
 import type { Chip } from "../kit";
@@ -7,8 +8,9 @@ import type { OnboardingNiche } from "@/lib/onboardingEntry";
 import { AI_PROCESSING_NOTICE } from "@/lib/onboardingChat";
 
 export const HERO_EYEBROW = "Humanos e IAs no mesmo time";
-export const HERO_TITLE = "Conte como é o seu negócio. Em minutos, sua IA já atende no WhatsApp.";
-export const HERO_SUBTITLE = "Converse com o Copiloto, veja a sua operação nascer e teste a sua IA antes de conectar um número.";
+export const HERO_TITLE = "Seu WhatsApp atende na hora. Até quando você não pode.";
+export const HERO_SUBTITLE =
+  "Conte como é o seu negócio, do jeito que contaria a um amigo. Em minutos nasce uma IA que atende como você atenderia e chama a equipe quando a conversa pede gente. Você testa tudo antes de conectar o seu número.";
 
 export const HERO_PLACEHOLDERS = [
   "Tenho uma clínica de estética em Recife…",

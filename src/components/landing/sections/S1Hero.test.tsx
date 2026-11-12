@@ -32,7 +32,7 @@ describe("S1Hero", () => {
   it("tem um h1 sem classe de animação", () => {
     setup();
     const h1 = screen.getByRole("heading", { level: 1 });
-    expect(h1).toHaveTextContent("Conte como é o seu negócio. Em minutos, sua IA já atende no WhatsApp.");
+    expect(h1).toHaveTextContent("Seu WhatsApp atende na hora. Até quando você não pode.");
     expect(h1.className).not.toMatch(/animate|transition/);
   });
 

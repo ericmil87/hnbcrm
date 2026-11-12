@@ -24,6 +24,8 @@ export const SUMMARY_MARKER = "hnbcrmSummary";
 export const SIGNUP_SOURCE_NAME = "Cadastro";
 export const CONTACT_SOURCE_NAME = "Site – contato";
 export const SIGNUP_TAG = "cadastro";
+export const NEWSLETTER_TAG = "newsletter";
+export const NEWSLETTER_SOURCE_NAME = "Site – newsletter";
 
 export const CONTACT_KINDS = ["implantacao", "consultoria", "empresa"] as const;
 export type ContactKind = (typeof CONTACT_KINDS)[number];
@@ -302,4 +304,20 @@ export async function findOrCreateInternalContact(
     auditAsSystem: true,
   });
   return { contactId, created: true, phoneStored: storePhone };
+}
+
+// ── Newsletter (inscrição pública) ─────────────────────────────────────────
+
+export const NEWSLETTER_LIMITS = { body: 2_000, name: 80, email: 254, source: 40 } as const;
+
+export type NewsletterSignup = { email: string; name: string };
+export type NewsletterParse = { ok: true; value: NewsletterSignup } | { ok: false; message: string };
+
+/** E-mail obrigatório (normalizado) e nome opcional, ambos saneados: texto de formulário é dado. */
+export function parseNewsletterSignup(raw: { email?: unknown; name?: unknown } | null | undefined): NewsletterParse {
+  if (!raw || typeof raw !== "object") return { ok: false, message: "Corpo inválido." };
+  const email = cleanFormText(raw.email, NEWSLETTER_LIMITS.email).toLowerCase();
+  if (!hasEmailShape(email)) return { ok: false, message: "Informe um e-mail válido." };
+  const name = cleanFormText(raw.name, NEWSLETTER_LIMITS.name);
+  return { ok: true, value: { email, name } };
 }
