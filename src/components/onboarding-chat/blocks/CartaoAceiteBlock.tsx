@@ -6,7 +6,8 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { mutationErrorMessage } from "@/lib/errors";
-import { AI_LGPD_ACK_LABEL, AI_LGPD_PARAGRAPHS } from "@/lib/onboardingAccount";
+import { AI_LGPD_ACK_LABEL } from "@/lib/aiLgpdText";
+import { AiLgpdParagraphs } from "@/components/settings/ai/AiLgpdParagraphs";
 import { BlockCard } from "./BlockCard";
 import type { BlockProps } from "./types";
 
@@ -59,11 +60,7 @@ export function CartaoAceiteView({ active, note, disabled = false, onAccept }: C
   return (
     <BlockCard title="Ativar a IA" icon={ShieldCheck} note={note}>
       <div className="space-y-2">
-        {AI_LGPD_PARAGRAPHS.map((p) => (
-          <p key={p} className="text-sm text-text-secondary">
-            {p}
-          </p>
-        ))}
+        <AiLgpdParagraphs />
         <Checkbox
           containerClassName="min-h-11 items-center"
           checked={checked}

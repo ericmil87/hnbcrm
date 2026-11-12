@@ -18,7 +18,7 @@ function timer(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${(seconds % 60).toString().padStart(2, "0")}`;
 }
 
-function VoiceBody({ onClose, onSubmit, phase }: Omit<VoiceSheetProps, "open">) {
+function VoiceBody({ onClose, onSubmit, phase, onSendingChange }: Omit<VoiceSheetProps, "open"> & { onSendingChange: (sending: boolean) => void }) {
   const { phase: rec, elapsed, take, error, start, stop, discard } = useVoiceCapture();
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -29,9 +29,11 @@ function VoiceBody({ onClose, onSubmit, phase }: Omit<VoiceSheetProps, "open">) 
   const send = async () => {
     if (!take || !size?.ok) return;
     setSending(true);
+    onSendingChange(true);
     setSendError(null);
     const result = await onSubmit({ kind: "audio", file: take.blob, name: take.name, mimeType: take.format.mimeType });
     setSending(false);
+    onSendingChange(false);
     if (result.ok) onClose();
     else setSendError(result.message);
   };
@@ -96,9 +98,14 @@ function VoiceBody({ onClose, onSubmit, phase }: Omit<VoiceSheetProps, "open">) 
 /** Folha do microfone: grava, ouve a prévia e envia como anexo `audio` (≤ 2 MB). */
 export function VoiceSheet({ open, onClose, onSubmit, phase }: VoiceSheetProps) {
   // Fechar descarta a gravação: o corpo desmonta e o hook solta microfone e URL.
+  // Enquanto envia, fechar é ignorado (o áudio já está subindo).
+  const [sending, setSending] = useState(false);
+  const guardedClose = () => {
+    if (!sending && phase === null) onClose();
+  };
   return (
-    <Modal open={open} onClose={onClose} title="Gravar áudio">
-      {open && <VoiceBody onClose={onClose} onSubmit={onSubmit} phase={phase} />}
+    <Modal open={open} onClose={guardedClose} title="Gravar áudio">
+      {open && <VoiceBody onClose={onClose} onSubmit={onSubmit} phase={phase} onSendingChange={setSending} />}
     </Modal>
   );
 }

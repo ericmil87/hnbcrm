@@ -60,15 +60,3 @@ export function confirmResultMessage(result: { verified: boolean; reason?: Confi
       return "Não foi possível confirmar o código. Tente de novo.";
   }
 }
-
-/**
- * Texto do aceite de IA/LGPD: o mesmo da tela de IA (`ActivationCard`, modal
- * "Ativar IA — LGPD"). Fonte única para o chat; o clique do botão é o aceite.
- */
-export const AI_LGPD_PARAGRAPHS = [
-  "Ao ativar, dados de clientes (mensagens, nomes, contexto do CRM) são processados por provedores de IA nos EUA em modo zero-retention (não são retidos nem usados para treino no caminho padrão da plataforma).",
-  "Sua organização é a controladora dos dados. Ao ativar, você confirma que sua política de privacidade divulga o uso de IA no atendimento e a transferência internacional de dados (LGPD, art. 33).",
-] as const;
-
-export const AI_LGPD_ACK_LABEL =
-  "Confirmo que minha política de privacidade divulga o uso de IA e a transferência internacional de dados";

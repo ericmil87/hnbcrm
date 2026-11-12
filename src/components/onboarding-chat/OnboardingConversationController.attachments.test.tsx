@@ -3,13 +3,23 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { OnboardingConversationController, type OnboardingConversationControllerProps } from "./OnboardingConversationController";
+import { CartaoContaView } from "./blocks/CartaoContaBlock";
+import { AvisoMateriaisView } from "./blocks/AvisoMateriaisBlock";
+import { MATERIALS_NOTICE_TEXT } from "../../../convex/lib/onboardingBlocks";
 
-// Só os containers dos blocos de conta/aviso (renderizados pelo portão) usam Convex.
-const mutationFns = vi.hoisted(() => ({ ack: vi.fn(async () => ({})) }));
-vi.mock("convex/react", () => ({
-  useQuery: () => undefined,
-  useMutation: () => mutationFns.ack,
-}));
+// Os blocos de conta/aviso reais usam Convex; aqui entram as Views por `renderGateBlock`.
+const ack = vi.fn(async (_args: { organizationId: string | null; sessionId: string | null }) => {});
+const requestCode = vi.fn(async () => ({ sent: true }));
+const renderGateBlock: OnboardingConversationControllerProps["renderGateBlock"] = (gate, ctx) =>
+  gate === "cartaoConta" ? (
+    <CartaoContaView verified={false} onRequest={requestCode} onConfirm={async () => ({ verified: false })} />
+  ) : (
+    <AvisoMateriaisView
+      text={MATERIALS_NOTICE_TEXT}
+      acknowledged={false}
+      onAck={() => ack({ organizationId: ctx.organizationId, sessionId: ctx.sessionId })}
+    />
+  );
 
 const enc = new TextEncoder();
 
@@ -35,6 +45,7 @@ function props(overrides: Partial<OnboardingConversationControllerProps> = {}): 
     token: "tok",
     intent: null,
     siteUrl: "https://x.convex.site",
+    renderGateBlock,
     ...overrides,
   };
 }
@@ -103,7 +114,7 @@ describe("anexos no controller", () => {
   });
 
   it("notice_required: mostra o aviso e o botão de ciência chama a mutation só no clique", async () => {
-    mutationFns.ack.mockClear();
+    ack.mockClear();
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: "x", code: "notice_required" }), { status: 403 }));
     render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch, uploadFile: vi.fn() })));
     await userEvent.click(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" }));
@@ -111,9 +122,57 @@ describe("anexos no controller", () => {
     await userEvent.type(screen.getByLabelText(/Endereço/), "https://loja.com.br");
     await userEvent.click(screen.getByRole("button", { name: "Enviar link" }));
     const region = await screen.findByRole("region", { name: "Aviso sobre materiais" });
-    expect(mutationFns.ack).not.toHaveBeenCalled();
+    expect(ack).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Li e entendi" }));
-    expect(mutationFns.ack).toHaveBeenCalledWith({ organizationId: "org1", sessionId: "s1" });
+    expect(ack).toHaveBeenCalledWith({ organizationId: "org1", sessionId: "s1" });
     expect(region).toBeInTheDocument();
+  });
+
+  it("sem e-mail confirmado: mostra o cartão de conta e NÃO sobe o arquivo nem chama o servidor", async () => {
+    const fetchMock = vi.fn();
+    const uploadFile = vi.fn();
+    render(
+      ui(
+        props({
+          fetchImpl: fetchMock as unknown as typeof fetch,
+          uploadFile,
+          chatState: { stage: "interview", lastChips: [], materialsUnlocked: false, materialsNoticeAcknowledged: true },
+        })
+      )
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" }));
+    await userEvent.upload(screen.getByLabelText("Escolher PDF"), new File(["%PDF"], "c.pdf", { type: "application/pdf" }));
+    expect(await screen.findByRole("region", { name: "Confirme o seu e-mail" })).toBeInTheDocument();
+    expect(uploadFile).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sem ciência do aviso: mostra o aviso e não sobe; depois de liberado, 'Enviar de novo' sobe", async () => {
+    const fetchMock = vi.fn(async () => sseResponse([{ type: "done", nextStage: null, askForMaterials: false }]));
+    const uploadFile = vi.fn(async () => "st1");
+    const gated = props({
+      fetchImpl: fetchMock as unknown as typeof fetch,
+      uploadFile,
+      chatState: { stage: "interview", lastChips: [], materialsUnlocked: true, materialsNoticeAcknowledged: false },
+    });
+    const { rerender } = render(ui(gated));
+    await userEvent.click(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" }));
+    await userEvent.upload(screen.getByLabelText("Escolher imagem"), new File(["a"], "f.png", { type: "image/png" }));
+    expect(await screen.findByRole("region", { name: "Aviso sobre materiais" })).toBeInTheDocument();
+    expect(uploadFile).not.toHaveBeenCalled();
+    rerender(ui({ ...gated, chatState: { stage: "interview", lastChips: [], materialsUnlocked: true, materialsNoticeAcknowledged: true } }));
+    await userEvent.click(screen.getByRole("button", { name: "Enviar de novo" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(uploadFile).toHaveBeenCalledTimes(1);
+    expect(bodyOf(fetchMock, 0).attachment).toEqual({ kind: "image", storageId: "st1" });
+  });
+
+  it("estado do portão desconhecido (campos ausentes): não barra, o servidor decide", async () => {
+    const uploadFile = vi.fn(async () => "st2");
+    const fetchMock = vi.fn(async () => sseResponse([{ type: "done", nextStage: null, askForMaterials: false }]));
+    render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch, uploadFile })));
+    await userEvent.click(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" }));
+    await userEvent.upload(screen.getByLabelText("Escolher imagem"), new File(["a"], "f.png", { type: "image/png" }));
+    await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1));
   });
 });

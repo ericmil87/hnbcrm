@@ -42,6 +42,25 @@ export const generateUploadUrl = mutation({
 });
 
 /**
+ * Descarta um upload que nunca virou arquivo salvo (o POST ao storage deu certo e o
+ * `saveFile` falhou). Só apaga o blob quando NENHUMA linha de `files` (de qualquer
+ * org) aponta para o `storageId`; na dúvida o blob fica (`lib/fileRefs.ts`).
+ * Mesma permissão do `generateUploadUrl`.
+ */
+export const discardUnsavedUpload = mutation({
+  args: { organizationId: v.id("organizations"), storageId: v.string() },
+  returns: v.boolean(),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "leads", "edit_own");
+    // Sem linha ainda: nenhum id coincide e qualquer linha existente bloqueia a exclusão.
+    return await deleteBlobIfUnreferenced(ctx, {
+      _id: "unsaved-upload" as Id<"files">,
+      storageId: args.storageId as Id<"_storage">,
+    });
+  },
+});
+
+/**
  * Save file metadata after upload
  *
  * Call this after uploading file to storage URL

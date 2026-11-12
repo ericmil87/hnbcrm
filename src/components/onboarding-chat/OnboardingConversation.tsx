@@ -68,6 +68,7 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
 
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const saveFile = useMutation(api.files.saveFile);
+  const discardUnsavedUpload = useMutation(api.files.discardUnsavedUpload);
   const uploadFile = useCallback(
     (file: { blob: Blob; name: string; mimeType: string }, onPhase: (phase: "uploading" | "saving") => void) =>
       uploadAttachmentFile(
@@ -75,11 +76,12 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
           organizationId,
           generateUploadUrl: (args) => generateUploadUrl({ organizationId: args.organizationId as Id<"organizations"> }),
           saveFile: (args) => saveFile({ ...args, organizationId: args.organizationId as Id<"organizations"> }),
+          discardUnsaved: (args) => discardUnsavedUpload({ ...args, organizationId: args.organizationId as Id<"organizations"> }),
         },
         file,
         onPhase
       ),
-    [organizationId, generateUploadUrl, saveFile]
+    [organizationId, generateUploadUrl, saveFile, discardUnsavedUpload]
   );
 
   const onSession = useCallback((id: string) => setSessionId(id as Id<"onboardingSessions">), []);
@@ -92,7 +94,16 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
       sessionId={sessionId}
       history={{ results: history.results as readonly HistoryMessage[], status: history.status, loadMore: history.loadMore }}
       sessionStage={session?.stage ?? null}
-      chatState={chatState ? { stage: chatState.stage, lastChips: chatState.lastChips } : null}
+      chatState={
+        chatState
+          ? {
+              stage: chatState.stage,
+              lastChips: chatState.lastChips,
+              materialsUnlocked: chatState.materialsUnlocked,
+              materialsNoticeAcknowledged: chatState.materialsNoticeAcknowledged,
+            }
+          : null
+      }
       draft={session?.draft ?? null}
       token={token ?? null}
       intent={intent}

@@ -10,6 +10,9 @@ import {
 } from "@/lib/voiceRecordingFormat";
 import { VOICE_MAX_SECONDS } from "@/lib/onboardingAttachments";
 
+/** Voz em 64 kbps: 3 minutos ficam bem abaixo do teto de 2 MB. */
+export const VOICE_BITS_PER_SECOND = 64000;
+
 export type VoicePhase = "idle" | "starting" | "recording" | "preview";
 
 export interface VoiceTake {
@@ -57,6 +60,7 @@ export function useVoiceCapture(): UseVoiceCaptureResult {
   const chunksRef = useRef<Blob[]>([]);
   const timerRef = useRef<number | null>(null);
   const urlRef = useRef<string | null>(null);
+  const elapsedRef = useRef(0);
 
   const release = useCallback(() => {
     if (timerRef.current !== null) {
@@ -151,7 +155,10 @@ export function useVoiceCapture(): UseVoiceCaptureResult {
         let requested = picked.mimeType;
         let recorder: MediaRecorder;
         try {
-          recorder = requested ? new MediaRecorder(stream, { mimeType: requested }) : new MediaRecorder(stream);
+          recorder = new MediaRecorder(stream, {
+            ...(requested ? { mimeType: requested } : {}),
+            audioBitsPerSecond: VOICE_BITS_PER_SECOND,
+          });
         } catch {
           // Safari: diz que suporta e depois recusa. Usa o padrão do navegador.
           requested = "";
@@ -193,13 +200,13 @@ export function useVoiceCapture(): UseVoiceCaptureResult {
           setPhase("preview");
         };
         recorder.start();
+        elapsedRef.current = 0;
         setElapsed(0);
         setPhase("recording");
         timerRef.current = window.setInterval(() => {
-          setElapsed((s) => {
-            if (s + 1 >= VOICE_MAX_SECONDS) queueMicrotask(stop);
-            return s + 1;
-          });
+          elapsedRef.current += 1;
+          setElapsed(elapsedRef.current);
+          if (elapsedRef.current >= VOICE_MAX_SECONDS) stop();
         }, 1000);
       } catch (err) {
         reset(voiceStartErrorMessage(err));

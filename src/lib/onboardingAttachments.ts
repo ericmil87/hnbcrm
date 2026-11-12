@@ -6,15 +6,15 @@
  *
  * Tetos iguais aos de `convex/onboardingChat.ts` (PDF 20 MB, imagem 5 MB, áudio 2 MB).
  */
-import { ONBOARDING_PDF_MAX_BYTES } from "../../convex/lib/onboardingLimits";
+import { ONBOARDING_AUDIO_MAX_BYTES, ONBOARDING_IMAGE_MAX_BYTES, ONBOARDING_PDF_MAX_BYTES } from "../../convex/lib/onboardingLimits";
 import type { OnboardingAttachment, OnboardingErrorCode } from "./onboardingStream";
 
 export type FileAttachmentKind = "pdf" | "image" | "audio";
 
 export const ATTACHMENT_MAX_BYTES: Record<FileAttachmentKind, number> = {
   pdf: ONBOARDING_PDF_MAX_BYTES,
-  image: 5 * 1024 * 1024,
-  audio: 2 * 1024 * 1024,
+  image: ONBOARDING_IMAGE_MAX_BYTES,
+  audio: ONBOARDING_AUDIO_MAX_BYTES,
 };
 
 /** Duração máxima da gravação (o servidor fala em uns 3 minutos / 2 MB). */
@@ -126,6 +126,8 @@ export interface UploadDeps {
     size: number;
     fileType: "message_attachment";
   }) => Promise<unknown>;
+  /** Apaga o blob quando o `saveFile` falha depois do POST (`files.discardUnsavedUpload`). */
+  discardUnsaved?: (args: { organizationId: string; storageId: string }) => Promise<unknown>;
   fetchImpl?: typeof fetch;
 }
 
@@ -143,14 +145,24 @@ export async function uploadAttachmentFile(
   const body = (await response.json()) as { storageId?: unknown };
   if (typeof body.storageId !== "string" || !body.storageId) throw new Error("upload failed");
   onPhase?.("saving");
-  await deps.saveFile({
-    organizationId: deps.organizationId,
-    storageId: body.storageId,
-    name: file.name,
-    mimeType: file.mimeType,
-    size: file.blob.size,
-    fileType: "message_attachment",
-  });
+  try {
+    await deps.saveFile({
+      organizationId: deps.organizationId,
+      storageId: body.storageId,
+      name: file.name,
+      mimeType: file.mimeType,
+      size: file.blob.size,
+      fileType: "message_attachment",
+    });
+  } catch (err) {
+    // O blob já está no storage e nunca virou arquivo: não deixa órfão (melhor esforço).
+    try {
+      await deps.discardUnsaved?.({ organizationId: deps.organizationId, storageId: body.storageId });
+    } catch {
+      // segue para o erro original
+    }
+    throw err;
+  }
   return body.storageId;
 }
 

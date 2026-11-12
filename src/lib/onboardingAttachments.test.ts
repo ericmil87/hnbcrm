@@ -73,6 +73,17 @@ describe("uploadAttachmentFile", () => {
     });
     expect(phases).toEqual(["uploading", "saving"]);
   });
+  it("saveFile falha depois do POST: descarta o blob e repassa o erro", async () => {
+    const discardUnsaved = vi.fn(async () => true);
+    const saveFile = vi.fn(async () => {
+      throw new Error("quota");
+    });
+    const fetchImpl = vi.fn(async () => ({ ok: true, json: async () => ({ storageId: "st9" }) }) as unknown as Response);
+    await expect(
+      uploadAttachmentFile({ organizationId: "o", generateUploadUrl: async () => "u", saveFile, discardUnsaved, fetchImpl }, { blob, name: "a", mimeType: "application/pdf" })
+    ).rejects.toThrow("quota");
+    expect(discardUnsaved).toHaveBeenCalledWith({ organizationId: "o", storageId: "st9" });
+  });
   it("falha do POST não chama saveFile", async () => {
     const saveFile = vi.fn();
     const fetchImpl = vi.fn(async () => ({ ok: false }) as unknown as Response);

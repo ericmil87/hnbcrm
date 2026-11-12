@@ -60,12 +60,16 @@ describe("AttachmentSheet", () => {
 class FakeRecorder {
   static instances: FakeRecorder[] = [];
   static isTypeSupported = (t: string) => t === "audio/mp4";
+  /** Tamanho do blob gravado ao parar. */
+  static bytes = 64;
   state: "inactive" | "recording" = "inactive";
   mimeType: string;
+  options: { mimeType?: string; audioBitsPerSecond?: number } | undefined;
   ondataavailable: ((e: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
   onerror: (() => void) | null = null;
-  constructor(_s: unknown, opts?: { mimeType?: string }) {
+  constructor(_s: unknown, opts?: { mimeType?: string; audioBitsPerSecond?: number }) {
+    this.options = opts;
     this.mimeType = opts?.mimeType ?? "";
     FakeRecorder.instances.push(this);
   }
@@ -74,28 +78,44 @@ class FakeRecorder {
   }
   stop() {
     this.state = "inactive";
-    this.ondataavailable?.({ data: new Blob([new Uint8Array(64)], { type: this.mimeType }) });
+    this.ondataavailable?.({ data: new Blob([new Uint8Array(FakeRecorder.bytes)], { type: this.mimeType }) });
     void this.onstop?.();
   }
 }
 
 describe("VoiceSheet", () => {
+  const trackStop = vi.fn();
+  const getUserMedia = vi.fn();
+  const originalCreate = URL.createObjectURL;
+  const originalRevoke = URL.revokeObjectURL;
+
   beforeEach(() => {
     FakeRecorder.instances = [];
+    FakeRecorder.bytes = 64;
+    trackStop.mockClear();
+    getUserMedia.mockReset();
+    getUserMedia.mockImplementation(async () => ({ getTracks: () => [{ stop: trackStop }] }));
     vi.stubGlobal("MediaRecorder", FakeRecorder);
-    vi.stubGlobal("URL", Object.assign(URL, { createObjectURL: vi.fn(() => "blob:x"), revokeObjectURL: vi.fn() }));
-    Object.defineProperty(navigator, "mediaDevices", {
-      configurable: true,
-      value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: vi.fn() }] })) },
-    });
+    URL.createObjectURL = vi.fn(() => "blob:x");
+    URL.revokeObjectURL = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", { configurable: true, value: { getUserMedia } });
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    URL.createObjectURL = originalCreate;
+    URL.revokeObjectURL = originalRevoke;
+  });
 
-  it("grava (formato mp4 do Safari), mostra a prévia e envia como audio/mp4", async () => {
-    const onSubmit = vi.fn(async (_d: AttachmentDraft) => ({ ok: true as const }));
-    render(<VoiceSheet open onClose={vi.fn()} onSubmit={onSubmit} phase={null} />);
+  const startRecording = async () => {
     await userEvent.click(screen.getByRole("button", { name: "Começar a gravar" }));
     await screen.findByRole("button", { name: "Parar gravação" });
+  };
+
+  it("grava (formato mp4 do Safari, 64 kbps), mostra a prévia e envia como audio/mp4", async () => {
+    const onSubmit = vi.fn(async (_d: AttachmentDraft) => ({ ok: true as const }));
+    render(<VoiceSheet open onClose={vi.fn()} onSubmit={onSubmit} phase={null} />);
+    await startRecording();
+    expect(FakeRecorder.instances[0].options).toEqual({ mimeType: "audio/mp4", audioBitsPerSecond: 64000 });
     await userEvent.click(screen.getByRole("button", { name: "Parar gravação" }));
     expect(await screen.findByLabelText("Prévia da gravação")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Enviar áudio" }));
@@ -108,23 +128,18 @@ describe("VoiceSheet", () => {
   });
 
   it("gravação acima de 2 MB avisa e não deixa enviar", async () => {
+    FakeRecorder.bytes = 2 * 1024 * 1024 + 1;
     const onSubmit = vi.fn(ok);
-    FakeRecorder.prototype.stop = function (this: FakeRecorder) {
-      this.state = "inactive";
-      this.ondataavailable?.({ data: new Blob([new Uint8Array(2 * 1024 * 1024 + 1)], { type: "audio/mp4" }) });
-      void this.onstop?.();
-    };
     render(<VoiceSheet open onClose={vi.fn()} onSubmit={onSubmit} phase={null} />);
-    await userEvent.click(screen.getByRole("button", { name: "Começar a gravar" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Parar gravação" }));
+    await startRecording();
+    await userEvent.click(screen.getByRole("button", { name: "Parar gravação" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Áudio grande demais");
     expect(screen.getByRole("button", { name: "Enviar áudio" })).toBeDisabled();
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it("permissão do microfone negada: mensagem clara e volta ao início", async () => {
-    const denied = Object.assign(new Error("denied"), { name: "NotAllowedError" });
-    (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(denied);
+    getUserMedia.mockRejectedValueOnce(Object.assign(new Error("denied"), { name: "NotAllowedError" }));
     render(<VoiceSheet open onClose={vi.fn()} onSubmit={vi.fn(ok)} phase={null} />);
     await userEvent.click(screen.getByRole("button", { name: "Começar a gravar" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Permissão do microfone negada");
@@ -138,5 +153,48 @@ describe("VoiceSheet", () => {
       await userEvent.click(screen.getByRole("button", { name: "Começar a gravar" }));
     });
     expect(screen.getByRole("alert")).toHaveTextContent("não grava áudio");
+  });
+
+  it("fechar a folha gravando solta o microfone", async () => {
+    const { rerender } = render(<VoiceSheet open onClose={vi.fn()} onSubmit={vi.fn(ok)} phase={null} />);
+    await startRecording();
+    expect(trackStop).not.toHaveBeenCalled();
+    rerender(<VoiceSheet open={false} onClose={vi.fn()} onSubmit={vi.fn(ok)} phase={null} />);
+    expect(trackStop).toHaveBeenCalled();
+    expect(FakeRecorder.instances[0].state).toBe("inactive");
+  });
+
+  it("desmontar gravando solta o microfone", async () => {
+    const { unmount } = render(<VoiceSheet open onClose={vi.fn()} onSubmit={vi.fn(ok)} phase={null} />);
+    await startRecording();
+    unmount();
+    expect(trackStop).toHaveBeenCalled();
+  });
+
+  it("desmontar com a permissão pendente solta o microfone assim que ela chega", async () => {
+    let grant!: (s: unknown) => void;
+    getUserMedia.mockImplementationOnce(() => new Promise((resolve) => (grant = resolve)));
+    const { unmount } = render(<VoiceSheet open onClose={vi.fn()} onSubmit={vi.fn(ok)} phase={null} />);
+    await userEvent.click(screen.getByRole("button", { name: "Começar a gravar" }));
+    unmount();
+    await act(async () => {
+      grant({ getTracks: () => [{ stop: trackStop }] });
+    });
+    expect(trackStop).toHaveBeenCalled();
+    expect(FakeRecorder.instances).toHaveLength(0);
+  });
+
+  it("fechar enquanto envia é ignorado", async () => {
+    let finish!: (r: { ok: true }) => void;
+    const onSubmit = vi.fn(() => new Promise<{ ok: true }>((resolve) => (finish = resolve)));
+    const onClose = vi.fn();
+    render(<VoiceSheet open onClose={onClose} onSubmit={onSubmit} phase={null} />);
+    await startRecording();
+    await userEvent.click(screen.getByRole("button", { name: "Parar gravação" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Enviar áudio" }));
+    await userEvent.keyboard("{Escape}");
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => finish({ ok: true }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

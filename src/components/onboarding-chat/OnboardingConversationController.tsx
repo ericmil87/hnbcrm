@@ -19,6 +19,7 @@ import type { OnboardingAttachment } from "@/lib/onboardingStream";
 import { AttachmentSheet, type SubmitAttachmentResult, type UploadPhase } from "./attachments/AttachmentSheet";
 import { VoiceSheet } from "./attachments/VoiceSheet";
 import { OnboardingBlockView } from "./blocks/registry";
+import type { BlockContext } from "./blocks/types";
 
 export const WIZARD_HREF = "/app/configuracao-inicial";
 export const HISTORY_PAGE = 30;
@@ -51,7 +52,14 @@ export interface OnboardingConversationControllerProps {
   /** Etapa gravada na sessão (`getSession().stage`): a fonte de verdade. */
   sessionStage: string | null;
   /** `getChatState` (etapa de reserva e últimos chips). */
-  chatState: { stage: string | null; lastChips: readonly string[] } | null;
+  chatState: {
+    stage: string | null;
+    lastChips: readonly string[];
+    /** E-mail confirmado (D2). Ausente = desconhecido: o servidor decide. */
+    materialsUnlocked?: boolean;
+    /** Ciência do aviso de materiais dada nesta sessão. Ausente = desconhecido. */
+    materialsNoticeAcknowledged?: boolean;
+  } | null;
   draft: OnboardingDraft | null;
   token: string | null;
   /** Mensagem guardada do hero: vira o primeiro turno quando a conversa está pronta. */
@@ -67,6 +75,8 @@ export interface OnboardingConversationControllerProps {
    * `storageId`. Sem ela, clipe e microfone ficam desligados.
    */
   uploadFile?: (file: { blob: Blob; name: string; mimeType: string }, onPhase: (phase: "uploading" | "saving") => void) => Promise<string>;
+  /** Bloco de conta/aviso mostrado quando um anexo precisa de e-mail confirmado ou de ciência. Padrão: o registro de blocos. */
+  renderGateBlock?: (gate: "cartaoConta" | "avisoMateriais", ctx: BlockContext) => ReactNode;
   /** Injeções para teste. */
   fetchImpl?: typeof fetch;
   siteUrl?: string;
@@ -99,6 +109,7 @@ export function OnboardingConversationController({
   onPreferForm,
   orgPicker,
   uploadFile,
+  renderGateBlock,
   fetchImpl,
   siteUrl,
 }: OnboardingConversationControllerProps) {
@@ -108,6 +119,8 @@ export function OnboardingConversationController({
   const [failedAttachment, setFailedAttachment] = useState<FailedAttachment | null>(null);
   const [sheet, setSheet] = useState<"attach" | "voice" | null>(null);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>(null);
+  // Anexo barrado ANTES de subir (sem e-mail confirmado / sem ciência): mostra o bloco e guarda o rascunho.
+  const [blocked, setBlocked] = useState<{ gate: "cartaoConta" | "avisoMateriais"; draft: AttachmentDraft } | null>(null);
   const turnIdRef = useRef(0);
 
   const stream = useOnboardingStream({ organizationId, sessionId, token, onSession, fetchImpl, siteUrl });
@@ -116,6 +129,12 @@ export function OnboardingConversationController({
   // Histórico ainda carregando conta como "não pronto": nada de saudação, chips nem envio.
   const ready = access.kind === "ready" && sessionId !== null && history.status !== "LoadingFirstPage" && !!token;
 
+  // Lidos DEPOIS de um await (upload): o valor do render que criou o callback pode estar velho.
+  const isStreamingRef = useRef(isStreaming);
+  isStreamingRef.current = isStreaming;
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
+
   const historyRef = useRef(history.results);
   historyRef.current = history.results;
 
@@ -123,7 +142,7 @@ export function OnboardingConversationController({
     (input: { text: string; attachment?: OnboardingAttachment; label?: string }): Promise<OnboardingTurnResult> | null => {
       const text = input.text.trim();
       const shown = input.attachment ? (input.label ?? "Anexo") : text;
-      if (!shown || isStreaming || !ready) return null;
+      if (!shown || isStreamingRef.current || !readyRef.current) return null;
       const meta = input.attachment ? { userText: text, attachmentLabel: shown } : { userText: text };
       const turnId = ++turnIdRef.current;
       setLastFailedText(null);
@@ -145,14 +164,16 @@ export function OnboardingConversationController({
         return result;
       });
     },
-    [streamSend, isStreaming, ready]
+    [streamSend]
   );
 
   /**
    * Começa um turno de texto. Devolve null quando NÃO começou (não pronto, turno em
    * andamento, texto vazio); senão a promessa do resultado.
    */
-  const startTurn = useCallback((raw: string) => runTurn({ text: raw }), [runTurn]);
+  // `ready` entra nas dependências de propósito: a mensagem do hero reenvia quando a conversa fica pronta.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const startTurn = useCallback((raw: string) => runTurn({ text: raw }), [runTurn, ready]);
 
   const send = useCallback((raw: string) => void startTurn(raw), [startTurn]);
 
@@ -162,7 +183,22 @@ export function OnboardingConversationController({
    */
   const submitAttachment = useCallback(
     async (draft: AttachmentDraft): Promise<SubmitAttachmentResult> => {
-      if (isStreaming || !ready) return { ok: false, message: "Espere o Copiloto terminar de responder para enviar." };
+      if (isStreamingRef.current || !readyRef.current) {
+        return { ok: false, message: "Espere o Copiloto terminar de responder para enviar." };
+      }
+      // Portões ANTES de subir qualquer arquivo (o servidor continua sendo a garantia).
+      const closed =
+        chatState?.materialsUnlocked === false
+          ? "cartaoConta"
+          : chatState?.materialsNoticeAcknowledged === false
+            ? "avisoMateriais"
+            : null;
+      if (closed) {
+        setBlocked({ gate: closed, draft });
+        // Fecha a folha: o bloco certo aparece na conversa.
+        return { ok: true };
+      }
+      setBlocked(null);
       let storageId: string | undefined;
       if (draft.kind !== "url") {
         if (!uploadFile) return { ok: false, message: UPLOAD_ERROR_MESSAGE };
@@ -174,10 +210,12 @@ export function OnboardingConversationController({
           setUploadPhase(null);
         }
       }
+      // O upload demorou: o turno pode ter começado por outro caminho nesse meio tempo.
+      if (isStreamingRef.current) return { ok: false, message: "Espere o Copiloto terminar de responder para enviar." };
       const started = runTurn({ text: "", attachment: toStreamAttachment(draft, storageId), label: attachmentTurnLabel(draft) });
       return started ? { ok: true } : { ok: false, message: "Não foi possível enviar agora. Tente de novo." };
     },
-    [isStreaming, ready, uploadFile, runTurn]
+    [chatState?.materialsUnlocked, chatState?.materialsNoticeAcknowledged, uploadFile, runTurn]
   );
 
   // Mensagem do hero: primeiro turno quando a conversa fica pronta. Só marca
@@ -221,20 +259,27 @@ export function OnboardingConversationController({
   const pendingIntent = intent?.message && !intentSentRef.current ? intent.message : null;
 
   // Anexo recusado por conta/aviso: mostra o bloco certo (e "Enviar de novo") em vez do erro genérico.
-  const gate = gateForErrorCode(streamError?.code);
+  const gate = gateForErrorCode(streamError?.code) ?? blocked?.gate ?? null;
   const retryAttachment = failedAttachment
     ? () => void runTurn({ text: "", attachment: failedAttachment.attachment, label: failedAttachment.label })
-    : null;
+    : blocked
+      ? () => void submitAttachment(blocked.draft)
+      : null;
+  const gateCtx = { ...blockCtx, isLatest: true };
   const tail = gate ? (
     <div className="flex flex-col items-start gap-2">
-      <OnboardingBlockView
-        block={
-          gate === "cartaoConta"
-            ? { kind: "cartaoConta", emailVerified: false, materialsUnlocked: false }
-            : { kind: "avisoMateriais", text: MATERIALS_NOTICE_TEXT, acknowledged: false }
-        }
-        ctx={{ ...blockCtx, isLatest: true }}
-      />
+      {renderGateBlock ? (
+        renderGateBlock(gate, gateCtx)
+      ) : (
+        <OnboardingBlockView
+          block={
+            gate === "cartaoConta"
+              ? { kind: "cartaoConta", emailVerified: false, materialsUnlocked: false }
+              : { kind: "avisoMateriais", text: MATERIALS_NOTICE_TEXT, acknowledged: false }
+          }
+          ctx={gateCtx}
+        />
+      )}
       {retryAttachment && (
         <Button type="button" variant="secondary" size="sm" disabled={isStreaming} onClick={retryAttachment}>
           Enviar de novo
