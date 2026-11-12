@@ -307,6 +307,7 @@ export const PUBLIC_API_ROUTES: readonly string[] = [
   "POST /api/v1/forms/public/submit",
   "POST /api/v1/forms/public/partial",
   "POST /api/v1/forms/experiment/view",
+  "POST /api/v1/public/contact", // pedido de contato/consultoria → lead na org interna (hnbcrmLeads.ts)
   "GET /api/v1/embed.js",
   "GET /api/v1/openapi.json",
   "POST /api/v1/webhooks/resend",
@@ -2582,6 +2583,48 @@ http.route({
   }),
 });
 
+// Pedido de contato/consultoria — POST /api/v1/public/contact
+// Público (sem API key): honeypot, limite de corpo, rate limit por IP/e-mail/dia e
+// validação na mutation. Sem org interna configurada: 503 {ok:false, code:"unavailable"}
+// (o front cai para o mailto). Honeypot preenchido: 200 {ok:true} sem criar nada.
+http.route({
+  path: "/api/v1/public/contact",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const text = await request.text();
+      if (text.length > 8_000) return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
+      let body: unknown;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return jsonResponse({ ok: false, code: "invalid", message: "Corpo inválido." }, 400);
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return jsonResponse({ ok: false, code: "invalid", message: "Corpo inválido." }, 400);
+      }
+      const b = body as Record<string, unknown>;
+      if (typeof b._honeypot === "string" && b._honeypot.trim() !== "") return jsonResponse({ ok: true });
+      const str = (x: unknown): string => (typeof x === "string" ? x : "");
+      const result = await ctx.runMutation(internal.hnbcrmLeads.internalSubmitContactRequest, {
+        name: str(b.name),
+        email: str(b.email),
+        ...(typeof b.phone === "string" ? { phone: b.phone } : {}),
+        ...(typeof b.business === "string" ? { business: b.business } : {}),
+        ...(typeof b.teamSize === "string" ? { teamSize: b.teamSize } : {}),
+        need: str(b.need),
+        kind: str(b.kind),
+        ipKey: request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined,
+      });
+      if (result.ok) return jsonResponse({ ok: true });
+      const status = result.code === "rate_limited" ? 429 : result.code === "unavailable" ? 503 : 400;
+      return jsonResponse(result, status);
+    } catch {
+      return jsonResponse({ ok: false, code: "error", message: "Não foi possível enviar agora." }, 500);
+    }
+  }),
+});
+
 // Save partial form submission — POST /api/v1/forms/public/partial
 http.route({
   path: "/api/v1/forms/public/partial",
@@ -4470,6 +4513,7 @@ http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: option
 http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/partial", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/public/contact", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns/get", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns/report", method: "OPTIONS", handler: optionsHandler });

@@ -9,7 +9,7 @@ import { FEATURED_PLAN, type PlanDisplay } from "@/lib/pricingCatalog";
 import type { BillingCycle } from "@/lib/pricing";
 import { cn } from "@/lib/utils";
 import { signUpHref } from "@/lib/authEntry";
-import { contactHref } from "@/lib/contactHref";
+import { ContactRequestButton } from "../ContactRequestForm";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { PLANS, TRIAL } from "../../../../convex/lib/plans";
 import { CTA_LABEL, PLAN_AUDIENCE, planCardLines } from "./pricingCopy";
@@ -71,11 +71,9 @@ function PlanCard({ plan, cycle }: { plan: PlanDisplay; cycle: BillingCycle }) {
 
         <div>
           {plan.key === "empresa" ? (
-            <a href={contactHref("empresa")} className="block">
-              <Button variant="secondary" size="lg" className="w-full">
-                Falar com a gente
-              </Button>
-            </a>
+            <ContactRequestButton topic="empresa" variant="secondary" size="lg" className="w-full">
+              Falar com a gente
+            </ContactRequestButton>
           ) : (
             <Link to={signUpHref(plan.key)} className="block">
               <Button variant={plan.featured ? "primary" : "secondary"} size="lg" className="w-full">

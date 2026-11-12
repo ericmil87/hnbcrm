@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { formatMoney } from "@/lib/format";
 import { serviceDisplays } from "@/lib/pricingCatalog";
-import { contactHref } from "@/lib/contactHref";
+import { ContactRequestButton } from "../ContactRequestForm";
 import { SERVICES } from "../../../../convex/lib/plans";
 import { CUSTOM_SERVICE_COPY, SERVICES_FOOTER, SERVICE_COPY, followUpText, servicesSubtitle } from "./pricingCopy";
 
@@ -25,11 +25,10 @@ function IncludesList({ items }: { items: readonly string[] }) {
 
 /**
  * "Implantação e consultoria": pacotes e acompanhamento vêm de `SERVICES` (catálogo).
- * Os botões abrem um e-mail (`contactHref`); o formulário que cria lead vem na Onda 5.
+ * Os botões abrem o formulário de contato (`ContactRequestForm`), que cria lead.
  */
 export function ServicesBlock() {
   const packages = serviceDisplays();
-  const href = contactHref("implantacao");
 
   return (
     <section id="implantacao" aria-labelledby="services-heading" className="space-y-6">
@@ -74,16 +73,12 @@ export function ServicesBlock() {
       </p>
 
       <div className="flex flex-col gap-3 sm:flex-row">
-        <a href={href} className="inline-block">
-          <Button variant="primary" size="lg" className="w-full sm:w-auto">
-            Falar com a gente
-          </Button>
-        </a>
-        <a href={href} className="inline-block">
-          <Button variant="secondary" size="lg" className="w-full sm:w-auto">
-            Pedir orçamento
-          </Button>
-        </a>
+        <ContactRequestButton topic="implantacao" variant="primary" size="lg" className="w-full sm:w-auto">
+          Falar com a gente
+        </ContactRequestButton>
+        <ContactRequestButton topic="consultoria" variant="secondary" size="lg" className="w-full sm:w-auto">
+          Pedir orçamento
+        </ContactRequestButton>
       </div>
 
       <p className="text-sm text-text-muted">{SERVICES_FOOTER}</p>

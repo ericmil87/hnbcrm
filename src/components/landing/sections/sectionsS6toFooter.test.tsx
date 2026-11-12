@@ -78,8 +78,8 @@ describe("S7", () => {
     expect(within(custom).getByText("Consultoria sob medida")).toBeTruthy();
     expect(within(custom).getByText("Sob orçamento")).toBeTruthy();
     expect(custom.textContent).not.toMatch(/R\$/);
-    expect(within(custom).getByRole("link", { name: "Pedir orçamento" }).getAttribute("href")).toMatch(/^mailto:/);
-    expect(screen.getByRole("link", { name: "Falar com a gente" }).getAttribute("href")).toMatch(/^mailto:/);
+    expect(within(custom).getByRole("button", { name: "Pedir orçamento" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Falar com a gente" })).toBeTruthy();
   });
 });
 

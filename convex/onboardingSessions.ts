@@ -14,6 +14,7 @@ import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalMutation, internalQuery, mutation, query, MutationCtx, QueryCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { getActiveMembership, requireAccountWithEmail, requirePermission } from "./lib/auth";
 import { assertValidDraft, draftHash, onboardingDraftValidator, type OnboardingDraft } from "./lib/onboardingDraft";
 import { scanDraft, type DraftSourceText } from "./lib/onboardingDraftFilter";
@@ -368,13 +369,22 @@ export const applyOnboardingDraft = mutation({
     const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
     const org = await ctx.db.get(args.organizationId);
     if (!org) throw new ConvexError("Organização não encontrada");
-    return await applyOnboardingDraftCore(ctx, {
+    const result = await applyOnboardingDraftCore(ctx, {
       org,
       member,
       session,
       expectedDraftHash: args.expectedDraftHash,
       overwriteExistingAttendant: args.overwriteExistingAttendant === true,
     });
+    // Resumo (segmento, plano de interesse) no lead de cadastro da org interna. Só ids.
+    // Sem a env da org interna não há para quem resumir: nem agenda o job.
+    if (!result.alreadyApplied && process.env.HNBCRM_INTERNAL_ORG_ID) {
+      await ctx.scheduler.runAfter(0, internal.hnbcrmLeads.internalApplySignupSummary, {
+        organizationId: args.organizationId,
+        sessionId: args.sessionId,
+      });
+    }
+    return result;
   },
 });
 

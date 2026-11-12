@@ -206,6 +206,9 @@ export const createOrganization = mutation({
       createdAt: now,
     });
 
+    // Lead do HNBCRM na org interna (só ids; sem env, a interna não faz nada).
+    await ctx.scheduler.runAfter(0, internal.hnbcrmLeads.internalCaptureSignupLead, { organizationId: orgId });
+
     return orgId;
   },
 });
