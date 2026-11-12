@@ -39,6 +39,7 @@ describe("brand assets in public/", () => {
       "public/pwa-512x512-v2.png": 512,
       "public/maskable-icon-512x512-v2.png": 512,
       "public/apple-touch-icon-180x180.png": 180,
+      "public/apple-touch-icon-180x180-v2.png": 180,
       "public/favicon-32x32.png": 32,
       "public/favicon-48x48.png": 48,
       "public/badge-96x96.png": 96,
