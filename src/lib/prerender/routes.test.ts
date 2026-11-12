@@ -113,7 +113,8 @@ describe("vercel.json: prerendered files win, everything else gets the neutral s
         .flatMap((r) => r.headers.filter((h) => h.key === "X-Robots-Tag").map((h) => h.value));
     expect(robotsFor(SPA_FALLBACK_URL)).toEqual(["noindex"]);
     for (const path of PRERENDER_PATHS) expect(robotsFor(path), path).toEqual([]);
-    expect(robotsFor("/comecar")).toEqual([]);
+    // /comecar é noindex por decisão da revisão final v2 (conversa de onboarding, sem conteúdo para indexar).
+    expect(robotsFor("/comecar")).toEqual(["noindex"]);
   });
 
   it("static files are served as they are (filesystem first)", () => {

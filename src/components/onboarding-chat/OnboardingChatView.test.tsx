@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { renderWithRouter } from "@/test/render";
 import { EmailEntryCardView } from "@/components/auth/EmailEntryCard";
 import { OnboardingChatView, type OnboardingChatViewProps } from "./OnboardingChatView";
+import { AI_PROCESSING_NOTICE } from "@/lib/onboardingChat";
 import { SignedOutIntro } from "./ConversationIntro";
 
 const noop = () => {};
@@ -51,6 +52,13 @@ describe("OnboardingChatView", () => {
     expect(screen.getByLabelText("E-mail")).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Etapa 1 de 7: Conta");
     expect(screen.getByLabelText("Mensagem para o Copiloto")).toBeDisabled();
+    // Aviso de IA sempre visível, inclusive sem login e antes do primeiro envio.
+    expect(screen.getByRole("note")).toHaveTextContent(AI_PROCESSING_NOTICE);
+  });
+
+  it("o aviso de IA aparece também com a conversa pronta", () => {
+    renderWithRouter(<OnboardingChatView {...props()} />);
+    expect(screen.getByRole("note")).toHaveTextContent(AI_PROCESSING_NOTICE);
   });
 
   it("anexo e microfone ficam prontos e desligados; formulário leva ao wizard", () => {

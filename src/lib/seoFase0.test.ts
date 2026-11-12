@@ -33,6 +33,10 @@ describe("vercel.json: X-Robots-Tag", () => {
     }
   });
 
+  it("conversa de onboarding (/comecar) é noindex", () => {
+    expect(headersFor("/comecar")["X-Robots-Tag"]).toEqual(["noindex"]);
+  });
+
   it("páginas públicas não recebem X-Robots-Tag", () => {
     for (const path of ["/", "/precos", "/developers", "/termos", "/privacidade"]) {
       expect(headersFor(path)["X-Robots-Tag"], path).toBeUndefined();
