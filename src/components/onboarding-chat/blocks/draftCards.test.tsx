@@ -6,6 +6,7 @@ import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import type { OnboardingDraft } from "../../../../convex/lib/onboardingDraft";
 import { draftFixture } from "@/test/onboardingDraftFixture";
 import { renderWithRouter } from "@/test/render";
+import { RespostasRapidasView } from "./RespostasRapidasBlock";
 import { PersonaCardView } from "./PersonaCardBlock";
 import { ConhecimentoListaView, originText } from "./ConhecimentoListaBlock";
 import { FunilPreviewView } from "./FunilPreviewBlock";
@@ -14,7 +15,7 @@ import { AplicarOperacaoView, type ApplyAttempt } from "./AplicarOperacaoBlock";
 import { SimuladorView } from "./SimuladorBlock";
 import { ConectarCanalView } from "./ConectarCanalBlock";
 import { ProximosPassosView } from "./ProximosPassosBlock";
-import { OnboardingTutorial } from "../tutorial/OnboardingTutorial";
+import { OnboardingTutorial, OnboardingTutorialModal } from "../tutorial/OnboardingTutorial";
 import { TUTORIAL_CARDS } from "../tutorial/tutorialCards";
 import type { BlockOf } from "./types";
 import type { CardEditor } from "./draftParts";
@@ -331,5 +332,102 @@ describe("tutorial guiado", () => {
     await user.click(screen.getByRole("button", { name: "Ver de novo" }));
     await user.click(screen.getByRole("button", { name: "Pular tutorial" }));
     expect(onDone).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("concorrência: versão do rascunho muda com o formulário aberto", () => {
+  it("'Usar mesmo assim' aberto na versão 3 não libera nada depois que vira 4", async () => {
+    const user = userEvent.setup();
+    const { editor, save } = fakeEditor(3);
+    const b = block("conhecimentoLista");
+    const { rerender } = render(<ConhecimentoListaView block={b} editor={editor} />);
+    await user.click(screen.getByRole("button", { name: "Usar mesmo assim" }));
+    await user.type(screen.getByLabelText("Por que este trecho pode entrar?"), "é o telefone da loja");
+    rerender(<ConhecimentoListaView block={b} editor={{ ...editor, version: 4 }} />);
+    expect(screen.getByText(/O rascunho mudou desde que você abriu/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Usar mesmo assim" })).toBeDisabled();
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it("sem mudança de versão, a liberação usa a versão de quando abriu", async () => {
+    const user = userEvent.setup();
+    const { editor, save } = fakeEditor(3);
+    render(<ConhecimentoListaView block={block("conhecimentoLista")} editor={editor} />);
+    await user.click(screen.getByRole("button", { name: "Usar mesmo assim" }));
+    await user.type(screen.getByLabelText("Por que este trecho pode entrar?"), "é o telefone da loja");
+    await user.click(screen.getByRole("button", { name: "Usar mesmo assim" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
+    expect(save.mock.calls[0][1]).toBe(3);
+  });
+
+  it("edição aberta mantém o texto, avisa e desliga o salvar; recarregar traz os campos novos", async () => {
+    const user = userEvent.setup();
+    const { editor, save } = fakeEditor(3);
+    const b = block("personaCard");
+    const { rerender } = render(<PersonaCardView block={b} editor={editor} startOpen />);
+    const name = screen.getByLabelText("Nome do atendente");
+    await user.clear(name);
+    await user.type(name, "Zé");
+    rerender(<PersonaCardView block={{ ...b, attendantName: "Bia Nova" }} editor={{ ...editor, version: 4 }} startOpen />);
+    expect(screen.getByRole("alert")).toHaveTextContent(/O rascunho mudou enquanto você editava/);
+    expect(screen.getByLabelText("Nome do atendente")).toHaveValue("Zé");
+    expect(screen.getByRole("button", { name: "Salvar ajuste" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Recarregar os campos" }));
+    expect(screen.getByLabelText("Nome do atendente")).toHaveValue("Bia Nova");
+    expect(screen.getByRole("button", { name: "Salvar ajuste" })).toBeEnabled();
+    expect(save).not.toHaveBeenCalled();
+  });
+});
+
+describe("respostas rápidas liberadas", () => {
+  it("item marcado e liberado mostra a tag e não pede liberação de novo", () => {
+    const b = buildBlock({ kind: "respostasRapidas" }, { ...live, draft: draftFixture() }) as BlockOf<"respostasRapidas">;
+    render(<RespostasRapidasView block={b} editor={fakeEditor().editor} released={[false, true]} />);
+    expect(screen.getByText("Liberado por você")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Usar mesmo assim" })).toBeNull();
+  });
+});
+
+describe("aplicar: trava e sobrescrita", () => {
+  it("alreadyApplied depois de pedir a troca é erro, não sucesso", async () => {
+    const user = userEvent.setup();
+    const onApply = vi
+      .fn<(o: boolean) => Promise<ApplyAttempt>>()
+      .mockResolvedValueOnce({ ok: true, result: applyResult({ attendant: "skipped_existing" }) })
+      .mockResolvedValueOnce({ ok: true, result: applyResult({ alreadyApplied: true, attendant: "unchanged" }) });
+    render(<AplicarOperacaoView state={okState} onApply={onApply} />);
+    await user.click(screen.getByRole("button", { name: "Montar minha operação" }));
+    await user.click(await screen.findByRole("button", { name: "Sobrescrever o atendente que já existe" }));
+    await user.click(screen.getByRole("button", { name: "Sim, sobrescrever" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/Não foi possível sobrescrever/);
+    expect(screen.getByText("Operação montada.")).toBeInTheDocument();
+    expect(screen.queryByText(/Esta versão já estava montada/)).toBeNull();
+  });
+
+  it("mensagem que não é a mais recente trava o botão; rascunho que mudou avisa", () => {
+    render(
+      <AplicarOperacaoView
+        state={okState}
+        onApply={vi.fn()}
+        lockedReason="Esta é uma mensagem antiga. Use o botão da mensagem mais recente."
+        changedSinceMessage
+      />
+    );
+    expect(screen.getByRole("button", { name: "Montar minha operação" })).toBeDisabled();
+    expect(screen.getByText(/mensagem antiga/)).toBeInTheDocument();
+    expect(screen.getByText(/O rascunho mudou desde esta mensagem/)).toBeInTheDocument();
+  });
+});
+
+describe("tutorial no modal", () => {
+  it("o último Entendi não fecha: mostra Ver de novo e Concluir", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<OnboardingTutorialModal open onClose={onClose} />);
+    for (let i = 0; i < TUTORIAL_CARDS.length; i += 1) await user.click(screen.getByRole("button", { name: "Entendi" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Ver de novo" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Concluir" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });

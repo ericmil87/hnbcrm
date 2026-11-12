@@ -10,7 +10,7 @@ import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS } from "../../../../convex/lib/onboardingDraft";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
 import { BlockCard } from "./BlockCard";
-import { FlagNotice, FormActions, ReleaseControl, type CardEditor } from "./draftParts";
+import { FlagNotice, FormActions, ReleaseControl, StaleNotice, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
 export interface ResumoNegocioViewProps {
@@ -51,12 +51,16 @@ export function ResumoNegocioView({ block, compact, editor, onAdjust, startOpen 
           </p>
           {!compact && <FlagNotice reason={block.suspicionReason} />}
           {editor && !compact && (
-            <ReleaseControl disabled={editor.saving} onRelease={(reason) => editor.save(releaseBusiness(reason), editor.version)} />
+            <ReleaseControl
+              version={editor.version}
+              disabled={editor.saving}
+              onRelease={(reason, base) => editor.save(releaseBusiness(reason), base)}
+            />
           )}
         </div>
       )}
       {open && editor ? (
-        <BusinessForm key={editor.version} block={block} editor={editor} onClose={() => setOpen(false)} />
+        <BusinessForm block={block} editor={editor} onClose={() => setOpen(false)} />
       ) : (
         (editor || onAdjust) &&
         !compact && (
@@ -74,7 +78,11 @@ function BusinessForm({ block, editor, onClose }: { block: BlockOf<"resumoNegoci
   const [name, setName] = useState(block.name);
   const [description, setDescription] = useState(block.description);
   const [city, setCity] = useState(block.city ?? "");
-  const base = editor.version;
+  const { base, stale, reload } = useBaseVersion(editor.version, () => {
+    setName(block.name);
+    setDescription(block.description);
+    setCity(block.city ?? "");
+  });
   return (
     <div className="mt-2 space-y-2 rounded-field border border-border-subtle bg-surface-sunken p-2">
       <Input label="Nome do negócio" value={name} maxLength={DRAFT_LIMITS.businessName} onChange={(e) => setName(e.target.value)} />
@@ -86,9 +94,10 @@ function BusinessForm({ block, editor, onClose }: { block: BlockOf<"resumoNegoci
         onChange={(e) => setDescription(e.target.value)}
       />
       <Input label="Cidade" value={city} maxLength={DRAFT_LIMITS.businessCity} onChange={(e) => setCity(e.target.value)} />
+      <StaleNotice stale={stale} onReload={reload} />
       <FormActions
         saving={editor.saving}
-        saveDisabled={name.trim() === "" || description.trim() === ""}
+        saveDisabled={name.trim() === "" || description.trim() === "" || stale}
         onCancel={onClose}
         onSave={() =>
           void editor

@@ -586,6 +586,37 @@ describe("aplicação", () => {
     expect(snap.ai).toHaveLength(1);
   });
 
+  test("skipped_existing -> sobrescrever com o MESMO rascunho: não cai em alreadyApplied e atualiza o atendente (audit high)", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const agentId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("teamMembers", {
+        organizationId: s.a.orgId, name: "Antigo", role: "ai", type: "ai", status: "active",
+        agentProfile: { kind: "attendant", mode: "autopilot", textsMigratedAt: Date.now() },
+        createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      await ctx.db.insert("agentProfileTexts", {
+        organizationId: s.a.orgId, teamMemberId: id, systemPrompt: "Persona feita à mão", knowledge: "FAQ da casa",
+        updatedAt: Date.now(),
+      });
+      return id;
+    });
+    const { sessionId } = await openSession(t, s);
+    expect((await apply(t, s, sessionId)).attendant).toBe("skipped_existing");
+    // Sem pedido de troca, repetir continua sendo o atalho idempotente.
+    expect((await apply(t, s, sessionId)).alreadyApplied).toBe(true);
+    const over = await apply(t, s, sessionId, { overwriteExistingAttendant: true });
+    expect(over.alreadyApplied).toBe(false);
+    expect(over.attendant).toBe("overwritten");
+    const agent = await t.run(async (ctx) => ctx.db.get(agentId));
+    expect(agent?.agentProfile?.mode).toBe("suggest");
+    expect(agent?.name).toBe("Bia");
+    const snap = await snapshot(t, s.a.orgId);
+    expect(snap.audits.find((a) => a.metadata?.action === "onboarding_attendant_overwritten")?.severity).toBe("high");
+    // Depois de sobrescrever, o atalho volta a valer.
+    expect((await apply(t, s, sessionId, { overwriteExistingAttendant: true })).alreadyApplied).toBe(true);
+  });
+
   test("com aceite, o pacote liga só o que foi marcado (sem gravar aceite): visão, transcrição no canal, tradução", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t, { aiActive: true, whatsapp: true });

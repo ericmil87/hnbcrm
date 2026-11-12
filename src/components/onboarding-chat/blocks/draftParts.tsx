@@ -39,25 +39,66 @@ export function FormActions({
   );
 }
 
+/** Versão do rascunho que o formulário viu ao abrir (não a de agora): é a `baseVersion` que ele envia. */
+export function useBaseVersion(version: number, reset?: () => void) {
+  const [base, setBase] = useState(version);
+  return {
+    base,
+    /** O rascunho mudou depois que o formulário abriu. */
+    stale: version !== base,
+    /** Descarta os campos e recarrega da versão nova. */
+    reload: () => {
+      reset?.();
+      setBase(version);
+    },
+  };
+}
+
+/** Aviso de edição concorrente: o texto digitado fica na tela; gravar só depois de recarregar. */
+export function StaleNotice({ stale, onReload }: { stale: boolean; onReload: () => void }) {
+  if (!stale) return null;
+  return (
+    <div role="alert" className="space-y-1.5 rounded-field bg-semantic-warning/10 px-2 py-1.5 text-caption text-text-primary">
+      <p>O rascunho mudou enquanto você editava. Seu texto continua aqui, mas não foi salvo. Recarregue os campos para ver a versão nova.</p>
+      <Button size="sm" variant="secondary" onClick={onReload}>
+        Recarregar os campos
+      </Button>
+    </div>
+  );
+}
+
 export interface ReleaseControlProps {
-  /** Recebe o motivo já validado; devolver `false` mantém o formulário aberto. */
-  onRelease: (reason: string) => Promise<boolean> | boolean | void;
+  /** Versão do rascunho que a tela mostra agora. */
+  version: number;
+  /** Recebe o motivo já validado e a versão de quando o controle abriu; `false` mantém o formulário aberto. */
+  onRelease: (reason: string, baseVersion: number) => Promise<boolean> | boolean | void;
   disabled?: boolean;
 }
 
 /**
  * "Usar mesmo assim": o item marcado só entra na operação depois de a pessoa
  * dizer por quê. O motivo vai em `release: { reason }` e é auditado no servidor.
+ * A versão do rascunho é fixada ao abrir: se mudar com o controle aberto, ele
+ * avisa e não libera (o item pode ser outro).
  */
-export function ReleaseControl({ onRelease, disabled }: ReleaseControlProps) {
+export function ReleaseControl({ version, onRelease, disabled }: ReleaseControlProps) {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const { base, stale, reload } = useBaseVersion(version);
 
   if (!open) {
     return (
-      <Button size="sm" variant="secondary" disabled={disabled} onClick={() => setOpen(true)}>
+      <Button
+        size="sm"
+        variant="secondary"
+        disabled={disabled}
+        onClick={() => {
+          reload();
+          setOpen(true);
+        }}
+      >
         Usar mesmo assim
       </Button>
     );
@@ -72,7 +113,7 @@ export function ReleaseControl({ onRelease, disabled }: ReleaseControlProps) {
     setError(null);
     setBusy(true);
     try {
-      const result = await onRelease(check.reason);
+      const result = await onRelease(check.reason, base);
       if (result !== false) setOpen(false);
     } finally {
       setBusy(false);
@@ -93,7 +134,18 @@ export function ReleaseControl({ onRelease, disabled }: ReleaseControlProps) {
         placeholder="Ex.: é o telefone da minha loja"
       />
       <p className="text-caption text-text-muted">O motivo fica registrado no histórico de alterações.</p>
-      <FormActions onSave={() => void confirm()} onCancel={() => setOpen(false)} saving={busy} saveLabel="Usar mesmo assim" />
+      {stale && (
+        <p role="alert" className="text-caption text-text-primary">
+          O rascunho mudou desde que você abriu. Confira o item na lista e abra de novo; nada foi liberado.
+        </p>
+      )}
+      <FormActions
+        onSave={() => void confirm()}
+        onCancel={() => setOpen(false)}
+        saving={busy}
+        saveDisabled={stale}
+        saveLabel="Usar mesmo assim"
+      />
     </div>
   );
 }

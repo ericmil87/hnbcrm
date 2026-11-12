@@ -23,6 +23,10 @@ export interface AplicarOperacaoViewProps {
   /** "Dar o aceite de IA": leva ao bloco de aceite (nunca aceita sozinho). */
   onAskAccept?: () => void;
   acceptDisabled?: boolean;
+  /** Motivo de o botão estar travado (ex.: mensagem que não é a mais recente). */
+  lockedReason?: string | null;
+  /** O rascunho gravado agora difere do que esta mensagem trazia. */
+  changedSinceMessage?: boolean;
 }
 
 function ResultList({ title, items }: { title: string; items: string[] }) {
@@ -44,7 +48,16 @@ function ResultList({ title, items }: { title: string; items: string[] }) {
  * com explicação se há nome bloqueado; mostra o que fica de fora; atendente
  * que já existia só é sobrescrito depois de uma confirmação clara.
  */
-export function AplicarOperacaoView({ state, note, compact, onApply, onAskAccept, acceptDisabled }: AplicarOperacaoViewProps) {
+export function AplicarOperacaoView({
+  state,
+  note,
+  compact,
+  onApply,
+  onAskAccept,
+  acceptDisabled,
+  lockedReason = null,
+  changedSinceMessage = false,
+}: AplicarOperacaoViewProps) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<ApplyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,7 +71,10 @@ export function AplicarOperacaoView({ state, note, compact, onApply, onAskAccept
     setError(null);
     try {
       const attempt = await onApply(overwrite);
-      if (attempt.ok) {
+      if (attempt.ok && overwrite && attempt.result.alreadyApplied) {
+        // Pediu a troca e o servidor respondeu "já montado": nada foi sobrescrito.
+        setError("Não foi possível sobrescrever o atendente que já existe. Ele continua como estava; tente de novo.");
+      } else if (attempt.ok) {
         setResult(attempt.result);
         setConfirming(false);
       } else {
@@ -87,6 +103,16 @@ export function AplicarOperacaoView({ state, note, compact, onApply, onAskAccept
             {state.flaggedCount === 1 ? "item marcado fica de fora" : "itens marcados ficam de fora"}. Use mesmo assim nos cartões acima
             para incluir.
           </span>
+        </p>
+      )}
+      {changedSinceMessage && !applied && (
+        <p role="status" className="mt-2 text-caption text-text-secondary">
+          O rascunho mudou desde esta mensagem. Os cartões acima mostram a versão mais nova.
+        </p>
+      )}
+      {lockedReason && !applied && (
+        <p role="status" className="mt-2 text-caption text-text-secondary">
+          {lockedReason}
         </p>
       )}
       {blockedReason && (
@@ -172,7 +198,7 @@ export function AplicarOperacaoView({ state, note, compact, onApply, onAskAccept
 
       {!state.alreadyApplied && !view && (
         <div className="mt-2">
-          <Button loading={busy} disabled={busy || blockedReason !== null} onClick={() => void run(false)}>
+          <Button loading={busy} disabled={busy || blockedReason !== null || lockedReason !== null} onClick={() => void run(false)}>
             Montar minha operação
           </Button>
         </div>
@@ -219,6 +245,8 @@ export function AplicarOperacaoBlock({ block, ctx }: BlockProps<"aplicarOperacao
       onApply={onApply}
       onAskAccept={() => ctx.sendText("Quero dar o aceite de IA para ligar o atendente.")}
       acceptDisabled={ctx.busy}
+      lockedReason={ctx.isLatest ? null : "Esta é uma mensagem antiga. Use o botão da mensagem mais recente."}
+      changedSinceMessage={ed.hash !== null && ed.hash !== block.draftHash}
     />
   );
 }

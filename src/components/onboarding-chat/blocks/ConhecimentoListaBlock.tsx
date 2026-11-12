@@ -10,7 +10,7 @@ import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS } from "../../../../convex/lib/onboardingDraft";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
 import { BlockCard } from "./BlockCard";
-import { FlagNotice, FormActions, ReleaseControl, Tag, type CardEditor } from "./draftParts";
+import { FlagNotice, FormActions, ReleaseControl, StaleNotice, Tag, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
 type Item = BlockOf<"conhecimentoLista">["items"][number];
@@ -70,7 +70,6 @@ export function ConhecimentoListaView({ block, compact, editor, onAdjust }: Conh
             <li key={item.index} className="rounded-field border border-border-subtle bg-surface-sunken p-2">
               {editing === item.index && editor ? (
                 <KnowledgeForm
-                  key={editor.version}
                   initial={item.text}
                   editor={editor}
                   onSave={(text) => setKnowledgeText(item.index, text)}
@@ -91,8 +90,9 @@ export function ConhecimentoListaView({ block, compact, editor, onAdjust }: Conh
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       {pending && (
                         <ReleaseControl
+                          version={editor.version}
                           disabled={editor.saving}
-                          onRelease={(reason) => editor.save(releaseKnowledge(item.index, reason), editor.version)}
+                          onRelease={(reason, base) => editor.save(releaseKnowledge(item.index, reason), base)}
                         />
                       )}
                       <Button size="sm" variant="ghost" disabled={editor.saving} onClick={() => setEditing(item.index)}>
@@ -124,7 +124,6 @@ export function ConhecimentoListaView({ block, compact, editor, onAdjust }: Conh
       {editor && !compact && editing === "new" && (
         <div className="mt-2 rounded-field border border-border-subtle bg-surface-sunken p-2">
           <KnowledgeForm
-            key={editor.version}
             initial=""
             editor={editor}
             saveLabel="Adicionar fato"
@@ -163,7 +162,7 @@ function KnowledgeForm({
   saveLabel?: string;
 }) {
   const [text, setText] = useState(initial);
-  const base = editor.version;
+  const { base, stale, reload } = useBaseVersion(editor.version, () => setText(initial));
   return (
     <div className="space-y-2">
       <Textarea
@@ -173,9 +172,10 @@ function KnowledgeForm({
         autoGrow
         onChange={(e) => setText(e.target.value)}
       />
+      <StaleNotice stale={stale} onReload={reload} />
       <FormActions
         saving={editor.saving}
-        saveDisabled={text.trim().length === 0}
+        saveDisabled={text.trim().length === 0 || stale}
         saveLabel={saveLabel}
         onCancel={onClose}
         onSave={() => void editor.save(onSave(text.trim()), base).then((ok) => ok && onClose())}

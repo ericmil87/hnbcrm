@@ -10,7 +10,7 @@ import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS, type OnboardingDraft } from "../../../../convex/lib/onboardingDraft";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
 import { BlockCard } from "./BlockCard";
-import { BlockedNotice, FormActions, type CardEditor } from "./draftParts";
+import { BlockedNotice, FormActions, StaleNotice, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
 const OUTCOME_CLASS: Record<string, string> = {
@@ -98,7 +98,7 @@ export function FunilPreviewView({ block, compact, editor, blocked, onAdjust, st
       )}
 
       {open && editor ? (
-        <FunnelForm key={editor.version} block={block} editor={editor} onClose={() => setOpen(false)} />
+        <FunnelForm block={block} editor={editor} onClose={() => setOpen(false)} />
       ) : (
         (editor || onAdjust) && (
           <Button size="sm" variant="secondary" className="mt-2" onClick={() => (editor ? setOpen(true) : onAdjust?.())}>
@@ -115,7 +115,11 @@ function FunnelForm({ block, editor, onClose }: { block: BlockOf<"funilPreview">
   const [name, setName] = useState(block.funnelName);
   const [stageNames, setStageNames] = useState(() => block.stages.map((s) => s.name));
   const [order, setOrder] = useState(() => block.stages.map((_, i) => i));
-  const base = editor.version;
+  const { base, stale, reload } = useBaseVersion(editor.version, () => {
+    setName(block.funnelName);
+    setStageNames(block.stages.map((s) => s.name));
+    setOrder(block.stages.map((_, i) => i));
+  });
 
   const move = (pos: number, dir: -1 | 1) => {
     const target = pos + dir;
@@ -180,7 +184,8 @@ function FunnelForm({ block, editor, onClose }: { block: BlockOf<"funilPreview">
           </li>
         ))}
       </ol>
-      <FormActions saving={editor.saving} saveDisabled={empty} onCancel={onClose} onSave={save} />
+      <StaleNotice stale={stale} onReload={reload} />
+      <FormActions saving={editor.saving} saveDisabled={empty || stale} onCancel={onClose} onSave={save} />
     </div>
   );
 }

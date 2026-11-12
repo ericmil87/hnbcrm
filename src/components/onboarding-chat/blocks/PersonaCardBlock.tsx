@@ -11,7 +11,7 @@ import { VOCAB } from "@/lib/vocab";
 import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
 import { BlockCard } from "./BlockCard";
-import { FlagNotice, FormActions, ReleaseControl, type CardEditor } from "./draftParts";
+import { FlagNotice, FormActions, ReleaseControl, StaleNotice, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
 const TONES = [
@@ -64,7 +64,11 @@ export function PersonaCardView({ block, compact, editor, onAdjust, startOpen = 
             <>
               <FlagNotice />
               {editor && (
-                <ReleaseControl disabled={editor.saving} onRelease={(reason) => editor.save(releaseGreeting(reason), editor.version)} />
+                <ReleaseControl
+                  version={editor.version}
+                  disabled={editor.saving}
+                  onRelease={(reason, base) => editor.save(releaseGreeting(reason), base)}
+                />
               )}
             </>
           )}
@@ -72,7 +76,7 @@ export function PersonaCardView({ block, compact, editor, onAdjust, startOpen = 
       )}
 
       {open && editor ? (
-        <PersonaForm key={editor.version} block={block} editor={editor} onClose={() => setOpen(false)} />
+        <PersonaForm block={block} editor={editor} onClose={() => setOpen(false)} />
       ) : (
         canAdjust && (
           <Button size="sm" variant="secondary" className="mt-2" onClick={() => (editor ? setOpen(true) : onAdjust?.())}>
@@ -89,7 +93,11 @@ function PersonaForm({ block, editor, onClose }: { block: BlockOf<"personaCard">
   const [attendantName, setName] = useState(block.attendantName);
   const [tone, setTone] = useState<string>(block.tone);
   const [addressAs, setAddress] = useState<string>(block.addressAs);
-  const base = editor.version;
+  const { base, stale, reload } = useBaseVersion(editor.version, () => {
+    setName(block.attendantName);
+    setTone(block.tone);
+    setAddress(block.addressAs);
+  });
   return (
     <div className="mt-2 space-y-3 rounded-field border border-border-subtle bg-surface-sunken p-2">
       <Input label="Nome do atendente" value={attendantName} maxLength={40} onChange={(e) => setName(e.target.value)} />
@@ -101,9 +109,10 @@ function PersonaForm({ block, editor, onClose }: { block: BlockOf<"personaCard">
         <p className="text-[13px] font-medium text-text-secondary">Como trata o cliente</p>
         <SegmentedControl ariaLabel="Tratamento" value={addressAs} onValueChange={setAddress} options={ADDRESS} size="sm" />
       </div>
+      <StaleNotice stale={stale} onReload={reload} />
       <FormActions
         saving={editor.saving}
-        saveDisabled={attendantName.trim().length === 0}
+        saveDisabled={attendantName.trim().length === 0 || stale}
         onCancel={onClose}
         onSave={() =>
           void editor

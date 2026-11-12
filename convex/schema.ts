@@ -3879,6 +3879,9 @@ const applicationTables = {
       ),
     ),
     appliedAttendantPending: v.optional(v.boolean()),
+    // A última aplicação manteve um atendente que já existia (`skipped_existing`):
+    // com o MESMO rascunho, o pedido explícito de sobrescrever não cai no atalho `alreadyApplied`.
+    appliedAttendantSkipped: v.optional(v.boolean()),
     // P2.3: ciência do aviso de materiais (LGPD / IA de provedores fora do
     // Brasil), gravada só pelo clique em `onboardingChat.ackMaterialsNotice`.
     // Ausente = o 1º material da sessão é recusado (`notice_required`).

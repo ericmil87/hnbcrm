@@ -37,6 +37,8 @@ export function TutorialScene({ card }: { card: TutorialCardData }) {
 export interface OnboardingTutorialProps {
   /** Terminou os cartões (ou pulou). Só avisa quem usa; nada é gravado aqui. */
   onDone?: () => void;
+  /** Quando o tutorial está dentro de um `Modal`: o fim mostra "Concluir" ao lado de "Ver de novo". */
+  onClose?: () => void;
   /** Cartões a mostrar (padrão: todos). */
   cards?: readonly TutorialCardData[];
   className?: string;
@@ -47,7 +49,7 @@ export interface OnboardingTutorialProps {
  * "Entendi". Usado no fim do teste do atendente e, depois, pelo menu de ajuda
  * (`OnboardingTutorialModal`).
  */
-export function OnboardingTutorial({ onDone, cards = TUTORIAL_CARDS, className }: OnboardingTutorialProps) {
+export function OnboardingTutorial({ onDone, onClose, cards = TUTORIAL_CARDS, className }: OnboardingTutorialProps) {
   const [index, setIndex] = useState(0);
   const [finished, setFinished] = useState(false);
   const card = cards[index];
@@ -59,17 +61,23 @@ export function OnboardingTutorial({ onDone, cards = TUTORIAL_CARDS, className }
           <CheckCircle2 className="size-4 text-semantic-success" aria-hidden="true" />
           Pronto. Você pode rever este tutorial quando quiser, pelo menu de ajuda.
         </p>
-        <Button
-          size="sm"
-          variant="secondary"
-          className="mt-2"
-          onClick={() => {
-            setIndex(0);
-            setFinished(false);
-          }}
-        >
-          Ver de novo
-        </Button>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => {
+              setIndex(0);
+              setFinished(false);
+            }}
+          >
+            Ver de novo
+          </Button>
+          {onClose && (
+            <Button size="sm" onClick={onClose}>
+              Concluir
+            </Button>
+          )}
+        </div>
       </BlockCard>
     );
   }
@@ -127,7 +135,7 @@ export interface OnboardingTutorialModalProps {
 export function OnboardingTutorialModal({ open, onClose }: OnboardingTutorialModalProps) {
   return (
     <Modal open={open} onClose={onClose} title="Tutorial do atendente">
-      <OnboardingTutorial onDone={onClose} className="max-w-none border-0 p-0 shadow-none" />
+      <OnboardingTutorial onClose={onClose} className="max-w-none border-0 p-0 shadow-none" />
     </Modal>
   );
 }
