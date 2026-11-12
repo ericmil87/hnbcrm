@@ -187,9 +187,9 @@ describe("S9", () => {
 });
 
 describe("CTA final e rodapé", () => {
-  it("CTA final leva ao cadastro e traz a linha de confiança", () => {
+  it("CTA final traz o composer do hero e a linha de confiança", () => {
     renderWithRouter(<FinalCta />);
-    expect(screen.getByRole("link", { name: "Testar grátis" }).getAttribute("href")).toContain("/entrar");
+    expect(screen.getByRole("textbox", { name: "Mensagem para o Copiloto, para começar agora" })).toBeTruthy();
     expect(screen.getByText(/dias grátis · sem cartão · reembolso em/)).toBeTruthy();
   });
 

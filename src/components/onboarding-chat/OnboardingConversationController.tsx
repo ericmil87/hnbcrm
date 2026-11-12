@@ -22,6 +22,8 @@ import { OnboardingBlockView } from "./blocks/registry";
 import type { BlockContext } from "./blocks/types";
 
 export const WIZARD_HREF = "/app/configuracao-inicial";
+/** Saída da conversa para o CRM (organização já existe neste ponto). */
+export const APP_HREF = "/app";
 export const HISTORY_PAGE = 30;
 
 /** Chips da saudação (conversa nova, sem mensagem do hero): texto fixo do app. */
@@ -308,6 +310,7 @@ export function OnboardingConversationController({
     onMic: canAttach ? () => setSheet("voice") : undefined,
     tail,
     formHref: WIZARD_HREF,
+    appHref: APP_HREF,
     onPreferForm,
     composerValue: composer,
     onComposerChange: setComposer,

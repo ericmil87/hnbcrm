@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router";
 import { toast } from "sonner";
 import { readOnboardingDraft } from "@/lib/onboardingEntry";
-import { signUpHref } from "@/lib/authEntry";
+import { startHref } from "@/lib/onboardingEntry";
 import { S1Hero } from "./S1Hero";
 
 vi.mock("sonner", () => ({ toast: { info: vi.fn() } }));
@@ -41,14 +41,14 @@ describe("S1Hero", () => {
     fireEvent.change(field(), { target: { value: "Tenho uma clínica em Recife" } });
     fireEvent.click(screen.getByRole("button", { name: "Enviar" }));
     expect(readOnboardingDraft()).toEqual({ message: "Tenho uma clínica em Recife", niche: null });
-    await vi.waitFor(() => expect(router.state.location.pathname + router.state.location.search).toBe(signUpHref()));
+    await vi.waitFor(() => expect(router.state.location.pathname + router.state.location.search).toBe(startHref()));
   });
 
   it("chip guarda o nicho e a mensagem", async () => {
     const router = setup();
     fireEvent.click(screen.getByRole("button", { name: "Corretor" }));
     expect(readOnboardingDraft()).toEqual({ message: "Sou corretor e perco lead fora do horário", niche: "corretor" });
-    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/entrar"));
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/comecar"));
   });
 
   it("chip Outro só foca o campo", () => {
@@ -63,7 +63,7 @@ describe("S1Hero", () => {
     const router = setup();
     fireEvent.click(screen.getByRole("button", { name }));
     expect(toast.info).toHaveBeenCalledWith(expect.stringContaining("depois de criar a conta"));
-    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/entrar"));
+    await vi.waitFor(() => expect(router.state.location.pathname).toBe("/comecar"));
   });
 
   it("tem controle de pausa, rolagem para a cena e linha de confiança do catálogo", () => {

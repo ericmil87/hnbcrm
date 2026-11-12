@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parsePlanKey } from "@/lib/authEntry";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { renderWithRouter } from "@/test/render";
 import { PricingSection } from "./PricingSection";
@@ -76,11 +77,18 @@ describe("PricingSection", () => {
     expect(screen.getAllByRole("button", { name: "Testar 30 dias grátis" }).length).toBeGreaterThanOrEqual(3);
     expect(within(plan("Empresa")).getByRole("button", { name: "Falar com a gente" })).toBeTruthy();
     const hrefs = within(plan("Escala")).getAllByRole("link").map((a) => a.getAttribute("href"));
-    expect(hrefs).toContain("/entrar?modo=cadastro&plano=escala");
+    expect(hrefs).toContain("/comecar?plano=escala");
     const text = container.textContent ?? "";
     for (const banned of ["Beta", "Grátis no Beta", "R$ 97", "R$ 297", "Starter", "Enterprise", "Começar Grátis"]) {
       expect(text).not.toContain(banned);
     }
+  });
+
+  it("clicar no botão de um plano chega a /comecar com ?plano= que a rota consegue ler", () => {
+    const { router } = renderWithRouter(page);
+    fireEvent.click(within(plan("Escala")).getAllByRole("link")[0]);
+    expect(router.state.location.pathname).toBe("/comecar");
+    expect(parsePlanKey(new URLSearchParams(router.state.location.search).get("plano"))).toBe("escala");
   });
 
   it("faixa da unidade com o exemplo de 20 vezes", () => {

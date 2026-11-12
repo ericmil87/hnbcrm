@@ -39,14 +39,14 @@ describe("LandingPage (esqueleto)", () => {
     expect(screen.queryByRole("link", { name: "Comunidade" })).toBeNull();
   });
 
-  it("Testar grátis leva ao cadastro e Entrar ao login", () => {
+  it("Testar grátis leva ao /comecar e Entrar ao login", () => {
     renderLanding();
     const ctas = screen.getAllByRole("link", { name: "Testar grátis" });
     expect(ctas.length).toBeGreaterThanOrEqual(1);
-    for (const a of ctas) expect(a).toHaveAttribute("href", "/entrar?modo=cadastro");
+    for (const a of ctas) expect(a).toHaveAttribute("href", "/comecar");
     const header = within(screen.getByRole("banner"));
     expect(header.getByRole("link", { name: "Entrar" })).toHaveAttribute("href", "/entrar");
-    expect(header.getByRole("link", { name: "Testar grátis" })).toHaveAttribute("href", "/entrar?modo=cadastro");
+    expect(header.getByRole("link", { name: "Testar grátis" })).toHaveAttribute("href", "/comecar");
     expect(header.getByRole("button", { name: "Escolher tema" })).toBeInTheDocument();
   });
 

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
 import { allPlanDisplays } from "@/lib/pricingCatalog";
 import type { BillingCycle } from "@/lib/pricing";
-import { signUpHref } from "@/lib/authEntry";
+import { startHref } from "@/lib/onboardingEntry";
 import { ANNUAL_MONTHS_CHARGED, PLANS, TRIAL, USAGE_WARN_PCT } from "../../../../convex/lib/plans";
 import { CompareTable } from "./CompareTable";
 import { PlanCards } from "./PlanCards";
@@ -98,7 +98,7 @@ export function PricingSection({ variant = "section" }: PricingSectionProps) {
         )}
 
         <div className="text-center">
-          <Link to={signUpHref()}>
+          <Link to={startHref()}>
             <Button variant="primary" size="lg">
               {CTA_LABEL}
             </Button>

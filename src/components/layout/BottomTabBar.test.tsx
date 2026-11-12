@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { BottomTabBarView } from "./BottomTabBar";
+import { HelpModal } from "./HelpModal";
 import { visibleNavItems } from "@/lib/nav";
 
 const items = visibleNavItems(() => true, { central: true });
@@ -30,7 +32,43 @@ function setup(over: Partial<React.ComponentProps<typeof BottomTabBarView>> = {}
   return { onNavigate, onToggleMore, onOpenAppearance };
 }
 
+function WithHelp() {
+  const [more, setMore] = useState(true);
+  const [help, setHelp] = useState(false);
+  return (
+    <>
+      <BottomTabBarView
+        items={items}
+        activeTab="dashboard"
+        badges={zero}
+        showMore={more}
+        orgName="Acme"
+        onNavigate={vi.fn()}
+        onToggleMore={() => setMore((m) => !m)}
+        onOpenOrgSwitcher={vi.fn()}
+        onSignOut={vi.fn()}
+        theme="whatsapp"
+        onOpenAppearance={vi.fn()}
+        onOpenHelp={() => setHelp(true)}
+      />
+      <HelpModal open={help} onClose={() => setHelp(false)} />
+    </>
+  );
+}
+
 describe("BottomTabBarView", () => {
+  it("folha aberta: Ajuda fecha a folha e abre o modal de ajuda", async () => {
+    render(<WithHelp />);
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Mais opções" })).getByRole("button", { name: "Ajuda" }));
+    expect(screen.queryByRole("dialog", { name: "Mais opções" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Ajuda" })).toBeInTheDocument();
+  });
+
+  it("sem onOpenHelp a folha não mostra Ajuda", () => {
+    setup({ showMore: true });
+    expect(screen.queryByRole("button", { name: "Ajuda" })).toBeNull();
+  });
+
   it("folha aberta: linha Aparência com o tema, entre Organização e Sair", async () => {
     const { onToggleMore, onOpenAppearance } = setup({ showMore: true });
     const dialog = screen.getByRole("dialog", { name: "Mais opções" });

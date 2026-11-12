@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { buttonClassName } from "@/components/ui/Button";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
-import { signUpHref } from "@/lib/authEntry";
+import { startHref } from "@/lib/onboardingEntry";
 import { communityUrl } from "@/lib/communityLink";
 import { cn } from "@/lib/utils";
 import { LANDING_ANCHORS, PRIMARY_CTA_LABEL } from "./sections/landingCopy";
@@ -31,7 +31,7 @@ const linkClass = cn(
 /**
  * Cabeçalho fixo da landing: logo, navegação por âncoras (segunda linha com
  * rolagem horizontal no celular), botão de tema, Entrar e Testar grátis.
- * "Testar grátis" vai para o cadastro (`signUpHref`) até a rota `/comecar` existir.
+ * "Testar grátis" vai para `/comecar` (`startHref`).
  */
 export function LandingHeader() {
   const links = landingNavLinks(communityUrl() !== null);
@@ -60,7 +60,7 @@ export function LandingHeader() {
           <Link to="/entrar" className={buttonClassName("ghost", "sm")}>
             Entrar
           </Link>
-          <Link to={signUpHref()} className={buttonClassName("primary", "sm")}>
+          <Link to={startHref()} className={buttonClassName("primary", "sm")}>
             {PRIMARY_CTA_LABEL}
           </Link>
         </div>

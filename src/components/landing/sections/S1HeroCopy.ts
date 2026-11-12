@@ -21,7 +21,7 @@ export const HERO_FIELD_LABEL = "Mensagem para o Copiloto";
 export const HERO_ATTACH_LABEL = "Anexar arquivo (site, PDF ou imagem)";
 export const HERO_MIC_LABEL = "Gravar áudio";
 export const HERO_SEND_LABEL = "Enviar";
-export const HERO_HINT = "O que você escrever aqui fica só no seu navegador até você criar a conta.";
+export const HERO_HINT = "O que você escrever aqui fica só no seu navegador até você criar a conta. Não coloque dados de clientes.";
 export const HERO_UPLOAD_NOTICE = "Envio de arquivo e de áudio acontece depois de criar a conta.";
 
 export const HERO_CHIPS_LABEL = "Escolha o seu tipo de negócio";
@@ -47,6 +47,38 @@ export const HERO_CHIP_MESSAGES: Record<OnboardingNiche, string> = {
 export const HERO_SECONDARY_CTA = "Ver como funciona";
 export const HERO_PAUSE_LABEL = "Pausar animação";
 export const HERO_RESUME_LABEL = "Retomar animação";
+
+export type HeroChatVariant = "hero" | "final";
+
+/**
+ * Rótulos acessíveis por instância: o hero e o CTA final ficam na mesma página, então
+ * cada controle precisa de um nome distinto (leitor de tela, `getByRole`).
+ */
+export const HERO_CHAT_LABELS: Record<
+  HeroChatVariant,
+  { region: string; field: string; send: string; attach: string; mic: string; chips: string; pause: string; resume: string }
+> = {
+  hero: {
+    region: "Conversa com Copiloto HNBCRM",
+    field: HERO_FIELD_LABEL,
+    send: HERO_SEND_LABEL,
+    attach: HERO_ATTACH_LABEL,
+    mic: HERO_MIC_LABEL,
+    chips: HERO_CHIPS_LABEL,
+    pause: HERO_PAUSE_LABEL,
+    resume: HERO_RESUME_LABEL,
+  },
+  final: {
+    region: "Conversa com Copiloto HNBCRM, para começar agora",
+    field: "Mensagem para o Copiloto, para começar agora",
+    send: "Enviar e começar",
+    attach: "Anexar arquivo e começar (site, PDF ou imagem)",
+    mic: "Gravar áudio e começar",
+    chips: "Escolha o seu tipo de negócio para começar",
+    pause: "Pausar animação do final da página",
+    resume: "Retomar animação do final da página",
+  },
+};
 
 export const HERO_CHAT_TITLE = "Copiloto HNBCRM";
 export const HERO_CHAT_STATUS = "online agora";

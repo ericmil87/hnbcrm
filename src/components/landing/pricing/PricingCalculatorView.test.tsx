@@ -72,7 +72,7 @@ describe("PricingCalculatorView", () => {
     expect(box.textContent).toMatch(/Para você:\s*Essencial,\s*R\$\s*197\/mês\./);
     expect(box.textContent).toContain("O excedente só é cobrado se você ligar");
     const link = screen.getByRole("link", { name: "Testar 30 dias grátis" });
-    expect(link.getAttribute("href")).toBe("/entrar?modo=cadastro&plano=essencial");
+    expect(link.getAttribute("href")).toBe("/comecar?plano=essencial");
   });
 
   it("com excedente a frase traz o valor estimado; Empresa vira Falar com a gente", () => {
