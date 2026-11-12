@@ -1,4 +1,4 @@
-import { Component, type ComponentType, type ErrorInfo, type ReactNode } from "react";
+import { Component, createContext, useContext, type ComponentType, type ErrorInfo, type ReactNode } from "react";
 import type { BlockContext, BlockProps, OnboardingBlock, OnboardingBlockKind } from "./types";
 import { ChipsBlock } from "./ChipsBlock";
 import { ResumoNegocioBlock } from "./ResumoNegocioBlock";
@@ -15,6 +15,8 @@ import { SimuladorBlock } from "./SimuladorBlock";
 import { ConectarCanalBlock } from "./ConectarCanalBlock";
 import { ProximosPassosBlock } from "./ProximosPassosBlock";
 import { TraducaoCartaoBlock } from "./TraducaoCartaoBlock";
+import { AtivarIaBlock } from "./AtivarIaBlock";
+import { OperacaoProntaBlock } from "./OperacaoProntaBlock";
 import { UnknownBlock } from "./UnknownBlock";
 
 /**
@@ -46,7 +48,16 @@ export const BLOCK_REGISTRY: BlockRegistry = {
   proximosPassos: ProximosPassosBlock,
   traducaoCartao: TraducaoCartaoBlock,
   avisoMateriais: AvisoMateriaisBlock,
+  ativarIa: AtivarIaBlock,
+  operacaoPronta: OperacaoProntaBlock,
 };
+
+/**
+ * Troca de componentes por `kind` (só a vitrine de DEV, `dev/OnboardingShowcase`, usa: ela alimenta as Views
+ * apresentacionais com dados fixos, sem Convex). Sem provedor, vale o `BLOCK_REGISTRY`.
+ */
+export type BlockOverrides = Partial<{ [K in OnboardingBlockKind]: ComponentType<BlockProps<K>> }>;
+export const BlockOverridesContext = createContext<BlockOverrides | null>(null);
 
 /** `kind` conhecido por este cliente (o payload vem da rede: nunca confiar no formato). */
 export function knownBlock(raw: unknown): OnboardingBlock | null {
@@ -82,10 +93,11 @@ export interface OnboardingBlockViewProps {
 
 /** Renderiza um bloco pelo registro; tipo desconhecido ou erro de render = `UnknownBlock`. */
 export function OnboardingBlockView({ block, ctx }: OnboardingBlockViewProps) {
+  const overrides = useContext(BlockOverridesContext);
   const known = knownBlock(block);
   if (!known) return <UnknownBlock />;
   // O registro é indexado pelo próprio `kind` do bloco: o par (componente, bloco) é coerente.
-  const View = BLOCK_REGISTRY[known.kind] as ComponentType<{ block: OnboardingBlock; ctx: BlockContext }>;
+  const View = (overrides?.[known.kind] ?? BLOCK_REGISTRY[known.kind]) as ComponentType<{ block: OnboardingBlock; ctx: BlockContext }>;
   return (
     <BlockBoundary>
       <View block={known} ctx={ctx} />

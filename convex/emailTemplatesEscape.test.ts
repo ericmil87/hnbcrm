@@ -33,7 +33,9 @@ describe("emailTemplates: escape de HTML", () => {
     it(`${event}: nenhum campo vira tag`, () => {
       const type = event === "channelSessionLostMeta" ? "channelSessionLost" : event;
       const { subject, html } = T.buildTemplate(type, data);
-      expect(html).not.toContain("<img");
+      // A casca tem UMA <img> (logo da marca, URL fixa); qualquer outra vinda de dado é falha.
+      expect(html.replace(/<img class="em-logo"[^>]*\/>/, "")).not.toContain("<img");
+      expect(html.match(/<img\b/g)?.length).toBe(1);
       expect(html).not.toContain("onerror=alert(1)>");
       expect(subject).not.toMatch(/[\r\n]/);
     });

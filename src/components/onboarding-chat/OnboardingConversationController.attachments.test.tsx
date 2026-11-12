@@ -39,7 +39,6 @@ function props(overrides: Partial<OnboardingConversationControllerProps> = {}): 
     access: { kind: "ready" },
     sessionId: "s1",
     history: { results: [], status: "Exhausted", loadMore: vi.fn() },
-    sessionStage: "interview",
     chatState: { stage: "interview", lastChips: [] },
     draft: null,
     token: "tok",
@@ -176,7 +175,7 @@ describe("anexos no controller", () => {
     await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1));
   });
 
-  it("'Enviar de novo' a partir do portão mostra o erro do upload", async () => {
+  it("arquivo guardado na fila: se o upload falha depois da confirmação, a conversa avisa e pede para anexar de novo", async () => {
     const uploadFile = vi.fn(async () => Promise.reject(new Error("x")));
     const gated = props({
       uploadFile,
@@ -186,8 +185,8 @@ describe("anexos no controller", () => {
     await userEvent.click(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" }));
     await userEvent.upload(screen.getByLabelText("Escolher imagem"), new File(["a"], "f.png", { type: "image/png" }));
     await screen.findByRole("region", { name: "Confirme o seu e-mail" });
+    expect(screen.getByText(/Guardei f\.png aqui no seu navegador/)).toBeInTheDocument();
     rerender(ui({ ...gated, chatState: { stage: "interview", lastChips: [], materialsUnlocked: true, materialsNoticeAcknowledged: true } }));
-    await userEvent.click(screen.getByRole("button", { name: "Enviar de novo" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível enviar o arquivo");
+    expect(await screen.findByText(/Não consegui enviar f\.png/)).toBeInTheDocument();
   });
 });

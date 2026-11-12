@@ -8,6 +8,27 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 - **Ícone do app com mais cor.** O ícone do HNBCRM na tela inicial ficou com o logo maior e em duas cores (balão da pessoa em branco, balão da IA em verde vivo) sobre o verde da marca. Assim ele continua colorido também quando o iPhone está com os ícones no modo escuro, que antes o deixava preto e branco. No Android e no computador o Chrome atualiza o ícone sozinho nos próximos dias. No iPhone é preciso remover o app da Tela de Início e adicioná-lo de novo pelo Safari.
 
+### Comece conversando: configuração mais fluida
+
+- **Cada cartão tem "Está bom, seguir" e "Ajustar".** Ao aprovar, o Copiloto continua sozinho para a próxima parte, e o cartão aprovado recolhe. O mesmo cartão não aparece mais repetido na conversa.
+- **O funil explicado e em movimento.** O cartão do funil diz para que ele serve e mostra clientes de exemplo andando pelas etapas, com todas as etapas legíveis também no celular.
+- **Seis etapas claras que não voltam:** Negócio, Funil, Atendente, Ativar, Testar e Conectar. Há sempre um botão com o próximo passo acima do campo de mensagem.
+- **"Ativar a sua IA" num cartão só,** no momento de montar a operação: um resumo curto do que acontece com os dados, o texto completo em "Ver detalhes", a caixa de confirmação e a escolha de como a IA responde. "Responder sozinha (24h)" vem sugerido, com "Sugerir respostas" a um toque; nada liga sem o seu clique. Se a organização já tinha um atendente, ele continua em "Sugerir respostas".
+- **A IA nasce pronta para atender 24h,** com os recursos opcionais do pacote recomendado ligados. Se preferir horário comercial, é só dizer.
+- **Código do e-mail sem cliques a mais.** O código de 6 dígitos é enviado sozinho, o cartão mostra para qual endereço foi (mascarado), e ao digitar o sexto dígito ele já confirma. Também dá para colar o código no campo de mensagem.
+- **Link enviado antes de confirmar o e-mail fica guardado** e é lido assim que você confirma. Arquivos ficam na fila do navegador e são enviados depois da confirmação.
+- **Origem certa de cada informação:** "Você contou", "Do site", "Do áudio".
+- **Fim da conversa com caminho claro:** "Sua operação está pronta", com Testar a sua IA, Conectar o WhatsApp e Abrir o meu CRM.
+- **Criar a organização pede só o nome.** O identificador é gerado automaticamente.
+
+### E-mails com a marca nova
+
+- Todos os e-mails do HNBCRM agora usam o logo novo e o verde da marca. O e-mail de boas-vindas chama você pelo nome e traz os primeiros passos atuais.
+
+### Site
+
+- Ao abrir outra página do site (Manifesto, Funcionalidades, Preços), ela começa do topo. Clicar no logo leva ao início; se você já está no início, volta ao topo.
+
 ### Site: acabamento da página inicial
 
 - **"A máquina funcionando" sem pulos.** A cena animada agora tem altura fixa: as mensagens entram dentro da janela, o cartão desliza de uma etapa do funil para a outra e o resto da página não se mexe mais. No celular a cena cabe numa tela só.

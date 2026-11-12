@@ -1,9 +1,10 @@
 import { Paperclip } from "lucide-react";
 import { Bubble } from "@/components/landing/kit";
 import { formatTime } from "@/lib/format";
-import type { TimelineItem } from "@/lib/onboardingChat";
+import { blockKey, blockKindOf, type TimelineItem } from "@/lib/onboardingChat";
 import { ModelText } from "./ModelText";
 import { ReplyAudio } from "./ReplyAudio";
+import { CollapsedBlock } from "./blocks/CollapsedBlock";
 import { OnboardingBlockView } from "./blocks/registry";
 import type { BlockContext } from "./blocks/types";
 
@@ -12,10 +13,12 @@ export interface MessageItemProps {
   /** Contexto dos blocos sem `isLatest` (calculado aqui). */
   blockCtx: Omit<BlockContext, "isLatest">;
   isLatest: boolean;
+  /** Blocos (`blockKey`) que aparecem de novo mais abaixo: viram uma linha recolhida. */
+  superseded?: ReadonlySet<string>;
 }
 
 /** Uma mensagem da conversa: bolha (texto puro), áudio da resposta e blocos ricos. */
-export function MessageItem({ item, blockCtx, isLatest }: MessageItemProps) {
+export function MessageItem({ item, blockCtx, isLatest, superseded }: MessageItemProps) {
   const time = item.createdAt ? formatTime(item.createdAt) : undefined;
 
   if (item.role === "user") {
@@ -45,9 +48,17 @@ export function MessageItem({ item, blockCtx, isLatest }: MessageItemProps) {
       )}
       {item.blocks.length > 0 && (
         <div className="flex flex-col items-start gap-1.5 pl-2">
-          {item.blocks.map((block, i) => (
-            <OnboardingBlockView key={`${item.key}:block:${i}`} block={block} ctx={ctx} />
-          ))}
+          {item.blocks.map((block, i) => {
+            const kind = blockKindOf(block);
+            const key = blockKey(item.key, i);
+            return superseded?.has(key) && kind ? (
+              <CollapsedBlock key={key} kind={kind} />
+            ) : (
+              <div key={key} data-onboarding-card={kind ?? undefined} className="flex w-full flex-col items-start">
+                <OnboardingBlockView block={block} ctx={ctx} />
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

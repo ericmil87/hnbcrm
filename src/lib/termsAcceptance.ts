@@ -10,7 +10,7 @@ export function needsTermsAcceptance(status: TermsStatusLike | null | undefined)
   return status.acceptedVersion !== status.currentVersion;
 }
 
-/** Criar organização exige nome, identificador e a caixa de aceite marcada. */
-export function canSubmitOrganization(args: { name: string; slug: string; accepted: boolean }): boolean {
-  return args.name.trim() !== "" && args.slug.trim() !== "" && args.accepted;
+/** Criar organização exige nome e a caixa de aceite marcada. */
+export function canSubmitOrganization(args: { name: string; accepted: boolean }): boolean {
+  return args.name.trim() !== "" && args.accepted;
 }

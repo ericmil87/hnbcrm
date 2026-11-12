@@ -7,65 +7,116 @@ import { AvisoMateriaisView } from "./AvisoMateriaisBlock";
 import { UploadProgressoBlock } from "./UploadProgressoBlock";
 import type { BlockContext } from "./types";
 
-const ctx: BlockContext = { organizationId: "o", sessionId: "s", sendText: vi.fn(), busy: false, isLatest: true };
+const ctx: BlockContext = { organizationId: "o", sessionId: "s", sendText: vi.fn(), sendEvent: vi.fn(), busy: false, isLatest: true };
 
 describe("CartaoContaView", () => {
   const base = (): CartaoContaViewProps => ({
     verified: false,
+    maskedEmail: "bu…te@milfont.net",
     onRequest: vi.fn(async () => ({ sent: true, canResendAt: 61_000 })),
     onConfirm: vi.fn(async () => ({ verified: false })),
   });
 
-  it("verificado: mostra o estado e nenhum campo", () => {
+  it("verificado: vira uma LINHA de sucesso, sem campo", () => {
     render(<CartaoContaView {...base()} verified />);
     expect(screen.getByRole("status")).toHaveTextContent("E-mail confirmado");
     expect(screen.queryByLabelText("Código de 6 dígitos")).toBeNull();
+    expect(screen.queryByRole("region")).toBeNull();
   });
 
-  it("não envia código ao montar; só no clique, e mostra a espera para reenviar", async () => {
+  it("mostra PARA QUAL endereço o código foi, sem enviar nada ao montar", () => {
     const p = base();
     render(<CartaoContaView {...p} nowFn={() => 1000} />);
     expect(p.onRequest).not.toHaveBeenCalled();
-    expect(screen.getByText(/liberar o envio de site, PDF, imagem e áudio/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Enviar código" }));
-    expect(p.onRequest).toHaveBeenCalledTimes(1);
-    await waitFor(() => expect(screen.getByRole("button", { name: /Reenviar código em/ })).toBeDisabled());
-    expect(screen.getByText(/Enviamos um código de 6 dígitos/)).toBeInTheDocument();
+    expect(screen.getByText(/Enviamos um código de 6 dígitos para bu…te@milfont\.net/)).toBeInTheDocument();
+    expect(screen.getByText(/libera o envio de site, PDF, imagem e áudio/)).toBeInTheDocument();
+    expect(screen.getByText(/Confira o spam ou reenvie/)).toBeInTheDocument();
   });
 
-  it("campo de código: one-time-code, só dígitos, confirma com 6 dígitos", async () => {
+  it("versão compacta do começo: 'Te mandei um código… é só colar aqui'", () => {
+    render(<CartaoContaView {...base()} compact />);
+    expect(screen.getByText(/Te mandei um código de 6 dígitos em bu…te@milfont\.net; quando chegar, é só colar aqui\. Enquanto isso, me conta do seu negócio\./)).toBeInTheDocument();
+  });
+
+  it("o botão é só 'Reenviar código' e mostra a contagem regressiva", async () => {
+    const p = base();
+    render(<CartaoContaView {...p} canResendAt={61_000} nowFn={() => 1000} />);
+    expect(screen.queryByRole("button", { name: "Enviar código" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Reenviar código em/ })).toBeDisabled();
+  });
+
+  it("reenviar chama o pedido e mostra o endereço na confirmação", async () => {
+    const p = base();
+    render(<CartaoContaView {...p} nowFn={() => 1000} />);
+    await userEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
+    expect(p.onRequest).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("button", { name: /Reenviar código em/ })).toBeDisabled());
+    expect(screen.getAllByText(/bu…te@milfont\.net/).length).toBeGreaterThan(1);
+  });
+
+  it("campo de código: one-time-code, numérico, só dígitos; CONFIRMA SOZINHO no 6º dígito e avisa a conversa uma vez", async () => {
+    const p = base();
+    p.onConfirm = vi.fn(async () => ({ verified: true }));
+    const onVerified = vi.fn();
+    render(<CartaoContaView {...p} onVerified={onVerified} />);
+    const input = screen.getByLabelText("Código de 6 dígitos") as HTMLInputElement;
+    expect(input).toHaveAttribute("autocomplete", "one-time-code");
+    expect(input).toHaveAttribute("inputmode", "numeric");
+    await userEvent.type(input, "12a34");
+    expect(input.value).toBe("1234");
+    expect(p.onConfirm).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Confirmar" })).toBeDisabled();
+    await userEvent.type(input, "56");
+    await waitFor(() => expect(p.onConfirm).toHaveBeenCalledWith("123456"));
+    expect(p.onConfirm).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("E-mail confirmado"));
+    expect(onVerified).toHaveBeenCalledTimes(1);
+  });
+
+  it("colar os 6 dígitos de uma vez também confirma", async () => {
     const p = base();
     p.onConfirm = vi.fn(async () => ({ verified: true }));
     render(<CartaoContaView {...p} />);
-    const input = screen.getByLabelText("Código de 6 dígitos") as HTMLInputElement;
-    expect(input).toHaveAttribute("autocomplete", "one-time-code");
-    const confirm = screen.getByRole("button", { name: "Confirmar" });
-    await userEvent.type(input, "12a34");
-    expect(input.value).toBe("1234");
-    expect(confirm).toBeDisabled();
-    await userEvent.type(input, "56");
-    await userEvent.click(confirm);
-    expect(p.onConfirm).toHaveBeenCalledWith("123456");
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("E-mail confirmado"));
+    await userEvent.click(screen.getByLabelText("Código de 6 dígitos"));
+    await userEvent.paste("123 456");
+    await waitFor(() => expect(p.onConfirm).toHaveBeenCalledWith("123456"));
   });
 
-  it("mensagens por reason (código errado com tentativas, vencido)", async () => {
+  it("já verificado pelo servidor: não avisa a conversa (só quem confirma aqui avisa)", () => {
+    const onVerified = vi.fn();
+    render(<CartaoContaView {...base()} verified onVerified={onVerified} />);
+    expect(onVerified).not.toHaveBeenCalled();
+  });
+
+  it("erro mostra as tentativas restantes e LIMPA o campo", async () => {
     const p = base();
     p.onConfirm = vi.fn<CartaoContaViewProps["onConfirm"]>().mockResolvedValueOnce({ verified: false, reason: "wrong", attemptsLeft: 3 }).mockResolvedValueOnce({ verified: false, reason: "expired" });
     render(<CartaoContaView {...p} />);
-    await userEvent.type(screen.getByLabelText("Código de 6 dígitos"), "111111");
-    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    const input = screen.getByLabelText("Código de 6 dígitos") as HTMLInputElement;
+    await userEvent.type(input, "111111");
     expect(await screen.findByText("Código incorreto. Restam 3 tentativas.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+    expect(input.value).toBe("");
+    await userEvent.type(input, "222222");
     expect(await screen.findByText("O código venceu. Peça um novo.")).toBeInTheDocument();
+  });
+
+  it("'Confirmar' discreto continua como alternativa acessível", async () => {
+    const p = base();
+    render(<CartaoContaView {...p} />);
+    expect(screen.getByRole("button", { name: "Confirmar" })).toBeInTheDocument();
   });
 
   it("pedido recusado (rate_limited) mostra a mensagem do motivo", async () => {
     const p = base();
     p.onRequest = vi.fn(async () => ({ sent: false, reason: "rate_limited" as const }));
     render(<CartaoContaView {...p} />);
-    await userEvent.click(screen.getByRole("button", { name: "Enviar código" }));
+    await userEvent.click(screen.getByRole("button", { name: "Reenviar código" }));
     expect(await screen.findByText(/Muitos pedidos de código/)).toBeInTheDocument();
+  });
+
+  it("aviso do envio automático que não saiu aparece sem clique", () => {
+    render(<CartaoContaView {...base()} initialMessage="Não consegui enviar o código agora. Toque em reenviar." />);
+    expect(screen.getByText(/Toque em reenviar/)).toBeInTheDocument();
   });
 });
 
@@ -87,10 +138,11 @@ describe("CartaoAceiteView", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("A IA está ativa");
   });
 
-  it("já ativa: mostra o estado ativo, sem botão", () => {
-    render(<CartaoAceiteView active onAccept={vi.fn()} />);
+  it("já ativa: mostra o estado ativo, sem botão e SEM subtítulo de convite (a nota do modelo não aparece)", () => {
+    render(<CartaoAceiteView active note="Clique para autorizar a IA." onAccept={vi.fn()} />);
     expect(screen.getByRole("status")).toHaveTextContent("ativa");
     expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByText(/Clique para autorizar/)).toBeNull();
   });
 
   it("falha da mutation mostra a mensagem e mantém o botão", async () => {

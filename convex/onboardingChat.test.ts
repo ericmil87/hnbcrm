@@ -16,7 +16,10 @@ import type { SafeFetchDeps } from "./lib/safeFetch";
 import { MATERIALS_EMAIL_UNVERIFIED_MESSAGE, MATERIALS_NOTICE_REQUIRED_MESSAGE } from "./onboardingChat";
 import { ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
 import { MATERIALS_NOTICE_TEXT } from "./lib/onboardingBlocks";
-import { INTERVIEWER_FALLBACK_REPLY } from "./lib/onboardingInterviewer";
+import { stepMessage } from "./lib/onboardingRoadmap";
+
+/** Falha do modelo: fala fixa do roteiro (a pessoa sempre tem o próximo passo). */
+const INTERVIEWER_FALLBACK_REPLY = stepMessage("next", "describe_business");
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -133,6 +136,8 @@ const interviewerJson = (extra: Record<string, unknown> = {}) =>
     reply: "Que bom! Montei um funil inicial para a sua clínica. Está certo?",
     chips: ["Está certo", "Quero ajustar"],
     blocks: [{ kind: "funilPreview" }, { kind: "personaCard" }],
+    // O negócio contado torna o funil o passo atual: é o roteiro (não o pedido do modelo) que anexa o cartão.
+    draftPatch: { business: { description: "Clínica de estética" } },
     nextStage: "interview",
     summary: "Clínica de estética; telefone 11 99999-8888.",
     ...extra,
@@ -248,9 +253,8 @@ describe("entrevistador (texto)", () => {
     expect(raw).not.toContain("HACK");
     expect(raw).not.toContain("forjado");
     expect(raw).not.toContain("evil.example");
-    const apply = r.blocks.find((b) => b.kind === "aplicarOperacao");
-    const { session } = await sessionOf(t, s.organizationId);
-    expect(apply && apply.kind === "aplicarOperacao" && apply.draftHash).toBe(session?.draftHash);
+    // Cartões de ação são do ESTADO: o pedido do modelo por "aplicarOperacao" é ignorado.
+    expect(r.blocks.map((b) => b.kind)).not.toContain("aplicarOperacao");
     expect(r.blocks.map((b) => b.kind)).not.toContain("rodarComando");
   });
 
@@ -329,7 +333,21 @@ describe("gates", () => {
       organizationId: s.organizationId,
       attachment: { kind: "url", url: "https://clinicasol.example/" },
     });
-    expect(r).toMatchObject({ ok: false, code: "email_unverified", message: MATERIALS_EMAIL_UNVERIFIED_MESSAGE });
+    // Link antes da confirmação: guardado, sem rede nem LLM (ver onboardingFlow.test.ts). Arquivo: recusado.
+    expect(r.ok).toBe(true);
+    const file = await t.run(async (ctx) => {
+      const storageId = await ctx.storage.store(new Blob(["x"], { type: "application/pdf" }));
+      await ctx.db.insert("files", {
+        organizationId: s.organizationId, storageId, name: "a.pdf", mimeType: "application/pdf", size: 1,
+        fileType: "message_attachment", uploadedBy: (await ctx.db.query("teamMembers").first())!._id, createdAt: Date.now(),
+      } as never);
+      return storageId;
+    });
+    const pdf = await as(t, s.adminUserId).action(internal.onboardingChat.internalSendTurn, {
+      organizationId: s.organizationId,
+      attachment: { kind: "pdf", storageId: file },
+    });
+    expect(pdf).toMatchObject({ ok: false, code: "email_unverified", message: MATERIALS_EMAIL_UNVERIFIED_MESSAGE });
     expect(calls).toHaveLength(0);
     expect(connected).toBe(0);
     // Texto continua liberado sem a confirmação.

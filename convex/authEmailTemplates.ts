@@ -9,17 +9,19 @@ import {
   ctaButton,
   escapeHtml,
   heading,
+  line,
+  safeUrl,
   paragraph,
   type TemplateResult,
 } from "./emailTemplates";
 
-// Cores do tema escuro do HNBCRM — emailTemplates.ts não exporta essas
-// constantes (só funções), então repetimos os mesmos valores aqui.
-const BRAND_ORANGE = "#EA580C";
-const BG_DARK = "#0d0d0d";
-const TEXT_PRIMARY = "#f5f5f5";
-const TEXT_SECONDARY = "#a3a3a3";
-const BORDER_COLOR = "#2a2a2a";
+// Cores do tema claro "Estilo WhatsApp" (mesmos valores de emailTemplates.ts; o modo escuro do
+// cliente é tratado lá por seletor de atributo sobre estes valores).
+const BG_SOFT = "#F0F2F5";
+const TEXT_PRIMARY = "#111B21";
+const TEXT_SECONDARY = "#54656F";
+const BORDER_COLOR = "#E9EDEF";
+const CODE_COLOR = "#006B58";
 
 /**
  * E-mail com o código de redefinição de senha (fluxo "reset" do Password
@@ -41,7 +43,7 @@ export function buildPasswordResetTemplate(data: {
         ${heading("Redefinir senha")}
         ${paragraph("Recebemos um pedido para redefinir a senha da sua conta no HNBCRM. Use o código abaixo na tela de redefinição.")}
         <div style="margin: 24px 0; text-align: center;">
-          <span style="display: inline-block; padding: 16px 32px; background: ${BG_DARK}; border: 1px solid ${BORDER_COLOR}; border-radius: 8px; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${BRAND_ORANGE};">${escapeHtml(data.code)}</span>
+          <span style="display: inline-block; padding: 16px 32px; background: ${BG_SOFT}; border: 1px solid ${BORDER_COLOR}; border-radius: 8px; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${CODE_COLOR};">${escapeHtml(data.code)}</span>
         </div>
         ${paragraph(`Esse código expira em ${data.expiresMinutes} minutos.`)}
         ${paragraph("Se você não pediu essa redefinição, pode ignorar este e-mail — sua senha continua a mesma.")}
@@ -69,7 +71,7 @@ export function buildEmailVerificationTemplate(data: {
         ${heading("Confirme seu e-mail")}
         ${paragraph("Use o código abaixo no HNBCRM para confirmar o seu e-mail e liberar o envio de materiais.")}
         <div style="margin: 24px 0; text-align: center;">
-          <span style="display: inline-block; padding: 16px 32px; background: ${BG_DARK}; border: 1px solid ${BORDER_COLOR}; border-radius: 8px; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${BRAND_ORANGE};">${escapeHtml(data.code)}</span>
+          <span style="display: inline-block; padding: 16px 32px; background: ${BG_SOFT}; border: 1px solid ${BORDER_COLOR}; border-radius: 8px; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${CODE_COLOR};">${escapeHtml(data.code)}</span>
         </div>
         ${paragraph(`Esse código expira em ${data.expiresMinutes} minutos.`)}
         ${paragraph("Se você não pediu este código, pode ignorar este e-mail.")}
@@ -89,29 +91,38 @@ export function buildWelcomeTemplate(data: {
   orgName: string;
   appUrl: string;
 }): TemplateResult {
-  const memberName = escapeHtml(data.memberName);
+  const firstName = welcomeFirstName(data.memberName);
   const orgName = escapeHtml(data.orgName);
+  const hello = firstName ? `Bem-vindo(a) ao HNBCRM, ${escapeHtml(firstName)}!` : "Bem-vindo(a) ao HNBCRM!";
+  const startUrl = `${data.appUrl}/comecar`;
   const steps = [
-    "Conecte o WhatsApp em Configurações → Canais",
-    "Monte o funil de vendas do jeito que sua equipe trabalha",
-    "Convide o resto da equipe para entrar",
+    `<a href="${safeUrl(startUrl)}" style="color: #006B58; font-weight: 600;">Conte sobre o seu negócio</a> para o Copiloto montar a operação`,
+    "Teste a sua IA no simulador antes de conectar um número",
+    "Conecte o WhatsApp e convide a equipe",
   ];
-  const stepsList = `<ol style="margin: 16px 0 0; padding-left: 20px; color: ${TEXT_SECONDARY}; font-size: 14px; line-height: 2;">
-    ${steps.map((step) => `<li>${step}</li>`).join("")}
+  const stepsList = `<ol style="margin: 16px 0 0; padding-left: 20px; color: ${TEXT_SECONDARY}; font-size: 15px; line-height: 1.9;">
+    ${steps.map((step) => `<li style="margin-bottom: 4px;">${step}</li>`).join("")}
   </ol>`;
   return {
-    subject: `Bem-vindo ao HNBCRM, ${memberName}!`,
+    subject: firstName ? `Bem-vindo ao HNBCRM, ${line(firstName)}!` : "Bem-vindo ao HNBCRM!",
     html: baseTemplate({
-      preheader: `${memberName}, sua organização ${orgName} já está pronta no HNBCRM.`,
+      preheader: `${firstName ? escapeHtml(firstName) + ", s" : "S"}ua organização ${orgName} já está pronta no HNBCRM.`,
       appUrl: data.appUrl,
       content: `
-        ${heading(`Bem-vindo(a) ao HNBCRM, ${memberName}!`)}
+        ${heading(hello)}
         ${paragraph(`Sua organização <strong style="color: ${TEXT_PRIMARY};">${orgName}</strong> já está pronta. Aqui vão os primeiros passos:`)}
         ${stepsList}
         ${ctaButton("Abrir o HNBCRM", `${data.appUrl}/app`)}
       `,
     }),
   };
+}
+
+/** Primeiro nome para a saudação; vazio quando o "nome" falta ou é o próprio e-mail (nunca mostrar e-mail). */
+function welcomeFirstName(raw: string): string {
+  const name = String(raw ?? "").replace(/\s+/g, " ").trim();
+  if (!name || name.includes("@")) return "";
+  return name;
 }
 
 /**

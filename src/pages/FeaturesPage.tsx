@@ -11,6 +11,7 @@ import { FeatureStatusLegend } from "@/components/landing/features/FeatureStatus
 import { FEATURE_AREAS } from "@/components/landing/featuresCatalog";
 import { PRIMARY_CTA_LABEL, trustLine } from "@/components/landing/sections/landingCopy";
 import { startHref } from "@/lib/onboardingEntry";
+import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
 const SITE_URL = import.meta.env.VITE_SITE_URL || "https://hnbcrm.com";
 
@@ -30,9 +31,9 @@ export function FeaturesPage() {
       />
       <header className="px-4 pt-6">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-2">
-          <Link to="/" className="flex min-h-11 items-center gap-2">
+          <HomeLogoLink>
             <BrandLogo variant="wordmark" size="md" />
-          </Link>
+          </HomeLogoLink>
           <div className="flex items-center gap-1 sm:gap-2">
             <PublicThemeButton />
             <Link to="/">

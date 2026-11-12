@@ -54,15 +54,6 @@ export function toOrgSummaries(list: unknown): OrgSummary[] {
     }));
 }
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
 // --- Formulário de criação (usado no seletor e na tela de boas-vindas) ---
 
 interface CreateOrganizationFormProps {
@@ -78,29 +69,21 @@ export function CreateOrganizationForm({
 }: CreateOrganizationFormProps) {
   const createOrganization = useMutation(api.organizations.createOrganization);
   const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
   const [accepted, setAccepted] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanSlug = slugify(slug);
-    if (!canSubmitOrganization({ name, slug: cleanSlug, accepted })) return;
+    if (!canSubmitOrganization({ name, accepted })) return;
     setIsCreating(true);
     try {
-      const orgId = await createOrganization({ name: name.trim(), slug: cleanSlug, acceptedTermsVersion: TERMS_VERSION });
+      const orgId = await createOrganization({ name: name.trim(), acceptedTermsVersion: TERMS_VERSION });
       // O plano de interesse (?plano=) só vale até a criação da org.
       clearPlanIntent();
       toast.success(`Organização "${name.trim()}" criada!`);
       onCreated(orgId);
     } catch (error) {
-      const message = mutationErrorMessage(error, "");
-      toast.error(
-        /slug/i.test(message)
-          ? "Esse identificador já está em uso. Escolha outro."
-          : "Não foi possível criar a organização. Tente novamente."
-      );
+      toast.error(mutationErrorMessage(error, "Não foi possível criar a organização. Tente novamente."));
     } finally {
       setIsCreating(false);
     }
@@ -112,21 +95,8 @@ export function CreateOrganizationForm({
         label="Nome da organização"
         placeholder="Minha Empresa"
         value={name}
-        onChange={(e) => {
-          setName(e.target.value);
-          if (!slugEdited) setSlug(slugify(e.target.value));
-        }}
+        onChange={(e) => setName(e.target.value)}
         autoFocus
-        required
-      />
-      <Input
-        label="Identificador (URL)"
-        placeholder="minha-empresa"
-        value={slug}
-        onChange={(e) => {
-          setSlugEdited(true);
-          setSlug(e.target.value);
-        }}
         required
       />
       <Checkbox
@@ -152,7 +122,7 @@ export function CreateOrganizationForm({
         </Button>
         <Button
           type="submit"
-          disabled={isCreating || !canSubmitOrganization({ name, slug: slugify(slug), accepted })}
+          disabled={isCreating || !canSubmitOrganization({ name, accepted })}
           className="flex-1"
         >
           {isCreating ? "Criando..." : "Criar"}

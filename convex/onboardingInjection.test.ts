@@ -1053,7 +1053,8 @@ describe("5. sessão, RBAC e gates de material", () => {
       organizationId: s.orgId,
       attachment: { kind: "url", url: SITE_URL },
     });
-    expect(unverified).toMatchObject({ ok: false, code: "email_unverified" });
+    // Link antes da confirmação: só fica guardado (nenhuma rede, nenhum LLM).
+    expect(unverified).toMatchObject({ ok: true });
     const pdf = await storeFile(t, s.orgId, new Uint8Array(hiddenTextPdf([LEGIT_FACT], {})), "application/pdf", "a.pdf");
     expect(
       await as(t, s.unverified).action(internal.onboardingChat.internalSendTurn, { organizationId: s.orgId, attachment: { kind: "pdf", storageId: pdf } }),

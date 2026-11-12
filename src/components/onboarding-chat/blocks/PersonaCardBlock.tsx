@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bot, Languages, SlidersHorizontal } from "lucide-react";
+import { Bot, Clock, Languages, LifeBuoy } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -8,9 +8,9 @@ import { plainModelText } from "@/lib/onboardingChat";
 import { releaseGreeting, setPersona } from "@/lib/onboardingDraftEdit";
 import { languageDisplayName } from "@/lib/translationRules";
 import { VOCAB } from "@/lib/vocab";
-import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
-import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
-import { BlockCard } from "./BlockCard";
+import { useDraftEditor } from "../useDraftEditor";
+import { ApprovableCard, purposeOf, type ApprovalProps } from "./ApprovableCard";
+import { approvalFor, liveDraftBlock } from "./liveBlock";
 import { FlagNotice, FormActions, ReleaseControl, StaleNotice, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
@@ -31,27 +31,53 @@ export interface PersonaCardViewProps {
   /** Sem `editor`: pede para carregar o rascunho vivo e abrir o ajuste. */
   onAdjust?: () => void;
   startOpen?: boolean;
+  /** "Está bom, seguir" (ao vivo). Ausente = cartão sem aprovação. */
+  approval?: ApprovalProps;
 }
 
 /** Cartão do jeito de atender: nome, tom, tratamento, idiomas e saudação, com "Ajustar" (campos fechados). */
-export function PersonaCardView({ block, compact, editor, onAdjust, startOpen = false }: PersonaCardViewProps) {
+export function PersonaCardView({ block, compact, editor, onAdjust, startOpen = false, approval }: PersonaCardViewProps) {
   const [open, setOpen] = useState(startOpen);
   const name = plainModelText(block.attendantName) || VOCAB.attendant.name;
   const languages = (Array.isArray(block.languages) ? block.languages : []).map((l) => languageDisplayName(l)).filter(Boolean);
   const greeting = block.greeting;
-  const canAdjust = Boolean(editor || onAdjust);
+  const adjust = editor ? () => setOpen(true) : onAdjust;
+  const formOpen = open && !!editor;
+  const hours = plainModelText(block.hoursLabel);
+  const handoff = (Array.isArray(block.handoff) ? block.handoff : []).map((h) => plainModelText(h)).filter(Boolean);
 
   return (
-    <BlockCard title="Jeito de atender" icon={Bot} note={compact ? undefined : block.note}>
+    <ApprovableCard
+      title="Jeito de atender"
+      icon={Bot}
+      purpose={purposeOf(block)}
+      note={compact ? undefined : block.note}
+      approval={approval}
+      compact={compact}
+      formOpen={formOpen}
+      onAdjust={adjust}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 break-words font-semibold">{name}</p>
         <Badge variant="brand">{plainModelText(block.toneLabel)}</Badge>
         <Badge>{block.addressAs === "senhor" ? "Trata por senhor(a)" : "Trata por você"}</Badge>
       </div>
       {!compact && languages.length > 0 && (
-        <p className="mt-1 inline-flex items-center gap-1 text-caption text-text-muted">
+        <p className="mt-1 flex items-center gap-1 text-caption text-text-muted">
           <Languages className="size-3.5" aria-hidden="true" />
           {languages.join(", ")}
+        </p>
+      )}
+      {hours && (
+        <p className="mt-1 flex items-center gap-1 text-caption text-text-secondary">
+          <Clock className="size-3.5 shrink-0" aria-hidden="true" />
+          {hours}
+        </p>
+      )}
+      {handoff.length > 0 && !compact && (
+        <p className="mt-1 flex items-start gap-1 text-caption text-text-secondary">
+          <LifeBuoy className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <span>Chama você quando: {handoff.join("; ")}.</span>
         </p>
       )}
       <p className="mt-1 text-caption text-text-muted">Sempre se apresenta como IA.</p>
@@ -75,21 +101,22 @@ export function PersonaCardView({ block, compact, editor, onAdjust, startOpen = 
         </div>
       )}
 
-      {open && editor ? (
-        <PersonaForm block={block} editor={editor} onClose={() => setOpen(false)} />
-      ) : (
-        canAdjust && (
-          <Button size="sm" variant="secondary" className="mt-2" onClick={() => (editor ? setOpen(true) : onAdjust?.())}>
-            <SlidersHorizontal className="size-3.5" aria-hidden="true" />
-            Ajustar
-          </Button>
-        )
-      )}
-    </BlockCard>
+      {formOpen && editor && <PersonaForm block={block} editor={editor} approval={compact ? undefined : approval} onClose={() => setOpen(false)} />}
+    </ApprovableCard>
   );
 }
 
-function PersonaForm({ block, editor, onClose }: { block: BlockOf<"personaCard">; editor: CardEditor; onClose: () => void }) {
+function PersonaForm({
+  block,
+  editor,
+  approval,
+  onClose,
+}: {
+  block: BlockOf<"personaCard">;
+  editor: CardEditor;
+  approval?: ApprovalProps;
+  onClose: () => void;
+}) {
   const [attendantName, setName] = useState(block.attendantName);
   const [tone, setTone] = useState<string>(block.tone);
   const [addressAs, setAddress] = useState<string>(block.addressAs);
@@ -124,8 +151,14 @@ function PersonaForm({ block, editor, onClose }: { block: BlockOf<"personaCard">
               }),
               base
             )
-            .then((ok) => ok && onClose())
+            .then((ok) => {
+              if (!ok) return;
+              onClose();
+              // "Salvar e seguir": gravou, então aprova o que ficou.
+              if (approval?.onApprove) approval.onApprove();
+            })
         }
+        saveLabel={approval?.onApprove ? "Salvar e seguir" : undefined}
       />
     </div>
   );
@@ -134,12 +167,12 @@ function PersonaForm({ block, editor, onClose }: { block: BlockOf<"personaCard">
 /** Versão com o rascunho vivo: mostra o que está gravado agora e permite editar. */
 function PersonaLive({ block, ctx }: BlockProps<"personaCard">) {
   const ed = useDraftEditor(ctx);
-  const live = ed.draft ? (buildBlock({ kind: "personaCard", note: block.note }, liveBlockContext(ed)) as BlockOf<"personaCard"> | null) : null;
   return (
     <PersonaCardView
-      block={live ?? block}
+      block={liveDraftBlock(block, ctx)}
       compact={ctx.compact}
       editor={ed.draft ? { version: ed.version, saving: ed.saving, save: ed.save } : undefined}
+      approval={approvalFor("personaCard", ctx)}
       startOpen
     />
   );
@@ -148,5 +181,12 @@ function PersonaLive({ block, ctx }: BlockProps<"personaCard">) {
 export function PersonaCardBlock({ block, ctx }: BlockProps<"personaCard">) {
   const [live, setLive] = useState(false);
   if (live) return <PersonaLive block={block} ctx={ctx} />;
-  return <PersonaCardView block={block} compact={ctx.compact} onAdjust={ctx.organizationId ? () => setLive(true) : undefined} />;
+  return (
+    <PersonaCardView
+      block={liveDraftBlock(block, ctx)}
+      compact={ctx.compact}
+      approval={approvalFor("personaCard", ctx)}
+      onAdjust={ctx.organizationId ? () => setLive(true) : undefined}
+    />
+  );
 }

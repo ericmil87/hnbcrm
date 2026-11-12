@@ -8,6 +8,7 @@ import { releaseQuickReply, removeQuickReply, setQuickReply } from "@/lib/onboar
 import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS } from "../../../../convex/lib/onboardingDraft";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
+import { purposeOf } from "./ApprovableCard";
 import { BlockCard } from "./BlockCard";
 import { FlagNotice, FormActions, ReleaseControl, StaleNotice, Tag, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
@@ -28,10 +29,7 @@ export function RespostasRapidasView({ block, compact, editor, released, onAdjus
   const items = Array.isArray(block.items) ? block.items : [];
   const shown = compact ? items.slice(0, COMPACT_ITEMS) : items;
   return (
-    <BlockCard title="Respostas rápidas" icon={MessageSquareText} note={compact ? undefined : block.note}>
-      <p className="text-caption text-text-secondary">
-        Atalhos que a sua equipe usa digitando <span className="font-medium">/</span> na conversa.
-      </p>
+    <BlockCard title="Respostas rápidas" icon={MessageSquareText} purpose={purposeOf(block)} note={compact ? undefined : block.note}>
       <ul className="mt-2 space-y-2" aria-label="Respostas rápidas">
         {shown.map((item, index) => {
           const isReleased = released?.[index] === true;

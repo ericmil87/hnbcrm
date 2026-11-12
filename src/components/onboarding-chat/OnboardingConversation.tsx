@@ -66,6 +66,7 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
           ? { kind: "ready" }
           : { kind: "loading" };
 
+  const confirmEmailCode = useMutation(api.emailVerification.confirmEmailVerificationCode);
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const saveFile = useMutation(api.files.saveFile);
   const uploadFile = useCallback(
@@ -91,7 +92,6 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
       access={access}
       sessionId={sessionId}
       history={{ results: history.results as readonly HistoryMessage[], status: history.status, loadMore: history.loadMore }}
-      sessionStage={session?.stage ?? null}
       chatState={
         chatState
           ? {
@@ -99,9 +99,19 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
               lastChips: chatState.lastChips,
               materialsUnlocked: chatState.materialsUnlocked,
               materialsNoticeAcknowledged: chatState.materialsNoticeAcknowledged,
+              emailVerified: chatState.emailVerified,
+              maskedEmail: chatState.maskedEmail,
+              pendingMaterials: chatState.pendingMaterials,
+              approvals: chatState.approvals,
+              reachedStep: chatState.reachedStep,
+              aiActive: chatState.aiActive,
+              applied: chatState.applied,
+              tested: chatState.tested,
+              connected: chatState.connected,
             }
           : null
       }
+      confirmEmailCode={(code) => confirmEmailCode({ code })}
       draft={session?.draft ?? null}
       token={token ?? null}
       intent={intent}

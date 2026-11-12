@@ -7,6 +7,7 @@ import { buildAuditDescription } from "./lib/auditDescription";
 import { aiConfigValidator, notifPresetValidator } from "./schema";
 import { initialOrgBilling, initialTrialBilling } from "./lib/entitlementsOps";
 import { TRIAL } from "./lib/plans";
+import { pickFreeOrgSlug } from "./lib/orgSlug";
 import { assertCurrentTermsVersion, recordTermsAcceptance } from "./terms";
 
 // Get user's organizations
@@ -49,7 +50,9 @@ export const getUserOrganizations = query({
 export const createOrganization = mutation({
   args: {
     name: v.string(),
-    slug: v.string(),
+    // Opcional: sem ele o servidor gera um livre a partir do nome (lib/orgSlug.ts). Explícito
+    // e repetido continua recusando (API/MCP/testes).
+    slug: v.optional(v.string()),
     // 7b: versão dos Termos que a pessoa aceitou no cadastro (caixa não pré-marcada).
     acceptedTermsVersion: v.optional(v.string()),
   },
@@ -64,15 +67,17 @@ export const createOrganization = mutation({
     // Versão errada recusa ANTES de criar qualquer coisa (front desatualizado).
     if (args.acceptedTermsVersion !== undefined) assertCurrentTermsVersion(args.acceptedTermsVersion);
 
-    // Check if slug is available
-    const existing = await ctx.db
-      .query("organizations")
-      .withIndex("by_slug", (q) => q.eq("slug", args.slug))
-      .first();
-    
-    // ConvexError: em produção um Error comum chega ao cliente como "Server
-    // Error"; o front traduz por /slug/i, então a palavra fica.
-    if (existing) throw new ConvexError("Este endereço (slug) já está em uso por outra organização");
+    const slugTaken = async (candidate: string) =>
+      (await ctx.db.query("organizations").withIndex("by_slug", (q) => q.eq("slug", candidate)).first()) !== null;
+    let slug: string;
+    if (args.slug !== undefined) {
+      slug = args.slug;
+      // ConvexError: em produção um Error comum chega ao cliente como "Server
+      // Error"; o front traduz por /slug/i, então a palavra fica.
+      if (await slugTaken(slug)) throw new ConvexError("Este endereço (slug) já está em uso por outra organização");
+    } else {
+      slug = await pickFreeOrgSlug(args.name, slugTaken);
+    }
 
     const now = Date.now();
 
@@ -91,7 +96,7 @@ export const createOrganization = mutation({
     // Create organization
     const orgId = await ctx.db.insert("organizations", {
       name: args.name,
-      slug: args.slug,
+      slug,
       settings: {
         // Produto PT-BR: os defaults seguem o público (o assistente ajusta).
         timezone: "America/Sao_Paulo",
@@ -200,8 +205,8 @@ export const createOrganization = mutation({
       action: "create",
       actorId: teamMemberId,
       actorType: "human",
-      metadata: { name: args.name, slug: args.slug },
-      description: buildAuditDescription({ action: "create", entityType: "organization", metadata: { name: args.name, slug: args.slug } }),
+      metadata: { name: args.name, slug: slug },
+      description: buildAuditDescription({ action: "create", entityType: "organization", metadata: { name: args.name, slug: slug } }),
       severity: "medium",
       createdAt: now,
     });

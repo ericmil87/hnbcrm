@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { Link, useSearchParams } from "react-router";
 import { SEO } from "@/components/SEO";
 import { BrandLogo } from "@/components/ui/BrandLogo";
@@ -7,11 +7,17 @@ import { KitShowcase } from "@/components/landing/kit/KitShowcase";
 import { isUiTheme } from "../../convex/lib/uiTheme";
 import { applyTheme } from "@/lib/themeDom";
 
+// Vitrine do onboarding (`?vitrine=onboarding&estado=`): só DEV, fora do bundle de produção.
+const OnboardingShowcase = lazy(() => import("@/components/onboarding-chat/dev/OnboardingShowcase").then((m) => ({ default: m.OnboardingShowcase })));
+const SHOWCASE_STATES = ["inicio", "funil", "atendente", "ativar", "email", "final", "erro"] as const;
+type ShowcaseState = (typeof SHOWCASE_STATES)[number];
+
 /**
  * Vitrine do kit de cena (`/dev/kit`). A rota só existe com
  * `import.meta.env.DEV` (ver `main.tsx`), então esta página não entra no build
  * de produção. `?tema=whatsapp-dark` aplica um tema sem gravar nada (capturas);
- * `?movimento=reduzido` mostra o estado final de todas as peças.
+ * `?movimento=reduzido` mostra o estado final de todas as peças;
+ * `?vitrine=onboarding&estado=inicio|funil|atendente|ativar|email|final|erro` mostra a conversa `/comecar` com dados fixos.
  */
 export function DevKitPage() {
   const [params] = useSearchParams();
@@ -21,6 +27,19 @@ export function DevKitPage() {
   useEffect(() => {
     if (isUiTheme(theme)) applyTheme(theme);
   }, [theme]);
+
+  if (params.get("vitrine") === "onboarding") {
+    const raw = params.get("estado");
+    const estado: ShowcaseState = (SHOWCASE_STATES as readonly string[]).includes(raw ?? "") ? (raw as ShowcaseState) : "inicio";
+    return (
+      <>
+        <SEO title="Onboarding (vitrine DEV)" noindex />
+        <Suspense fallback={null}>
+          <OnboardingShowcase estado={estado} reducedMotion={reduced || undefined} />
+        </Suspense>
+      </>
+    );
+  }
 
   return (
     <>

@@ -20,6 +20,7 @@ import { assertValidDraft, draftHash, onboardingDraftValidator, type OnboardingD
 import { scanDraft, type DraftSourceText } from "./lib/onboardingDraftFilter";
 import { applyOnboardingDraftCore, type ApplyResult } from "./lib/onboardingApply";
 import { buildAuditDescription } from "./lib/auditDescription";
+import { APPROVAL_SECTIONS, ROADMAP_STEPS, sectionSignature, type ApprovalSection } from "./lib/onboardingRoadmap";
 
 const SUMMARY_MAX = 2000;
 const SOURCE_TEXTS_MAX = 20;
@@ -48,6 +49,20 @@ const sessionValidator = v.object({
   appliedDraftHash: v.union(v.string(), v.null()),
   /** Há rascunho gravado diferente do último aplicado. */
   hasUnappliedChanges: v.boolean(),
+  /** Assinatura aprovada por seção ("Está bom, seguir"); mudou o conteúdo = pendente de novo. */
+  approvals: v.object({
+    funnel: v.optional(v.string()),
+    persona: v.optional(v.string()),
+    knowledge: v.optional(v.string()),
+  }),
+  /** Etapa (0-based) mais avançada já alcançada: a barra nunca regride. */
+  reachedStep: v.number(),
+  /** A pessoa testou a IA. */
+  tested: v.boolean(),
+  /** Canal conectado ou "conectar depois" escolhido. */
+  connected: v.boolean(),
+  /** Links guardados à espera da confirmação do e-mail. */
+  pendingMaterialsCount: v.number(),
   createdAt: v.number(),
   updatedAt: v.number(),
 });
@@ -130,6 +145,11 @@ function toView(s: Doc<"onboardingSessions">) {
     appliedAt: s.appliedAt ?? null,
     appliedDraftHash: s.appliedDraftHash ?? null,
     hasUnappliedChanges: s.draftHash !== undefined && s.draftHash !== s.appliedDraftHash,
+    approvals: s.approvals ?? {},
+    reachedStep: s.reachedStep ?? 0,
+    tested: s.testedAt !== undefined,
+    connected: s.channelStepAt !== undefined,
+    pendingMaterialsCount: s.pendingMaterials?.length ?? 0,
     createdAt: s.createdAt,
     updatedAt: s.updatedAt,
   };
@@ -439,6 +459,10 @@ export const internalUpdateSummary = internalMutation({
     summary: v.optional(v.string()),
     messageCountDelta: v.optional(v.number()),
     stage: v.optional(stageValidator),
+    /** Última assinatura mostrada por tipo de cartão (mescla com a gravada). */
+    shownCards: v.optional(v.record(v.string(), v.string())),
+    /** Etapa mais avançada alcançada (0–5): só sobe. */
+    reachedStep: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -452,8 +476,54 @@ export const internalUpdateSummary = internalMutation({
       ...(args.summary !== undefined ? { summary: args.summary.trim().slice(0, SUMMARY_MAX) } : {}),
       messageCount: session.messageCount + delta,
       ...(args.stage ? { stage: args.stage } : {}),
+      ...(args.shownCards ? { shownCards: { ...(session.shownCards ?? {}), ...args.shownCards } } : {}),
+      ...(args.reachedStep !== undefined && Number.isInteger(args.reachedStep)
+        ? { reachedStep: Math.max(session.reachedStep ?? 0, Math.min(ROADMAP_STEPS.length - 1, Math.max(0, args.reachedStep))) }
+        : {}),
       updatedAt: Date.now(),
     });
     return null;
+  },
+});
+
+/**
+ * "Está bom, seguir" de uma seção do rascunho (evento `approve` do roteiro).
+ * Grava a assinatura ATUAL do conteúdo (`sectionSignature`); se a tela mandou
+ * `sig` e ela difere da atual, NÃO aprova (`stale`: o cartão mudou). Audit `low`
+ * sem texto livre. Idempotente (aprovar de novo a mesma assinatura não grava).
+ */
+export const internalApproveSection = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    memberId: v.id("teamMembers"),
+    section: v.union(v.literal("funnel"), v.literal("persona"), v.literal("knowledge")),
+    sig: v.optional(v.string()),
+  },
+  returns: v.object({ status: v.union(v.literal("approved"), v.literal("unchanged"), v.literal("stale"), v.literal("no_draft")) }),
+  handler: async (ctx, args) => {
+    if (!(APPROVAL_SECTIONS as readonly string[]).includes(args.section)) throw new ConvexError("Seção inválida");
+    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    if (!session.draft) return { status: "no_draft" as const };
+    const section = args.section as ApprovalSection;
+    const current = sectionSignature(session.draft, section);
+    if (args.sig !== undefined && args.sig !== current) return { status: "stale" as const };
+    if (session.approvals?.[section] === current) return { status: "unchanged" as const };
+    const now = Date.now();
+    await ctx.db.patch(session._id, { approvals: { ...(session.approvals ?? {}), [section]: current }, updatedAt: now });
+    const metadata = { action: "onboarding_section_approved", section };
+    await ctx.db.insert("auditLogs", {
+      organizationId: args.organizationId,
+      entityType: "onboardingSession",
+      entityId: session._id,
+      action: "update",
+      actorId: args.memberId,
+      actorType: "human",
+      metadata,
+      description: buildAuditDescription({ action: "update", entityType: "onboardingSession", metadata }),
+      severity: "low",
+      createdAt: now,
+    });
+    return { status: "approved" as const };
   },
 });

@@ -33,6 +33,13 @@ describe("describeApplyResult", () => {
     expect(v.needsConsent).toBe(false);
   });
 
+  it("a nota do atendente diz a verdade conforme o modo final", () => {
+    expect(describeApplyResult(result(), "autopilot").attendantNote).toMatch(/responde sozinha, 24h/);
+    expect(describeApplyResult(result(), "autopilot").attendantNote).not.toMatch(/Nada sai sozinho/);
+    expect(describeApplyResult(result(), "autopilot_failed").attendantNote).toMatch(/ficou montada em Sugerir respostas/);
+    expect(describeApplyResult(result(), "suggest").attendantNote).toMatch(/Nada sai sozinho/);
+  });
+
   it("aceite pendente: atendente e recursos esperam o aceite de IA", () => {
     const v = describeApplyResult(
       result({

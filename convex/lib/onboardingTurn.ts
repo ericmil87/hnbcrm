@@ -49,19 +49,43 @@ import { sanitizeLlmError } from "./llm/sanitize";
 import { cleanDraftText, normalizeDraft, DRAFT_LIMITS, type OnboardingDraft } from "./onboardingDraft";
 import { maskFreeText } from "./onboardingSetupContext";
 import {
+  ACTION_BLOCK_KINDS,
+  buildBlock,
   buildBlocks,
   onboardingBlockValidator,
+  type BlockContext,
+  type BlockRequest,
   type OnboardingBlock,
   type OnboardingBlockKind,
   type UploadOutcome,
 } from "./onboardingBlocks";
 import {
-  INTERVIEWER_FALLBACK_REPLY,
+  CARD_SECTION,
+  actionCardSignature,
+  cardSignature,
+  coherentChips,
+  materialPendingMessage,
+  nextTask,
+  planTurnCards,
+  replyMentionsUi,
+  stepMessage,
+  taskCard,
+  taskChips,
+  taskStepIndex,
+  isDraftCardKind,
+  sectionSignature,
+  type ApprovalSection,
+  type RoadmapFacts,
+  type RoadmapNotice,
+  type RoadmapTask,
+  type TaskCardKind,
+} from "./onboardingRoadmap";
+import {
+  CHIPS_MIN,
   INTERVIEWER_RETRY_NUDGE,
   USER_TEXT_MAX,
   buildInterviewerMessages,
   buildReaderMessages,
-  fallbackChips,
   maskThirdPartyEmails,
   mergeDraftPatch,
   mergeReaderProposal,
@@ -71,7 +95,6 @@ import {
   type HistoryItem,
   type InterviewerOutput,
   type MaterialKind,
-  type NextStage,
 } from "./onboardingInterviewer";
 import type { ChatMessage } from "./llm/types";
 import { segmentTemplate } from "./onboardingTemplates";
@@ -127,6 +150,37 @@ export const turnAttachmentValidator = v.union(
   v.object({ kind: v.literal("audio"), storageId: v.id("_storage") }),
 );
 
+/**
+ * Evento estruturado do roteiro (SEM LLM): a tela avisa que a pessoa fez uma
+ * ação de cartão; o servidor CONFERE o fato e responde com o próximo passo.
+ * Mutuamente exclusivo com `text`/`attachment`.
+ */
+export const turnEventValidator = v.union(
+  v.object({
+    kind: v.literal("approve"),
+    section: v.union(v.literal("funnel"), v.literal("persona"), v.literal("knowledge")),
+    /** Assinatura do cartão que a pessoa viu (`sig` do bloco); diferente da atual = o cartão mudou. */
+    sig: v.optional(v.string()),
+  }),
+  v.object({
+    kind: v.literal("notify"),
+    what: v.union(
+      v.literal("email_verified"),
+      v.literal("activated"),
+      v.literal("tested"),
+      v.literal("connected"),
+      v.literal("skip_connect"),
+    ),
+  }),
+  v.object({ kind: v.literal("next") }),
+  v.object({ kind: v.literal("process_pending") }),
+);
+export type TurnEvent =
+  | { kind: "approve"; section: ApprovalSection; sig?: string }
+  | { kind: "notify"; what: "email_verified" | "activated" | "tested" | "connected" | "skip_connect" }
+  | { kind: "next" }
+  | { kind: "process_pending" };
+
 export const turnInputValidator = {
   organizationId: v.id("organizations"),
   /** Ausente = sessão mais recente da org (criada se não houver). */
@@ -135,6 +189,8 @@ export const turnInputValidator = {
   text: v.optional(v.string()),
   /** No máximo um material por turno. Exige e-mail confirmado (D2) e a ciência do aviso. */
   attachment: v.optional(turnAttachmentValidator),
+  /** Evento do roteiro (sem texto nem anexo; não chama o modelo). */
+  event: v.optional(turnEventValidator),
 };
 
 export const TURN_ERROR_CODES = [
@@ -185,6 +241,7 @@ export type TurnInput = {
   sessionId?: Id<"onboardingSessions">;
   text?: string;
   attachment?: TurnAttachment;
+  event?: TurnEvent;
 };
 
 export type TurnResult =
@@ -389,13 +446,24 @@ function chunksOf(text: string): string[] {
   return parts.filter((p) => p.length > 0);
 }
 
-/** Etapa final: aplicada só a aplicação marca; depois de aplicada, só test/next_steps. */
-function resolveStage(current: string, proposed: NextStage | undefined): NextStage | undefined {
-  if (!proposed) return undefined;
-  if (current === "applied" || current === "test" || current === "next_steps") {
-    return proposed === "test" || proposed === "next_steps" ? proposed : undefined;
-  }
-  return proposed;
+/**
+ * Etapa gravada (compatibilidade; a tela usa o roteiro): deriva da TAREFA.
+ * describe_business → interview; approve_*, activate → draft; test → test;
+ * connect/done → next_steps. Nunca `materials`; `applied` só a aplicação marca.
+ * Uma sessão já aplicada/testada não volta atrás por este caminho.
+ */
+export function stageForTask(current: string, task: RoadmapTask): "interview" | "draft" | "test" | "next_steps" | undefined {
+  const mapped =
+    task === "describe_business"
+      ? "interview"
+      : task === "test"
+        ? "test"
+        : task === "connect" || task === "done"
+          ? "next_steps"
+          : "draft";
+  if (current === "applied" && (mapped === "interview" || mapped === "draft")) return undefined;
+  if ((current === "test" || current === "next_steps") && (mapped === "interview" || mapped === "draft")) return undefined;
+  return mapped;
 }
 
 const refLabel = (s: string) => cleanDraftText(s).slice(0, DRAFT_LIMITS.originReference);
@@ -421,7 +489,118 @@ type Prep = {
   file: { size: number; mimeType: string; label: string } | null;
   siteKey: string | null;
   materialsNoticeAck: boolean;
+  deferMaterial: boolean;
+  approvals: Partial<Record<ApprovalSection, string>>;
+  shownCards: Record<string, string>;
+  reachedStep: number;
+  tested: boolean;
+  connected: boolean;
+  pendingCount: number;
+  maskedEmail: string | null;
+  lastEvent: string | null;
 };
+
+type FlowState = {
+  draft: OnboardingDraft | null;
+  approvals: Partial<Record<ApprovalSection, string>>;
+  applied: boolean;
+  appliedDraftHash: string | null;
+  draftHash: string | null;
+  draftVersion: number;
+  tested: boolean;
+  connected: boolean;
+  reachedStep: number;
+  pendingCount: number;
+};
+
+function factsOf(f: FlowState, p: { aiActive: boolean; emailVerified: boolean }): RoadmapFacts {
+  return {
+    draft: f.draft,
+    approvals: f.approvals,
+    aiActive: p.aiActive,
+    applied: f.applied,
+    tested: f.tested,
+    connected: f.connected,
+    emailVerified: p.emailVerified,
+    reachedStep: f.reachedStep,
+  };
+}
+
+function flowFromPrep(prep: Prep, draft: OnboardingDraft | null): FlowState {
+  return {
+    draft,
+    approvals: prep.approvals,
+    applied: prep.appliedDraftHash !== null,
+    appliedDraftHash: prep.appliedDraftHash,
+    draftHash: null,
+    draftVersion: prep.draftVersion,
+    tested: prep.tested,
+    connected: prep.connected,
+    reachedStep: prep.reachedStep,
+    pendingCount: prep.pendingCount,
+  };
+}
+
+/** Estado atual da sessão (gravado) por cima do que a abertura do turno viu. */
+async function flowNow(ctx: ActionCtx, input: { organizationId: Id<"organizations"> }, prep: Prep): Promise<FlowState> {
+  const view = await ctx.runQuery(internal.onboardingSessions.internalGetSession, {
+    organizationId: input.organizationId,
+    sessionId: prep.sessionId,
+  });
+  if (!view) return flowFromPrep(prep, prep.draft);
+  return {
+    draft: view.draft,
+    approvals: view.approvals,
+    applied: view.appliedDraftHash !== null,
+    appliedDraftHash: view.appliedDraftHash,
+    draftHash: view.draftHash,
+    draftVersion: view.draftVersion,
+    tested: view.tested,
+    connected: view.connected,
+    reachedStep: view.reachedStep,
+    pendingCount: view.pendingMaterialsCount,
+  };
+}
+
+function blockCtxOf(f: FlowState, prep: Prep, extra: { upload?: UploadOutcome } = {}): BlockContext {
+  return {
+    draft: f.draft,
+    draftHash: f.draftHash,
+    draftVersion: f.draftVersion,
+    appliedDraftHash: f.appliedDraftHash,
+    emailVerified: prep.emailVerified,
+    aiActive: prep.aiActive,
+    materialsNoticeAck: prep.materialsNoticeAck,
+    approvals: f.approvals,
+    ...(prep.maskedEmail ? { maskedEmail: prep.maskedEmail } : {}),
+    pendingMaterials: f.pendingCount,
+    tested: f.tested,
+    connected: f.connected,
+    ...(extra.upload ? { upload: extra.upload } : {}),
+  };
+}
+
+function cardSigOf(kind: TaskCardKind, f: FlowState, facts: RoadmapFacts): string {
+  return kind === "ativarIa" || kind === "operacaoPronta"
+    ? actionCardSignature(kind, {
+        draftHash: f.draftHash,
+        appliedDraftHash: f.appliedDraftHash,
+        aiActive: facts.aiActive,
+        tested: facts.tested,
+        connected: facts.connected,
+      })
+    : cardSignature(f.draft, kind);
+}
+
+/** Completa as sugestões com as da tarefa (só as coerentes). Aceita menos de `CHIPS_MIN` quando não houver. */
+function finalChips(modelChips: readonly string[], facts: RoadmapFacts, task: RoadmapTask): string[] {
+  const chips = coherentChips(modelChips, facts);
+  for (const c of coherentChips(taskChips(task), facts)) {
+    if (chips.length >= CHIPS_MIN) break;
+    if (!chips.some((x) => x.toLowerCase() === c.toLowerCase())) chips.push(c);
+  }
+  return chips;
+}
 
 export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events: TurnEvents): Promise<TurnResult> {
   const fail = (code: TurnErrorCode, message: string, sessionId: Id<"onboardingSessions"> | null = null): TurnResult => ({
@@ -430,6 +609,12 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     message,
     sessionId,
   });
+  if (input.event) {
+    if ((input.text ?? "").trim() || input.attachment) {
+      return fail("invalid_input", "Um evento não leva texto nem material.");
+    }
+    return await runOnboardingEvent(ctx, { ...input, event: input.event }, events);
+  }
   let userText = (input.text ?? "").trim();
   if (userText.length > USER_TEXT_MAX) return fail("invalid_input", `Mensagem longa demais (máximo ${USER_TEXT_MAX} caracteres).`);
   if (!userText && !input.attachment) return fail("invalid_input", "Escreva uma mensagem ou envie um material.");
@@ -480,6 +665,11 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     });
     version = saved.draftVersion;
     draft = (await getSession())?.draft ?? start;
+  }
+
+  // 3b. Link antes da confirmação do e-mail: só guarda (nenhuma busca, nenhum LLM, nenhuma reserva).
+  if (prep.deferMaterial && input.attachment?.kind === "url") {
+    return await deferMaterialTurn(ctx, input, prep, draft, version, userText, events);
   }
 
   // 4. Material.
@@ -685,15 +875,14 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
   });
 
   const segment = draft.business.segment;
+  const factsBefore = factsOf({ ...flowFromPrep(prep, draft) }, prep);
   const messages = buildInterviewerMessages({
     draft,
     summary: prep.summary,
     history: prep.history,
     userText,
     userTextIsTranscript: transcribed,
-    emailVerified: prep.emailVerified,
-    aiActive: prep.aiActive,
-    stage: prep.stage,
+    facts: factsBefore,
     turnIndex: Math.floor(prep.messageCount / 2),
     ...(materialNote ? { materialNote } : {}),
   }) as ChatMessage[];
@@ -713,21 +902,23 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     );
     if (!call.ok && call.refused) break; // sem orçamento para a retentativa: resposta de reserva
     if (!call.ok) continue;
-    const parsed = parseInterviewerOutput(call.content, { stage: prep.stage, segment, userTexts });
+    const parsed = parseInterviewerOutput(call.content, { segment, userTexts, facts: factsBefore });
     if (parsed.ok) output = parsed.value;
     else console.log(JSON.stringify({ event: "onboardingInterviewerDiscarded", reason: parsed.reason, detail: parsed.detail }));
   }
   const usedFallback = !output;
+  // Falha do modelo: a pessoa sempre tem o próximo passo (fala fixa do roteiro + cartão do passo + sugestões da tarefa).
+  const fallbackTask = nextTask(factsBefore);
   const out: InterviewerOutput = output ?? {
-    reply: INTERVIEWER_FALLBACK_REPLY,
-    chips: fallbackChips(prep.stage, segment),
+    reply: stepMessage("next", fallbackTask),
+    chips: taskChips(fallbackTask),
     blocks: [],
     askForMaterials: false,
   };
 
   // draftPatch → rascunho (nunca configuração).
   if (out.draftPatch) {
-    const merged = normalizeDraft(mergeDraftPatch(draft, out.draftPatch));
+    const merged = normalizeDraft(mergeDraftPatch(draft, out.draftPatch, { fromAudio: transcribed }));
     if (merged.ok) {
       try {
         const saved = await ctx.runMutation(internal.onboardingSessions.internalSaveDraft, {
@@ -745,35 +936,39 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     }
   }
 
-  // 6. Estado final + blocos do servidor.
-  const final = await getSession();
-  const finalDraft = final?.draft ?? draft;
+  // 6. Estado final + cartões decididos pelo ESTADO (roteiro), montados pelo servidor.
+  const flow = await flowNow(ctx, input, prep);
+  const facts = factsOf(flow, prep);
+  const task = nextTask(facts);
+  const planned = planTurnCards({
+    facts,
+    shown: prep.shownCards,
+    requested: usedFallback ? [] : out.blocks.map((r) => r.kind).filter((k) => !ACTION_BLOCK_KINDS.includes(k)),
+    actionState: { draftHash: flow.draftHash, appliedDraftHash: flow.appliedDraftHash },
+    mentionsUi: usedFallback || replyMentionsUi(out.reply),
+  });
   const forced: OnboardingBlockKind[] = [];
   if (upload) forced.push("uploadProgresso");
-  if (prep.messageCount === 0) forced.push("funilPreview");
   if (out.askForMaterials && !prep.emailVerified) forced.push("cartaoConta");
   if (out.askForMaterials && prep.emailVerified && !prep.materialsNoticeAck) forced.push("avisoMateriais");
-  const blocks = buildBlocks(
-    out.blocks,
-    {
-      draft: finalDraft,
-      draftHash: final?.draftHash ?? null,
-      draftVersion: final?.draftVersion ?? version,
-      appliedDraftHash: final?.appliedDraftHash ?? prep.appliedDraftHash,
-      emailVerified: prep.emailVerified,
-      aiActive: prep.aiActive,
-      materialsNoticeAck: prep.materialsNoticeAck,
-      ...(upload ? { upload } : {}),
-    },
-    { forced, chips: out.chips },
-  );
-  const nextStage = resolveStage(final?.stage ?? prep.stage, out.nextStage);
+  // A nota do modelo só vai nos cartões do rascunho.
+  const requests: BlockRequest[] = planned.map((c) => {
+    const note = isDraftCardKind(c.kind) ? out.blocks.find((r) => r.kind === c.kind)?.note : undefined;
+    return { kind: c.kind, ...(note ? { note } : {}) };
+  });
+  const blocks = buildBlocks(requests, blockCtxOf(flow, prep, { ...(upload ? { upload } : {}) }), { forced });
+  const shownUpdate: Record<string, string> = {};
+  for (const c of planned) if (blocks.some((x) => x.kind === c.kind)) shownUpdate[c.kind] = c.sig;
+  const chips = finalChips(out.chips, facts, task);
+  const nextStage = stageForTask(prep.stage, task);
   await ctx.runMutation(internal.onboardingSessions.internalUpdateSummary, {
     organizationId: input.organizationId,
     sessionId,
     messageCountDelta: 2,
     ...(out.summary && !usedFallback ? { summary: maskFreeText(out.summary) } : {}),
     ...(nextStage ? { stage: nextStage } : {}),
+    ...(Object.keys(shownUpdate).length > 0 ? { shownCards: shownUpdate } : {}),
+    reachedStep: taskStepIndex(task),
   });
   const assistantMessageId = await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
     organizationId: input.organizationId,
@@ -781,17 +976,17 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     role: "assistant",
     text: out.reply,
     blocks,
-    chips: out.chips,
-    draftVersion: final?.draftVersion ?? version,
+    chips,
+    draftVersion: flow.draftVersion,
   });
 
   for (const piece of chunksOf(out.reply)) await events.onDelta?.(piece);
   for (const block of blocks) await events.onBlock?.(block);
-  await events.onChips?.(out.chips);
-  const draftInfo = final?.draftHash ? { version: final.draftVersion, hash: final.draftHash } : null;
+  await events.onChips?.(chips);
+  const draftInfo = flow.draftHash ? { version: flow.draftVersion, hash: flow.draftHash } : null;
   if (draftInfo) await events.onDraft?.(draftInfo);
 
-  const doneInfo = { nextStage: nextStage ?? final?.stage ?? null, askForMaterials: out.askForMaterials && prep.emailVerified };
+  const doneInfo = { nextStage: nextStage ?? prep.stage, askForMaterials: out.askForMaterials && prep.emailVerified };
   await events.onDone?.(doneInfo);
 
   // 7. Resposta em áudio (só quando o usuário mandou áudio), DEPOIS do `done`. Nunca derruba o turno.
@@ -804,7 +999,7 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     ok: true,
     sessionId,
     reply: out.reply,
-    chips: out.chips,
+    chips,
     blocks,
     draft: draftInfo,
     nextStage: doneInfo.nextStage,
@@ -812,6 +1007,273 @@ export async function runOnboardingTurn(ctx: ActionCtx, input: TurnInput, events
     ...(voice?.kind === "audio" ? { audio: voice.audio } : {}),
     ...(voice?.kind === "text" ? { audioSkipReason: voice.reason } : {}),
   };
+}
+
+// ── Link antes da confirmação do e-mail ─────────────────────────────────────
+
+/**
+ * Turno determinístico: o LINK fica guardado (`pendingMaterials`, até 3) e a
+ * leitura só acontece depois da confirmação do e-mail e da ciência do aviso
+ * (`process_pending`). Sem rede, sem LLM, sem reserva de orçamento (o rate
+ * limit do turno já foi consumido). O texto digitado junto do anexo não é
+ * processado aqui (o envio de material não leva texto).
+ */
+async function deferMaterialTurn(
+  ctx: ActionCtx,
+  input: TurnInput,
+  prep: Prep,
+  draft: OnboardingDraft,
+  version: number,
+  userText: string,
+  events: TurnEvents,
+): Promise<TurnResult> {
+  const att = input.attachment as { kind: "url"; url: string };
+  const url = att.url.trim();
+  const host = prep.siteKey ?? "link";
+  const label = url.slice(0, 200);
+  const pending = await ctx.runMutation(internal.onboardingChat.internalAddPendingMaterial, {
+    organizationId: input.organizationId,
+    sessionId: prep.sessionId,
+    url,
+    label: host,
+  });
+  await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
+    organizationId: input.organizationId,
+    sessionId: prep.sessionId,
+    role: "user",
+    text: userText,
+    attachment: { kind: "site", label },
+  });
+  const flow = { ...(await flowNow(ctx, input, prep)), pendingCount: pending.count };
+  const facts = factsOf(flow, prep);
+  const task = nextTask(facts);
+  const reply = materialPendingMessage({ label: `o link de ${host}`, maskedEmail: prep.maskedEmail, stored: pending.stored });
+  const kinds: OnboardingBlockKind[] = ["cartaoConta"];
+  if (!prep.materialsNoticeAck) kinds.push("avisoMateriais");
+  const bctx = blockCtxOf(flow, prep);
+  const blocks = kinds.map((kind) => buildBlock({ kind }, bctx)).filter((x): x is OnboardingBlock => x !== null);
+  const chips = coherentChips(taskChips(task), facts);
+  await ctx.runMutation(internal.onboardingSessions.internalUpdateSummary, {
+    organizationId: input.organizationId,
+    sessionId: prep.sessionId,
+    messageCountDelta: 2,
+  });
+  await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
+    organizationId: input.organizationId,
+    sessionId: prep.sessionId,
+    role: "assistant",
+    text: reply,
+    blocks,
+    chips,
+    draftVersion: flow.draftVersion || version,
+  });
+  void draft;
+  return await emitStep(events, { sessionId: prep.sessionId, reply, blocks, chips, flow, stage: prep.stage });
+}
+
+/** Emite os mesmos eventos de um turno (delta, block, chips, draft, done) e monta o resultado. */
+async function emitStep(
+  events: TurnEvents,
+  r: { sessionId: Id<"onboardingSessions">; reply: string; blocks: OnboardingBlock[]; chips: string[]; flow: FlowState; stage: string },
+): Promise<TurnResult> {
+  for (const piece of chunksOf(r.reply)) await events.onDelta?.(piece);
+  for (const block of r.blocks) await events.onBlock?.(block);
+  if (r.reply || r.chips.length > 0) await events.onChips?.(r.chips);
+  const draftInfo = r.flow.draftHash ? { version: r.flow.draftVersion, hash: r.flow.draftHash } : null;
+  if (draftInfo) await events.onDraft?.(draftInfo);
+  await events.onDone?.({ nextStage: r.stage, askForMaterials: false });
+  return {
+    ok: true,
+    sessionId: r.sessionId,
+    reply: r.reply,
+    chips: r.chips,
+    blocks: r.blocks,
+    draft: draftInfo,
+    nextStage: r.stage,
+    askForMaterials: false,
+  };
+}
+
+// ── Eventos estruturados (sem LLM) ──────────────────────────────────────────
+
+const SECTION_CARD: Record<ApprovalSection, "funilPreview" | "personaCard" | "conhecimentoLista"> = {
+  funnel: "funilPreview",
+  persona: "personaCard",
+  knowledge: "conhecimentoLista",
+};
+
+/**
+ * Evento do roteiro: mesma abertura com auth do turno (conta com e-mail +
+ * `settings:manage`, sessão da org), mas SEM rate limit de LLM, SEM orçamento e
+ * SEM modelo (nunca falha por limite de uso). O servidor confere o fato antes
+ * de reconhecer; fato não confirmado = responde com o passo atual (como `next`),
+ * nunca erro. Uma mensagem `assistant` com a chave do evento; nenhuma mensagem
+ * `user`. Repetido (a última mensagem já tem a mesma chave) = só `done`.
+ */
+export async function runOnboardingEvent(
+  ctx: ActionCtx,
+  input: TurnInput & { event: TurnEvent },
+  events: TurnEvents,
+): Promise<TurnResult> {
+  const event = input.event;
+  let prep: Prep;
+  try {
+    prep = await ctx.runMutation(internal.onboardingChat.internalPrepareTurn, {
+      organizationId: input.organizationId,
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    });
+  } catch (e) {
+    const err = turnErrorOf(e);
+    return { ok: false, code: err.code, message: err.message, sessionId: null };
+  }
+  const { sessionId } = prep;
+  await events.onSession?.(sessionId);
+
+  if (event.kind === "process_pending") return await processPending(ctx, input, prep, events);
+
+  let notice: RoadmapNotice = "next";
+  let staleSection: ApprovalSection | null = null;
+  let target = "-";
+  if (event.kind === "approve") {
+    target = event.section;
+    const r = await ctx.runMutation(internal.onboardingSessions.internalApproveSection, {
+      organizationId: input.organizationId,
+      sessionId,
+      memberId: prep.memberId,
+      section: event.section,
+      ...(event.sig !== undefined ? { sig: event.sig } : {}),
+    });
+    if (r.status === "stale") staleSection = event.section;
+    else if (r.status === "approved" || r.status === "unchanged") notice = "approved";
+  } else if (event.kind === "notify") {
+    target = event.what;
+    const r = await ctx.runMutation(internal.onboardingChat.internalApplyNotify, {
+      organizationId: input.organizationId,
+      sessionId,
+      userId: prep.userId,
+      what: event.what,
+    });
+    if (r.acknowledged) notice = event.what;
+  }
+
+  const flow = await flowNow(ctx, input, prep);
+  const facts = factsOf(flow, prep);
+  const task = nextTask(facts);
+  const cardKind: TaskCardKind | "funilPreview" | "personaCard" | "conhecimentoLista" | null = staleSection
+    ? SECTION_CARD[staleSection]
+    : taskCard(task);
+  const bctx = blockCtxOf(flow, prep);
+  const blocks: OnboardingBlock[] = [];
+  if (event.kind === "notify" && event.what === "email_verified" && notice === "email_verified" && flow.pendingCount > 0 && !prep.materialsNoticeAck) {
+    const aviso = buildBlock({ kind: "avisoMateriais" }, bctx);
+    if (aviso) blocks.push(aviso);
+  }
+  const card = cardKind ? buildBlock({ kind: cardKind }, bctx) : null;
+  if (card) blocks.push(card);
+  const sig = cardKind
+    ? cardKind === "ativarIa" || cardKind === "operacaoPronta"
+      ? cardSigOf(cardKind, flow, facts)
+      : cardSignature(flow.draft, cardKind)
+    : "";
+  const key = `${event.kind}:${target}:${task}:${staleSection ? "stale" : "ok"}:${sig}`;
+  const stage = stageForTask(prep.stage, task) ?? prep.stage;
+  if (prep.lastEvent === key) {
+    // Mesmo evento, mesmo resultado: não grava de novo.
+    await events.onDone?.({ nextStage: stage, askForMaterials: false });
+    return { ok: true, sessionId, reply: "", chips: [], blocks: [], draft: flow.draftHash ? { version: flow.draftVersion, hash: flow.draftHash } : null, nextStage: stage, askForMaterials: false };
+  }
+
+  const reply = staleSection
+    ? "Esse item mudou enquanto você olhava. Confira de novo e me diga se está bom."
+    : stepMessage(notice, task, { pendingMaterials: flow.pendingCount });
+  const chips = finalChips([], facts, task);
+  const shown: Record<string, string> = {};
+  if (card && cardKind && sig) shown[cardKind] = sig;
+  const nextStage = stageForTask(prep.stage, task);
+  await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
+    organizationId: input.organizationId,
+    sessionId,
+    role: "assistant",
+    text: reply,
+    blocks,
+    chips,
+    draftVersion: flow.draftVersion,
+    event: key,
+  });
+  await ctx.runMutation(internal.onboardingSessions.internalUpdateSummary, {
+    organizationId: input.organizationId,
+    sessionId,
+    messageCountDelta: 1,
+    ...(nextStage ? { stage: nextStage } : {}),
+    ...(Object.keys(shown).length > 0 ? { shownCards: shown } : {}),
+    reachedStep: taskStepIndex(task),
+  });
+  return await emitStep(events, { sessionId, reply, blocks, chips, flow, stage });
+}
+
+/** `process_pending`: lê o primeiro link guardado pelo turno NORMAL de material (todos os gates continuam). */
+async function processPending(ctx: ActionCtx, input: TurnInput, prep: Prep, events: TurnEvents): Promise<TurnResult> {
+  const { sessionId } = prep;
+  const flow = await flowNow(ctx, input, prep);
+  const facts = factsOf(flow, prep);
+  const task = nextTask(facts);
+  const stage = stageForTask(prep.stage, task) ?? prep.stage;
+  if (flow.pendingCount === 0) {
+    await events.onDone?.({ nextStage: stage, askForMaterials: false });
+    return { ok: true, sessionId, reply: "", chips: [], blocks: [], draft: flow.draftHash ? { version: flow.draftVersion, hash: flow.draftHash } : null, nextStage: stage, askForMaterials: false };
+  }
+  if (prep.emailVerified && prep.materialsNoticeAck) {
+    const item = await ctx.runMutation(internal.onboardingChat.internalTakePendingMaterial, {
+      organizationId: input.organizationId,
+      sessionId,
+    });
+    if (!item) {
+      await events.onDone?.({ nextStage: stage, askForMaterials: false });
+      return { ok: true, sessionId, reply: "", chips: [], blocks: [], draft: null, nextStage: stage, askForMaterials: false };
+    }
+    const result = await runOnboardingTurn(
+      ctx,
+      { organizationId: input.organizationId, sessionId, attachment: { kind: "url", url: item.url } },
+      { ...events, onSession: undefined },
+    );
+    if (!result.ok) {
+      // Não foi lido (limite, orçamento…): volta para a frente da fila.
+      await ctx.runMutation(internal.onboardingChat.internalAddPendingMaterial, {
+        organizationId: input.organizationId,
+        sessionId,
+        url: item.url,
+        label: item.label,
+        front: true,
+      });
+    }
+    return result;
+  }
+  // E-mail ou ciência ainda faltam: fala fixa + o cartão que resolve.
+  const needsEmail = !prep.emailVerified;
+  const key = `process_pending:${needsEmail ? "email" : "notice"}:${flow.pendingCount}`;
+  if (prep.lastEvent === key) {
+    await events.onDone?.({ nextStage: stage, askForMaterials: false });
+    return { ok: true, sessionId, reply: "", chips: [], blocks: [], draft: flow.draftHash ? { version: flow.draftVersion, hash: flow.draftHash } : null, nextStage: stage, askForMaterials: false };
+  }
+  const bctx = blockCtxOf(flow, prep);
+  const block = buildBlock({ kind: needsEmail ? "cartaoConta" : "avisoMateriais" }, bctx);
+  const blocks = block ? [block] : [];
+  const reply = needsEmail
+    ? materialPendingMessage({ label: "o que você mandou", maskedEmail: prep.maskedEmail, stored: true })
+    : "Antes de eu ler o que você mandou, confirme que leu o aviso sobre como o material é lido.";
+  const chips = coherentChips(taskChips(task), facts);
+  await ctx.runMutation(internal.onboardingChat.internalAppendMessage, {
+    organizationId: input.organizationId,
+    sessionId,
+    role: "assistant",
+    text: reply,
+    blocks,
+    chips,
+    draftVersion: flow.draftVersion,
+    event: key,
+  });
+  await ctx.runMutation(internal.onboardingSessions.internalUpdateSummary, { organizationId: input.organizationId, sessionId, messageCountDelta: 1 });
+  return await emitStep(events, { sessionId, reply, blocks, chips, flow, stage });
 }
 
 // ── Resposta em áudio (P4.2b) ───────────────────────────────────────────────

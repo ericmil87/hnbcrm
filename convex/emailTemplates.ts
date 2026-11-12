@@ -3,47 +3,87 @@
 
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 
-const BRAND_ORANGE = "#EA580C";
-const BG_DARK = "#0d0d0d";
-const CARD_BG = "#1a1a1a";
-const TEXT_PRIMARY = "#f5f5f5";
-const TEXT_SECONDARY = "#a3a3a3";
-const BORDER_COLOR = "#2a2a2a";
+// Identidade "Encaixe" / tema padrão "Estilo WhatsApp". Claro por padrão; o bloco `prefers-color-scheme: dark`
+// da casca troca as cores por valor (seletor de atributo no `style` inline), então estas constantes são
+// a única fonte e qualquer cor nova deve entrar também em `DARK_OVERRIDES`.
+export const BRAND = "#008069"; // botão primário (texto branco = AA)
+export const BRAND_LIGHT = "#00A884";
+export const BRAND_LINK = "#006B58"; // verde escuro para links/destaques sobre branco
+const BG_PAGE = "#F0F2F5";
+const BG_SOFT = "#F0F2F5";
+const CARD_BG = "#FFFFFF";
+const TEXT_PRIMARY = "#111B21";
+const TEXT_SECONDARY = "#54656F";
+const BORDER_COLOR = "#E9EDEF";
+const OK_COLOR = "#067647";
+const WARN_COLOR = "#B54708";
+const BAD_COLOR = "#B42318";
+const FONT_STACK = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/** Par claro -> escuro, aplicado por `[style*="..."]` no modo escuro do cliente de e-mail. */
+const DARK_OVERRIDES: Array<[prop: "color" | "background-color" | "background" | "border-color", light: string, dark: string]> = [
+  ["background-color", BG_PAGE, "#111B21"],
+  ["background-color", CARD_BG, "#202C33"],
+  ["background", BG_SOFT, "#111B21"],
+  ["color", TEXT_PRIMARY, "#E9EDEF"],
+  ["color", TEXT_SECONDARY, "#AEBAC1"],
+  ["color", BRAND_LINK, "#25D3A3"],
+  ["color", OK_COLOR, "#4ADE80"],
+  ["color", WARN_COLOR, "#FBBF24"],
+  ["color", BAD_COLOR, "#F87171"],
+];
+
+function darkCss(): string {
+  const rules = DARK_OVERRIDES.map(([prop, light, dark]) => {
+    const sel = `[style*="${prop}: ${light}"]`;
+    return `    ${sel} { ${prop === "background" ? "background-color" : prop}: ${dark} !important; }`;
+  });
+  return `  @media (prefers-color-scheme: dark) {
+    .em-border { border-color: #2A3942 !important; }
+${rules.join("\n")}
+  }`;
+}
 
 export function baseTemplate(opts: {
   preheader: string;
   content: string;
   appUrl: string;
 }): string {
+  const logoUrl = safeUrl(`${resolveAppUrl()}/brand/email-logo.png`);
   return `<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" xmlns="http://www.w3.org/1999/xhtml">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light dark" />
+  <meta name="supported-color-schemes" content="light dark" />
   <title>HNBCRM</title>
   <style>
-    body { margin: 0; padding: 0; background-color: ${BG_DARK}; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
-    .preheader { display: none !important; max-height: 0; overflow: hidden; mso-hide: all; }
+    :root { color-scheme: light dark; supported-color-schemes: light dark; }
+    body { margin: 0; padding: 0; background-color: ${BG_PAGE}; font-family: ${FONT_STACK}; -webkit-text-size-adjust: 100%; }
+    .preheader { display: none !important; visibility: hidden; opacity: 0; max-height: 0; max-width: 0; overflow: hidden; mso-hide: all; }
+    @media only screen and (max-width: 480px) { .em-card { padding: 24px 20px !important; } }
+${darkCss()}
   </style>
 </head>
-<body>
-  <span class="preheader">${opts.preheader}</span>
-  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color: ${BG_DARK}; padding: 32px 16px;">
+<body style="margin: 0; padding: 0; background-color: ${BG_PAGE};">
+  <span class="preheader" style="display: none; max-height: 0; overflow: hidden;">${opts.preheader}</span>
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background-color: ${BG_PAGE}; padding: 24px 12px;">
     <tr><td align="center">
-      <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width: 600px;">
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="max-width: 560px;">
         <!-- Logo -->
-        <tr><td style="padding-bottom: 24px; text-align: center;">
-          <span style="font-size: 24px; font-weight: 700; color: ${BRAND_ORANGE};">HNBCRM</span>
+        <tr><td style="padding: 8px 0 20px; text-align: center; font-family: ${FONT_STACK};">
+          <img class="em-logo" src="${logoUrl}" width="150" height="42" alt="HNBCRM" style="display: inline-block; border: 0; outline: none; height: 42px; width: 150px; font-family: ${FONT_STACK}; font-size: 22px; font-weight: 700; line-height: 42px; color: ${TEXT_PRIMARY};" />
         </td></tr>
         <!-- Content Card -->
-        <tr><td style="background-color: ${CARD_BG}; border: 1px solid ${BORDER_COLOR}; border-radius: 12px; padding: 32px;">
+        <tr><td class="em-card em-border" style="background-color: ${CARD_BG}; border: 1px solid ${BORDER_COLOR}; border-radius: 16px; padding: 32px; font-family: ${FONT_STACK};">
           ${opts.content}
         </td></tr>
         <!-- Footer -->
-        <tr><td style="padding-top: 24px; text-align: center; color: ${TEXT_SECONDARY}; font-size: 12px; line-height: 1.5;">
-          <p style="margin: 0;">HNBCRM &mdash; CRM inteligente para equipes de vendas</p>
+        <tr><td style="padding-top: 24px; text-align: center; color: ${TEXT_SECONDARY}; font-family: ${FONT_STACK}; font-size: 12px; line-height: 1.5;">
+          <p style="margin: 0; color: ${TEXT_SECONDARY};">HNBCRM · Humanos e IAs no mesmo time</p>
           <p style="margin: 4px 0 0;">
-            <a href="${safeUrl(`${opts.appUrl}/app/configuracoes`)}" style="color: ${TEXT_SECONDARY}; text-decoration: underline;">Gerenciar preferencias de email</a>
+            <a href="${safeUrl(`${opts.appUrl}/app/configuracoes`)}" style="color: ${BRAND_LINK}; text-decoration: underline;">Gerenciar preferências de e-mail</a>
           </p>
         </td></tr>
       </table>
@@ -82,8 +122,8 @@ export function escapeStrings<T extends object>(data: T): T {
 
 export function ctaButton(label: string, url: string): string {
   return `<table cellpadding="0" cellspacing="0" role="presentation" style="margin-top: 24px;">
-    <tr><td style="background-color: ${BRAND_ORANGE}; border-radius: 9999px; padding: 12px 28px;">
-      <a href="${safeUrl(url)}" style="color: #ffffff; text-decoration: none; font-weight: 600; font-size: 14px; display: inline-block;">${escapeHtml(label)}</a>
+    <tr><td style="background-color: ${BRAND}; border-radius: 9999px; padding: 0;">
+      <a href="${safeUrl(url)}" style="color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px; line-height: 20px; display: inline-block; padding: 14px 32px; border-radius: 9999px; font-family: ${FONT_STACK};">${escapeHtml(label)}</a>
     </td></tr>
   </table>`;
 }
@@ -146,15 +186,15 @@ export function buildInviteTemplate(data: {
   return {
     subject: `Voce foi convidado para ${line(data.orgName)}`,
     html: baseTemplate({
-      preheader: `${e.memberName}, voce foi convidado para ${e.orgName} no HNBCRM.`,
+      preheader: `${e.memberName}, você foi convidado para ${e.orgName} no HNBCRM.`,
       appUrl,
       content: `
         ${heading(`Bem-vindo ao ${e.orgName}!`)}
-        ${paragraph(`Ola ${e.memberName}, voce foi convidado para fazer parte da equipe <strong style="color: ${TEXT_PRIMARY};">${e.orgName}</strong> no HNBCRM.`)}
-        ${paragraph("Use as credenciais abaixo para acessar o sistema. Voce devera trocar a senha no primeiro acesso.")}
+        ${paragraph(`Olá ${e.memberName}, você foi convidado para fazer parte da equipe <strong style="color: ${TEXT_PRIMARY};">${e.orgName}</strong> no HNBCRM.`)}
+        ${paragraph("Use as credenciais abaixo para acessar o HNBCRM. Você deverá trocar a senha no primeiro acesso.")}
         ${infoTable(`
-          ${infoRow("Email", e.email)}
-          ${infoRow("Senha temporaria", `<code style="background: ${BG_DARK}; padding: 2px 8px; border-radius: 4px; color: ${BRAND_ORANGE}; font-size: 14px;">${e.tempPassword}</code>`)}
+          ${infoRow("E-mail", e.email)}
+          ${infoRow("Senha temporária", `<code style="background: ${BG_SOFT}; padding: 2px 8px; border-radius: 4px; color: ${BRAND_LINK}; font-size: 14px;">${e.tempPassword}</code>`)}
         `)}
         ${ctaButton("Acessar HNBCRM", data.loginUrl)}
       `,
@@ -203,19 +243,19 @@ export function buildHandoffRequestedTemplate(data: {
       ? `Novo repasse — ${line(data.pendingLabel)} pendentes`
       : `Repasse solicitado: ${line(maskDigitRuns(data.leadTitle))}`,
     html: baseTemplate({
-      preheader: `${data.orgName ? escapeHtml(data.orgName) + ": " : ""}repasse pendente para o lead "${title}".`,
+      preheader: `${data.orgName ? escapeHtml(data.orgName) + ": " : ""}pedido de ajuda pendente para o lead "${title}".`,
       appUrl,
       content: `
-        ${heading("Repasse Solicitado")}
-        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${escapeHtml(data.fromMemberName)}</strong> solicitou um repasse e a conversa precisa de uma pessoa.`)}
+        ${heading("Pedido de ajuda")}
+        ${paragraph(`<strong style="color: ${TEXT_PRIMARY};">${escapeHtml(data.fromMemberName)}</strong> pediu ajuda: a conversa precisa de uma pessoa.`)}
         ${infoTable(`
           ${orgLine}
           ${infoRow("Lead", title)}
           ${infoRow("Origem", escapeHtml(originLabel))}
           ${showReason ? infoRow("Motivo", escapeHtml(data.reason!.slice(0, 300))) : ""}
         `)}
-        ${paragraph("Abra o repasse no CRM para ver a conversa e assumir.")}
-        ${ctaButton("Ver Repasse", data.leadUrl)}
+        ${paragraph("Abra o pedido no HNBCRM para ver a conversa e assumir.")}
+        ${ctaButton("Ver pedido de ajuda", data.leadUrl)}
       `,
     }),
   };
@@ -229,15 +269,15 @@ export function buildHandoffResolvedTemplate(data: {
 }): TemplateResult {
   const e = escapeStrings(data);
   const appUrl = data.leadUrl.replace(/\/app\/.*$/, "");
-  const statusColor = e.status === "aceito" ? "#22c55e" : "#ef4444";
+  const statusColor = e.status === "aceito" ? OK_COLOR : BAD_COLOR;
   return {
     subject: `Repasse ${line(data.status)}: ${line(data.leadTitle)}`,
     html: baseTemplate({
-      preheader: `Seu repasse para "${e.leadTitle}" foi ${e.status} por ${e.resolvedByName}.`,
+      preheader: `Seu pedido de ajuda para "${e.leadTitle}" foi ${e.status} por ${e.resolvedByName}.`,
       appUrl,
       content: `
-        ${heading("Repasse Resolvido")}
-        ${paragraph(`Seu repasse para o lead <strong style="color: ${TEXT_PRIMARY};">${e.leadTitle}</strong> foi <strong style="color: ${statusColor};">${e.status}</strong> por ${e.resolvedByName}.`)}
+        ${heading("Pedido de ajuda resolvido")}
+        ${paragraph(`Seu pedido de ajuda para o lead <strong style="color: ${TEXT_PRIMARY};">${e.leadTitle}</strong> foi <strong style="color: ${statusColor};">${e.status}</strong> por ${e.resolvedByName}.`)}
         ${ctaButton("Ver Lead", data.leadUrl)}
       `,
     }),
@@ -333,7 +373,7 @@ export function buildTaskCommentMentionTemplate(data: {
   const appUrl = data.appUrl || data.taskUrl?.replace(/\/app\/.*$/, "") || resolveAppUrl();
   const taskUrl = data.taskUrl || `${appUrl}/app/tarefas?task=${data.taskId ?? ""}`;
   const excerptBlock = e.commentExcerpt
-    ? `<div style="margin-top: 16px; padding: 12px 16px; background: ${BG_DARK}; border-radius: 8px; border-left: 3px solid ${BRAND_ORANGE};">
+    ? `<div style="margin-top: 16px; padding: 12px 16px; background: ${BG_SOFT}; border-radius: 8px; border-left: 3px solid ${BRAND_LINK};">
         <p style="margin: 0; font-size: 13px; color: ${TEXT_SECONDARY}; line-height: 1.5; font-style: italic;">"${e.commentExcerpt}"</p>
       </div>`
     : "";
@@ -436,25 +476,25 @@ export function buildDailyDigestTemplate(data: {
         ${paragraph(`Aqui esta o resumo das atividades de ontem em <strong style="color: ${TEXT_PRIMARY};">${e.orgName}</strong>.`)}
         <table cellpadding="0" cellspacing="0" role="presentation" style="width: 100%; margin-top: 16px;">
           <tr>
-            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: ${BRAND_ORANGE};">${e.newLeadsCount}</div>
+            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_SOFT}; border-radius: 8px;">
+              <div style="font-size: 28px; font-weight: 700; color: ${BRAND_LINK};">${e.newLeadsCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Novos leads</div>
             </td>
             <td style="width: 8px;"></td>
-            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: #22c55e;">${e.completedTasksCount}</div>
+            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_SOFT}; border-radius: 8px;">
+              <div style="font-size: 28px; font-weight: 700; color: ${OK_COLOR};">${e.completedTasksCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Tarefas concluidas</div>
             </td>
           </tr>
           <tr><td colspan="3" style="height: 8px;"></td></tr>
           <tr>
-            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: #eab308;">${e.pendingHandoffsCount}</div>
-              <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Repasses pendentes</div>
+            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_SOFT}; border-radius: 8px;">
+              <div style="font-size: 28px; font-weight: 700; color: ${WARN_COLOR};">${e.pendingHandoffsCount}</div>
+              <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Pedidos de ajuda pendentes</div>
             </td>
             <td style="width: 8px;"></td>
-            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_DARK}; border-radius: 8px;">
-              <div style="font-size: 28px; font-weight: 700; color: ${e.overdueTasksCount > 0 ? "#ef4444" : TEXT_SECONDARY};">${e.overdueTasksCount}</div>
+            <td style="width: 50%; padding: 12px; text-align: center; background: ${BG_SOFT}; border-radius: 8px;">
+              <div style="font-size: 28px; font-weight: 700; color: ${e.overdueTasksCount > 0 ? BAD_COLOR : TEXT_SECONDARY};">${e.overdueTasksCount}</div>
               <div style="font-size: 12px; color: ${TEXT_SECONDARY}; margin-top: 4px;">Tarefas atrasadas</div>
             </td>
           </tr>
@@ -485,7 +525,7 @@ export function buildFormSubmissionTemplate(data: {
         ${paragraph(`Uma nova submissao foi recebida no formulario <strong style="color: ${TEXT_PRIMARY};">${formName}</strong>.`)}
         ${infoTable(`
           ${infoRow("Formulario", formName)}
-          ${data.contactEmail ? infoRow("Email", escapeHtml(data.contactEmail)) : ""}
+          ${data.contactEmail ? infoRow("E-mail", escapeHtml(data.contactEmail)) : ""}
           ${data.contactName ? infoRow("Contato", escapeHtml(data.contactName)) : ""}
         `)}
         ${ctaButton("Ver Lead", data.leadUrl)}
@@ -689,7 +729,7 @@ export function buildAiSpendAlertTemplate(data: {
   const consequence = !reached
     ? "Nada muda por enquanto — é só um aviso para você acompanhar."
     : data.mode === "block"
-      ? "O teto está no modo <strong>bloquear</strong>: o atendente passa a deixar respostas como RASCUNHO para a equipe revisar (e abre um repasse), e os demais recursos de IA ficam suspensos até o próximo mês."
+      ? "O teto está no modo <strong>bloquear</strong>: o atendente passa a deixar respostas como RASCUNHO para a equipe revisar (e abre um pedido de ajuda), e os demais recursos de IA ficam suspensos até o próximo mês."
       : "O teto está no modo <strong>avisar</strong>: a IA continua funcionando normalmente. Se quiser que ela pare ao atingir o teto, mude o modo para bloquear.";
   const title = reached ? "Teto de gastos de IA atingido" : "Gasto de IA perto do teto";
   return {

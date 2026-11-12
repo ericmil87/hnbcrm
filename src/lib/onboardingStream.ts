@@ -29,6 +29,29 @@ export type OnboardingAttachment =
   | { kind: "url"; url: string }
   | { kind: "pdf" | "image" | "audio"; storageId: string };
 
+/**
+ * Evento de cartão (ação concluída na tela). Determinístico no servidor: sem
+ * LLM, não falha por limite de uso, não grava mensagem da pessoa. Mutuamente
+ * exclusivo com `text`/`attachment`.
+ */
+export type OnboardingEvent =
+  | { kind: "approve"; section: "funnel" | "persona" | "knowledge"; sig?: string }
+  | { kind: "notify"; what: "email_verified" | "activated" | "tested" | "connected" | "skip_connect" }
+  | { kind: "next" }
+  | { kind: "process_pending" };
+
+/** Chave estável de um evento (fila e deduplicação). */
+export function onboardingEventKey(event: OnboardingEvent): string {
+  switch (event.kind) {
+    case "approve":
+      return `approve:${event.section}:${event.sig ?? ""}`;
+    case "notify":
+      return `notify:${event.what}`;
+    default:
+      return event.kind;
+  }
+}
+
 export interface OnboardingReplyAudio {
   url: string;
   durationSec: number;
@@ -248,6 +271,7 @@ export interface OnboardingTurnBody {
   sessionId?: string;
   text?: string;
   attachment?: OnboardingAttachment;
+  event?: OnboardingEvent;
 }
 
 export type OnboardingTurnOutcome =

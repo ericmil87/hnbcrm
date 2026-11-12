@@ -249,10 +249,10 @@ describe("confirmEmailVerificationCode", () => {
 describe("getEmailVerificationStatus e limpeza", () => {
   test("status mostra canResendAt após o pedido", async () => {
     const { as } = await mkUser("a@example.com");
-    expect(await as.query(api.emailVerification.getEmailVerificationStatus, {})).toEqual({ verified: false });
+    expect(await as.query(api.emailVerification.getEmailVerificationStatus, {})).toEqual({ verified: false, maskedEmail: "a…@example.com" });
     await as.mutation(api.emailVerification.requestEmailVerificationCode, {});
     const s = await as.query(api.emailVerification.getEmailVerificationStatus, {});
-    expect(s).toEqual({ verified: false, canResendAt: Date.now() + EMAIL_CODE_RESEND_COOLDOWN_MS });
+    expect(s).toEqual({ verified: false, canResendAt: Date.now() + EMAIL_CODE_RESEND_COOLDOWN_MS, maskedEmail: "a…@example.com" });
     expect(await t.query(api.emailVerification.getEmailVerificationStatus, {})).toEqual({ verified: false });
   });
 

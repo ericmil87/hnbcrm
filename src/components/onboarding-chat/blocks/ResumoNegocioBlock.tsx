@@ -6,10 +6,11 @@ import { Input } from "@/components/ui/Input";
 import { Textarea } from "@/components/ui/Textarea";
 import { plainModelText } from "@/lib/onboardingChat";
 import { releaseBusiness, setBusiness } from "@/lib/onboardingDraftEdit";
-import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS } from "../../../../convex/lib/onboardingDraft";
-import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
+import { useDraftEditor } from "../useDraftEditor";
+import { purposeOf } from "./ApprovableCard";
 import { BlockCard } from "./BlockCard";
+import { liveDraftBlock } from "./liveBlock";
 import { FlagNotice, FormActions, ReleaseControl, StaleNotice, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
@@ -28,7 +29,7 @@ export function ResumoNegocioView({ block, compact, editor, onAdjust, startOpen 
   const description = plainModelText(block.description);
   const city = plainModelText(block.city);
   return (
-    <BlockCard title="Resumo do negócio" icon={Building2} note={compact ? undefined : block.note}>
+    <BlockCard title="Resumo do negócio" icon={Building2} purpose={purposeOf(block)} note={compact ? undefined : block.note}>
       <div className="flex flex-wrap items-center gap-2">
         <p className="min-w-0 break-words font-semibold">{name}</p>
         {block.segmentLabel && <Badge variant="brand">{plainModelText(block.segmentLabel)}</Badge>}
@@ -111,12 +112,9 @@ function BusinessForm({ block, editor, onClose }: { block: BlockOf<"resumoNegoci
 
 function ResumoLive({ block, ctx }: BlockProps<"resumoNegocio">) {
   const ed = useDraftEditor(ctx);
-  const live = ed.draft
-    ? (buildBlock({ kind: "resumoNegocio", note: block.note }, liveBlockContext(ed)) as BlockOf<"resumoNegocio"> | null)
-    : null;
   return (
     <ResumoNegocioView
-      block={live ?? block}
+      block={liveDraftBlock(block, ctx)}
       compact={ctx.compact}
       editor={ed.draft ? { version: ed.version, saving: ed.saving, save: ed.save } : undefined}
       startOpen
@@ -127,5 +125,5 @@ function ResumoLive({ block, ctx }: BlockProps<"resumoNegocio">) {
 export function ResumoNegocioBlock({ block, ctx }: BlockProps<"resumoNegocio">) {
   const [live, setLive] = useState(false);
   if (live) return <ResumoLive block={block} ctx={ctx} />;
-  return <ResumoNegocioView block={block} compact={ctx.compact} onAdjust={ctx.organizationId ? () => setLive(true) : undefined} />;
+  return <ResumoNegocioView block={liveDraftBlock(block, ctx)} compact={ctx.compact} onAdjust={ctx.organizationId ? () => setLive(true) : undefined} />;
 }

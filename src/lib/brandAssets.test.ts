@@ -51,6 +51,11 @@ describe("brand assets in public/", () => {
     for (const [file, size] of Object.entries(expected)) expect(pngSize(file), file).toEqual({ w: size, h: size });
   });
 
+  it("email-logo.png is the 2x header (white pill) of the transactional e-mails", () => {
+    expect(pngSize("public/brand/email-logo.png")).toEqual({ w: 300, h: 84 });
+    expect(statSync(join(root, "public/brand/email-logo.png")).size).toBeLessThan(30 * 1024);
+  });
+
   it("favicon.ico carries 16, 32 and 48 px images", () => {
     const b = readFileSync(join(root, "public/favicon.ico"));
     expect(b.readUInt16LE(2)).toBe(1);

@@ -18,6 +18,7 @@ import {
 } from "@/components/landing/manifestoCopy";
 import { PRIMARY_CTA_LABEL, trustLine } from "@/components/landing/sections/landingCopy";
 import { startHref } from "@/lib/onboardingEntry";
+import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
 const SITE_URL = import.meta.env.VITE_SITE_URL || "https://hnbcrm.com";
 
@@ -34,9 +35,9 @@ export function ManifestoPage() {
       />
       <header className="px-4 pt-6">
         <div className="mx-auto flex max-w-6xl items-center justify-between">
-          <Link to="/" className="flex min-h-11 items-center gap-2">
+          <HomeLogoLink>
             <BrandLogo variant="wordmark" size="md" />
-          </Link>
+          </HomeLogoLink>
           <div className="flex items-center gap-1 sm:gap-2">
             <PublicThemeButton />
             <Link to="/">

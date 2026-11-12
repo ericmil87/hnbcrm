@@ -221,4 +221,38 @@ describe("useOnboardingStream", () => {
     });
     expect(f.signals[0].aborted).toBe(true);
   });
+
+  it("evento de cartão: vai no corpo, sem texto nem anexo, e responde como um turno", async () => {
+    const f = streamingFetch();
+    const { result } = setup(f.fetchImpl);
+    let p!: Promise<OnboardingTurnResult>;
+    act(() => {
+      p = result.current.send({ event: { kind: "approve", section: "funnel", sig: "ab12" } });
+    });
+    await waitFor(() => expect(f.bodies).toHaveLength(1));
+    const body = JSON.parse((f.mock.mock.calls[0][1] as RequestInit).body as string);
+    expect(body).toEqual({ organizationId: "org1", sessionId: "s1", event: { kind: "approve", section: "funnel", sig: "ab12" } });
+    act(() => f.bodies[0].push({ type: "delta", text: "Combinado." }, { type: "done" }));
+    await waitFor(() => expect(result.current.isStreaming).toBe(false));
+    act(() => f.bodies[0].close());
+    expect(await p).toBe("ok");
+    expect(result.current.turn?.replyText).toBe("Combinado.");
+  });
+
+  it("evento junto com texto ou anexo é recusado sem rede; evento durante um turno não começa outro", async () => {
+    const f = streamingFetch();
+    const { result } = setup(f.fetchImpl);
+    await act(async () => {
+      expect(await result.current.send({ text: "Oi", event: { kind: "next" } })).toBe("failed");
+    });
+    expect(f.mock).not.toHaveBeenCalled();
+    act(() => {
+      void result.current.send({ text: "Oi" });
+    });
+    await waitFor(() => expect(f.bodies).toHaveLength(1));
+    await act(async () => {
+      expect(await result.current.send({ event: { kind: "next" } })).toBe("failed");
+    });
+    expect(f.bodies).toHaveLength(1);
+  });
 });
