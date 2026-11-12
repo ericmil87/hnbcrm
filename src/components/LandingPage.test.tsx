@@ -50,9 +50,10 @@ describe("LandingPage (esqueleto)", () => {
     expect(header.getByRole("button", { name: "Escolher tema" })).toBeInTheDocument();
   });
 
-  it("a tabela de preços e os cards antigos saíram da landing", () => {
+  it("a tabela de preços e os cards antigos saíram da landing (só o resumo do S6)", () => {
     renderLanding();
-    expect(screen.queryByText("Mais escolhido")).toBeNull();
+    expect(screen.getAllByText("Mais escolhido")).toHaveLength(1);
+    expect(screen.queryByText("Compare os planos")).toBeNull();
     expect(screen.queryByText(/Em breve/)).toBeNull();
     expect(screen.getByRole("link", { name: /Ver tabela completa/ })).toHaveAttribute("href", "/precos");
   });
