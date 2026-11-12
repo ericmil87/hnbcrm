@@ -30,8 +30,9 @@ describe("retorno do OAuth da Meta aponta para uma tela real", () => {
 
   test("o caminho está sob /app/configuracoes, como o roteador do app", () => {
     expect(url.pathname).toBe("/app/configuracoes");
-    expect(read("src/main.tsx")).toMatch(/path="\/app"|path:\s*["']\/app["']|\/app/);
-    expect(read("src/main.tsx")).toMatch(/configuracoes/);
+    // The route table lives in src/appRoutes.tsx (shared by main.tsx and the build-time prerender).
+    expect(read("src/appRoutes.tsx")).toMatch(/path="\/app"|path:\s*["']\/app["']|\/app/);
+    expect(read("src/appRoutes.tsx")).toMatch(/configuracoes/);
   });
 
   test("o frontend lê meta e pendente da URL", () => {

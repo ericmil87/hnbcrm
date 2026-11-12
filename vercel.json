@@ -1,6 +1,11 @@
 {
   "rewrites": [
-    { "source": "/((?!assets/|sw\\.js$|manifest\\.webmanifest$|registerSW\\.js$|workbox-.*\\.js$).*)", "destination": "/index.html" }
+    { "source": "/", "destination": "/index.html" },
+    { "source": "/precos", "destination": "/precos/index.html" },
+    { "source": "/developers", "destination": "/developers/index.html" },
+    { "source": "/termos", "destination": "/termos/index.html" },
+    { "source": "/privacidade", "destination": "/privacidade/index.html" },
+    { "source": "/((?!assets/|sw\\.js$|manifest\\.webmanifest$|registerSW\\.js$|workbox-.*\\.js$).*)", "destination": "/spa-fallback.html" }
   ],
   "headers": [
     {

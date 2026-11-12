@@ -13,7 +13,7 @@ const SMALL_TEXT = /text-\[(?:9|10|11)px\]/;
 const VIEWPORT = /h-screen|min-h-screen|100vh/;
 
 const SMALL_TEXT_ALLOWLIST = ["components/campaigns/WhatsAppPreview.tsx", "components/forms/renderer/"];
-const VIEWPORT_SCOPE = ["components/layout/", "components/ui/", "main.tsx"];
+const VIEWPORT_SCOPE = ["components/layout/", "components/ui/", "main.tsx", "appRoutes.tsx"];
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
