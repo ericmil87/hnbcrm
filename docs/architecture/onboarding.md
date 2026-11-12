@@ -1,6 +1,6 @@
-# Onboarding conversacional v2 — custo, limites, modelos, pipeline e conversa (P2.x, P3.1)
+# Onboarding conversacional v2 — pipeline, custo, limites, voz, conversa e leads (P1.2, P2.x, P3.x, P4.2b, P5.1)
 
-O Rascunho de Operação e a aplicação (P2.1) estão em [`leads-pipeline.md`](leads-pipeline.md). Aqui ficam o orçamento de custo de IA do onboarding, os limites de uso, os modelos por env e a mudança do simulador do atendente.
+O Rascunho de Operação e a aplicação (P2.1) estão em [`leads-pipeline.md`](leads-pipeline.md). Aqui ficam o orçamento de custo de IA do onboarding, os limites de uso, os modelos por env, a mudança do simulador do atendente, o código de e-mail, o pipeline de IA (leitor e entrevistador), a resposta em áudio no chat, o frontend da conversa em `/comecar`, o red team de injeção e os leads do HNBCRM. A tabela de envs desta entrega (com o comportamento quando ausentes) está em [`ops-dev-prod.md`](ops-dev-prod.md); a busca segura de URL e os extratores de site/PDF estão em [`security.md`](security.md); a entrada por e-mail em [`auth-multi-org.md`](auth-multi-org.md).
 
 ## Estado atual
 
