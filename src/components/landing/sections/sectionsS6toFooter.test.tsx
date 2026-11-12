@@ -120,7 +120,7 @@ describe("S7b", () => {
 describe("S8", () => {
   it("sem a env a seção continua: só newsletter e código aberto, sem grupo", () => {
     vi.stubEnv("VITE_COMMUNITY_URL", "");
-    const { container } = render(<S8Community />);
+    const { container } = renderWithRouter(<S8Community />);
     expect(container.querySelector("#comunidade")).not.toBeNull();
     expect(screen.queryByRole("heading", { level: 3, name: "Grupo no WhatsApp" })).toBeNull();
     expect(screen.queryByRole("link", { name: "Entrar no grupo do WhatsApp" })).toBeNull();
@@ -131,7 +131,7 @@ describe("S8", () => {
   it("com env inválida (http, texto solto) também some só o grupo", () => {
     for (const bad of ["http://chat.whatsapp.com/x", "grupo", "javascript:alert(1)"]) {
       vi.stubEnv("VITE_COMMUNITY_URL", bad);
-      const { unmount } = render(<S8Community />);
+      const { unmount } = renderWithRouter(<S8Community />);
       expect(screen.queryByRole("link", { name: "Entrar no grupo do WhatsApp" })).toBeNull();
       expect(screen.getByRole("button", { name: "Quero receber" })).toBeTruthy();
       unmount();
@@ -140,7 +140,7 @@ describe("S8", () => {
 
   it("com env válida mostra o grupo, as três linhas e os três cartões", () => {
     vi.stubEnv("VITE_COMMUNITY_URL", GROUP);
-    render(<S8Community />);
+    renderWithRouter(<S8Community />);
     const a = screen.getByRole("link", { name: "Entrar no grupo do WhatsApp" });
     expect(a.getAttribute("href")).toBe(GROUP);
     expect(a.getAttribute("rel")).toContain("noopener");
@@ -150,7 +150,7 @@ describe("S8", () => {
 
   it("código aberto: links externos para o repositório e o changelog", () => {
     vi.stubEnv("VITE_COMMUNITY_URL", "");
-    render(<S8Community />);
+    renderWithRouter(<S8Community />);
     for (const name of ["Ver no GitHub", "O que mudou em cada versão"]) {
       const l = screen.getByRole("link", { name });
       expect(l.getAttribute("target")).toBe("_blank");
@@ -169,7 +169,7 @@ describe("S8", () => {
       removeEventListener: () => {},
     })) as unknown as typeof window.matchMedia;
     try {
-      render(<S8Community />);
+      renderWithRouter(<S8Community />);
       const qr = await screen.findByRole("img", { name: "QR code do grupo do WhatsApp" });
       expect(qr.tagName.toLowerCase()).toBe("svg");
       expect(screen.getByText("Aponte a câmera do celular para entrar.")).toBeTruthy();
