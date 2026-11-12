@@ -6,7 +6,8 @@ Rules (tokens, primitives, mobile-first, anti-patterns): `.claude/rules/frontend
 
 ```
 src/
-├── main.tsx                    # Entry: ConvexAuthProvider + RouterProvider (react-router v7)
+├── main.tsx                    # Entry: hydrates prerendered public pages or createRoot; routes in appRoutes.tsx (public pages without Convex; ConvexRoot lazily wraps /entrar, /comecar, /f/*, /app/*)
+├── appRoutes.tsx               # Route table shared by the client and the build-time prerender (scripts/prerenderPlugin.ts)
 ├── components/auth/EmailEntryCard.tsx # unified entry at /entrar (replaced SignInForm.tsx): e-mail → `authEntry.checkEmailForSignIn` → password or create password in the same form; EmailEntryCardView (presentational, `compact` for the onboarding chat, `onSuccess`) + container; "Esqueci a senha" opens ForgotPasswordForm in place; pure rules in lib/emailEntry.ts (+ test)
 ├── SignOutButton.tsx           # Sign-out button
 ├── index.css                   # --rgb-* color channels + full-color aliases (:root = dark base; light/whatsapp/whatsapp-dark blocks; default whatsapp), shadows, auth classes, shimmer, .chat-wallpaper

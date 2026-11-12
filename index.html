@@ -14,10 +14,11 @@
     <meta name="apple-mobile-web-app-title" content="HNBCRM" />
 
     <link rel="stylesheet" href="/src/index.css" />
-    <!-- O index.html é servido para TODA rota (rewrite do vercel.json), inclusive /f/* (formulários
-         dos clientes): as tags estáticas são institucionais e neutras, sem og:url, sem preço/teste.
-         A copy de marketing vem do react-helmet na landing (SEO.tsx). data-rh="true" faz o
-         react-helmet-async substituir estas tags em vez de duplicar. -->
+    <!-- Este template vira o shell neutro (dist/spa-fallback.html) servido a toda rota sem prerender
+         (rewrite do vercel.json), inclusive /f/* (formulários dos clientes): as tags estáticas são
+         institucionais e neutras, sem og:url, sem preço/teste. As páginas públicas pré-renderizadas
+         (/, /precos, /developers, /termos, /privacidade: scripts/prerenderPlugin.ts) trocam estas tags
+         pelas da página (SEO.tsx). data-rh="true" faz o react-helmet-async substituir em vez de duplicar. -->
     <title>HNBCRM</title>
     <meta data-rh="true" name="description" content="HNBCRM: CRM com atendimento por IA no WhatsApp, em que equipe e agentes de IA trabalham juntos." />
     <meta data-rh="true" property="og:type" content="website" />

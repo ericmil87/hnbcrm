@@ -1,23 +1,27 @@
-import { useEffect, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
-function getMatch(query: string): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function"
-    ? window.matchMedia(query).matches
-    : false;
+function mediaQuery(query: string): MediaQueryList | null {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function" ? window.matchMedia(query) : null;
 }
 
-/** Acompanha uma media query (ex.: `"(max-width: 767px)"`). */
+/** Server/hydration snapshot: the prerendered public pages are rendered at build time without a viewport. */
+const serverSnapshot = () => false;
+
+/**
+ * Acompanha uma media query (ex.: `"(max-width: 767px)"`). Durante a hidratação de uma página
+ * pré-renderizada devolve `false` (o mesmo valor do render de build) e passa ao valor real logo em
+ * seguida; em render só no cliente lê o valor real desde o início.
+ */
 export function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => getMatch(query));
-
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const mql = window.matchMedia(query);
-    const onChange = (e: MediaQueryListEvent) => setMatches(e.matches);
-    setMatches(mql.matches);
-    mql.addEventListener("change", onChange);
-    return () => mql.removeEventListener("change", onChange);
-  }, [query]);
-
-  return matches;
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const mql = mediaQuery(query);
+      if (!mql) return () => {};
+      mql.addEventListener("change", onChange);
+      return () => mql.removeEventListener("change", onChange);
+    },
+    [query],
+  );
+  const getSnapshot = useCallback(() => mediaQuery(query)?.matches ?? false, [query]);
+  return useSyncExternalStore(subscribe, getSnapshot, serverSnapshot);
 }

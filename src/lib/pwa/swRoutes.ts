@@ -3,7 +3,9 @@
 // Workbox matches these against pathname + search.
 export const NAVIGATION_ALLOWLIST: RegExp[] = [/^\/app\//];
 export const NAVIGATION_DENYLIST: RegExp[] = [/^\/f\//, /^\/api\//];
-export const SHELL_URL = "/index.html";
+// Neutral SPA shell (the built index.html template). `/index.html` itself is the prerendered landing
+// since the prerender (src/lib/prerender/routes.ts), so it must never answer an /app/ navigation.
+export const SHELL_URL = "/spa-fallback.html";
 
 export function isShellNavigation(pathnameAndSearch: string): boolean {
   if (NAVIGATION_DENYLIST.some((re) => re.test(pathnameAndSearch))) return false;

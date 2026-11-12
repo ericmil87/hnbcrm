@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { MANIFEST_ID, MANIFEST_SCOPE, MANIFEST_START_URL, SW_SCOPE, WEB_MANIFEST } from "./manifestConfig";
 import { DEFAULT_THEME, THEME_COLOR as UI_THEME_COLOR } from "../theme";
+import { SPA_FALLBACK_URL } from "../prerender/routes";
+import { SHELL_URL } from "./swRoutes";
 
 const root = resolve(__dirname, "../../..");
 const read = (rel: string) => readFileSync(join(root, rel), "utf8");
@@ -76,9 +78,12 @@ describe("vercel.json", () => {
     expect(appRule.headers.map((h) => h.key)).toContain("X-Frame-Options");
     expect(formRule.headers.map((h) => h.key)).not.toContain("X-Frame-Options");
   });
-  it("rewrite falls back to index.html but never captures PWA files or assets", () => {
-    const rw = vercel.rewrites[0];
-    expect(rw.destination).toBe("/index.html");
+  it("catch-all rewrite falls back to the neutral SPA shell but never captures PWA files or assets", () => {
+    // The catch-all is the LAST rule (the prerendered public pages come first, src/lib/prerender/routes.ts);
+    // its target is the neutral shell (built index.html template), since /index.html is the prerendered landing.
+    const rw = vercel.rewrites[vercel.rewrites.length - 1];
+    expect(rw.destination).toBe(SPA_FALLBACK_URL);
+    expect(SHELL_URL).toBe(SPA_FALLBACK_URL);
     // Vercel uses path-to-regexp with a leading slash; the source is a regex over the path.
     const re = new RegExp(`^${rw.source}$`);
     for (const p of ["/sw.js", "/manifest.webmanifest", "/registerSW.js", "/workbox-abc123.js", "/assets/x.js"]) {
@@ -105,14 +110,20 @@ describe("service worker source", () => {
     expect(listener).toContain("skipWaiting(");
     expect(sw.indexOf("skipWaiting(")).toBeGreaterThan(sw.indexOf('addEventListener("message"'));
   });
-  it("registers the worker only from inside /app (never at module load of main.tsx)", () => {
+  it("registers the worker only from inside /app (never at module load of main.tsx or the route table)", () => {
     expect(read("src/main.tsx")).not.toContain("registerAppServiceWorker");
+    expect(read("src/appRoutes.tsx")).not.toContain("registerAppServiceWorker");
     expect(read("src/components/pwa/PwaUpdateManager.tsx")).toContain("registerAppServiceWorker()");
     expect(read("src/components/layout/AuthLayout.tsx")).toContain("<PwaUpdateManager />");
   });
   it("vite config ignores compressed files, stats and the xlsx chunk and registers only prod", () => {
     const cfg = read("vite.config.ts");
     for (const g of ['"**/*.gz"', '"**/*.br"', '"stats.html"', '"**/xlsx-vendor*"']) expect(cfg).toContain(g);
+    // The SW answers /app/ navigations with the neutral shell: it must be precached (SHELL_URL).
+    expect(cfg).toContain('"spa-fallback.html"');
+    expect(SHELL_URL).toBe(`/${"spa-fallback.html"}`);
+    // ...and the build itself refuses a sw.js without it (scripts/prerenderPlugin.ts).
+    expect(read("scripts/prerenderPlugin.ts")).toMatch(/sw\.js[\s\S]*includes\(SPA_FALLBACK_FILE\)/);
     expect(cfg).toContain("__APP_BUILD__");
     expect(cfg).toContain("__PWA_KILL_SWITCH__");
     expect(read("src/lib/pwa/register.ts")).toContain("import.meta.env.PROD");

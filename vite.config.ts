@@ -7,9 +7,30 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from "node:fs";
 import { WEB_MANIFEST } from "./src/lib/pwa/manifestConfig";
 import { makeBuildId } from "./src/lib/pwa/buildVersion";
+import { prerenderPublicPages } from "./scripts/prerenderPlugin";
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "package.json"), "utf8")) as { version: string };
 const APP_BUILD = makeBuildId({ version: pkg.version, sha: process.env.VERCEL_GIT_COMMIT_SHA, now: new Date() });
+
+/**
+ * Vendor chunks by package path: react-vendor, convex-values (validators only: convex/lib/uiTheme.ts
+ * reaches the entry through lib/theme.ts), convex-vendor (client + auth, loaded on demand by
+ * ConvexRoot: /entrar, /f/*, /app/*; never by public pages), utils-vendor, icons-vendor and
+ * xlsx-vendor (SheetJS, only via dynamic import() in the campaign wizard).
+ */
+function vendorChunk(id: string): string | undefined {
+  const at = id.lastIndexOf("/node_modules/");
+  if (at < 0) return undefined;
+  const rest = id.slice(at + "/node_modules/".length);
+  const pkg = rest.startsWith("@") ? rest.split("/").slice(0, 2).join("/") : rest.split("/")[0];
+  if (["react", "react-dom", "react-router", "scheduler"].includes(pkg)) return "react-vendor";
+  if (pkg === "convex" && /\/(values|common)\//.test(rest)) return "convex-values";
+  if (pkg === "convex" || pkg === "@convex-dev/auth") return "convex-vendor";
+  if (["clsx", "tailwind-merge", "sonner"].includes(pkg)) return "utils-vendor";
+  if (pkg === "lucide-react") return "icons-vendor";
+  if (pkg === "xlsx") return "xlsx-vendor";
+  return undefined;
+}
 
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => ({
@@ -31,7 +52,9 @@ export default defineConfig(({ mode }) => ({
       manifest: { ...WEB_MANIFEST },
       manifestFilename: "manifest.webmanifest",
       injectManifest: {
-        globPatterns: ["**/*.{js,css,html}", "pwa-*.png", "maskable-icon-*.png", "apple-touch-icon-*.png"],
+        // HTML: only the neutral SPA shell (the SW answers /app/ navigations with it); the prerendered
+        // public pages are never served by the SW.
+        globPatterns: ["**/*.{js,css}", "spa-fallback.html", "pwa-*.png", "maskable-icon-*.png", "apple-touch-icon-*.png"],
         globIgnores: ["**/*.gz", "**/*.br", "stats.html", "**/xlsx-vendor*"],
       },
       devOptions: { enabled: false },
@@ -72,6 +95,8 @@ window.addEventListener('message', async (message) => {
     }),
     viteCompression({ algorithm: 'gzip' }),
     viteCompression({ algorithm: 'brotliCompress', ext: '.br' }),
+    // Last on purpose: writes the prerendered public pages after the client build (scripts/prerenderPlugin.ts).
+    prerenderPublicPages(),
   ].filter(Boolean),
   resolve: {
     alias: {
@@ -81,22 +106,10 @@ window.addEventListener('message', async (message) => {
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          // Core React (react, react-dom, react-router)
-          'react-vendor': ['react', 'react-dom', 'react-router'],
-
-          // Convex backend client
-          'convex-vendor': ['convex/react', '@convex-dev/auth/react'],
-
-          // Utility libraries
-          'utils-vendor': ['clsx', 'tailwind-merge', 'sonner'],
-
-          // Icons library (lucide-react)
-          'icons-vendor': ['lucide-react'],
-
-          // SheetJS — só carregado por import() dinâmico no wizard de campanhas
-          'xlsx-vendor': ['xlsx'],
-        },
+        // Function form on purpose: the object form also moves the dependencies of a listed package into
+        // that chunk, and React's CJS jsx-runtime ended up in convex-vendor, so the entry preloaded the
+        // Convex runtime on every public page. Here each package goes to its chunk by path, nothing else.
+        manualChunks: (id) => vendorChunk(id),
       },
     },
     chunkSizeWarningLimit: 600,

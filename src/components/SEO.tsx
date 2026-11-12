@@ -1,4 +1,8 @@
 import { Helmet } from 'react-helmet-async';
+import { useLocation } from 'react-router';
+
+/** Both share cards are 1200x630 (scripts/generate-brand-assets.mjs). */
+const KNOWN_CARDS = new Set(['/og-neutral.png', '/og-image.png']);
 
 interface SEOProps {
   title?: string;
@@ -25,7 +29,9 @@ export function SEO({
   const siteUrl = import.meta.env.VITE_SITE_URL || 'https://hnbcrm.com';
   const fullTitle = title.includes('HNBCRM') ? title : `${title} | HNBCRM`;
   const ogImageUrl = ogImage.startsWith('http') ? ogImage : `${siteUrl}${ogImage}`;
-  const canonicalUrl = canonical || `${siteUrl}${window.location.pathname}`;
+  // Router location instead of `window`: the same component renders at build time (prerender).
+  const { pathname } = useLocation();
+  const canonicalUrl = canonical || `${siteUrl}${pathname}`;
 
   return (
     <Helmet>
@@ -43,6 +49,9 @@ export function SEO({
       <meta property="og:url" content={canonicalUrl} />
       <meta property="og:type" content={ogType} />
       <meta property="og:site_name" content="HNBCRM" />
+      <meta property="og:locale" content="pt_BR" />
+      {KNOWN_CARDS.has(ogImage) && <meta property="og:image:width" content="1200" />}
+      {KNOWN_CARDS.has(ogImage) && <meta property="og:image:height" content="630" />}
 
       {/* Twitter Card */}
       <meta name="twitter:card" content="summary_large_image" />
