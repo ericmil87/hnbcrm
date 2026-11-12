@@ -5,6 +5,7 @@ import "./index.css";
 import { ROUTES } from "./appRoutes";
 import { ThemedToaster } from "./components/ui/ThemedToaster";
 import { installPreloadErrorHandler } from "./lib/pwa/preloadError";
+import { isPrerenderPath } from "./lib/prerender/routes";
 
 // Entry = router + public shells only (routes in appRoutes.tsx). Convex and the app shell load on demand.
 installPreloadErrorHandler();
@@ -25,7 +26,9 @@ const toasterContainer = document.createElement("div");
 document.body.appendChild(toasterContainer);
 createRoot(toasterContainer).render(<ThemedToaster />);
 
-if (container.firstElementChild) {
+// Hydrate only a page that really is prerendered at this path; anything else in #root (stale cache,
+// an extension, a proxy) is cleared and the app renders from scratch.
+if (container.firstElementChild && isPrerenderPath(window.location.pathname)) {
   // Prerendered public page (scripts/prerenderPlugin.ts): hydrate the static HTML, keeping its DOM
   // nodes (replacing them with createRoot made the hero <h1> a new, later LCP candidate: 1.7 s ->
   // 5.0 s on throttled 4G). Hydration starts once the route module is loaded, so the first client
@@ -43,6 +46,7 @@ if (container.firstElementChild) {
     });
   }
 } else {
-  // Empty #root (SPA fallback): render now, so the route's hydrateFallbackElement shows the spinner.
+  // SPA fallback (empty #root): render now, so the route's hydrateFallbackElement shows the spinner.
+  container.replaceChildren();
   createRoot(container).render(app);
 }

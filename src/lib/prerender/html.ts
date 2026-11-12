@@ -27,11 +27,15 @@ export function injectPrerender(template: string, parts: PrerenderParts): string
   if (!template.includes(ROOT_EMPTY)) throw new Error('prerender: template sem <div id="root"></div>');
   if (!/<title\b[^>]*>[^<]+<\/title>/.test(parts.head)) throw new Error("prerender: página sem <title>");
 
-  let html = template.replace(TITLE_RE, "<!--prerender-head-->");
-  html = html.replace(MANAGED_META_RE, "");
-  html = html.replace("<!--prerender-head-->", `${parts.head.trim()}\n    `);
+  // Page content always goes in through a replacer FUNCTION: a replacement string would expand
+  // `$&`, `$'`, `$$`... found in the copy (prices are written "R$").
+  const head = `${parts.head.trim()}\n    `;
+  const root = `<div id="root">${parts.body}</div>`;
+  let html = template.replace(TITLE_RE, () => "<!--prerender-head-->");
+  html = html.replace(MANAGED_META_RE, () => "");
+  html = html.replace("<!--prerender-head-->", () => head);
 
-  return html.replace(ROOT_EMPTY, `<div id="root">${parts.body}</div>`);
+  return html.replace(ROOT_EMPTY, () => root);
 }
 
 /** Reads `content` of the first `<meta>` matching `attr="value"` (tests and build checks). */

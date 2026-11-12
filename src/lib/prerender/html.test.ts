@@ -45,6 +45,18 @@ describe("injectPrerender", () => {
     expect(html.match(/index-abc\.js/g)).toHaveLength(1);
   });
 
+  it("keeps $ sequences of the copy literally (no $& / $' / $$ / $1 expansion)", () => {
+    const tricky = `Plano R$" 197 $& $' $\` $$ $1 $0`;
+    const out = injectPrerender(TEMPLATE, {
+      head: `<title data-rh="true">${tricky}</title><meta data-rh="true" name="description" content="${tricky}"/>`,
+      body: `<h1>${tricky}</h1>`,
+    });
+    expect(titleOf(out)).toBe(tricky);
+    expect(h1Texts(out)).toEqual([tricky]);
+    expect(out).toContain(`content="${tricky}"`);
+    expect(out).toContain('<div id="root"><h1>');
+  });
+
   it("fails loudly on an unexpected template or a page without title", () => {
     expect(() => injectPrerender(TEMPLATE.replace('<div id="root"></div>', ""), { head: HEAD, body: "" })).toThrow();
     expect(() => injectPrerender(TEMPLATE.replace(/<title>.*<\/title>/, ""), { head: HEAD, body: "" })).toThrow();

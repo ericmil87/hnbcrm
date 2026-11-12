@@ -110,14 +110,20 @@ describe("service worker source", () => {
     expect(listener).toContain("skipWaiting(");
     expect(sw.indexOf("skipWaiting(")).toBeGreaterThan(sw.indexOf('addEventListener("message"'));
   });
-  it("registers the worker only from inside /app (never at module load of main.tsx)", () => {
+  it("registers the worker only from inside /app (never at module load of main.tsx or the route table)", () => {
     expect(read("src/main.tsx")).not.toContain("registerAppServiceWorker");
+    expect(read("src/appRoutes.tsx")).not.toContain("registerAppServiceWorker");
     expect(read("src/components/pwa/PwaUpdateManager.tsx")).toContain("registerAppServiceWorker()");
     expect(read("src/components/layout/AuthLayout.tsx")).toContain("<PwaUpdateManager />");
   });
   it("vite config ignores compressed files, stats and the xlsx chunk and registers only prod", () => {
     const cfg = read("vite.config.ts");
     for (const g of ['"**/*.gz"', '"**/*.br"', '"stats.html"', '"**/xlsx-vendor*"']) expect(cfg).toContain(g);
+    // The SW answers /app/ navigations with the neutral shell: it must be precached (SHELL_URL).
+    expect(cfg).toContain('"spa-fallback.html"');
+    expect(SHELL_URL).toBe(`/${"spa-fallback.html"}`);
+    // ...and the build itself refuses a sw.js without it (scripts/prerenderPlugin.ts).
+    expect(read("scripts/prerenderPlugin.ts")).toMatch(/sw\.js[\s\S]*includes\(SPA_FALLBACK_FILE\)/);
     expect(cfg).toContain("__APP_BUILD__");
     expect(cfg).toContain("__PWA_KILL_SWITCH__");
     expect(read("src/lib/pwa/register.ts")).toContain("import.meta.env.PROD");

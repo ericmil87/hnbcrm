@@ -16,7 +16,7 @@
 import { build, type Plugin, type ResolvedConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { injectPrerender } from "../src/lib/prerender/html";
@@ -56,6 +56,15 @@ export function prerenderPublicPages(): Plugin {
       async handler() {
         if (config.build.ssr) return;
         const outDir = resolve(config.root, config.build.outDir);
+        // The service worker answers /app/ navigations with the neutral shell (SHELL_URL); without it in the
+        // precache, createHandlerBoundToURL throws and the installed PWA breaks. vite-plugin-pwa writes sw.js
+        // in an earlier closeBundle. The kill-switch build publishes a self-destroying SW without precache.
+        if (process.env.PWA_KILL_SWITCH !== "1") {
+          const sw = join(outDir, "sw.js");
+          if (!existsSync(sw) || !readFileSync(sw, "utf8").includes(SPA_FALLBACK_FILE)) {
+            throw new Error(`prerender: ${SPA_FALLBACK_FILE} não está no precache de dist/sw.js`);
+          }
+        }
         const ssrDir = resolve(config.root, "node_modules/.cache/hnbcrm-prerender");
         rmSync(ssrDir, { recursive: true, force: true });
         await build({

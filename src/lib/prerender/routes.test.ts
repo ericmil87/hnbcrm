@@ -10,7 +10,10 @@ import { PRERENDER_PATHS, SPA_FALLBACK_FILE, SPA_FALLBACK_URL, isPrerenderPath, 
 
 const root = resolve(__dirname, "../../..");
 const read = (rel: string) => readFileSync(resolve(root, rel), "utf8");
-const vercel = JSON.parse(read("vercel.json")) as { rewrites: { source: string; destination: string }[] };
+const vercel = JSON.parse(read("vercel.json")) as {
+  rewrites: { source: string; destination: string }[];
+  headers: { source: string; headers: { key: string; value: string }[] }[];
+};
 
 /** Files of the deploy output that matter here (prerendered pages + shell + a static asset). */
 const OUTPUT = new Set([...PRERENDER_PATHS.map((p) => prerenderOutFile(p)), SPA_FALLBACK_FILE, "theme-init.js", "robots.txt"]);
@@ -50,6 +53,20 @@ describe("prerender routes", () => {
     }
   });
 
+  it("routes that use Convex are declared inside ConvexRoot's children (after its lazy import)", () => {
+    const routes = read("src/appRoutes.tsx");
+    const convexAt = routes.indexOf(`import("./components/layout/ConvexRoot")`);
+    const notFoundAt = routes.indexOf(`import("./pages/NotFoundPage")`);
+    expect(convexAt).toBeGreaterThan(-1);
+    for (const path of ["/entrar", "/comecar", "/app", "/f/:formSlug"]) {
+      const at = routes.indexOf(`path: "${path}"`);
+      expect(at, path).toBeGreaterThan(convexAt);
+      expect(at, `${path} must stay before the public 404`).toBeLessThan(notFoundAt);
+    }
+    // /comecar has its own error boundary, like the other Convex pages.
+    expect(routes).toMatch(/path: "\/comecar"[^\n]*errorElement: <RouteErrorPage \/>/);
+  });
+
   it("the entry never creates the Convex client nor imports the app shell eagerly", () => {
     // Both modules are in the entry chunk: main.tsx and the shared route table.
     for (const file of ["src/main.tsx", "src/appRoutes.tsx"]) {
@@ -87,6 +104,16 @@ describe("vercel.json: prerendered files win, everything else gets the neutral s
     ["/pagina-que-nao-existe"],
   ])("%s falls back to the neutral SPA shell", (path) => {
     expect(served(path)).toBe(SPA_FALLBACK_FILE);
+  });
+
+  it("the shell's own URL is noindex, and that header never reaches the paths it is served under", () => {
+    const robotsFor = (path: string) =>
+      vercel.headers
+        .filter((r) => new RegExp(`^${r.source}$`).test(path))
+        .flatMap((r) => r.headers.filter((h) => h.key === "X-Robots-Tag").map((h) => h.value));
+    expect(robotsFor(SPA_FALLBACK_URL)).toEqual(["noindex"]);
+    for (const path of PRERENDER_PATHS) expect(robotsFor(path), path).toEqual([]);
+    expect(robotsFor("/comecar")).toEqual([]);
   });
 
   it("static files are served as they are (filesystem first)", () => {
