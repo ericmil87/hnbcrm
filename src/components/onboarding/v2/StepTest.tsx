@@ -33,6 +33,7 @@ export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNe
   const attendants = useQuery(api.aiSettings.listAttendants, { organizationId }) as
     | Array<{ _id: Id<"teamMembers">; status: string; removedAt?: number | null }>
     | undefined;
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
   const markStep = useMutation(api.onboarding.markWizardStep);
   const marked = useRef(false);
   const attendant = pickEditableAttendant(attendants);
@@ -57,7 +58,7 @@ export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNe
         title="Teste seu atendente"
         description="Converse como se fosse um cliente. A IA responde e mostra o que faria com a conversa. Nada chega a um cliente de verdade."
       >
-        {attendants === undefined ? (
+        {attendants === undefined || aiStatus === undefined ? (
           <div className="flex justify-center py-8">
             <Spinner />
           </div>
@@ -67,6 +68,15 @@ export function StepTest({ organizationId, status, onAdjustPersona, onBack, onNe
             size="sm"
             title={`Crie o ${VOCAB.attendant.name} primeiro`}
             description="Sem atendente não há o que testar. Volte ao passo anterior para criar o seu."
+            action={{ label: "Voltar para o Atendente IA", onClick: onAdjustPersona }}
+          />
+        ) : !aiStatus.active ? (
+          // O simulador gasta IA da plataforma: só roda com a IA ativa (aceite dado por clique humano).
+          <EmptyState
+            icon={Bot}
+            size="sm"
+            title="Ative a IA para testar o atendente"
+            description="O teste usa a IA da sua organização. Ative a IA e aceite os termos no passo anterior, depois volte aqui."
             action={{ label: "Voltar para o Atendente IA", onClick: onAdjustPersona }}
           />
         ) : (

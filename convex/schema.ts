@@ -2,6 +2,8 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { authTables } from "@convex-dev/auth/server";
 import { uiThemeValidator } from "./lib/uiTheme";
+import { onboardingDraftValidator } from "./lib/onboardingDraft";
+import { onboardingBlockValidator } from "./lib/onboardingBlocks";
 
 // Shared saved-view filters validator — single source of truth, reused by
 // convex/savedViews.ts arg validators (never duplicate this shape inline).
@@ -272,6 +274,16 @@ const aiConfigValidator = v.object({
   // dentro de um grupo alcança gente que nunca falou com a empresa. A F1 só
   // declara o campo; quem o lê é a F4.
   groupAgentEnabled: v.optional(v.boolean()),
+  // Resposta em áudio (onboarding v2, seção 5). DEFAULT FALSE como
+  // `visionEnabled`: ausente = desligada (orgs existentes não mudam, sem
+  // migração). Só o campo: quem lê é a porta de TTS (outro pacote). Ligada pelo
+  // pacote recomendado do onboarding SÓ com a IA ativa e o aceite LGPD.
+  voiceReplyEnabled: v.optional(v.boolean()),
+  // Voz escolhida (id do provedor de TTS, decidido no spike D6). Ausente = padrão da porta.
+  voiceReplyVoice: v.optional(v.string()),
+  // P4.1: aviso de voz sintética, falado no INÍCIO do primeiro áudio de cada
+  // conversa (`conversations.aiVoiceNoticeAt`). Ausente = sem aviso (padrão).
+  voiceReplyNotice: v.optional(v.string()),
   // Aceite PRÓPRIO do autopilot em GRUPO (review de segurança nº 5). O
   // `autopilotEarlyAck` do atendente 1 a 1 foi assinado para outro risco:
   // responder sozinho a UMA pessoa que escreveu para a empresa. Publicar sozinho
@@ -1528,6 +1540,9 @@ const applicationTables = {
     // rejeitar repasse, turno instruído); itens skipped/failed da fila
     // anteriores a ele não descrevem mais o estado (o chip "IA em espera" some).
     aiResumedAt: v.optional(v.number()),
+    // P4.1: quando o aviso de voz sintética (`aiConfig.voiceReplyNotice`) já foi
+    // falado nesta conversa. Ausente = ainda não (o próximo áudio da IA o leva).
+    aiVoiceNoticeAt: v.optional(v.number()),
     // Informações passadas pela equipe humana à IA ("Devolver para IA" /
     // rejeitar repasse com instrução): persistem na conversa e entram como
     // fonte oficial em TODOS os turnos seguintes do atendente (cap 20, FIFO).
@@ -2704,6 +2719,26 @@ const applicationTables = {
     createdAt: v.number(),
   }).index("by_email", ["email"]),
 
+  // Onboarding v2 (P2.4): rate limit de janela fixa por chave (`user|org|ip:<id>:<janela>`).
+  onboardingRateLimits: defineTable({
+    key: v.string(),
+    windowStart: v.number(),
+    count: v.number(),
+  })
+    .index("by_key", ["key"])
+    .index("by_windowStart", ["windowStart"]),
+
+  // Onboarding v2 (P2.4): gasto de IA do onboarding por dia UTC, todas as orgs
+  // (corte global). `alertedAt` garante 1 alerta por dia; é o ÚNICO registro do
+  // alerta numa org cliente (o audit só vai para a org interna, se configurada).
+  onboardingSpendDaily: defineTable({
+    day: v.string(), // "AAAA-MM-DD" UTC
+    costUsdMicros: v.number(),
+    runs: v.number(),
+    alertedAt: v.optional(v.number()),
+    alertedByOrgId: v.optional(v.id("organizations")),
+  }).index("by_day", ["day"]),
+
   // Teto de e-mails de autenticação por endereço (janela fixa). O flow "reset"
   // é PÚBLICO e o Convex Auth só limita tentativas de código, não pedidos —
   // sem isto, qualquer um bombardeia uma caixa alheia usando o nosso domínio.
@@ -2711,7 +2746,23 @@ const applicationTables = {
     email: v.string(), // normalizado
     windowStart: v.number(),
     count: v.number(),
-  }).index("by_email", ["email"]),
+  })
+    .index("by_email", ["email"])
+    .index("by_window_start", ["windowStart"]),
+
+  // Código de 6 dígitos para confirmar o e-mail da conta (onboarding v2: materiais
+  // só liberam depois disso). Guarda só o HASH (HMAC-SHA256, userId como sal e
+  // pepper opcional por env, ligado ao e-mail normalizado); um código ativo por usuário (o pedido novo apaga o
+  // anterior). Vencidos saem pelo cron diário `internalPruneEmailVerificationCodes`.
+  emailVerificationCodes: defineTable({
+    userId: v.id("users"),
+    codeHash: v.string(),
+    expiresAt: v.number(),
+    attempts: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_expires_at", ["expiresAt"]),
 
   // Forms (embeddable lead capture)
   forms: defineTable({
@@ -3061,7 +3112,11 @@ const applicationTables = {
       // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
       v.literal("attendant_draft"),
       // Tradução automática (F1): 1 chamada ao LLM por mensagem traduzida.
-      v.literal("translation")
+      v.literal("translation"),
+      // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
+      v.literal("onboarding"),
+      // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
+      v.literal("tts")
     ),
     status: v.union(
       v.literal("running"),
@@ -3769,6 +3824,128 @@ const applicationTables = {
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
+
+  // Onboarding conversacional v2 (P2.1): sessão por org com o Rascunho de
+  // Operação. Gravar o rascunho NUNCA aplica configuração: a única escrita é
+  // `onboardingSessions.applyOnboardingDraft` (clique do usuário). Mensagens da
+  // conversa NÃO moram aqui (doc limitado a 1 MiB e regravado a cada turno):
+  // só `summary` (resumo curto) e `messageCount`; o histórico completo, se o
+  // P2.3 precisar, vai para uma tabela filha com `sessionId`.
+  onboardingSessions: defineTable({
+    organizationId: v.id("organizations"),
+    createdBy: v.id("teamMembers"), // membro humano que abriu a sessão
+    stage: v.union(
+      v.literal("interview"),
+      v.literal("materials"),
+      v.literal("draft"),
+      v.literal("applied"),
+      v.literal("test"),
+      v.literal("next_steps"),
+    ),
+    draft: v.optional(onboardingDraftValidator), // validado + filtrado no servidor
+    draftHash: v.optional(v.string()), // sha256 do rascunho normalizado
+    draftVersion: v.number(), // +1 a cada gravação
+    draftUpdatedBy: v.optional(v.union(v.literal("user"), v.literal("ai"))),
+    summary: v.optional(v.string()), // resumo da conversa (≤ 2.000)
+    messageCount: v.number(),
+    // Gasto de IA da sessão em micro-US$ (mesma unidade de `aiUsageMonthly.costUsdMicros`).
+    spentUsdMicros: v.number(),
+    // P2.4: saldo retido por reservas em andamento (somado ao gasto no teste do
+    // orçamento). `reservedAt` = última reserva; reserva com mais de 10 min é órfã e ignorada.
+    reservedUsdMicros: v.optional(v.number()),
+    reservedAt: v.optional(v.number()),
+    // Estimativa da última reserva: padrão do que o registro solta quando não informa a sua.
+    lastEstimateUsdMicros: v.optional(v.number()),
+    // P2.4: ids de registro de gasto já aplicados (idempotência), os últimos 20.
+    recordedRequestIds: v.optional(v.array(v.string())),
+    appliedAt: v.optional(v.number()),
+    appliedDraftHash: v.optional(v.string()),
+    appliedBy: v.optional(v.id("teamMembers")),
+    // Atendente criado POR ESTA sessão: só ele tem persona/conhecimento
+    // regerados ao reaplicar. Atendente pré-existente nunca é sobrescrito sem
+    // `overwriteExistingAttendant` explícito no clique.
+    attendantId: v.optional(v.id("teamMembers")),
+    // Pendências de aceite da última aplicação: com elas, reaplicar o MESMO
+    // rascunho depois do aceite de IA completa o que ficou de fora.
+    appliedPendingConsent: v.optional(
+      v.array(
+        v.union(
+          v.literal("vision"),
+          v.literal("transcription"),
+          v.literal("dateTime"),
+          v.literal("translation"),
+          v.literal("voice"),
+        ),
+      ),
+    ),
+    appliedAttendantPending: v.optional(v.boolean()),
+    // A última aplicação manteve um atendente que já existia (`skipped_existing`):
+    // com o MESMO rascunho, o pedido explícito de sobrescrever não cai no atalho `alreadyApplied`.
+    appliedAttendantSkipped: v.optional(v.boolean()),
+    // P2.3: ciência do aviso de materiais (LGPD / IA de provedores fora do
+    // Brasil), gravada só pelo clique em `onboardingChat.ackMaterialsNotice`.
+    // Ausente = o 1º material da sessão é recusado (`notice_required`).
+    materialsNoticeAckAt: v.optional(v.number()),
+    materialsNoticeAckBy: v.optional(v.id("teamMembers")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Onboarding conversacional v2 (P2.3): histórico da conversa (tabela filha da
+  // sessão; o doc da sessão guarda só resumo e contagem). Texto do usuário até
+  // 4.000, resposta do assistente já saneada (guard de saída, sem link/imagem
+  // do modelo). Blocos montados pelo SERVIDOR a partir do rascunho (snapshot do
+  // turno). Material: só a referência (tipo, rótulo, storageId) — o texto
+  // extraído de terceiros NÃO é persistido (retenção só durante o turno).
+  onboardingMessages: defineTable({
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    role: v.union(v.literal("user"), v.literal("assistant")),
+    text: v.string(),
+    blocks: v.optional(v.array(onboardingBlockValidator)),
+    chips: v.optional(v.array(v.string())),
+    attachment: v.optional(
+      v.object({
+        kind: v.union(v.literal("site"), v.literal("pdf"), v.literal("imagem"), v.literal("audio")),
+        label: v.string(),
+        storageId: v.optional(v.id("_storage")),
+      }),
+    ),
+    /** O texto do usuário veio da transcrição de um áudio. */
+    transcribed: v.optional(v.boolean()),
+    draftVersion: v.optional(v.number()),
+    // P4.2b: resposta do assistente em áudio (o usuário mandou áudio). WAV no
+    // storage da org com linha em `files` (`metadata.kind:"onboarding_voice_reply"`);
+    // a URL é gerada na leitura, com o RBAC da sessão. Some (blob + linha + campo)
+    // em `audioExpiresAt` pelo cron `onboardingChat.internalExpireOnboardingAudio`.
+    audio: v.optional(
+      v.object({
+        fileId: v.id("files"),
+        storageId: v.id("_storage"),
+        durationSec: v.number(),
+        mimeType: v.string(),
+      }),
+    ),
+    audioExpiresAt: v.optional(v.number()),
+    /** Motivo de a resposta NÃO ter saído em áudio quando o usuário mandou áudio (diagnóstico; fora da view). */
+    audioSkipReason: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_session", ["sessionId"])
+    .index("by_organization", ["organizationId"])
+    .index("by_audio_expires_at", ["audioExpiresAt"]),
+
+  // Onboarding v2 (P2.3): páginas lidas por site numa sessão (teto de 5 por
+  // site, contado NO SERVIDOR e reservado antes da busca; nunca vem do LLM).
+  onboardingSiteReads: defineTable({
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    siteKey: v.string(),
+    pages: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_session_and_site", ["sessionId", "siteKey"])
+    .index("by_organization", ["organizationId"]),
 
   // Ações destrutivas propostas pelo copiloto — two-phase server-side: a tool
   // grava a proposta; a execução real é uma mutation disparada por humano.

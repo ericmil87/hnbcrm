@@ -28,7 +28,11 @@ export const internalStartRun = internalMutation({
       // Rascunho de Atendente IA gerado no onboarding (fv2-18): não persiste nada.
       v.literal("attendant_draft"),
       // Tradução automática (F1).
-      v.literal("translation")
+      v.literal("translation"),
+      // Onboarding conversacional v2 (P2.4).
+      v.literal("onboarding"),
+      // P4.1: síntese de voz da resposta em áudio do atendente.
+      v.literal("tts")
     ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),

@@ -43,8 +43,7 @@ export function Footer() {
           {/* Col 1 — Brand */}
           <div className="col-span-2 md:col-span-1 space-y-3">
             <div className="flex items-center gap-2">
-              <BrandLogo className="h-8 w-8 object-contain" />
-              <span className="text-xl font-bold text-text-primary">HNBCRM</span>
+              <BrandLogo variant="wordmark" size="md" />
             </div>
             <p className="text-sm text-text-secondary">
               O CRM onde humanos e IA trabalham juntos.
@@ -56,7 +55,7 @@ export function Footer() {
           <div className="space-y-3">
             <h4 className="text-sm font-semibold text-text-primary">Produto</h4>
             <div className="flex flex-col gap-2">
-              <InternalLink to="/#funcionalidades">Funcionalidades</InternalLink>
+              <InternalLink to="/#como-funciona">Como funciona</InternalLink>
               <InternalLink to="/precos">Preços</InternalLink>
               <ExtLink href={`${GITHUB_URL}/blob/main/ROADMAP.md`}>Roadmap</ExtLink>
               <ExtLink href={CHANGELOG_URL}>Novidades</ExtLink>

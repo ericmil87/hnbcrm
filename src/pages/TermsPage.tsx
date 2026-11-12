@@ -29,15 +29,13 @@ export function TermsPage() {
       <SEO
         title="Termos de Uso e Assinatura"
         description="Termos de Uso e Assinatura do HNBCRM: planos, atendimentos de IA, excedente, teste, troca de plano, cancelamento, reembolso de 7 dias, só leitura, WhatsApp não oficial e proteção de dados."
-        keywords="termos de uso, termos de assinatura, hnbcrm, planos, reembolso, whatsapp, saas"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
         <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur-md border-b border-border">
           <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <Link to="/" className="flex items-center gap-2">
-              <BrandLogo className="h-7 w-7 object-contain" />
-              <span className="text-lg font-bold text-text-primary">HNBCRM</span>
+              <BrandLogo variant="wordmark" size="md" />
             </Link>
             <div className="flex items-center gap-1">
               <PublicThemeButton />

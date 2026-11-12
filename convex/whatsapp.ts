@@ -36,7 +36,10 @@ import { claimChannelSlot, rescheduleWhatsappDispatch } from "./lib/whatsappDisp
 import {
   BridgeQuote,
   BridgeSendRequest,
+  BridgeVoiceNoteFields,
+  bridgeAudioNeedsConversion,
   bridgeSendKindForMime,
+  planBridgeAudioSend,
   buildBridgeMarkReadRequest,
   buildBridgeMediaSendRequest,
   buildBridgePresenceRequest,
@@ -45,6 +48,8 @@ import {
   parseBridgeSendResponse,
 } from "./lib/bridgeSend";
 import { toDataUri } from "./lib/bridgeMedia";
+import { convertVoiceNoteToOggOpus } from "./lib/voiceNoteConvert";
+import { checkMetaWhatsappAudio } from "./lib/metaWhatsappAudio";
 import { closeTypingPresenceBracket, openTypingPresenceBracket } from "./lib/bridgePresence";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
 import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
@@ -440,38 +445,6 @@ export function captionFor(content: string | undefined): string | undefined {
   return content;
 }
 
-// Transcode a recorded voice note to audio/ogg; codecs=opus (WhatsApp PTT format)
-// via the self-hosted Whisper service's /convert endpoint. Returns the converted
-// bytes, or null when the service isn't configured or the conversion fails — the
-// caller then sends the original untouched. Best-effort: never throws.
-async function convertVoiceNoteToOggOpus(
-  bytes: Uint8Array,
-  mimeType: string
-): Promise<Uint8Array | null> {
-  const serviceUrl = process.env.WHISPER_SERVICE_URL;
-  const serviceToken = process.env.WHISPER_SERVICE_TOKEN;
-  if (!serviceUrl || !serviceToken) return null;
-  try {
-    const form = new FormData();
-    form.append(
-      "file",
-      new Blob([bytes], { type: mimeType || "application/octet-stream" }),
-      "voice-note"
-    );
-    const response = await fetch(`${serviceUrl.replace(/\/$/, "")}/convert?target=ogg-opus`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${serviceToken}` },
-      body: form,
-    });
-    if (!response.ok) return null;
-    const buffer = await response.arrayBuffer();
-    if (buffer.byteLength === 0) return null;
-    return new Uint8Array(buffer);
-  } catch {
-    return null;
-  }
-}
-
 // Send one outbound message (text OR media) through the wuzapi bridge and record
 // the result. Kept out of the action body so the Meta path stays readable; the
 // decrypt + blob read run here (in the action) exactly like the Meta path.
@@ -671,34 +644,46 @@ async function sendViaBridge(
     }
     let bytes = new Uint8Array(await blob.arrayBuffer());
     let sendMime = file.mimeType;
+    let sendKind = bridgeSendKindForMime(sendMime);
+    let sendFilename: string = file.name;
+    // Resposta em áudio do atendente (P4.1): `metadata.voiceNote` leva duração e
+    // waveform calculadas do PCM; vira PTT/Seconds/Waveform/MimeType no wuzapi.
+    let voiceFields: BridgeVoiceNoteFields | undefined;
 
-    // Voice notes: the browser records audio/webm (or ogg) but WhatsApp/whatsmeow
-    // expects a PTT as audio/ogg; codecs=opus. When the Whisper service is
-    // configured, transcode non-ogg audio via its /convert endpoint; otherwise
-    // (or on failure) fall back to sending the original and note it.
-    // VALIDAR: whether wuzapi accepts a raw webm data-URI as a playable voice note.
-    if (message.contentType === "audio" && !/^audio\/ogg/i.test(file.mimeType)) {
-      const converted = await convertVoiceNoteToOggOpus(bytes, file.mimeType);
-      if (converted) {
-        bytes = converted;
-        sendMime = "audio/ogg; codecs=opus";
-      } else {
-        dispatchNotes.push(
-          "Nota de voz enviada no formato original — conversão para ogg/opus indisponível"
-        );
-      }
+    // Voice notes: the browser records audio/webm, audio/ogg or (Safari/iPhone)
+    // audio/mp4 (AAC, saved as .m4a), but WhatsApp/whatsmeow expects a PTT as
+    // audio/ogg; codecs=opus. Non-ogg audio goes through the Whisper service
+    // /convert; when that is unavailable the original goes out as a DOCUMENT
+    // (never `data:audio/mp4|webm` on the audio endpoint). See planBridgeAudioSend.
+    if (message.contentType === "audio") {
+      const converted = bridgeAudioNeedsConversion(file.mimeType)
+        ? await convertVoiceNoteToOggOpus(bytes, file.mimeType)
+        : null;
+      const plan = planBridgeAudioSend({
+        fileMimeType: file.mimeType,
+        fileName: file.name,
+        converted: converted !== null,
+        voiceNote: message.metadata?.voiceNote,
+      });
+      if (plan.useConverted && converted) bytes = converted;
+      voiceFields = plan.voiceFields;
+      sendMime = plan.sendMime;
+      sendKind = plan.kind;
+      if (plan.filename) sendFilename = plan.filename;
+      if (plan.note) dispatchNotes.push(plan.note);
     }
 
     request = buildBridgeMediaSendRequest({
       baseUrl: config.bridgeBaseUrl,
       token,
       toPhone,
-      kind: bridgeSendKindForMime(sendMime),
+      kind: sendKind,
       dataUri: toDataUri(bytes, sendMime),
       caption: captionFor(message.content),
-      filename: file.name,
+      filename: sendFilename,
       quote,
       mentions,
+      ...(voiceFields ? { voiceFields } : {}),
     });
     // The bridge sends one attachment per message; note any extras we skip.
     if (attachmentFiles.length > 1) {
@@ -997,6 +982,20 @@ async function dispatchMessage(
       : file.mimeType.startsWith("audio/")
         ? "audio"
         : "document";
+    // Meta refuses webm (Chrome/Edge recordings) and other non-listed audio;
+    // mp4/AAC (Safari/iPhone) and ogg go straight through. Fail before the send.
+    if (kind === "audio") {
+      const audioCheck = checkMetaWhatsappAudio(file.mimeType);
+      if (!audioCheck.ok) {
+        await ctx.runMutation(internal.whatsapp.internalMarkDispatchFailed, {
+          messageId: args.messageId,
+          detail: audioCheck.detail,
+          errorKind: "permanent",
+          preSend: true,
+        });
+        return null;
+      }
+    }
     payload.type = kind;
     payload[kind] = {
       link,

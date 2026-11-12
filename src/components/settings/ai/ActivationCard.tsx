@@ -10,6 +10,8 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { AiStatus } from "./aiTypes";
+import { AiLgpdParagraphs } from "./AiLgpdParagraphs";
+import { AI_LGPD_ACK_LABEL } from "@/lib/aiLgpdText";
 
 // ── Ativação (master switch + gate LGPD) ──
 
@@ -87,20 +89,11 @@ export function ActivationCard({
 
       <Modal open={showAckModal} onClose={() => setShowAckModal(false)} title="Ativar IA — LGPD">
         <div className="space-y-4">
-          <p className="text-sm text-text-secondary">
-            Ao ativar, dados de clientes (mensagens, nomes, contexto do CRM) são processados por
-            provedores de IA nos EUA em modo <strong>zero-retention</strong> (não são retidos nem
-            usados para treino no caminho padrão da plataforma).
-          </p>
-          <p className="text-sm text-text-secondary">
-            Sua organização é a controladora dos dados. Confirme que sua política de privacidade
-            divulga o uso de IA no atendimento e a transferência internacional de dados
-            (LGPD, art. 33).
-          </p>
+          <AiLgpdParagraphs />
           <Checkbox
             checked={ackChecked}
             onChange={(e) => setAckChecked(e.target.checked)}
-            label="Confirmo que minha política de privacidade divulga o uso de IA e a transferência internacional de dados"
+            label={AI_LGPD_ACK_LABEL}
           />
           <div className="flex gap-2 pt-2">
             <Button variant="secondary" onClick={() => setShowAckModal(false)} className="flex-1">

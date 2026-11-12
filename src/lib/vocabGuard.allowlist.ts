@@ -13,9 +13,8 @@ export const ALLOWED_PATHS: readonly string[] = [
   "src/pages/PrivacyPage.tsx",
   "src/components/settings/advanced/**",
   "src/embed/**",
-  "src/components/landing/**",
-  "src/pages/LandingPage.tsx",
-  "src/components/LandingPage.tsx",
+  // Landing (P1.1): seções, kit, cabeçalho e LandingPage saíram da lista e seguem o glossário.
+  // P1.6: `landing/pricing/**` também saiu (Setores/Repasse trocados pelos termos do produto).
 ];
 
 export interface AllowedTerm {

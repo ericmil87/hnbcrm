@@ -1,16 +1,27 @@
-import { Link, Navigate, useLocation } from "react-router";
+import { useEffect } from "react";
+import { Link, Navigate, useLocation, useSearchParams } from "react-router";
 import { useConvexAuth } from "convex/react";
-import { SignInForm } from "@/SignInForm";
+import { EmailEntryCard } from "@/components/auth/EmailEntryCard";
 import { Spinner } from "@/components/ui/Spinner";
 import { ArrowLeft } from "lucide-react";
 import { SEO } from "@/components/SEO";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { postLoginTarget } from "@/lib/signOutFlow";
+import { parseAuthFlow, parsePlanKey, storePlanIntent } from "@/lib/authEntry";
 
 export function AuthPage() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const initialFlow = parseAuthFlow(searchParams.get("modo"));
+  const planIntent = parsePlanKey(searchParams.get("plano"));
+
+  // Preserva o plano de interesse até a criação da organização (vale para entrar e para
+  // criar conta: a entrada unificada decide o caminho depois, sem sair desta tela).
+  useEffect(() => {
+    storePlanIntent(planIntent);
+  }, [planIntent]);
 
   if (isLoading) {
     return (
@@ -27,6 +38,7 @@ export function AuthPage() {
   return (
     <>
       <SEO
+        preloadDisplayFont
         title="Entrar"
         description="Acesse sua conta HNBCRM"
         noindex={true}
@@ -44,8 +56,8 @@ export function AuthPage() {
             <ArrowLeft size={16} />
             Voltar ao início
           </Link>
-          <BrandLogo className="h-16 w-16 mx-auto mb-4" />
-          <h1 className="text-3xl md:text-4xl font-bold text-text-primary mb-2">
+          <BrandLogo size="xl" decorative className="mx-auto mb-4" />
+          <h1 className="font-display text-3xl md:text-4xl font-bold text-text-primary mb-2">
             HNBCRM
           </h1>
           <p className="text-lg md:text-xl text-text-secondary">
@@ -53,7 +65,7 @@ export function AuthPage() {
           </p>
         </div>
         <div className="animate-fade-in-up rounded-card border border-border-subtle bg-surface-raised p-5 shadow-card sm:p-6">
-          <SignInForm />
+          <EmailEntryCard intent={initialFlow} autoFocus />
         </div>
       </div>
     </div>

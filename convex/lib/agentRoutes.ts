@@ -90,6 +90,17 @@ type RunQueryCtx = {
 };
 
 /**
+ * A resposta em áudio (P4.1, `lib/tts.ts`) só existe no OpenRouter e usa a
+ * chave da PLATAFORMA. Org em BYO (decidiu pagar e escolher o próprio provedor)
+ * ou com a rota do atendente em `opencode-only` (tirou o OpenRouter da cadeia)
+ * não manda texto para lá: a resposta sai em texto.
+ */
+export function platformTtsAllowed(providerConfig: OrgProviderConfig | null | undefined): boolean {
+  if (providerConfig?.mode === "byo") return false;
+  return effectivePlatformOrder(providerConfig, "attendant") !== "opencode-only";
+}
+
+/**
  * Ordem efetiva da cadeia para um produto. Precedência, do mais específico ao
  * mais geral: escolha do PRODUTO > padrão da ORG > override de ops no
  * deployment (env LLM_PLATFORM_ORDER) > "auto".

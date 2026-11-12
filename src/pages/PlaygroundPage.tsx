@@ -24,7 +24,6 @@ export function PlaygroundPage() {
       <SEO
         title="API Playground"
         description="Teste a API REST do HNBCRM interativamente. 113 endpoints para leads, contatos, conversas, campanhas, grupos, tarefas e webhooks."
-        keywords="api playground, rest api, testing, developer tools"
       />
       <PlaygroundConfigProvider>
         <div className="h-screen flex flex-col bg-surface-base text-text-primary">
@@ -33,8 +32,7 @@ export function PlaygroundPage() {
           <div className="px-4 py-2.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 min-w-0">
               <Link to="/" className="flex items-center gap-1.5 flex-shrink-0">
-                <BrandLogo className="h-6 w-6 object-contain" />
-                <span className="text-sm font-bold text-text-primary hidden sm:inline">HNBCRM</span>
+                <BrandLogo variant="responsive" size="sm" />
               </Link>
               <span className="text-text-muted text-xs hidden sm:inline">/</span>
               <Link to="/developers" className="text-xs text-text-secondary hover:text-text-primary transition-colors hidden sm:inline">

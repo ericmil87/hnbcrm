@@ -21,7 +21,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { encryptSecret, secretLast4 } from "./lib/secretCrypto";
 import {
   DEFAULT_AGENDA_HEADER,
-  isValidAgendaUrl,
+  agendaUrlProblem,
   isValidHeaderName,
 } from "./lib/externalAgenda";
 import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
@@ -35,9 +35,8 @@ import {
   supportsVision,
   visionModelOptions,
 } from "./lib/llm/registry";
-import { personaById, personaForIndustry } from "./lib/agentPersonas";
+import { seedAttendantCore } from "./lib/attendantSeed";
 import {
-  insertAgentTextsForNewMember,
   readAgentTexts,
   stripAgentTexts,
 } from "./lib/agentProfileTexts";
@@ -196,6 +195,12 @@ export const setFeatureToggles = mutation({
     attendantEnabled: v.optional(v.boolean()),
     visionEnabled: v.optional(v.boolean()),
     groupAgentEnabled: v.optional(v.boolean()),
+    // P4.1 — resposta em áudio (`lib/tts.ts`): ligar/desligar, voz de catálogo
+    // (`voiceReply.getVoiceReplySettings().voices`) e aviso de voz sintética
+    // opcional (`""` remove). Ausente = não mexe.
+    voiceReplyEnabled: v.optional(v.boolean()),
+    voiceReplyVoice: v.optional(v.string()),
+    voiceReplyNotice: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -501,75 +506,6 @@ export const getAttendantTexts = query({
   },
 });
 
-// Semente do atendente (compartilhada pelo 1-toque e pelo wizard de ativação):
-// persona por indústria, conhecimento das quickReplies, modo SUGESTÃO e SEM
-// horário (24h) — em sugestão nada é enviado sozinho, então restrição de
-// horário vira decisão de quem liga o autopilot, não default que silencia a IA.
-async function seedAttendant(
-  ctx: MutationCtx,
-  org: Doc<"organizations">,
-  actor: Doc<"teamMembers">,
-  opts: { personaId?: string; name?: string }
-): Promise<Id<"teamMembers">> {
-  const persona = opts.personaId
-    ? personaById(opts.personaId)
-    : personaForIndustry(org.onboardingMeta?.industry);
-
-  const quickReplies = await ctx.db
-    .query("quickReplies")
-    .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
-    .take(50);
-  const knowledge =
-    quickReplies.length > 0
-      ? "Perguntas e respostas frequentes do time:\n" +
-        quickReplies.map((r) => `- ${r.shortcut}: ${r.content}`).join("\n")
-      : undefined;
-
-  const now = Date.now();
-  const attendantId = await ctx.db.insert("teamMembers", {
-    organizationId: org._id,
-    name: opts.name?.trim() || "Atendente IA",
-    role: "ai",
-    type: "ai",
-    status: "active",
-    agentProfile: {
-      kind: "attendant",
-      mode: "suggest", // atendente começa SEMPRE em sugestão
-      // Texto (persona + FAQ) nasce em `agentProfileTexts`, não no doc.
-      textsMigratedAt: now,
-      language: "pt-BR",
-      handoffKeywords: persona.handoffKeywords,
-      // P4: regra de avanço default coerente com a persona (editável em
-      // Opções avançadas). Só a instrução em linguagem natural — board e
-      // estágios ficam no default da org até o admin configurar.
-      pipelineConfig: { advanceRules: persona.advanceRules },
-    },
-    createdAt: now,
-    updatedAt: now,
-  });
-  await insertAgentTextsForNewMember(
-    ctx,
-    { _id: attendantId, organizationId: org._id },
-    { systemPrompt: persona.systemPrompt, knowledge },
-    now
-  );
-
-  await ctx.db.insert("auditLogs", {
-    organizationId: org._id,
-    entityType: "teamMember",
-    entityId: attendantId,
-    action: "create",
-    actorId: actor._id,
-    actorType: "human",
-    metadata: { type: "ai", kind: "attendant", persona: persona.id },
-    description: `Criou o atendente IA (persona ${persona.label}, modo sugestão)`,
-    severity: "high",
-    createdAt: now,
-  });
-
-  return attendantId;
-}
-
 // Ativação em 1 toque: cria o teamMember IA já semeado — modo SUGESTÃO, 24h.
 export const createAttendantOneClick = mutation({
   args: {
@@ -587,7 +523,7 @@ export const createAttendantOneClick = mutation({
     if (!aiConfig?.enabled || !aiConfig.lgpdAck) {
       throw new Error("Ative a IA (com o aceite LGPD) antes de criar o atendente");
     }
-    return await seedAttendant(ctx, org, member, args);
+    return await seedAttendantCore(ctx, org, member, args);
   },
 });
 
@@ -694,7 +630,7 @@ export const activateOneFlow = mutation({
       }
     } else {
       const orgFresh = (await ctx.db.get(args.organizationId))!;
-      attendantId = await seedAttendant(ctx, orgFresh, member, {
+      attendantId = await seedAttendantCore(ctx, orgFresh, member, {
         personaId: args.personaId,
         name: args.attendantName,
       });
@@ -1620,7 +1556,8 @@ function validateExternalAgendaInput(args: { url: string; headerName?: string; a
   apiKey: string | null;
 } {
   const url = args.url.trim();
-  if (!isValidAgendaUrl(url)) throw new Error("A URL da agenda precisa começar com https://");
+  const urlProblem = agendaUrlProblem(url);
+  if (urlProblem) throw new Error(urlProblem);
   const headerName = args.headerName?.trim() || undefined;
   if (headerName && !isValidHeaderName(headerName)) {
     throw new Error("Nome de header inválido (use letras, números e hífen, ex.: X-API-Key)");

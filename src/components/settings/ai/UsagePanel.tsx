@@ -24,6 +24,8 @@ export const USAGE_KIND_LABELS: Record<string, string> = {
   group_radar: "Radar de oportunidades",
   simulator: "Simulador",
   attendant_draft: "Escrever com IA (atendente)",
+  onboarding: "Configuração por conversa",
+  tts: "Respostas em áudio",
 };
 
 export const SPEND_MODE_OPTIONS = [

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { calculatePricing, type BillingCycle } from "@/lib/pricing";
+import { valueToInput } from "@/lib/pricingConversation";
 import { PricingCalculatorView, type CalculatorExample, type CalculatorValue } from "./PricingCalculatorView";
 
 const EXAMPLES: readonly (CalculatorExample & { value: CalculatorValue })[] = [
@@ -34,33 +35,22 @@ const INITIAL: CalculatorValue = EXAMPLES[0].value;
 
 interface PricingCalculatorProps {
   cycle: BillingCycle;
+  variant?: "full" | "compact";
+  fullTableHref?: string;
 }
 
-export function PricingCalculator({ cycle }: PricingCalculatorProps) {
+export function PricingCalculator({ cycle, variant = "full", fullTableHref }: PricingCalculatorProps) {
   const [value, setValue] = useState<CalculatorValue>(INITIAL);
 
-  const result = useMemo(
-    () =>
-      calculatePricing({
-        channels: value.channels,
-        aiAttendancesPerMonth: value.attendances,
-        byo: value.byo,
-        units: value.multiUnit ? value.units : undefined,
-        needs: {
-          groups: value.groups,
-          departments: value.teamModules,
-          translation: value.teamModules,
-          api: value.teamModules,
-        },
-        cycle,
-      }),
-    [value, cycle],
-  );
+  const result = useMemo(() => calculatePricing(valueToInput(value, cycle)), [value, cycle]);
 
   return (
     <PricingCalculatorView
       value={value}
       result={result}
+      cycle={cycle}
+      variant={variant}
+      fullTableHref={fullTableHref}
       examples={EXAMPLES}
       onChange={(patch) => setValue((v) => ({ ...v, ...patch }))}
       onPickExample={(id) => {

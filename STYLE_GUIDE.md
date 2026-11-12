@@ -10,25 +10,27 @@
 
 ### 1.1 Logo
 
-O logo HNBCRM é um ícone de aperto de mãos, representando a colaboração entre humanos e bots de IA. Existe em três variantes de cor (laranja, branco e preto), escolhidas conforme o tema:
+O logo HNBCRM é o "Encaixe": dois balões de conversa que se encaixam, o humano só com contorno e o da IA sólido, em verde, com uma faísca vazada. Existe em duas formas: o ícone e o ícone com o nome "HNBCRM" (wordmark em Plus Jakarta Sans 800, já em curvas).
 
 **Arquivos de logo:**
 
-| Arquivo | Variante | Uso |
-|---|---|---|
-| `public/orange_icon_logo_transparent-bg-528x488.png` | Laranja sobre transparente | Escuro (marca laranja): sidebar e header; só via `BrandLogo` |
-| `public/white_icon_logo_transparent-bg-528x488.png` | Branco sobre transparente | WhatsApp escuro: logo do app via `BrandLogo`; splash screens e marcas d'água em fundos escuros |
-| `public/black_icon_logo_transparent-bg-528x488.png` | Preto sobre transparente | **Principal** — páginas públicas (sempre Estilo WhatsApp, usam `/black_icon_logo_transparent-bg-528x488.png`); no app, Estilo WhatsApp e Claro via `BrandLogo`; impressão |
-| `public/icon_logo_white_bg_full-700x700.png` | Laranja sobre fundo branco | Favicon, meta tags, Open Graph |
-| `public/icon_logo_white_bg_full-700x700.jpg` | Laranja sobre fundo branco (JPG) | Fallback para plataformas sem suporte PNG |
+| Arquivo | Uso |
+|---|---|
+| `src/lib/brandLogo.ts` | Geometria única (caminhos SVG). O `BrandLogo` e o gerador leem daqui |
+| `public/brand/icone.svg`, `public/brand/icone-wordmark.svg` | Versões estáticas com cor fixa (humano `#111B21`, IA `#008069`), para material externo; o app não as usa |
+| `public/favicon.svg`, `favicon.ico` (16/32/48), `favicon-32x32.png`, `favicon-48x48.png` | Favicon: ícone branco sobre quadrado `#008069` |
+| `public/pwa-192x192.png`, `pwa-512x512.png`, `apple-touch-icon-180x180.png`, `maskable-icon-512x512.png`, `badge-96x96.png` | Ícones do PWA e do push (maskable com o ícone dentro da área segura; badge só alfa) |
+| `public/og-image.png` | Imagem de compartilhamento 1200x630 |
+
+Todos os PNG/ICO/OG vêm de `node scripts/generate-brand-assets.mjs` (sharp + Chrome local). Rode só quando o logo mudar (o iOS mantém o ícone já instalado).
 
 **Regras de uso:**
-- Área de respiro mínima: 1x a largura do ícone em todas as direções
-- Tamanho mínimo do ícone: 24px (mobile), 32px (desktop)
+- Área de respiro mínima: metade da largura do ícone em todas as direções
+- Tamanho mínimo do ícone: 24px (mobile), 32px (desktop); o wordmark a partir de 32px de altura
 - Nunca distorcer, rotacionar ou alterar as proporções do logo
-- No app use sempre `BrandLogo` (`src/components/ui/BrandLogo.tsx`), que troca a variante pelo tema: preto no Estilo WhatsApp e no Claro, branco no WhatsApp escuro, laranja no Escuro. Não referencie os PNGs direto em telas do app
-- Páginas públicas (landing, entrar, preços, developers, legais) ficam sempre no Estilo WhatsApp e usam o PNG preto
-- Fora dos temas (splash, marca d'água): fundo escuro = branco ou laranja; fundo claro = preto
+- Use sempre `BrandLogo` (`src/components/ui/BrandLogo.tsx`): `variant="icon" | "wordmark" | "responsive"` (ícone abaixo do breakpoint, wordmark a partir dele) e `size="sm|md|lg|xl|2xl"`. É SVG inline: o balão humano é `currentColor` (`text-text-primary`) e o da IA é o token `logo-ai` (`fill-logo-ai`, verde nos 4 temas). Com o texto "HNBCRM" ao lado, passe `decorative`
+- Não referencie arquivos de logo em telas; páginas públicas ficam no Estilo WhatsApp e usam o mesmo componente
+- Tipografia: corpo em Inter Variable (`font-sans`), títulos das páginas públicas em Plus Jakarta Sans (`font-display`), ambas auto-hospedadas em `public/fonts/`
 
 ### 1.2 Paleta de Cores
 

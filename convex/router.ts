@@ -33,8 +33,10 @@ import {
   deletionStatusPage as metaDeletionStatusPage,
 } from "./metaMessaging";
 import { copilotStream } from "./copilotHttp";
+import { handleOnboardingStream, onboardingStreamPreflight } from "./onboardingHttp";
 import { telegramWebhook } from "./telegramHttp";
 import { asaasWebhook } from "./billingHttp";
+import { clientIpKey } from "./lib/onboardingBudget";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
 
 const http = httpRouter();
@@ -154,6 +156,8 @@ export const PERMISSION_DENIED_MESSAGE = "Permissão insuficiente";
  * O comentário de cada entrada aponta a função do app que ditou o nível.
  */
 export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
+  // Onboarding conversacional (JWT do usuário, não API key) — onboardingSessions.* (settings:manage)
+  "POST /api/onboarding/stream": { category: "settings", level: "manage" },
   // Leads — convex/leads.ts
   "POST /api/v1/inbound/lead": { category: "leads", level: "edit_own" }, // leads.createLead (captura universal)
   "GET /api/v1/leads": { category: "leads", level: "view_own" }, // leads.getLeads (requireAuth)
@@ -304,6 +308,7 @@ export const PUBLIC_API_ROUTES: readonly string[] = [
   "POST /api/v1/forms/public/submit",
   "POST /api/v1/forms/public/partial",
   "POST /api/v1/forms/experiment/view",
+  "POST /api/v1/public/contact", // pedido de contato/consultoria → lead na org interna (hnbcrmLeads.ts)
   "GET /api/v1/embed.js",
   "GET /api/v1/openapi.json",
   "POST /api/v1/webhooks/resend",
@@ -332,6 +337,24 @@ export function requireRoutePermission(
   }
   return errorResponse(PERMISSION_DENIED_MESSAGE, 403);
 }
+
+// ---- Onboarding conversacional v2 (P2.3): SSE autenticado por JWT do usuário ----
+// Não é REST de API key: a rota resolve o membro pelo JWT e aplica o MESMO gate
+// fail-closed (`ROUTE_PERMISSIONS` + `requireRoutePermission`) às permissões dele.
+http.route({
+  path: "/api/onboarding/stream",
+  method: "POST",
+  handler: httpAction(async (ctx, request) =>
+    handleOnboardingStream(ctx, request, (permissions) =>
+      requireRoutePermission({ permissions }, "POST", "/api/onboarding/stream")
+    )
+  ),
+});
+http.route({
+  path: "/api/onboarding/stream",
+  method: "OPTIONS",
+  handler: httpAction(async () => onboardingStreamPreflight()),
+});
 
 // ---- Lead Endpoints ----
 
@@ -2561,6 +2584,55 @@ http.route({
   }),
 });
 
+// Pedido de contato/consultoria — POST /api/v1/public/contact
+// Público (sem API key): honeypot, limite de corpo, rate limit por IP/e-mail/dia e
+// validação na mutation. Sem org interna configurada: 503 {ok:false, code:"unavailable"}
+// (o front cai para o mailto). Honeypot preenchido: 200 {ok:true} sem criar nada.
+http.route({
+  path: "/api/v1/public/contact",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      // Recusa pelo Content-Length ANTES de ler o corpo; o corte pelo texto cobre quem omite o cabeçalho.
+      const declared = Number(request.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > 8_000) {
+        return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
+      }
+      const text = await request.text();
+      if (text.length > 8_000) return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
+      let body: unknown;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return jsonResponse({ ok: false, code: "invalid", message: "Corpo inválido." }, 400);
+      }
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        return jsonResponse({ ok: false, code: "invalid", message: "Corpo inválido." }, 400);
+      }
+      const b = body as Record<string, unknown>;
+      if (typeof b._honeypot === "string" && b._honeypot.trim() !== "") return jsonResponse({ ok: true });
+      const str = (x: unknown): string => (typeof x === "string" ? x : "");
+      const result = await ctx.runMutation(internal.hnbcrmLeads.internalSubmitContactRequest, {
+        name: str(b.name),
+        email: str(b.email),
+        ...(typeof b.phone === "string" ? { phone: b.phone } : {}),
+        ...(typeof b.business === "string" ? { business: b.business } : {}),
+        ...(typeof b.teamSize === "string" ? { teamSize: b.teamSize } : {}),
+        need: str(b.need),
+        kind: str(b.kind),
+        ipKey: clientIpKey(request) ?? undefined,
+      });
+      if (result.ok) return jsonResponse({ ok: true });
+      const status = result.code === "rate_limited" ? 429 : result.code === "unavailable" ? 503 : 400;
+      return jsonResponse(result, status);
+    } catch (err) {
+      // Só a mensagem do erro: nunca o corpo (dados do solicitante).
+      console.error("[contact]", err instanceof Error ? err.message : "erro");
+      return jsonResponse({ ok: false, code: "error", message: "Não foi possível enviar agora." }, 500);
+    }
+  }),
+});
+
 // Save partial form submission — POST /api/v1/forms/public/partial
 http.route({
   path: "/api/v1/forms/public/partial",
@@ -4449,6 +4521,7 @@ http.route({ path: "/api/v1/webhooks/resend", method: "OPTIONS", handler: option
 http.route({ path: "/api/v1/forms/public", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/submit", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/forms/public/partial", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/public/contact", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns/get", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/campaigns/report", method: "OPTIONS", handler: optionsHandler });

@@ -29,6 +29,7 @@ import { teardownPushOnLogout } from "@/lib/push/subscription";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
+import { SELECTED_ORG_KEY } from "@/lib/selectedOrg";
 import { PwaUpdateManager } from "../pwa/PwaUpdateManager";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
 import {
@@ -56,7 +57,6 @@ export type AppOutletContext = {
   selectOrganization: (orgId: Id<"organizations">) => void;
 };
 
-const SELECTED_ORG_KEY = "hnbcrm.selectedOrgId";
 const KNOWN_ORGS_KEY_PREFIX = "hnbcrm.knownOrgIds.";
 
 function readStoredOrgId(): Id<"organizations"> | null {
@@ -530,7 +530,7 @@ function WelcomeScreen({
     <div className="flex items-center justify-center min-h-screen supports-[height:100dvh]:min-h-[100dvh] px-4 py-8">
       <div className="w-full max-w-md">
         <div className="text-center mb-8 animate-fade-in-up">
-          <BrandLogo className="h-20 w-20 mx-auto mb-6" />
+          <BrandLogo size="2xl" decorative className="mx-auto mb-6" />
           <h1 className="text-2xl md:text-3xl font-bold text-text-primary mb-2">
             Bem-vindo ao HNBCRM
           </h1>

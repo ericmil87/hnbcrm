@@ -123,10 +123,14 @@ export interface PanelPart extends PanelPartData {
 }
 
 /** Salva só os formulários alterados, com o primeiro erro em toast e o aviso de saída. */
-export function usePanelSave(parts: PanelPart[], save: (patch: AgentProfilePatch) => Promise<void>) {
+export function usePanelSave(
+  parts: PanelPart[],
+  save: (patch: AgentProfilePatch) => Promise<void>,
+  extraDirty = false,
+) {
   const [saving, setSaving] = useState(false);
   const dirty = parts.some((p) => p.dirty);
-  const guardDialog = useUnsavedGuard(dirty);
+  const guardDialog = useUnsavedGuard(dirty || extraDirty);
   // Estado mais recente dos formulários: o `await` do salvar pode terminar depois de novas edições.
   const latest = useRef(parts);
   useEffect(() => {

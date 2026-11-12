@@ -100,7 +100,6 @@ export function DevelopersPage() {
       <SEO
         title="Developer Documentation"
         description="API REST, servidor MCP, webhooks e agent skills para integrar IA no HNBCRM. 113 endpoints documentados com playground interativo."
-        keywords="api, rest, mcp, webhooks, developer, integration, ai agents"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
@@ -108,8 +107,7 @@ export function DevelopersPage() {
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-shrink-0">
             <Link to="/" className="flex items-center gap-2">
-              <BrandLogo className="h-7 w-7 object-contain" />
-              <span className="text-lg font-bold text-text-primary hidden sm:inline">HNBCRM</span>
+              <BrandLogo variant="responsive" size="md" />
             </Link>
             <span className="text-text-muted hidden sm:inline">/</span>
             <span className="text-sm font-medium text-text-secondary hidden sm:inline">Developers</span>

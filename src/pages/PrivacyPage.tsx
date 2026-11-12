@@ -25,15 +25,13 @@ export function PrivacyPage() {
       <SEO
         title="Política de Privacidade"
         description="Política de Privacidade do HNBCRM — quais dados tratamos, como atuamos como operador em nome da sua organização, o canal WhatsApp, Instagram e Facebook Messenger, os grupos de WhatsApp e seus direitos sob a LGPD."
-        keywords="política de privacidade, lgpd, proteção de dados, hnbcrm, privacidade, grupos de whatsapp, instagram, messenger, exclusão de dados"
       />
       <div className="min-h-screen bg-surface-base text-text-primary">
         {/* Header */}
         <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur-md border-b border-border">
           <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
             <Link to="/" className="flex items-center gap-2">
-              <BrandLogo className="h-7 w-7 object-contain" />
-              <span className="text-lg font-bold text-text-primary">HNBCRM</span>
+              <BrandLogo variant="wordmark" size="md" />
             </Link>
             <div className="flex items-center gap-1">
               <PublicThemeButton />
@@ -83,7 +81,14 @@ export function PrivacyPage() {
                 <span className="text-text-primary font-medium">Dados de conta:</span> nome, e-mail,
                 credenciais de acesso (armazenadas de forma protegida), organização à qual o usuário
                 pertence, papel e permissões, além de registros de auditoria das ações realizadas na
-                plataforma.
+                plataforma. Ao criar uma conta, o seu nome e o seu e-mail também são registrados como
+                contato comercial do HNBCRM, para que possamos responder e acompanhar o seu cadastro.
+              </p>
+              <p>
+                <span className="text-text-primary font-medium">Onboarding por conversa:</span> o texto
+                que você escreve e os materiais que envia (sites, PDFs, imagens e áudios) na conversa de
+                configuração são processados por inteligência artificial de provedores parceiros, que
+                podem estar fora do Brasil. Não envie dados pessoais de clientes nessa conversa.
               </p>
               <p>
                 <span className="text-text-primary font-medium">

@@ -13,6 +13,8 @@
  * so it survives whichever serialization wuzapi emits.
  */
 
+import { isValidWaveform, waveformToBase64 } from "./tts";
+
 export interface BridgeSendRequest {
   url: string;
   headers: Record<string, string>;
@@ -231,6 +233,132 @@ export function bridgeSendKindForMime(mimeType: string): BridgeMediaSendKind {
   return "document";
 }
 
+const baseMime = (mimeType: string): string => (mimeType || "").split(";")[0].trim().toLowerCase();
+
+/**
+ * File name sent to the Whisper service `/convert` with a voice note.
+ *
+ * Only Safari's mp4/AAC recordings (`audio/mp4`, `.m4a`) get an extension, as a
+ * hint for the converter's input container. Everything else, including the
+ * Chrome webm path that works today, keeps the bare `voice-note` name: changing
+ * it would need validation against the live service.
+ */
+export function voiceNoteConvertFilename(mimeType: string): string {
+  const base = baseMime(mimeType);
+  if (base === "audio/mp4" || base === "audio/x-m4a" || base === "audio/m4a") return "voice-note.m4a";
+  if (base === "audio/aac") return "voice-note.aac";
+  return "voice-note";
+}
+
+/** Extension (without dot) for an audio sent as a document, by base mime. */
+const AUDIO_DOCUMENT_EXT: Record<string, string> = {
+  "audio/mp4": "m4a",
+  "audio/x-m4a": "m4a",
+  "audio/m4a": "m4a",
+  "audio/aac": "aac",
+  "audio/webm": "webm",
+  "audio/mpeg": "mp3",
+  "audio/wav": "wav",
+  "audio/amr": "amr",
+};
+
+export const BRIDGE_AUDIO_AS_DOCUMENT_NOTE =
+  "Nota de voz enviada como arquivo de áudio: a conversão para ogg/opus não estava disponível";
+
+/** `true` when a voice note needs the `/convert` pass before going out. */
+export function bridgeAudioNeedsConversion(fileMimeType: string): boolean {
+  return baseMime(fileMimeType) !== "audio/ogg";
+}
+
+export type BridgeAudioSendPlan = {
+  kind: BridgeMediaSendKind;
+  /** Mime of the data-URI that goes to the gateway. */
+  sendMime: string;
+  /** Use the converted ogg/opus bytes instead of the stored original. */
+  useConverted: boolean;
+  /** File name (documents only). */
+  filename?: string;
+  /** Dispatch note shown on the message when the plan degrades. */
+  note?: string;
+  /**
+   * Voice note fields for `/chat/send/audio` (AI voice reply, P4.1): only when the
+   * message carries a valid `metadata.voiceNote` AND the plan stays on the audio
+   * endpoint. Human recordings carry none, so their request is unchanged.
+   */
+  voiceFields?: BridgeVoiceNoteFields;
+};
+
+/**
+ * Extra body fields of the wuzapi `SendAudio` handler (read from upstream
+ * `handlers.go`, spike P0.4): `ptt` (default true upstream), `mimetype`,
+ * `Seconds` (uint32) and `Waveform` (`[]byte` = base64 string in JSON). Go's
+ * JSON decoder matches keys case-insensitively, so `PTT`/`MimeType` reach the
+ * `ptt`/`mimetype` tags. The version running on the managed VPS was NOT
+ * verified: an older gateway ignores unknown fields (Go default).
+ */
+export type BridgeVoiceNoteFields = {
+  PTT: true;
+  MimeType: string;
+  Seconds: number;
+  Waveform?: string;
+};
+
+/** Mime declared to WhatsApp for a voice note. */
+export const VOICE_NOTE_MIME = "audio/ogg; codecs=opus";
+
+/**
+ * `metadata.voiceNote` ({ seconds, waveform }) → wuzapi fields, or undefined when
+ * absent/invalid. `seconds` must be an integer 1–3600; `waveform` is optional and
+ * must be 64 integers 0–100 (anything else is dropped, never sent half-valid).
+ */
+export function bridgeVoiceNoteFields(voiceNote: unknown): BridgeVoiceNoteFields | undefined {
+  if (!voiceNote || typeof voiceNote !== "object") return undefined;
+  const { seconds, waveform } = voiceNote as { seconds?: unknown; waveform?: unknown };
+  if (typeof seconds !== "number" || !Number.isInteger(seconds) || seconds < 1 || seconds > 3600) {
+    return undefined;
+  }
+  const wave = isValidWaveform(waveform) ? waveformToBase64(waveform) : undefined;
+  return { PTT: true, MimeType: VOICE_NOTE_MIME, Seconds: seconds, ...(wave ? { Waveform: wave } : {}) };
+}
+
+/**
+ * How a voice note (`contentType: "audio"`) goes out through the bridge.
+ *
+ * - ogg original → `/chat/send/audio` as is (voice note).
+ * - converted to ogg/opus → `/chat/send/audio` with the converted bytes.
+ * - not ogg and not converted → `/chat/send/document` with the original bytes
+ *   and a name whose extension matches the REAL mime (an old iPhone recording
+ *   may be stored as `.webm` with `audio/mp4`). The audio endpoint is never
+ *   fed `data:audio/mp4`/`webm` (wuzapi expects ogg there); the document
+ *   endpoint is the one already used for every PDF/Office attachment.
+ */
+export function planBridgeAudioSend(input: {
+  fileMimeType: string;
+  fileName: string;
+  converted: boolean;
+  /** `message.metadata.voiceNote` (AI voice reply): adds PTT/Seconds/Waveform/MimeType. */
+  voiceNote?: unknown;
+}): BridgeAudioSendPlan {
+  const base = baseMime(input.fileMimeType);
+  const voiceFields = bridgeVoiceNoteFields(input.voiceNote);
+  if (base === "audio/ogg") {
+    return { kind: "audio", sendMime: input.fileMimeType, useConverted: false, ...(voiceFields ? { voiceFields } : {}) };
+  }
+  if (input.converted) {
+    return { kind: "audio", sendMime: "audio/ogg; codecs=opus", useConverted: true, ...(voiceFields ? { voiceFields } : {}) };
+  }
+  const ext = AUDIO_DOCUMENT_EXT[base];
+  const name = (input.fileName || "").trim() || "nota-de-voz";
+  const stem = name.replace(/\.[A-Za-z0-9]{1,8}$/, "") || "nota-de-voz";
+  return {
+    kind: "document",
+    sendMime: base || "application/octet-stream",
+    useConverted: false,
+    filename: ext ? `${stem}.${ext}` : name,
+    note: BRIDGE_AUDIO_AS_DOCUMENT_NOTE,
+  };
+}
+
 // Endpoint path + JSON body field carrying the base64 data-URI, per kind.
 // VALIDAR: paths `/chat/send/{image,audio,document,video}` and the PascalCase
 // body field names (Image/Audio/Document/Video) against the live wuzapi in U6.
@@ -262,6 +390,8 @@ export function buildBridgeMediaSendRequest(params: {
   filename?: string;
   quote?: BridgeQuote;
   mentions?: string[];
+  /** Voice note fields (audio only; ignored for the other kinds). */
+  voiceFields?: BridgeVoiceNoteFields;
 }): BridgeSendRequest {
   const base = params.baseUrl.replace(/\/+$/, "");
   const { path, field } = MEDIA_ENDPOINT[params.kind];
@@ -269,6 +399,7 @@ export function buildBridgeMediaSendRequest(params: {
   const body: Record<string, unknown> = {
     Phone: params.toPhone,
     [field]: params.dataUri,
+    ...(params.kind === "audio" && params.voiceFields ? params.voiceFields : {}),
   };
   // Audio (voice note) takes no caption; the others do when we have real text.
   if (params.kind !== "audio" && params.caption && params.caption.length > 0) {

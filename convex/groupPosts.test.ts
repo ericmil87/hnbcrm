@@ -26,6 +26,8 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { setSafeFetchDepsForTests } from "./lib/safeFetchNode";
+import { useFetchBackedSafeFetchForTests } from "./lib/safeFetchNode.test-helper";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -42,12 +44,16 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   t = convexTest(schema, modules);
+  // A rede da agenda passa pelo safeFetch (action Node): aqui ele usa o
+  // `fetch` global simulado, com todo nome resolvendo para um IP público.
+  useFetchBackedSafeFetchForTests();
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  setSafeFetchDepsForTests(null);
 });
 
 const asUser = (userId: Id<"users">) => t.withIdentity({ subject: `${userId}|s1` });

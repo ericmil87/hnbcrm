@@ -51,6 +51,34 @@ export function buildPasswordResetTemplate(data: {
 }
 
 /**
+ * E-mail com o código de 6 dígitos para confirmar o e-mail da conta (onboarding
+ * v2). Sem link: o usuário digita o código na tela. `code` é numérico, mas passa
+ * por escapeHtml por defesa em profundidade.
+ */
+export function buildEmailVerificationTemplate(data: {
+  code: string;
+  expiresMinutes: number;
+}): TemplateResult {
+  const base = appUrl();
+  return {
+    subject: "Seu código de confirmação do HNBCRM",
+    html: baseTemplate({
+      preheader: `Seu código de confirmação é ${data.code}.`,
+      appUrl: base,
+      content: `
+        ${heading("Confirme seu e-mail")}
+        ${paragraph("Use o código abaixo no HNBCRM para confirmar o seu e-mail e liberar o envio de materiais.")}
+        <div style="margin: 24px 0; text-align: center;">
+          <span style="display: inline-block; padding: 16px 32px; background: ${BG_DARK}; border: 1px solid ${BORDER_COLOR}; border-radius: 8px; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${BRAND_ORANGE};">${escapeHtml(data.code)}</span>
+        </div>
+        ${paragraph(`Esse código expira em ${data.expiresMinutes} minutos.`)}
+        ${paragraph("Se você não pediu este código, pode ignorar este e-mail.")}
+      `,
+    }),
+  };
+}
+
+/**
  * E-mail de boas-vindas, disparado ao criar uma organização (o admin que
  * acabou de se cadastrar — ver organizations.ts → createOrganization).
  * `memberName`/`orgName` são digitados pelo usuário no cadastro, então

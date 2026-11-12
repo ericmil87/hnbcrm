@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="public/orange_icon_logo_transparent-bg-528x488.png" alt="HNBCRM" width="120" />
+  <img src="public/pwa-512x512.png" alt="HNBCRM" width="120" />
 </p>
 
 <h1 align="center">HNBCRM</h1>
@@ -228,6 +228,7 @@ The backend runs on [Convex Cloud](https://convex.dev) — no infrastructure to 
    | Variable | Value |
    |----------|-------|
    | `VITE_CONVEX_URL` | Your Convex deployment URL (e.g. `https://your-app.convex.cloud`) |
+   | `VITE_COMMUNITY_URL` | Optional: `https://` invite link of your community group, shown on the landing (unset = hidden) |
 
 3. Deploy — Vercel auto-detects Vite, uses `npm run build`, outputs from `dist/`
 

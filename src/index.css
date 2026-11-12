@@ -2,6 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Self-hosted fonts (OFL 1.1, latin subset, variable wght). Files live in public/fonts/ (CSP font-src 'self').
+   Inter = body everywhere; Plus Jakarta Sans = `font-display` on the public pages' headings. */
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Plus Jakarta Sans Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 200 800;
+  src: url("/fonts/plus-jakarta-sans-latin-wght-normal.woff2") format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /*
  * Color tokens are RGB channels ("R G B") so Tailwind can apply alpha
  * (`bg-surface-base/50`). Use the full-color aliases below (`var(--surface-base)`,
@@ -34,6 +53,7 @@
   --rgb-brand-400: 251 146 60;
   --rgb-brand-500: 255 107 0;
   --rgb-brand-600: 234 88 12;
+  --rgb-logo-ai: 0 168 132;
   --rgb-brand-700: 194 65 12;
   --rgb-brand-800: 154 52 18;
   --rgb-brand-900: 124 45 18;
@@ -84,6 +104,10 @@
   --rgb-code-number: 255 166 87;
   --rgb-code-keyword: 210 168 255;
 
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
+
   /* Full-color aliases for raw CSS and inline styles */
   --surface-base:    rgb(var(--rgb-surface-base));
   --surface-raised:  rgb(var(--rgb-surface-raised));
@@ -104,6 +128,8 @@
   --color-semantic-info:    rgb(var(--rgb-semantic-info));
   --color-brand-500:        rgb(var(--rgb-brand-500));
   --color-brand-600:        rgb(var(--rgb-brand-600));
+  --qr-fg:                  rgb(var(--rgb-qr-fg));
+  --qr-bg:                  rgb(var(--rgb-qr-bg));
 
   --chat-wallpaper: none;
 
@@ -135,6 +161,7 @@
   --rgb-brand-400: 194 65 12;
   --rgb-brand-500: 194 65 12;
   --rgb-brand-600: 173 58 11;
+  --rgb-logo-ai: 0 128 105;
   --rgb-brand-700: 154 52 18;
   --rgb-brand-800: 124 45 18;
   --rgb-brand-900: 108 39 16;
@@ -180,6 +207,10 @@
   --rgb-code-number: 149 56 0;
   --rgb-code-keyword: 102 57 186;
 
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
+
   --chat-wallpaper: none;
 
   --shadow-card:       0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
@@ -210,6 +241,7 @@
   --rgb-brand-400: 1 117 97;
   --rgb-brand-500: 1 117 97;
   --rgb-brand-600: 0 128 105;
+  --rgb-logo-ai: 0 128 105;
   --rgb-brand-700: 1 107 87;
   --rgb-brand-800: 1 92 75;
   --rgb-brand-900: 10 61 51;
@@ -255,6 +287,10 @@
   --rgb-code-number: 149 56 0;
   --rgb-code-keyword: 102 57 186;
 
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
+
   --chat-wallpaper:
     radial-gradient(rgb(84 101 111 / 0.1) 0.6px, transparent 0.6px),
     radial-gradient(rgb(84 101 111 / 0.1) 0.6px, transparent 0.6px);
@@ -287,6 +323,7 @@
   --rgb-brand-400: 33 199 160;
   --rgb-brand-500: 0 168 132;
   --rgb-brand-600: 0 128 105;
+  --rgb-logo-ai: 0 168 132;
   --rgb-brand-700: 0 110 90;
   --rgb-brand-800: 0 92 75;
   --rgb-brand-900: 2 77 64;
@@ -331,6 +368,10 @@
   --rgb-code-string: 126 231 135;
   --rgb-code-number: 255 166 87;
   --rgb-code-keyword: 210 168 255;
+
+  /* QR code: dark on light in every theme (scanners fail on inverted codes) */
+  --rgb-qr-fg: 17 27 33;
+  --rgb-qr-bg: 255 255 255;
 
   --chat-wallpaper:
     radial-gradient(rgb(233 237 239 / 0.06) 0.6px, transparent 0.6px),
@@ -467,6 +508,14 @@ body {
   }
 }
 
+/* === Kit de cena (landing/onboarding): pausar a cena congela também as animações CSS internas
+   (pontos de "digitando…", pulsos), não só a linha do tempo. Ver SceneLoop. === */
+[data-scene-paused="true"] *,
+[data-scene-paused="true"] *::before,
+[data-scene-paused="true"] *::after {
+  animation-play-state: paused !important;
+}
+
 /* === Safe area utility === */
 .pb-safe {
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -476,6 +525,7 @@ body {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }

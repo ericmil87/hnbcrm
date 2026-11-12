@@ -146,7 +146,9 @@ async function readEvents(res: Response): Promise<Array<Record<string, unknown>>
     .map((l) => JSON.parse(l.slice("data: ".length)));
 }
 
-describe("copilot SSE golden", () => {
+// Timeout explícito: o 1º teste paga a carga fria de todos os módulos do convex-test (~1,5 s sozinho);
+// sob várias suítes em paralelo passava dos 5 s padrão. Não há espera real nos demais (backoff com timer falso).
+describe("copilot SSE golden", { timeout: 30_000 }, () => {
   test("texto puro: thread → deltas → done; persiste user+assistant e fecha o run", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -410,13 +412,22 @@ describe("copilot SSE golden", () => {
       "fetch",
       vi.fn(async () => new Response("boom", { status: 500 }))
     );
-    const asUser = t.withIdentity({ subject: `${s.userId}|s1` });
-    const res = await asUser.fetch("/api/copilot/stream", {
-      method: "POST",
-      body: JSON.stringify({ organizationId: s.organizationId, message: "oi" }),
-    });
-    const events = await readEvents(res);
-    expect(events.map((e) => e.type)).toEqual(["thread", "error"]);
+    // O copilotTurn espera 1 s + 2 s (backoff) entre tentativas: só `setTimeout` vira falso e é
+    // avançado em lote, sem espera real (era ~3 s de relógio, estourava os 5 s sob carga).
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const asUser = t.withIdentity({ subject: `${s.userId}|s1` });
+      const res = await asUser.fetch("/api/copilot/stream", {
+        method: "POST",
+        body: JSON.stringify({ organizationId: s.organizationId, message: "oi" }),
+      });
+      const pending = readEvents(res);
+      for (let i = 0; i < 10; i++) await vi.advanceTimersByTimeAsync(1_000);
+      const events = await pending;
+      expect(events.map((e) => e.type)).toEqual(["thread", "error"]);
+    } finally {
+      vi.useRealTimers();
+    }
     const runs = await t.run(async (ctx) => await ctx.db.query("agentRuns").collect());
     expect(runs[0].status).toBe("error");
   });

@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { QR_BG, QR_FG } from "../components/landing/qrColors";
 import { contrastWithAlpha, hexToRgb, parseChannels, type Rgb } from "./contrast";
 
 const css = readFileSync(resolve(__dirname, "../index.css"), "utf8");
@@ -41,6 +42,7 @@ const DARK_HEX: Record<string, string> = {
   "chat-header": "18181B",
   "composer": "18181B",
   "composer-field": "09090B",
+  "logo-ai": "00A884",
   "bubble-in": "18181B",
   "bubble-in-link": "FB923C",
   "bubble-out": "EA580C",
@@ -67,6 +69,8 @@ const DARK_HEX: Record<string, string> = {
   "code-string": "7EE787",
   "code-number": "FFA657",
   "code-keyword": "D2A8FF",
+  "qr-fg": "111B21",
+  "qr-bg": "FFFFFF",
 };
 
 type Block = Record<string, string>;
@@ -157,7 +161,7 @@ interface Pair {
 const surfaces = ["surface-base", "surface-raised", "surface-overlay", "surface-sunken"];
 const PAIRS: Pair[] = [
   ...["text-primary", "text-secondary", "text-muted"].flatMap((fg) => surfaces.map((bg) => ({ fg, bg, min: 4.5 }))),
-  ...["brand-600", "semantic-success", "semantic-error", "semantic-warning", "semantic-info"].map((bg) => ({ fg: "white", bg, min: 4.5 })),
+  ...["brand-600", "brand-700", "semantic-success", "semantic-error", "semantic-warning", "semantic-info"].map((bg) => ({ fg: "white", bg, min: 4.5 })),
   ...["ai-300", "ai-400"].flatMap((fg) => ["surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5 }))),
   ...["bubble-in", "bubble-note", "chat-bg"].map((bg) => ({ fg: "text-primary", bg, min: 4.5 })),
   ...["bubble-out", "bubble-ai"].map((bg) => ({ fg: "bubble-out-fg", bg, min: 4.5 })),
@@ -176,6 +180,8 @@ const PAIRS: Pair[] = [
   // Code blocks: every readable color on the code background, in all four themes (comments included).
   ...["code-fg", "code-muted", "code-key", "code-string", "code-number", "code-keyword"].map((fg) => ({ fg, bg: "code-bg", min: 4.5 })),
   { fg: "code-muted", bg: "code-header", min: 4.5 },
+  // QR code: fixed dark on white, same in all four themes (AAA-level contrast for scanners).
+  { fg: "qr-fg", bg: "qr-bg", min: 7 },
   // Not checked in Escuro (its brand text and semantic colors are frozen, see DARK_KNOWN_FAILURES notes).
   ...["brand-300", "brand-400", "brand-500"].flatMap((fg) =>
     ["surface-base", "surface-raised", "surface-sunken"].map((bg) => ({ fg, bg, min: 4.5, notDark: true })),
@@ -291,6 +297,15 @@ describe("themeTokens: contraste do WhatsApp escuro", () => {
   it("white text on primary buttons (brand-600) and the send button is readable", () => {
     expect(measureIn("whatsapp-dark", { fg: "white", bg: "brand-600", min: 4.5 })).toBeGreaterThanOrEqual(4.5);
     expect(measureIn("whatsapp-dark", { fg: "white", bg: "chat-send", min: 3 })).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("themeTokens: logo-ai (balão da IA do logo) contra as superfícies", () => {
+  // Graphical object: WCAG 1.4.11 asks for 3:1.
+  const themes = ["light", "whatsapp", "whatsapp-dark", "dark"] as const;
+  const surfaces = ["surface-base", "surface-raised", "surface-overlay"] as const;
+  it.each(themes.flatMap((th) => surfaces.map((s) => [th, s] as const)))("%s: logo-ai on %s >= 3", (theme, surface) => {
+    expect(measureIn(theme, { fg: "logo-ai", bg: surface, min: 3 })).toBeGreaterThanOrEqual(3);
   });
 });
 
