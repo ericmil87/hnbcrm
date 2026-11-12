@@ -185,6 +185,8 @@ export function rateKey(scope: RateScope, id: string, windowName: string): strin
  */
 export function normalizeIpKey(raw: string | undefined | null): string | null {
   if (!raw) return null;
+  // Idempotente: a chave IPv6 já normalizada ("a:b:c:d::/64") volta igual.
+  if (raw.endsWith("::/64")) raw = raw.slice(0, -3);
   const parts = raw.split(",").map((p) => p.trim().toLowerCase()).filter(Boolean);
   const ip = parts[parts.length - 1];
   if (!ip || ip.length > 64) return null;
@@ -205,6 +207,24 @@ export function normalizeIpKey(raw: string | undefined | null): string | null {
   const groups = [...headGroups, ...Array(tail === null ? 0 : missing).fill("0"), ...tailGroups];
   if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
   return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "")).join(":")}::/64`;
+}
+
+/** Cabeçalhos com o IP do cliente, do mais confiável ao menos (a borda os define, não o cliente). */
+type HeaderReader = { headers: { get(name: string): string | null } };
+
+/**
+ * IP do cliente de uma rota HTTP, normalizado (`normalizeIpKey`). Ordem: `cf-connecting-ip`,
+ * `x-real-ip`, entrada mais à direita de `x-forwarded-for`. Nenhum válido = `console.warn`
+ * (uma vez por chamada, sem dado pessoal) e null: o chamador cai no balde compartilhado /
+ * limites por usuário.
+ */
+export function clientIpKey(request: HeaderReader): string | null {
+  for (const name of ["cf-connecting-ip", "x-real-ip", "x-forwarded-for"]) {
+    const ip = normalizeIpKey(request.headers.get(name));
+    if (ip) return ip;
+  }
+  console.warn("clientIpKey: nenhum cabeçalho de IP válido na requisição (balde compartilhado).");
+  return null;
 }
 
 /** Lançamento do onboarding v2: `legacy` criada a partir daqui entra no orçamento de teste. */

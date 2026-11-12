@@ -53,6 +53,10 @@
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex, nofollow" }]
     },
     {
+      "source": "/comecar",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
+    },
+    {
       "source": "/spa-fallback\\.html",
       "headers": [{ "key": "X-Robots-Tag", "value": "noindex" }]
     }

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   DEFAULT_GLOBAL_DAILY_USD_MICROS,
   DEFAULT_SESSION_BUDGET_USD_MICROS,
@@ -8,6 +8,7 @@ import {
   evaluateOnboardingBudget,
   getOnboardingBudgetConfig,
   normalizeIpKey,
+  clientIpKey,
   parseBudgetMicros,
 } from "./onboardingBudget";
 import { ONBOARDING_V2_LAUNCH_MS, onboardingOrgBudgetApplies } from "./onboardingBudget";
@@ -138,5 +139,36 @@ describe("onboardingOrgBudgetApplies", () => {
     expect(onboardingOrgBudgetApplies({ createdAt: ONBOARDING_V2_LAUNCH_MS, billing: { status: "legacy" } })).toBe(true);
     expect(onboardingOrgBudgetApplies({ createdAt: ONBOARDING_V2_LAUNCH_MS, billing: { status: "active", plan: "essencial" } })).toBe(false);
     expect(onboardingOrgBudgetApplies({ createdAt: ONBOARDING_V2_LAUNCH_MS, billing: { status: "past_due", plan: "essencial" } })).toBe(false);
+  });
+});
+
+describe("clientIpKey", () => {
+  const req = (h: Record<string, string>) => ({ headers: new Headers(h) });
+
+  test("ordem: cf-connecting-ip, x-real-ip, x-forwarded-for (mais à direita)", () => {
+    expect(clientIpKey(req({ "cf-connecting-ip": "203.0.113.1", "x-real-ip": "203.0.113.2", "x-forwarded-for": "9.9.9.9, 203.0.113.3" }))).toBe("203.0.113.1");
+    expect(clientIpKey(req({ "x-real-ip": "203.0.113.2", "x-forwarded-for": "203.0.113.3" }))).toBe("203.0.113.2");
+    expect(clientIpKey(req({ "x-forwarded-for": "1.1.1.1, 203.0.113.3" }))).toBe("203.0.113.3");
+  });
+
+  test("cabeçalho inválido cai para o próximo; IPv6 vira /64", () => {
+    expect(clientIpKey(req({ "cf-connecting-ip": "lixo", "x-real-ip": "2001:db8:1:2:3:4:5:6" }))).toBe("2001:db8:1:2::/64");
+  });
+
+  test("a chave normalizada é aceita de novo por normalizeIpKey", () => {
+    const k = clientIpKey(req({ "x-real-ip": "2001:db8:1:2:3:4:5:6" }));
+    expect(normalizeIpKey(k)).toBe(k);
+    expect(normalizeIpKey("203.0.113.9")).toBe("203.0.113.9");
+  });
+
+  test("sem cabeçalho: null e um único aviso, sem dado pessoal", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(clientIpKey(req({ "x-forwarded-for": "nao-e-ip" }))).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).not.toContain("nao-e-ip");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

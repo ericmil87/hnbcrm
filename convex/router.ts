@@ -36,6 +36,7 @@ import { copilotStream } from "./copilotHttp";
 import { handleOnboardingStream, onboardingStreamPreflight } from "./onboardingHttp";
 import { telegramWebhook } from "./telegramHttp";
 import { asaasWebhook } from "./billingHttp";
+import { clientIpKey } from "./lib/onboardingBudget";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
 
 const http = httpRouter();
@@ -2619,7 +2620,7 @@ http.route({
         ...(typeof b.teamSize === "string" ? { teamSize: b.teamSize } : {}),
         need: str(b.need),
         kind: str(b.kind),
-        ipKey: request.headers.get("x-forwarded-for") || request.headers.get("cf-connecting-ip") || undefined,
+        ipKey: clientIpKey(request) ?? undefined,
       });
       if (result.ok) return jsonResponse({ ok: true });
       const status = result.code === "rate_limited" ? 429 : result.code === "unavailable" ? 503 : 400;

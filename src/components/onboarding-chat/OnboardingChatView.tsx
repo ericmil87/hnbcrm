@@ -6,7 +6,7 @@ import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { Button, buttonClassName } from "@/components/ui/Button";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import type { TimelineItem } from "@/lib/onboardingChat";
+import { AI_PROCESSING_NOTICE, type TimelineItem } from "@/lib/onboardingChat";
 import { cn } from "@/lib/utils";
 import { MessageItem } from "./MessageItem";
 import { StageProgress } from "./StageProgress";
@@ -227,6 +227,9 @@ export function OnboardingChatView({
                 </Button>
               </div>
             )}
+            <p role="note" className="mx-2 rounded-card bg-surface-sunken px-3 py-2 text-caption text-text-muted">
+              {AI_PROCESSING_NOTICE}
+            </p>
             {intro}
             {timeline.map((item) => (
               <MessageItem

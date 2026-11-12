@@ -34,6 +34,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { Permissions } from "./lib/permissions";
 import { runOnboardingTurn, type TurnAttachment, type TurnInput } from "./lib/onboardingTurn";
+import { clientIpKey } from "./lib/onboardingBudget";
 
 const CORS = {
   "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
@@ -116,8 +117,8 @@ export async function handleOnboardingStream(
   if (denied) {
     return new Response(denied.body, { status: denied.status, headers: { "Content-Type": "application/json", ...CORS } });
   }
-  // 3. Rate limit por IP (entrada mais à direita do x-forwarded-for), antes do turno.
-  const ipKey = request.headers.get("x-forwarded-for") ?? request.headers.get("cf-connecting-ip") ?? undefined;
+  // 3. Rate limit por IP (`clientIpKey`: cf-connecting-ip, x-real-ip ou x-forwarded-for), antes do turno.
+  const ipKey = clientIpKey(request);
   if (ipKey) {
     const rate = await ctx.runMutation(internal.onboardingBudget.internalCheckOnboardingRateLimit, { ipKey });
     if (!rate.ok) return json(429, { error: rate.message, code: "rate_limited", retryAfterMs: rate.retryAfterMs });
