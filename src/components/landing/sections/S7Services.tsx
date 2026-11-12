@@ -1,7 +1,7 @@
 import { Check } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { buttonClassName } from "@/components/ui/Button";
-import { contactHref } from "@/lib/contactHref";
+import { ContactRequestButton } from "../ContactRequestForm";
 import { formatMoney } from "@/lib/format";
 import { followUpDisplay, serviceDisplays, type ServiceDisplay } from "@/lib/pricingCatalog";
 import { cn } from "@/lib/utils";
@@ -86,12 +86,11 @@ function PackageCard({ pkg }: { pkg: ServiceDisplay }) {
 /**
  * S7: "Feito com você". Pacotes de implantação, acompanhamento e consultoria
  * sob medida, sempre como opcional. Valores de `SERVICES` (catálogo). Os botões
- * abrem e-mail por `contactHref`; o formulário que cria lead entra na Onda 5.
+ * abrem o formulário de contato (`ContactRequestForm`), que cria lead na equipe do HNBCRM.
  */
 export function S7Services() {
   const packages = serviceDisplays();
   const followUp = followUpDisplay();
-  const href = contactHref("implantacao");
   return (
     <LandingSection
       id={LANDING_ANCHORS.services}
@@ -117,9 +116,9 @@ export function S7Services() {
         <div className="md:max-w-2xl">
           <Includes items={CUSTOM_COPY.includes} />
         </div>
-        <a href={href} className={buttonClassName("primary", "lg", "w-full sm:w-auto sm:self-start")}>
+        <ContactRequestButton topic="consultoria" variant="primary" size="lg" className="w-full sm:w-auto sm:self-start">
           Pedir orçamento
-        </a>
+        </ContactRequestButton>
       </div>
 
       <p className="mt-6 text-text-primary">
@@ -131,9 +130,9 @@ export function S7Services() {
       </p>
 
       <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-        <a href={href} className={buttonClassName("secondary", "lg")}>
+        <ContactRequestButton topic="implantacao" variant="secondary" size="lg">
           Falar com a gente
-        </a>
+        </ContactRequestButton>
       </div>
 
       <p className="mt-6 max-w-2xl text-sm text-text-muted">

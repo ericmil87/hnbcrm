@@ -29,14 +29,13 @@ describe("PricingSection", () => {
     expect(screen.getAllByRole("article")).toHaveLength(4);
   });
 
-  it("Falar com a gente (Empresa e servicos) abre e-mail, nunca o cadastro", () => {
+  it("Falar com a gente (Empresa e servicos) abre o formulario, nunca o cadastro", () => {
     renderWithRouter(page);
-    const emp = within(plan("Empresa")).getByRole("link", { name: "Falar com a gente" });
-    expect(emp.getAttribute("href")).toBe("mailto:contato@hnbcrm.com?subject=Plano%20Empresa");
+    const emp = within(plan("Empresa")).getByRole("button", { name: "Falar com a gente" });
+    expect(emp.closest("a")).toBeNull();
     const block = screen.getByRole("region", { name: "Quer que a gente monte junto?" });
     for (const name of ["Falar com a gente", "Pedir orçamento"]) {
-      const href = within(block).getByRole("link", { name }).getAttribute("href") ?? "";
-      expect(href.startsWith("mailto:contato@hnbcrm.com?subject=Implanta")).toBe(true);
+      expect(within(block).getByRole("button", { name }).closest("a")).toBeNull();
     }
   });
 

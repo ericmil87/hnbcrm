@@ -1,13 +1,15 @@
 /**
- * Link do botão "Falar com a gente" / "Pedir orçamento" (implantação e plano Empresa).
- * Ponto único: a Onda 5 troca por um formulário que cria lead sem mexer nos botões.
+ * Link de e-mail do "Falar com a gente" / "Pedir orçamento". Os botões abrem o formulário
+ * (`ContactRequestForm`, que cria lead); este mailto é a alternativa quando o formulário
+ * está indisponível (org interna sem configuração, rede, limite).
  */
 import { LEGAL_ENTITY } from "./legalEntity";
 
-export type ContactTopic = "implantacao" | "empresa";
+export type ContactTopic = "implantacao" | "consultoria" | "empresa";
 
 const SUBJECTS: Record<ContactTopic, string> = {
   implantacao: "Implantação HNBCRM",
+  consultoria: "Consultoria HNBCRM",
   empresa: "Plano Empresa",
 };
 
