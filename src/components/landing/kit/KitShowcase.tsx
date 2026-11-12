@@ -12,6 +12,10 @@ import { ChipRow, type Chip } from "./ChipRow";
 import { MiniFunnel } from "./MiniFunnel";
 import { PhoneNotification } from "./PhoneNotification";
 import { SceneLoop } from "./SceneLoop";
+import { ChatFeed } from "./ChatFeed";
+import { FunnelRail } from "./FunnelRail";
+import { PhoneFrame } from "./PhoneFrame";
+import { SceneSteps } from "./SceneSteps";
 import type { SceneStep } from "./useSceneTimeline";
 
 /**
@@ -180,6 +184,49 @@ export function KitShowcase({ reducedMotion }: KitShowcaseProps) {
             actions={[{ label: "Depois" }, { label: "Assumir", primary: true }]}
             enter
           />
+        </div>
+      </Panel>
+
+      <Panel title="Palco de altura fixa (ChatFeed, FunnelRail, PhoneFrame, SceneSteps)">
+        <SceneSteps
+          items={[
+            { id: "cliente", label: "Cliente chama" },
+            { id: "ia", label: "IA responde" },
+            { id: "funil", label: "Funil anda" },
+            { id: "voce", label: "Você entra" },
+          ]}
+          activeIndex={1}
+          className="mb-4 max-w-xl"
+        />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[minmax(0,5fr)_minmax(0,3fr)_minmax(0,4fr)]">
+          <ChatWindow
+            title="Marina"
+            subtitle="online"
+            avatar={<Avatar name="Marina" size="md" />}
+            className="h-80"
+            bodyClassName="min-h-0 gap-0 overflow-hidden p-0"
+          >
+            <ChatFeed>
+              <Bubble variant="system">Hoje</Bubble>
+              <AudioBubble variant="in" duration="0:14" time="23:14" playing />
+              <TypingDots variant="ai" />
+            </ChatFeed>
+          </ChatWindow>
+          <div className="rounded-card border border-border bg-surface-base p-1 md:h-80">
+            <FunnelRail
+              stages={FUNNEL_COLUMNS}
+              cards={[{ id: "paulo", title: "Paulo", subtitle: "pacote mensal", stageId: "novo" }]}
+              moving={{ title: "Marina", subtitle: "limpeza de pele", stageId: "interessado" }}
+              highlight
+              className="md:h-full"
+            />
+          </div>
+          <PhoneFrame time="23:14" className="h-80">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 text-center">
+              <p className="font-display text-4xl font-semibold tabular-nums text-text-primary">23:14</p>
+              <p className="text-sm text-text-secondary">A IA está atendendo</p>
+            </div>
+          </PhoneFrame>
         </div>
       </Panel>
 

@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { Bubble, AttachmentBubble, MiniFunnel, PhoneNotification } from "../kit";
-import { HelpRequest, SceneBox, SceneTag } from "./S3Parts";
+import { Building2, Globe, Megaphone, Users } from "lucide-react";
+import { HelpRequest, SceneBox, SceneChip, SceneTag } from "./S3Parts";
 
-/** Perfis, dores e cenas da seção S4 (copy aprovada em 11/11/2026). Todas as cenas são exemplos ilustrativos. */
+/** Perfis, dores e cenas da seção S4 (copy aprovada em 11/11/2026). As cenas são exemplos (a seção avisa uma vez, no rodapé). */
 
 export interface ProfilePain {
   today: string;
@@ -33,8 +34,53 @@ const FUNNEL_CARDS = [
   { id: "c4", title: "Tomás", columnId: "novo" },
   { id: "c5", title: "Rafael", subtitle: "2 quartos · financiamento", columnId: "qualificado" },
   { id: "c6", title: "Helena", columnId: "qualificado" },
-  { id: "c7", title: "Lúcia", columnId: "visita" },
+  { id: "c7", title: "Lúcia", subtitle: "Visita sábado, 10h", columnId: "visita" },
+  { id: "c8", title: "Marcos", subtitle: "Cobertura · à vista", columnId: "visita" },
 ] as const;
+
+const UNIT_BARS = [
+  { name: "Centro", count: 52 },
+  { name: "Norte", count: 41 },
+  { name: "Sul", count: 35 },
+] as const;
+
+/** Mini-painel da Central (números ilustrativos): três KPIs e conversas por unidade. */
+function CentralPanel() {
+  const max = Math.max(...UNIT_BARS.map((u) => u.count));
+  return (
+    <div className="flex flex-col justify-center rounded-card border border-border-subtle bg-surface-raised p-3 shadow-card">
+      <p className="flex items-center justify-between gap-2 text-sm font-semibold text-text-primary">
+        Central
+        <span className="text-caption font-normal text-text-muted">números ilustrativos</span>
+      </p>
+      <dl className="mt-3 grid grid-cols-3 gap-2">
+        {[
+          ["Primeira resposta", "1 min 40 s"],
+          ["Conversas hoje", "128"],
+          ["Convertidas", "31%"],
+        ].map(([label, value]) => (
+          <div key={label} className="min-w-0 rounded-field bg-surface-sunken p-2">
+            <dt className="text-caption leading-tight text-text-muted">{label}</dt>
+            <dd className="mt-1 text-base font-semibold tabular-nums leading-tight text-text-primary">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p className="mt-3 text-caption font-semibold text-text-secondary">Conversas por unidade</p>
+      <ul className="mt-1.5 space-y-2">
+        {UNIT_BARS.map((u) => (
+          <li key={u.name} className="grid grid-cols-[3.25rem_1fr_2rem] items-center gap-2 text-caption">
+            <span className="text-text-secondary">{u.name}</span>
+            <span aria-hidden="true" className="h-1.5 overflow-hidden rounded-full bg-surface-sunken">
+              <span className="block h-full rounded-full bg-brand-600" style={{ width: `${Math.round((u.count / max) * 100)}%` }} />
+            </span>
+            <span className="text-right font-semibold tabular-nums text-text-primary">{u.count}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-caption text-text-secondary">Atendidas pelo time: IA e equipe juntas.</p>
+    </div>
+  );
+}
 
 export const PROFILE_TABS: readonly ProfileTab[] = [
   {
@@ -142,7 +188,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
   {
     id: "corretor",
     label: "Corretor e imobiliária",
-    note: "Estamos construindo com corretores. Distribuição automática de leads entre a equipe e envio de materiais (book, planta) ainda não existem.",
+    note: "Estamos construindo com corretores: distribuição automática de leads e envio de book e planta ainda não existem.",
     pains: [
       {
         today: "O lead do anúncio chega à noite e esfria até de manhã.",
@@ -150,11 +196,17 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         sceneLabel: "Exemplo: lead do anúncio à noite",
         scene: (
           <SceneBox>
+            <div className="flex flex-wrap gap-1.5">
+              <SceneChip icon={Megaphone}>Anúncio · Apto 2 quartos</SceneChip>
+            </div>
             <Bubble variant="in" label="Cliente" time="21:40" enter>
               Vi o apartamento de 2 quartos. Podemos conversar?
             </Bubble>
             <Bubble variant="ai" label="Atendente IA" time="21:40" enter enterDelayMs={400}>
               Claro, Rafael! Para eu te ajudar melhor: você pensa em financiar? E para quando seria a mudança?
+            </Bubble>
+            <Bubble variant="in" label="Cliente" time="21:42" enter enterDelayMs={800}>
+              Vou financiar, sim. A mudança seria em uns 3 meses.
             </Bubble>
           </SceneBox>
         ),
@@ -166,19 +218,22 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         scene: (
           <SceneBox>
             <Bubble variant="system" enter>
-              Retorno do Rafael · segunda, 10h
+              Retorno agendado pela IA · Rafael · segunda, 10h
             </Bubble>
             <Bubble variant="ai" label="Atendente IA" time="segunda, 10:00" enter enterDelayMs={400}>
               Oi, Rafael! Conseguiu ver a simulação do financiamento?
+            </Bubble>
+            <Bubble variant="in" label="Rafael" time="10:12" enter enterDelayMs={800}>
+              Vi sim! Pode marcar uma visita no sábado?
             </Bubble>
           </SceneBox>
         ),
       },
       {
         today: "Você não sabe em que pé está cada lead.",
-        with: "Cada lead no seu Funil, com a conversa junto. Arraste no computador, use as setas no celular.",
+        with: "Cada lead na sua etapa do Funil, com a conversa junto. Você vê quem espera visita e quem ainda precisa de resposta.",
         sceneLabel: "Exemplo: Funil com leads",
-        scene: <MiniFunnel columns={FUNNEL_COLUMNS} cards={FUNNEL_CARDS} enter label="Exemplo de Funil" />,
+        scene: <MiniFunnel columns={FUNNEL_COLUMNS} cards={FUNNEL_CARDS} enter label="Funil de exemplo" className="h-full [&>div]:h-full [&>div>div]:min-h-[12rem]" />,
       },
     ],
   },
@@ -192,8 +247,17 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         sceneLabel: "Exemplo: mensagem do dia no grupo",
         scene: (
           <SceneBox>
-            <Bubble variant="ai" label="Mensagem do dia" time="07:30" enter>
+            <div className="flex flex-wrap gap-1.5">
+              <SceneChip icon={Users}>Grupo · Roda de conversa</SceneChip>
+            </div>
+            <Bubble variant="system" enter>
+              Publicação programada · 07:30
+            </Bubble>
+            <Bubble variant="ai" label="Mensagem do dia" time="07:30" enter enterDelayMs={400}>
               Bom dia! Sábado tem roda de conversa às 16h. Traga quem você quiser.
+            </Bubble>
+            <Bubble variant="in" label="Marina" time="07:41" enter enterDelayMs={800}>
+              Eu vou! Levo a Paula junto.
             </Bubble>
           </SceneBox>
         ),
@@ -204,11 +268,17 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         sceneLabel: "Exemplo: a IA responde no grupo quando é mencionada",
         scene: (
           <SceneBox>
+            <div className="flex flex-wrap gap-1.5">
+              <SceneChip icon={Users}>Grupo · Roda de conversa</SceneChip>
+            </div>
             <Bubble variant="in" label="Membro do grupo" time="12:15" enter>
               @Assistente quando é o próximo encontro?
             </Bubble>
             <Bubble variant="ai" label="Atendente IA" time="12:15" enter enterDelayMs={400}>
               Dia 22, às 19h, no espaço de sempre. Quer que eu mande o flyer?
+            </Bubble>
+            <Bubble variant="in" label="Membro do grupo" time="12:16" enter enterDelayMs={800}>
+              Quero, obrigado!
             </Bubble>
           </SceneBox>
         ),
@@ -219,11 +289,17 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         sceneLabel: "Exemplo: boas-vindas após inscrição pelo site",
         scene: (
           <SceneBox>
+            <div className="flex flex-wrap gap-1.5">
+              <SceneChip icon={Globe}>Formulário do site</SceneChip>
+            </div>
             <Bubble variant="system" enter>
-              Lead novo pelo formulário do site · Patrícia
+              Lead novo no Funil · Patrícia
             </Bubble>
             <Bubble variant="ai" label="Atendente IA" time="09:03" enter enterDelayMs={400}>
               Oi, Patrícia! Recebi sua inscrição. Posso te mandar os detalhes do encontro?
+            </Bubble>
+            <Bubble variant="in" label="Patrícia" time="09:05" enter enterDelayMs={800}>
+              Pode sim! Estou ansiosa.
             </Bubble>
           </SceneBox>
         ),
@@ -241,53 +317,26 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         scene: (
           <SceneBox>
             <div className="flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-caption font-semibold text-text-secondary shadow-bubble">
-                Unidade Centro
-              </span>
-              <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-caption font-semibold text-text-secondary shadow-bubble">
-                Departamento Reservas
-              </span>
+              <SceneChip icon={Building2}>Unidade Centro</SceneChip>
+              <SceneChip>Departamento Reservas</SceneChip>
             </div>
-            <Bubble variant="system" enter>
+            <Bubble variant="in" label="Hóspede" time="18:20" enter>
+              Vou chegar só às 23h. Tem problema?
+            </Bubble>
+            <Bubble variant="system" enter enterDelayMs={400}>
               Transferida para Recepção, com a nota "Hóspede chega às 23h."
+            </Bubble>
+            <Bubble variant="out" label="Recepção" time="18:24" enter enterDelayMs={800}>
+              Tudo certo, já vi a nota. Deixamos o seu check-in pronto para as 23h.
             </Bubble>
           </SceneBox>
         ),
       },
       {
         today: "O gestor não enxerga a operação.",
-        with: "A Central mostra a primeira resposta e quanto a IA e a equipe atenderam, por departamento e por unidade.",
-        sceneLabel: "Exemplo: painel Central (números ilustrativos)",
-        scene: (
-          <div
-            className="rounded-card border border-border-subtle bg-surface-raised p-3 shadow-card"
-          >
-            <p className="flex items-center justify-between text-sm font-semibold text-text-primary">
-              Central
-              <span className="text-caption font-normal text-text-muted">números ilustrativos</span>
-            </p>
-            <dl className="mt-3 space-y-3 text-sm">
-              <div>
-                <dt className="text-caption text-text-muted">Primeira resposta</dt>
-                <dd className="font-semibold tabular-nums text-text-primary">1 min 40 s</dd>
-              </div>
-              <div>
-                <dt className="text-caption text-text-muted">IA × equipe</dt>
-                <dd>
-                  <div aria-hidden="true" className="mt-1 flex h-2 overflow-hidden rounded-full bg-surface-sunken">
-                    <div className="h-full bg-ai-600" style={{ width: "68%" }} />
-                    <div className="h-full bg-brand-600" style={{ width: "32%" }} />
-                  </div>
-                  <span className="mt-1 block tabular-nums text-text-secondary">IA 68% · Equipe 32%</span>
-                </dd>
-              </div>
-              <div>
-                <dt className="text-caption text-text-muted">Por unidade</dt>
-                <dd className="tabular-nums text-text-secondary">Centro 1 min 20 s · Norte 2 min 05 s</dd>
-              </div>
-            </dl>
-          </div>
-        ),
+        with: "A Central mostra a primeira resposta, as conversas por unidade e por departamento e quantas foram convertidas.",
+        sceneLabel: "Exemplo: painel Central",
+        scene: <CentralPanel />,
       },
       {
         today: "O hóspede escreve em outro idioma.",
@@ -295,6 +344,9 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         sceneLabel: "Exemplo: tradução automática",
         scene: (
           <SceneBox>
+            <div className="flex flex-wrap gap-1.5">
+              <SceneChip icon={Globe}>Idioma · inglês</SceneChip>
+            </div>
             <Bubble variant="in" label="Cliente" time="20:40" enter>
               Hi! Do you have a room for two this Friday?
               <span className="mt-1 block border-t border-border-subtle pt-1 text-caption text-text-secondary">

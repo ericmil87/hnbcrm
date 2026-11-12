@@ -32,9 +32,9 @@ export interface WebManifest {
   screenshots: { src: string; sizes: string; type: string; form_factor: "narrow" | "wide"; label: string }[];
 }
 
-// Icons carry a version suffix (-v2): Chrome only refreshes the installed icon when the manifest changes, so a new
+// Icons carry a version suffix (-v3): Chrome only refreshes the installed icon when the manifest changes, so a new
 // logo needs new file names. The unversioned files stay in public/ for old caches, the push icon and apple-touch.
-const shortcutIcon = [{ src: "/pwa-192x192-v2.png", sizes: "192x192", type: "image/png" }];
+const shortcutIcon = [{ src: "/pwa-192x192-v3.png", sizes: "192x192", type: "image/png" }];
 
 export const WEB_MANIFEST: WebManifest = {
   id: MANIFEST_ID,
@@ -50,9 +50,9 @@ export const WEB_MANIFEST: WebManifest = {
   background_color: BACKGROUND_COLOR,
   categories: ["business", "productivity"],
   icons: [
-    { src: "/pwa-192x192-v2.png", sizes: "192x192", type: "image/png" },
-    { src: "/pwa-512x512-v2.png", sizes: "512x512", type: "image/png" },
-    { src: "/maskable-icon-512x512-v2.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+    { src: "/pwa-192x192-v3.png", sizes: "192x192", type: "image/png" },
+    { src: "/pwa-512x512-v3.png", sizes: "512x512", type: "image/png" },
+    { src: "/maskable-icon-512x512-v3.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
   ],
   shortcuts: [
     { name: "Conversas", short_name: "Conversas", url: "/app/entrada", icons: shortcutIcon },

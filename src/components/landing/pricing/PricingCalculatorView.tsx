@@ -189,6 +189,8 @@ function PeopleQuestion({ value, onChange }: PeopleQuestionProps) {
                   i === 0 && "left-0 text-left",
                   isLast && "right-0 text-right",
                   !isLast && i > 0 && "-translate-x-1/2 text-center",
+                  // Marcas vizinhas se sobrepõem em telas estreitas: lá ficam só as pontas e a do meio.
+                  !isLast && i > 0 && i % 2 === 1 && "hidden sm:block",
                 )}
                 style={!isLast && i > 0 ? { left: `${(attendancesToSlider(mark) / maxPosition) * 100}%` } : undefined}
               >
@@ -278,6 +280,8 @@ export function PricingCalculatorView({
     perPerson === null && result.plan === "essencial" && cycle === "monthly"
       ? planDisplay("essencial", cycle).perDayBrl
       : null;
+  const perDayCompact =
+    perDay ?? (cycle === "monthly" && result.plan !== "empresa" ? Math.round(result.totalMonthlyBrl / 30) : null);
   const overflowPlan = channelOverflowPlan(valueToInput(value, cycle), result);
   const hasUpgrade = result.upgradePlan !== null && result.upgradeAtAttendances !== null;
   const isEmpresa = result.plan === "empresa";
@@ -289,28 +293,9 @@ export function PricingCalculatorView({
     SETTLE_MS,
   );
 
-  return (
-    <div className="space-y-6">
-      {!compact && examples.length > 0 && (
-        <div>
-          <p className="mb-2 text-sm font-medium text-text-secondary">Ou comece por um exemplo</p>
-          <div className="flex flex-wrap gap-2">
-            {examples.map((ex) => (
-              <button
-                key={ex.id}
-                type="button"
-                onClick={() => onPickExample?.(ex.id)}
-                className="min-h-11 rounded-full border border-border bg-surface-raised px-4 text-sm text-text-primary hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-              >
-                {ex.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
+  const questions = (
+    <>
       <PeopleQuestion value={value.attendances} onChange={(attendances) => onChange({ attendances })} />
-
       <div>
         <p className="text-lg font-semibold text-text-primary">Em quantos números de WhatsApp?</p>
         <div className="mt-3">
@@ -333,6 +318,30 @@ export function PricingCalculatorView({
           </p>
         )}
       </div>
+    </>
+  );
+
+  return (
+    <div className={compact ? "space-y-6 lg:grid lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:items-start lg:gap-8 lg:space-y-0" : "space-y-6"}>
+      {!compact && examples.length > 0 && (
+        <div>
+          <p className="mb-2 text-sm font-medium text-text-secondary">Ou comece por um exemplo</p>
+          <div className="flex flex-wrap gap-2">
+            {examples.map((ex) => (
+              <button
+                key={ex.id}
+                type="button"
+                onClick={() => onPickExample?.(ex.id)}
+                className="min-h-11 rounded-full border border-border bg-surface-raised px-4 text-sm text-text-primary hover:bg-surface-overlay focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                {ex.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {compact ? <div className="space-y-6">{questions}</div> : questions}
 
       {!compact && (
         <div>
@@ -408,35 +417,61 @@ export function PricingCalculatorView({
           {announcement}
         </p>
 
-        <div aria-hidden="true">
-          <p className="text-base text-text-primary md:text-lg">
-            Para você:{" "}
-            <strong className="font-bold">
-              {planLabel},{" "}
-              <span data-testid="calculator-total" className="tabular-nums">
+        {compact ? (
+          <div aria-hidden="true">
+            <p className="text-caption font-semibold uppercase tracking-wide text-brand-600">Plano recomendado</p>
+            <p className="mt-1 font-display text-xl font-bold text-text-primary">{planLabel}</p>
+            <p className="mt-1 text-text-primary">
+              <span data-testid="calculator-total" className="text-4xl font-bold tabular-nums">
                 {totalText}
               </span>
-              /mês
-            </strong>
-            {result.overageAttendances > 0
-              ? `, já com o excedente estimado de ${money(result.overageBrl)}.`
-              : "."}
-          </p>
-          {perPerson !== null && (
-            <p className="mt-1 text-sm text-text-secondary tabular-nums">
-              Dá {money(perPerson)} por pessoa atendida, usando a franquia inteira.
+              <span className="text-base text-text-secondary">/mês</span>
             </p>
-          )}
-          {perDay !== null && (
-            <p className="mt-1 text-sm text-text-secondary tabular-nums">Cerca de {money(perDay)} por dia.</p>
-          )}
-          {!compact && hasUpgrade && (
-            <p className="mt-2 text-sm text-text-secondary tabular-nums">
-              Se passar de {formatCount(result.upgradeAtAttendances ?? 0)} pessoas por mês, o{" "}
-              <strong>{result.upgradePlan ? PLANS[result.upgradePlan].label : ""}</strong> passa a sair mais barato.
+            {result.overageAttendances > 0 && (
+              <p className="mt-1 text-sm text-text-secondary tabular-nums">
+                Já com o excedente estimado de {money(result.overageBrl)}.
+              </p>
+            )}
+            {perPerson !== null && (
+              <p className="mt-1 text-sm text-text-secondary tabular-nums">
+                Dá {money(perPerson)} por pessoa atendida, usando a franquia inteira.
+              </p>
+            )}
+            {perDayCompact !== null && (
+              <p className="mt-1 text-sm text-text-secondary tabular-nums">Cerca de {money(perDayCompact)} por dia.</p>
+            )}
+          </div>
+        ) : (
+          <div aria-hidden="true">
+            <p className="text-base text-text-primary md:text-lg">
+              Para você:{" "}
+              <strong className="font-bold">
+                {planLabel},{" "}
+                <span data-testid="calculator-total" className="tabular-nums">
+                  {totalText}
+                </span>
+                /mês
+              </strong>
+              {result.overageAttendances > 0
+                ? `, já com o excedente estimado de ${money(result.overageBrl)}.`
+                : "."}
             </p>
-          )}
-        </div>
+            {perPerson !== null && (
+              <p className="mt-1 text-sm text-text-secondary tabular-nums">
+                Dá {money(perPerson)} por pessoa atendida, usando a franquia inteira.
+              </p>
+            )}
+            {perDay !== null && (
+              <p className="mt-1 text-sm text-text-secondary tabular-nums">Cerca de {money(perDay)} por dia.</p>
+            )}
+            {!compact && hasUpgrade && (
+              <p className="mt-2 text-sm text-text-secondary tabular-nums">
+                Se passar de {formatCount(result.upgradeAtAttendances ?? 0)} pessoas por mês, o{" "}
+                <strong>{result.upgradePlan ? PLANS[result.upgradePlan].label : ""}</strong> passa a sair mais barato.
+              </p>
+            )}
+          </div>
+        )}
 
         <Link to={startHref(result.plan)} className="mt-3 block">
           <Button variant={isEmpresa ? "secondary" : "primary"} size="lg" className="w-full">

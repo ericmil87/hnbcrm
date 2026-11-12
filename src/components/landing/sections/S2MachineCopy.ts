@@ -10,7 +10,6 @@ export const MACHINE_SUBTITLE =
   "Um cliente manda áudio. A IA entende, responde e move o lead no Funil. Você só entra quando importa.";
 export const MACHINE_CAPTION =
   "Cena ilustrativa, com o Atendente no modo automático. Ele começa em modo sugestão, e você libera o automático quando quiser.";
-export const MACHINE_SWIPE_HINT = "Deslize para ver os três painéis";
 export const MACHINE_LABEL = "Cena ilustrativa: a máquina funcionando";
 export const MACHINE_DESCRIPTION =
   "Cena ilustrativa: às 23h14 uma cliente manda áudio perguntando horário e preço. A IA transcreve, responde, e o lead passa de Novo para Agendado no Funil. A dona recebe um aviso no celular, assume a conversa e manda o Pix. O Copiloto resume os leads quentes do dia.";
@@ -27,19 +26,42 @@ export const MACHINE_FUNNEL_COLUMNS = [
   { id: "agendado", title: "Agendado" },
 ] as const;
 
-/** ~20 s no total. */
+/** Leads parados no Funil (os mesmos que o Copiloto cita no resumo). Aparecem a partir de `md`. */
+export const MACHINE_FUNNEL_CARDS = [
+  { id: "ingrid", title: "Ingrid", subtitle: "voltou a falar", stageId: "novo" },
+  { id: "paulo", title: "Paulo", subtitle: "valor do pacote", stageId: "interessado" },
+] as const;
+
+/**
+ * ~24 s por volta. `saida` é o último passo: com movimento a cena esmaece e
+ * recomeça; com movimento reduzido é nele que a cena fica parada (estado final).
+ */
 export const MACHINE_STEPS: readonly SceneStep[] = [
-  { id: "inicio", duration: 800 },
-  { id: "audio", duration: 1600 },
-  { id: "transcricao", duration: 1800 },
-  { id: "digitando", duration: 1400 },
+  { id: "inicio", duration: 700 },
+  { id: "audio", duration: 1700 },
+  { id: "transcricao", duration: 1900 },
+  { id: "digitando", duration: 1300 },
   { id: "resposta", duration: 2200 },
-  { id: "cliente-ok", duration: 1800 },
-  { id: "ia-ok", duration: 1800 },
-  { id: "aviso", duration: 2400 },
+  { id: "cliente-ok", duration: 1500 },
+  { id: "digitando-2", duration: 1000 },
+  { id: "ia-ok", duration: 1500 },
+  { id: "agendado", duration: 1800 },
+  { id: "aviso", duration: 2200 },
+  { id: "toque", duration: 500 },
   { id: "equipe", duration: 2600 },
-  { id: "resumo", duration: 3800 },
+  { id: "resumo", duration: 4000 },
+  { id: "saida", duration: 600 },
 ];
+
+/** Capítulos da história (indicador no cabeçalho da cena); `from` = passo em que o capítulo começa. */
+export const MACHINE_CHAPTERS = [
+  { id: "cliente", label: "Cliente chama", from: "audio" },
+  { id: "ia", label: "IA responde", from: "digitando" },
+  { id: "funil", label: "Funil anda", from: "agendado" },
+  { id: "voce", label: "Você entra", from: "aviso" },
+] as const;
+
+export const MACHINE_BADGE = "Cena ilustrativa";
 
 export const MACHINE_TRANSCRIPT = "Oi, vocês têm horário no sábado? Queria saber o valor da limpeza de pele.";
 
@@ -63,13 +85,11 @@ export const MACHINE_TEXT = {
   teamMessage: "Oi, Marina! Aqui é a Ana. Vou te passar o Pix do sinal.",
   copilotTitle: "Copiloto",
   copilotSubtitle: "resumo de hoje",
-  copilotLabel: "Copiloto · resumo de hoje",
+  phoneClock: "23:14",
+  phoneLabel: "Seu celular",
+  restTitle: "Tudo em dia",
+  restBody: "A IA está atendendo",
+  restStatus: "Atendente IA no automático",
   copilotHeadline: "3 leads quentes hoje",
   copilotLeads: ["Marina · pronta para fechar", "Paulo · pediu valor do pacote", "Ingrid · voltou a falar hoje"],
 } as const;
-
-export const MACHINE_DOT_LABELS: Record<"conversa" | "funil" | "voce", string> = {
-  conversa: "Ver painel Conversa",
-  funil: "Ver painel Funil",
-  voce: "Ver painel Você",
-};
