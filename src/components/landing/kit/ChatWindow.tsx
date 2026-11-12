@@ -17,6 +17,8 @@ export interface ChatWindowProps {
   badge?: ReactNode;
   /** Ação no canto direito do cabeçalho (ex.: botão de pausa da cena). */
   headerAction?: ReactNode;
+  /** Faixa logo abaixo do cabeçalho, fora da rolagem (ex.: barra de progresso do onboarding). */
+  subheader?: ReactNode;
   /** Mensagens (bolhas). */
   children: ReactNode;
   /** Composer, chips ou qualquer rodapé da janela. */
@@ -59,6 +61,7 @@ export function ChatWindow({
   avatar,
   badge,
   headerAction,
+  subheader,
   children,
   composer,
   label,
@@ -89,6 +92,7 @@ export function ChatWindow({
         {badge}
         {headerAction}
       </div>
+      {subheader}
       <div
         className={cn("chat-wallpaper flex flex-1 flex-col gap-1.5 overflow-y-auto px-3 py-3", bodyClassName)}
         {...(live ? { role: "log", "aria-live": "polite" as const, "aria-relevant": "additions" as const } : {})}

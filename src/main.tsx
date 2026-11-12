@@ -14,6 +14,8 @@ import { installPreloadErrorHandler } from "./lib/pwa/preloadError";
 
 // Páginas públicas pesadas (ex.: DevelopersPage puxa o apiRegistry) ficam fora do bundle inicial.
 const LandingPage = lazy(() => import("./components/LandingPage").then(m => ({ default: m.LandingPage })));
+// Conversa do onboarding v2 (/comecar): pública na URL, exige conta para conversar.
+const OnboardingChatPage = lazy(() => import("./components/onboarding-chat/OnboardingChatPage").then(m => ({ default: m.OnboardingChatPage })));
 const AuthPage = lazy(() => import("./components/AuthPage").then(m => ({ default: m.AuthPage })));
 const DevelopersPage = lazy(() => import("./pages/DevelopersPage").then(m => ({ default: m.DevelopersPage })));
 const PlaygroundPage = lazy(() => import("./pages/PlaygroundPage").then(m => ({ default: m.PlaygroundPage })));
@@ -69,6 +71,7 @@ const router = createBrowserRouter([
   { path: "/developers/playground", element: <LazyRoute Component={PlaygroundPage} />, errorElement: <RouteErrorPage /> },
   { path: "/precos", element: <LazyRoute Component={PricingPage} />, errorElement: <RouteErrorPage /> },
   { path: "/entrar", element: <LazyRoute Component={AuthPage} />, errorElement: <RouteErrorPage /> },
+  { path: "/comecar", element: <LazyRoute Component={OnboardingChatPage} />, errorElement: <RouteErrorPage /> },
   { path: "/termos", element: <LazyRoute Component={TermsPage} />, errorElement: <RouteErrorPage /> },
   { path: "/privacidade", element: <LazyRoute Component={PrivacyPage} />, errorElement: <RouteErrorPage /> },
   { path: "/f/:formSlug", element: <LazyRoute Component={PublicFormPage} />, errorElement: <RouteErrorPage /> },

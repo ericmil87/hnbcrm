@@ -29,6 +29,7 @@ import { teardownPushOnLogout } from "@/lib/push/subscription";
 import type { UiTheme } from "../../../convex/lib/uiTheme";
 import { OnboardingWizardV2 } from "../onboarding/v2/OnboardingWizardV2";
 import { ErrorBoundary } from "../ErrorBoundary";
+import { SELECTED_ORG_KEY } from "@/lib/selectedOrg";
 import { PwaUpdateManager } from "../pwa/PwaUpdateManager";
 import { ChangePasswordScreen } from "../team/ChangePasswordScreen";
 import {
@@ -56,7 +57,6 @@ export type AppOutletContext = {
   selectOrganization: (orgId: Id<"organizations">) => void;
 };
 
-const SELECTED_ORG_KEY = "hnbcrm.selectedOrgId";
 const KNOWN_ORGS_KEY_PREFIX = "hnbcrm.knownOrgIds.";
 
 function readStoredOrgId(): Id<"organizations"> | null {
