@@ -2,6 +2,75 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não publicada]
+
+### Landing e preços novas
+
+- **Página inicial refeita.** Nova identidade visual (logotipo "Encaixe" e títulos em Plus Jakarta Sans, fontes hospedadas no próprio site), mensagem renovada e cenas animadas que mostram o atendente, o Copiloto e a equipe trabalhando juntos. As animações pausam fora da tela, têm botão de pausa e respeitam a opção "reduzir movimento" do aparelho. As cenas são exemplos ilustrativos e dizem isso; depoimentos só aparecem quando forem reais.
+- **Comece digitando.** O campo do topo da página inicial leva o que você escrever direto para a conversa de configuração (veja "Comece conversando"). Nada do que você digita ali é enviado a um servidor antes de você criar a conta.
+- **Página de preços nova.** Quatro planos em cartões de mesma altura, abas no celular, tabela "Compare os planos" recolhível, definições, perguntas frequentes e a unidade explicada: "pessoas atendidas pela IA no mês". O selo "Mais escolhido" ganhou mais contraste nos quatro temas.
+- **Calculadora de preço em formato de conversa.** Escolha o volume de atendimentos com uma barra (que também anda pelo teclado), ajuste canais e opções com botões e veja o resultado numa frase, fixa no rodapé no celular.
+- **Implantação e consultoria.** Pacotes de implantação (Express, Completa e Empresa, parcelados em até 3 vezes), acompanhamento mensal e consultoria sob orçamento. Para pedir, use o formulário de contato da página.
+- **Comunidade.** Quando o grupo da comunidade estiver configurado, a página inicial e o menu Ajuda levam até ele (no computador, também com QR code).
+- Os botões "Testar 30 dias grátis" e "Começar" abrem a conversa de configuração e preservam o plano escolhido na página de preços.
+
+### Comece conversando: configure o HNBCRM por uma conversa
+
+- **Nova tela `/comecar`.** Em vez de preencher formulários, você conta sobre o seu negócio numa conversa e o Copiloto de configuração monta uma proposta de operação. Quem ainda não tem conta cria a conta na própria conversa; quem prefere formulário segue para o assistente de configuração de sempre ("Prefiro preencher um formulário"), e quem já aplicou pode ir direto para o CRM.
+- **Materiais para ele ler.** Mande o link do site ou do Instagram, um PDF (até 20 MB), uma imagem ou flyer (até 5 MB) ou grave um áudio (até 3 minutos). O Copiloto aproveita o que encontrar para sugerir persona, respostas e conhecimento, sempre mostrando de onde veio cada informação.
+- **Rascunho de Operação.** A proposta aparece em cartões que você pode ajustar: o atendente (nome, tom, como trata o cliente), o conhecimento do negócio, as respostas rápidas, o funil de vendas (com animação), o resumo do negócio e a tradução. O que o Copiloto não conseguiu confirmar na fonte vem marcado e só entra se você liberar, informando um motivo.
+- **Montar minha operação.** Um clique cria funil, campos, respostas rápidas e o atendente. O atendente nasce sempre em modo "sugerir respostas": o piloto automático só liga se você escolher. Se a organização já tiver um atendente, ele não é alterado sem a sua confirmação explícita.
+- **Teste a IA antes de usar.** Converse com o atendente no simulador, ainda dentro da configuração, e veja o tutorial rápido de 5 cartões (tradução, áudio e imagem, pedido de ajuda à equipe, Copiloto e avisos no celular), que também fica no menu Ajuda.
+- **Próximos passos.** Ao final, o Copiloto leva você a conectar o canal (com o aviso honesto sobre o QR code do WhatsApp), convidar a equipe e entrar no grupo da comunidade.
+- **Respostas por áudio no Copiloto.** Se você mandar um áudio, ele pode responder falando. Valores, links e endereços sempre vão por escrito.
+- **Limites de uso.** A conversa tem limite de gasto por sessão, por organização em teste e por dia, além de limite de mensagens por usuário, organização e rede. Quando um limite é atingido, o Copiloto avisa em português.
+
+### Entrada por e-mail
+
+- **Um formulário só para entrar ou criar conta.** Digite o e-mail e o HNBCRM mostra, na mesma tela, "Bem-vindo de volta" (com senha e "Esqueci a senha") ou "Vamos criar sua conta". Se a verificação do e-mail falhar por qualquer motivo, você escolhe à mão entre "Já tenho conta" e "Criar conta". O plano escolhido na página de preços é preservado.
+- **Código de 6 dígitos para liberar os materiais.** Para o Copiloto ler site, PDF, imagem ou áudio, a conta precisa confirmar o e-mail com um código enviado por e-mail (vale 10 minutos, com 5 tentativas por código). Quem só conversa não precisa confirmar.
+
+### Atendente responde em áudio
+
+- **Responder em áudio no WhatsApp.** Novo cartão "Responder em áudio" nas configurações do atendente (Comportamento na conversa). Com ele ligado, quando o cliente manda um áudio, o atendente responde com uma nota de voz. Escolha a voz entre as opções disponíveis e, se quiser, um aviso curto de voz sintética para o primeiro áudio de cada conversa.
+- **Regras que não mudam.** Nunca fala Pix, links, valores, endereços, códigos, e-mails ou telefones: esses dados seguem por escrito, logo depois do áudio. Não responde em áudio em grupos, em respostas longas, em rascunhos para aprovação, em follow-up nem fora do português. Se algo falhar, a resposta sai em texto, nunca em silêncio.
+- **Onde funciona hoje.** Só em números do WhatsApp conectados por QR code. Fica desligado até você ligar, e as organizações existentes não mudam. Não há clonagem de voz, e o consumo entra no limite de gastos da IA.
+
+### Tradução e simulador
+
+- **Tradução no pacote recomendado.** Ao montar a operação pela conversa, o módulo de tradução automática pode ser ligado junto com a IA, só depois do aceite da IA.
+- **Simulador do atendente medido.** Ele respeita o modo leitura e o limite de gastos e passa a contar no consumo de IA (veja também "Mudanças que você pode notar").
+
+### Segurança e privacidade
+
+- **Proteções no onboarding.** O Copiloto de configuração lê o material em duas etapas: um leitor isolado, sem nenhuma ferramenta, extrai só conteúdo, e o entrevistador, que conversa com você, também não tem ferramentas. Tudo o que vem de site, PDF, imagem ou áudio é tratado como dado, nunca como instrução. Frases que parecem ordens ao modelo, dados de pagamento e links ou telefones que não estão na fonte são marcados e ficam de fora até você liberar. A aplicação só acontece por um clique seu, e a IA nunca liga sozinha o piloto automático.
+- **Leitura segura de sites e PDFs.** Só endereços https; endereços internos ou privados são recusados, inclusive por redirecionamento; há limite de tamanho e de tempo. O PDF é lido num processo isolado, com limite de memória e proteção contra arquivos malformados.
+- **Aviso de materiais.** Antes do primeiro material, o HNBCRM explica que o conteúdo é processado por provedores de IA (inclusive no exterior) e pede a sua ciência com um clique.
+- **Código de e-mail seguro.** O código é guardado apenas como assinatura criptográfica, expira em 10 minutos, invalida o anterior e tem limite de tentativas.
+- **Entrada por e-mail com limite.** A verificação do e-mail tem limite por endereço. Ainda não há limite por rede (IP) nem desafio anti-robô no cadastro, e criar conta com um e-mail que já existe continua avisando que ele já existe.
+- **Quem se cadastra vira contato do HNBCRM.** Ao criar uma organização, seu nome e e-mail entram como lead no CRM interno do HNBCRM, para podermos ajudar na implantação; o resumo do negócio só leva dados de listas fechadas (segmento e plano de interesse). Pedidos feitos no formulário de contato da página seguem o mesmo caminho.
+- **Agenda externa pela leitura segura.** A agenda externa do atendente passou a usar a mesma leitura segura de endereços.
+
+### Performance e SEO
+
+- **Páginas públicas bem mais rápidas.** A página inicial, preços, desenvolvedores, Termos e Privacidade carregam sem o código do aplicativo e já vêm com o conteúdo pronto no HTML. Em medição simulada de celular, o carregamento principal da página inicial caiu de cerca de 3,5 s para 2,3 s.
+- **Melhor para buscadores e para compartilhar.** Título, descrição, imagem de prévia e dados estruturados por página; mapa do site e orientações para robôs de busca (que podem ler as páginas públicas); área logada, entrada e formulários dos clientes ficam fora dos resultados de busca. A prévia ao compartilhar o link no WhatsApp usa a nova marca.
+- **Ícones do app e do navegador novos**, com a nova marca.
+
+### Correções
+
+- **Nota de voz no iPhone.** A gravação no app instalado e no Safari do iPhone passou a usar o formato que o aparelho realmente grava, com mensagens claras quando o microfone está negado, ocupado ou ausente, e o microfone é liberado ao sair. Se a conversão da nota de voz não estiver disponível no WhatsApp por QR code, o áudio vai como arquivo de áudio em vez de falhar.
+- **Páginas públicas.** Corrigidos o selo do plano mais escolhido, a animação de entrada e os botões de cadastro (que agora preservam o plano).
+- **Versão no rodapé.** Vem sempre do repositório.
+
+### Mudanças que você pode notar
+
+- **O simulador do atendente exige a IA ativa.** Sem a IA da organização ligada (e o aceite dado), o simulador pede para ativá-la antes de testar. Organizações com a IA ligada simulam como antes.
+- **Áudio gravado no Chrome em número oficial da Meta.** O WhatsApp oficial não aceita o formato gravado pelo Chrome e pelo Edge: agora o envio falha antes de sair, com um aviso claro, em vez de aparecer como enviado. Áudios do iPhone/Safari seguem saindo, como arquivo de áudio. Em número por QR code nada muda.
+- **Agenda externa do atendente.** O endereço da agenda aceita a porta 443 ou qualquer porta de 1024 a 65535. O flyer segue só na porta 443 e só por https: flyer em http deixa de ser baixado e o atendente responde só com texto.
+- **Novo menu "Ajuda"** na barra lateral (e em "Mais" no celular), com o tutorial do atendente e o link da comunidade.
+- **Instagram e Messenger continuam "em liberação"**, porque a conexão depende da aprovação da Meta.
+
 ## [0.80.0] - 2026-11-10
 
 ### Visual do WhatsApp como padrão e novo tema "WhatsApp escuro"

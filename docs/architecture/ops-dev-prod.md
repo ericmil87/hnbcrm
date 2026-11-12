@@ -18,7 +18,7 @@ npm run deploy:prod      # Publica backend no PROD (lê a chave de convex-prod-k
 
 Tests: `npm run test` (vitest + convex-test; `*.test.ts` em `convex/`). Seed data is available via `convex/seed.ts`.
 
-**CI (GitHub Actions, `.github/workflows/ci.yml`, v0.69):** roda em push/PR para `main` e em push de `ci/**`: `npm ci` → 3× `tsc` (convex, app, node) → `npm run test` (inclui `secretScan.test.ts`) → `npx vite build`, ~1,5 min, Node do `.nvmrc` (22). Atualização 11/2026 (P2.2): o `.nvmrc` passou para 24, igual ao runtime das actions Node fixado em `convex.json` (ver "Versão do Node" abaixo). **Sem** `convex dev --once` de propósito — não há deployment nem chave no CI, por isso `npm run lint` NÃO serve de CI. A suíte não depende de `.env.local` (o build lê `VITE_CONVEX_URL` com fallback vazio). Único teste sensível a carga com `{ retry: 2 }` pontual: `groupMediaPolicy.test.ts` ("fetch do sob demanda tem timeout menor que a trava") — não mudar o tempo. O `visualizer` do `vite.config.ts` só abre o `stats.html` fora do CI (`open: !process.env.CI`).
+**CI (GitHub Actions, `.github/workflows/ci.yml`, v0.69):** roda em push/PR para `main` e em push de `ci/**`: `npm ci` → 3× `tsc` (convex, app, node) → `npm run test` (inclui `secretScan.test.ts`) → `npx vite build`, ~1,5 min, Node do `.nvmrc` (22). Atualização 11/2026 (P2.2): o `.nvmrc` passou de 22 para 24 e hoje vale 24, igual ao runtime das actions Node fixado em `convex.json` (ver "Versão do Node" abaixo); o 22 desta frase é o valor histórico da v0.69. **Sem** `convex dev --once` de propósito — não há deployment nem chave no CI, por isso `npm run lint` NÃO serve de CI. A suíte não depende de `.env.local` (o build lê `VITE_CONVEX_URL` com fallback vazio). Único teste sensível a carga com `{ retry: 2 }` pontual: `groupMediaPolicy.test.ts` ("fetch do sob demanda tem timeout menor que a trava") — não mudar o tempo. O `visualizer` do `vite.config.ts` só abre o `stats.html` fora do CI (`open: !process.env.CI`).
 
 ## Deployments: dev × prod (separados desde 02/10/2026)
 
@@ -47,3 +47,22 @@ Trechos movidos literalmente do `convex/CLAUDE.md` ao enxugá-lo (identificadore
 - `convex.json` fixa `node.nodeVersion: "24"` para as actions Node (o `unpdf@2.1.0` do extrator de PDF declara `engines >=24`) e `.nvmrc` está em 24, então CI e máquina local rodam a mesma versão das actions. A suíte inteira passou em Node 24.22.2 e em 22.15.0.
 - Node 25 está BLOQUEADO por enquanto: o `web-push@3.6.7` (`pushNode.ts`) depende de `jws` → `jwa` → `buffer-equal-constant-time@1.0.1`, que usa `SlowBuffer` (removido no Node 25). Subir para 25 exige trocar/atualizar o `web-push` antes.
 - `convex.json` também declara `node.externalPackages: ["unpdf"]` (o worker do pdf.js importa o pacote pelo caminho absoluto; ver `security.md`). Validação no primeiro push: `npx convex dev --once` deve aceitar a versão e instalar o pacote; se o servidor recusar 24, voltar para `"22"` (o spike rodou igual em 22).
+
+## Envs novas da entrega "landing + onboarding v2" (11/2026)
+
+Convex (`npx convex env set NOME valor [--prod]`; PROD só com `--prod`). Nenhuma é obrigatória para o app subir: o comportamento sem a env está na última coluna. Detalhes em `onboarding.md` (custo, modelos, leads) e `ai-attendant.md` (voz).
+
+| Env | Onde | Para quê | Se ausente (ou inválida) |
+|---|---|---|---|
+| `HNBCRM_INTERNAL_ORG_ID` | Convex | org interna do HNBCRM: recebe o lead do cadastro, o lead de contato/consultoria e o audit do alerta global de custo | nada acontece: nenhum lead interno é criado e `POST /api/v1/public/contact` responde 503 `unavailable` (o front cai para o `mailto`); id inválido, org inexistente ou sem admin humano ativo = igual a ausente |
+| `HNBCRM_INTERNAL_BOARD_ID` | Convex | funil da org interna para esses leads | usa o funil padrão da org interna |
+| `ONBOARDING_SESSION_BUDGET_USD_MICROS` | Convex | teto de gasto de IA de uma sessão do onboarding (micro-US$) | 500000 (US$ 0,50); vazia, não inteira, <= 0 ou acima de US$ 1.000 cai no padrão |
+| `ONBOARDING_TRIAL_ORG_BUDGET_USD_MICROS` | Convex | teto mensal de onboarding por org (trial, sem billing, legacy criada em/depois de 11/11/2026) | 2000000 (US$ 2,00), mesma regra de validação |
+| `ONBOARDING_GLOBAL_DAILY_USD_MICROS` | Convex | corte global do dia UTC (soma de todas as orgs) | 20000000 (US$ 20,00), mesma regra de validação |
+| `ONBOARDING_MODEL_INTERVIEWER`, `ONBOARDING_MODEL_READER`, `ONBOARDING_MODEL_VISION` | Convex | modelo do entrevistador, do leitor em quarentena e da visão do onboarding | padrões do `registry.ts` (copiloto, atendente e visão); valor com formato inválido ou fora do registry (na visão, fora da cadeia de visão) cai no padrão |
+| `ONBOARDING_TTS_MODEL`, `ONBOARDING_TTS_VOICE` | Convex | modelo e voz da resposta falada do Copiloto do onboarding | `google/gemini-3.8-flash-tts` e voz `Kore`; valor fora da lista de modelos/vozes de catálogo cai no padrão |
+| `ATTENDANT_TTS_MODEL`, `ATTENDANT_TTS_VOICE` | Convex | modelo e voz padrão da resposta em áudio do atendente (a voz escolhida pela org vence a env) | mesmos padrões; a voz só toca quando a org liga "Responder em áudio" |
+| `EMAIL_CODE_PEPPER` | Convex | segredo opcional extra do código de e-mail de 6 dígitos; a chave do HMAC já é derivada de `JWT_PRIVATE_KEY` | opcional: sem ela vale só `JWT_PRIVATE_KEY` (que o Convex Auth exige); sem as duas o pedido de código é recusado. Trocar invalida os códigos pendentes (expiram em 10 min) |
+| `VITE_COMMUNITY_URL` | Vercel (build do frontend) | link https do grupo da comunidade (landing, QR code, menu Ajuda, próximos passos do onboarding) | a comunidade não aparece em lugar nenhum; valor que não é https é ignorado |
+
+Também: `convex.json` fixa `node.nodeVersion: "24"` e `node.externalPackages: ["unpdf"]` (extrator de PDF do onboarding; ver "Versão do Node"), e o deploy do backend deve ir ANTES do frontend nesta entrega (a entrada por e-mail e o `/comecar` chamam funções novas). A voz exige `OPENROUTER_API_KEY` e o conversor `WHISPER_SERVICE_URL`/`TOKEN`, que já existiam.
