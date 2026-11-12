@@ -49,9 +49,13 @@ export interface ActivationInput {
   overwrite?: boolean;
 }
 
-/** O atendente foi criado/atualizado por ESTA aplicação (só então dá para ligar o modo). */
+/**
+ * O atendente nasceu NESTA aplicação (só então dá para ligar o modo). Sobrescrever um atendente que
+ * já existia (`overwritten`) não conta: ele fica em Sugerir respostas, e o automático se liga depois,
+ * nas Configurações (a confirmação de sobrescrever não fala de modo).
+ */
 export function attendantWasBorn(r: ApplyResult): boolean {
-  return r.attendant === "created" || r.attendant === "updated" || r.attendant === "overwritten";
+  return r.attendant === "created" || r.attendant === "updated";
 }
 
 /**

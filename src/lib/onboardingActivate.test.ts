@@ -113,15 +113,16 @@ describe("runActivation", () => {
     expect(s).toMatchObject({ complete: true, finalMode: "suggest" });
   });
 
-  it("sobrescrever refaz a montagem e liga o modo no atendente novo", async () => {
+  it("sobrescrever refaz a montagem, mas o atendente que já existia fica em Sugerir", async () => {
     const d = deps();
     const s1 = await run(INITIAL_ACTIVATION, { mode: "autopilot", aiActive: true }, d);
     const d2 = deps({
       apply: vi.fn(async () => ({ ok: true as const, result: result({ attendant: "overwritten", attendantId: "att2" as never }) })),
     });
     const s2 = await run(s1, { mode: "autopilot", aiActive: true, overwrite: true }, d2);
-    expect(d2.enableAutopilot).toHaveBeenCalledWith("att2");
+    expect(d2.enableAutopilot).not.toHaveBeenCalled();
     expect(s2.complete).toBe(true);
+    expect(s2.finalMode).toBe("suggest");
   });
 });
 
