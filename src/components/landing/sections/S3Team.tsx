@@ -20,7 +20,7 @@ const CARDS: readonly { id: "atendente" | "copiloto" | "equipe"; title: string; 
     title: "Copiloto",
     icon: Sparkles,
     benefit:
-      "Fala com você. Responde sobre o seu CRM, resume o dia e ajuda a configurar. Pede confirmação antes de mudar algo. Também no Telegram.",
+      "Fala com você. Responde sobre o seu CRM, resume o dia e ajuda a configurar. Pede confirmação antes de ações sensíveis. Também no Telegram.",
   },
   {
     id: "equipe",
@@ -110,6 +110,7 @@ export function S3Team() {
               <p className="mt-3 text-base text-text-secondary">{card.benefit}</p>
               {card.extra && <p className="mt-2 text-sm text-text-muted">{card.extra}</p>}
               <Reveal className="mt-4 flex flex-1 flex-col justify-end">
+                <p className="mb-1.5 text-caption text-text-muted">Exemplo ilustrativo</p>
                 <Scene />
               </Reveal>
             </li>

@@ -46,7 +46,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "O Atendente responde na hora, do jeito da sua clínica, e a recepção confirma o horário.",
         sceneLabel: "Exemplo: paciente pergunta o preço à noite",
         scene: (
-          <SceneBox label="Exemplo: paciente pergunta o preço à noite">
+          <SceneBox>
             <Bubble variant="in" label="Paciente" time="22:07" enter>
               Quanto custa a consulta com a dermatologista?
             </Bubble>
@@ -61,7 +61,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "Quando a IA não sabe, ela passa para a recepção com o resumo da conversa pronto.",
         sceneLabel: "Exemplo: pedido de ajuda para a recepção",
         scene: (
-          <SceneBox label="Exemplo: pedido de ajuda para a recepção">
+          <SceneBox>
             <HelpRequest title="Carla quer saber se o convênio cobre o procedimento" enter />
             <Bubble variant="out" label="Recepção" time="10:31" enter enterDelayMs={400}>
               Assumi. Vou conferir com o convênio e já te respondo.
@@ -74,7 +74,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "A IA volta a falar com quem sumiu e, antes de mandar, lê a conversa de novo. Se o cliente já resolveu, ela não manda.",
         sceneLabel: "Exemplo: retorno agendado pela IA",
         scene: (
-          <SceneBox label="Exemplo: retorno agendado pela IA">
+          <SceneBox>
             <Bubble variant="system" enter>
               Retorno agendado pela IA · quinta, 10h
             </Bubble>
@@ -95,7 +95,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "A IA escreve a resposta e você aprova com um toque quando sair da sessão.",
         sceneLabel: "Exemplo: sugestão da IA para aprovar",
         scene: (
-          <SceneBox label="Exemplo: sugestão da IA para aprovar">
+          <SceneBox>
             <Bubble variant="in" label="Cliente" time="15:20" enter>
               Oi! Você atende online? Qual o valor?
             </Bubble>
@@ -112,7 +112,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "O cliente manda o print e a IA lê. Quem confirma o pagamento é você.",
         sceneLabel: "Exemplo: comprovante enviado pelo cliente",
         scene: (
-          <SceneBox label="Exemplo: comprovante enviado pelo cliente">
+          <SceneBox>
             <AttachmentBubble variant="in" kind="image" name="comprovante.jpg" label="Cliente" time="18:02" enter />
             <Bubble variant="ai" label="Atendente IA" time="18:02" enter enterDelayMs={400}>
               Recebi o seu comprovante de R$ 150. A Júlia confirma o pagamento e te avisa.
@@ -125,7 +125,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "No Telegram, você recebe os pedidos de ajuda e o resumo do dia, e resolve dali mesmo.",
         sceneLabel: "Exemplo: aviso do Copiloto no Telegram",
         scene: (
-          <SceneBox label="Exemplo: aviso do Copiloto no Telegram" className="justify-center">
+          <SceneBox className="justify-center">
             <PhoneNotification
               app="Telegram"
               time="08:00"
@@ -149,7 +149,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "O Atendente responde no primeiro minuto e já pergunta valor, prazo e financiamento.",
         sceneLabel: "Exemplo: lead do anúncio à noite",
         scene: (
-          <SceneBox label="Exemplo: lead do anúncio à noite">
+          <SceneBox>
             <Bubble variant="in" label="Cliente" time="21:40" enter>
               Vi o apartamento de 2 quartos. Podemos conversar?
             </Bubble>
@@ -164,7 +164,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "A IA volta a falar na data certa e não manda se o lead já resolveu.",
         sceneLabel: "Exemplo: retorno ao lead na segunda",
         scene: (
-          <SceneBox label="Exemplo: retorno ao lead na segunda">
+          <SceneBox>
             <Bubble variant="system" enter>
               Retorno do Rafael · segunda, 10h
             </Bubble>
@@ -191,7 +191,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "Publicações programadas nos grupos, com texto seu ou mensagem do dia escrita pela IA, com aprovação se você quiser. Só na conexão por QR code.",
         sceneLabel: "Exemplo: mensagem do dia no grupo",
         scene: (
-          <SceneBox label="Exemplo: mensagem do dia no grupo">
+          <SceneBox>
             <Bubble variant="ai" label="Mensagem do dia" time="07:30" enter>
               Bom dia! Sábado tem roda de conversa às 16h. Traga quem você quiser.
             </Bubble>
@@ -203,7 +203,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "No grupo, a IA só responde quando é mencionada. Ela consulta a agenda que você indicar e manda o flyer.",
         sceneLabel: "Exemplo: a IA responde no grupo quando é mencionada",
         scene: (
-          <SceneBox label="Exemplo: a IA responde no grupo quando é mencionada">
+          <SceneBox>
             <Bubble variant="in" label="Membro do grupo" time="12:15" enter>
               @Assistente quando é o próximo encontro?
             </Bubble>
@@ -218,7 +218,7 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
         with: "O formulário do site cria o lead no Funil, e as boas-vindas saem no WhatsApp.",
         sceneLabel: "Exemplo: boas-vindas após inscrição pelo site",
         scene: (
-          <SceneBox label="Exemplo: boas-vindas após inscrição pelo site">
+          <SceneBox>
             <Bubble variant="system" enter>
               Lead novo pelo formulário do site · Patrícia
             </Bubble>
@@ -236,10 +236,10 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
     pains: [
       {
         today: "Cada unidade atende de um jeito.",
-        with: "Unidade e setor em cada conversa, com fila e transferência com nota.",
-        sceneLabel: "Exemplo: conversa transferida entre setores",
+        with: "Unidade e departamento em cada conversa, com fila e transferência com nota.",
+        sceneLabel: "Exemplo: conversa transferida entre departamentos",
         scene: (
-          <SceneBox label="Exemplo: conversa transferida entre setores">
+          <SceneBox>
             <div className="flex flex-wrap gap-1.5">
               <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-caption font-semibold text-text-secondary shadow-bubble">
                 Unidade Centro
@@ -256,12 +256,10 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
       },
       {
         today: "O gestor não enxerga a operação.",
-        with: "A Central mostra a primeira resposta e quanto a IA e a equipe atenderam, por setor e por unidade.",
+        with: "A Central mostra a primeira resposta e quanto a IA e a equipe atenderam, por departamento e por unidade.",
         sceneLabel: "Exemplo: painel Central (números ilustrativos)",
         scene: (
           <div
-            role="group"
-            aria-label="Exemplo: painel Central (números ilustrativos)"
             className="rounded-card border border-border-subtle bg-surface-raised p-3 shadow-card"
           >
             <p className="flex items-center justify-between text-sm font-semibold text-text-primary">
@@ -293,10 +291,10 @@ export const PROFILE_TABS: readonly ProfileTab[] = [
       },
       {
         today: "O hóspede escreve em outro idioma.",
-        with: "A equipe lê e responde em português. A mensagem sai no idioma do cliente.",
+        with: "A equipe lê e responde em português. A mensagem sai no idioma do cliente. Tradução automática é módulo opcional.",
         sceneLabel: "Exemplo: tradução automática",
         scene: (
-          <SceneBox label="Exemplo: tradução automática">
+          <SceneBox>
             <Bubble variant="in" label="Cliente" time="20:40" enter>
               Hi! Do you have a room for two this Friday?
               <span className="mt-1 block border-t border-border-subtle pt-1 text-caption text-text-secondary">

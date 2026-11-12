@@ -73,7 +73,7 @@ describe("S4", () => {
       fireEvent.click(tab);
       expect(screen.getAllByText("Hoje")).toHaveLength(3);
       expect(screen.getAllByText("Com o HNBCRM")).toHaveLength(3);
-      expect(screen.getAllByText("Exemplo ilustrativo")).toHaveLength(3);
+      expect(within(screen.getByRole("tabpanel")).getAllByText("Exemplo ilustrativo")).toHaveLength(3);
     }
     fireEvent.click(screen.getByRole("tab", { name: "Corretor e imobiliária" }));
     expect(within(screen.getByRole("tabpanel")).getByRole("note")).toHaveTextContent(/Distribuição automática de leads/);
@@ -91,5 +91,39 @@ describe("S5", () => {
     expect(note).toHaveTextContent(/API oficial da Meta/);
     expect(container.textContent?.toLowerCase()).not.toContain("sem risco");
     expect(screen.getByRole("link", { name: "Testar grátis" })).toBeInTheDocument();
+  });
+});
+
+describe("S3 a S5: vocabulário e movimento", () => {
+  it("nenhum texto (todas as abas) contém repasse ou setor", () => {
+    const { container } = render(all());
+    const texts: string[] = [container.textContent ?? ""];
+    for (const tab of screen.getAllByRole("tab")) {
+      fireEvent.click(tab);
+      texts.push(screen.getByRole("tabpanel").textContent ?? "");
+    }
+    const labels = Array.from(container.querySelectorAll("[aria-label]")).map((el) => el.getAttribute("aria-label") ?? "");
+    for (const text of [...texts, ...labels]) expect(text).not.toMatch(/\b(repasse|setor)/i);
+  });
+
+  it("movimento reduzido: toda animação é motion-safe (estado final sem animar) e nada fica em loop", () => {
+    const { container } = render(all());
+    for (const tab of screen.getAllByRole("tab")) {
+      fireEvent.click(tab);
+      for (const el of Array.from(container.querySelectorAll("[class*='animate-']"))) {
+        const animated = (el.getAttribute("class") ?? "").split(/\s+/).filter((c) => /(^|:)animate-/.test(c));
+        for (const c of animated) {
+          expect(c.startsWith("motion-safe:")).toBe(true);
+          expect(c).not.toMatch(/pulse|spin|ping|bounce/);
+        }
+      }
+    }
+    expect(container.querySelector("[data-revealed]")).not.toBeNull();
+  });
+
+  it("a cena de cada dor tem nome acessível vindo de sceneLabel e rótulo de exemplo", () => {
+    render(all());
+    expect(screen.getByRole("group", { name: "Exemplo: paciente pergunta o preço à noite" })).toBeInTheDocument();
+    expect(screen.getAllByText("Exemplo ilustrativo").length).toBeGreaterThanOrEqual(6);
   });
 });

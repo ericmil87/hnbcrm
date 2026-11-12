@@ -41,7 +41,9 @@ export function S4Profiles() {
                 <p className="mt-1 text-base font-medium text-text-primary">{pain.today}</p>
                 <div className="mt-4 flex flex-1 flex-col justify-end">
                   <p className="mb-1.5 text-caption text-text-muted">Exemplo ilustrativo</p>
-                  {pain.scene}
+                  <div role="group" aria-label={pain.sceneLabel}>
+                    {pain.scene}
+                  </div>
                 </div>
                 <p className="mt-4 text-caption font-semibold uppercase tracking-wide text-brand-600">Com o HNBCRM</p>
                 <p className="mt-1 text-base text-text-secondary">{pain.with}</p>

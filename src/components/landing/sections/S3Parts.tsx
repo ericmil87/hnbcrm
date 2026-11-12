@@ -31,14 +31,13 @@ export function SceneBox({
   className,
 }: {
   /** Nome acessível da cena. */
-  label: string;
+  label?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <div
-      role="group"
-      aria-label={label}
+      {...(label ? { role: "group", "aria-label": label } : {})}
       className={cn("chat-wallpaper flex flex-col gap-1.5 rounded-card border border-border-subtle p-3", className)}
     >
       {children}
