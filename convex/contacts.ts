@@ -629,6 +629,8 @@ export const internalCreateContact = internalMutation({
     teamMemberId: v.id("teamMembers"),
     // Tradução automática (F1): idioma preferido (código do catálogo).
     preferredLanguage: v.optional(v.string()),
+    // Criação automática do sistema (ex.: formulário público): audita como "system".
+    auditAsSystem: v.optional(v.boolean()),
     ...enrichmentArgFields,
   },
   returns: v.id("contacts"),
@@ -689,7 +691,7 @@ export const internalCreateContact = internalMutation({
       entityId: contactId,
       action: "create",
       actorId: teamMember._id,
-      actorType: teamMember.type === "ai" ? "ai" : "human",
+      actorType: args.auditAsSystem ? "system" : teamMember.type === "ai" ? "ai" : "human",
       metadata: {
         name: `${args.firstName || ""} ${args.lastName || ""}`.trim(),
         email: args.email,

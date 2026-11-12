@@ -236,14 +236,15 @@ export const internalSubmitContactRequest = internalMutation({
       return { ok: false as const, code: "rate_limited", message: "Muitos pedidos em pouco tempo. Tente de novo mais tarde." };
     }
 
-    // Contato só por e-mail; existente não é alterado, e o telefone informado vai na nota.
-    const { contactId, created } = await findOrCreateInternalContact(ctx, target, {
+    // Contato só por e-mail; existente não é alterado e telefone já usado por outro contato não é
+    // gravado: nesses casos o telefone informado vai só na nota.
+    const { contactId, phoneStored } = await findOrCreateInternalContact(ctx, target, {
       name: req.name,
       email: req.email,
       company: req.business || undefined,
       phone: req.phone,
     });
-    const note = buildContactNote(req) + (!created && req.phone ? `\nTelefone informado: ${req.phone}` : "");
+    const note = buildContactNote(req) + (!phoneStored && req.phone ? `\nTelefone informado: ${req.phone}` : "");
 
     // Mesma pessoa pedindo o mesmo tipo de novo: nota no lead aberto, sem lead duplicado.
     let open: Doc<"leads"> | null = null;

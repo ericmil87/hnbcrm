@@ -390,7 +390,25 @@ describe("contato/consultoria", () => {
     expect(contacts).toHaveLength(3);
     const created = contacts.find((c) => c.email === "novo@cliente.test");
     expect(created?._id).not.toBe(withPhone);
-    expect(created?.phone).toBe("5511999990000");
+    // Número já é de outro contato da org: não vai para o novo, fica só na nota.
+    expect(created?.phone).toBeUndefined();
+    expect(created?.whatsappNumber).toBeUndefined();
+    const newLead = (await internalLeads(internalOrg.orgId)).find((l) => l.contactId === created?._id)!;
+    const newActs = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", newLead._id)).collect());
+    expect(newActs.find((a) => a.type === "note")?.content).toContain("Telefone informado: (11) 99999-0000");
+    const contactAudit = await t.run((ctx) =>
+      ctx.db.query("auditLogs").withIndex("by_entity", (q) => q.eq("entityType", "contact").eq("entityId", created!._id)).first(),
+    );
+    expect(contactAudit?.actorType).toBe("system");
+
+    // Telefone livre: contato novo guarda o número normalizado.
+    expect(
+      await t.mutation(internal.hnbcrmLeads.internalSubmitContactRequest, { ...VALID, email: "livre@cliente.test", phone: "(31) 97777-1111" }),
+    ).toEqual({ ok: true });
+    const free = await t.run((ctx) =>
+      ctx.db.query("contacts").withIndex("by_organization_and_email", (q) => q.eq("organizationId", internalOrg.orgId).eq("email", "livre@cliente.test")).first(),
+    );
+    expect(free?.phone).toBe("5531977771111");
     expect((await t.run((ctx) => ctx.db.get(withPhone)))?.firstName).toBe("Dona do número");
   });
 

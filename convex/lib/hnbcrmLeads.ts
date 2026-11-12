@@ -17,6 +17,7 @@ import { leadCreationStagePatch } from "./leadStageMove";
 import { hasEmailShape } from "./emailAddress";
 import { normalizeCampaignPhone } from "./phone";
 import { resolveDefaultCountry } from "./orgPhone";
+import { findContactsByPhoneCandidates } from "./inboundRouting";
 
 export const SIGNUP_MARKER = "hnbcrmSignupOrgId";
 export const SUMMARY_MARKER = "hnbcrmSummary";
@@ -279,21 +280,26 @@ export async function findOrCreateInternalContact(
   ctx: MutationCtx,
   target: InternalTarget,
   c: { name: string; email: string; phone?: string; company?: string },
-): Promise<{ contactId: Id<"contacts">; created: boolean }> {
+): Promise<{ contactId: Id<"contacts">; created: boolean; phoneStored: boolean }> {
   const orgId = target.org._id;
   const existing = await ctx.db
     .query("contacts")
     .withIndex("by_organization_and_email", (q) => q.eq("organizationId", orgId).eq("email", c.email))
     .first();
-  if (existing) return { contactId: existing._id, created: false };
+  if (existing) return { contactId: existing._id, created: false, phoneStored: false };
   const norm = c.phone ? normalizeCampaignPhone(c.phone, resolveDefaultCountry(target.org.settings)) : null;
+  // Número que já é de OUTRO contato da org interna não vai para o contato novo (ficaria um
+  // duplicado disputando as mensagens do número); o chamador deixa o telefone só na nota.
+  const phoneTaken = norm?.ok ? (await findContactsByPhoneCandidates(ctx, orgId, norm.phone)).length > 0 : false;
+  const storePhone = norm?.ok === true && !phoneTaken;
   const contactId = await ctx.runMutation(internal.contacts.internalCreateContact, {
     organizationId: orgId,
     teamMemberId: target.actor._id,
     firstName: c.name,
     email: c.email,
     ...(c.company ? { company: c.company } : {}),
-    ...(norm?.ok ? { phone: norm.phone, whatsappNumber: norm.phone } : {}),
+    ...(norm?.ok && storePhone ? { phone: norm.phone, whatsappNumber: norm.phone } : {}),
+    auditAsSystem: true,
   });
-  return { contactId, created: true };
+  return { contactId, created: true, phoneStored: storePhone };
 }
