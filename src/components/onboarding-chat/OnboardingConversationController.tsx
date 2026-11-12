@@ -120,6 +120,7 @@ export function OnboardingConversationController({
   const [sheet, setSheet] = useState<"attach" | "voice" | null>(null);
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>(null);
   // Anexo barrado ANTES de subir (sem e-mail confirmado / sem ciência): mostra o bloco e guarda o rascunho.
+  const [retryState, setRetryState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
   const [blocked, setBlocked] = useState<{ gate: "cartaoConta" | "avisoMateriais"; draft: AttachmentDraft } | null>(null);
   const turnIdRef = useRef(0);
 
@@ -147,6 +148,7 @@ export function OnboardingConversationController({
       const turnId = ++turnIdRef.current;
       setLastFailedText(null);
       setFailedAttachment(null);
+      setBlocked(null);
       setPendingMeta({ turnId, ...meta, baselineId: historyRef.current[0]?._id ?? null, startedAt: Date.now() });
       if (!input.attachment) setComposer("");
       return streamSend({ ...(text ? { text } : {}), ...(input.attachment ? { attachment: input.attachment } : {}) }).then((result) => {
@@ -195,10 +197,10 @@ export function OnboardingConversationController({
             : null;
       if (closed) {
         setBlocked({ gate: closed, draft });
+        setRetryState({ busy: false, error: null });
         // Fecha a folha: o bloco certo aparece na conversa.
         return { ok: true };
       }
-      setBlocked(null);
       let storageId: string | undefined;
       if (draft.kind !== "url") {
         if (!uploadFile) return { ok: false, message: UPLOAD_ERROR_MESSAGE };
@@ -259,11 +261,15 @@ export function OnboardingConversationController({
   const pendingIntent = intent?.message && !intentSentRef.current ? intent.message : null;
 
   // Anexo recusado por conta/aviso: mostra o bloco certo (e "Enviar de novo") em vez do erro genérico.
-  const gate = gateForErrorCode(streamError?.code) ?? blocked?.gate ?? null;
+  const streamGate = gateForErrorCode(streamError?.code);
+  const gate = streamGate ?? blocked?.gate ?? null;
   const retryAttachment = failedAttachment
     ? () => void runTurn({ text: "", attachment: failedAttachment.attachment, label: failedAttachment.label })
     : blocked
-      ? () => void submitAttachment(blocked.draft)
+      ? () => {
+          setRetryState({ busy: true, error: null });
+          void submitAttachment(blocked.draft).then((r) => setRetryState({ busy: false, error: r.ok ? null : r.message }));
+        }
       : null;
   const gateCtx = { ...blockCtx, isLatest: true };
   const tail = gate ? (
@@ -281,10 +287,18 @@ export function OnboardingConversationController({
         />
       )}
       {retryAttachment && (
-        <Button type="button" variant="secondary" size="sm" disabled={isStreaming} onClick={retryAttachment}>
+        <Button type="button" variant="secondary" size="sm" loading={retryState.busy} disabled={isStreaming || retryState.busy} onClick={retryAttachment}>
           Enviar de novo
         </Button>
       )}
+      <div aria-live="polite">
+        {retryState.busy && uploadPhase && <p className="text-caption text-text-secondary">Enviando o arquivo…</p>}
+        {retryState.error && (
+          <p role="alert" className="text-sm text-semantic-error">
+            {retryState.error}
+          </p>
+        )}
+      </div>
     </div>
   ) : null;
   const canAttach = !!uploadFile && access.kind === "ready" && ready && !isStreaming;
@@ -372,7 +386,7 @@ export function OnboardingConversationController({
       status={turn?.status}
       showTypingBubble={isStreaming && !turnText}
       chips={chips}
-      error={gate ? null : (streamError?.message ?? null)}
+      error={streamGate ? null : (streamError?.message ?? null)}
       onRetry={
         streamError?.code === "forbidden"
           ? undefined

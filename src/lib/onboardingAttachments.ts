@@ -126,8 +126,6 @@ export interface UploadDeps {
     size: number;
     fileType: "message_attachment";
   }) => Promise<unknown>;
-  /** Apaga o blob quando o `saveFile` falha depois do POST (`files.discardUnsavedUpload`). */
-  discardUnsaved?: (args: { organizationId: string; storageId: string }) => Promise<unknown>;
   fetchImpl?: typeof fetch;
 }
 
@@ -145,24 +143,14 @@ export async function uploadAttachmentFile(
   const body = (await response.json()) as { storageId?: unknown };
   if (typeof body.storageId !== "string" || !body.storageId) throw new Error("upload failed");
   onPhase?.("saving");
-  try {
-    await deps.saveFile({
-      organizationId: deps.organizationId,
-      storageId: body.storageId,
-      name: file.name,
-      mimeType: file.mimeType,
-      size: file.blob.size,
-      fileType: "message_attachment",
-    });
-  } catch (err) {
-    // O blob já está no storage e nunca virou arquivo: não deixa órfão (melhor esforço).
-    try {
-      await deps.discardUnsaved?.({ organizationId: deps.organizationId, storageId: body.storageId });
-    } catch {
-      // segue para o erro original
-    }
-    throw err;
-  }
+  await deps.saveFile({
+    organizationId: deps.organizationId,
+    storageId: body.storageId,
+    name: file.name,
+    mimeType: file.mimeType,
+    size: file.blob.size,
+    fileType: "message_attachment",
+  });
   return body.storageId;
 }
 

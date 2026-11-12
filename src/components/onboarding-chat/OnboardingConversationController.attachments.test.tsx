@@ -175,4 +175,19 @@ describe("anexos no controller", () => {
     await userEvent.upload(screen.getByLabelText("Escolher imagem"), new File(["a"], "f.png", { type: "image/png" }));
     await waitFor(() => expect(uploadFile).toHaveBeenCalledTimes(1));
   });
+
+  it("'Enviar de novo' a partir do portão mostra o erro do upload", async () => {
+    const uploadFile = vi.fn(async () => Promise.reject(new Error("x")));
+    const gated = props({
+      uploadFile,
+      chatState: { stage: "interview", lastChips: [], materialsUnlocked: false, materialsNoticeAcknowledged: true },
+    });
+    const { rerender } = render(ui(gated));
+    await userEvent.click(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" }));
+    await userEvent.upload(screen.getByLabelText("Escolher imagem"), new File(["a"], "f.png", { type: "image/png" }));
+    await screen.findByRole("region", { name: "Confirme o seu e-mail" });
+    rerender(ui({ ...gated, chatState: { stage: "interview", lastChips: [], materialsUnlocked: true, materialsNoticeAcknowledged: true } }));
+    await userEvent.click(screen.getByRole("button", { name: "Enviar de novo" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Não foi possível enviar o arquivo");
+  });
 });

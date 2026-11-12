@@ -68,7 +68,6 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
 
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const saveFile = useMutation(api.files.saveFile);
-  const discardUnsavedUpload = useMutation(api.files.discardUnsavedUpload);
   const uploadFile = useCallback(
     (file: { blob: Blob; name: string; mimeType: string }, onPhase: (phase: "uploading" | "saving") => void) =>
       uploadAttachmentFile(
@@ -76,12 +75,11 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
           organizationId,
           generateUploadUrl: (args) => generateUploadUrl({ organizationId: args.organizationId as Id<"organizations"> }),
           saveFile: (args) => saveFile({ ...args, organizationId: args.organizationId as Id<"organizations"> }),
-          discardUnsaved: (args) => discardUnsavedUpload({ ...args, organizationId: args.organizationId as Id<"organizations"> }),
         },
         file,
         onPhase
       ),
-    [organizationId, generateUploadUrl, saveFile, discardUnsavedUpload]
+    [organizationId, generateUploadUrl, saveFile]
   );
 
   const onSession = useCallback((id: string) => setSessionId(id as Id<"onboardingSessions">), []);
