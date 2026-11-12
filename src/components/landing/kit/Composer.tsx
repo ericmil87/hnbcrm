@@ -26,6 +26,10 @@ export interface ComposerProps {
   onMic?: () => void;
   attachLabel?: string;
   micLabel?: string;
+  /** Desliga só o clipe (slot pronto para quando anexos existirem, ex.: onboarding antes do P3.2). */
+  attachDisabled?: boolean;
+  /** Desliga só o microfone (o botão de enviar, com texto, continua valendo). */
+  micDisabled?: boolean;
   sendLabel?: string;
   /** Pulso em sequência no clipe e no microfone enquanto o campo está parado e vazio. Padrão: `true`. */
   pulse?: boolean;
@@ -74,6 +78,8 @@ export function Composer({
   onMic,
   attachLabel = "Anexar arquivo",
   micLabel = "Gravar áudio",
+  attachDisabled = false,
+  micDisabled = false,
   sendLabel = "Enviar",
   pulse = true,
   hint,
@@ -152,7 +158,7 @@ export function Composer({
           <button
             type="button"
             onClick={onAttach ?? focusField}
-            disabled={disabled}
+            disabled={disabled || attachDisabled}
             aria-label={attachLabel}
             className="relative inline-flex size-11 shrink-0 items-center justify-center rounded-full text-text-muted transition-colors hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 disabled:opacity-50"
           >
@@ -207,7 +213,7 @@ export function Composer({
           <button
             type="button"
             onClick={onMic ?? focusField}
-            disabled={disabled}
+            disabled={disabled || micDisabled}
             aria-label={micLabel}
             className="relative inline-flex size-11 shrink-0 items-center justify-center rounded-full bg-chat-send text-white transition-transform active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base disabled:opacity-50"
           >
