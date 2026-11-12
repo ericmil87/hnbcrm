@@ -6,11 +6,14 @@ import { ROUTES } from "./appRoutes";
 import { ThemedToaster } from "./components/ui/ThemedToaster";
 import { installPreloadErrorHandler } from "./lib/pwa/preloadError";
 import { isPrerenderPath } from "./lib/prerender/routes";
+import { installPublicScroll } from "./lib/publicScroll";
 
 // Entry = router + public shells only (routes in appRoutes.tsx). Convex and the app shell load on demand.
 installPreloadErrorHandler();
 
 const router = createBrowserRouter(ROUTES);
+// Páginas públicas abrem no topo (ou na âncora); /app tem o ScrollRestoration do AuthLayout.
+installPublicScroll(router);
 
 const container = document.getElementById("root")!;
 const app = (

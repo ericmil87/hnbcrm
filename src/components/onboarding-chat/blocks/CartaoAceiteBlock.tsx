@@ -34,7 +34,8 @@ export function CartaoAceiteView({ active, note, disabled = false, onAccept }: C
 
   if (active || done) {
     return (
-      <BlockCard title="IA ativa" icon={ShieldCheck} note={note}>
+      // Ativo: nada de convite ("Clique para autorizar…") vindo da nota do modelo.
+      <BlockCard title="IA ativa" icon={ShieldCheck}>
         <p role="status" className="flex items-start gap-2 text-sm text-text-primary">
           <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-semantic-success" aria-hidden="true" />
           A IA está ativa na sua organização. Reconhecimento LGPD registrado.

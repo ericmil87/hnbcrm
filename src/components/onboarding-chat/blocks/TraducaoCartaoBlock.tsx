@@ -6,6 +6,7 @@ import { setTranslation } from "@/lib/onboardingDraftEdit";
 import { VOCAB } from "@/lib/vocab";
 import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
+import { purposeOf } from "./ApprovableCard";
 import { BlockCard } from "./BlockCard";
 import type { CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
@@ -26,12 +27,8 @@ export interface TraducaoCartaoViewProps {
 export function TraducaoCartaoView({ block, compact, editor, onAdjust }: TraducaoCartaoViewProps) {
   const label = block.enabled ? "Ligada" : "Desligada";
   return (
-    <BlockCard title={VOCAB.translation.name} icon={Languages} note={compact ? undefined : block.note}>
-      <p className="text-text-secondary">
-        {block.enabled
-          ? "Seu cliente escreve no idioma dele, você lê em português e responde em português. A mensagem sai no idioma dele."
-          : "Desligada: as mensagens aparecem como o cliente escreveu."}
-      </p>
+    <BlockCard title={VOCAB.translation.name} icon={Languages} purpose={purposeOf(block)} note={compact ? undefined : block.note}>
+      {!block.enabled && <p className="text-text-secondary">Desligada: as mensagens aparecem como o cliente escreveu.</p>}
       {!compact && (
         <p className="mt-1 text-caption text-text-muted">Funciona depois do aceite de IA. Dá para mudar quando quiser, em Configurações.</p>
       )}

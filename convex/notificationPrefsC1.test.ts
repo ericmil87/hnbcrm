@@ -546,7 +546,8 @@ describe("revisão do C1", () => {
       count: 2, tasks: [{ title: evil, dueDate: "01/01", taskUrl: "https://x.com.br/app/tarefas?task=1" }], appUrl: "https://x.com.br",
     });
     for (const out of [one, many]) {
-      expect(out.html).not.toContain("<img");
+      // A casca tem UMA <img> (logo da marca, URL fixa); qualquer outra vinda de dado é falha.
+      expect(out.html.replace(/<img class="em-logo"[^>]*\/>/, "")).not.toContain("<img");
       expect(out.html).toContain("&lt;img");
     }
   });

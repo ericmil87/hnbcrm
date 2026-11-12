@@ -3887,6 +3887,24 @@ const applicationTables = {
     // Ausente = o 1º material da sessão é recusado (`notice_required`).
     materialsNoticeAckAt: v.optional(v.number()),
     materialsNoticeAckBy: v.optional(v.id("teamMembers")),
+    // Roteiro determinístico (`lib/onboardingRoadmap.ts`), todos aditivos.
+    // Assinatura aprovada por seção ("Está bom, seguir"); mudou o conteúdo = pendente de novo.
+    approvals: v.optional(
+      v.object({ funnel: v.optional(v.string()), persona: v.optional(v.string()), knowledge: v.optional(v.string()) }),
+    ),
+    // Última assinatura mostrada por tipo de cartão (cartão idêntico não reaparece).
+    shownCards: v.optional(v.record(v.string(), v.string())),
+    // Etapa mais avançada já alcançada (0–5): a barra nunca regride.
+    reachedStep: v.optional(v.number()),
+    testedAt: v.optional(v.number()),
+    channelStepAt: v.optional(v.number()),
+    channelStepKind: v.optional(v.union(v.literal("connected"), v.literal("skipped"))),
+    // Links recebidos antes da confirmação do e-mail (máx. 3); lidos depois por `process_pending`.
+    pendingMaterials: v.optional(
+      v.array(v.object({ kind: v.literal("url"), url: v.string(), label: v.string(), createdAt: v.number() })),
+    ),
+    // Envio automático do código de e-mail (uma vez por sessão, mesmo se recusado).
+    emailCodeAutoSentAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
@@ -3929,6 +3947,8 @@ const applicationTables = {
     audioExpiresAt: v.optional(v.number()),
     /** Motivo de a resposta NÃO ter saído em áudio quando o usuário mandou áudio (diagnóstico; fora da view). */
     audioSkipReason: v.optional(v.string()),
+    /** Chave do evento determinístico que gerou esta mensagem (idempotência; sem texto livre). */
+    event: v.optional(v.string()),
     createdAt: v.number(),
   })
     .index("by_session", ["sessionId"])

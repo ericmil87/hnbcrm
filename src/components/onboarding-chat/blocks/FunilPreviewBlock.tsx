@@ -1,16 +1,16 @@
 import { useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowUp, Columns3, SlidersHorizontal } from "lucide-react";
-import { MiniFunnel } from "@/components/landing/kit";
+import { AlertTriangle, ArrowDown, ArrowUp, Columns3 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { plainModelText } from "@/lib/onboardingChat";
 import { moveStage, renameStage, setFunnelName } from "@/lib/onboardingDraftEdit";
 import { cn } from "@/lib/utils";
-import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS, type OnboardingDraft } from "../../../../convex/lib/onboardingDraft";
-import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
-import { BlockCard } from "./BlockCard";
+import { useDraftEditor } from "../useDraftEditor";
+import { ApprovableCard, purposeOf, type ApprovalProps } from "./ApprovableCard";
 import { BlockedNotice, FormActions, StaleNotice, useBaseVersion, type CardEditor } from "./draftParts";
+import { FunnelAnimation } from "./FunnelAnimation";
+import { approvalFor, liveDraftBlock } from "./liveBlock";
 import type { BlockOf, BlockProps } from "./types";
 
 const OUTCOME_CLASS: Record<string, string> = {
@@ -18,10 +18,6 @@ const OUTCOME_CLASS: Record<string, string> = {
   lost: "border-semantic-error/40 bg-semantic-error/5",
   open: "border-border bg-surface-sunken",
 };
-const OUTCOME_LABEL: Record<string, string> = { won: "Ganho", lost: "Perdido" };
-
-/** Largura mínima de cada coluna do funil animado (rola na horizontal em tela estreita). */
-const COLUMN_MIN_PX = 104;
 
 export interface FunilPreviewViewProps {
   block: BlockOf<"funilPreview">;
@@ -31,22 +27,37 @@ export interface FunilPreviewViewProps {
   blocked?: OnboardingDraft["blocked"];
   onAdjust?: () => void;
   startOpen?: boolean;
+  /** "Está bom, seguir" (ao vivo). Ausente = cartão sem aprovação. */
+  approval?: ApprovalProps;
+  /** Força o movimento reduzido na animação (testes, vitrine). */
+  reducedMotion?: boolean;
 }
 
 /**
- * `funilPreview`: o funil em colunas (`MiniFunnel`), entrando em sequência
- * (movimento reduzido = estado final), com "Ajustar" para os nomes e a ordem
- * das etapas. Nome bloqueado pede edição; não existe "usar mesmo assim" aqui.
+ * `funilPreview`: o que é o funil (frase "para que serve"), as etapas num trilho
+ * vertical com leads de EXEMPLO andando por elas (selo "Exemplo", pausar,
+ * movimento reduzido = estado final), "Está bom, seguir" e "Ajustar" para os
+ * nomes e a ordem das etapas. Nome bloqueado pede edição; não existe "usar
+ * mesmo assim" aqui.
  */
-export function FunilPreviewView({ block, compact, editor, blocked, onAdjust, startOpen = false }: FunilPreviewViewProps) {
+export function FunilPreviewView({ block, compact, editor, blocked, onAdjust, startOpen = false, approval, reducedMotion }: FunilPreviewViewProps) {
   const [open, setOpen] = useState(startOpen);
   const stages = Array.isArray(block.stages) ? block.stages.slice(0, 12) : [];
   const fields = Array.isArray(block.customFields) ? block.customFields.slice(0, 12) : [];
-  const columns = stages.map((s, i) => ({ id: String(i), title: plainModelText(s.name) }));
-  const cards = columns.length > 0 ? [{ id: "primeiro", title: "Primeiro contato", subtitle: "Exemplo", columnId: "0" }] : [];
+  const formOpen = open && !!editor;
+  const adjust = editor ? () => setOpen(true) : onAdjust;
 
   return (
-    <BlockCard title={plainModelText(block.funnelName) || "Funil"} icon={Columns3} note={compact ? undefined : block.note}>
+    <ApprovableCard
+      title={plainModelText(block.funnelName) || "Funil"}
+      icon={Columns3}
+      purpose={purposeOf(block)}
+      note={compact ? undefined : block.note}
+      approval={approval}
+      compact={compact}
+      formOpen={formOpen}
+      onAdjust={adjust}
+    >
       {compact ? (
         <ol className="flex flex-wrap gap-1.5" aria-label="Etapas do funil">
           {stages.map((s, i) => (
@@ -59,19 +70,7 @@ export function FunilPreviewView({ block, compact, editor, blocked, onAdjust, st
           ))}
         </ol>
       ) : (
-        <div className="overflow-x-auto pb-1">
-          <div style={{ minWidth: columns.length * COLUMN_MIN_PX }}>
-            <MiniFunnel label="Etapas do funil" columns={columns} cards={cards} enter staggerMs={110} />
-          </div>
-        </div>
-      )}
-      {!compact && stages.some((s) => OUTCOME_LABEL[s.outcome]) && (
-        <p className="mt-1 text-caption text-text-muted">
-          {stages
-            .filter((s) => OUTCOME_LABEL[s.outcome])
-            .map((s) => `${plainModelText(s.name)}: ${OUTCOME_LABEL[s.outcome].toLowerCase()}`)
-            .join(" · ")}
-        </p>
+        <FunnelAnimation stages={stages} examples={block.examples} reducedMotion={reducedMotion} />
       )}
       {fields.length > 0 && !compact && (
         <p className="mt-2 text-caption text-text-secondary">
@@ -97,21 +96,24 @@ export function FunilPreviewView({ block, compact, editor, blocked, onAdjust, st
         </div>
       )}
 
-      {open && editor ? (
-        <FunnelForm block={block} editor={editor} onClose={() => setOpen(false)} />
-      ) : (
-        (editor || onAdjust) && (
-          <Button size="sm" variant="secondary" className="mt-2" onClick={() => (editor ? setOpen(true) : onAdjust?.())}>
-            <SlidersHorizontal className="size-3.5" aria-hidden="true" />
-            Ajustar
-          </Button>
-        )
+      {formOpen && editor && (
+        <FunnelForm block={block} editor={editor} approval={compact ? undefined : approval} onClose={() => setOpen(false)} />
       )}
-    </BlockCard>
+    </ApprovableCard>
   );
 }
 
-function FunnelForm({ block, editor, onClose }: { block: BlockOf<"funilPreview">; editor: CardEditor; onClose: () => void }) {
+function FunnelForm({
+  block,
+  editor,
+  approval,
+  onClose,
+}: {
+  block: BlockOf<"funilPreview">;
+  editor: CardEditor;
+  approval?: ApprovalProps;
+  onClose: () => void;
+}) {
   const [name, setName] = useState(block.funnelName);
   const [stageNames, setStageNames] = useState(() => block.stages.map((s) => s.name));
   const [order, setOrder] = useState(() => block.stages.map((_, i) => i));
@@ -144,7 +146,12 @@ function FunnelForm({ block, editor, onClose }: { block: BlockOf<"funilPreview">
     }
     const update = (d: OnboardingDraft) =>
       [...renames, ...moves].reduce((acc, fn) => fn(acc), setFunnelName(name.trim())(d));
-    void editor.save(update, base).then((ok) => ok && onClose());
+    void editor.save(update, base).then((ok) => {
+      if (!ok) return;
+      onClose();
+      // "Salvar e seguir": gravou, então aprova o que ficou (o servidor calcula a assinatura do rascunho novo).
+      if (approval?.onApprove) approval.onApprove();
+    });
   };
 
   return (
@@ -185,22 +192,21 @@ function FunnelForm({ block, editor, onClose }: { block: BlockOf<"funilPreview">
         ))}
       </ol>
       <StaleNotice stale={stale} onReload={reload} />
-      <FormActions saving={editor.saving} saveDisabled={empty || stale} onCancel={onClose} onSave={save} />
+      <FormActions saving={editor.saving} saveDisabled={empty || stale} onCancel={onClose} onSave={save} saveLabel={approval?.onApprove ? "Salvar e seguir" : undefined} />
     </div>
   );
 }
 
 function FunilLive({ block, ctx }: BlockProps<"funilPreview">) {
   const ed = useDraftEditor(ctx);
-  const live = ed.draft
-    ? (buildBlock({ kind: "funilPreview", note: block.note }, liveBlockContext(ed)) as BlockOf<"funilPreview"> | null)
-    : null;
+  const shown = liveDraftBlock(block, ctx);
   return (
     <FunilPreviewView
-      block={live ?? block}
+      block={shown}
       compact={ctx.compact}
       blocked={ed.draft?.blocked}
       editor={ed.draft ? { version: ed.version, saving: ed.saving, save: ed.save } : undefined}
+      approval={approvalFor("funilPreview", ctx)}
       startOpen
     />
   );
@@ -209,6 +215,12 @@ function FunilLive({ block, ctx }: BlockProps<"funilPreview">) {
 export function FunilPreviewBlock({ block, ctx }: BlockProps<"funilPreview">) {
   const [live, setLive] = useState(false);
   if (live) return <FunilLive block={block} ctx={ctx} />;
-  return <FunilPreviewView block={block} compact={ctx.compact} onAdjust={ctx.organizationId ? () => setLive(true) : undefined} />;
+  return (
+    <FunilPreviewView
+      block={liveDraftBlock(block, ctx)}
+      compact={ctx.compact}
+      approval={approvalFor("funilPreview", ctx)}
+      onAdjust={ctx.organizationId ? () => setLive(true) : undefined}
+    />
+  );
 }
-

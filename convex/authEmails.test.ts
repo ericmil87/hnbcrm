@@ -12,7 +12,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { buildPasswordResetTemplate, buildWelcomeTemplate } from "./authEmailTemplates";
+import { buildEmailVerificationTemplate, buildPasswordResetTemplate, buildWelcomeTemplate } from "./authEmailTemplates";
 import { generateResetCode } from "./passwordReset";
 import { RESET_EMAILS_PER_WINDOW } from "./authEmails";
 
@@ -65,6 +65,46 @@ describe("templates de e-mail de auth", () => {
     expect(html).toContain("&lt;b&gt;Admin&lt;/b&gt;");
     // CTA aponta para /app do appUrl passado.
     expect(html).toContain("https://hnbcrm.com/app\"");
+  });
+
+  test("boas-vindas: saúda pelo nome; sem nome (vazio ou o próprio e-mail) não mostra e-mail", () => {
+    const base = { orgName: "Acme", appUrl: "https://hnbcrm.com" };
+    const named = buildWelcomeTemplate({ ...base, memberName: "Ana Souza" });
+    expect(named.html).toContain("Bem-vindo(a) ao HNBCRM, Ana Souza!");
+    expect(named.subject).toBe("Bem-vindo ao HNBCRM, Ana Souza!");
+    for (const memberName of ["fulano@dominio.com", "", "   "]) {
+      const r = buildWelcomeTemplate({ ...base, memberName });
+      expect(r.html).toContain("Bem-vindo(a) ao HNBCRM!");
+      expect(r.html).not.toContain("fulano");
+      expect(r.subject).toBe("Bem-vindo ao HNBCRM!");
+    }
+  });
+
+  test("boas-vindas: primeiros passos do fluxo atual, com link para /comecar", () => {
+    const { html } = buildWelcomeTemplate({ memberName: "Ana", orgName: "Acme", appUrl: "https://hnbcrm.com" });
+    expect(html).toContain("https://hnbcrm.com/comecar");
+    expect(html).toContain("background-color: #008069");
+    expect(html).toContain("Conte sobre o seu negócio");
+    expect(html).toContain("simulador");
+    expect(html).toContain("Conecte o WhatsApp e convide a equipe");
+    expect(html).not.toContain("Configurações → Canais");
+  });
+
+  test("casca: marca nova, sem laranja antigo, com rodapé e link de preferências", () => {
+    for (const { html } of [
+      buildWelcomeTemplate({ memberName: "Ana", orgName: "Acme", appUrl: "https://hnbcrm.com" }),
+      buildPasswordResetTemplate({ code: "12345678", expiresMinutes: 15 }),
+      buildEmailVerificationTemplate({ code: "123456", expiresMinutes: 10 }),
+    ]) {
+      expect(html).not.toMatch(/#C2410C|#EA580C/i);
+      expect(html).not.toContain("CRM inteligente");
+      expect(html).toContain('src="https://hnbcrm.com/brand/email-logo.png"');
+      expect(html).toContain('alt="HNBCRM"');
+      expect(html).toContain("color-scheme");
+      expect(html).toContain("Humanos e IAs no mesmo time");
+      expect(html).toContain("Gerenciar preferências de e-mail");
+      expect(html).toContain("https://hnbcrm.com/app/configuracoes");
+    }
   });
 });
 

@@ -73,6 +73,8 @@ export function AvisoMateriaisBlock({ block, ctx }: BlockProps<"avisoMateriais">
       onAck={async () => {
         if (!organizationId || !sessionId) return;
         await ack({ organizationId, sessionId });
+        // Ciência dada: o Copiloto diz o que vem agora (e a conversa segue com o que estava esperando).
+        ctx.sendEvent({ kind: "next" });
       }}
     />
   );

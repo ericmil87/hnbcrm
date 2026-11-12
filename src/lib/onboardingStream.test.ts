@@ -5,6 +5,7 @@ import {
   decodeSseData,
   formatRetryWait,
   onboardingErrorMessage,
+  onboardingEventKey,
   parseOnboardingEvent,
   readHttpError,
   runOnboardingTurnRequest,
@@ -333,5 +334,38 @@ describe("runOnboardingTurnRequest", () => {
     await new Promise((r) => setTimeout(r, 5));
     ac.abort();
     expect(await promise).toEqual({ ok: false, aborted: true });
+  });
+});
+
+describe("eventos de cartão", () => {
+  it("o corpo leva o evento e o evento responde como um turno (sem texto da pessoa)", async () => {
+    const fetchImpl = vi.fn(async () =>
+      streamResponse([sse({ type: "delta", text: "Combinado." }, { type: "done", nextStage: null, askForMaterials: false })])
+    );
+    const seen: string[] = [];
+    const outcome = await runOnboardingTurnRequest({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      siteUrl: "https://x.convex.site",
+      token: "tok",
+      body: { organizationId: "org1", sessionId: "s1", event: { kind: "notify", what: "activated" } },
+      onEvent: (e) => seen.push(e.type),
+    });
+    expect(outcome.ok).toBe(true);
+    expect(seen).toEqual(["delta", "done"]);
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(init.body as string)).toEqual({
+      organizationId: "org1",
+      sessionId: "s1",
+      event: { kind: "notify", what: "activated" },
+    });
+  });
+
+  it("onboardingEventKey distingue seção, assinatura e aviso", () => {
+    expect(onboardingEventKey({ kind: "approve", section: "funnel", sig: "a" })).not.toBe(
+      onboardingEventKey({ kind: "approve", section: "funnel", sig: "b" })
+    );
+    expect(onboardingEventKey({ kind: "approve", section: "persona" })).not.toBe(onboardingEventKey({ kind: "approve", section: "funnel" }));
+    expect(onboardingEventKey({ kind: "notify", what: "tested" })).toBe("notify:tested");
+    expect(onboardingEventKey({ kind: "next" })).toBe("next");
   });
 });

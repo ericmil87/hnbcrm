@@ -1,5 +1,6 @@
 // One-off brand asset generation (outputs are versioned in public/; not part of the build).
 //   node scripts/generate-brand-assets.mjs          (everything)
+//   node scripts/generate-brand-assets.mjs --email  (only public/brand/email-logo.png, header of transactional e-mails)
 //   node scripts/generate-brand-assets.mjs --pwa    (only the installed-app icons: pwa, maskable, apple-touch)
 // Source of truth for the geometry: src/lib/brandLogo.ts. Needs `sharp` (devDependency) and a local
 // Chrome/Chromium (CHROME_BIN or google-chrome) only for public/og-image.png.
@@ -101,7 +102,26 @@ function buildIco(entries) {
   return Buffer.concat([head, ...dirs, ...entries.map((e) => e.data)]);
 }
 
+/**
+ * E-mail header logo (icon + wordmark on a white pill, 2x of the 150x42 CSS box). Hosted PNG: mail clients do not
+ * render inline SVG reliably. The white pill is baked in because several clients (Gmail on iOS) darken the page
+ * without honoring our dark-mode CSS, which would leave a dark logo on a dark background.
+ */
+async function emailLogo() {
+  const logo = await sharp(Buffer.from(logoSvg(true)), { density: 384 })
+    .resize(228, 52, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png()
+    .toBuffer();
+  const pill = Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="300" height="84"><rect width="300" height="84" rx="42" fill="#fff"/></svg>`);
+  await sharp(pill)
+    .composite([{ input: logo, gravity: "center" }])
+    .png({ compressionLevel: 9 })
+    .toFile(pub("brand/email-logo.png"));
+  console.log("wrote brand/email-logo.png");
+}
+
 async function main() {
+  if (process.argv.includes("--email")) return emailLogo();
   mkdirSync(pub("splash"), { recursive: true });
   if (!process.argv.includes("--pwa")) {
     writeFileSync(pub("brand/icone.svg"), logoSvg(false));
@@ -140,6 +160,7 @@ async function main() {
 
   await ogImage(false); // marketing card: landing only (SEO.tsx ogImage)
   await ogImage(true); // neutral wordmark-only card: static index.html, served for every route incl. /f/*
+  await emailLogo();
 }
 
 /** iOS launch screens (apple-touch-startup-image): flat background + centered icon. Sizes are device px; index.html

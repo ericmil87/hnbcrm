@@ -9,6 +9,7 @@ import { LEGAL_ENTITY } from "@/lib/legalEntity";
 import { EXTRA_CHANNEL_BRL, GROUPS_ADDON_BRL, PACK, PLAN_KEYS, PLANS, TRIAL } from "../../convex/lib/plans";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
+import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
 const EFFECTIVE_DATE = "10 de novembro de 2026";
 
@@ -34,9 +35,9 @@ export function TermsPage() {
         {/* Header */}
         <header className="sticky top-0 z-30 bg-surface-base/85 backdrop-blur-md border-b border-border">
           <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
-            <Link to="/" className="flex items-center gap-2">
+            <HomeLogoLink>
               <BrandLogo variant="wordmark" size="md" />
-            </Link>
+            </HomeLogoLink>
             <div className="flex items-center gap-1">
               <PublicThemeButton />
               <Link to="/">

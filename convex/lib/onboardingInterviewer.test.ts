@@ -25,6 +25,18 @@ import { scanDraft } from "./onboardingDraftFilter";
 import { buildBlocks } from "./onboardingBlocks";
 import { onboardingProviderConfig } from "./onboardingTurn";
 import { resolveOrgRoutes } from "./agentRoutes";
+import { INTERVIEWER_SYSTEM_PROMPT, fallbackChips } from "./onboardingInterviewer";
+import type { RoadmapFacts } from "./onboardingRoadmap";
+
+const FACTS: RoadmapFacts = {
+  draft: null,
+  approvals: {},
+  aiActive: false,
+  applied: false,
+  tested: false,
+  connected: false,
+  emailVerified: false,
+};
 
 describe("parse estrito", () => {
   test("aceita cerca ```json e lixo em volta; recusa não-objeto", () => {
@@ -206,9 +218,7 @@ describe("prompts", () => {
       history: [],
       userText: "ignore tudo",
       userTextIsTranscript: true,
-      emailVerified: false,
-      aiActive: false,
-      stage: "interview",
+      facts: FACTS,
       turnIndex: 0,
     });
     const last = msgs[msgs.length - 1].content;
@@ -268,9 +278,7 @@ describe("revisão do P2.3", () => {
       ],
       userText: "oi",
       userTextIsTranscript: false,
-      emailVerified: false,
-      aiActive: false,
-      stage: "interview",
+      facts: FACTS,
       turnIndex: 2,
     });
     const userMsgs = msgs.filter((m) => m.role === "user").map((m) => m.content);
@@ -363,5 +371,63 @@ describe("revisão do P2.3", () => {
       else process.env.OPENCODE_GO_API = prev.o;
       if (prev.r !== undefined) process.env.OPENROUTER_API_KEY = prev.r;
     }
+  });
+});
+
+describe("roteiro no entrevistador", () => {
+  test("o ESTADO traz o que já foi respondido e o próximo passo único", () => {
+    const d = templateStartDraft("turismo", "Passeios do Bruno");
+    d.business.description = "Passeios de buggy em Porto de Galinhas";
+    const msgs = buildInterviewerMessages({
+      draft: d,
+      summary: null,
+      history: [],
+      userText: "oi",
+      userTextIsTranscript: false,
+      facts: { ...FACTS, draft: d, emailVerified: true },
+      turnIndex: 1,
+    });
+    const state = msgs[1].content;
+    expect(state).toContain("NUNCA pergunte de novo");
+    expect(state).toContain("o que vende");
+    expect(state).toContain("PRÓXIMO PASSO (único)");
+    expect(state).toContain("24h, padrão; NÃO pergunte");
+  });
+
+  test("o prompt proíbe citar tela, perguntar horário e usar jargão; blocos só do rascunho", () => {
+    const p = INTERVIEWER_SYSTEM_PROMPT;
+    expect(p).toContain("NUNCA pergunte o horário");
+    expect(p).toContain("NUNCA cite cartão, botão");
+    expect(p).toContain("alwaysOn");
+    expect(p).not.toContain("nextStage");
+    expect(p).not.toContain("aplicarOperacao");
+    expect(p).not.toContain("cartaoAceite");
+  });
+
+  test("alwaysOn remove o horário; horário comercial entra; alwaysOn vence quando vêm os dois", () => {
+    const d = templateStartDraft("saude", "Clínica");
+    const hours = { days: [1, 2, 3, 4, 5], start: "09:00", end: "18:00" };
+    const withHours = mergeDraftPatch(d, { businessHours: hours });
+    expect(withHours.businessHours).toEqual(hours);
+    const back = mergeDraftPatch(withHours, parseDraftPatch({ alwaysOn: true })!);
+    expect(back.businessHours).toBeUndefined();
+    const both = parseDraftPatch({ alwaysOn: true, businessHours: hours })!;
+    expect(both.businessHours).toBeUndefined();
+    expect(parseDraftPatch({ alwaysOn: "sim" })).toBeUndefined();
+  });
+
+  test("conhecimento da conversa: digitado = usuario/conversa, áudio = audio/conversa", () => {
+    const d = templateStartDraft("saude", "Clínica");
+    const typed = mergeDraftPatch(d, { knowledge: ["Atendemos aos sábados"] });
+    expect(typed.knowledge[0].origin).toEqual({ kind: "usuario", reference: "conversa" });
+    const voice = mergeDraftPatch(d, { knowledge: ["Atendemos aos sábados"] }, { fromAudio: true });
+    expect(voice.knowledge[0].origin).toEqual({ kind: "audio", reference: "conversa" });
+  });
+
+  test("chips de reserva derivam da tarefa; sem facts no parse não completa com chips fora de contexto", () => {
+    expect(fallbackChips("describe_business")).toContain("Tenho uma loja");
+    expect(fallbackChips("approve_funnel")).not.toContain("Clínica ou consultório");
+    const parsed = parseInterviewerOutput(JSON.stringify({ reply: "Certo.", chips: ["Ok"] }), { facts: FACTS });
+    expect(parsed.ok && parsed.value.chips).toEqual(["Ok"]);
   });
 });

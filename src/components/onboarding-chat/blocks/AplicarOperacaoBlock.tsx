@@ -89,7 +89,7 @@ export function AplicarOperacaoView({
   const waitingAccept = (view?.needsConsent ?? false) || (view?.waitingConsent.length ?? 0) > 0 || (!state.aiActive && applied);
 
   return (
-    <BlockCard title="Montar minha operação" icon={Hammer} note={compact ? undefined : note}>
+    <BlockCard title="Montar minha operação" icon={Hammer} note={compact || applied ? undefined : note}>
       {!applied && (
         <p className="text-text-secondary">
           Só depois do seu clique eu crio o funil, os campos, as respostas rápidas e o atendente. Nada acontece antes.

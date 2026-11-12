@@ -5,13 +5,13 @@ import { ConvexError, v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
 import { internalMutation, mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { sendTransactionalEmail } from "./email";
 import { buildEmailVerificationTemplate } from "./authEmailTemplates";
 import { requireAccountWithEmail } from "./lib/auth";
 import { cronsDisabled } from "./lib/cronGuard";
 import { internal } from "./_generated/api";
-import { maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
+import { maskEmailForDisplay, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 import {
   EMAIL_CODE_DAY_MS,
   EMAIL_CODE_MAX_ATTEMPTS,
@@ -83,6 +83,92 @@ async function auditVerification(ctx: MutationCtx, userId: Id<"users">, descript
   }
 }
 
+export type RequestCodeResult = {
+  sent: boolean;
+  reason?: "already_verified" | "cooldown" | "rate_limited" | "not_deliverable" | "unavailable";
+  canResendAt?: number;
+  expiresAt?: number;
+};
+
+/**
+ * Núcleo do pedido de código (mesmos limites para o clique e para o envio
+ * automático do onboarding): 60 s entre pedidos, 5/h e 10/dia por usuário e por
+ * endereço, bloqueio por erros, segredo obrigatório. Nunca lança: `unavailable`
+ * = sem segredo de código configurado.
+ */
+export async function requestEmailVerificationCodeCore(
+  ctx: MutationCtx,
+  user: Doc<"users">,
+): Promise<RequestCodeResult> {
+  const userId = user._id;
+  if (typeof user.emailVerificationTime === "number") return { sent: false, reason: "already_verified" };
+
+  if (!emailCodeSecretMaterial()) {
+    console.error("[email] emailVerification: sem JWT_PRIVATE_KEY nem EMAIL_CODE_PEPPER — pedido recusado");
+    return { sent: false, reason: "unavailable" };
+  }
+
+  const now = Date.now();
+  const email = normalizeEmail(user.email);
+  const previous = await ctx.db
+    .query("emailVerificationCodes")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .order("desc")
+    .first();
+  if (previous && now - previous.createdAt < EMAIL_CODE_RESEND_COOLDOWN_MS) {
+    return { sent: false, reason: "cooldown", canResendAt: previous.createdAt + EMAIL_CODE_RESEND_COOLDOWN_MS };
+  }
+  const userKey = `verify-user:${userId}`;
+  const emailKey = `verify-email:${email}`;
+  // Avalia os dois antes de gravar: recusa não consome cota de nenhum.
+  const userDayKey = `verify-user-d:${userId}`;
+  const emailDayKey = `verify-email-d:${email}`;
+  const okUser = await checkWindow(ctx, userKey, now, false);
+  const okEmail = await checkWindow(ctx, emailKey, now, false);
+  const okUserDay = await checkWindow(ctx, userDayKey, now, false, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+  const okEmailDay = await checkWindow(ctx, emailDayKey, now, false, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+  // Erros demais de código em 24 h: bloqueia novos pedidos até a janela fechar.
+  const failures = await ctx.db
+    .query("authEmailThrottle")
+    .withIndex("by_email", (q) => q.eq("email", `verify-fail:${userId}`))
+    .first();
+  const blockedByFailures =
+    !!failures && now - failures.windowStart < EMAIL_CODE_DAY_MS && failures.count >= EMAIL_CODE_MAX_FAILURES_PER_DAY;
+  if (!okUser || !okEmail || !okUserDay || !okEmailDay || blockedByFailures) {
+    console.warn(`[email] emailVerification: teto de pedidos atingido para ${maskEmailForLog(email)}`);
+    return { sent: false, reason: "rate_limited" };
+  }
+
+  const code = generateEmailVerificationCode();
+  const template = buildEmailVerificationTemplate({ code, expiresMinutes: EMAIL_CODE_TTL_MINUTES });
+  const delivered = await sendTransactionalEmail(ctx, {
+    to: email,
+    subject: template.subject,
+    html: template.html,
+    kind: "emailVerification",
+  });
+  if (!delivered) return { sent: false, reason: "not_deliverable" };
+
+  await checkWindow(ctx, userKey, now, true);
+  await checkWindow(ctx, emailKey, now, true);
+  await checkWindow(ctx, userDayKey, now, true, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+  await checkWindow(ctx, emailDayKey, now, true, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
+  const old = await ctx.db
+    .query("emailVerificationCodes")
+    .withIndex("by_user", (q) => q.eq("userId", userId))
+    .take(20);
+  for (const row of old) await ctx.db.delete(row._id);
+  const expiresAt = now + EMAIL_CODE_TTL_MS;
+  await ctx.db.insert("emailVerificationCodes", {
+    userId,
+    codeHash: await hashEmailVerificationCode(userId, email, code),
+    expiresAt,
+    attempts: 0,
+    createdAt: now,
+  });
+  return { sent: true, canResendAt: now + EMAIL_CODE_RESEND_COOLDOWN_MS, expiresAt };
+}
+
 export const requestEmailVerificationCode = mutation({
   args: {},
   returns: v.object({
@@ -95,73 +181,12 @@ export const requestEmailVerificationCode = mutation({
   }),
   handler: async (ctx) => {
     const user = await requireAccountWithEmail(ctx);
-    const userId = user._id;
-    if (typeof user.emailVerificationTime === "number") return { sent: false, reason: "already_verified" as const };
-
-    if (!emailCodeSecretMaterial()) {
-      console.error("[email] emailVerification: sem JWT_PRIVATE_KEY nem EMAIL_CODE_PEPPER — pedido recusado");
+    const r = await requestEmailVerificationCodeCore(ctx, user);
+    const { reason, ...rest } = r;
+    if (reason === "unavailable") {
       throw new ConvexError("A confirmação de e-mail está indisponível no momento. Tente novamente mais tarde.");
     }
-
-    const now = Date.now();
-    const email = normalizeEmail(user.email);
-    const previous = await ctx.db
-      .query("emailVerificationCodes")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .order("desc")
-      .first();
-    if (previous && now - previous.createdAt < EMAIL_CODE_RESEND_COOLDOWN_MS) {
-      return { sent: false, reason: "cooldown" as const, canResendAt: previous.createdAt + EMAIL_CODE_RESEND_COOLDOWN_MS };
-    }
-    const userKey = `verify-user:${userId}`;
-    const emailKey = `verify-email:${email}`;
-    // Avalia os dois antes de gravar: recusa não consome cota de nenhum.
-    const userDayKey = `verify-user-d:${userId}`;
-    const emailDayKey = `verify-email-d:${email}`;
-    const okUser = await checkWindow(ctx, userKey, now, false);
-    const okEmail = await checkWindow(ctx, emailKey, now, false);
-    const okUserDay = await checkWindow(ctx, userDayKey, now, false, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
-    const okEmailDay = await checkWindow(ctx, emailDayKey, now, false, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
-    // Erros demais de código em 24 h: bloqueia novos pedidos até a janela fechar.
-    const failures = await ctx.db
-      .query("authEmailThrottle")
-      .withIndex("by_email", (q) => q.eq("email", `verify-fail:${userId}`))
-      .first();
-    const blockedByFailures =
-      !!failures && now - failures.windowStart < EMAIL_CODE_DAY_MS && failures.count >= EMAIL_CODE_MAX_FAILURES_PER_DAY;
-    if (!okUser || !okEmail || !okUserDay || !okEmailDay || blockedByFailures) {
-      console.warn(`[email] emailVerification: teto de pedidos atingido para ${maskEmailForLog(email)}`);
-      return { sent: false, reason: "rate_limited" as const };
-    }
-
-    const code = generateEmailVerificationCode();
-    const template = buildEmailVerificationTemplate({ code, expiresMinutes: EMAIL_CODE_TTL_MINUTES });
-    const delivered = await sendTransactionalEmail(ctx, {
-      to: email,
-      subject: template.subject,
-      html: template.html,
-      kind: "emailVerification",
-    });
-    if (!delivered) return { sent: false, reason: "not_deliverable" as const };
-
-    await checkWindow(ctx, userKey, now, true);
-    await checkWindow(ctx, emailKey, now, true);
-    await checkWindow(ctx, userDayKey, now, true, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
-    await checkWindow(ctx, emailDayKey, now, true, EMAIL_CODE_REQUESTS_PER_DAY, EMAIL_CODE_DAY_MS);
-    const old = await ctx.db
-      .query("emailVerificationCodes")
-      .withIndex("by_user", (q) => q.eq("userId", userId))
-      .take(20);
-    for (const row of old) await ctx.db.delete(row._id);
-    const expiresAt = now + EMAIL_CODE_TTL_MS;
-    await ctx.db.insert("emailVerificationCodes", {
-      userId,
-      codeHash: await hashEmailVerificationCode(userId, email, code),
-      expiresAt,
-      attempts: 0,
-      createdAt: now,
-    });
-    return { sent: true, canResendAt: now + EMAIL_CODE_RESEND_COOLDOWN_MS, expiresAt };
+    return { ...rest, ...(reason ? { reason } : {}) };
   },
 });
 
@@ -214,13 +239,20 @@ export const confirmEmailVerificationCode = mutation({
 
 export const getEmailVerificationStatus = query({
   args: {},
-  returns: v.object({ verified: v.boolean(), canResendAt: v.optional(v.number()) }),
+  returns: v.object({
+    verified: v.boolean(),
+    canResendAt: v.optional(v.number()),
+    /** Endereço mascarado da conta ("bu…te@dominio.com"); ausente se não houver e-mail válido. */
+    maskedEmail: v.optional(v.string()),
+  }),
   handler: async (ctx) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) return { verified: false };
     const user = await ctx.db.get(userId);
     if (!user) return { verified: false };
     if (typeof user.emailVerificationTime === "number") return { verified: true };
+    const masked = maskEmailForDisplay(user.email);
+    const maskedField = masked ? { maskedEmail: masked } : {};
     const last = await ctx.db
       .query("emailVerificationCodes")
       .withIndex("by_user", (q) => q.eq("userId", userId))
@@ -228,8 +260,8 @@ export const getEmailVerificationStatus = query({
       .first();
     // Sem relógio na query: o cliente compara `canResendAt` com o próprio Date.now().
     return last
-      ? { verified: false, canResendAt: last.createdAt + EMAIL_CODE_RESEND_COOLDOWN_MS }
-      : { verified: false };
+      ? { verified: false, canResendAt: last.createdAt + EMAIL_CODE_RESEND_COOLDOWN_MS, ...maskedField }
+      : { verified: false, ...maskedField };
   },
 });
 

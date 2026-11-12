@@ -11,11 +11,12 @@ import { parsePlanKey, storePlanIntent } from "@/lib/authEntry";
 import { readOnboardingIntent } from "@/lib/onboardingIntent";
 import { pickOnboardingOrg, readSelectedOrgId, writeSelectedOrgId } from "@/lib/selectedOrg";
 import { ConversationCard, CopilotNote, IntentBubble, SignedOutIntro } from "./ConversationIntro";
+import { accountProgress } from "@/lib/onboardingChat";
 import { OnboardingChatView } from "./OnboardingChatView";
 import { OnboardingConversation, WIZARD_HREF } from "./OnboardingConversation";
 
 const noop = () => {};
-const IDLE_BLOCK_CTX = { organizationId: null, sessionId: null, sendText: noop, busy: true };
+const IDLE_BLOCK_CTX = { organizationId: null, sessionId: null, sendText: noop, sendEvent: noop, busy: true };
 
 /**
  * Rota pública `/comecar`: a conversa do onboarding v2. Pública na URL, mas
@@ -42,7 +43,6 @@ export function OnboardingChatPage() {
         <IdleView intro={intent?.message ? <IntentBubble message={intent.message} /> : null} />
       ) : !isAuthenticated ? (
         <IdleView
-          stage="account"
           intro={<SignedOutIntro intentMessage={intent?.message} accountCard={<EmailEntryCard compact autoFocus />} />}
           placeholder="Entre na sua conta para continuar"
         />
@@ -53,10 +53,10 @@ export function OnboardingChatPage() {
   );
 }
 
-function IdleView({ intro, stage = "account", placeholder = "Carregando…" }: { intro: React.ReactNode; stage?: string; placeholder?: string }) {
+function IdleView({ intro, placeholder = "Carregando…" }: { intro: React.ReactNode; placeholder?: string }) {
   return (
     <OnboardingChatView
-      stage={stage}
+      progress={accountProgress()}
       intro={intro}
       timeline={[]}
       typing={false}

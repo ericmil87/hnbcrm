@@ -1,20 +1,22 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ClipboardList, LayoutDashboard, RotateCcw, X } from "lucide-react";
+import { ClipboardList, LayoutDashboard, ListChecks, RotateCcw, X } from "lucide-react";
 import { ChatWindow, ChipRow, Composer, TypingDots } from "@/components/landing/kit";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { Button, buttonClassName } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { AI_PROCESSING_NOTICE, type TimelineItem } from "@/lib/onboardingChat";
+import { AI_PROCESSING_NOTICE, supersededBlockKeys, type ProgressView, type TimelineItem } from "@/lib/onboardingChat";
 import { cn } from "@/lib/utils";
 import { MessageItem } from "./MessageItem";
+import { NextStepBar, type NextStepBarProps } from "./NextStepBar";
 import { StageProgress } from "./StageProgress";
 import type { BlockContext } from "./blocks/types";
 
 export interface OnboardingChatViewProps {
-  /** Etapa para a barra (`account` antes da conta/org; senão a do servidor). */
-  stage: string | null;
+  /** Progresso das 6 etapas (`accountProgress` antes da conta/org; senão `chatProgress`). */
+  progress: ProgressView;
   /** Conteúdo fixo antes do histórico (saudação, cartão de conta, criação da org). */
   intro?: ReactNode;
   timeline: readonly TimelineItem[];
@@ -43,6 +45,10 @@ export interface OnboardingChatViewProps {
   blockCtx: Omit<BlockContext, "isLatest">;
   /** Painel à direita no desktop (prévia viva). Ausente = conversa ocupa tudo. */
   preview?: ReactNode;
+  /** O mesmo painel para a folha do celular (botão "Sua operação" no cabeçalho). Padrão: `preview`. */
+  previewSheet?: ReactNode;
+  /** Barra do próximo passo, sempre acima do campo de mensagem. Ausente = sem a barra (ex.: sem conta). */
+  nextStep?: NextStepBarProps;
   /** Destino de "Prefiro preencher um formulário" (wizard v2). */
   formHref: string;
   onPreferForm?: () => void;
@@ -62,7 +68,7 @@ export interface OnboardingChatViewProps {
  * conversa. A área de mensagens é `role="log"` (`ChatWindow live`).
  */
 export function OnboardingChatView({
-  stage,
+  progress,
   intro,
   timeline,
   typing,
@@ -83,6 +89,8 @@ export function OnboardingChatView({
   onLoadMore,
   blockCtx,
   preview,
+  previewSheet,
+  nextStep,
   formHref,
   onPreferForm,
   appHref,
@@ -91,6 +99,8 @@ export function OnboardingChatView({
   tail,
 }: OnboardingChatViewProps) {
   const coarse = useMediaQuery("(pointer: coarse)");
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const superseded = useMemo(() => supersededBlockKeys(timeline), [timeline]);
   const endRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLDivElement>(null);
   const firstKeyRef = useRef<string | null>(null);
@@ -128,21 +138,24 @@ export function OnboardingChatView({
   const footer = (
     <div ref={composerRef}>
       {error && (
-        <div role="alert" className="mx-2 mt-2 flex items-start gap-2 rounded-card border border-semantic-error/30 bg-semantic-error/10 px-3 py-2 text-sm text-text-primary">
-          <p className="min-w-0 flex-1 pt-1.5">{error}</p>
-          {onRetry && (
-            <Button type="button" variant="ghost" size="sm" onClick={onRetry} className="shrink-0">
-              <RotateCcw className="size-4" aria-hidden="true" />
-              Tentar de novo
-            </Button>
-          )}
-          {onDismissError && (
-            <Button type="button" variant="ghost" size="sm" iconOnly aria-label="Fechar aviso" onClick={onDismissError} className="shrink-0">
-              <X className="size-4" aria-hidden="true" />
-            </Button>
-          )}
+        <div role="alert" className="mx-2 mt-2 flex flex-wrap items-start gap-2 rounded-card border border-semantic-error/30 bg-semantic-error/10 px-3 py-2 text-sm text-text-primary">
+          <p className="min-w-0 flex-1 basis-48 pt-1.5">{error}</p>
+          <div className="flex shrink-0 items-center">
+            {onRetry && (
+              <Button type="button" variant="ghost" size="sm" onClick={onRetry} className="shrink-0">
+                <RotateCcw className="size-4" aria-hidden="true" />
+                Tentar de novo
+              </Button>
+            )}
+            {onDismissError && (
+              <Button type="button" variant="ghost" size="sm" iconOnly aria-label="Fechar aviso" onClick={onDismissError} className="shrink-0">
+                <X className="size-4" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
         </div>
       )}
+      {nextStep && !composerDisabled && <NextStepBar {...nextStep} disabled={nextStep.disabled || typing} />}
       {chipItems.length > 0 && !typing && !composerDisabled && (
         <ChipRow
           label="Respostas sugeridas"
@@ -184,6 +197,12 @@ export function OnboardingChatView({
           <span className="ml-2 hidden font-display text-base font-bold text-text-primary sm:inline">HNBCRM</span>
         </Link>
         <div className="flex-1" />
+        {preview && (
+          <Button type="button" variant="secondary" size="sm" className="shrink-0 whitespace-nowrap lg:hidden" onClick={() => setSheetOpen(true)}>
+            <ListChecks className="size-4" aria-hidden="true" />
+            Sua operação
+          </Button>
+        )}
         {appHref && (
           <Link
             to={appHref}
@@ -197,10 +216,12 @@ export function OnboardingChatView({
         <Link
           to={formHref}
           onClick={onPreferForm}
-          className={cn(buttonClassName("ghost", "sm"), "min-h-11 text-caption sm:text-sm")}
+          className={cn(buttonClassName("ghost", "sm"), "min-h-11 min-w-11 shrink-0 whitespace-nowrap text-caption sm:text-sm")}
         >
-          <ClipboardList className="size-4" aria-hidden="true" />
-          Prefiro preencher um formulário
+          <ClipboardList className="size-4 shrink-0" aria-hidden="true" />
+          <span className="hidden sm:inline">Prefiro preencher um formulário</span>
+          {/* No celular o cabeçalho tem "Sua operação": o formulário fica só no ícone (rótulo para leitor de tela). */}
+          <span className="sr-only sm:hidden">Prefiro preencher um formulário</span>
         </Link>
         <PublicThemeButton />
       </header>
@@ -215,7 +236,7 @@ export function OnboardingChatView({
             typingLabel={status || "digitando…"}
             live
             label="Conversa com o Copiloto HNBCRM"
-            subheader={<StageProgress stage={stage} />}
+            subheader={<StageProgress progress={progress} />}
             className="min-h-0 flex-1 rounded-none border-0 shadow-none lg:rounded-card lg:border lg:shadow-elevated"
             bodyClassName="min-h-0 overscroll-contain"
             composer={footer}
@@ -237,6 +258,7 @@ export function OnboardingChatView({
                 item={item}
                 blockCtx={blockCtx}
                 isLatest={item.key === latestAssistantKey && item.key === last?.key}
+                superseded={superseded}
               />
             ))}
             {tail}
@@ -250,6 +272,11 @@ export function OnboardingChatView({
           </div>
         )}
       </main>
+      {preview && (
+        <Modal open={sheetOpen} onClose={() => setSheetOpen(false)} title="Sua operação">
+          {previewSheet ?? preview}
+        </Modal>
+      )}
     </div>
   );
 }

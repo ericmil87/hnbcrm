@@ -44,3 +44,18 @@ export function maskEmailForLog(raw: string | undefined | null): string {
   const at = email.lastIndexOf("@");
   return at === -1 ? "***" : `***@${email.slice(at + 1)}`;
 }
+
+/**
+ * Para a tela (cartão de confirmação): legível, nunca o endereço inteiro.
+ * `bugueiroteste@milfont.net` -> `bu…te@milfont.net`; local curta -> `b…@dominio`;
+ * endereço sem formato válido -> "".
+ */
+export function maskEmailForDisplay(raw: string | undefined | null): string {
+  const email = normalizeEmail(raw);
+  if (!hasEmailShape(email)) return "";
+  const at = email.lastIndexOf("@");
+  const local = email.slice(0, at);
+  const domain = email.slice(at + 1);
+  if (local.length <= 4) return `${local.slice(0, 1)}…@${domain}`;
+  return `${local.slice(0, 2)}…${local.slice(-2)}@${domain}`;
+}

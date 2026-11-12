@@ -6,6 +6,7 @@ import { ApiPlayground } from "@/components/developers/ApiPlayground";
 import { SEO } from "@/components/SEO";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
+import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
 export function PlaygroundPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -31,9 +32,9 @@ export function PlaygroundPage() {
         <header className="flex-shrink-0 bg-surface-base border-b border-border">
           <div className="px-4 py-2.5 flex items-center justify-between gap-4">
             <div className="flex items-center gap-2 min-w-0">
-              <Link to="/" className="flex items-center gap-1.5 flex-shrink-0">
+              <HomeLogoLink>
                 <BrandLogo variant="responsive" size="sm" />
-              </Link>
+              </HomeLogoLink>
               <span className="text-text-muted text-xs hidden sm:inline">/</span>
               <Link to="/developers" className="text-xs text-text-secondary hover:text-text-primary transition-colors hidden sm:inline">
                 Developers

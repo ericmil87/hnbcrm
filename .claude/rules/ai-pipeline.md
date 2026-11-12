@@ -82,3 +82,8 @@ Rules distilled from incidents in production. Reasoning and timelines: `docs/arc
 
 ## Tradução
 - Atendente com `agentProfile.language:"auto"` responde no idioma do lead (`languageInstruction`, que recebe o idioma da conversa); a tradução de exibição para a equipe é assíncrona (`metadata.translation.role:"display"`, agendada pelos dois commits do atendente) e nunca atrasa nem altera o envio. Rascunho editado por humano na língua da equipe leva `aiDraft.editedInTeamLanguage` e sai pelo desvio de tradução como saída humana; o rascunho pendente guarda a versão da equipe em `aiDraft.translatedText`. Em grupo e publicação `auto` vira pt-BR (`fixedAgentLanguage`). A rota LLM de tradução é só fallback do LibreTranslate e respeita `orgAiActive`.
+
+## Conversa de configuração (`/comecar`)
+- O próximo passo, os cartões de ação e a barra de etapas saem de `convex/lib/onboardingRoadmap.ts` (puro, importado pela tela); o modelo só pede cartões do rascunho. Cartão ou passo novo entra no roteiro, nunca numa instrução do prompt.
+- Ação de cartão concluída = evento sem LLM (`event` no SSE: `approve`, `notify`, `next`, `process_pending`); o servidor confere o fato antes de reconhecer. Não mande texto fingindo ser a pessoa.
+- "Responder sozinha" no onboarding só pelo clique no `ativarIa` → `aiSettings.updateAgentProfile` com `autopilotRiskAck`; `applyOnboardingDraftCore` nunca grava autopilot.

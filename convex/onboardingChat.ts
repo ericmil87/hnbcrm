@@ -25,6 +25,9 @@ import { getActiveMembership, requireAccountWithEmail, requirePermission } from 
 import { resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { orgAiActive } from "./lib/agentSecurity";
 import { isEmailVerifiedForMaterials } from "./lib/emailVerification";
+import { maskEmailForDisplay } from "./lib/emailAddress";
+import { requestEmailVerificationCodeCore } from "./emailVerification";
+import { coherentChips, type RoadmapFacts } from "./lib/onboardingRoadmap";
 import { ensureOnboardingSession } from "./onboardingSessions";
 import { onboardingBlockValidator } from "./lib/onboardingBlocks";
 import { onboardingDraftValidator } from "./lib/onboardingDraft";
@@ -178,6 +181,24 @@ export const getChatState = query({
       materialsNoticeAcknowledged: v.boolean(),
       aiActive: v.boolean(),
       lastChips: v.array(v.string()),
+      /** E-mail da conta confirmado (mesmo que `materialsUnlocked`; nome pedido pela tela do roteiro). */
+      emailVerified: v.boolean(),
+      /** Endereço mascarado da conta ("bu…te@dominio.com"). */
+      maskedEmail: v.union(v.string(), v.null()),
+      /** Links guardados à espera da confirmação do e-mail. */
+      pendingMaterials: v.number(),
+      approvals: v.object({
+        funnel: v.optional(v.string()),
+        persona: v.optional(v.string()),
+        knowledge: v.optional(v.string()),
+      }),
+      /** Etapa (0-based) mais avançada já alcançada. */
+      reachedStep: v.number(),
+      /** Existe rascunho aplicado. */
+      applied: v.boolean(),
+      tested: v.boolean(),
+      /** Canal conectado ou "conectar depois" escolhido (`channelStepAt`). */
+      connected: v.boolean(),
     }),
   ),
   handler: async (ctx, args) => {
@@ -198,16 +219,37 @@ export const getChatState = query({
           .order("desc")
           .first()
       : null;
+    const emailVerified = await isEmailVerifiedForMaterials(ctx, userId);
+    const user = await ctx.db.get(userId);
+    const aiActive = orgAiActive(org);
+    const facts: RoadmapFacts = {
+      draft: session?.draft ?? null,
+      approvals: session?.approvals ?? {},
+      aiActive,
+      applied: session?.appliedDraftHash !== undefined,
+      tested: session?.testedAt !== undefined,
+      connected: session?.channelStepAt !== undefined,
+      emailVerified,
+      reachedStep: session?.reachedStep ?? 0,
+    };
     return {
       sessionId: session?._id ?? null,
       stage: session?.stage ?? null,
       draftVersion: session?.draftVersion ?? 0,
       draftHash: session?.draftHash ?? null,
       messageCount: session?.messageCount ?? 0,
-      materialsUnlocked: await isEmailVerifiedForMaterials(ctx, userId),
+      materialsUnlocked: emailVerified,
       materialsNoticeAcknowledged: session?.materialsNoticeAckAt !== undefined,
-      aiActive: orgAiActive(org),
-      lastChips: last?.role === "assistant" ? (last.chips ?? []) : [],
+      aiActive,
+      lastChips: last?.role === "assistant" ? coherentChips(last.chips ?? [], facts) : [],
+      emailVerified,
+      maskedEmail: maskEmailForDisplay(user?.email) || null,
+      pendingMaterials: session?.pendingMaterials?.length ?? 0,
+      approvals: session?.approvals ?? {},
+      reachedStep: facts.reachedStep ?? 0,
+      applied: facts.applied,
+      tested: facts.tested,
+      connected: facts.connected,
     };
   },
 });
@@ -247,6 +289,53 @@ export const ackMaterialsNotice = mutation({
       createdAt: now,
     });
     return { acknowledgedAt: now };
+  },
+});
+
+// ── Envio automático do código de e-mail (uma vez por sessão) ───────────────
+
+/**
+ * A conversa pede o código SOZINHA quando a conta ainda não confirmou o e-mail,
+ * UMA vez por sessão (`emailCodeAutoSentAt` fica gravado mesmo se o envio for
+ * recusado por limite; o reenvio é o botão do cartão, que usa
+ * `requestEmailVerificationCode`). Mesmos limites do pedido manual
+ * (`requestEmailVerificationCodeCore`). Nunca lança por falta de segredo ou limite.
+ */
+export const ensureEmailCodeSent = mutation({
+  args: { organizationId: v.id("organizations"), sessionId: v.id("onboardingSessions") },
+  returns: v.object({
+    sent: v.boolean(),
+    reason: v.optional(
+      v.union(
+        v.literal("already_verified"),
+        v.literal("already_requested"),
+        v.literal("cooldown"),
+        v.literal("rate_limited"),
+        v.literal("not_deliverable"),
+        v.literal("unavailable"),
+      ),
+    ),
+    canResendAt: v.optional(v.number()),
+    maskedEmail: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    await requirePermission(ctx, args.organizationId, "settings", "manage");
+    const user = await requireAccountWithEmail(ctx);
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.organizationId !== args.organizationId) {
+      throw new ConvexError("Sessão de onboarding não encontrada");
+    }
+    const maskedEmail = maskEmailForDisplay(user.email) || null;
+    if (typeof user.emailVerificationTime === "number") return { sent: false, reason: "already_verified" as const, maskedEmail };
+    if (session.emailCodeAutoSentAt !== undefined) return { sent: false, reason: "already_requested" as const, maskedEmail };
+    await ctx.db.patch(session._id, { emailCodeAutoSentAt: Date.now() });
+    const r = await requestEmailVerificationCodeCore(ctx, user);
+    return {
+      sent: r.sent,
+      ...(r.reason ? { reason: r.reason } : {}),
+      ...(r.canResendAt !== undefined ? { canResendAt: r.canResendAt } : {}),
+      maskedEmail,
+    };
   },
 });
 
@@ -336,6 +425,22 @@ export const internalPrepareTurn = internalMutation({
     ),
     siteKey: v.union(v.string(), v.null()),
     materialsNoticeAck: v.boolean(),
+    /** Link recebido ANTES da confirmação do e-mail: o turno só o guarda (nenhuma busca). */
+    deferMaterial: v.boolean(),
+    /** Roteiro: estado gravado na sessão. */
+    approvals: v.object({
+      funnel: v.optional(v.string()),
+      persona: v.optional(v.string()),
+      knowledge: v.optional(v.string()),
+    }),
+    shownCards: v.record(v.string(), v.string()),
+    reachedStep: v.number(),
+    tested: v.boolean(),
+    connected: v.boolean(),
+    pendingCount: v.number(),
+    maskedEmail: v.union(v.string(), v.null()),
+    /** Chave do evento da ÚLTIMA mensagem da sessão (idempotência de eventos). */
+    lastEvent: v.union(v.string(), v.null()),
   }),
   handler: async (ctx, args) => {
     let member: Doc<"teamMembers">;
@@ -357,7 +462,11 @@ export const internalPrepareTurn = internalMutation({
     const org = await ctx.db.get(args.organizationId);
     if (!org) refuse("invalid_input", "Organização não encontrada");
     const emailVerified = await isEmailVerifiedForMaterials(ctx, user._id);
-    if (args.attachment && !emailVerified) refuse("email_unverified", MATERIALS_EMAIL_UNVERIFIED_MESSAGE);
+    // Só LINK é guardado antes da confirmação (sem busca); arquivo continua recusado.
+    if (args.attachment && !emailVerified && args.attachment.kind !== "url") {
+      refuse("email_unverified", MATERIALS_EMAIL_UNVERIFIED_MESSAGE);
+    }
+    const deferMaterial = args.attachment?.kind === "url" && !emailVerified;
 
     let file: { size: number; mimeType: string; label: string } | null = null;
     let siteKey: string | null = null;
@@ -402,7 +511,7 @@ export const internalPrepareTurn = internalMutation({
       session = await ensureOnboardingSession(ctx, args.organizationId, member);
     }
     // Aviso de materiais: o 1º material da sessão só depois da ciência explícita.
-    if (args.attachment && session.materialsNoticeAckAt === undefined) {
+    if (args.attachment && !deferMaterial && session.materialsNoticeAckAt === undefined) {
       refuse("notice_required", MATERIALS_NOTICE_REQUIRED_MESSAGE);
     }
     const providerConfig = org.settings.aiConfig?.providerConfig;
@@ -411,6 +520,7 @@ export const internalPrepareTurn = internalMutation({
       .withIndex("by_session", (q) => q.eq("sessionId", session._id))
       .order("desc")
       .take(HISTORY_FOR_PROMPT);
+    const lastEvent = recent[0]?.event ?? null;
     return {
       sessionId: session._id,
       memberId: member._id,
@@ -433,6 +543,15 @@ export const internalPrepareTurn = internalMutation({
       file,
       siteKey,
       materialsNoticeAck: session.materialsNoticeAckAt !== undefined,
+      deferMaterial,
+      approvals: session.approvals ?? {},
+      shownCards: session.shownCards ?? {},
+      reachedStep: session.reachedStep ?? 0,
+      tested: session.testedAt !== undefined,
+      connected: session.channelStepAt !== undefined,
+      pendingCount: session.pendingMaterials?.length ?? 0,
+      maskedEmail: maskEmailForDisplay(user.email) || null,
+      lastEvent,
     };
   },
 });
@@ -485,6 +604,8 @@ export const internalAppendMessage = internalMutation({
     ),
     transcribed: v.optional(v.boolean()),
     draftVersion: v.optional(v.number()),
+    /** Chave do evento determinístico que gerou a mensagem (idempotência). */
+    event: v.optional(v.string()),
   },
   returns: v.id("onboardingMessages"),
   handler: async (ctx, args) => {
@@ -505,6 +626,7 @@ export const internalAppendMessage = internalMutation({
         : {}),
       ...(args.transcribed ? { transcribed: true } : {}),
       ...(args.draftVersion !== undefined ? { draftVersion: args.draftVersion } : {}),
+      ...(args.event ? { event: args.event.slice(0, 200) } : {}),
       createdAt: Date.now(),
     });
   },
@@ -626,6 +748,122 @@ export const internalLogMaterialRead = internalMutation({
       createdAt: Date.now(),
     });
     return null;
+  },
+});
+
+// ── Roteiro: fatos conferidos no servidor e materiais guardados ──────────────
+
+/** Canal de WhatsApp conectado (mesmo critério do snapshot de `onboarding.ts`): bridge `connected` ou Meta `active`. */
+async function orgHasConnectedWhatsapp(ctx: QueryCtx, organizationId: Id<"organizations">): Promise<boolean> {
+  const channels = await ctx.db
+    .query("channelConfigs")
+    .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+    .take(100);
+  return channels
+    .filter((c) => c.channel === "whatsapp")
+    .some((c) => (c.provider === "bridge" ? c.bridgeSessionState === "connected" : c.status === "active"));
+}
+
+/**
+ * Evento `notify` do roteiro: o servidor CONFERE o fato antes de reconhecer (o
+ * cliente nunca é a fonte). Devolve `{acknowledged}`; `false` = fato não
+ * confirmado (quem chama responde com o passo atual). Escrita limitada a
+ * `testedAt`, `channelStepAt` e `channelStepKind`.
+ */
+export const internalApplyNotify = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    userId: v.id("users"),
+    what: v.union(
+      v.literal("email_verified"),
+      v.literal("activated"),
+      v.literal("tested"),
+      v.literal("connected"),
+      v.literal("skip_connect"),
+    ),
+  },
+  returns: v.object({ acknowledged: v.boolean() }),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.organizationId !== args.organizationId) {
+      throw new ConvexError("Sessão de onboarding não encontrada");
+    }
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) return { acknowledged: false };
+    const applied = session.appliedDraftHash !== undefined;
+    const aiActive = orgAiActive(org);
+    const now = Date.now();
+    switch (args.what) {
+      case "email_verified":
+        return { acknowledged: await isEmailVerifiedForMaterials(ctx, args.userId) };
+      case "activated":
+        return { acknowledged: aiActive && applied };
+      case "tested":
+        if (!(aiActive && applied)) return { acknowledged: false };
+        if (session.testedAt === undefined) await ctx.db.patch(session._id, { testedAt: now, updatedAt: now });
+        return { acknowledged: true };
+      case "connected":
+        if (!(await orgHasConnectedWhatsapp(ctx, args.organizationId))) return { acknowledged: false };
+        if (session.channelStepAt === undefined || session.channelStepKind !== "connected") {
+          await ctx.db.patch(session._id, { channelStepAt: now, channelStepKind: "connected", updatedAt: now });
+        }
+        return { acknowledged: true };
+      case "skip_connect":
+        if (!(aiActive && applied)) return { acknowledged: false };
+        if (session.channelStepAt === undefined) {
+          await ctx.db.patch(session._id, { channelStepAt: now, channelStepKind: "skipped", updatedAt: now });
+        }
+        return { acknowledged: true };
+    }
+  },
+});
+
+const PENDING_MATERIALS_MAX = 3;
+
+/**
+ * Guarda um link recebido antes da confirmação do e-mail (dedupe por URL, teto
+ * de 3; rótulo = host). `front` devolve à frente da fila um item retirado e não
+ * lido. Nenhuma busca acontece aqui.
+ */
+export const internalAddPendingMaterial = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    sessionId: v.id("onboardingSessions"),
+    url: v.string(),
+    label: v.string(),
+    front: v.optional(v.boolean()),
+  },
+  returns: v.object({ stored: v.boolean(), count: v.number() }),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.organizationId !== args.organizationId) {
+      throw new ConvexError("Sessão de onboarding não encontrada");
+    }
+    const list = session.pendingMaterials ?? [];
+    if (list.some((m) => m.url === args.url)) return { stored: true, count: list.length };
+    if (list.length >= PENDING_MATERIALS_MAX) return { stored: false, count: list.length };
+    const item = { kind: "url" as const, url: args.url.slice(0, 2000), label: args.label.slice(0, 200), createdAt: Date.now() };
+    const next = args.front ? [item, ...list] : [...list, item];
+    await ctx.db.patch(session._id, { pendingMaterials: next, updatedAt: Date.now() });
+    return { stored: true, count: next.length };
+  },
+});
+
+/** Retira o PRIMEIRO material guardado (ou `null`). */
+export const internalTakePendingMaterial = internalMutation({
+  args: { organizationId: v.id("organizations"), sessionId: v.id("onboardingSessions") },
+  returns: v.union(v.null(), v.object({ url: v.string(), label: v.string() })),
+  handler: async (ctx, args) => {
+    const session = await ctx.db.get(args.sessionId);
+    if (!session || session.organizationId !== args.organizationId) {
+      throw new ConvexError("Sessão de onboarding não encontrada");
+    }
+    const list = session.pendingMaterials ?? [];
+    if (list.length === 0) return null;
+    const [first, ...rest] = list;
+    await ctx.db.patch(session._id, { pendingMaterials: rest, updatedAt: Date.now() });
+    return { url: first.url, label: first.label };
   },
 });
 

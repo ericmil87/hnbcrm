@@ -23,3 +23,15 @@ export const AI_LGPD_ACK_LABEL =
 export function aiLgpdPlainText(paragraph: readonly AiLgpdPart[]): string {
   return paragraph.map((p) => (typeof p === "string" ? p : p.strong)).join("");
 }
+
+/**
+ * Resumo HUMANO do aceite (cartão "Ativar a sua IA" do onboarding): curto e sem
+ * juridiquês. NÃO substitui o aceite: o texto completo (`AI_LGPD_PARAGRAPHS`) fica em
+ * "Ver detalhes" e a caixa com `AI_LGPD_ACK_LABEL` continua sendo marcada pela pessoa.
+ */
+export const AI_LGPD_HUMAN_SUMMARY: readonly string[] = [
+  "As conversas dos seus clientes são processadas por provedores de IA parceiros, inclusive fora do Brasil, em um modo que não guarda as mensagens nem as usa para treinar a IA, no caminho padrão.",
+  "A sua empresa é a responsável pelos dados dos seus clientes.",
+];
+
+export const AI_LGPD_DETAILS_LABEL = "Ver detalhes";

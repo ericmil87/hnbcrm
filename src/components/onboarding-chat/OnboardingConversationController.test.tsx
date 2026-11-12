@@ -56,7 +56,6 @@ function props(overrides: Partial<OnboardingConversationControllerProps> = {}): 
     access: { kind: "ready" },
     sessionId: "s1",
     history: loaded(),
-    sessionStage: "interview",
     chatState: { stage: "interview", lastChips: [] },
     draft: null,
     token: "tok",
@@ -143,7 +142,7 @@ describe("OnboardingConversationController", () => {
     expect(sessionStorage.getItem(ONBOARDING_DRAFT_KEY)).toBeNull();
   });
 
-  it("conversa nova sem hero: saudação e chips fixos; chip envia", async () => {
+  it("conversa nova sem hero: saudação e chips neutros; chip envia", async () => {
     const user = userEvent.setup();
     const f = streamingFetch();
     render(ui(props({ fetchImpl: f.fetchImpl })));
@@ -211,9 +210,17 @@ describe("OnboardingConversationController", () => {
     expect(screen.getAllByText("Vamos lá, me conta mais.")).toHaveLength(1);
   });
 
-  it("etapa: a da sessão vence a do turno e a do estado", () => {
-    render(ui(props({ sessionStage: "draft", chatState: { stage: "interview", lastChips: [] } })));
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Etapa 4 de 7: Rascunho");
+  it("progresso em português: começa em Negócio e nunca regride (reachedStep do servidor e máximo visto na tela)", () => {
+    const view = render(ui(props({ chatState: { stage: "interview", lastChips: [], reachedStep: 2 } })));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Etapa 3 de 6: Atendente");
+    // O servidor "voltou" para 0: a barra fica onde estava.
+    view.rerender(ui(props({ chatState: { stage: "interview", lastChips: [], reachedStep: 0 } })));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Etapa 3 de 6: Atendente");
+  });
+
+  it("conversa nova: etapa 1 Negócio", () => {
+    render(ui(props()));
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Etapa 1 de 6: Negócio");
   });
 
   it("sem permissão: só o aviso, campo desligado", () => {

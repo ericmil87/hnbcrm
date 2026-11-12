@@ -5,6 +5,7 @@ import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { startHref } from "@/lib/onboardingEntry";
 import { cn } from "@/lib/utils";
 import { LANDING_ANCHORS, PRIMARY_CTA_LABEL } from "./sections/landingCopy";
+import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
 interface NavLink {
   href: string;
@@ -37,13 +38,9 @@ export function LandingHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border-subtle bg-surface-base/95 backdrop-blur supports-[backdrop-filter]:bg-surface-base/80">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-2 px-4 pt-2 md:flex-nowrap md:py-2">
-        <Link
-          to="/"
-          aria-label="HNBCRM, início"
-          className="inline-flex min-h-11 shrink-0 items-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-        >
+        <HomeLogoLink>
           <BrandLogo variant="responsive" size="md" decorative />
-        </Link>
+        </HomeLogoLink>
         <nav
           aria-label="Seções da página"
           className="order-last -mx-4 flex w-[calc(100%+2rem)] gap-1 overflow-x-auto px-3 pb-1 [scrollbar-width:none] md:order-none md:mx-0 md:w-auto md:flex-1 md:justify-center md:overflow-visible md:px-0 md:pb-0 [&::-webkit-scrollbar]:hidden"

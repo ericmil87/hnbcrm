@@ -1,15 +1,15 @@
 import { useState } from "react";
-import { BookOpen, FileText, Globe, Image as ImageIcon, Mic, Pencil, Plus, Trash2, User, SlidersHorizontal } from "lucide-react";
+import { BookOpen, FileText, Globe, Image as ImageIcon, Mic, Pencil, Plus, Trash2, User } from "lucide-react";
 import type { ComponentType } from "react";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
 import { plainModelText } from "@/lib/onboardingChat";
 import { addKnowledge, releaseKnowledge, removeKnowledge, setKnowledgeText } from "@/lib/onboardingDraftEdit";
 import { formatCount } from "@/lib/format";
-import { buildBlock } from "../../../../convex/lib/onboardingBlocks";
 import { DRAFT_LIMITS } from "../../../../convex/lib/onboardingDraft";
-import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
-import { BlockCard } from "./BlockCard";
+import { useDraftEditor } from "../useDraftEditor";
+import { ApprovableCard, purposeOf, type ApprovalProps } from "./ApprovableCard";
+import { approvalFor, liveDraftBlock } from "./liveBlock";
 import { FlagNotice, FormActions, ReleaseControl, StaleNotice, Tag, useBaseVersion, type CardEditor } from "./draftParts";
 import type { BlockOf, BlockProps } from "./types";
 
@@ -24,14 +24,16 @@ const ORIGIN: Record<string, { label: string; icon: ComponentType<{ className?: 
   template: { label: "Modelo do segmento", icon: BookOpen },
 };
 
-/** Origem legível: o tipo (fixo) e, se houver, a referência (texto puro; link vira "[link removido]" e some). */
+/**
+ * Origem legível: o `originLabel` do SERVIDOR ("Você contou", "Do site: host",
+ * "Do PDF: nome", "Do áudio") como texto puro. Sem rótulo (mensagem antiga) ou com
+ * link no rótulo, cai no nome fixo do tipo. Nunca deduz "Do site" na tela.
+ */
 export function originText(item: Pick<Item, "originKind" | "originLabel">): string {
   const base = (ORIGIN[item.originKind] ?? ORIGIN.usuario).label;
   const label = plainModelText(item.originLabel ?? "");
-  const sep = label.indexOf(": ");
-  const detail = sep >= 0 ? label.slice(sep + 2).trim() : "";
-  if (!detail || detail.includes("[link removido]")) return base;
-  return `${base}: ${detail}`;
+  if (!label || label.includes("[link removido]")) return base;
+  return label;
 }
 
 const COMPACT_ITEMS = 3;
@@ -41,16 +43,30 @@ export interface ConhecimentoListaViewProps {
   compact?: boolean;
   editor?: CardEditor;
   onAdjust?: () => void;
+  /** "Está bom, seguir" (ao vivo). Ausente = cartão sem aprovação. */
+  approval?: ApprovalProps;
 }
 
-export function ConhecimentoListaView({ block, compact, editor, onAdjust }: ConhecimentoListaViewProps) {
+/**
+ * Procedência de cada fato: SEMPRE o `originLabel` do servidor ("Você contou",
+ * "Do site: host", "Do PDF: nome", "Do áudio"); a tela nunca deduz "Do site".
+ */
+export function ConhecimentoListaView({ block, compact, editor, onAdjust, approval }: ConhecimentoListaViewProps) {
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const items = (Array.isArray(block.items) ? block.items : []).slice(0, DRAFT_LIMITS.knowledgeMax);
   const shown = compact ? items.slice(0, COMPACT_ITEMS) : items;
   const full = items.length >= DRAFT_LIMITS.knowledgeMax;
 
   return (
-    <BlockCard title="O que o atendente sabe" icon={BookOpen} note={compact ? undefined : block.note}>
+    <ApprovableCard
+      title="O que a IA sabe"
+      icon={BookOpen}
+      purpose={purposeOf(block)}
+      note={compact ? undefined : block.note}
+      approval={approval}
+      compact={compact}
+      onAdjust={!editor && !compact ? onAdjust : undefined}
+    >
       <p className="text-caption text-text-secondary">
         <span className="tabular-nums">{formatCount(block.total)}</span> {block.total === 1 ? "fato" : "fatos"}
         {block.flagged > 0 && (
@@ -138,13 +154,7 @@ export function ConhecimentoListaView({ block, compact, editor, onAdjust }: Conh
           Adicionar fato
         </Button>
       )}
-      {!editor && onAdjust && !compact && (
-        <Button size="sm" variant="secondary" className="mt-2" onClick={onAdjust}>
-          <SlidersHorizontal className="size-3.5" aria-hidden="true" />
-          Ajustar
-        </Button>
-      )}
-    </BlockCard>
+    </ApprovableCard>
   );
 }
 
@@ -186,14 +196,12 @@ function KnowledgeForm({
 
 function ConhecimentoLive({ block, ctx }: BlockProps<"conhecimentoLista">) {
   const ed = useDraftEditor(ctx);
-  const live = ed.draft
-    ? (buildBlock({ kind: "conhecimentoLista", note: block.note }, liveBlockContext(ed)) as BlockOf<"conhecimentoLista"> | null)
-    : null;
   return (
     <ConhecimentoListaView
-      block={live ?? block}
+      block={liveDraftBlock(block, ctx)}
       compact={ctx.compact}
       editor={ed.draft ? { version: ed.version, saving: ed.saving, save: ed.save } : undefined}
+      approval={approvalFor("conhecimentoLista", ctx)}
     />
   );
 }
@@ -201,5 +209,12 @@ function ConhecimentoLive({ block, ctx }: BlockProps<"conhecimentoLista">) {
 export function ConhecimentoListaBlock({ block, ctx }: BlockProps<"conhecimentoLista">) {
   const [live, setLive] = useState(false);
   if (live) return <ConhecimentoLive block={block} ctx={ctx} />;
-  return <ConhecimentoListaView block={block} compact={ctx.compact} onAdjust={ctx.organizationId ? () => setLive(true) : undefined} />;
+  return (
+    <ConhecimentoListaView
+      block={liveDraftBlock(block, ctx)}
+      compact={ctx.compact}
+      approval={approvalFor("conhecimentoLista", ctx)}
+      onAdjust={ctx.organizationId ? () => setLive(true) : undefined}
+    />
+  );
 }

@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { buildTimeline, currentChips, plainModelText, stageProgress, type HistoryMessage, type PendingTurn } from "./onboardingChat";
+import { coherentChips, type RoadmapFacts } from "../../convex/lib/onboardingRoadmap";
+import {
+  accountProgress,
+  blockKey,
+  buildTimeline,
+  cardIsLatest,
+  chatProgress,
+  collapsedBlockLine,
+  currentChips,
+  isBareEmailCode,
+  nextStepFor,
+  plainModelText,
+  shouldProcessPending,
+  supersededBlockKeys,
+  type HistoryMessage,
+  type PendingTurn,
+} from "./onboardingChat";
 
 function msg(id: string, role: "user" | "assistant", text: string, extra: Partial<HistoryMessage> = {}): HistoryMessage {
   return { _id: id, role, text, blocks: [], chips: [], attachment: null, createdAt: 1, ...extra };
@@ -19,15 +35,126 @@ function pending(extra: Partial<PendingTurn> = {}): PendingTurn {
   };
 }
 
-describe("stageProgress", () => {
-  it("mapeia as etapas do servidor e a etapa de conta", () => {
-    expect(stageProgress("account")).toMatchObject({ index: 1, total: 7, label: "Conta" });
-    expect(stageProgress("interview").valueText).toBe("Etapa 2 de 7: Entrevista");
-    expect(stageProgress("next_steps")).toMatchObject({ index: 7, ratio: 1 });
+const facts = (over: Partial<RoadmapFacts> = {}): RoadmapFacts => ({
+  draft: null,
+  approvals: {},
+  aiActive: false,
+  applied: false,
+  tested: false,
+  connected: false,
+  emailVerified: true,
+  ...over,
+});
+
+describe("progresso do roteiro", () => {
+  it("sem login/sem organização: 'Crie a sua conta' antes da etapa 1, tudo em português", () => {
+    const p = accountProgress();
+    expect(p).toMatchObject({ index: 0, total: 6, label: "Crie a sua conta" });
+    expect(p.steps.map((s) => s.label)).toEqual(["Negócio", "Funil", "Atendente", "Ativar", "Testar", "Conectar"]);
+    expect(p.steps.every((s) => s.state === "todo")).toBe(true);
   });
-  it("etapa desconhecida ou nula = entrevista", () => {
-    expect(stageProgress(null).index).toBe(2);
-    expect(stageProgress("xpto").index).toBe(2);
+  it("conversa aberta sem rascunho: etapa 1 Negócio", () => {
+    const p = chatProgress(facts());
+    expect(p).toMatchObject({ index: 1, label: "Negócio", valueText: "Etapa 1 de 6: Negócio" });
+    expect(p.steps[0].state).toBe("current");
+  });
+  it("nunca regride: reachedStep do servidor e o máximo visto na tela sustentam a barra", () => {
+    expect(chatProgress(facts({ reachedStep: 3 })).index).toBe(4);
+    expect(chatProgress(facts({ reachedStep: 0 }), 5).label).toBe("Testar");
+    const p = chatProgress(facts({ reachedStep: 1 }), 3);
+    expect(p.index).toBe(3);
+    expect(p.steps.map((s) => s.state)).toEqual(["done", "done", "current", "todo", "todo", "todo"]);
+  });
+  it("concluído: tudo feito e rótulo em português", () => {
+    const p = chatProgress(facts({ applied: true, aiActive: true, tested: true, connected: true }));
+    expect(p.complete).toBe(true);
+    expect(p.valueText).toBe("Configuração concluída");
+    expect(p.steps.every((s) => s.state === "done")).toBe(true);
+  });
+  it("nenhum rótulo em inglês em nenhum estado", () => {
+    const all = [accountProgress(), chatProgress(facts()), chatProgress(facts(), 6), chatProgress(facts({ reachedStep: 99 }))];
+    for (const p of all) expect(`${p.label} ${p.valueText} ${p.steps.map((s) => s.label).join(" ")}`).not.toMatch(/interview|draft|applied|account|materials|test\b/i);
+  });
+  it("próximo passo: sem rascunho é contar do negócio; concluído é abrir o CRM", () => {
+    expect(nextStepFor(facts())).toMatchObject({ task: "describe_business", label: "Contar sobre o meu negócio", cardKind: null });
+    expect(nextStepFor(facts({ applied: true, aiActive: true, tested: true, connected: true }))).toMatchObject({
+      task: "done",
+      label: "Abrir o meu CRM",
+    });
+  });
+});
+
+describe("código de e-mail digitado", () => {
+  it("só exatamente 6 dígitos valem como código", () => {
+    expect(isBareEmailCode("123456")).toBe(true);
+    expect(isBareEmailCode(" 123456 ")).toBe(true);
+    expect(isBareEmailCode("12345")).toBe(false);
+    expect(isBareEmailCode("1234567")).toBe(false);
+    expect(isBareEmailCode("meu cep é 123456")).toBe(false);
+  });
+});
+
+describe("cartões sem repetição (supersededBlockKeys)", () => {
+  const funil = { kind: "funilPreview", funnelName: "Vendas", stages: [], customFields: [], blockedCount: 0 };
+  const persona = { kind: "personaCard" };
+  const item = (key: string, blocks: unknown[], role: "assistant" | "user" = "assistant") => ({ key, role, blocks });
+
+  it("o mesmo cartão em várias mensagens: só a mais recente fica inteira (histórico antigo com o funil 3 vezes)", () => {
+    const t = [item("a", [funil]), item("b", [funil, persona]), item("c", [funil])];
+    const s = supersededBlockKeys(t);
+    expect(s.has(blockKey("a", 0))).toBe(true);
+    expect(s.has(blockKey("b", 0))).toBe(true);
+    expect(s.has(blockKey("c", 0))).toBe(false);
+    expect(s.has(blockKey("b", 1))).toBe(false);
+  });
+  it("tipos diferentes e tipos de conversa (chips, upload) não são tocados", () => {
+    const t = [item("a", [funil, { kind: "chips", options: [] }, { kind: "uploadProgresso" }]), item("b", [{ kind: "uploadProgresso" }])];
+    expect(supersededBlockKeys(t).size).toBe(0);
+  });
+  it("cartões de ação repetidos (ativarIa, operacaoPronta, cartaoConta) recolhem os anteriores", () => {
+    const t = [item("a", [{ kind: "cartaoConta" }, { kind: "ativarIa" }]), item("u", [], "user"), item("b", [{ kind: "cartaoConta" }, { kind: "ativarIa" }, { kind: "operacaoPronta" }])];
+    const s = supersededBlockKeys(t);
+    expect([...s].sort()).toEqual([blockKey("a", 0), blockKey("a", 1)].sort());
+  });
+  it("aplicarOperacao/cartaoAceite antigos: recolhidos quando não são a mensagem mais recente; funcionam como hoje na última", () => {
+    const old = [item("a", [{ kind: "aplicarOperacao" }, { kind: "cartaoAceite" }]), item("b", [funil])];
+    expect(supersededBlockKeys(old).size).toBe(2);
+    const latest = [item("b", [funil]), item("a", [{ kind: "aplicarOperacao" }])];
+    expect(supersededBlockKeys(latest).size).toBe(0);
+  });
+  it("linha recolhida diz onde está o cartão atual", () => {
+    expect(collapsedBlockLine("funilPreview")).toBe("Funil de vendas · atualizado mais abaixo");
+    expect(collapsedBlockLine("aplicarOperacao")).toMatch(/cartão mais recente/);
+  });
+  it("cardIsLatest: o cartão está na última mensagem do Copiloto", () => {
+    expect(cardIsLatest([item("a", [funil])], "funilPreview")).toBe(true);
+    expect(cardIsLatest([item("a", [funil]), item("u", [], "user")], "funilPreview")).toBe(false);
+    expect(cardIsLatest([item("a", [funil])], null)).toBe(false);
+  });
+});
+
+describe("sugestões coerentes na tela", () => {
+  it("sugestão gravada antes de uma ação some quando ela conclui", () => {
+    const draft = { business: { description: "passeios de buggy" } } as never;
+    expect(coherentChips(["Tenho uma clínica", "Vendo serviços", "Outra coisa"], facts({ draft }))).toEqual(["Outra coisa"]);
+    expect(coherentChips(["Confirmar o e-mail", "Seguir"], facts({ emailVerified: true }))).toEqual(["Seguir"]);
+    expect(coherentChips(["Testar a IA", "Seguir"], facts({ tested: true }))).toEqual(["Seguir"]);
+  });
+});
+
+describe("process_pending sem laço", () => {
+  const base = { emailVerified: true, noticeOk: true, idle: true, queued: 0, pending: 2, lastAttempt: null as number | null };
+  it("tenta uma vez; só repete se o número cair", () => {
+    expect(shouldProcessPending(base)).toBe(true);
+    expect(shouldProcessPending({ ...base, lastAttempt: 2 })).toBe(false);
+    expect(shouldProcessPending({ ...base, pending: 1, lastAttempt: 2 })).toBe(true);
+  });
+  it("espera e-mail, ciência, conversa ociosa e a fila de arquivos", () => {
+    expect(shouldProcessPending({ ...base, emailVerified: false })).toBe(false);
+    expect(shouldProcessPending({ ...base, noticeOk: false })).toBe(false);
+    expect(shouldProcessPending({ ...base, idle: false })).toBe(false);
+    expect(shouldProcessPending({ ...base, queued: 1 })).toBe(false);
+    expect(shouldProcessPending({ ...base, pending: 0 })).toBe(false);
   });
 });
 

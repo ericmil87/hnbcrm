@@ -28,6 +28,7 @@ import { SEO } from "@/components/SEO";
 import { Footer } from "@/components/landing/Footer";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
+import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
 const sections = [
   { id: "quick-start", label: "Quick Start", icon: Rocket },
@@ -106,9 +107,9 @@ export function DevelopersPage() {
       <header className="sticky top-0 z-30 backdrop-blur-md bg-surface-base/90 border-b border-border">
         <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-4 flex-shrink-0">
-            <Link to="/" className="flex items-center gap-2">
+            <HomeLogoLink>
               <BrandLogo variant="responsive" size="md" />
-            </Link>
+            </HomeLogoLink>
             <span className="text-text-muted hidden sm:inline">/</span>
             <span className="text-sm font-medium text-text-secondary hidden sm:inline">Developers</span>
           </div>

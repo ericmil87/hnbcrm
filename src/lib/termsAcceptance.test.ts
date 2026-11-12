@@ -10,8 +10,8 @@ describe("termsAcceptance", () => {
     expect(needsTermsAcceptance({ currentVersion: "2026-11-10", acceptedVersion: "2026-11-10" })).toBe(false);
   });
   it("criar organização exige a caixa marcada", () => {
-    expect(canSubmitOrganization({ name: "Acme", slug: "acme", accepted: false })).toBe(false);
-    expect(canSubmitOrganization({ name: "Acme", slug: "acme", accepted: true })).toBe(true);
-    expect(canSubmitOrganization({ name: " ", slug: "acme", accepted: true })).toBe(false);
+    expect(canSubmitOrganization({ name: "Acme", accepted: false })).toBe(false);
+    expect(canSubmitOrganization({ name: "Acme", accepted: true })).toBe(true);
+    expect(canSubmitOrganization({ name: " ", accepted: true })).toBe(false);
   });
 });

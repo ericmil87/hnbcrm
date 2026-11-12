@@ -6,7 +6,7 @@ import type { BlockContext } from "./types";
 import { MessageItem } from "../MessageItem";
 
 function ctx(overrides: Partial<BlockContext> = {}): BlockContext {
-  return { organizationId: "o", sessionId: "s", sendText: vi.fn(), busy: false, isLatest: true, ...overrides };
+  return { organizationId: "o", sessionId: "s", sendText: vi.fn(), sendEvent: vi.fn(), busy: false, isLatest: true, ...overrides };
 }
 
 const UNKNOWN_TEXT = /não pode ser exibido nesta versão/;
@@ -30,6 +30,8 @@ describe("registro de blocos", () => {
         "proximosPassos",
         "traducaoCartao",
         "avisoMateriais",
+        "ativarIa",
+        "operacaoPronta",
       ].sort()
     );
   });
@@ -90,7 +92,7 @@ describe("registro de blocos", () => {
     expect(screen.getByText("Veja aqui e [link removido]")).toBeInTheDocument();
     expect(screen.getByText("Nota")).toBeInTheDocument();
     expect(screen.getByText(/marcado para revisão/)).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Etapas do funil" }).textContent).toContain("Novo lead");
+    expect(screen.getByLabelText("Etapas do funil").textContent).toContain("Novo lead");
     expect(screen.getByText(/Campos: Orçamento/)).toBeInTheDocument();
   });
 
@@ -113,6 +115,36 @@ describe("registro de blocos", () => {
   });
 });
 
+describe("cartões na conversa", () => {
+  const funil = { kind: "funilPreview", funnelName: "Vendas", stages: [{ name: "Novo", outcome: "open" }], customFields: [], blockedCount: 0 };
+  const blockCtx = { organizationId: "o", sessionId: "s", sendText: vi.fn(), sendEvent: vi.fn(), busy: false };
+
+  it("mensagem antiga sem purpose mostra a frase fixa 'para que serve' logo abaixo do título", () => {
+    render(<OnboardingBlockView block={funil} ctx={ctx()} />);
+    expect(screen.getByText(/Funil é o caminho que cada cliente faz/)).toBeInTheDocument();
+  });
+
+  it("purpose do servidor vence a frase fixa", () => {
+    render(<OnboardingBlockView block={{ ...funil, purpose: "Frase do servidor." }} ctx={ctx()} />);
+    expect(screen.getByText("Frase do servidor.")).toBeInTheDocument();
+    expect(screen.queryByText(/Funil é o caminho/)).toBeNull();
+  });
+
+  it("MessageItem: cartão repetido vira uma linha recolhida, sem botões", () => {
+    render(
+      <MessageItem
+        item={{ key: "m1", role: "assistant", text: "", blocks: [funil], chips: [] }}
+        blockCtx={blockCtx}
+        isLatest={false}
+        superseded={new Set(["m1:block:0"])}
+      />
+    );
+    expect(screen.getByText("Funil de vendas · atualizado mais abaixo")).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("region", { name: "Vendas" })).toBeNull();
+  });
+});
+
 describe("MessageItem", () => {
   it("resposta do Copiloto é texto puro com quebras; áudio que falha some e fica o texto", () => {
     const { container } = render(
@@ -125,7 +157,7 @@ describe("MessageItem", () => {
           chips: [],
           audio: { url: "https://x/a.wav", durationSec: 2, mimeType: "audio/wav" },
         }}
-        blockCtx={{ organizationId: "o", sessionId: "s", sendText: vi.fn(), busy: false }}
+        blockCtx={{ organizationId: "o", sessionId: "s", sendText: vi.fn(), sendEvent: vi.fn(), busy: false }}
         isLatest
       />
     );

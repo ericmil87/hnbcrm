@@ -33,9 +33,29 @@ export interface ApplyResultView {
   attendantNote: string | null;
 }
 
+/** O que o atendente faz DE FATO, conforme o modo final (nunca promete o que não ligou). */
+export function attendantModeNote(mode: FinalAttendantMode): string {
+  switch (mode) {
+    case "autopilot":
+      return "Sua IA responde sozinha, 24h. Ela chama você quando não souber ou quando o cliente pedir uma pessoa. Dá para mudar em Configurações.";
+    case "autopilot_failed":
+      return "A operação ficou montada em Sugerir respostas: a IA escreve e você aprova cada resposta. Não consegui ligar o modo Responder sozinha; tente de novo.";
+    default:
+      return "Seu atendente começa em Sugerir respostas: ele escreve e a sua equipe revisa. Nada sai sozinho para um cliente.";
+  }
+}
+
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-export function describeApplyResult(r: ApplyResult): ApplyResultView {
+/**
+ * Modo FINAL do atendente depois do clique (para dizer a verdade na tela):
+ * `suggest` (escolhido ou padrão), `autopilot` (ligado com sucesso) ou
+ * `autopilot_failed` (a pessoa pediu Responder sozinha, a operação ficou em
+ * Sugerir respostas porque ligar o modo falhou).
+ */
+export type FinalAttendantMode = "suggest" | "autopilot" | "autopilot_failed";
+
+export function describeApplyResult(r: ApplyResult, finalMode: FinalAttendantMode = "suggest"): ApplyResultView {
   const created: string[] = [];
   if (r.funnelMode === "created") created.push("Funil criado");
   if (r.funnelMode === "replaced") created.push("Funil montado no lugar do anterior");
@@ -80,9 +100,7 @@ export function describeApplyResult(r: ApplyResult): ApplyResultView {
 
   const needsConsent = r.attendant === "pending_consent";
   const born = r.attendant === "created" || r.attendant === "updated" || r.attendant === "overwritten";
-  const attendantNote = born
-    ? "Seu atendente começa em Sugerir respostas: ele escreve e a sua equipe revisa. Nada sai sozinho para um cliente."
-    : null;
+  const attendantNote = !born ? null : attendantModeNote(finalMode);
 
   return {
     created,

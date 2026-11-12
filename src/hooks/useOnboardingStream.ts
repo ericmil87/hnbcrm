@@ -4,6 +4,7 @@ import {
   onboardingErrorMessage,
   runOnboardingTurnRequest,
   type OnboardingAttachment,
+  type OnboardingEvent,
   type OnboardingReplyAudio,
   type OnboardingStreamEvent,
   type OnboardingTurnError,
@@ -26,6 +27,8 @@ export interface OnboardingStreamTurn {
 export interface SendOnboardingTurnInput {
   text?: string;
   attachment?: OnboardingAttachment;
+  /** Evento de cartão (sem LLM, sem mensagem da pessoa); exclusivo com `text`/`attachment`. */
+  event?: OnboardingEvent;
 }
 
 /**
@@ -125,7 +128,8 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
   const send = useCallback(
     async (input: SendOnboardingTurnInput): Promise<OnboardingTurnResult> => {
       const text = input.text?.trim() ?? "";
-      if (!text && !input.attachment) return "failed";
+      if (input.event && (text || input.attachment)) return "failed";
+      if (!text && !input.attachment && !input.event) return "failed";
       if (streamingRef.current) return "failed";
       if (!organizationId) return "failed";
       if (!token) {
@@ -191,6 +195,7 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
           ...(sessionRef.current ? { sessionId: sessionRef.current } : {}),
           ...(text ? { text } : {}),
           ...(input.attachment ? { attachment: input.attachment } : {}),
+          ...(input.event ? { event: input.event } : {}),
         },
         signal: controller.signal,
         onEvent,

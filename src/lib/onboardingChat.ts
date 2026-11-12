@@ -1,49 +1,102 @@
 /**
- * Regras puras da conversa do onboarding (`/comecar`): etapas da barra de
- * progresso, texto do modelo sem marcação e a linha do tempo (histórico do
- * servidor + turno em andamento, sem duplicar).
+ * Regras puras da conversa do onboarding (`/comecar`): progresso (roteiro de
+ * 6 etapas), texto do modelo sem marcação, a linha do tempo (histórico do
+ * servidor + turno em andamento, sem duplicar) e que cartão aparece inteiro.
  */
+import {
+  DRAFT_CARD_KINDS,
+  ROADMAP_STEPS,
+  nextStepLabel,
+  nextTask,
+  roadmapProgress,
+  taskCard,
+  type RoadmapFacts,
+  type RoadmapTask,
+  type TaskCardKind,
+} from "../../convex/lib/onboardingRoadmap";
 import { safeAudioUrl, type OnboardingReplyAudio } from "./onboardingStream";
 
-// ── Etapas ──────────────────────────────────────────────────────────────────
+// ── Progresso (roteiro de 6 etapas, em português, nunca regride) ────────────
 
-/** Etapas visíveis (plano 4.1). `account` é a etapa 1 (antes do login / sem org). */
-export const ONBOARDING_STEPS = [
-  { id: "account", label: "Conta" },
-  { id: "interview", label: "Entrevista" },
-  { id: "materials", label: "Materiais" },
-  { id: "draft", label: "Rascunho" },
-  { id: "applied", label: "Aplicar" },
-  { id: "test", label: "Teste" },
-  { id: "next_steps", label: "Próximos passos" },
-] as const;
+/** Rótulo da etapa anterior ao roteiro (sem login ou sem organização). */
+export const ACCOUNT_STEP_LABEL = "Crie a sua conta";
 
-export type OnboardingStepId = (typeof ONBOARDING_STEPS)[number]["id"];
+export interface ProgressStepView {
+  id: string;
+  label: string;
+  state: "done" | "current" | "todo";
+}
 
-export interface StageProgress {
-  /** 1-based. */
+export interface ProgressView {
+  /** 0 = conta (antes da etapa 1); 1..6 = etapas do roteiro. */
   index: number;
   total: number;
   label: string;
   /** 0..1, para a largura da barra. */
   ratio: number;
-  /** "Etapa 2 de 7: Entrevista". */
+  /** "Etapa 2 de 6: Funil". */
   valueText: string;
+  complete: boolean;
+  steps: ProgressStepView[];
 }
 
-/** Etapa do servidor (`onboardingSessions.stage`) → progresso; desconhecida ou nula = entrevista. */
-export function stageProgress(stage: string | null | undefined): StageProgress {
-  const total = ONBOARDING_STEPS.length;
-  let i = ONBOARDING_STEPS.findIndex((s) => s.id === stage);
-  if (i === -1) i = 1;
-  const step = ONBOARDING_STEPS[i];
+function stepsView(current: number, complete: boolean): ProgressStepView[] {
+  return ROADMAP_STEPS.map((s, i) => ({
+    id: s.id,
+    label: s.label,
+    state: complete || i + 1 < current ? "done" : i + 1 === current ? "current" : "todo",
+  }));
+}
+
+/** Antes do login / sem organização: o passo é criar a conta. */
+export function accountProgress(): ProgressView {
+  const total = ROADMAP_STEPS.length;
   return {
-    index: i + 1,
+    index: 0,
     total,
-    label: step.label,
-    ratio: (i + 1) / total,
-    valueText: `Etapa ${i + 1} de ${total}: ${step.label}`,
+    label: ACCOUNT_STEP_LABEL,
+    ratio: 0,
+    valueText: `${ACCOUNT_STEP_LABEL}, antes da etapa 1 de ${total}`,
+    complete: false,
+    steps: stepsView(0, false),
   };
+}
+
+/**
+ * Progresso com a conversa aberta. Monotônico: vale o maior entre a etapa do
+ * que falta agora, o `reachedStep` do servidor e o maior índice já visto na
+ * tela (`seenIndex`, 1-based). Nenhum rótulo em inglês em nenhum estado.
+ */
+export function chatProgress(facts: RoadmapFacts, seenIndex = 0): ProgressView {
+  const seen = Math.max(0, Math.floor(seenIndex) - 1);
+  const reached = Math.max(Number.isInteger(facts.reachedStep) ? (facts.reachedStep as number) : 0, seen);
+  const p = roadmapProgress({ ...facts, reachedStep: reached });
+  return {
+    index: p.index,
+    total: p.total,
+    label: p.label,
+    ratio: p.ratio,
+    valueText: p.valueText,
+    complete: p.complete,
+    steps: stepsView(p.index, p.complete),
+  };
+}
+
+/** O que a barra do próximo passo mostra: o rótulo do servidor/roteiro e o cartão do passo. */
+export interface NextStep {
+  task: RoadmapTask;
+  label: string;
+  cardKind: TaskCardKind | null;
+}
+
+export function nextStepFor(facts: RoadmapFacts): NextStep {
+  const task = nextTask(facts);
+  return { task, label: nextStepLabel(task), cardKind: taskCard(task) };
+}
+
+/** O texto digitado é só o código de 6 dígitos do e-mail (com o e-mail ainda por confirmar, vale como o código). */
+export function isBareEmailCode(text: string): boolean {
+  return /^\d{6}$/.test(text.trim());
 }
 
 // ── Texto do modelo ─────────────────────────────────────────────────────────
@@ -204,4 +257,105 @@ export function currentChips(timeline: readonly TimelineItem[], fallback: readon
   if (!last) return [...fallback];
   if (last.role !== "assistant") return [];
   return last.chips.length > 0 ? [...last.chips] : [...fallback];
+}
+
+// ── Cartões sem repetição ───────────────────────────────────────────────────
+
+/** Cartões que, repetidos na conversa, só aparecem inteiros na ocorrência mais recente. */
+export const SUPERSEDABLE_KINDS: readonly string[] = [...DRAFT_CARD_KINDS, "ativarIa", "operacaoPronta", "cartaoConta"];
+
+/** Cartões do fluxo antigo (histórico): fora da mensagem mais recente, aparecem recolhidos. */
+export const LEGACY_ACTION_KINDS: readonly string[] = ["aplicarOperacao", "cartaoAceite"];
+
+/** Chave estável de um bloco dentro da linha do tempo. */
+export function blockKey(itemKey: string, index: number): string {
+  return `${itemKey}:block:${index}`;
+}
+
+export function blockKindOf(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const kind = (raw as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : null;
+}
+
+/**
+ * Chaves (`blockKey`) dos blocos que NÃO devem aparecer inteiros: o mesmo tipo
+ * de cartão aparece de novo mais abaixo (vale a ocorrência mais recente; o
+ * histórico antigo de produção tem o funil várias vezes), ou é um cartão de
+ * ação do fluxo antigo numa mensagem que não é a mais recente. Quem renderiza
+ * troca estes blocos por uma linha recolhida, sem botões.
+ */
+export function supersededBlockKeys(timeline: readonly Pick<TimelineItem, "key" | "role" | "blocks">[]): Set<string> {
+  const out = new Set<string>();
+  const seen = new Set<string>();
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const item = timeline[i];
+    if (item.role !== "assistant") continue;
+    for (let b = item.blocks.length - 1; b >= 0; b--) {
+      const kind = blockKindOf(item.blocks[b]);
+      if (!kind) continue;
+      if (SUPERSEDABLE_KINDS.includes(kind)) {
+        if (seen.has(kind)) out.add(blockKey(item.key, b));
+        else seen.add(kind);
+      } else if (LEGACY_ACTION_KINDS.includes(kind) && i !== timeline.length - 1) {
+        out.add(blockKey(item.key, b));
+      }
+    }
+  }
+  return out;
+}
+
+/** Nome do cartão na linha recolhida ("Funil de vendas · atualizado mais abaixo"). */
+export const COLLAPSED_BLOCK_TITLE: Record<string, string> = {
+  resumoNegocio: "Resumo do negócio",
+  funilPreview: "Funil de vendas",
+  personaCard: "Jeito de atender",
+  conhecimentoLista: "O que a IA sabe",
+  respostasRapidas: "Respostas rápidas",
+  traducaoCartao: "Tradução automática",
+  ativarIa: "Ativar a sua IA",
+  operacaoPronta: "Operação pronta",
+  cartaoConta: "Confirmação do e-mail",
+  aplicarOperacao: "Montar a operação",
+  cartaoAceite: "Ativar a IA",
+};
+
+export function collapsedBlockLine(kind: string): string {
+  const title = COLLAPSED_BLOCK_TITLE[kind] ?? "Cartão";
+  return LEGACY_ACTION_KINDS.includes(kind) ? `${title} · agora é feito no cartão mais recente` : `${title} · atualizado mais abaixo`;
+}
+
+/** O cartão do passo atual está na última mensagem da conversa (rolar até ele basta; senão pede de novo). */
+export function cardIsLatest(timeline: readonly Pick<TimelineItem, "role" | "blocks">[], kind: string | null): boolean {
+  if (!kind) return false;
+  const last = timeline[timeline.length - 1];
+  return !!last && last.role === "assistant" && last.blocks.some((b) => blockKindOf(b) === kind);
+}
+
+/** Hora de enviar o próximo arquivo guardado na fila (e-mail confirmado, ciência dada, conversa ociosa). */
+export function pendingFileDrain(input: {
+  emailVerified: boolean;
+  noticeOk: boolean;
+  idle: boolean;
+  queued: number;
+}): boolean {
+  return input.emailVerified && input.noticeOk && input.idle && input.queued > 0;
+}
+
+/**
+ * Decide se manda `process_pending` agora. `lastAttempt` = quantos materiais
+ * pendentes havia na última tentativa (null = nenhuma): só tenta de novo se o
+ * número CAIU desde então (sem laço infinito quando o servidor não consegue ler).
+ */
+export function shouldProcessPending(input: {
+  emailVerified: boolean;
+  noticeOk: boolean;
+  idle: boolean;
+  queued: number;
+  pending: number;
+  lastAttempt: number | null;
+}): boolean {
+  if (!input.emailVerified || !input.noticeOk || !input.idle || input.queued > 0) return false;
+  if (input.pending <= 0) return false;
+  return input.lastAttempt === null || input.pending < input.lastAttempt;
 }

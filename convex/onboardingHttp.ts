@@ -14,7 +14,8 @@
  * (o mesmo da interna `onboardingChat.internalSendTurn`). É a ÚNICA porta do
  * frontend para o turno.
  *
- * Corpo: `{organizationId, sessionId?, text?, attachment?}` (ver `turnInputValidator`).
+ * Corpo: `{organizationId, sessionId?, text?, attachment?}` OU `{organizationId, sessionId?, event}`
+ * (evento do roteiro, SEM modelo: ver `turnEventValidator`; exclusivo com `text`/`attachment`).
  * Eventos SSE (linhas `data: {...}`):
  *   {type:"session", sessionId}           — sessão resolvida (criada se preciso)
  *   {type:"status", text}                 — progresso ("Lendo o site…")
@@ -33,7 +34,7 @@ import type { ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import type { Permissions } from "./lib/permissions";
-import { runOnboardingTurn, type TurnAttachment, type TurnInput } from "./lib/onboardingTurn";
+import { runOnboardingTurn, type TurnAttachment, type TurnEvent, type TurnInput } from "./lib/onboardingTurn";
 import { clientIpKey } from "./lib/onboardingBudget";
 
 const CORS = {
@@ -57,6 +58,28 @@ export function onboardingStreamPreflight(): Response {
 // Formato de id do Convex (e o do convex-test, com `;`); a validação real é o `v.id` das internas.
 const ID_RE = /^[A-Za-z0-9;_-]{1,100}$/;
 
+const SECTIONS = ["funnel", "persona", "knowledge"] as const;
+const NOTIFY_WHATS = ["email_verified", "activated", "tested", "connected", "skip_connect"] as const;
+
+/** Evento do roteiro validado à mão (`null` = inválido; chaves extras são ignoradas). */
+export function parseTurnEvent(raw: unknown): TurnEvent | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (e.kind === "next") return { kind: "next" };
+  if (e.kind === "process_pending") return { kind: "process_pending" };
+  if (e.kind === "approve") {
+    const section = SECTIONS.find((x) => x === e.section);
+    if (!section) return null;
+    if (e.sig !== undefined && (typeof e.sig !== "string" || e.sig.length > 100)) return null;
+    return { kind: "approve", section, ...(typeof e.sig === "string" ? { sig: e.sig } : {}) };
+  }
+  if (e.kind === "notify") {
+    const what = NOTIFY_WHATS.find((x) => x === e.what);
+    return what ? { kind: "notify", what } : null;
+  }
+  return null;
+}
+
 /** Corpo validado à mão (o JSON é `unknown`): 400 para o que não casar. */
 export function parseTurnBody(raw: unknown): TurnInput | null {
   if (!raw || typeof raw !== "object") return null;
@@ -77,11 +100,20 @@ export function parseTurnBody(raw: unknown): TurnInput | null {
       attachment = { kind: a.kind, storageId: a.storageId as Id<"_storage"> };
     } else return null;
   }
+  let event: TurnEvent | undefined;
+  if (b.event !== undefined) {
+    // Evento é exclusivo com texto e anexo.
+    if (b.text !== undefined || b.attachment !== undefined) return null;
+    const parsed = parseTurnEvent(b.event);
+    if (!parsed) return null;
+    event = parsed;
+  }
   return {
     organizationId: b.organizationId as Id<"organizations">,
     ...(b.sessionId ? { sessionId: b.sessionId as Id<"onboardingSessions"> } : {}),
     ...(typeof b.text === "string" ? { text: b.text } : {}),
     ...(attachment ? { attachment } : {}),
+    ...(event ? { event } : {}),
   };
 }
 
@@ -101,7 +133,7 @@ export async function handleOnboardingStream(
     return json(400, { error: "JSON inválido" });
   }
   const input = parseTurnBody(raw);
-  if (!input) return json(400, { error: "Corpo inválido: organizationId e text ou attachment" });
+  if (!input) return json(400, { error: "Corpo inválido: organizationId e text, attachment ou event" });
 
   // 1. Auth do usuário (JWT do Convex auth no Authorization, propagado ao runQuery).
   //    Sem login = 401 sem gravar nada (nem contador de IP).

@@ -1,17 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithRouter } from "@/test/render";
 import { EmailEntryCardView } from "@/components/auth/EmailEntryCard";
 import { OnboardingChatView, type OnboardingChatViewProps } from "./OnboardingChatView";
-import { AI_PROCESSING_NOTICE } from "@/lib/onboardingChat";
+import { AI_PROCESSING_NOTICE, accountProgress, chatProgress } from "@/lib/onboardingChat";
 import { SignedOutIntro } from "./ConversationIntro";
 
 const noop = () => {};
 
 function props(overrides: Partial<OnboardingChatViewProps> = {}): OnboardingChatViewProps {
   return {
-    stage: "interview",
+    progress: chatProgress({ draft: null, approvals: {}, aiActive: false, applied: false, tested: false, connected: false, emailVerified: true }),
     timeline: [],
     typing: false,
     chips: [],
@@ -19,7 +19,7 @@ function props(overrides: Partial<OnboardingChatViewProps> = {}): OnboardingChat
     composerValue: "",
     onComposerChange: noop,
     onSubmit: noop,
-    blockCtx: { organizationId: null, sessionId: null, sendText: noop, busy: false },
+    blockCtx: { organizationId: null, sessionId: null, sendText: noop, sendEvent: noop, busy: false },
     formHref: "/app/configuracao-inicial",
     ...overrides,
   };
@@ -30,7 +30,7 @@ describe("OnboardingChatView", () => {
     renderWithRouter(
       <OnboardingChatView
         {...props({
-          stage: "account",
+          progress: accountProgress(),
           composerDisabled: true,
           composerPlaceholder: "Entre na sua conta para continuar",
           intro: (
@@ -50,7 +50,7 @@ describe("OnboardingChatView", () => {
     expect(screen.getByText(/não perder o que você já contou/)).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Entrar ou criar conta" })).toBeInTheDocument();
     expect(screen.getByLabelText("E-mail")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Etapa 1 de 7: Conta");
+    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuetext", "Crie a sua conta, antes da etapa 1 de 6");
     expect(screen.getByLabelText("Mensagem para o Copiloto")).toBeDisabled();
     // Aviso de IA sempre visível, inclusive sem login e antes do primeiro envio.
     expect(screen.getByRole("note")).toHaveTextContent(AI_PROCESSING_NOTICE);
@@ -121,5 +121,57 @@ describe("OnboardingChatView", () => {
     expect(screen.getByText("Montei um funil.")).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Vendas" })).toBeInTheDocument();
     expect(screen.getByText("Prévia")).toBeInTheDocument();
+  });
+
+  it("barra do próximo passo SEMPRE acima do campo: botão principal com o rótulo do roteiro; também com erro", async () => {
+    const user = userEvent.setup();
+    const onPress = vi.fn();
+    renderWithRouter(
+      <OnboardingChatView {...props({ error: "Limite atingido.", nextStep: { label: "Ver o meu funil", onPress } })} />
+    );
+    const bar = screen.getByRole("group", { name: "Próximo passo" });
+    await user.click(within(bar).getByRole("button", { name: /Ver o meu funil/ }));
+    expect(onPress).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("Limite atingido.");
+    // Acima do campo de mensagem.
+    expect(bar.compareDocumentPosition(screen.getByLabelText("Mensagem para o Copiloto")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("em 'done' o próximo passo é um link para o CRM", () => {
+    renderWithRouter(<OnboardingChatView {...props({ nextStep: { label: "Abrir o meu CRM", href: "/app" } })} />);
+    expect(within(screen.getByRole("group", { name: "Próximo passo" })).getByRole("link", { name: "Abrir o meu CRM" })).toHaveAttribute("href", "/app");
+  });
+
+  it("cartão repetido na conversa: só o mais recente aparece inteiro; o anterior vira linha recolhida", () => {
+    const funil = (name: string) => ({ kind: "funilPreview", funnelName: name, stages: [{ name: "Novo", outcome: "open" }], customFields: [], blockedCount: 0 });
+    renderWithRouter(
+      <OnboardingChatView
+        {...props({
+          timeline: [
+            { key: "a1", role: "assistant", text: "Primeiro.", blocks: [funil("Funil antigo")], chips: [] },
+            { key: "a2", role: "assistant", text: "Segundo.", blocks: [funil("Funil novo")], chips: [] },
+          ],
+        })}
+      />
+    );
+    expect(screen.getByRole("region", { name: "Funil novo" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Funil antigo" })).toBeNull();
+    expect(screen.getByText("Funil de vendas · atualizado mais abaixo")).toBeInTheDocument();
+  });
+
+  it("celular: botão 'Sua operação' abre o painel numa folha (com o botão do próximo passo no rodapé)", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(
+      <OnboardingChatView
+        {...props({
+          preview: <p>Prévia no desktop</p>,
+          previewSheet: <p>Prévia na folha</p>,
+          nextStep: { label: "Ativar a minha IA", onPress: vi.fn() },
+        })}
+      />
+    );
+    expect(screen.queryByText("Prévia na folha")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Sua operação" }));
+    expect(screen.getByRole("dialog", { name: "Sua operação" })).toHaveTextContent("Prévia na folha");
   });
 });
