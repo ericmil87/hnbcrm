@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import { Info } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { buttonClassName } from "@/components/ui/Button";
-import { signUpHref } from "@/lib/authEntry";
+import { startHref } from "@/lib/onboardingEntry";
 import { LandingSection } from "./LandingSection";
 import { LANDING_ANCHORS, PRIMARY_CTA_LABEL } from "./landingCopy";
 
@@ -65,7 +65,7 @@ export function S5HowItStarts() {
       </div>
 
       <div className="mt-6">
-        <Link to={signUpHref()} className={buttonClassName("primary", "lg")}>
+        <Link to={startHref()} className={buttonClassName("primary", "lg")}>
           {PRIMARY_CTA_LABEL}
         </Link>
       </div>

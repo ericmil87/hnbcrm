@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import { ArrowRight, Users } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { buttonClassName } from "@/components/ui/Button";
-import { signUpHref } from "@/lib/authEntry";
+import { startHref } from "@/lib/onboardingEntry";
 import { formatCount, formatMoney } from "@/lib/format";
 import { allPlanDisplays, type PlanDisplay } from "@/lib/pricingCatalog";
 import { cn } from "@/lib/utils";
@@ -104,7 +104,7 @@ export function S6PriceSummary() {
       </div>
 
       <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-        <Link to={signUpHref()} className={buttonClassName("primary", "lg")}>
+        <Link to={startHref()} className={buttonClassName("primary", "lg")}>
           Testar {TRIAL.days} dias grátis
         </Link>
         <Link to="/precos" className={buttonClassName("secondary", "lg")}>

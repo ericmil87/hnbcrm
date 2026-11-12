@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { Building2, LogOut, MoreHorizontal, Palette } from "lucide-react";
+import { Building2, CircleHelp, LogOut, MoreHorizontal, Palette } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useNavBadges } from "@/hooks/useNavBadges";
@@ -17,6 +17,7 @@ import {
   type NavItemDef,
 } from "@/lib/nav";
 import { Modal } from "@/components/ui/Modal";
+import { HelpModal } from "./HelpModal";
 import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
 import { themeLabel, type UiTheme } from "@/lib/theme";
 
@@ -32,6 +33,8 @@ interface BottomTabBarViewProps {
   onSignOut: () => void;
   theme: UiTheme;
   onOpenAppearance: () => void;
+  /** Abre o menu "Ajuda" (tutorial e comunidade). Sem ele o item não aparece. */
+  onOpenHelp?: () => void;
   /** Modo conversa: a barra some (a folha "Mais" continua montada). */
   hidden?: boolean;
 }
@@ -52,6 +55,7 @@ export function BottomTabBarView({
   onSignOut,
   theme,
   onOpenAppearance,
+  onOpenHelp,
   hidden = false,
 }: BottomTabBarViewProps) {
   const { primary, more } = useMemo(() => splitMobile(items), [items]);
@@ -141,6 +145,19 @@ export function BottomTabBarView({
               <Palette size={18} className="shrink-0 text-brand-500" aria-hidden="true" />
               <span className="flex-1 text-left">{`Aparência · ${themeLabel(theme)}`}</span>
             </button>
+            {onOpenHelp && (
+              <button
+                type="button"
+                onClick={() => {
+                  onToggleMore();
+                  onOpenHelp();
+                }}
+                className="w-full flex items-center gap-3 px-3 py-3 rounded-lg text-sm text-text-secondary hover:text-text-primary hover:bg-surface-raised transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              >
+                <CircleHelp size={18} className="shrink-0 text-brand-500" aria-hidden="true" />
+                <span className="flex-1 text-left">Ajuda</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -244,6 +261,7 @@ export function BottomTabBar({
   hidden = false,
 }: BottomTabBarProps) {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = activeTabForPath(location.pathname);
@@ -266,8 +284,10 @@ export function BottomTabBar({
       onSignOut={onSignOut}
       theme={theme}
       onOpenAppearance={() => setAppearanceOpen(true)}
+      onOpenHelp={() => setHelpOpen(true)}
       hidden={hidden}
     />
+    <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     <ThemePickerModal open={appearanceOpen} organizationId={organizationId} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
     </>
   );

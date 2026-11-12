@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ClipboardList, RotateCcw, X } from "lucide-react";
+import { ClipboardList, LayoutDashboard, RotateCcw, X } from "lucide-react";
 import { ChatWindow, ChipRow, Composer, TypingDots } from "@/components/landing/kit";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { BrandLogo } from "@/components/ui/BrandLogo";
@@ -46,6 +46,8 @@ export interface OnboardingChatViewProps {
   /** Destino de "Prefiro preencher um formulário" (wizard v2). */
   formHref: string;
   onPreferForm?: () => void;
+  /** Saída para o CRM (quem já tem organização não fica preso na conversa). Ausente = sem o link. */
+  appHref?: string;
   /** Clipe e microfone (P3.2). Sem handler ficam desligados. */
   onAttach?: () => void;
   onMic?: () => void;
@@ -83,6 +85,7 @@ export function OnboardingChatView({
   preview,
   formHref,
   onPreferForm,
+  appHref,
   onAttach,
   onMic,
   tail,
@@ -181,6 +184,16 @@ export function OnboardingChatView({
           <span className="ml-2 hidden font-display text-base font-bold text-text-primary sm:inline">HNBCRM</span>
         </Link>
         <div className="flex-1" />
+        {appHref && (
+          <Link
+            to={appHref}
+            aria-label="Ir para o CRM"
+            className={cn(buttonClassName("ghost", "sm"), "min-h-11 min-w-11 text-caption sm:text-sm")}
+          >
+            <LayoutDashboard className="size-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Ir para o CRM</span>
+          </Link>
+        )}
         <Link
           to={formHref}
           onClick={onPreferForm}

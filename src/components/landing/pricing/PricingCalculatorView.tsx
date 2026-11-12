@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { Input } from "@/components/ui/Input";
 import { useCountUp } from "@/hooks/useCountUp";
-import { signUpHref } from "@/lib/authEntry";
+import { startHref } from "@/lib/onboardingEntry";
 import { formatCount, formatMoney } from "@/lib/format";
 import type { BillingCycle, PricingLineId, PricingOption, PricingResult } from "@/lib/pricing";
 import {
@@ -438,7 +438,7 @@ export function PricingCalculatorView({
           )}
         </div>
 
-        <Link to={signUpHref(result.plan)} className="mt-3 block">
+        <Link to={startHref(result.plan)} className="mt-3 block">
           <Button variant={isEmpresa ? "secondary" : "primary"} size="lg" className="w-full">
             {isEmpresa ? "Falar com a gente" : CTA_LABEL}
           </Button>

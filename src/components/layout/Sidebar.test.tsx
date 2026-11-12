@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SidebarView } from "./Sidebar";
 import { groupNavItems, visibleNavItems } from "@/lib/nav";
@@ -50,6 +50,16 @@ describe("SidebarView", () => {
     const names = screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"));
     expect(names.indexOf("Painel")).toBeLessThan(names.indexOf("Conversas"));
     expect(names.indexOf("Conversas")).toBeLessThan(names.indexOf("Requer atenção"));
+  });
+
+  it("Ajuda só aparece com onOpenHelp e abre o menu", async () => {
+    setup();
+    expect(screen.queryByRole("button", { name: "Ajuda" })).toBeNull();
+    cleanup();
+    const onOpenHelp = vi.fn();
+    setup({ onOpenHelp });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Ajuda" }));
+    expect(onOpenHelp).toHaveBeenCalledOnce();
   });
 
   it("botão Aparência fica acima de Sair, com 44 px, e abre o seletor", async () => {

@@ -2,14 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ONBOARDING_DRAFT_KEY,
   ONBOARDING_DRAFT_MAX,
+  ONBOARDING_ROUTE_READY,
   clearOnboardingDraft,
   goToOnboarding,
   onboardingHref,
   parseNiche,
   readOnboardingDraft,
   saveOnboardingDraft,
+  startHref,
 } from "./onboardingEntry";
-import { signUpHref } from "./authEntry";
 
 function memoryStorage(failWrites = false): Storage {
   const m = new Map<string, string>();
@@ -84,11 +85,20 @@ describe("onboardingEntry", () => {
     expect(navigate).toHaveBeenCalledOnce();
   });
 
-  it("goToOnboarding guarda e navega para o destino atual (cadastro até a Onda 3)", () => {
+  it("startHref é a fonte única: /comecar, com ?plano= só quando houver", () => {
+    expect(ONBOARDING_ROUTE_READY).toBe(true);
+    expect(startHref()).toBe("/comecar");
+    expect(startHref(null)).toBe("/comecar");
+    expect(startHref("profissional")).toBe("/comecar?plano=profissional");
+    expect(onboardingHref()).toBe(startHref());
+  });
+
+  it("goToOnboarding guarda e navega para /comecar (com o plano, se vier)", () => {
     const navigate = vi.fn();
     const to = goToOnboarding("Sou corretor", "corretor", navigate);
     expect(to).toBe(onboardingHref());
-    expect(navigate).toHaveBeenCalledWith(signUpHref());
+    expect(navigate).toHaveBeenCalledWith("/comecar");
     expect(readOnboardingDraft()).toEqual({ message: "Sou corretor", niche: "corretor" });
+    expect(goToOnboarding("oi", null, navigate, "escala")).toBe("/comecar?plano=escala");
   });
 });

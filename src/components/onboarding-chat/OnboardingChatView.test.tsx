@@ -60,6 +60,14 @@ describe("OnboardingChatView", () => {
     expect(screen.getByRole("link", { name: /Prefiro preencher um formulário/ })).toHaveAttribute("href", "/app/configuracao-inicial");
   });
 
+  it("com appHref oferece a saída para o CRM; sem ele não mostra", () => {
+    const { unmount } = renderWithRouter(<OnboardingChatView {...props({ appHref: "/app" })} />);
+    expect(screen.getByRole("link", { name: "Ir para o CRM" })).toHaveAttribute("href", "/app");
+    unmount();
+    renderWithRouter(<OnboardingChatView {...props()} />);
+    expect(screen.queryByRole("link", { name: "Ir para o CRM" })).toBeNull();
+  });
+
   it("chips do rodapé enviam o texto", async () => {
     const user = userEvent.setup();
     const onChip = vi.fn();

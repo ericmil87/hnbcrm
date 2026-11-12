@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { LogOut, Palette, Sparkles } from "lucide-react";
+import { CircleHelp, LogOut, Palette, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePermissions } from "@/hooks/usePermissions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -19,6 +19,7 @@ import {
 } from "@/lib/nav";
 import { OrgSwitcherTrigger } from "@/components/org/OrgSwitcher";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { HelpModal } from "./HelpModal";
 import { ThemePickerModal } from "@/components/settings/ThemePickerModal";
 import type { UiTheme } from "@/lib/theme";
 import { VOCAB } from "@/lib/vocab";
@@ -41,6 +42,8 @@ interface SidebarViewProps {
   /** Avisos novos em outras organizações (ponto no seletor de org). */
   orgNewsTotal?: number;
   onOpenAppearance: () => void;
+  /** Abre o menu "Ajuda" (tutorial e comunidade). Sem ele o item não aparece. */
+  onOpenHelp?: () => void;
   /** Só com o Copiloto ativo na organização; sem ele o item não aparece. */
   onOpenCopilot?: () => void;
   /** `aria-keyshortcuts` do atalho do Copiloto na plataforma (padrão: Ctrl+K). */
@@ -59,6 +62,7 @@ export function SidebarView({
   onOpenOrgSwitcher,
   orgNewsTotal,
   onOpenAppearance,
+  onOpenHelp,
   onOpenCopilot,
   copilotKeys = copilotAriaShortcut(false),
 }: SidebarViewProps) {
@@ -178,6 +182,20 @@ export function SidebarView({
             <span className="hidden lg:block">Aparência</span>
           </button>
         )}
+        {onOpenHelp &&
+          withTip(
+            "Ajuda",
+            <button
+              type="button"
+              onClick={onOpenHelp}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-h-[44px] focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+              aria-label="Ajuda"
+              aria-haspopup="dialog"
+            >
+              <CircleHelp size={20} className="shrink-0" aria-hidden="true" />
+              <span className="hidden lg:block">Ajuda</span>
+            </button>
+          )}
         {withTip(
           "Sair",
           <button
@@ -207,6 +225,7 @@ interface SidebarProps {
 
 export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher, theme, setTheme, onOpenCopilot }: SidebarProps) {
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = activeTabForPath(location.pathname);
@@ -233,9 +252,11 @@ export function Sidebar({ onSignOut, organizationId, orgName, onOpenOrgSwitcher,
       onOpenOrgSwitcher={onOpenOrgSwitcher}
       orgNewsTotal={orgNews.total}
       onOpenAppearance={() => setAppearanceOpen(true)}
+      onOpenHelp={() => setHelpOpen(true)}
       onOpenCopilot={onOpenCopilot}
       copilotKeys={copilotAriaShortcut(detectIsMac())}
     />
+    <HelpModal open={helpOpen} onClose={() => setHelpOpen(false)} />
     <ThemePickerModal open={appearanceOpen} organizationId={organizationId} onClose={() => setAppearanceOpen(false)} theme={theme} setTheme={setTheme} />
     </>
   );
