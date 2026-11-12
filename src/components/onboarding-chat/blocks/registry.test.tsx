@@ -90,7 +90,7 @@ describe("registro de blocos", () => {
     expect(screen.getByText("Veja aqui e [link removido]")).toBeInTheDocument();
     expect(screen.getByText("Nota")).toBeInTheDocument();
     expect(screen.getByText(/marcado para revisão/)).toBeInTheDocument();
-    expect(screen.getByRole("list", { name: "Etapas do funil" }).textContent).toContain("Novo lead");
+    expect(screen.getByRole("group", { name: "Etapas do funil" }).textContent).toContain("Novo lead");
     expect(screen.getByText(/Campos: Orçamento/)).toBeInTheDocument();
   });
 
@@ -104,10 +104,12 @@ describe("registro de blocos", () => {
     expect(screen.getByRole("button", { name: "Sim" })).toBeDisabled();
   });
 
-  it("stubs renderizam o título e a nota sem ação", () => {
-    render(<OnboardingBlockView block={{ kind: "aplicarOperacao", draftHash: "h", draftVersion: 1, canApply: true, blockedCount: 0, flaggedCount: 0, aiActive: false, alreadyApplied: false, note: "Pronto" }} ctx={ctx()} />);
-    expect(screen.getByRole("region", { name: "Montar minha operação" })).toBeInTheDocument();
-    expect(screen.queryByRole("button")).toBeNull();
+  it("cartão de tradução estático mostra o estado e só oferece Ajustar (sem gravar nada ao montar)", () => {
+    render(<OnboardingBlockView block={{ kind: "traducaoCartao", enabled: true, note: "Pronto" }} ctx={ctx()} />);
+    expect(screen.getByRole("region", { name: "Tradução automática" })).toBeInTheDocument();
+    expect(screen.getByText("Pronto")).toBeInTheDocument();
+    expect(screen.getByText("Ligada")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ajustar" })).toBeInTheDocument();
   });
 });
 

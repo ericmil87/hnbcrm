@@ -155,7 +155,7 @@ export function OnboardingConversationController({
   );
 
   const stage = sessionStage ?? turn?.done?.nextStage ?? chatState?.stage ?? "interview";
-  const preview = <DraftPreviewPanel draft={draft} />;
+  const preview = <DraftPreviewPanel draft={draft} ctx={blockCtx} />;
   const pendingIntent = intent?.message && !intentSentRef.current ? intent.message : null;
 
   const baseProps = {

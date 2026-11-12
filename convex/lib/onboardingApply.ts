@@ -301,7 +301,11 @@ export async function applyOnboardingDraftCore(
   // depois pela porta própria). Aí segue o fluxo normal, que é idempotente.
   const hadPending =
     (session.appliedPendingConsent?.length ?? 0) > 0 || session.appliedAttendantPending === true;
-  if (session.appliedDraftHash === hash && (!hadPending || !orgAiActive(org))) {
+  // Exceção: o último resultado foi `skipped_existing` e agora há o pedido
+  // explícito de sobrescrever (mesmo rascunho): segue o fluxo normal.
+  const wantsOverwriteAfterSkip =
+    params.overwriteExistingAttendant === true && session.appliedAttendantSkipped === true;
+  if (session.appliedDraftHash === hash && (!hadPending || !orgAiActive(org)) && !wantsOverwriteAfterSkip) {
     return {
       alreadyApplied: true,
       draftHash: hash,
@@ -557,6 +561,7 @@ export async function applyOnboardingDraftCore(
     ...(createdAttendantId ? { attendantId: createdAttendantId } : {}),
     appliedPendingConsent: pendingConsent,
     appliedAttendantPending: attendant === "pending_consent",
+    appliedAttendantSkipped: attendant === "skipped_existing",
     updatedAt: now,
   });
   const aiFeaturesTurnedOn = FEATURE_KEYS.filter((k) => features[k] === "applied");
