@@ -7,6 +7,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
 import type { HistoryMessage } from "@/lib/onboardingChat";
 import type { OnboardingIntent } from "@/lib/onboardingIntent";
+import { uploadAttachmentFile } from "@/lib/onboardingAttachments";
 import { writeSelectedOrgId } from "@/lib/selectedOrg";
 import {
   HISTORY_PAGE,
@@ -65,6 +66,22 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
           ? { kind: "ready" }
           : { kind: "loading" };
 
+  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
+  const saveFile = useMutation(api.files.saveFile);
+  const uploadFile = useCallback(
+    (file: { blob: Blob; name: string; mimeType: string }, onPhase: (phase: "uploading" | "saving") => void) =>
+      uploadAttachmentFile(
+        {
+          organizationId,
+          generateUploadUrl: (args) => generateUploadUrl({ organizationId: args.organizationId as Id<"organizations"> }),
+          saveFile: (args) => saveFile({ ...args, organizationId: args.organizationId as Id<"organizations"> }),
+        },
+        file,
+        onPhase
+      ),
+    [organizationId, generateUploadUrl, saveFile]
+  );
+
   const onSession = useCallback((id: string) => setSessionId(id as Id<"onboardingSessions">), []);
   const onPreferForm = useCallback(() => writeSelectedOrgId(organizationId), [organizationId]);
 
@@ -75,7 +92,16 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
       sessionId={sessionId}
       history={{ results: history.results as readonly HistoryMessage[], status: history.status, loadMore: history.loadMore }}
       sessionStage={session?.stage ?? null}
-      chatState={chatState ? { stage: chatState.stage, lastChips: chatState.lastChips } : null}
+      chatState={
+        chatState
+          ? {
+              stage: chatState.stage,
+              lastChips: chatState.lastChips,
+              materialsUnlocked: chatState.materialsUnlocked,
+              materialsNoticeAcknowledged: chatState.materialsNoticeAcknowledged,
+            }
+          : null
+      }
       draft={session?.draft ?? null}
       token={token ?? null}
       intent={intent}
@@ -83,6 +109,7 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
       onSession={onSession}
       onPreferForm={onPreferForm}
       orgPicker={orgPicker}
+      uploadFile={uploadFile}
     />
   );
 }

@@ -10,6 +10,8 @@ import { Checkbox } from "@/components/ui/Checkbox";
 import { api } from "../../../../convex/_generated/api";
 import { Id } from "../../../../convex/_generated/dataModel";
 import { AiStatus, PERSONAS } from "./aiTypes";
+import { AiLgpdParagraphs } from "./AiLgpdParagraphs";
+import { AI_LGPD_ACK_LABEL } from "@/lib/aiLgpdText";
 
 // ── Wizard de ativação em 1 fluxo (v4.2): liga IA + LGPD + atendente + bridge
 // numa única mutation (activateOneFlow). Some assim que a IA fica ativa E com
@@ -149,17 +151,11 @@ export function ActivationWizardModal({
 
         {needsLgpdAck ? (
           <div className="space-y-2.5 pt-3 border-t border-border">
-            <p className="text-sm text-text-secondary">
-              Ao ativar, dados de clientes (mensagens, nomes, contexto do CRM) são processados por
-              provedores de IA nos EUA em modo <strong>zero-retention</strong> (não são retidos nem
-              usados para treino no caminho padrão da plataforma). Sua organização é a controladora
-              dos dados; confirme que sua política de privacidade divulga o uso de IA e a
-              transferência internacional de dados (LGPD, art. 33).
-            </p>
+            <AiLgpdParagraphs />
             <Checkbox
               checked={lgpdChecked}
               onChange={(e) => setLgpdChecked(e.target.checked)}
-              label="Confirmo que minha política de privacidade divulga o uso de IA e a transferência internacional de dados"
+              label={AI_LGPD_ACK_LABEL}
             />
           </div>
         ) : (

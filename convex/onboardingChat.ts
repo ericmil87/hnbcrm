@@ -32,7 +32,7 @@ import { siteKeyOf, MAX_PAGES_PER_SITE } from "./lib/htmlExtract";
 import { HISTORY_FOR_PROMPT, USER_TEXT_MAX, REPLY_MAX } from "./lib/onboardingInterviewer";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { runOnboardingTurn, turnInputValidator, turnResultValidator, type TurnResult } from "./lib/onboardingTurn";
-import { ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
+import { ONBOARDING_AUDIO_MAX_BYTES, ONBOARDING_IMAGE_MAX_BYTES, ONBOARDING_PDF_MAX_BYTES } from "./lib/onboardingLimits";
 import { cronsDisabled } from "./lib/cronGuard";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
 import { deleteFileRow } from "./lib/storageUsage";
@@ -46,9 +46,9 @@ const ATTACHMENT_LABEL_MAX = 200;
  * manda duração confiável; o teto em bytes protege o Whisper, que é o MESMO
  * serviço da transcrição dos clientes reais.
  */
-const AUDIO_MAX_BYTES = 2 * 1024 * 1024;
+const AUDIO_MAX_BYTES = ONBOARDING_AUDIO_MAX_BYTES;
 const PDF_MAX_BYTES = ONBOARDING_PDF_MAX_BYTES;
-const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const IMAGE_MAX_BYTES = ONBOARDING_IMAGE_MAX_BYTES;
 
 const attachmentKindValidator = v.union(v.literal("site"), v.literal("pdf"), v.literal("imagem"), v.literal("audio"));
 

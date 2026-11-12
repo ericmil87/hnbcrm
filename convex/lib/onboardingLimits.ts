@@ -11,3 +11,7 @@
  */
 export const ONBOARDING_PDF_MAX_MB = 20;
 export const ONBOARDING_PDF_MAX_BYTES = ONBOARDING_PDF_MAX_MB * 1024 * 1024;
+
+/** Teto de imagem e de áudio do anexo do turno (validação do servidor e do cliente usam estes). */
+export const ONBOARDING_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const ONBOARDING_AUDIO_MAX_BYTES = 2 * 1024 * 1024;

@@ -46,6 +46,11 @@ export interface OnboardingChatViewProps {
   /** Destino de "Prefiro preencher um formulário" (wizard v2). */
   formHref: string;
   onPreferForm?: () => void;
+  /** Clipe e microfone (P3.2). Sem handler ficam desligados. */
+  onAttach?: () => void;
+  onMic?: () => void;
+  /** Conteúdo depois da última mensagem (ex.: cartão de conta/aviso pedido por um anexo recusado). */
+  tail?: ReactNode;
 }
 
 /**
@@ -78,6 +83,9 @@ export function OnboardingChatView({
   preview,
   formHref,
   onPreferForm,
+  onAttach,
+  onMic,
+  tail,
 }: OnboardingChatViewProps) {
   const coarse = useMediaQuery("(pointer: coarse)");
   const endRef = useRef<HTMLDivElement>(null);
@@ -150,11 +158,12 @@ export function OnboardingChatView({
         pulse={false}
         maxLength={4000}
         autoFocus={!coarse && !composerDisabled}
-        // Anexos e áudio chegam no P3.2: slots prontos e desligados.
-        attachDisabled
-        micDisabled
-        attachLabel="Anexar arquivo (em breve)"
-        micLabel="Gravar áudio (em breve)"
+        onAttach={onAttach}
+        onMic={onMic}
+        attachDisabled={!onAttach}
+        micDisabled={!onMic}
+        attachLabel="Enviar site, PDF ou imagem"
+        micLabel="Gravar áudio"
         className="pb-safe"
       />
     </div>
@@ -214,6 +223,7 @@ export function OnboardingChatView({
                 isLatest={item.key === latestAssistantKey && item.key === last?.key}
               />
             ))}
+            {tail}
             {showTypingBubble && <TypingDots label={status || "digitando…"} />}
             <div ref={endRef} aria-hidden="true" />
           </ChatWindow>
