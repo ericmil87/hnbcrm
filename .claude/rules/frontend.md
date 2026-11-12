@@ -88,7 +88,7 @@ paths:
 - Rules shared with the backend are imported from `convex/lib/*` (single source), never copied.
 - New components: named export, `PascalCase.tsx`, `interface XProps`, placed in the feature folder (`inbox/`, `tasks/`, `settings/`...) or `ui/` if generic.
 - Components shared between the setup wizard and Settings never call a different mutation than the one Settings calls today; the caller owns the Convex call. `FunnelEditor` is controlled (no Convex); `AttendantSimulator` is a container (`simulateAttendant`) over the presentational `AttendantSimulatorView`.
-- Build chunks (`vite.config.ts` `manualChunks`): `react-vendor`, `convex-vendor`, `utils-vendor`, `icons-vendor`, `xlsx-vendor` (xlsx only via dynamic `import()`). Keep heavy libs lazy; new origins (fonts, CDN, iframe) also need the CSP in `vercel.json`.
+- Build chunks (`vite.config.ts` `manualChunks`): `react-vendor`, `convex-vendor`, `convex-values`, `utils-vendor`, `icons-vendor`, `xlsx-vendor` (xlsx only via dynamic `import()`; function `vendorChunk`). Public pages must not import `convex/react` (no `convex-vendor` in their entry); routes that need Convex go under `ConvexRoot` in `src/appRoutes.tsx`. Keep heavy libs lazy; new origins (fonts, CDN, iframe) also need the CSP in `vercel.json`.
 
 Full reference: `STYLE_GUIDE.md`, `src/CLAUDE.md`, `docs/architecture/frontend.md`
 
