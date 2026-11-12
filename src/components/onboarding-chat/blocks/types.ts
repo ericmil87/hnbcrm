@@ -21,6 +21,8 @@ export interface BlockContext {
   busy: boolean;
   /** O bloco é da última resposta do Copiloto (ações de convite só valem nela). */
   isLatest: boolean;
+  /** Prévia do desktop (`DraftPreviewPanel`): os mesmos cartões, mais enxutos. */
+  compact?: boolean;
 }
 
 export interface BlockProps<K extends OnboardingBlockKind> {
