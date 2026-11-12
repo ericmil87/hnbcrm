@@ -126,13 +126,14 @@ async function main() {
 
 /** iOS launch screens (apple-touch-startup-image): flat background + centered icon. Sizes are device px; index.html
  *  links each one by media query (device-width/height @ ratio), light and dark (prefers-color-scheme). */
-export const SPLASH_SIZES = [
-  [1320, 2868], [1206, 2622], [1290, 2796], [1179, 2556], [1284, 2778], [1170, 2532], [1125, 2436], [750, 1334],
+const SPLASH_SIZES = [
+  [1320, 2868], [1206, 2622], [1260, 2736], [1290, 2796], [1179, 2556], [1284, 2778], [1170, 2532], [1125, 2436],
+  [1242, 2688], [1242, 2208], [1080, 2340], [828, 1792], [750, 1334],
 ];
 async function splashImages() {
   const variants = {
     light: { bg: "#F0F2F5", human: INK, ai: GREEN },
-    dark: { bg: "#111B21", human: "#E9EDEF", ai: "#00A884" },
+    dark: { bg: "#0B141A", human: "#E9EDEF", ai: "#00A884" },
   };
   for (const [w, h] of SPLASH_SIZES) {
     const box = Math.round(Math.min(w, h) * 0.22); // icon box side

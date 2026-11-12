@@ -6,7 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Aplicativo instalado (PWA)
 
-- **Ícone novo no Android e no computador.** Os ícones do app agora têm nome versionado, então o Chrome troca o ícone instalado sozinho em alguns dias.
+- **Ícone novo no Android e no computador.** Os ícones do app agora têm nome versionado, então o Chrome atualiza o ícone instalado nos próximos dias (pode aparecer um aviso pedindo para confirmar a atualização do app).
 - **No iPhone, é preciso reinstalar o app para ver o ícone novo.** O iOS guarda o ícone da Tela de Início: remova o HNBCRM da Tela de Início e adicione de novo pelo Safari (Compartilhar > Adicionar à Tela de Início). Faça o login de novo dentro do app reinstalado.
 - **Tela de abertura no iPhone** com o logo, clara ou escura conforme o aparelho (em vez de tela em branco).
 - **Instalação mais completa no Android e no computador:** capturas de tela de exemplo (organização fictícia), descrição atualizada e atalho novo para o Funil (Conversas, Requer atenção, Tarefas e Funil).

@@ -65,7 +65,7 @@ export const WEB_MANIFEST: WebManifest = {
   screenshots: [
     { src: "/screenshots/conversas-narrow.png", sizes: "1080x1920", type: "image/png", form_factor: "narrow", label: "Conversas com o atendente de IA e a equipe" },
     { src: "/screenshots/atendimento-narrow.png", sizes: "1080x1920", type: "image/png", form_factor: "narrow", label: "A IA responde e você acompanha no mesmo chat" },
-    { src: "/screenshots/atendimento-wide.png", sizes: "1920x1080", type: "image/png", form_factor: "wide", label: "Conversas, funil e Copiloto no computador" },
+    { src: "/screenshots/atendimento-wide.png", sizes: "1920x1080", type: "image/png", form_factor: "wide", label: "Conversas e equipe no computador" },
     { src: "/screenshots/funil-wide.png", sizes: "1920x1080", type: "image/png", form_factor: "wide", label: "Funil de vendas com os leads por etapa" },
   ],
 };
