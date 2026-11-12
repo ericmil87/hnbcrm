@@ -2,7 +2,9 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
-## [Não publicada]
+## [0.81.0] - 2026-11-12
+
+_Landing e preços novas, configuração por conversa (`/comecar`), entrada por e-mail e PWA atualizado._
 
 ### Aplicativo instalado (PWA)
 
