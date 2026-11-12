@@ -28,6 +28,15 @@ export interface SendOnboardingTurnInput {
   attachment?: OnboardingAttachment;
 }
 
+/**
+ * Resultado de `send`:
+ * - `ok`: o turno chegou ao `done` (mesmo que a espera do áudio tenha sido abortada depois);
+ * - `failed`: não começou ou terminou com erro (`error` preenchido quando houve erro);
+ * - `superseded`: abortado antes do `done` por um turno novo, `abort()` ou desmontagem.
+ *   Quem chamou NÃO deve desfazer nada: o estado já é do turno seguinte.
+ */
+export type OnboardingTurnResult = "ok" | "failed" | "superseded";
+
 export interface UseOnboardingStreamOptions {
   organizationId: string | null;
   sessionId?: string | null;
@@ -51,7 +60,7 @@ export interface UseOnboardingStreamResult {
    * Envia um turno. Um turno ainda aberto (esperando áudio) é abortado; com um
    * turno antes do `done`, a chamada é ignorada (`false`). Nunca reconecta sozinho.
    */
-  send: (input: SendOnboardingTurnInput) => Promise<boolean>;
+  send: (input: SendOnboardingTurnInput) => Promise<OnboardingTurnResult>;
   abort: () => void;
   clearError: () => void;
 }
@@ -92,8 +101,14 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      controllerRef.current?.abort();
-      controllerRef.current = null;
+      // Aborta depois de uma microtarefa: no StrictMode o efeito é desmontado e
+      // remontado na hora, e o turno já iniciado não pode morrer por isso.
+      const pending = controllerRef.current;
+      queueMicrotask(() => {
+        if (mountedRef.current || controllerRef.current !== pending) return;
+        pending?.abort();
+        controllerRef.current = null;
+      });
     };
   }, []);
 
@@ -108,15 +123,15 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
   const clearError = useCallback(() => setError(null), []);
 
   const send = useCallback(
-    async (input: SendOnboardingTurnInput): Promise<boolean> => {
+    async (input: SendOnboardingTurnInput): Promise<OnboardingTurnResult> => {
       const text = input.text?.trim() ?? "";
-      if (!text && !input.attachment) return false;
-      if (streamingRef.current) return false;
-      if (!organizationId) return false;
+      if (!text && !input.attachment) return "failed";
+      if (streamingRef.current) return "failed";
+      if (!organizationId) return "failed";
       if (!token) {
         const err: OnboardingTurnError = { code: "unauthenticated", message: onboardingErrorMessage("unauthenticated") };
         setError(err);
-        return false;
+        return "failed";
       }
       // Turno anterior ainda aberto só pelo áudio: encerra (o histórico traz o áudio depois).
       controllerRef.current?.abort();
@@ -128,7 +143,9 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
       setError(null);
       setTurn(emptyTurn());
 
-      const isCurrent = () => mountedRef.current && controllerRef.current === controller;
+      // Só o controller decide se o turno ainda é o atual (a desmontagem aborta por ele).
+      const isCurrent = () => controllerRef.current === controller;
+      let gotDone = false;
       const apply = (fn: (t: OnboardingStreamTurn) => OnboardingStreamTurn) => {
         if (isCurrent()) setTurn((prev) => fn(prev ?? emptyTurn()));
       };
@@ -178,6 +195,7 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
         signal: controller.signal,
         onEvent,
         onDone: () => {
+          gotDone = true;
           // Destrava a entrada sem esperar o TTS; a leitura continua por um `audio`.
           if (!isCurrent()) return;
           streamingRef.current = false;
@@ -186,17 +204,24 @@ export function useOnboardingStream(options: UseOnboardingStreamOptions): UseOnb
         },
       });
 
-      if (!isCurrent()) return outcome.ok;
+      if (outcome.ok || gotDone) {
+        if (isCurrent()) {
+          controllerRef.current = null;
+          setAwaitingAudio(false);
+        }
+        return "ok";
+      }
+      if (!isCurrent()) return "superseded";
       controllerRef.current = null;
       streamingRef.current = false;
       setIsStreaming(false);
       setAwaitingAudio(false);
-      if (!outcome.ok && "error" in outcome) {
+      if ("error" in outcome) {
         setError(outcome.error);
         setTurn((prev) => ({ ...(prev ?? emptyTurn()), status: null, error: outcome.error }));
-        return false;
+        return "failed";
       }
-      return outcome.ok;
+      return "superseded";
     },
     [organizationId, token, fetchImpl, siteUrl]
   );

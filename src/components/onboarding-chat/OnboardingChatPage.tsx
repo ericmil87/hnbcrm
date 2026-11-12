@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Navigate, useNavigate, useSearchParams } from "react-router";
 import { useConvexAuth, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -78,11 +78,17 @@ function SignedInConversation({ intent: initialIntent }: { intent: ReturnType<ty
   // Consumida uma vez: trocar de org (remonta a conversa) não reenvia a mensagem do hero.
   const [intent, setIntent] = useState(initialIntent);
   const rawOrgs = useQuery(api.organizations.getUserOrganizations);
+  // Senha temporária é trava da conta: quem resolve é o /app (ChangePasswordScreen).
+  const mustChangePassword = useQuery(api.teamMembers.getMustChangePassword, {});
   const orgs = useMemo(() => (rawOrgs === undefined ? undefined : toOrgSummaries(rawOrgs)), [rawOrgs]);
   const [chosenId, setChosenId] = useState<string | null>(() => readSelectedOrgId());
   const intentBubble = intent?.message ? <IntentBubble message={intent.message} /> : null;
 
-  if (orgs === undefined) {
+  if (mustChangePassword) {
+    return <Navigate to="/app" replace />;
+  }
+
+  if (orgs === undefined || mustChangePassword === undefined) {
     return <IdleView intro={intentBubble} />;
   }
 

@@ -8,6 +8,7 @@ import {
   parseOnboardingEvent,
   readHttpError,
   runOnboardingTurnRequest,
+  safeAudioUrl,
   type OnboardingStreamEvent,
 } from "./onboardingStream";
 
@@ -93,9 +94,9 @@ describe("parseOnboardingEvent / decodeSseData", () => {
       askForMaterials: true,
     });
     expect(parseOnboardingEvent({ type: "done" })).toEqual({ type: "done", nextStage: null, askForMaterials: false });
-    expect(parseOnboardingEvent({ type: "audio", url: "https://x/a.wav", durationSec: 3.2, mimeType: "audio/wav" })).toEqual({
+    expect(parseOnboardingEvent({ type: "audio", url: "https://abc.convex.cloud/api/storage/a1", durationSec: 3.2, mimeType: "audio/wav" })).toEqual({
       type: "audio",
-      url: "https://x/a.wav",
+      url: "https://abc.convex.cloud/api/storage/a1",
       durationSec: 3.2,
       mimeType: "audio/wav",
     });
@@ -120,6 +121,21 @@ describe("parseOnboardingEvent / decodeSseData", () => {
     const unknown = parseOnboardingEvent({ type: "error", code: "xyz" });
     expect(unknown).toMatchObject({ type: "error", code: "error" });
     expect((unknown as { message: string }).message).toMatch(/Algo deu errado/);
+  });
+});
+
+describe("safeAudioUrl", () => {
+  it("só https no storage do Convex (ou no host do deployment)", () => {
+    expect(safeAudioUrl("https://abc.convex.cloud/api/storage/x")).toBe("https://abc.convex.cloud/api/storage/x");
+    expect(safeAudioUrl("https://abc.convex.site/x")).toBe("https://abc.convex.site/x");
+    expect(safeAudioUrl("http://abc.convex.cloud/x")).toBeNull();
+    expect(safeAudioUrl("https://mal.example/x.wav")).toBeNull();
+    expect(safeAudioUrl("https://convex.cloud.mal.example/x")).toBeNull();
+    expect(safeAudioUrl("https://u:p@abc.convex.cloud/x")).toBeNull();
+    expect(safeAudioUrl("javascript:alert(1)")).toBeNull();
+    expect(safeAudioUrl("data:audio/wav;base64,AAAA")).toBeNull();
+    expect(safeAudioUrl(42)).toBeNull();
+    expect(safeAudioUrl("https://convex.minha-empresa.com/s/1", "convex.minha-empresa.com")).toBe("https://convex.minha-empresa.com/s/1");
   });
 });
 
@@ -209,11 +225,31 @@ describe("runOnboardingTurnRequest", () => {
     void promise.then(() => (settled = true));
     await new Promise((r) => setTimeout(r, 10));
     expect(settled).toBe(false); // não fechou no done
-    ctl.push(sse({ type: "audio", url: "https://x/a.wav", durationSec: 2, mimeType: "audio/wav" }));
+    ctl.push(sse({ type: "audio", url: "https://abc.convex.cloud/api/storage/a1", durationSec: 2, mimeType: "audio/wav" }));
     ctl.close();
     const outcome = await promise;
     expect(outcome.ok).toBe(true);
     expect(seen).toEqual(["delta", "done", "onDone", "audio"]);
+  });
+
+  it("abortar a espera do áudio (depois do done) conta como turno ok, não como abortado", async () => {
+    const ctl = controlledBody();
+    const ac = new AbortController();
+    const promise = runOnboardingTurnRequest({
+      fetchImpl: (async (_u: string, init: RequestInit) => {
+        init.signal?.addEventListener("abort", () => ctl.error(new DOMException("Aborted", "AbortError")));
+        return new Response(ctl.body, { status: 200 });
+      }) as unknown as typeof fetch,
+      siteUrl: "",
+      token: "t",
+      body: BODY,
+      signal: ac.signal,
+      onEvent: () => {},
+    });
+    ctl.push(sse({ type: "done", nextStage: "draft", askForMaterials: false }));
+    await new Promise((r) => setTimeout(r, 5));
+    ac.abort();
+    expect(await promise).toEqual({ ok: true, done: { nextStage: "draft", askForMaterials: false } });
   });
 
   it("conexão que cai depois do done ainda conta como turno ok", async () => {

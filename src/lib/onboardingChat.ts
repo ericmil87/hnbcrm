@@ -3,7 +3,7 @@
  * progresso, texto do modelo sem marcação e a linha do tempo (histórico do
  * servidor + turno em andamento, sem duplicar).
  */
-import type { OnboardingReplyAudio } from "./onboardingStream";
+import { safeAudioUrl, type OnboardingReplyAudio } from "./onboardingStream";
 
 // ── Etapas ──────────────────────────────────────────────────────────────────
 
@@ -48,7 +48,7 @@ export function stageProgress(stage: string | null | undefined): StageProgress {
 
 // ── Texto do modelo ─────────────────────────────────────────────────────────
 
-const INVISIBLE_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]/g;
+const INVISIBLE_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\u200E\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\uFEFF]/g;
 
 /**
  * Texto do Copiloto para a tela, SEM marcação: o backend já limpa, mas a tela
@@ -115,7 +115,15 @@ export interface TimelineItem {
   pending?: boolean;
 }
 
+/** Áudio só com URL segura (`https:` no storage do Convex); senão, sem player. */
+function safeAudio(audio: OnboardingReplyAudio | undefined): OnboardingReplyAudio | undefined {
+  if (!audio) return undefined;
+  const url = safeAudioUrl(audio.url);
+  return url ? { ...audio, url } : undefined;
+}
+
 function fromHistory(m: HistoryMessage): TimelineItem {
+  const audio = safeAudio(m.audio);
   return {
     key: m._id,
     role: m.role,
@@ -123,7 +131,7 @@ function fromHistory(m: HistoryMessage): TimelineItem {
     blocks: m.blocks,
     chips: m.chips,
     ...(m.attachment ? { attachmentLabel: m.attachment.label } : {}),
-    ...(m.audio ? { audio: m.audio } : {}),
+    ...(audio ? { audio } : {}),
     createdAt: m.createdAt,
   };
 }
@@ -151,9 +159,10 @@ export function buildTimeline(historyNewestFirst: readonly HistoryMessage[], pen
   const hasUser = fresh.some((m) => m.role === "user");
   const freshAssistant = fresh.find((m) => m.role === "assistant");
 
+  const pendingAudio = safeAudio(pending.audio);
   if (freshAssistant) {
-    if (pending.audio && !freshAssistant.audio) {
-      return items.map((it) => (it.key === freshAssistant._id ? { ...it, audio: pending.audio } : it));
+    if (pendingAudio && !items.find((it) => it.key === freshAssistant._id)?.audio) {
+      return items.map((it) => (it.key === freshAssistant._id ? { ...it, audio: pendingAudio } : it));
     }
     return items;
   }
@@ -171,14 +180,14 @@ export function buildTimeline(historyNewestFirst: readonly HistoryMessage[], pen
       pending: true,
     });
   }
-  if (pending.replyText || pending.blocks.length > 0 || pending.audio) {
+  if (pending.replyText || pending.blocks.length > 0 || pendingAudio) {
     out.push({
       key: "pending:assistant",
       role: "assistant",
       text: pending.replyText,
       blocks: pending.blocks,
       chips: pending.chips,
-      ...(pending.audio ? { audio: pending.audio } : {}),
+      ...(pendingAudio ? { audio: pendingAudio } : {}),
       pending: true,
     });
   }

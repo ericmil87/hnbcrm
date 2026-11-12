@@ -42,11 +42,20 @@ describe("plainModelText", () => {
     expect(out).not.toContain("\n\n\n");
   });
   it("remove invisíveis e esquemas perigosos; não-string vira vazio", () => {
-    expect(plainModelText("a​b﻿c")).toBe("abc");
+    expect(plainModelText("a\u200Bb\uFEFFc")).toBe("abc");
     expect(plainModelText("javascript:alert(1)")).toBe("[link removido]");
     expect(plainModelText("<script>alert(1)</script>Oi<style>p{}</style>")).toBe("Oi");
     expect(plainModelText(42)).toBe("");
     expect(plainModelText(null)).toBe("");
+  });
+});
+
+describe("plainModelText e caracteres de junção", () => {
+  it("ZWJ/ZWNJ ficam (emoji compostos e escritas que dependem deles); zero-width space sai", () => {
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(plainModelText(`Familia ${family}`)).toBe(`Familia ${family}`);
+    expect(plainModelText("a\u200Cb")).toBe("a\u200Cb");
+    expect(plainModelText("a\u200Bb\uFEFFc\u202Ed")).toBe("abcd");
   });
 });
 
@@ -75,10 +84,17 @@ describe("buildTimeline", () => {
 
   it("resposta já no histórico: nada pendente duplicado; áudio do stream completa a resposta", () => {
     const h = [msg("m4", "assistant", "Ok!"), msg("m3", "user", "Quero vender mais"), ...history];
-    const audio = { url: "https://x/a.wav", durationSec: 2, mimeType: "audio/wav" };
+    const audio = { url: "https://abc.convex.cloud/api/storage/a1", durationSec: 2, mimeType: "audio/wav" };
     const tl = buildTimeline(h, pending({ replyText: "Ok!", streaming: false, audio }));
     expect(tl.map((t) => t.key)).toEqual(["m1", "m2", "m3", "m4"]);
     expect(tl[3].audio).toEqual(audio);
+  });
+
+  it("áudio fora do storage do Convex (histórico ou stream) não vira player", () => {
+    const h = [msg("m4", "assistant", "Ok!", { audio: { url: "https://mal.example/a.wav", durationSec: 1, mimeType: "audio/wav" } }), msg("m3", "user", "Quero vender mais"), ...history];
+    const tl = buildTimeline(h, pending({ audio: { url: "http://abc.convex.cloud/a.wav", durationSec: 1, mimeType: "audio/wav" } }));
+    expect(tl.find((t) => t.key === "m4")?.audio).toBeUndefined();
+    expect(buildTimeline(h, null).find((t) => t.key === "m4")?.audio).toBeUndefined();
   });
 
   it("histórico vazio (baseline null): tudo o que chegar é do turno", () => {

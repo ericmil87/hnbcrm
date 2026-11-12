@@ -108,6 +108,37 @@ export function onboardingErrorMessage(code: OnboardingErrorCode, serverMessage?
   return base;
 }
 
+function hostOf(url: string | undefined): string | null {
+  try {
+    return url ? new URL(url).host : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Host do deployment do app (`VITE_CONVEX_URL`), aceito também em auto-hospedagem. */
+const APP_CONVEX_HOST = hostOf(import.meta.env?.VITE_CONVEX_URL as string | undefined);
+
+/**
+ * URL de áudio aceita na tela: só `https:` e só no storage do Convex
+ * (`*.convex.cloud` / `*.convex.site` ou o host do próprio deployment). Qualquer
+ * outra coisa vira null (o player não aparece; fica o texto).
+ */
+export function safeAudioUrl(raw: unknown, extraHost: string | null = APP_CONVEX_HOST): string | null {
+  if (typeof raw !== "string" || !raw) return null;
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" || u.username || u.password) return null;
+  const host = u.hostname.toLowerCase();
+  const convexHost = host.endsWith(".convex.cloud") || host.endsWith(".convex.site");
+  if (!convexHost && !(extraHost && u.host === extraHost)) return null;
+  return u.toString();
+}
+
 function isStr(v: unknown): v is string {
   return typeof v === "string";
 }
@@ -137,15 +168,17 @@ export function parseOnboardingEvent(raw: unknown): OnboardingStreamEvent | null
         nextStage: isStr(e.nextStage) ? e.nextStage : null,
         askForMaterials: e.askForMaterials === true,
       };
-    case "audio":
-      return isStr(e.url) && e.url
+    case "audio": {
+      const url = safeAudioUrl(e.url);
+      return url
         ? {
             type: "audio",
-            url: e.url,
+            url,
             durationSec: typeof e.durationSec === "number" && Number.isFinite(e.durationSec) ? e.durationSec : 0,
             mimeType: isStr(e.mimeType) ? e.mimeType : "audio/wav",
           }
         : null;
+    }
     case "error": {
       const code = normalizeErrorCode(e.code);
       return { type: "error", code, message: onboardingErrorMessage(code, isStr(e.message) ? e.message : null) };
@@ -323,9 +356,10 @@ export async function runOnboardingTurnRequest(opts: RunOnboardingTurnOptions): 
     parser.push(decoder.decode());
     parser.end();
   } catch (err) {
-    if (isAbort(err, signal)) return { ok: false, aborted: true };
-    // Conexão caiu depois do `done` (ex.: esperando o áudio): o turno valeu.
+    // Depois do `done` o turno valeu, mesmo que a espera do áudio seja abortada
+    // (turno novo) ou a conexão caia: o histórico traz o áudio depois.
     if (state.done) return { ok: true, done: state.done };
+    if (isAbort(err, signal)) return { ok: false, aborted: true };
     return { ok: false, error: { code: "network", message: FALLBACK_MESSAGE.network } };
   } finally {
     try {
