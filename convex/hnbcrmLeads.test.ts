@@ -226,6 +226,23 @@ describe("resumo do onboarding", () => {
     expect(defs).toHaveLength(1);
   });
 
+  test("lead de outra org do mesmo titular: só nota com o nome da org, campos intactos", async () => {
+    const internalOrg = await seedInternal({ fields: true });
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", internalOrg.orgId);
+    const first = await mkOwner("maria@cliente.test", "Org Um");
+    await drain();
+    const second = await as(first.userId).mutation(api.organizations.createOrganization, { name: "Org Dois", slug: "org-dois" });
+    await drain();
+    await applyFor(first.userId, second);
+    await drain();
+    const leads = await internalLeads(internalOrg.orgId);
+    expect(leads).toHaveLength(1);
+    expect(leads[0].customFields.segmento).toBeUndefined();
+    expect(leads[0].customFields.hnbcrmSignupOrgId).toBe(String(first.orgId));
+    const notes = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", leads[0]._id)).collect());
+    expect(notes.find((a) => a.type === "note")?.content).toContain("Org Dois");
+  });
+
   test("sem env nada muda; reaplicar o mesmo resumo é no-op", async () => {
     const internalOrg = await seedInternal();
     const { userId, orgId } = await mkOwner("maria@cliente.test");
@@ -337,6 +354,79 @@ describe("contato/consultoria", () => {
     expect(bad.status).toBe(400);
     const huge = await post({ ...VALID, need: "x".repeat(20_000) });
     expect(huge.status).toBe(413);
+  });
+
+  test("contato existente não é alterado: telefone informado vai só na nota; e-mail novo com telefone de existente cria contato novo", async () => {
+    const internalOrg = await seedInternal();
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", internalOrg.orgId);
+    const existingId = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: internalOrg.orgId, firstName: "Antigo", email: "joao@cliente.test", tags: [], createdAt: 1, updatedAt: 1,
+      }),
+    );
+    const withPhone = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: internalOrg.orgId, firstName: "Dona do número", email: "dona@cliente.test",
+        phone: "5511999990000", whatsappNumber: "5511999990000", tags: [], createdAt: 1, updatedAt: 1,
+      }),
+    );
+    expect(await t.mutation(internal.hnbcrmLeads.internalSubmitContactRequest, { ...VALID, phone: "(21) 98888-7777" })).toEqual({ ok: true });
+    const kept = await t.run((ctx) => ctx.db.get(existingId));
+    expect(kept?.phone).toBeUndefined();
+    expect(kept?.whatsappNumber).toBeUndefined();
+    expect(kept?.firstName).toBe("Antigo");
+    const [lead] = await internalLeads(internalOrg.orgId);
+    expect(lead.contactId).toBe(existingId);
+    const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", lead._id)).collect());
+    expect(acts.find((a) => a.type === "note")?.content).toContain("Telefone informado: (21) 98888-7777");
+
+    // E-mail novo com o telefone de um contato existente: contato NOVO, o antigo fica intacto.
+    expect(
+      await t.mutation(internal.hnbcrmLeads.internalSubmitContactRequest, { ...VALID, email: "novo@cliente.test", phone: "(11) 99999-0000" }),
+    ).toEqual({ ok: true });
+    const contacts = await t.run((ctx) =>
+      ctx.db.query("contacts").withIndex("by_organization", (q) => q.eq("organizationId", internalOrg.orgId)).collect(),
+    );
+    expect(contacts).toHaveLength(3);
+    const created = contacts.find((c) => c.email === "novo@cliente.test");
+    expect(created?._id).not.toBe(withPhone);
+    expect(created?.phone).toBe("5511999990000");
+    expect((await t.run((ctx) => ctx.db.get(withPhone)))?.firstName).toBe("Dona do número");
+  });
+
+  test("origem do formulário, auditoria medium, chave de e-mail em hash e balde sem IP", async () => {
+    const internalOrg = await seedInternal();
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", internalOrg.orgId);
+    await t.mutation(internal.hnbcrmLeads.internalSubmitContactRequest, VALID);
+    const [lead] = await internalLeads(internalOrg.orgId);
+    expect((await t.run((ctx) => ctx.db.get(lead.sourceId!)))?.name).toBe("Site – contato");
+    const audits = await t.run((ctx) =>
+      ctx.db.query("auditLogs").withIndex("by_entity", (q) => q.eq("entityType", "lead").eq("entityId", lead._id)).collect(),
+    );
+    expect(audits[0].severity).toBe("medium");
+    const keys = (await t.run((ctx) => ctx.db.query("onboardingRateLimits").collect())).map((r) => r.key);
+    expect(keys.some((k) => k.includes("joao@cliente.test"))).toBe(false);
+    expect(keys).toContain("contact:ip:unknown");
+    expect(keys.some((k) => /^contact:email:[0-9a-f]{32}$/.test(k))).toBe(true);
+
+    // Sem IP o balde é compartilhado e baixo (10/h), mesmo com e-mails diferentes.
+    for (let i = 0; i < 9; i++) {
+      expect(await t.mutation(internal.hnbcrmLeads.internalSubmitContactRequest, { ...VALID, email: `p${i}@cliente.test` })).toEqual({ ok: true });
+    }
+    expect(
+      await t.mutation(internal.hnbcrmLeads.internalSubmitContactRequest, { ...VALID, email: "ultimo@cliente.test" }),
+    ).toMatchObject({ ok: false, code: "rate_limited" });
+  });
+
+  test("Content-Length acima do teto é recusado (413)", async () => {
+    const internalOrg = await seedInternal();
+    vi.stubEnv("HNBCRM_INTERNAL_ORG_ID", internalOrg.orgId);
+    const res = await t.fetch("/api/v1/public/contact", {
+      method: "POST",
+      body: JSON.stringify(VALID),
+      headers: { "Content-Type": "application/json", "Content-Length": "50000" },
+    });
+    expect(res.status).toBe(413);
   });
 
   test("a rota é pública declarada (não usa API key)", () => {

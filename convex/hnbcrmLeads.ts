@@ -14,14 +14,18 @@ import { internalMutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
+import { sha256Hex } from "./lib/auditText";
 import { evaluateFixedWindow, normalizeIpKey } from "./lib/onboardingBudget";
 import {
+  CONTACT_KIND_LABEL,
+  CONTACT_SOURCE_NAME,
   SIGNUP_MARKER,
+  SIGNUP_SOURCE_NAME,
   SIGNUP_TAG,
   SUMMARY_MARKER,
-  CONTACT_KIND_LABEL,
   addInternalNote,
   buildContactNote,
+  cleanFormText,
   findOrCreateInternalContact,
   insertInternalLead,
   parseContactRequest,
@@ -33,6 +37,8 @@ const MS_DAY = 24 * MS_HOUR;
 /** Tetos do formulário público (janela fixa; recusa não consome). */
 const CONTACT_RATE = {
   ip: { windowMs: MS_HOUR, limit: 5 },
+  /** Sem IP válido: um balde COMPARTILHADO e mais baixo (nunca pula o limite). */
+  ipUnknown: { windowMs: MS_HOUR, limit: 10 },
   email: { windowMs: MS_HOUR, limit: 3 },
   global: { windowMs: MS_DAY, limit: 300 },
 } as const;
@@ -59,13 +65,14 @@ async function consumeContactRate(
   return true;
 }
 
-/** Titular da conta: o admin humano mais antigo da org (quem criou). */
+/** Titular da conta: o admin humano mais antigo da org (quem criou). Para ao achar. */
 async function findOwner(ctx: MutationCtx, organizationId: Id<"organizations">) {
-  const humans = await ctx.db
+  for await (const m of ctx.db
     .query("teamMembers")
-    .withIndex("by_organization_and_type", (q) => q.eq("organizationId", organizationId).eq("type", "human"))
-    .take(50);
-  return humans.find((m) => m.role === "admin" && m.removedAt === undefined && m.status !== "inactive") ?? null;
+    .withIndex("by_organization_and_type", (q) => q.eq("organizationId", organizationId).eq("type", "human"))) {
+    if (m.role === "admin" && m.removedAt === undefined && m.status !== "inactive") return m;
+  }
+  return null;
 }
 
 /** Lead de cadastro do titular (marcador no customFields), via contato por e-mail. */
@@ -75,11 +82,10 @@ async function findSignupLead(ctx: MutationCtx, internalOrgId: Id<"organizations
     .withIndex("by_organization_and_email", (q) => q.eq("organizationId", internalOrgId).eq("email", email))
     .first();
   if (!contact) return null;
-  const leads = await ctx.db
-    .query("leads")
-    .withIndex("by_contact", (q) => q.eq("contactId", contact._id))
-    .take(50);
-  return leads.find((l) => l.organizationId === internalOrgId && l.customFields?.[SIGNUP_MARKER] !== undefined) ?? null;
+  for await (const l of ctx.db.query("leads").withIndex("by_contact", (q) => q.eq("contactId", contact._id))) {
+    if (l.organizationId === internalOrgId && l.customFields?.[SIGNUP_MARKER] !== undefined) return l;
+  }
+  return null;
 }
 
 export const internalCaptureSignupLead = internalMutation({
@@ -98,18 +104,17 @@ export const internalCaptureSignupLead = internalMutation({
     // Idempotente por titular: a mesma pessoa (ou a mesma org reagendada) não duplica.
     if (await findSignupLead(ctx, target.org._id, email)) return { status: "exists" };
 
-    const name = (owner.name || email.split("@")[0]).slice(0, 80);
-    const contactId = await findOrCreateInternalContact(ctx, target.org._id, {
-      name,
-      email,
-      company: org.name.slice(0, 120),
-    });
+    const orgName = cleanFormText(org.name, 80) || "organização";
+    const name = cleanFormText(owner.name || email.split("@")[0], 80) || "Titular";
+    // Só por e-mail: contato que já existe na org interna não é alterado.
+    const { contactId } = await findOrCreateInternalContact(ctx, target, { name, email, company: orgName });
     await insertInternalLead(ctx, target, {
-      title: `Cadastro: ${org.name.slice(0, 80)}`,
+      title: `Cadastro: ${orgName}`,
       contactId,
       tags: [SIGNUP_TAG],
       customFields: { [SIGNUP_MARKER]: String(args.organizationId) },
       via: "cadastro",
+      sourceName: SIGNUP_SOURCE_NAME,
     });
     return { status: "created" };
   },
@@ -152,6 +157,15 @@ export const internalApplySignupSummary = internalMutation({
       wanted.push({ label: "Plano de interesse", keys: ["plano_interesse", "plano"], value: session.draft.planInterest });
     }
     const summary = wanted.map((w) => `${w.label}: ${w.value}`).join("; ");
+
+    // O lead é de OUTRA org do mesmo titular: não mistura campos; só nota com o nome da org.
+    if (lead.customFields?.[SIGNUP_MARKER] !== String(args.organizationId)) {
+      const org = await ctx.db.get(args.organizationId);
+      const orgName = cleanFormText(org?.name, 80) || "outra organização";
+      await addInternalNote(ctx, target, lead._id, `Resumo do onboarding da organização "${orgName}". ${summary}`);
+      return { status: "noted_other_org" };
+    }
+
     if (lead.customFields?.[SUMMARY_MARKER] === summary) return { status: "unchanged" };
 
     const customFields: Record<string, unknown> = { ...lead.customFields, [SUMMARY_MARKER]: summary };
@@ -173,7 +187,7 @@ export const internalApplySignupSummary = internalMutation({
       actorType: "system",
       metadata: { via: "onboarding_summary" },
       description: "Resumo do onboarding aplicado ao lead de cadastro",
-      severity: "low",
+      severity: "medium",
       createdAt: now,
     });
     if (leftovers.length > 0) {
@@ -210,9 +224,11 @@ export const internalSubmitContactRequest = internalMutation({
 
     const now = Date.now();
     const ip = normalizeIpKey(args.ipKey);
+    // E-mail só como hash na chave (a tabela não guarda o endereço em claro).
+    const emailHash = (await sha256Hex(req.email)).slice(0, 32);
     const subjects = [
-      ...(ip ? [{ key: `contact:ip:${ip}`, spec: CONTACT_RATE.ip }] : []),
-      { key: `contact:email:${req.email}`, spec: CONTACT_RATE.email },
+      ip ? { key: `contact:ip:${ip}`, spec: CONTACT_RATE.ip } : { key: "contact:ip:unknown", spec: CONTACT_RATE.ipUnknown },
+      { key: `contact:email:${emailHash}`, spec: CONTACT_RATE.email },
       { key: "contact:global", spec: CONTACT_RATE.global },
     ];
     if (!(await consumeContactRate(ctx, now, subjects))) {
@@ -220,22 +236,23 @@ export const internalSubmitContactRequest = internalMutation({
       return { ok: false as const, code: "rate_limited", message: "Muitos pedidos em pouco tempo. Tente de novo mais tarde." };
     }
 
-    const contactId = await findOrCreateInternalContact(ctx, target.org._id, {
+    // Contato só por e-mail; existente não é alterado, e o telefone informado vai na nota.
+    const { contactId, created } = await findOrCreateInternalContact(ctx, target, {
       name: req.name,
       email: req.email,
       company: req.business || undefined,
       phone: req.phone,
     });
-    const note = buildContactNote(req);
+    const note = buildContactNote(req) + (!created && req.phone ? `\nTelefone informado: ${req.phone}` : "");
 
     // Mesma pessoa pedindo o mesmo tipo de novo: nota no lead aberto, sem lead duplicado.
-    const leads = await ctx.db
-      .query("leads")
-      .withIndex("by_contact", (q) => q.eq("contactId", contactId))
-      .take(50);
-    const open = leads.find(
-      (l) => l.organizationId === target.org._id && l.closedAt === undefined && l.tags.includes(req.kind),
-    );
+    let open: Doc<"leads"> | null = null;
+    for await (const l of ctx.db.query("leads").withIndex("by_contact", (q) => q.eq("contactId", contactId))) {
+      if (l.organizationId === target.org._id && l.closedAt === undefined && l.tags.includes(req.kind)) {
+        open = l;
+        break;
+      }
+    }
     if (open) {
       await addInternalNote(ctx, target, open._id, note);
     } else {
@@ -246,6 +263,7 @@ export const internalSubmitContactRequest = internalMutation({
         customFields: {},
         note,
         via: "formulário de contato",
+        sourceName: CONTACT_SOURCE_NAME,
       });
     }
     return { ok: true as const };

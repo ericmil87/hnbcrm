@@ -39,14 +39,14 @@ describe("ContactRequestForm", () => {
     expect(screen.getByRole("link", { name: "Enviar por e-mail" }).getAttribute("href")).toBe(contactHref("empresa"));
   });
 
-  it("limite de pedidos não oferece e-mail, só a mensagem", async () => {
+  it("limite de pedidos também oferece o e-mail", async () => {
     const submit = vi.fn().mockResolvedValue({ ok: false, code: "rate_limited", message: "Muitos pedidos." });
     const user = userEvent.setup();
     render(<ContactRequestForm topic="implantacao" submit={submit} />);
     await fill(user);
     await user.click(screen.getByRole("button", { name: "Enviar pedido" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Muitos pedidos");
-    expect(screen.queryByRole("link", { name: "Enviar por e-mail" })).toBeNull();
+    expect(screen.getByRole("link", { name: "Enviar por e-mail" }).getAttribute("href")).toBe(contactHref("implantacao"));
   });
 });
 

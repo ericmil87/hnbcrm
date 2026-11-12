@@ -15,10 +15,13 @@ import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
 import { leadCreationStagePatch } from "./leadStageMove";
 import { hasEmailShape } from "./emailAddress";
+import { normalizeCampaignPhone } from "./phone";
+import { resolveDefaultCountry } from "./orgPhone";
 
 export const SIGNUP_MARKER = "hnbcrmSignupOrgId";
 export const SUMMARY_MARKER = "hnbcrmSummary";
 export const SIGNUP_SOURCE_NAME = "Cadastro";
+export const CONTACT_SOURCE_NAME = "Site – contato";
 export const SIGNUP_TAG = "cadastro";
 
 export const CONTACT_KINDS = ["implantacao", "consultoria", "empresa"] as const;
@@ -67,11 +70,16 @@ export async function resolveInternalTarget(ctx: MutationCtx): Promise<InternalT
   const org = await ctx.db.get(orgId);
   if (!org) return null;
 
-  const humans = await ctx.db
+  // Org interna é pequena (equipe do HNBCRM): itera o índice até achar o 1º admin ativo, sem corte arbitrário.
+  let actor: Doc<"teamMembers"> | null = null;
+  for await (const m of ctx.db
     .query("teamMembers")
-    .withIndex("by_organization_and_type", (q) => q.eq("organizationId", orgId).eq("type", "human"))
-    .take(100);
-  const actor = humans.find((m) => m.role === "admin" && m.removedAt === undefined && m.status !== "inactive");
+    .withIndex("by_organization_and_type", (q) => q.eq("organizationId", orgId).eq("type", "human"))) {
+    if (m.role === "admin" && m.removedAt === undefined && m.status !== "inactive") {
+      actor = m;
+      break;
+    }
+  }
   if (!actor) return null;
 
   let board: Doc<"boards"> | null = null;
@@ -82,12 +90,19 @@ export async function resolveInternalTarget(ctx: MutationCtx): Promise<InternalT
     if (candidate && candidate.organizationId === orgId && candidate.archivedAt === undefined) board = candidate;
   }
   if (!board) {
-    const boards = await ctx.db
+    // Funis em ordem: o padrão vivo, senão o primeiro vivo (para ao achar o padrão).
+    let firstLive: Doc<"boards"> | null = null;
+    for await (const b of ctx.db
       .query("boards")
-      .withIndex("by_organization_and_order", (q) => q.eq("organizationId", orgId))
-      .take(50);
-    const live = boards.filter((b) => b.archivedAt === undefined);
-    board = live.find((b) => b.isDefault) ?? live[0] ?? null;
+      .withIndex("by_organization_and_order", (q) => q.eq("organizationId", orgId))) {
+      if (b.archivedAt !== undefined) continue;
+      if (b.isDefault) {
+        board = b;
+        break;
+      }
+      firstLive ??= b;
+    }
+    board ??= firstLive;
   }
   if (!board) return null;
 
@@ -100,16 +115,19 @@ export async function resolveInternalTarget(ctx: MutationCtx): Promise<InternalT
   return { org, actor, board, stage };
 }
 
-async function ensureSource(ctx: MutationCtx, orgId: Id<"organizations">, now: number): Promise<Id<"leadSources">> {
-  const sources = await ctx.db
-    .query("leadSources")
-    .withIndex("by_organization", (q) => q.eq("organizationId", orgId))
-    .take(100);
-  const found = sources.find((s) => s.name.toLowerCase() === SIGNUP_SOURCE_NAME.toLowerCase());
-  if (found) return found._id;
+async function ensureSource(
+  ctx: MutationCtx,
+  orgId: Id<"organizations">,
+  name: string,
+  now: number,
+): Promise<Id<"leadSources">> {
+  // Sem índice por nome; as origens da org interna são poucas (dezenas), então itera o índice da org.
+  for await (const s of ctx.db.query("leadSources").withIndex("by_organization", (q) => q.eq("organizationId", orgId))) {
+    if (s.name.toLowerCase() === name.toLowerCase()) return s._id;
+  }
   return await ctx.db.insert("leadSources", {
     organizationId: orgId,
-    name: SIGNUP_SOURCE_NAME,
+    name,
     type: "other",
     isActive: true,
     createdAt: now,
@@ -127,11 +145,13 @@ export async function insertInternalLead(
     customFields: Record<string, unknown>;
     note?: string;
     via: string;
+    /** Origem do lead ("Cadastro" no gancho, "Site – contato" no formulário). */
+    sourceName: string;
   },
 ): Promise<Id<"leads">> {
   const { org, actor, board, stage } = target;
   const now = Date.now();
-  const sourceId = await ensureSource(ctx, org._id, now);
+  const sourceId = await ensureSource(ctx, org._id, args.sourceName, now);
   const leadId = await ctx.db.insert("leads", {
     organizationId: org._id,
     title: args.title,
@@ -160,7 +180,7 @@ export async function insertInternalLead(
     actorType: "system",
     metadata: { title: args.title, contactId: args.contactId, via: args.via },
     description: buildAuditDescription({ action: "create", entityType: "lead", metadata: { title: args.title } }),
-    severity: "low",
+    severity: "medium",
     createdAt: now,
   });
   await ctx.db.insert("activities", {
@@ -249,16 +269,31 @@ export function buildContactNote(r: ContactRequest): string {
     .join("\n");
 }
 
+/**
+ * Contato do solicitante, SÓ por e-mail. Contato existente NÃO é alterado (a rota é pública:
+ * quem digita um e-mail alheio não pode mexer no cadastro dele). Telefone nunca é usado para
+ * buscar; vai ao contato só quando ele é NOVO (normalizado) e, no caso de existente, o chamador
+ * o registra na nota.
+ */
 export async function findOrCreateInternalContact(
   ctx: MutationCtx,
-  orgId: Id<"organizations">,
+  target: InternalTarget,
   c: { name: string; email: string; phone?: string; company?: string },
-): Promise<Id<"contacts">> {
-  return await ctx.runMutation(internal.contacts.internalFindOrCreateContact, {
+): Promise<{ contactId: Id<"contacts">; created: boolean }> {
+  const orgId = target.org._id;
+  const existing = await ctx.db
+    .query("contacts")
+    .withIndex("by_organization_and_email", (q) => q.eq("organizationId", orgId).eq("email", c.email))
+    .first();
+  if (existing) return { contactId: existing._id, created: false };
+  const norm = c.phone ? normalizeCampaignPhone(c.phone, resolveDefaultCountry(target.org.settings)) : null;
+  const contactId = await ctx.runMutation(internal.contacts.internalCreateContact, {
     organizationId: orgId,
-    email: c.email,
+    teamMemberId: target.actor._id,
     firstName: c.name,
+    email: c.email,
     ...(c.company ? { company: c.company } : {}),
-    ...(c.phone ? { phone: c.phone, normalizePhone: true } : {}),
+    ...(norm?.ok ? { phone: norm.phone, whatsappNumber: norm.phone } : {}),
   });
+  return { contactId, created: true };
 }

@@ -66,7 +66,7 @@ export function ContactRequestForm({ topic, onClose, submit = submitContactReque
     );
   }
 
-  const fallback = failure && (failure.code === "unavailable" || failure.code === "error");
+  const fallback = failure && (failure.code !== "invalid");
 
   return (
     <form onSubmit={onSubmit} className="space-y-3">

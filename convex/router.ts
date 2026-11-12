@@ -2592,6 +2592,11 @@ http.route({
   method: "POST",
   handler: httpAction(async (ctx, request) => {
     try {
+      // Recusa pelo Content-Length ANTES de ler o corpo; o corte pelo texto cobre quem omite o cabeçalho.
+      const declared = Number(request.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > 8_000) {
+        return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
+      }
       const text = await request.text();
       if (text.length > 8_000) return jsonResponse({ ok: false, code: "invalid", message: "Pedido grande demais." }, 413);
       let body: unknown;
@@ -2619,7 +2624,9 @@ http.route({
       if (result.ok) return jsonResponse({ ok: true });
       const status = result.code === "rate_limited" ? 429 : result.code === "unavailable" ? 503 : 400;
       return jsonResponse(result, status);
-    } catch {
+    } catch (err) {
+      // Só a mensagem do erro: nunca o corpo (dados do solicitante).
+      console.error("[contact]", err instanceof Error ? err.message : "erro");
       return jsonResponse({ ok: false, code: "error", message: "Não foi possível enviar agora." }, 500);
     }
   }),
