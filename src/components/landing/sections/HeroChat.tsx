@@ -6,20 +6,15 @@ import { goToOnboarding, type OnboardingNiche } from "@/lib/onboardingEntry";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 import { AiAvatar, Bubble, ChatWindow, ChipRow, Composer, ScenePauseButton, type Chip } from "../kit";
 import {
-  HERO_ATTACH_LABEL,
+  HERO_CHAT_LABELS,
+  type HeroChatVariant,
   HERO_BUBBLES,
   HERO_CHAT_STATUS,
   HERO_CHAT_TITLE,
   HERO_CHIPS,
-  HERO_CHIPS_LABEL,
   HERO_CHIP_MESSAGES,
-  HERO_FIELD_LABEL,
   HERO_HINT,
-  HERO_MIC_LABEL,
-  HERO_PAUSE_LABEL,
   HERO_PLACEHOLDERS,
-  HERO_RESUME_LABEL,
-  HERO_SEND_LABEL,
   HERO_STATIC_PLACEHOLDER,
   HERO_UPLOAD_NOTICE,
 } from "./S1HeroCopy";
@@ -30,7 +25,8 @@ import {
  * no navegador e segue para o onboarding (`goToOnboarding`, a mesma porta nos dois).
  * Anexo e microfone levam ao mesmo destino com um aviso: não há upload anônimo.
  */
-export function HeroChat() {
+export function HeroChat({ variant = "hero" }: { variant?: HeroChatVariant }) {
+  const labels = HERO_CHAT_LABELS[variant];
   const navigate = useNavigate();
   const [draft, setDraft] = useState("");
   const [animationPaused, setAnimationPaused] = useState(false);
@@ -60,6 +56,7 @@ export function HeroChat() {
     <div ref={windowRef} className="min-w-0">
       <ChatWindow
         title={HERO_CHAT_TITLE}
+        label={labels.region}
         subtitle={HERO_CHAT_STATUS}
         avatar={<AiAvatar />}
         badge={<Badge variant="brand">IA</Badge>}
@@ -69,7 +66,7 @@ export function HeroChat() {
             <ChipRow
               className="px-2 pt-2"
               chips={HERO_CHIPS}
-              label={HERO_CHIPS_LABEL}
+              label={labels.chips}
               onSelect={pickChip}
             />
             <Composer
@@ -78,10 +75,10 @@ export function HeroChat() {
               onSubmit={send}
               placeholder={HERO_STATIC_PLACEHOLDER}
               placeholders={HERO_PLACEHOLDERS}
-              label={HERO_FIELD_LABEL}
-              attachLabel={HERO_ATTACH_LABEL}
-              micLabel={HERO_MIC_LABEL}
-              sendLabel={HERO_SEND_LABEL}
+              label={labels.field}
+              attachLabel={labels.attach}
+              micLabel={labels.mic}
+              sendLabel={labels.send}
               hint={HERO_HINT}
               maxLength={2000}
               onAttach={needsAccount}
@@ -103,8 +100,8 @@ export function HeroChat() {
           <ScenePauseButton
             paused={animationPaused}
             onToggle={() => setAnimationPaused((p) => !p)}
-            pauseLabel={HERO_PAUSE_LABEL}
-            resumeLabel={HERO_RESUME_LABEL}
+            pauseLabel={labels.pause}
+            resumeLabel={labels.resume}
           />
         </div>
       )}

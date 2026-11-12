@@ -5,7 +5,6 @@ import {
   ONBOARDING_ROUTE_READY,
   clearOnboardingDraft,
   goToOnboarding,
-  onboardingHref,
   parseNiche,
   readOnboardingDraft,
   saveOnboardingDraft,
@@ -90,13 +89,14 @@ describe("onboardingEntry", () => {
     expect(startHref()).toBe("/comecar");
     expect(startHref(null)).toBe("/comecar");
     expect(startHref("profissional")).toBe("/comecar?plano=profissional");
-    expect(onboardingHref()).toBe(startHref());
+    expect(startHref("invalido")).toBe("/comecar");
+    expect(startHref("__proto__")).toBe("/comecar");
   });
 
   it("goToOnboarding guarda e navega para /comecar (com o plano, se vier)", () => {
     const navigate = vi.fn();
     const to = goToOnboarding("Sou corretor", "corretor", navigate);
-    expect(to).toBe(onboardingHref());
+    expect(to).toBe("/comecar");
     expect(navigate).toHaveBeenCalledWith("/comecar");
     expect(readOnboardingDraft()).toEqual({ message: "Sou corretor", niche: "corretor" });
     expect(goToOnboarding("oi", null, navigate, "escala")).toBe("/comecar?plano=escala");

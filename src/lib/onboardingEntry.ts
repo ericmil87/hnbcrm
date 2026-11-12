@@ -6,11 +6,11 @@
  * destino de todos os CTAs de cadastro da landing e dos preços.
  */
 import type { PlanKey } from "../../convex/lib/plans";
-import { signUpHref } from "./authEntry";
+import { parsePlanKey, signUpHref } from "./authEntry";
 
 export const ONBOARDING_DRAFT_KEY = "hnbcrm:onboarding-rascunho";
 export const ONBOARDING_PATH = "/comecar";
-/** A rota `/comecar` existe; `false` devolveria os CTAs ao cadastro de `/entrar`. */
+/** A rota `/comecar` existe. `false` = rollback: todos os CTAs voltam ao cadastro antigo (`/entrar?modo=cadastro`). */
 export const ONBOARDING_ROUTE_READY = true;
 export const ONBOARDING_DRAFT_MAX = 2000;
 
@@ -30,14 +30,11 @@ export function parseNiche(raw: unknown): OnboardingNiche | null {
  * Destino de todo CTA de cadastro ("Testar grátis", "Começar grátis", "Testar 30
  * dias grátis", hero, CTA final, preços). Mantém `?plano=` quando houver.
  */
-export function startHref(plan?: PlanKey | null): string {
-  if (!ONBOARDING_ROUTE_READY) return plan ? signUpHref(plan) : signUpHref();
-  return plan ? `${ONBOARDING_PATH}?plano=${plan}` : ONBOARDING_PATH;
-}
-
-/** Destino do hero e do CTA final (sem plano). */
-export function onboardingHref(plan?: PlanKey | null): string {
-  return startHref(plan);
+export function startHref(plan?: PlanKey | string | null): string {
+  // Plano inválido (valor vindo de fora do tipo) = sem query.
+  const valid = parsePlanKey(plan);
+  if (!ONBOARDING_ROUTE_READY) return valid ? signUpHref(valid) : signUpHref();
+  return valid ? `${ONBOARDING_PATH}?plano=${valid}` : ONBOARDING_PATH;
 }
 
 /** Guarda a mensagem (limitada) e o nicho. Devolve `false` se não há o que guardar ou o navegador não guarda. */

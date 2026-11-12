@@ -11,7 +11,7 @@ export function FinalCta() {
   return (
     <LandingSection id={LANDING_ANCHORS.finalCta} title="Conte como é o seu negócio. A sua IA começa daí.">
       <div className="max-w-xl">
-        <HeroChat />
+        <HeroChat variant="final" />
       </div>
       <p className="mt-4 text-sm text-text-muted">{trustLine()}</p>
     </LandingSection>

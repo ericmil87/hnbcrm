@@ -189,7 +189,7 @@ describe("S9", () => {
 describe("CTA final e rodapé", () => {
   it("CTA final traz o composer do hero e a linha de confiança", () => {
     renderWithRouter(<FinalCta />);
-    expect(screen.getByRole("textbox", { name: "Mensagem para o Copiloto" })).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: "Mensagem para o Copiloto, para começar agora" })).toBeTruthy();
     expect(screen.getByText(/dias grátis · sem cartão · reembolso em/)).toBeTruthy();
   });
 
