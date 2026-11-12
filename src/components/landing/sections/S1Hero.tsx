@@ -4,12 +4,15 @@ import { ArrowDown, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/Badge";
 import { buttonClassName } from "@/components/ui/Button";
-import { goToOnboarding } from "@/lib/onboardingEntry";
+import { goToOnboarding, type OnboardingNiche } from "@/lib/onboardingEntry";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
-import { Bubble, ChatWindow, ChipRow, Composer, ScenePauseButton, type Chip } from "../kit";
+import { AiAvatar, Bubble, ChatWindow, ChipRow, Composer, ScenePauseButton, type Chip } from "../kit";
 import { LANDING_ANCHORS, trustLine } from "./landingCopy";
 import {
   HERO_ATTACH_LABEL,
+  HERO_BUBBLES,
+  HERO_CHAT_STATUS,
+  HERO_CHAT_TITLE,
   HERO_CHIPS,
   HERO_CHIPS_LABEL,
   HERO_CHIP_MESSAGES,
@@ -46,8 +49,7 @@ export function S1Hero() {
   }
 
   function pickChip(chip: Chip) {
-    const niche = HERO_CHIPS.find((c) => c.id === chip.id)?.id;
-    if (!niche) return;
+    const niche = chip.id as OnboardingNiche;
     const message = HERO_CHIP_MESSAGES[niche];
     if (!message) {
       windowRef.current?.querySelector("textarea")?.focus();
@@ -91,8 +93,9 @@ export function S1Hero() {
 
         <div ref={windowRef} className="min-w-0">
           <ChatWindow
-            title="Copiloto HNBCRM"
-            subtitle="online agora"
+            title={HERO_CHAT_TITLE}
+            subtitle={HERO_CHAT_STATUS}
+            avatar={<AiAvatar />}
             badge={<Badge variant="brand">IA</Badge>}
             bodyClassName="min-h-[11rem]"
             composer={
@@ -123,10 +126,10 @@ export function S1Hero() {
             }
           >
             <Bubble variant="ai" side="start" label="Copiloto" time="09:41" enter>
-              Oi! Me conta: o que você vende e como atende hoje?
+              {HERO_BUBBLES[0]}
             </Bubble>
             <Bubble variant="ai" side="start" label="Copiloto" time="09:41" tail={false} enter enterDelayMs={400}>
-              Pode escrever, mandar um áudio, o link do site ou o flyer.
+              {HERO_BUBBLES[1]}
             </Bubble>
           </ChatWindow>
           {!reduced && (

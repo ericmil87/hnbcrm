@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { applyTheme } from "@/lib/themeDom";
 import { UI_THEMES } from "../../../../convex/lib/uiTheme";
@@ -44,9 +44,24 @@ describe("S2Machine", () => {
   it("tem pontos de navegação dos painéis e a legenda honesta", () => {
     restore = mockReducedMotion(true);
     render(<S2Machine />);
-    for (const name of ["Conversa", "Funil", "Você"]) {
+    for (const name of ["Ver painel Conversa", "Ver painel Funil", "Ver painel Você"]) {
       expect(screen.getByRole("button", { name })).toBeInTheDocument();
     }
     expect(screen.getByText(/Ele começa em modo sugestão/)).toBeInTheDocument();
+  });
+
+  it("os pontos levam ao painel e o scroll sem largura rolável não quebra", () => {
+    restore = mockReducedMotion(true);
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+    const { container } = render(<S2Machine />);
+    fireEvent.click(screen.getByRole("button", { name: "Ver painel Funil" }));
+    expect(scrollIntoView).toHaveBeenCalledOnce();
+    expect(scrollIntoView.mock.contexts[0]).toBe(container.querySelector('[data-panel="funil"]'));
+    const scroller = container.querySelector('[data-panel="conversa"]')!.parentElement!;
+    expect(scroller).toHaveAttribute("tabindex", "-1");
+    // jsdom: scrollWidth == clientWidth == 0 (nada para rolar).
+    expect(() => fireEvent.scroll(scroller)).not.toThrow();
+    expect(screen.getByRole("button", { name: "Ver painel Conversa" })).toHaveAttribute("aria-current", "true");
   });
 });

@@ -57,6 +57,25 @@ describe("onboardingEntry", () => {
     expect(readOnboardingDraft()).toBeNull();
   });
 
+  it("mensagem vazia sem nicho não grava nem sobrescreve o rascunho anterior", () => {
+    saveOnboardingDraft("Sou terapeuta", "terapeuta");
+    expect(saveOnboardingDraft("   ", null)).toBe(false);
+    expect(readOnboardingDraft()).toEqual({ message: "Sou terapeuta", niche: "terapeuta" });
+    expect(saveOnboardingDraft("", "loja")).toBe(true);
+    expect(readOnboardingDraft()).toEqual({ message: "", niche: "loja" });
+  });
+
+  it("rascunho com tipos errados é revalidado", () => {
+    sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify({ message: "ok", niche: "hacker" }));
+    expect(readOnboardingDraft()).toEqual({ message: "ok", niche: null });
+    sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify("texto"));
+    expect(readOnboardingDraft()).toBeNull();
+    sessionStorage.setItem(ONBOARDING_DRAFT_KEY, "null");
+    expect(readOnboardingDraft()).toBeNull();
+    sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify({ message: "a".repeat(ONBOARDING_DRAFT_MAX + 10) }));
+    expect(readOnboardingDraft()?.message).toHaveLength(ONBOARDING_DRAFT_MAX);
+  });
+
   it("sem armazenamento não quebra e ainda navega", () => {
     vi.stubGlobal("sessionStorage", memoryStorage(true));
     expect(saveOnboardingDraft("oi", null)).toBe(false);

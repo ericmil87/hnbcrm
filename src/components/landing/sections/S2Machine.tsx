@@ -21,14 +21,18 @@ import {
   MACHINE_DESCRIPTION,
   MACHINE_EYEBROW,
   MACHINE_FUNNEL_COLUMNS,
+  MACHINE_DOT_LABELS,
   MACHINE_LABEL,
   MACHINE_PANELS,
   MACHINE_STEPS,
   MACHINE_SUBTITLE,
   MACHINE_SWIPE_HINT,
+  MACHINE_TEXT,
   MACHINE_TITLE,
   MACHINE_TRANSCRIPT,
 } from "./S2MachineCopy";
+
+const T = MACHINE_TEXT;
 
 type PanelId = (typeof MACHINE_PANELS)[number]["id"];
 
@@ -52,17 +56,17 @@ function ConversationPanel({ scene }: { scene: SceneLoopState }) {
   const typing = scene.step?.id === "digitando";
   return (
     <ChatWindow
-      title="Marina"
+      title={T.customerName}
       subtitle="online"
       typing={typing}
-      avatar={<Avatar name="Marina" size="md" />}
+      avatar={<Avatar name={T.customerName} size="md" />}
       bodyClassName="h-[26rem] justify-end overflow-hidden"
     >
-      <Bubble variant="system">Hoje</Bubble>
+      <Bubble variant="system">{T.dateSeparator}</Bubble>
       {scene.reached("audio") && (
         <AudioBubble
           variant="in"
-          duration="0:14"
+          duration={T.audioDuration}
           time="23:14"
           transcript={scene.reached("transcricao") ? MACHINE_TRANSCRIPT : undefined}
           enter
@@ -70,18 +74,18 @@ function ConversationPanel({ scene }: { scene: SceneLoopState }) {
       )}
       {typing && <TypingDots />}
       {scene.reached("resposta") && (
-        <Bubble variant="ai" label="Atendente IA" time="23:14" ticks="read" enter>
-          Oi, Marina! Sábado temos às 9h e às 10h30. A limpeza de pele sai por R$ 180. Qual horário você prefere?
+        <Bubble variant="ai" label={T.aiLabel} time="23:14" ticks="read" enter>
+          {T.aiPrice}
         </Bubble>
       )}
       {scene.reached("cliente-ok") && (
         <Bubble variant="in" time="23:15" enter>
-          Fechado, 10h30!
+          {T.customerOk}
         </Bubble>
       )}
       {scene.reached("ia-ok") && (
-        <Bubble variant="ai" label="Atendente IA" time="23:15" ticks="delivered" enter>
-          Anotei 10h30. A equipe confirma com você amanhã cedo.
+        <Bubble variant="ai" label={T.aiLabel} time="23:15" ticks="delivered" enter>
+          {T.aiOk}
         </Bubble>
       )}
     </ChatWindow>
@@ -94,7 +98,7 @@ function FunnelPanel({ scene }: { scene: SceneLoopState }) {
     <div className="rounded-card border border-border bg-surface-raised p-3 shadow-card">
       <MiniFunnel
         columns={MACHINE_FUNNEL_COLUMNS}
-        moving={scene.reached("audio") ? { title: "Marina", subtitle: "limpeza de pele", columnId } : null}
+        moving={scene.reached("audio") ? { title: T.funnelCardTitle, subtitle: T.funnelCardSubtitle, columnId } : null}
         enter
         className="min-h-[24rem]"
       />
@@ -107,31 +111,30 @@ function YouPanel({ scene }: { scene: SceneLoopState }) {
     <div className="min-h-[26rem] space-y-3">
       {scene.reached("aviso") && (
         <PhoneNotification
-          title="Marina quer fechar. Assumir?"
-          actions={[{ label: "Depois" }, { label: "Assumir", primary: true }]}
+          title={T.notificationTitle}
+          actions={[{ label: T.notificationLater }, { label: T.notificationTake, primary: true }]}
           enter
         />
       )}
       {scene.reached("equipe") && (
-        <ChatWindow title="Marina" subtitle="online" avatar={<Avatar name="Marina" size="md" />} bodyClassName="gap-1.5">
+        <ChatWindow title={T.customerName} subtitle="online" avatar={<Avatar name={T.customerName} size="md" />} bodyClassName="gap-1.5">
           <Bubble variant="system" enter>
-            Você assumiu a conversa. A IA pausou.
+            {T.takeoverLine}
           </Bubble>
-          <Bubble variant="out" label="Ana" time="23:16" ticks="sent" enter>
-            Oi, Marina! Aqui é a Ana. Vou te passar o Pix do sinal.
+          <Bubble variant="out" label={T.teamLabel} time="23:16" ticks="sent" enter>
+            {T.teamMessage}
           </Bubble>
         </ChatWindow>
       )}
       {scene.reached("resumo") && (
-        <ChatWindow title="Copiloto" subtitle="resumo de hoje" avatar={<AiAvatar />}>
-          <Bubble variant="ai" side="start" label="Copiloto · resumo de hoje" enter>
-            <strong>3 leads quentes hoje</strong>
-            <br />
-            Marina · pronta para fechar
-            <br />
-            Paulo · pediu valor do pacote
-            <br />
-            Ingrid · voltou a falar hoje
+        <ChatWindow title={T.copilotTitle} subtitle={T.copilotSubtitle} avatar={<AiAvatar />}>
+          <Bubble variant="ai" side="start" label={T.copilotLabel} enter>
+            <strong>{T.copilotHeadline}</strong>
+            {T.copilotLeads.map((lead) => (
+              <span key={lead} className="block">
+                {lead}
+              </span>
+            ))}
           </Bubble>
         </ChatWindow>
       )}
@@ -176,6 +179,7 @@ export function S2Machine() {
         {(scene) => (
           <div
             ref={scrollerRef}
+            tabIndex={-1}
             onScroll={onScroll}
             className={cn(
               "-mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
@@ -200,7 +204,7 @@ export function S2Machine() {
             key={panel.id}
             type="button"
             onClick={() => goTo(panel.id)}
-            aria-label={panel.title}
+            aria-label={MACHINE_DOT_LABELS[panel.id]}
             aria-current={i === active ? "true" : undefined}
             className="inline-flex size-11 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
           >

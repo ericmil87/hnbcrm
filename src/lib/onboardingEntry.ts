@@ -30,12 +30,14 @@ export function onboardingHref(): string {
   return ONBOARDING_ROUTE_READY ? ONBOARDING_PATH : signUpHref();
 }
 
-/** Guarda a mensagem (limitada) e o nicho. Devolve `false` se o navegador não guarda. */
+/** Guarda a mensagem (limitada) e o nicho. Devolve `false` se não há o que guardar ou o navegador não guarda. */
 export function saveOnboardingDraft(message: string, niche?: string | null): boolean {
   const draft: OnboardingDraft = {
     message: message.trim().slice(0, ONBOARDING_DRAFT_MAX),
     niche: parseNiche(niche),
   };
+  // Nada a guardar: não sobrescreve um rascunho válido anterior.
+  if (!draft.message && !draft.niche) return false;
   try {
     sessionStorage.setItem(ONBOARDING_DRAFT_KEY, JSON.stringify(draft));
     return true;

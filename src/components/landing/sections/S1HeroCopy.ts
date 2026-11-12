@@ -47,3 +47,10 @@ export const HERO_CHIP_MESSAGES: Record<OnboardingNiche, string> = {
 export const HERO_SECONDARY_CTA = "Ver como funciona";
 export const HERO_PAUSE_LABEL = "Pausar animação";
 export const HERO_RESUME_LABEL = "Retomar animação";
+
+export const HERO_CHAT_TITLE = "Copiloto HNBCRM";
+export const HERO_CHAT_STATUS = "online agora";
+export const HERO_BUBBLES = [
+  "Oi! Me conta: o que você vende e como atende hoje?",
+  "Pode escrever, mandar um áudio, o link do site ou o flyer.",
+] as const;
