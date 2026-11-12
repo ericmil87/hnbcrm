@@ -4,6 +4,18 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não publicada]
 
+### Aplicativo instalado (PWA)
+
+- **Ícone do app com mais cor.** O ícone do HNBCRM na tela inicial ficou com o logo maior e em duas cores (balão da pessoa em branco, balão da IA em verde vivo) sobre o verde da marca. Assim ele continua colorido também quando o iPhone está com os ícones no modo escuro, que antes o deixava preto e branco. No Android e no computador o Chrome atualiza o ícone sozinho nos próximos dias. No iPhone é preciso remover o app da Tela de Início e adicioná-lo de novo pelo Safari.
+
+### Site: acabamento da página inicial
+
+- **"A máquina funcionando" sem pulos.** A cena animada agora tem altura fixa: as mensagens entram dentro da janela, o cartão desliza de uma etapa do funil para a outra e o resto da página não se mexe mais. No celular a cena cabe numa tela só.
+- **"O que muda no seu dia".** Cenas mais completas em Corretor, Comunidade e Rede com várias unidades (que agora mostra um painel da Central com primeira resposta, conversas por unidade e conversões), sem espaços vazios e sem o rótulo "Exemplo ilustrativo" em cada cartão.
+- **"Um dia com o HNBCRM".** A antiga seção "Como é usar no dia a dia" virou uma linha do tempo, da mensagem da manhã ao áudio da noite, mostrando quem fez cada coisa: a IA, a equipe ou os dois.
+- **Calculadora de preço** num bloco só, com as perguntas de um lado e o plano recomendado do outro.
+- O aviso sob o campo do topo da página ficou mais leve.
+
 ### Site: funcionalidades, manifesto, quem faz e novidades por e-mail
 
 - **Página de funcionalidades (`/funcionalidades`).** Tudo o que o HNBCRM faz hoje, organizado por área, com a situação de cada item: pronto, pronto mas desligado até você ligar, em liberação, em breve ou no radar. O que ainda não existe fica num bloco separado, "O que vem depois". A página inicial ganhou um resumo com oito destaques e o link para a lista completa.

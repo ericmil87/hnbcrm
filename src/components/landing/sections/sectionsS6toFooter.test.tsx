@@ -5,7 +5,7 @@ import { rawColorHits } from "@/test/rawColorDom";
 import { applyTheme } from "@/lib/themeDom";
 import { LEGAL_ENTITY } from "@/lib/legalEntity";
 import { UI_THEMES } from "../../../../convex/lib/uiTheme";
-import { PLANS, SERVICES } from "../../../../convex/lib/plans";
+import { PLANS, SERVICES, TRIAL } from "../../../../convex/lib/plans";
 import { S6PriceSummary } from "./S6PriceSummary";
 import { S7Services } from "./S7Services";
 import { S7bSocialProof } from "./S7bSocialProof";
@@ -14,6 +14,7 @@ import { S9Faq, landingFaq } from "./S9Faq";
 import { FinalCta } from "./FinalCta";
 import { LandingFooter } from "./Footer";
 import { SOCIAL_PROOF } from "../socialProof";
+import { DAY_IN_THE_LIFE } from "../dayInTheLife";
 
 const GROUP = "https://chat.whatsapp.com/grupo-de-teste";
 
@@ -61,6 +62,15 @@ describe("S6", () => {
     expect(screen.getAllByRole("link", { name: "Ver tabela completa" })[0].getAttribute("href")).toBe("/precos");
     expect(screen.getByText("Em quantos números de WhatsApp?")).toBeTruthy();
     expect(screen.queryByText("Precisa de algum destes?")).toBeNull();
+    expect(screen.getByRole("heading", { level: 3, name: "Descubra o seu plano em 20 segundos" })).toBeTruthy();
+  });
+
+  it("um único botão principal de teste grátis (sem duplicação)", () => {
+    renderWithRouter(<S6PriceSummary />);
+    expect(screen.getAllByRole("link", { name: `Testar ${TRIAL.days} dias grátis` })).toHaveLength(1);
+    expect(screen.getAllByRole("link", { name: "Ver tabela completa" })).toHaveLength(1);
+    expect(screen.getByRole("link", { name: "Ajustar mais opções" })).toBeTruthy();
+    expect(screen.getByText("O mesmo cliente falando 20 vezes no mês conta 1.")).toBeTruthy();
   });
 });
 
@@ -84,21 +94,29 @@ describe("S7", () => {
 });
 
 describe("S7b", () => {
-  it("em produção: só cenas com selo e números; sem depoimento nem logo", () => {
+  it("em produção: linha do tempo do dia e fatos; sem selo, depoimento nem logo", () => {
     const { container } = render(<S7bSocialProof prod />);
-    expect(screen.getByRole("heading", { level: 2, name: "Como é usar no dia a dia" })).toBeTruthy();
-    expect(screen.getAllByText("Exemplo ilustrativo")).toHaveLength(3);
+    expect(screen.getByRole("heading", { level: 2, name: "Um dia com o HNBCRM" })).toBeTruthy();
+    const list = screen.getByRole("list", { name: "Um dia de exemplo" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(DAY_IN_THE_LIFE.length);
+    expect(within(list).getByText("07:30")).toBeTruthy();
+    expect(within(list).getByText("23:14")).toBeTruthy();
+    expect(within(list).getAllByText("IA + equipe").length).toBeGreaterThan(0);
+    expect(screen.getByText("Cenas de exemplo.")).toBeTruthy();
+    expect(screen.queryByText("Exemplo ilustrativo")).toBeNull();
     expect(screen.queryByText("Nome de exemplo")).toBeNull();
     expect(screen.queryByText("Marca de exemplo")).toBeNull();
     expect(screen.queryByText("Quem usa")).toBeNull();
-    expect(container.textContent).toContain("Milhares");
+    expect(container.textContent).toContain(`${TRIAL.days} dias grátis`);
+    expect(container.textContent).toContain("Usuários ilimitados");
+    expect(container.textContent).not.toContain("Milhares");
   });
 
-  it("em desenvolvimento: mostra os exemplos de depoimento e logo, todos com selo", () => {
+  it("em desenvolvimento: exemplos de depoimento e logo levam o selo", () => {
     render(<S7bSocialProof prod={false} />);
     expect(screen.getAllByText("Nome de exemplo")).toHaveLength(3);
     expect(screen.getByText("Marca de exemplo")).toBeTruthy();
-    expect(screen.getAllByText("Exemplo ilustrativo")).toHaveLength(3 + 3 + 1);
+    expect(screen.getAllByText("Exemplo ilustrativo")).toHaveLength(3 + 1);
   });
 
   it("depoimento real aparece em produção sem selo", () => {
@@ -113,7 +131,7 @@ describe("S7b", () => {
     );
     expect(screen.getByText("Atende bem.")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 2, name: "O que dizem quem já usa" })).toBeTruthy();
-    expect(screen.getAllByText("Exemplo ilustrativo")).toHaveLength(3);
+    expect(screen.queryByText("Exemplo ilustrativo")).toBeNull();
   });
 });
 

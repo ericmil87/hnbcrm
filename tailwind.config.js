@@ -107,6 +107,8 @@ export default {
         'typing-dot':    'typingDot 1.2s ease-in-out infinite both',
         'ring-pulse':    'ringPulse 4s ease-out infinite both',
         'caret-blink':   'caretBlink 1s steps(1, end) infinite',
+        'wave-bar':      'waveBar 900ms ease-in-out infinite both',
+        'stage-flash':   'stageFlash 1100ms ease-out both',
       },
       keyframes: {
         fadeIn: {
@@ -183,6 +185,17 @@ export default {
         caretBlink: {
           '0%, 100%': { opacity: '1' },
           '50%':      { opacity: '0' },
+        },
+        // Barra da onda de áudio "tocando" (AudioBubble playing).
+        waveBar: {
+          '0%, 100%': { transform: 'scaleY(0.45)' },
+          '50%':      { transform: 'scaleY(1)' },
+        },
+        // Anel que acende uma vez na etapa de destino do funil (FunnelRail highlight).
+        stageFlash: {
+          '0%':   { opacity: '0', transform: 'scale(0.97)' },
+          '30%':  { opacity: '1', transform: 'scale(1)' },
+          '100%': { opacity: '0', transform: 'scale(1.02)' },
         },
       },
     },

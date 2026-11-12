@@ -34,14 +34,19 @@ export function useInView<T extends Element = HTMLDivElement>(options: UseInView
       return;
     }
     const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry) return;
-        if (entry.isIntersecting) {
-          setIsInView(true);
-          if (once) observer.disconnect();
-        } else if (!once) {
-          setIsInView(false);
+      (entries) => {
+        // Um lote pode trazer várias mudanças (sai e volta entre dois quadros: giro de tela,
+        // redimensionar). Vale a mais recente; ler só a primeira deixava a cena parada para sempre.
+        const latest = entries[entries.length - 1];
+        if (!latest) return;
+        if (once) {
+          if (entries.some((entry) => entry.isIntersecting)) {
+            setIsInView(true);
+            observer.disconnect();
+          }
+          return;
         }
+        setIsInView(latest.isIntersecting);
       },
       { root, rootMargin, threshold }
     );

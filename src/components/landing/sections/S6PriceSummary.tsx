@@ -2,11 +2,9 @@ import { Link } from "react-router";
 import { ArrowRight, Users } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { buttonClassName } from "@/components/ui/Button";
-import { startHref } from "@/lib/onboardingEntry";
 import { formatCount, formatMoney } from "@/lib/format";
 import { allPlanDisplays, type PlanDisplay } from "@/lib/pricingCatalog";
 import { cn } from "@/lib/utils";
-import { TRIAL } from "../../../../convex/lib/plans";
 import { PricingCalculator } from "../pricing/PricingCalculator";
 import { LandingSection } from "./LandingSection";
 import { LANDING_ANCHORS } from "./landingCopy";
@@ -90,23 +88,26 @@ export function S6PriceSummary() {
         ))}
       </ul>
 
-      <p className="mt-6 max-w-3xl text-sm text-text-secondary">
-        Atendente, Copiloto, áudio, imagem, follow-up e pedido de ajuda vêm em todos os planos. Passou da franquia? A IA
-        só sugere, e a sua equipe envia. O excedente é opcional, com o teto que você escolher.
-      </p>
-      <p className="mt-3 flex items-center gap-2 text-sm font-medium text-text-primary">
-        <Users className="size-4 shrink-0 text-brand-500" aria-hidden="true" />
-        O mesmo cliente falando 20 vezes no mês conta 1.
-      </p>
-
-      <div className="mt-8 max-w-xl">
-        <PricingCalculator cycle="monthly" variant="compact" />
+      <div className="mt-8 rounded-card border border-border bg-surface-raised p-4 md:p-6 lg:p-8">
+        <h3 className="font-display text-xl font-bold text-text-primary md:text-2xl">
+          Descubra o seu plano em 20 segundos
+        </h3>
+        <div className="mt-5">
+          <PricingCalculator cycle="monthly" variant="compact" />
+        </div>
+        <div className="mt-6 space-y-2 border-t border-border pt-4 text-sm text-text-secondary">
+          <p>
+            Atendente, Copiloto, áudio, imagem, follow-up e pedido de ajuda vêm em todos os planos. Passou da franquia? A
+            IA só sugere, e a sua equipe envia. O excedente é opcional, com o teto que você escolher.
+          </p>
+          <p className="flex items-center gap-2 font-medium text-text-primary">
+            <Users className="size-4 shrink-0 text-brand-500" aria-hidden="true" />
+            O mesmo cliente falando 20 vezes no mês conta 1.
+          </p>
+        </div>
       </div>
 
-      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-        <Link to={startHref()} className={buttonClassName("primary", "lg")}>
-          Testar {TRIAL.days} dias grátis
-        </Link>
+      <div className="mt-6 flex justify-center lg:justify-start">
         <Link to="/precos" className={buttonClassName("secondary", "lg")}>
           Ver tabela completa
           <ArrowRight className="size-4" aria-hidden="true" />

@@ -54,7 +54,7 @@ export default defineConfig(({ mode }) => ({
       injectManifest: {
         // HTML: only the neutral SPA shell (the SW answers /app/ navigations with it); the prerendered
         // public pages are never served by the SW.
-        globPatterns: ["**/*.{js,css}", "spa-fallback.html", "pwa-*-v2.png", "maskable-icon-*-v2.png", "apple-touch-icon-*-v2.png"],
+        globPatterns: ["**/*.{js,css}", "spa-fallback.html", "pwa-*-v3.png", "maskable-icon-*-v3.png", "apple-touch-icon-*-v3.png"],
         globIgnores: ["**/*.gz", "**/*.br", "stats.html", "**/xlsx-vendor*"],
       },
       devOptions: { enabled: false },

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { TRIAL } from "../../../convex/lib/plans";
+import { ACTOR_LABEL, DAY_IN_THE_LIFE } from "./dayInTheLife";
 import {
-  INBOX_CHANNELS,
   SOCIAL_PROOF,
   itemsOfKind,
   needsExampleBadge,
@@ -15,8 +16,7 @@ describe("socialProof", () => {
     expect(prod.every((i) => i.real)).toBe(true);
     expect(itemsOfKind(prod, "depoimento")).toHaveLength(0);
     expect(itemsOfKind(prod, "logo")).toHaveLength(0);
-    expect(itemsOfKind(prod, "cena")).toHaveLength(3);
-    expect(itemsOfKind(prod, "numero").length).toBeGreaterThan(0);
+    expect(itemsOfKind(prod, "fato")).toHaveLength(4);
   });
 
   it("em desenvolvimento mostra também os exemplos, todos com selo", () => {
@@ -25,9 +25,9 @@ describe("socialProof", () => {
     for (const i of dev.filter((x) => !x.real)) expect(needsExampleBadge(i)).toBe(true);
   });
 
-  it("cena ilustrativa leva o selo mesmo sendo real; número real não leva", () => {
-    for (const c of itemsOfKind(SOCIAL_PROOF, "cena")) expect(needsExampleBadge(c)).toBe(true);
-    for (const n of itemsOfKind(SOCIAL_PROOF, "numero")) expect(needsExampleBadge(n)).toBe(false);
+  it("fato real não leva selo; os dias de teste vêm de TRIAL", () => {
+    for (const f of itemsOfKind(SOCIAL_PROOF, "fato")) expect(needsExampleBadge(f)).toBe(false);
+    expect(itemsOfKind(SOCIAL_PROOF, "fato").some((f) => f.title.includes(String(TRIAL.days)))).toBe(true);
   });
 
   it("depoimento real aparece em produção sem selo e muda o título", () => {
@@ -42,11 +42,22 @@ describe("socialProof", () => {
     expect(visibleSocialProof([real], true)).toEqual([real]);
     expect(needsExampleBadge(real)).toBe(false);
     expect(socialProofTitle([real])).toBe("O que dizem quem já usa");
-    expect(socialProofTitle(visibleSocialProof(SOCIAL_PROOF, true))).toBe("Como é usar no dia a dia");
+    expect(socialProofTitle(visibleSocialProof(SOCIAL_PROOF, true))).toBe("Um dia com o HNBCRM");
+  });
+});
+
+describe("dayInTheLife", () => {
+  it("cinco momentos com horário válido, em ordem, e autor conhecido", () => {
+    expect(DAY_IN_THE_LIFE).toHaveLength(5);
+    const times = DAY_IN_THE_LIFE.map((m) => m.time);
+    for (const t of times) expect(t).toMatch(/^([01]\d|2[0-3]):[0-5]\d$/);
+    expect([...times].sort()).toEqual(times);
+    for (const m of DAY_IN_THE_LIFE) expect(ACTOR_LABEL[m.actor]).toBeTruthy();
   });
 
-  it("o número de canais sai da lista de canais", () => {
-    const n = itemsOfKind(SOCIAL_PROOF, "numero").find((i) => i.id === "num-canais");
-    expect(n?.value).toBe(String(INBOX_CHANNELS.length));
+  it("a IA nunca confirma pagamento sozinha", () => {
+    const pix = DAY_IN_THE_LIFE.find((m) => m.id === "comprovante-pix");
+    expect(pix?.actor).toBe("ia-equipe");
+    expect(pix?.text).toMatch(/nunca a IA/);
   });
 });

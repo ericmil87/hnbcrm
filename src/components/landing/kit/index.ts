@@ -19,5 +19,16 @@ export {
   type MiniFunnelMovingCard,
 } from "./MiniFunnel";
 export { PhoneNotification, type PhoneNotificationProps, type PhoneNotificationAction } from "./PhoneNotification";
+export { ChatFeed, type ChatFeedProps } from "./ChatFeed";
+export {
+  FunnelRail,
+  type FunnelRailProps,
+  type FunnelRailStage,
+  type FunnelRailCard,
+  type FunnelRailMovingCard,
+  type FunnelRailOrientation,
+} from "./FunnelRail";
+export { PhoneFrame, type PhoneFrameProps } from "./PhoneFrame";
+export { SceneSteps, type SceneStepsProps, type SceneStepsItem } from "./SceneSteps";
 export { SceneLoop, ScenePauseButton, type SceneLoopProps, type SceneLoopState, type ScenePauseButtonProps } from "./SceneLoop";
 export { useSceneTimeline, type SceneStep, type SceneTimeline, type SceneTimelineOptions } from "./useSceneTimeline";

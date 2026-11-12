@@ -58,8 +58,8 @@ const INVISIBLE_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F\u200B\u200E\
  * escapa; quebras de linha com `whitespace-pre-wrap`), nunca como HTML.
  */
 /** Aviso de LGPD da conversa (informação, não aceite: não grava nada). Texto único: conversa e hero. */
-export const AI_PROCESSING_NOTICE =
-  "A conversa é processada por IA de provedores parceiros, inclusive fora do Brasil. Não envie dados de clientes.";
+export const AI_PROCESSING_NOTICE_CORE = "A conversa é processada por IA de provedores parceiros, inclusive fora do Brasil.";
+export const AI_PROCESSING_NOTICE = `${AI_PROCESSING_NOTICE_CORE} Não envie dados de clientes.`;
 
 export function plainModelText(raw: unknown): string {
   if (typeof raw !== "string") return "";

@@ -77,7 +77,7 @@ describe("LandingPage (esqueleto)", () => {
       "Como começa",
       "Preço em 20 segundos",
       "Quer que a gente monte junto?",
-      "Como é usar no dia a dia",
+      "Um dia com o HNBCRM",
       "Perguntas rápidas",
       "Conte como é o seu negócio. A sua IA começa daí.",
     ]) {

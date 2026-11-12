@@ -1,5 +1,6 @@
 // One-off brand asset generation (outputs are versioned in public/; not part of the build).
-//   node scripts/generate-brand-assets.mjs
+//   node scripts/generate-brand-assets.mjs          (everything)
+//   node scripts/generate-brand-assets.mjs --pwa    (only the installed-app icons: pwa, maskable, apple-touch)
 // Source of truth for the geometry: src/lib/brandLogo.ts. Needs `sharp` (devDependency) and a local
 // Chrome/Chromium (CHROME_BIN or google-chrome) only for public/og-image.png.
 // iOS keeps the installed icon: re-run only when the logo changes.
@@ -59,6 +60,21 @@ function tileSvg(scale, rx = 0) {
   );
 }
 
+/**
+ * Installed-app tile (-v3): saturated brand gradient (top #00997A to bottom #006B58), no transparency. The logo is
+ * two-tone (white person bubble, bright green AI bubble) on purpose: iOS "dark" home-screen icons darken the tile
+ * background and keep the glyph, so an all-white glyph ends up black and white there.
+ */
+const APP_AI = "#4FF0A0";
+function appTileSvg(scale) {
+  return (
+    `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">` +
+    `<stop offset="0" stop-color="#00997A"/><stop offset="1" stop-color="#006B58"/></linearGradient></defs>` +
+    `<rect width="64" height="64" fill="url(#bg)"/>` +
+    `<g transform="translate(32 32) scale(${scale}) translate(-31 -34)">${iconShapes({ human: "#fff", ai: APP_AI })}</g></svg>\n`
+  );
+}
+
 const png = async (svg, size, file) => {
   await sharp(Buffer.from(svg), { density: 384 }).resize(size, size).png({ compressionLevel: 9 }).toFile(pub(file));
   console.log("wrote", file);
@@ -87,22 +103,22 @@ function buildIco(entries) {
 
 async function main() {
   mkdirSync(pub("splash"), { recursive: true });
-  writeFileSync(pub("brand/icone.svg"), logoSvg(false));
-  writeFileSync(pub("brand/icone-wordmark.svg"), logoSvg(true));
-  writeFileSync(pub("favicon.svg"), tileSvg(0.86, 14));
-
-  const any = tileSvg(0.74); // pwa "any" and apple touch: full bleed, the OS rounds the corners
-  // Versioned names (-v2) are the only ones the app references. The unversioned files are LEGACY: they stay
-  // only for clients that have not updated yet (old manifest, old service worker push icon, old cached shell).
-  // Delete them (and this loop) once the installed base has moved on.
-  const maskable = tileSvg(0.6); // content inside the 80% safe circle
-  for (const suffix of ["", "-v2"]) {
-    await png(any, 192, `pwa-192x192${suffix}.png`);
-    await png(any, 512, `pwa-512x512${suffix}.png`);
-    await png(maskable, 512, `maskable-icon-512x512${suffix}.png`);
+  if (!process.argv.includes("--pwa")) {
+    writeFileSync(pub("brand/icone.svg"), logoSvg(false));
+    writeFileSync(pub("brand/icone-wordmark.svg"), logoSvg(true));
+    writeFileSync(pub("favicon.svg"), tileSvg(0.86, 14));
   }
-  await png(any, 180, "apple-touch-icon-180x180.png");
-  await png(any, 180, "apple-touch-icon-180x180-v2.png");
+
+  // Installed-app icons are versioned (-v3) and are the only ones the app references. The unversioned and -v2 files
+  // are LEGACY (older flat-green design): committed in public/, no longer generated, kept for clients that have not
+  // updated yet (old manifest, old service worker push icon, old cached shell). Delete once the installed base moved.
+  const any = appTileSvg(0.78); // pwa "any" and apple touch: full bleed (iOS paints transparency black), logo ~66% wide
+  const maskable = appTileSvg(0.66); // logo ~56% wide: inside the 80% safe circle
+  await png(any, 192, "pwa-192x192-v3.png");
+  await png(any, 512, "pwa-512x512-v3.png");
+  await png(maskable, 512, "maskable-icon-512x512-v3.png");
+  await png(any, 180, "apple-touch-icon-180x180-v3.png");
+  if (process.argv.includes("--pwa")) return;
 
   const fav = tileSvg(0.86, 14);
   const entries = [];

@@ -38,8 +38,9 @@ export interface SceneLoopState extends SceneTimeline {
   togglePause: () => void;
   /**
    * O botão de pausa pronto, para a cena posicionar onde quiser (com
-   * `renderControl={false}`). Não use junto com `description`: o conteúdo da
-   * cena fica `aria-hidden` e o botão sumiria do leitor de tela.
+   * `renderControl={false}`). Dentro de `children` não use junto com
+   * `description`: o conteúdo da cena fica `aria-hidden` e o botão sumiria do
+   * leitor de tela; nesse caso ponha o botão em `header`.
    */
   control: ReactNode;
 }
@@ -55,6 +56,12 @@ export interface SceneLoopProps {
   loop?: boolean;
   /** Desenha a cena para o passo atual. */
   children: (scene: SceneLoopState) => ReactNode;
+  /**
+   * Cabeçalho da cena, acima do conteúdo animado e FORA do `aria-hidden` (ao
+   * contrário de `children`): o lugar fixo para o botão de pausa
+   * (`scene.control`, com `renderControl={false}`) e para indicadores.
+   */
+  header?: (scene: SceneLoopState) => ReactNode;
   /** Nome acessível do bloco ("Cena ilustrativa: a máquina funcionando"). */
   label: string;
   /**
@@ -83,6 +90,7 @@ export function SceneLoop({
   steps,
   loop = true,
   children,
+  header,
   label,
   description,
   paused = false,
@@ -102,6 +110,7 @@ export function SceneLoop({
     <ScenePauseButton paused={userPaused} onToggle={togglePause} pauseLabel={pauseLabel} resumeLabel={resumeLabel} />
   ) : null;
   const playing = !frozen && !timeline.reduced;
+  const scene: SceneLoopState = { ...timeline, playing, userPaused, togglePause, control };
 
   return (
     <div
@@ -112,9 +121,8 @@ export function SceneLoop({
       className={cn("relative", className)}
     >
       {description && <p className="sr-only">{description}</p>}
-      <div aria-hidden={description ? true : undefined}>
-        {children({ ...timeline, playing, userPaused, togglePause, control })}
-      </div>
+      {header?.(scene)}
+      <div aria-hidden={description ? true : undefined}>{children(scene)}</div>
       {renderControl && control && <div className="mt-3 flex justify-end">{control}</div>}
     </div>
   );

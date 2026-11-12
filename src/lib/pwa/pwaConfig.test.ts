@@ -54,14 +54,14 @@ describe("manifest", () => {
     for (const icon of [...WEB_MANIFEST.icons, ...WEB_MANIFEST.shortcuts.flatMap((s) => s.icons), ...WEB_MANIFEST.screenshots]) {
       expect(existsSync(join(root, "public", icon.src)), icon.src).toBe(true);
     }
-    expect(existsSync(join(root, "public/apple-touch-icon-180x180-v2.png"))).toBe(true);
-    expect(read("index.html")).toContain('href="/apple-touch-icon-180x180-v2.png"');
-    expect(PUSH_ICON).toBe("/pwa-192x192-v2.png");
+    expect(existsSync(join(root, "public/apple-touch-icon-180x180-v3.png"))).toBe(true);
+    expect(read("index.html")).toContain('href="/apple-touch-icon-180x180-v3.png"');
+    expect(PUSH_ICON).toBe("/pwa-192x192-v3.png");
   });
-  it("points only at versioned (-v2) icons; the unversioned files are legacy, kept for clients that have not updated yet", () => {
-    for (const icon of WEB_MANIFEST.icons) expect(icon.src, icon.src).toMatch(/-v2\.png$/);
-    for (const s of WEB_MANIFEST.shortcuts) for (const i of s.icons) expect(i.src).toMatch(/-v2\.png$/);
-    for (const old of ["pwa-192x192.png", "pwa-512x512.png", "maskable-icon-512x512.png"]) {
+  it("points only at versioned (-v3) icons; the unversioned files are legacy, kept for clients that have not updated yet", () => {
+    for (const icon of WEB_MANIFEST.icons) expect(icon.src, icon.src).toMatch(/-v3\.png$/);
+    for (const s of WEB_MANIFEST.shortcuts) for (const i of s.icons) expect(i.src).toMatch(/-v3\.png$/);
+    for (const old of ["pwa-192x192.png", "pwa-512x512.png", "maskable-icon-512x512.png", "pwa-192x192-v2.png", "pwa-512x512-v2.png", "maskable-icon-512x512-v2.png"]) {
       expect(existsSync(join(root, "public", old)), old).toBe(true);
     }
   });

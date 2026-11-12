@@ -6,6 +6,8 @@ export interface PhoneNotificationAction {
   label: string;
   /** Botão principal (cor da marca). */
   primary?: boolean;
+  /** Desenha o toque no botão (encolhe um pouco e ganha anel): a cena "aperta" a ação. */
+  pressed?: boolean;
   /** Com handler vira `<button>` de verdade (44 px); sem, é só desenho. */
   onClick?: () => void;
 }
@@ -60,7 +62,9 @@ export function PhoneNotification({
           {actions.map((action) => {
             const look = cn(
               "inline-flex min-h-11 flex-1 items-center justify-center rounded-full px-3 text-sm font-semibold",
-              action.primary ? "bg-brand-600 text-white" : "border border-border bg-surface-raised text-text-primary"
+              "motion-safe:transition-transform motion-safe:duration-150",
+              action.primary ? "bg-brand-600 text-white" : "border border-border bg-surface-raised text-text-primary",
+              action.pressed && "scale-95 ring-2 ring-brand-500/50 ring-offset-2 ring-offset-surface-overlay"
             );
             return action.onClick ? (
               <button

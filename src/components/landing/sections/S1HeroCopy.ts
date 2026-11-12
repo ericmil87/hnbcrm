@@ -5,7 +5,7 @@
  */
 import type { Chip } from "../kit";
 import type { OnboardingNiche } from "@/lib/onboardingEntry";
-import { AI_PROCESSING_NOTICE } from "@/lib/onboardingChat";
+import { AI_PROCESSING_NOTICE_CORE } from "@/lib/onboardingChat";
 
 export const HERO_EYEBROW = "Humanos e IAs no mesmo time";
 export const HERO_TITLE = "Seu WhatsApp atende na hora. Até quando você não pode.";
@@ -24,7 +24,8 @@ export const HERO_FIELD_LABEL = "Mensagem para o Copiloto";
 export const HERO_ATTACH_LABEL = "Anexar arquivo (site, PDF ou imagem)";
 export const HERO_MIC_LABEL = "Gravar áudio";
 export const HERO_SEND_LABEL = "Enviar";
-export const HERO_HINT = `O que você escrever aqui fica só no seu navegador até você criar a conta. ${AI_PROCESSING_NOTICE}`;
+/** Aviso do hero: a parte informativa do aviso de IA, sem o tom de proibição (o aviso completo aparece na conversa). */
+export const HERO_HINT = `O que você escrever aqui fica só no seu navegador até você criar a conta. ${AI_PROCESSING_NOTICE_CORE} Para começar, basta falar do seu negócio.`;
 export const HERO_UPLOAD_NOTICE = "Envio de arquivo e de áudio acontece depois de criar a conta.";
 
 export const HERO_CHIPS_LABEL = "Escolha o seu tipo de negócio";

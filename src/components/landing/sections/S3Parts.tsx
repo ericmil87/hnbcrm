@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { LifeBuoy } from "lucide-react";
+import { LifeBuoy, type LucideIcon } from "lucide-react";
 import { useInView } from "@/hooks/useInView";
 import { cn } from "@/lib/utils";
 
@@ -79,6 +79,16 @@ export function HelpRequest({
 export function SceneTag({ children }: { children: ReactNode }) {
   return (
     <span className="mt-1 inline-flex rounded-full bg-bubble-out-fg/10 px-2 py-0.5 text-caption font-semibold">
+      {children}
+    </span>
+  );
+}
+
+/** Chip de contexto no topo de uma cena (unidade, departamento, grupo, origem). Desenho, não botão. */
+export function SceneChip({ icon: Icon, children }: { icon?: LucideIcon; children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-surface-raised px-2.5 py-0.5 text-caption font-semibold text-text-secondary shadow-bubble">
+      {Icon && <Icon className="size-3.5" aria-hidden="true" />}
       {children}
     </span>
   );

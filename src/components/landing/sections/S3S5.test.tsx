@@ -66,19 +66,26 @@ describe("S4", () => {
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
   });
 
-  it("cada aba tem três dores e cenas rotuladas como exemplo; a aba Corretor traz a nota fixa", () => {
+  it("cada aba tem três dores e cenas sem rótulo repetido; a aba Corretor traz a nota fixa", () => {
     render(all());
     const tabs = screen.getAllByRole("tab");
     for (const tab of tabs) {
       fireEvent.click(tab);
       expect(screen.getAllByText("Hoje")).toHaveLength(3);
       expect(screen.getAllByText("Com o HNBCRM")).toHaveLength(3);
-      expect(within(screen.getByRole("tabpanel")).getAllByText("Exemplo ilustrativo")).toHaveLength(3);
+      expect(within(screen.getByRole("tabpanel")).queryByText("Exemplo ilustrativo")).toBeNull();
+      expect(within(screen.getByRole("tabpanel")).getAllByRole("listitem").length).toBeGreaterThanOrEqual(3);
     }
     fireEvent.click(screen.getByRole("tab", { name: "Corretor e imobiliária" }));
-    expect(within(screen.getByRole("tabpanel")).getByRole("note")).toHaveTextContent(/Distribuição automática de leads/);
+    const note = within(screen.getByRole("tabpanel")).getByRole("note");
+    expect(note).toHaveTextContent(/distribuição automática de leads/);
+    expect(within(note).getByRole("link", { name: "Ver o que vem depois" })).toHaveAttribute("href", "/funcionalidades#o-que-vem");
     fireEvent.click(screen.getByRole("tab", { name: "Rede com várias unidades" }));
-    expect(screen.getAllByText("números ilustrativos").length).toBeGreaterThan(0);
+    const rede = within(screen.getByRole("tabpanel"));
+    expect(rede.getAllByText("números ilustrativos")).toHaveLength(1);
+    expect(rede.queryByText(/IA ×|IA 68%/)).toBeNull();
+    expect(rede.getByText("Primeira resposta")).toBeInTheDocument();
+    expect(rede.getByText("Conversas por unidade")).toBeInTheDocument();
   });
 });
 
@@ -121,9 +128,11 @@ describe("S3 a S5: vocabulário e movimento", () => {
     expect(container.querySelector("[data-revealed]")).not.toBeNull();
   });
 
-  it("a cena de cada dor tem nome acessível vindo de sceneLabel e rótulo de exemplo", () => {
+  it("a cena de cada dor tem nome acessível vindo de sceneLabel e a seção avisa uma vez que são exemplos", () => {
     render(all());
     expect(screen.getByRole("group", { name: "Exemplo: paciente pergunta o preço à noite" })).toBeInTheDocument();
-    expect(screen.getAllByText("Exemplo ilustrativo").length).toBeGreaterThanOrEqual(6);
+    const section = screen.getByRole("heading", { name: "O que muda no seu dia" }).closest("section")!;
+    expect(within(section).queryByText("Exemplo ilustrativo")).toBeNull();
+    expect(within(section).getByText("As cenas são exemplos.")).toBeInTheDocument();
   });
 });
