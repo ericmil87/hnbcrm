@@ -55,8 +55,8 @@ describe("OnboardingChatView", () => {
 
   it("anexo e microfone ficam prontos e desligados; formulário leva ao wizard", () => {
     renderWithRouter(<OnboardingChatView {...props()} />);
-    expect(screen.getByRole("button", { name: "Anexar arquivo (em breve)" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Gravar áudio (em breve)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Enviar site, PDF ou imagem" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Gravar áudio" })).toBeDisabled();
     expect(screen.getByRole("link", { name: /Prefiro preencher um formulário/ })).toHaveAttribute("href", "/app/configuracao-inicial");
   });
 

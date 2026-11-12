@@ -6,6 +6,19 @@ import { clearOnboardingIntent, type OnboardingIntent } from "@/lib/onboardingIn
 import { CopilotNote, IntentBubble } from "./ConversationIntro";
 import { DraftPreviewPanel } from "./DraftPreviewPanel";
 import { OnboardingChatView } from "./OnboardingChatView";
+import { Button } from "@/components/ui/Button";
+import { MATERIALS_NOTICE_TEXT } from "../../../convex/lib/onboardingBlocks";
+import {
+  UPLOAD_ERROR_MESSAGE,
+  attachmentTurnLabel,
+  gateForErrorCode,
+  toStreamAttachment,
+  type AttachmentDraft,
+} from "@/lib/onboardingAttachments";
+import type { OnboardingAttachment } from "@/lib/onboardingStream";
+import { AttachmentSheet, type SubmitAttachmentResult, type UploadPhase } from "./attachments/AttachmentSheet";
+import { VoiceSheet } from "./attachments/VoiceSheet";
+import { OnboardingBlockView } from "./blocks/registry";
 
 export const WIZARD_HREF = "/app/configuracao-inicial";
 export const HISTORY_PAGE = 30;
@@ -18,7 +31,7 @@ export const GREETING_CHIPS = [
   "Tenho uma loja online",
 ] as const;
 
-type PendingMeta = Pick<PendingTurn, "userText" | "baselineId" | "startedAt"> & { turnId: number };
+type PendingMeta = Pick<PendingTurn, "userText" | "baselineId" | "startedAt" | "attachmentLabel"> & { turnId: number };
 
 export type ConversationAccess = { kind: "loading" } | { kind: "ready" } | { kind: "forbidden" } | { kind: "error"; message: string };
 
@@ -49,9 +62,20 @@ export interface OnboardingConversationControllerProps {
   onPreferForm?: () => void;
   /** Conteúdo antes do histórico (ex.: seletor de organização). */
   orgPicker?: ReactNode;
+  /**
+   * Sobe um arquivo para o storage da org (`generateUploadUrl` + `saveFile`) e devolve o
+   * `storageId`. Sem ela, clipe e microfone ficam desligados.
+   */
+  uploadFile?: (file: { blob: Blob; name: string; mimeType: string }, onPhase: (phase: "uploading" | "saving") => void) => Promise<string>;
   /** Injeções para teste. */
   fetchImpl?: typeof fetch;
   siteUrl?: string;
+}
+
+/** Último anexo que falhou (para "Tentar de novo" sem subir o arquivo outra vez). */
+interface FailedAttachment {
+  attachment: OnboardingAttachment;
+  label: string;
 }
 
 /**
@@ -74,12 +98,16 @@ export function OnboardingConversationController({
   onSession,
   onPreferForm,
   orgPicker,
+  uploadFile,
   fetchImpl,
   siteUrl,
 }: OnboardingConversationControllerProps) {
   const [composer, setComposer] = useState("");
   const [pendingMeta, setPendingMeta] = useState<PendingMeta | null>(null);
   const [lastFailedText, setLastFailedText] = useState<string | null>(null);
+  const [failedAttachment, setFailedAttachment] = useState<FailedAttachment | null>(null);
+  const [sheet, setSheet] = useState<"attach" | "voice" | null>(null);
+  const [uploadPhase, setUploadPhase] = useState<UploadPhase>(null);
   const turnIdRef = useRef(0);
 
   const stream = useOnboardingStream({ organizationId, sessionId, token, onSession, fetchImpl, siteUrl });
@@ -91,25 +119,28 @@ export function OnboardingConversationController({
   const historyRef = useRef(history.results);
   historyRef.current = history.results;
 
-  /**
-   * Começa um turno. Devolve null quando NÃO começou (não pronto, turno em
-   * andamento, texto vazio); senão a promessa do resultado.
-   */
-  const startTurn = useCallback(
-    (raw: string): Promise<OnboardingTurnResult> | null => {
-      const text = raw.trim();
-      if (!text || isStreaming || !ready) return null;
+  const runTurn = useCallback(
+    (input: { text: string; attachment?: OnboardingAttachment; label?: string }): Promise<OnboardingTurnResult> | null => {
+      const text = input.text.trim();
+      const shown = input.attachment ? (input.label ?? "Anexo") : text;
+      if (!shown || isStreaming || !ready) return null;
+      const meta = input.attachment ? { userText: text, attachmentLabel: shown } : { userText: text };
       const turnId = ++turnIdRef.current;
       setLastFailedText(null);
-      setPendingMeta({ turnId, userText: text, baselineId: historyRef.current[0]?._id ?? null, startedAt: Date.now() });
-      setComposer("");
-      return streamSend({ text }).then((result) => {
+      setFailedAttachment(null);
+      setPendingMeta({ turnId, ...meta, baselineId: historyRef.current[0]?._id ?? null, startedAt: Date.now() });
+      if (!input.attachment) setComposer("");
+      return streamSend({ ...(text ? { text } : {}), ...(input.attachment ? { attachment: input.attachment } : {}) }).then((result) => {
         // Turno substituído por outro (ou desmontagem): o estado já é do seguinte.
         if (result === "failed" && turnIdRef.current === turnId) {
           setPendingMeta((cur) => (cur?.turnId === turnId ? null : cur));
-          setLastFailedText(text);
-          // Devolve o texto ao campo para a pessoa não perder o que escreveu.
-          setComposer((current) => (current.trim() ? current : text));
+          if (input.attachment) {
+            setFailedAttachment({ attachment: input.attachment, label: shown });
+          } else {
+            setLastFailedText(text);
+            // Devolve o texto ao campo para a pessoa não perder o que escreveu.
+            setComposer((current) => (current.trim() ? current : text));
+          }
         }
         return result;
       });
@@ -117,7 +148,37 @@ export function OnboardingConversationController({
     [streamSend, isStreaming, ready]
   );
 
+  /**
+   * Começa um turno de texto. Devolve null quando NÃO começou (não pronto, turno em
+   * andamento, texto vazio); senão a promessa do resultado.
+   */
+  const startTurn = useCallback((raw: string) => runTurn({ text: raw }), [runTurn]);
+
   const send = useCallback((raw: string) => void startTurn(raw), [startTurn]);
+
+  /**
+   * Anexo da folha do clipe/microfone: arquivo sobe primeiro (fases para a folha),
+   * depois vem o turno com o `storageId`. Um anexo por turno.
+   */
+  const submitAttachment = useCallback(
+    async (draft: AttachmentDraft): Promise<SubmitAttachmentResult> => {
+      if (isStreaming || !ready) return { ok: false, message: "Espere o Copiloto terminar de responder para enviar." };
+      let storageId: string | undefined;
+      if (draft.kind !== "url") {
+        if (!uploadFile) return { ok: false, message: UPLOAD_ERROR_MESSAGE };
+        try {
+          storageId = await uploadFile({ blob: draft.file, name: draft.name, mimeType: draft.mimeType }, setUploadPhase);
+        } catch {
+          return { ok: false, message: UPLOAD_ERROR_MESSAGE };
+        } finally {
+          setUploadPhase(null);
+        }
+      }
+      const started = runTurn({ text: "", attachment: toStreamAttachment(draft, storageId), label: attachmentTurnLabel(draft) });
+      return started ? { ok: true } : { ok: false, message: "Não foi possível enviar agora. Tente de novo." };
+    },
+    [isStreaming, ready, uploadFile, runTurn]
+  );
 
   // Mensagem do hero: primeiro turno quando a conversa fica pronta. Só marca
   // como enviada (e apaga a intenção) depois que o envio COMEÇOU.
@@ -135,6 +196,7 @@ export function OnboardingConversationController({
     if (!pendingMeta) return null;
     return {
       userText: pendingMeta.userText,
+      ...(pendingMeta.attachmentLabel ? { attachmentLabel: pendingMeta.attachmentLabel } : {}),
       baselineId: pendingMeta.baselineId,
       startedAt: pendingMeta.startedAt,
       replyText: turn?.replyText ?? "",
@@ -158,7 +220,34 @@ export function OnboardingConversationController({
   const preview = <DraftPreviewPanel draft={draft} ctx={blockCtx} />;
   const pendingIntent = intent?.message && !intentSentRef.current ? intent.message : null;
 
+  // Anexo recusado por conta/aviso: mostra o bloco certo (e "Enviar de novo") em vez do erro genérico.
+  const gate = gateForErrorCode(streamError?.code);
+  const retryAttachment = failedAttachment
+    ? () => void runTurn({ text: "", attachment: failedAttachment.attachment, label: failedAttachment.label })
+    : null;
+  const tail = gate ? (
+    <div className="flex flex-col items-start gap-2">
+      <OnboardingBlockView
+        block={
+          gate === "cartaoConta"
+            ? { kind: "cartaoConta", emailVerified: false, materialsUnlocked: false }
+            : { kind: "avisoMateriais", text: MATERIALS_NOTICE_TEXT, acknowledged: false }
+        }
+        ctx={{ ...blockCtx, isLatest: true }}
+      />
+      {retryAttachment && (
+        <Button type="button" variant="secondary" size="sm" disabled={isStreaming} onClick={retryAttachment}>
+          Enviar de novo
+        </Button>
+      )}
+    </div>
+  ) : null;
+  const canAttach = !!uploadFile && access.kind === "ready" && ready && !isStreaming;
+
   const baseProps = {
+    onAttach: canAttach ? () => setSheet("attach") : undefined,
+    onMic: canAttach ? () => setSheet("voice") : undefined,
+    tail,
     formHref: WIZARD_HREF,
     onPreferForm,
     composerValue: composer,
@@ -218,6 +307,7 @@ export function OnboardingConversationController({
   const turnText = turn?.replyText ?? "";
 
   return (
+    <>
     <OnboardingChatView
       {...baseProps}
       stage={stage}
@@ -237,13 +327,25 @@ export function OnboardingConversationController({
       status={turn?.status}
       showTypingBubble={isStreaming && !turnText}
       chips={chips}
-      error={streamError?.message ?? null}
-      onRetry={lastFailedText && streamError?.code !== "forbidden" ? () => send(lastFailedText) : undefined}
+      error={gate ? null : (streamError?.message ?? null)}
+      onRetry={
+        streamError?.code === "forbidden"
+          ? undefined
+          : retryAttachment && !gate
+            ? retryAttachment
+            : lastFailedText
+              ? () => send(lastFailedText)
+              : undefined
+      }
       onDismissError={clearError}
       canLoadMore={history.status === "CanLoadMore"}
       loadingMore={history.status === "LoadingMore"}
       onLoadMore={() => history.loadMore(HISTORY_PAGE)}
       preview={preview}
     />
+    <AttachmentSheet open={sheet === "attach"} onClose={() => setSheet(null)} onSubmit={submitAttachment} phase={uploadPhase} />
+    <VoiceSheet open={sheet === "voice"} onClose={() => setSheet(null)} onSubmit={submitAttachment} phase={uploadPhase} />
+    </>
   );
 }
+
