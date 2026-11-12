@@ -1,4 +1,5 @@
 import { useId, useState } from "react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { submitNewsletterSignup, type NewsletterSignupResult } from "@/lib/newsletter";
@@ -82,9 +83,9 @@ export function NewsletterForm({ source, submit = submitNewsletterSignup }: News
       </div>
       <p className="text-caption text-text-muted">
         {copy.consent} Veja a{" "}
-        <a href="/privacidade" className="text-brand-400 underline">
+        <Link to="/privacidade" className="text-brand-400 underline">
           Política de Privacidade
-        </a>
+        </Link>
         .
       </p>
       {failure && (

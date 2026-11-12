@@ -477,7 +477,8 @@ describe("newsletter", () => {
     const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", lead._id)).collect());
     const note = acts.find((a) => a.type === "note")?.content;
     expect(note).toContain("(rodape)");
-    expect(note).toContain("Consentimento registrado em 2026-11-12");
+    expect(note).toContain("em 2026-11-12");
+    expect(note).toContain("ainda não confirmado");
     expect(await sub({ email: "leitora@site.test" })).toEqual({ ok: true });
     expect(await internalLeads(org.orgId)).toHaveLength(1);
   });

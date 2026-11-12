@@ -53,7 +53,7 @@ const NEWSLETTER_RATE = {
   ip: { windowMs: MS_HOUR, limit: 5 },
   ipUnknown: { windowMs: MS_HOUR, limit: 10 },
   email: { windowMs: MS_HOUR, limit: 3 },
-  global: { windowMs: MS_DAY, limit: 500 },
+  global: { windowMs: MS_DAY, limit: 200 },
 } as const;
 
 async function consumeContactRate(
@@ -336,7 +336,8 @@ export const internalSubscribeNewsletter = internalMutation({
       contactId,
       tags: [NEWSLETTER_TAG],
       customFields: {},
-      note: `Inscrição na newsletter pelo site${source ? ` (${source})` : ""}. Consentimento registrado em ${new Date(now).toISOString()}.`,
+      // Sem confirmação por e-mail (opt-in simples): a nota diz isso para ninguém tratar como confirmado.
+      note: `Inscrição na newsletter pedida pelo site${source ? ` (${source})` : ""} em ${new Date(now).toISOString()}. E-mail ainda não confirmado pelo titular.`,
       via: "newsletter",
       sourceName: NEWSLETTER_SOURCE_NAME,
     });
