@@ -32,7 +32,9 @@ describe("manifest", () => {
     expect(WEB_MANIFEST.background_color).toBe("#F0F2F5");
     // manifestConfig stays import-free for vite.config.ts, so it repeats the default theme's color.
     expect(WEB_MANIFEST.theme_color).toBe(UI_THEME_COLOR[DEFAULT_THEME]);
-    expect(WEB_MANIFEST.shortcuts.map((s) => s.url)).toEqual(["/app/entrada", "/app/repasses", "/app/tarefas"]);
+    expect(WEB_MANIFEST.shortcuts.map((s) => s.url)).toEqual(["/app/entrada", "/app/repasses", "/app/tarefas", "/app/pipeline"]);
+    expect(WEB_MANIFEST.shortcuts.length).toBeLessThanOrEqual(4); // Chrome shows at most 4
+    expect(WEB_MANIFEST.description).toContain("atendimento com IA no WhatsApp");
   });
   it("keeps id, scope and start_url coherent", () => {
     expect(MANIFEST_ID).toBe("/app/");
@@ -52,6 +54,40 @@ describe("manifest", () => {
       expect(existsSync(join(root, "public", icon.src)), icon.src).toBe(true);
     }
     expect(existsSync(join(root, "public/apple-touch-icon-180x180.png"))).toBe(true);
+  });
+  it("points at versioned (-v2) icons and keeps the unversioned files for old caches and the push icon", () => {
+    for (const icon of WEB_MANIFEST.icons) expect(icon.src, icon.src).toMatch(/-v2\.png$/);
+    for (const s of WEB_MANIFEST.shortcuts) for (const i of s.icons) expect(i.src).toMatch(/-v2\.png$/);
+    for (const old of ["pwa-192x192.png", "pwa-512x512.png", "maskable-icon-512x512.png"]) {
+      expect(existsSync(join(root, "public", old)), old).toBe(true);
+    }
+  });
+  it("lists narrow and wide screenshots whose declared size matches the file", () => {
+    const forms = new Set(WEB_MANIFEST.screenshots.map((s) => s.form_factor));
+    expect(forms).toEqual(new Set(["narrow", "wide"]));
+    for (const s of WEB_MANIFEST.screenshots) {
+      const b = readFileSync(join(root, "public", s.src));
+      expect(`${b.readUInt32BE(16)}x${b.readUInt32BE(20)}`, s.src).toBe(s.sizes);
+      expect(b.length, s.src).toBeLessThan(300 * 1024);
+      expect(s.label.length).toBeGreaterThan(0);
+    }
+  });
+  it("links an iOS launch screen (light and dark) that exists for every listed iPhone size", () => {
+    const html = read("index.html");
+    const links = [...html.matchAll(/rel="apple-touch-startup-image" href="([^"]+)" media="([^"]+)"/g)];
+    expect(links.length).toBeGreaterThanOrEqual(16);
+    for (const [, href, media] of links) {
+      const b = readFileSync(join(root, "public", href));
+      const size = href.match(/-(\d+)x(\d+)-/)!;
+      const w = Number(size[1]);
+      const h = Number(size[2]);
+      expect(b.readUInt32BE(16), href).toBe(w);
+      expect(b.readUInt32BE(20), href).toBe(h);
+      const ratio = Number(media.match(/pixel-ratio: (\d)/)![1]);
+      expect(Number(media.match(/device-width: (\d+)px/)![1]) * ratio, media).toBe(w);
+      expect(Number(media.match(/device-height: (\d+)px/)![1]) * ratio, media).toBe(h);
+    }
+    expect(links.filter((l) => l[2].includes("prefers-color-scheme: dark")).length).toBe(links.length / 2);
   });
 });
 
