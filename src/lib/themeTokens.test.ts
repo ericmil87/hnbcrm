@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { QR_BG, QR_FG } from "../components/landing/qrColors";
 import { contrastWithAlpha, hexToRgb, parseChannels, type Rgb } from "./contrast";
 
 const css = readFileSync(resolve(__dirname, "../index.css"), "utf8");

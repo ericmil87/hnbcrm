@@ -53,33 +53,8 @@ export type SocialProofItem = TestimonialItem | SceneItem | NumberItem | LogoIte
 /** Canais da caixa de entrada citados na copy (a contagem sai desta lista). */
 export const INBOX_CHANNELS = ["WhatsApp", "Instagram", "Messenger", "Telegram para a equipe"] as const;
 
-export const SOCIAL_PROOF: readonly SocialProofItem[] = [
-  // Depoimentos: nenhum real até haver autorização. Os de exemplo só existem em DEV.
-  {
-    kind: "depoimento",
-    id: "dep-exemplo-1",
-    real: false,
-    quote: "Texto de exemplo para ver o cartão de depoimento.",
-    name: "Nome de exemplo",
-    business: "Clínica",
-    city: "Cidade",
-  },
-  {
-    kind: "depoimento",
-    id: "dep-exemplo-2",
-    real: false,
-    quote: "Outro texto de exemplo para ver o cartão de depoimento.",
-    name: "Nome de exemplo",
-    business: "Terapeuta",
-  },
-  {
-    kind: "depoimento",
-    id: "dep-exemplo-3",
-    real: false,
-    quote: "Mais um texto de exemplo para ver o cartão de depoimento.",
-    name: "Nome de exemplo",
-    business: "Corretor",
-  },
+/** Itens reais ou declaradamente ilustrativos: os únicos que vão para o bundle de produção. */
+const REAL_ITEMS: readonly SocialProofItem[] = [
   // Cenas de uso: declaradamente ilustrativas (selo sempre).
   {
     kind: "cena",
@@ -122,9 +97,46 @@ export const SOCIAL_PROOF: readonly SocialProofItem[] = [
   },
   { kind: "numero", id: "num-testes", real: true, value: "Milhares", text: "de testes automatizados a cada versão" },
   { kind: "numero", id: "num-aberto", real: true, value: "Código aberto", text: "e changelog público em português" },
-  // Logos: nenhum autorizado por escrito. O exemplo só aparece em DEV.
+];
+
+/** Exemplos falsos para ver os cartões em DEV. Nunca entram no bundle de produção (ver `SOCIAL_PROOF`). */
+const EXAMPLE_ITEMS: readonly SocialProofItem[] = [
+  // Depoimentos: nenhum real até haver autorização. Os de exemplo só existem em DEV.
+  {
+    kind: "depoimento",
+    id: "dep-exemplo-1",
+    real: false,
+    quote: "Texto de exemplo para ver o cartão de depoimento.",
+    name: "Nome de exemplo",
+    business: "Clínica",
+    city: "Cidade",
+  },
+  {
+    kind: "depoimento",
+    id: "dep-exemplo-2",
+    real: false,
+    quote: "Outro texto de exemplo para ver o cartão de depoimento.",
+    name: "Nome de exemplo",
+    business: "Terapeuta",
+  },
+  {
+    kind: "depoimento",
+    id: "dep-exemplo-3",
+    real: false,
+    quote: "Mais um texto de exemplo para ver o cartão de depoimento.",
+    name: "Nome de exemplo",
+    business: "Corretor",
+  },
+  // Logos: nenhum autorizado por escrito.
   { kind: "logo", id: "logo-exemplo", real: false, name: "Marca de exemplo", src: "" },
 ];
+
+/**
+ * `import.meta.env.DEV` é trocado por `false` no build e o minificador descarta
+ * `EXAMPLE_ITEMS`: "Nome de exemplo" não existe em `dist`. `visibleSocialProof`
+ * continua como segunda barreira.
+ */
+export const SOCIAL_PROOF: readonly SocialProofItem[] = [...REAL_ITEMS, ...(import.meta.env.DEV ? EXAMPLE_ITEMS : [])];
 
 /** Em produção só itens reais; fora dela, tudo (os não reais levam o selo). */
 export function visibleSocialProof(items: readonly SocialProofItem[], prod: boolean): SocialProofItem[] {

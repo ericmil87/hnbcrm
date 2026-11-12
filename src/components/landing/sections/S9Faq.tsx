@@ -62,7 +62,7 @@ function FaqItem({ entry }: { entry: FaqEntry }) {
           />
         </button>
       </h3>
-      <div id={panelId} role="region" aria-label={entry.question} hidden={!open} className="pb-4 text-text-secondary">
+      <div id={panelId} hidden={!open} className="pb-4 text-text-secondary">
         {entry.answer}
       </div>
     </div>
