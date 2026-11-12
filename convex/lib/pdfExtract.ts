@@ -42,6 +42,8 @@
 import { inflateRawSync, constants as zlibConstants } from "node:zlib";
 import { Worker } from "node:worker_threads";
 import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { cleanUntrustedText } from "./untrustedText";
 import { ONBOARDING_PDF_MAX_BYTES, ONBOARDING_PDF_MAX_MB } from "./onboardingLimits";
 
@@ -628,7 +630,7 @@ const PDFJS_OPTIONS = {
 type RawPages = { numPages: number; pages: string[] };
 type WorkerMsg =
   | { kind: "ok"; numPages: number; pages: string[] }
-  | { kind: "setup" }
+  | { kind: "setup"; err?: string }
   | { kind: "open-error"; name?: string }
   | { kind: "too-many" }
   | { kind: "timeout" }
@@ -640,8 +642,8 @@ const { parentPort, workerData } = require("node:worker_threads");
 const { pathToFileURL } = require("node:url");
 (async () => {
   let mod;
-  try { mod = await import(pathToFileURL(workerData.unpdfPath).href); }
-  catch (e) { parentPort.postMessage({ kind: "setup" }); return; }
+  try { const u = workerData.unpdfPath; mod = await import(u.startsWith("file:") ? u : pathToFileURL(u).href); }
+  catch (e) { parentPort.postMessage({ kind: "setup", err: String(e && e.message || e).slice(0, 200) }); return; }
   const o = workerData.opts;
   const deadline = Date.now() + o.timeoutMs;
   let pdf;
@@ -679,13 +681,57 @@ function openErrorToCode(name: string | undefined): PdfErrorCode {
   return "PARSE_FAILED";
 }
 
+/** Log de diagnóstico quando o worker do PDF não sobe (sem conteúdo do arquivo). */
+function logWorkerUnavailable(stage: "resolve" | "ctor" | "setup", err?: unknown): void {
+  const detail = err instanceof Error ? err.message : typeof err === "string" ? err : undefined;
+  console.warn(JSON.stringify({ event: "pdfWorkerUnavailable", stage, detail: detail?.slice(0, 200) }));
+}
+
+/**
+ * O Convex só liga `node_modules` (com os `externalPackages`) ao bundle quando
+ * algum código importa o pacote literalmente (validado em DEV). O pdf.js roda
+ * no worker e nunca na thread principal, então a referência abaixo existe só
+ * para o bundler e nunca executa (env que ninguém define).
+ */
+if (process.env.HNBCRM_NEVER_LOAD_UNPDF_IN_MAIN === "__never__") {
+  void import("unpdf");
+}
+
 function resolveUnpdfPath(override?: string): string | null {
   if (override !== undefined && process.env.VITEST === "true") return override;
+  // No Convex, pacotes de `externalPackages` ficam fora da pasta dos módulos
+  // (/tmp/external_deps/...): `createRequire(import.meta.url)` não os acha, mas
+  // `import.meta.resolve` acha (validado em DEV, Node 24). Ordem: resolve do
+  // ESM → require a partir do módulo (vitest/local).
+  try {
+    const resolved = (import.meta as { resolve?: (s: string) => string }).resolve?.("unpdf");
+    if (resolved) return resolved;
+  } catch {
+    // segue para o fallback
+  }
   try {
     return createRequire(import.meta.url).resolve("unpdf");
   } catch {
-    return null;
+    // segue para o fallback do Convex
   }
+  // Convex: este arquivo é empacotado em <raiz>/modules/_deps/node/*.js e os
+  // externalPackages ficam em <raiz>/node_modules (validado em DEV). Sobe as
+  // pastas a partir do módulo até achar de onde o pacote resolve.
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 8; i++) {
+      try {
+        return createRequire(join(dir, "package.json")).resolve("unpdf");
+      } catch {
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+    }
+  } catch {
+    // sem caminho de arquivo
+  }
+  return null;
 }
 
 /** Orçamento de caracteres CRUS lidos (a limpeza encolhe espaços; folga de 50%). */
@@ -708,7 +754,10 @@ function runInWorker(
   unpdfPathOverride?: string
 ): Promise<RawPages> {
   const unpdfPath = resolveUnpdfPath(unpdfPathOverride);
-  if (!unpdfPath) return Promise.reject(new PdfExtractError("UNAVAILABLE"));
+  if (!unpdfPath) {
+    logWorkerUnavailable("resolve");
+    return Promise.reject(new PdfExtractError("UNAVAILABLE"));
+  }
   return new Promise<RawPages>((resolve, reject) => {
     const buffer = copy.buffer.slice(copy.byteOffset, copy.byteOffset + copy.byteLength);
     const rssStart = process.memoryUsage.rss();
@@ -731,7 +780,8 @@ function runInWorker(
         // Só o heap JS; ArrayBuffers ficam fora — por isso o vigia de RSS abaixo.
         resourceLimits: { maxOldGenerationSizeMb: 256, maxYoungGenerationSizeMb: 32 },
       });
-    } catch {
+    } catch (e) {
+      logWorkerUnavailable("ctor", e);
       reject(new PdfExtractError("UNAVAILABLE"));
       return;
     }
@@ -759,6 +809,7 @@ function runInWorker(
             resolve({ numPages: msg.numPages, pages: msg.pages });
             break;
           case "setup":
+            logWorkerUnavailable("setup", msg.err);
             reject(new PdfExtractError("UNAVAILABLE"));
             break;
           case "open-error":

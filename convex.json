@@ -1,6 +1,8 @@
 {
   "node": {
-    "nodeVersion": "24",
-    "externalPackages": ["unpdf"]
+    "externalPackages": [
+      "unpdf"
+    ],
+    "nodeVersion": "24"
   }
 }
