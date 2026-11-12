@@ -4,7 +4,7 @@
 // Chrome/Chromium (CHROME_BIN or google-chrome) only for public/og-image.png.
 // iOS keeps the installed icon: re-run only when the logo changes.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import sharp from "sharp";
@@ -86,15 +86,21 @@ function buildIco(entries) {
 }
 
 async function main() {
+  mkdirSync(pub("splash"), { recursive: true });
   writeFileSync(pub("brand/icone.svg"), logoSvg(false));
   writeFileSync(pub("brand/icone-wordmark.svg"), logoSvg(true));
   writeFileSync(pub("favicon.svg"), tileSvg(0.86, 14));
 
   const any = tileSvg(0.74); // pwa "any" and apple touch: full bleed, the OS rounds the corners
-  await png(any, 192, "pwa-192x192.png");
-  await png(any, 512, "pwa-512x512.png");
+  // Versioned names (-v2) so Chrome sees a manifest change and refreshes the installed icon; the unversioned
+  // files stay for old caches, the push icon of already-subscribed devices and the apple-touch-icon link.
+  const maskable = tileSvg(0.6); // content inside the 80% safe circle
+  for (const suffix of ["", "-v2"]) {
+    await png(any, 192, `pwa-192x192${suffix}.png`);
+    await png(any, 512, `pwa-512x512${suffix}.png`);
+    await png(maskable, 512, `maskable-icon-512x512${suffix}.png`);
+  }
   await png(any, 180, "apple-touch-icon-180x180.png");
-  await png(tileSvg(0.6), 512, "maskable-icon-512x512.png"); // content inside the 80% safe circle
 
   const fav = tileSvg(0.86, 14);
   const entries = [];
@@ -105,6 +111,8 @@ async function main() {
   await png(fav, 48, "favicon-48x48.png");
   await png(fav, 32, "favicon-32x32.png");
 
+  await splashImages();
+
   // Android notification badge: alpha-only silhouette (the OS tints it white).
   const badge =
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><g transform="translate(32 32) scale(0.95) translate(-31 -34)">` +
@@ -114,6 +122,31 @@ async function main() {
 
   await ogImage(false); // marketing card: landing only (SEO.tsx ogImage)
   await ogImage(true); // neutral wordmark-only card: static index.html, served for every route incl. /f/*
+}
+
+/** iOS launch screens (apple-touch-startup-image): flat background + centered icon. Sizes are device px; index.html
+ *  links each one by media query (device-width/height @ ratio), light and dark (prefers-color-scheme). */
+const SPLASH_SIZES = [
+  [1320, 2868], [1206, 2622], [1260, 2736], [1290, 2796], [1179, 2556], [1284, 2778], [1170, 2532], [1125, 2436],
+  [1242, 2688], [1242, 2208], [1080, 2340], [828, 1792], [750, 1334],
+];
+async function splashImages() {
+  const variants = {
+    light: { bg: "#F0F2F5", human: INK, ai: GREEN },
+    dark: { bg: "#0B141A", human: "#E9EDEF", ai: "#00A884" },
+  };
+  for (const [w, h] of SPLASH_SIZES) {
+    const box = Math.round(Math.min(w, h) * 0.22); // icon box side
+    for (const [name, c] of Object.entries(variants)) {
+      const svg =
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="${c.bg}"/>` +
+        `<svg x="${(w - box) / 2}" y="${(h - box) / 2}" width="${box}" height="${box}" viewBox="0 0 64 64">` +
+        `<g transform="translate(32 32) scale(0.9) translate(-31 -34)">${iconShapes({ human: c.human, ai: c.ai })}</g></svg></svg>`;
+      const file = `splash/apple-splash-${w}x${h}-${name}.png`;
+      await sharp(Buffer.from(svg)).png({ palette: true, compressionLevel: 9 }).toFile(pub(file));
+      console.log("wrote", file);
+    }
+  }
 }
 
 async function ogImage(neutral) {
