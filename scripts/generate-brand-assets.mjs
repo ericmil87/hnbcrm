@@ -92,8 +92,9 @@ async function main() {
   writeFileSync(pub("favicon.svg"), tileSvg(0.86, 14));
 
   const any = tileSvg(0.74); // pwa "any" and apple touch: full bleed, the OS rounds the corners
-  // Versioned names (-v2) so Chrome sees a manifest change and refreshes the installed icon; the unversioned
-  // files stay for old caches, the push icon of already-subscribed devices and the apple-touch-icon link.
+  // Versioned names (-v2) are the only ones the app references. The unversioned files are LEGACY: they stay
+  // only for clients that have not updated yet (old manifest, old service worker push icon, old cached shell).
+  // Delete them (and this loop) once the installed base has moved on.
   const maskable = tileSvg(0.6); // content inside the 80% safe circle
   for (const suffix of ["", "-v2"]) {
     await png(any, 192, `pwa-192x192${suffix}.png`);
@@ -101,6 +102,7 @@ async function main() {
     await png(maskable, 512, `maskable-icon-512x512${suffix}.png`);
   }
   await png(any, 180, "apple-touch-icon-180x180.png");
+  await png(any, 180, "apple-touch-icon-180x180-v2.png");
 
   const fav = tileSvg(0.86, 14);
   const entries = [];
