@@ -122,3 +122,25 @@ describe("getConversations unreadOnly", () => {
     expect(archived[0]!.unreadCount).toBe(4);
   });
 });
+
+describe("getConversations unreadOnly: ordem por tempo", () => {
+  test("com mais não lidas que o limite, entram as mais recentes mesmo com contador menor", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, userId } = await seed(t);
+    // Recente com contador 1 e antiga com contador 99: por tempo a recente vem antes.
+    const { recent, old } = await t.run(async (ctx) => {
+      const now = Date.now();
+      const base = { organizationId, channel: "whatsapp" as const, status: "active" as const, messageCount: 1, updatedAt: now };
+      const recent = await ctx.db.insert("conversations", { ...base, unreadCount: 1, lastMessageAt: now + 5_000, createdAt: now });
+      const old = await ctx.db.insert("conversations", { ...base, unreadCount: 99, lastMessageAt: now - 9_000_000, createdAt: now - 9_000_000 });
+      return { recent, old };
+    });
+    const as = t.withIdentity({ subject: `${userId}|s1` });
+    const list = await as.query(api.conversations.getConversations, { organizationId, limit: 50, unreadOnly: true });
+    const ids = list.map((c) => c!._id);
+    expect(ids[0]).toBe(recent);
+    expect(ids.indexOf(old)).toBeGreaterThan(0);
+    const times = list.map((c) => c!.lastMessageAt ?? c!.createdAt);
+    expect(times).toEqual([...times].sort((a, b) => b - a));
+  });
+});

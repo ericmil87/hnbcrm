@@ -19,8 +19,9 @@ import {
   decideThreadScroll,
   dividerScrollTop,
   isNearBottom,
+  leftOpenAnchor,
   makePrependAnchor,
-  shouldPinAfterResize,
+  resizeScrollAction,
   type PrependAnchor,
 } from "@/lib/threadPaging";
 import type { InboxMessage } from "@/components/inbox/types";
@@ -58,6 +59,9 @@ export function useThreadPaging(
   const nearBottomRef = useRef(true);
   const scrolledConvRef = useRef<string | null>(null);
   const anchorRef = useRef<PrependAnchor | null>(null);
+  // Abertura no divisor de não lidas ainda valendo (a pessoa não rolou): refeita
+  // enquanto o conteúdo ou a caixa mudam de tamanho. `applied` = rolagem que deixamos.
+  const dividerHoldRef = useRef<{ conversationId: string | null; applied: number } | null>(null);
 
   // Espelho em estado do `nearBottomRef` (botão "ir para o fim" e marcar como lida).
   const [atBottom, setAtBottom] = useState(true);
@@ -70,13 +74,32 @@ export function useThreadPaging(
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
+    const hold = dividerHoldRef.current;
+    if (hold && leftOpenAnchor({ applied: hold.applied, scrollTop: el.scrollTop })) dividerHoldRef.current = null;
     nearBottomRef.current = isNearBottom(el);
     setAtBottom(nearBottomRef.current);
+  };
+
+  /** Rola até o divisor de não lidas (topo da área visível). Falso se ele não está na tela. */
+  const scrollToDivider = (el: HTMLDivElement): boolean => {
+    const divider = el.querySelector<HTMLElement>("[data-unread-divider]");
+    if (!divider) return false;
+    // Abre onde a pessoa parou (como o WhatsApp); a âncora do histórico não muda.
+    el.scrollTop = dividerScrollTop({
+      dividerTop: divider.getBoundingClientRect().top,
+      containerTop: el.getBoundingClientRect().top,
+      scrollTop: el.scrollTop,
+    });
+    dividerHoldRef.current = { conversationId, applied: el.scrollTop };
+    nearBottomRef.current = isNearBottom(el);
+    setAtBottom(nearBottomRef.current);
+    return true;
   };
 
   const scrollToBottom = () => {
     const el = scrollRef.current;
     if (!el) return;
+    dividerHoldRef.current = null;
     nearBottomRef.current = true;
     // Salto direto, sem animação: com `smooth` o `onScroll` do meio do caminho dava "longe do fim", o
     // botão reaparecia e uma mensagem que chegasse nesse intervalo não fixava no fim.
@@ -90,6 +113,7 @@ export function useThreadPaging(
     if (!conversationId) return;
     const el = scrollRef.current;
     const next = nextLimit(limit, LOAD_MORE_STEP, MESSAGES_MAX_LIMIT);
+    dividerHoldRef.current = null;
     if (el) anchorRef.current = makePrependAnchor(conversationId, next, el);
     setPage({ key: conversationId, limit: next });
   };
@@ -121,22 +145,19 @@ export function useThreadPaging(
     anchorRef.current = decision.anchor;
     scrolledConvRef.current = decision.scrolledConversationId;
     nearBottomRef.current = decision.nearBottom;
-    const divider = decision.initial && hasUnreadDivider
-      ? el.querySelector<HTMLElement>("[data-unread-divider]")
-      : null;
-    if (divider) {
-      // Abre onde a pessoa parou (como o WhatsApp); a âncora do histórico não muda.
-      el.scrollTop = dividerScrollTop({
-        dividerTop: divider.getBoundingClientRect().top,
-        containerTop: el.getBoundingClientRect().top,
-        scrollTop: el.scrollTop,
-      });
-      nearBottomRef.current = isNearBottom(el);
-      setAtBottom(nearBottomRef.current);
-    } else if (decision.scrollTop === "bottom") {
+    if (decision.initial) dividerHoldRef.current = null;
+    if (decision.initial && hasUnreadDivider && scrollToDivider(el)) return;
+    if (decision.scrollTop === null) return;
+    // Mensagem nova com o leitor no fim, ou lote anterior chegando: a abertura no divisor acabou.
+    dividerHoldRef.current = null;
+    if (decision.scrollTop === "bottom") {
       el.scrollTop = el.scrollHeight;
       if (decision.initial) setAtBottom(true);
-    } else if (decision.scrollTop !== null) el.scrollTop = decision.scrollTop;
+    } else {
+      el.scrollTop = decision.scrollTop;
+      // Thread curto: o lote anterior não pode ser puxado para o fim pelo observador de tamanho.
+      nearBottomRef.current = isNearBottom(el);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, messagesRaw, limit, conversationId, ready]);
 
@@ -153,28 +174,41 @@ export function useThreadPaging(
     }
   }, [messages, atBottom, conversationId]);
 
-  // Teclado do celular abrindo (container segue a visualViewport) ou composer
-  // crescendo encolhem o thread sem evento de `scroll`: quem estava no fim
-  // continua vendo as últimas mensagens.
+  // Mudança de tamanho sem evento de `scroll`. Da CAIXA: teclado do celular
+  // abrindo (container segue a visualViewport) ou composer crescendo. Do
+  // CONTEÚDO: imagem, áudio, prévia ou tradução que terminam de carregar depois
+  // da rolagem inicial (o Safari do iPhone não compensa a rolagem sozinho). Quem
+  // estava no fim continua no fim; a abertura no divisor de não lidas é refeita
+  // até a pessoa rolar (regra em `resizeScrollAction`).
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
-    let prevClientHeight: number | null = el.clientHeight;
+    let prev = { clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
     const observer = new ResizeObserver(() => {
-      const clientHeight = el.clientHeight;
-      if (shouldPinAfterResize({ prevClientHeight, clientHeight, nearBottom: nearBottomRef.current })) {
-        el.scrollTop = el.scrollHeight;
-      }
-      prevClientHeight = clientHeight;
+      const next = { clientHeight: el.clientHeight, scrollHeight: el.scrollHeight };
+      const hold = dividerHoldRef.current;
+      const action = resizeScrollAction({
+        prev,
+        next,
+        holdingDivider: hold !== null && hold.conversationId === conversationId,
+        nearBottom: nearBottomRef.current,
+      });
+      prev = next;
+      if (action === "divider") scrollToDivider(el);
+      else if (action === "bottom") el.scrollTop = el.scrollHeight;
     });
     observer.observe(el);
+    const content = el.firstElementChild;
+    if (content) observer.observe(content);
     return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
 
   const flash = (messageId: string) => {
     const el = document.getElementById(`msg-${messageId}`);
-    // Saindo do fim de propósito: o ResizeObserver não pode puxar de volta.
+    // Saindo do fim (ou do divisor) de propósito: o ResizeObserver não pode puxar de volta.
     nearBottomRef.current = false;
+    dividerHoldRef.current = null;
     el?.scrollIntoView({ behavior: "smooth", block: "center" });
     setHighlightId(messageId);
     window.setTimeout(() => setHighlightId((cur) => (cur === messageId ? null : cur)), 2000);

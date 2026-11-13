@@ -458,6 +458,7 @@ export function ConversationHeader({
               <AiControlMenu
                 conversationId={conversationId}
                 aiPausedUntil={conversation.aiPausedUntil as number | undefined}
+                aiMode={conversation.aiMode as string | undefined}
                 hasPendingDraft={hasPendingDraft}
                 aiState={aiConvState as AiConvState}
                 canReply={canReply}

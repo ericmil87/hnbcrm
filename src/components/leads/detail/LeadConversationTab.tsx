@@ -31,7 +31,8 @@ export function LeadConversationTab({ leadId, organizationId }: LeadConversation
   const createConversation = useMutation(api.conversations.createConversation);
   const [chosenId, setChosenId] = useState<string | null>(null);
 
-  // Só as conversas deste lead (não lidas primeiro, depois a mais recente). O ramo
+  // Só as conversas deste lead, da mais recente para a mais antiga (a query não
+  // põe mais as não lidas na frente; a escolha inicial abaixo cuida disso). O ramo
   // por lead lê o índice por canal+criação e ordena DEPOIS do take: 20 dá folga.
   const conversations = useQuery(api.conversations.getConversations, {
     organizationId,
@@ -48,7 +49,12 @@ export function LeadConversationTab({ leadId, organizationId }: LeadConversation
   }
 
   const leadConversations = conversations.filter((c): c is NonNullable<typeof c> => c !== null);
-  const selected = leadConversations.find((c) => c._id === chosenId) ?? leadConversations[0] ?? null;
+  // Sem escolha: a conversa com mensagem não lida, senão a mais recente.
+  const selected =
+    leadConversations.find((c) => c._id === chosenId) ??
+    leadConversations.find((c) => (c.unreadCount ?? 0) > 0) ??
+    leadConversations[0] ??
+    null;
 
   return (
     <div className="flex flex-col h-full">

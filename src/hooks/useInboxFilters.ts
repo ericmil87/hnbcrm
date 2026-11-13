@@ -15,12 +15,14 @@ import {
   type InboxFilterState,
 } from "@/lib/channelAccounts";
 import {
+  isPlausibleConvexId,
   KIND_FILTER_KEY,
   readKindFilter,
   type ConversationKindFilter,
+  type InboxAiFilter,
   type InboxChipState,
 } from "@/lib/inboxState";
-import { booleanParam, stringParam } from "@/lib/searchParamState";
+import { booleanParam, enumParam, stringParam } from "@/lib/searchParamState";
 import {
   EMPTY_QUEUE_FILTER,
   queueFilterArgs,
@@ -30,7 +32,8 @@ import {
 /**
  * Filtros da lista de Conversas.
  * - Estado de tela, na URL (replace, não polui o histórico): `?archived=1`,
- *   `?label=<id>`, `?unread=1` (chip "Não lidas" do celular) e `?mine=1` ("Minhas", celular e desktop).
+ *   `?label=<id>`, `?unread=1` (chip "Não lidas" do celular), `?mine=1` ("Minhas", celular e desktop),
+ *   `?stage=<stageId>` (etapa do funil) e `?ai=on|off` (IA atendendo / desligada); os três últimos são filtros de servidor.
  * - Preferência pessoal, em `localStorage`: Diretas/Grupos e Canal/Conta.
  * - Fila (Central, opcional por org): estado local.
  */
@@ -43,6 +46,16 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const mine = mineParam.value;
   const mineArgs = mine ? { mine: true as const } : {};
   const setMine = (next: boolean) => mineParam.set(next);
+  // Etapa do funil e IA: filtros de servidor (`stageId`, `ai`), celular e desktop.
+  const stageParam = useSearchParamState("stage", stringParam);
+  const aiParam = useSearchParamState("ai", enumParam<"" | InboxAiFilter>(["", "on", "off"], ""));
+  // Id colado/corrompido na URL nunca vira arg (o validator do servidor recusaria a query inteira).
+  const stageId = isPlausibleConvexId(stageParam.value) ? stageParam.value : null;
+  const stageArgs = stageId ? { stageId: stageId as Id<"stages"> } : {};
+  const aiFilter: InboxAiFilter | null = aiParam.value || null;
+  const aiArgs = aiFilter ? { ai: aiFilter } : {};
+  const setStageId = (next: string | null) => stageParam.set(next);
+  const setAiFilter = (next: InboxAiFilter | null) => aiParam.set(next ?? "");
   const showArchived = archivedParam.value;
   // "Não lidas" é chip só do celular: no desktop não há controle para desligá-lo,
   // então `?unread=1` nem vale lá (gate na fonte).
@@ -51,7 +64,7 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const unreadArgs = unreadOnly ? { unreadOnly: true as const } : {};
   const setShowArchived = archivedParam.set;
   /** Celular: abrir Arquivadas desliga "Não lidas" na mesma escrita da URL. */
-  const openArchived = () => archivedParam.set(true, { also: { unread: null, mine: null } });
+  const openArchived = () => archivedParam.set(true, { also: { unread: null, mine: null, stage: null, ai: null } });
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
   // Etiqueta apagada (ou colada de outra org) na URL não pode deixar a lista
@@ -132,8 +145,16 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
     if (next.channel !== channelFilter.channel || next.configId !== channelFilter.configId) {
       updateChannelFilter({ channel: next.channel, configId: next.configId });
     }
-    if (next.unreadOnly !== unreadOnly || next.labelId !== filterLabelId || next.mine !== mine) {
-      unreadParam.set(next.unreadOnly, { also: { label: next.labelId, mine: next.mine ? "1" : null } });
+    if (
+      next.unreadOnly !== unreadOnly ||
+      next.labelId !== filterLabelId ||
+      next.mine !== mine ||
+      next.stageId !== stageId ||
+      next.ai !== aiFilter
+    ) {
+      unreadParam.set(next.unreadOnly, {
+        also: { label: next.labelId, mine: next.mine ? "1" : null, stage: next.stageId, ai: next.ai },
+      });
     }
   };
 
@@ -145,6 +166,12 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
     mine,
     mineArgs,
     setMine,
+    stageId,
+    stageArgs,
+    setStageId,
+    aiFilter,
+    aiArgs,
+    setAiFilter,
     openArchived,
     applyChipState,
     setShowArchived,

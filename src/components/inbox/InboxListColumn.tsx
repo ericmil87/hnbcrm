@@ -2,7 +2,8 @@ import { useState } from "react";
 import { useNavigate, useOutletContext } from "react-router";
 import { CheckSquare, Plus, SlidersHorizontal } from "lucide-react";
 import { accountBadgeLabel, channelLabel, shouldShowAccount } from "@/lib/channelAccounts";
-import { applyInboxChip, countUnreadConversations, inboxFilterChips } from "@/lib/inboxState";
+import { applyInboxChip, countUnreadConversations, inboxFilterChips, listShowsAi } from "@/lib/inboxState";
+import { stageNameById } from "@/lib/inboxStageFilter";
 import { TAB_ROUTES } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import type { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
@@ -12,6 +13,8 @@ import { AttentionBanner } from "@/components/inbox/AttentionBanner";
 import { ConversationList } from "@/components/inbox/ConversationList";
 import type { ConversationListEntry } from "@/components/inbox/ConversationListItem";
 import { InboxQueueBar } from "@/components/inbox/central/InboxQueueBar";
+import { InboxAiFilterSheet } from "@/components/inbox/InboxAiFilterSheet";
+import { StageFilterSheet, useStageGroups } from "@/components/inbox/InboxStageFilter";
 import { InboxFiltersSheet, hasSheetFilters } from "@/components/inbox/InboxFiltersSheet";
 import { usePageHeader } from "@/components/layout/pageHeader";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
@@ -69,6 +72,12 @@ export function InboxListColumn({
   // Celular (< md): layout estilo WhatsApp; desktop fica como sempre (D1).
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [filtersSheetOpen, setFiltersSheetOpen] = useState(false);
+  const [stageSheetOpen, setStageSheetOpen] = useState(false);
+  const [aiSheetOpen, setAiSheetOpen] = useState(false);
+  // O nome da etapa escolhida vem dos funis: só assina com `?stage=` na URL.
+  const { groups: stageGroups, source: stageNameSource } = useStageGroups(organizationId, !!filters.stageId);
+  const stageName = stageNameById(stageGroups, filters.stageId);
+  const showAi = listShowsAi(list.validConversations, !!filters.aiFilter);
   // Relógio da hora dos itens (vira "Ontem" na virada do dia sem outro render).
   const now = useNow(isMobile);
   const sheetFilters = {
@@ -114,6 +123,8 @@ export function InboxListColumn({
     unreadOnly: filters.unreadOnly,
     mine: filters.mine,
     labelId: filterLabelId,
+    stageId: filters.stageId,
+    ai: filters.aiFilter,
     channel: channelFilter.channel,
     configId: channelFilter.configId,
   };
@@ -121,6 +132,24 @@ export function InboxListColumn({
 
   return (
     <>
+    {stageNameSource}
+    {isMobile && (
+      <>
+        <StageFilterSheet
+          open={stageSheetOpen}
+          onClose={() => setStageSheetOpen(false)}
+          organizationId={organizationId}
+          stageId={filters.stageId}
+          onChoose={filters.setStageId}
+        />
+        <InboxAiFilterSheet
+          open={aiSheetOpen}
+          onClose={() => setAiSheetOpen(false)}
+          value={filters.aiFilter}
+          onChoose={filters.setAiFilter}
+        />
+      </>
+    )}
     {isMobile && (
       <InboxFiltersSheet
         open={filtersSheetOpen}
@@ -145,8 +174,15 @@ export function InboxListColumn({
                 unreadMore: list.canLoadMore,
                 channelLabel: channelFilter.channel ? channelLabel(channelFilter.channel) : undefined,
                 accountLabel: activeAccount ? accountBadgeLabel(activeAccount) : undefined,
+                stageLabel: stageName,
+                showAi,
               }),
-              onChip: (id) => filters.applyChipState(applyInboxChip(id, chipState)),
+              // "Etapa" e "IA" sempre abrem a folha (nela há "Todas as…" para limpar).
+              onChip: (id) => {
+                if (id === "stage") setStageSheetOpen(true);
+                else if (id === "ai") setAiSheetOpen(true);
+                else filters.applyChipState(applyInboxChip(id, chipState));
+              },
               unreadOnly: filters.unreadOnly,
               onLongPress: bulk.startSelectionWith,
               now,
@@ -213,6 +249,8 @@ export function InboxListColumn({
         mine: filters.mine,
         onMineChange: filters.setMine,
         queueFilterActive: filters.queueFilterActive,
+        stage: { organizationId, id: filters.stageId, name: stageName, onChange: filters.setStageId },
+        ai: { value: filters.aiFilter, onChange: filters.setAiFilter, show: showAi },
       }}
       selection={{
         mode: bulk.selectionMode,

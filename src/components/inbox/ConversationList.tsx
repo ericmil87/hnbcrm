@@ -10,6 +10,7 @@ import {
   Mic,
   Users,
 } from "lucide-react";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterChips, type FilterChip } from "@/components/ui/FilterChips";
@@ -32,7 +33,15 @@ import {
   SearchSectionHeader,
   type InboxContactResult,
 } from "@/components/inbox/ContactSearchResults";
-import { KIND_FILTERS, emptyListMessage, type ConversationKindFilter } from "@/lib/inboxState";
+import { StageFilterButton } from "@/components/inbox/InboxStageFilter";
+import {
+  AI_FILTER_LABEL,
+  KIND_FILTERS,
+  emptyListMessage,
+  listShowsAi,
+  type ConversationKindFilter,
+  type InboxAiFilter,
+} from "@/lib/inboxState";
 import type { ListPreview } from "@/lib/listPreview";
 import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
@@ -87,6 +96,16 @@ export interface ConversationListFilters {
   mine: boolean;
   onMineChange: (mine: boolean) => void;
   queueFilterActive: boolean;
+  /** Etapa do funil (filtro de servidor, `stageId`). Ausente = sem o controle. */
+  stage?: {
+    organizationId: Id<"organizations">;
+    id: string | null;
+    /** Nome já resolvido da etapa escolhida. */
+    name?: string;
+    onChange: (stageId: string | null) => void;
+  };
+  /** Atendente IA (filtro de servidor, `ai`). `show` = a org usa IA (ou o filtro está ativo). */
+  ai?: { value: InboxAiFilter | null; onChange: (value: InboxAiFilter | null) => void; show: boolean };
 }
 
 export interface ConversationListSelection {
@@ -322,6 +341,30 @@ function FilterBar({ filters, selection }: { filters: ConversationListFilters; s
           />
         </div>
       )}
+      {filters.stage && (
+        <StageFilterButton
+          organizationId={filters.stage.organizationId}
+          stageId={filters.stage.id}
+          stageName={filters.stage.name}
+          onChoose={filters.stage.onChange}
+        />
+      )}
+      {filters.ai?.show && (
+        <div className="min-w-0 flex-1 basis-32 max-w-[12rem]">
+          <Select
+            size="sm"
+            aria-label="Filtrar por Atendente IA"
+            className="coarse:min-h-11"
+            value={filters.ai.value ?? ""}
+            onValueChange={(v) => filters.ai?.onChange(v === "on" || v === "off" ? v : null)}
+            options={[
+              { value: "", label: "IA: todas" },
+              { value: "on", label: AI_FILTER_LABEL.on },
+              { value: "off", label: AI_FILTER_LABEL.off },
+            ]}
+          />
+        </div>
+      )}
       <Button
         type="button"
         variant={selection.mode ? "secondary" : "ghost"}
@@ -455,7 +498,11 @@ export function ConversationList({
     labelId: filters.labelId,
     unreadOnly: isMobile ? mobile?.unreadOnly : false,
     mine: filters.mine,
+    stageId: filters.stage?.id,
+    ai: filters.ai?.value,
   });
+  // "IA desligada" só aparece em org que usa IA (ver `listShowsAi`).
+  const showAi = listShowsAi(conversations, !!filters.ai?.value);
   const searchMonthRow = search.active && (
     <div className="flex items-center gap-2">
       {isMobile ? (
@@ -595,6 +642,7 @@ export function ConversationList({
                     showAccount={showAccountFor(conversation)}
                     central={centralFor?.(conversation)}
                     preview={previewFor?.(conversation._id)}
+                    showAi={showAi}
                     onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
                     onLongPress={() => mobile.onLongPress(conversation._id)}
                   />
@@ -667,6 +715,7 @@ export function ConversationList({
               showAccount={showAccountFor(conversation)}
               central={centralFor?.(conversation)}
               preview={previewFor?.(conversation._id)}
+              showAi={showAi}
               onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
             />
           ))

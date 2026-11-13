@@ -14,6 +14,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Lista de conversas mostra "Rascunho:" e "digitando…".** O texto que você começou e não enviou aparece na prévia da conversa, e dá para ver quem está escrevendo sem abrir a conversa.
 - **Novo filtro "Minhas".** Mostra só as conversas em que você é o responsável. Fica junto dos outros filtros (chip no celular, botão no computador) e combina com eles.
 - **Áudios em 1,25× e 1,75×.** A velocidade de reprodução ganhou dois passos, e o app lembra a última que você escolheu.
+- **A lista fica na ordem do tempo.** As conversas aparecem pela hora da última mensagem, como no WhatsApp. A conversa não lida continua em destaque (nome, hora e contador), mas não pula mais de lugar quando você a abre.
+- **Mais espaço para ler a mensagem na lista (celular).** A segunda linha de cada conversa é toda da última mensagem. O título do lead, a conta e os chips de unidade e setor ficam numa terceira linha discreta, só quando há o que mostrar.
+- **Filtro por etapa do funil.** Novo filtro "Etapa" na lista de conversas (chip no celular, botão no computador): escolha uma etapa, agrupadas por funil, e veja só as conversas dos leads que estão nela. Como o "Minhas", olha as conversas mais recentes.
+- **Dá para ver onde a IA está atendendo.** Cada conversa 1 a 1 mostra um ícone discreto: colorido quando a Atendente IA responde ou sugere respostas, riscado quando ela está desligada naquela conversa (pausada, com pessoa no comando, pedido de ajuda pendente). Novo filtro "IA" para ver só umas ou só outras. O ícone e o filtro só aparecem em organizações que usam a IA; grupos não entram.
+- **O cabeçalho da conversa não diz mais "IA ativa" quando ela não atende.** Em conversa com lead de uma pessoa, pedido de ajuda pendente ou organização sem IA, o menu da IA mostra "IA desligada nesta conversa".
+- **A conversa abre no lugar certo no celular.** Sem mensagens novas, abre na última mensagem; com mensagens novas, abre no divisor "Mensagens não lidas". Antes, fotos que terminavam de carregar empurravam a tela para o meio da conversa, principalmente no iPhone.
 
 ### Campanhas e grupos: pausa automática quando o WhatsApp pede para desacelerar
 
