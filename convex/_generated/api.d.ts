@@ -224,6 +224,7 @@ import type * as lib_notificationPrefs from "../lib/notificationPrefs.js";
 import type * as lib_notificationResolve from "../lib/notificationResolve.js";
 import type * as lib_notificationTargets from "../lib/notificationTargets.js";
 import type * as lib_notify from "../lib/notify.js";
+import type * as lib_oggOpus from "../lib/oggOpus.js";
 import type * as lib_onboardingApply from "../lib/onboardingApply.js";
 import type * as lib_onboardingBlocks from "../lib/onboardingBlocks.js";
 import type * as lib_onboardingBudget from "../lib/onboardingBudget.js";
@@ -594,6 +595,7 @@ declare const fullApi: ApiFromModules<{
   "lib/notificationResolve": typeof lib_notificationResolve;
   "lib/notificationTargets": typeof lib_notificationTargets;
   "lib/notify": typeof lib_notify;
+  "lib/oggOpus": typeof lib_oggOpus;
   "lib/onboardingApply": typeof lib_onboardingApply;
   "lib/onboardingBlocks": typeof lib_onboardingBlocks;
   "lib/onboardingBudget": typeof lib_onboardingBudget;
