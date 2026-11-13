@@ -6,7 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Conversas: acabamento no padrão do WhatsApp
 
-- **Áudio gravado no app volta a chegar ao cliente.** A nota de voz gravada pelo navegador ou pelo app instalado (inclusive no iPhone) falhava no envio em números conectados por QR code. Corrigido: ela sai como mensagem de voz normal.
+- **Áudio gravado no app volta a chegar e a tocar para o cliente.** A nota de voz gravada pelo navegador ou pelo app instalado (inclusive no iPhone) falhava em números conectados por QR code: primeiro não saía, depois chegava ao cliente sem tocar. Corrigido: ela sai como mensagem de voz normal, com duração e forma de onda, e toca no celular e no WhatsApp Web. Áudios enviados antes da correção continuam sem tocar; é preciso gravar de novo.
 - **A conversa só é marcada como lida quando você está olhando a tela.** Com a aba em segundo plano ou a janela sem foco, o cliente não vê mais "lido" no WhatsApp antes da hora, e a notificação não some do celular do número.
 - **Divisor "Mensagens não lidas".** Ao abrir uma conversa com mensagens novas, a tela começa no ponto em que você parou, como no WhatsApp.
 - **Botão para ir às mensagens mais recentes,** que aparece ao rolar para cima e conta as mensagens que chegaram enquanto você lia o histórico.
