@@ -93,9 +93,10 @@ function stubNet(net: Net) {
 }
 
 let seq = 0;
-async function ingest(t: T, s: Seed) {
+async function ingest(t: T, s: Seed, text?: string) {
   seq += 1;
   const body = JSON.parse(JSON.stringify(pageText));
+  if (text) body.entry[0].messaging[0].message.text = text;
   body.entry[0].messaging[0].message.mid = `m_avatar_${seq}`;
   const { events } = parseMetaMessagingWebhook(body);
   await t.action(internal.metaMessaging.internalIngestEvent, { configId: s.messengerId, event: events[0] });
@@ -222,7 +223,10 @@ describe("renovação", () => {
     await ingest(t, s);
     // O perfil de nome (primeiro contato) segue; a foto não.
     expect(net.cdn()).toBe(0);
-    expect((await state(t)).row).toBeNull();
+    // Sem vaga: grava a linha com recuo de 1 h (não repete a cada mensagem), sem foto.
+    const row = (await state(t)).row;
+    expect(row).toMatchObject({ status: "none", checkedAt: 0 });
+    expect(row?.url).toBeUndefined();
   });
 
   test("kill switch CONTACT_AVATAR_FETCH=0 não busca foto", async () => {
@@ -306,5 +310,53 @@ describe("regra entre canais e foto manual", () => {
     const st = await state(t);
     expect(st.row?.status).toBe("ok");
     expect(st.contact?.avatarUrl).toBe("https://manual.example/x");
+  });
+});
+
+describe("ordem no ingest e canal sem vaga", () => {
+  test("o opt-out (\"pare\") é gravado ANTES da busca da foto", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    let optedOutWhenFetched: boolean | null = null;
+    stubNet({
+      profile: { first_name: "Ana", profile_pic: CDN },
+      image: () => {
+        // A foto só é buscada depois do opt-out: lê o estado no momento do download.
+        optedOutWhenFetched = (globalThis as any).__optedOut ?? null;
+        return new Response(jpeg() as BodyInit, { status: 200 });
+      },
+    });
+    const orig = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string | URL, init?: RequestInit) => {
+      if (!String(url).startsWith("https://graph.facebook.com")) {
+        const identity = await t.run(async (ctx) => await ctx.db.query("contactChannelIdentities").first());
+        (globalThis as any).__optedOut = identity?.optedOutAt !== undefined;
+      }
+      return orig(url as string, init);
+    });
+    await ingest(t, s, "pare");
+    delete (globalThis as any).__optedOut;
+    expect(optedOutWhenFetched).toBe(true);
+  });
+
+  test("canal no teto diário e contato sem linha: grava a linha com recuo de 1 h e não repete", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("channelAvatarPacing", {
+        organizationId: s.organizationId, channelConfigId: s.messengerId, nextFetchAt: 0,
+        day: new Date().toISOString().slice(0, 10), dayCount: 300,
+      });
+    });
+    const net = stubNet({ profile: { first_name: "Ana", profile_pic: CDN } });
+    const before = Date.now();
+    await ingest(t, s);
+    const st = await state(t);
+    expect(st.row).toMatchObject({ status: "none", source: "messenger" });
+    expect(st.row!.nextCheckAt).toBeGreaterThanOrEqual(before + 3600_000);
+    expect(net.cdn()).toBe(0);
+    const graphAfterFirst = net.graph();
+    await ingest(t, s);
+    expect(net.graph()).toBe(graphAfterFirst); // sem nova consulta de perfil/foto
   });
 });

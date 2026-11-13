@@ -66,6 +66,7 @@ import { createNotification } from "./lib/notify";
 import { notificationCopy } from "./lib/notificationCopy";
 import { deleteConversationCascade, newBudget } from "./lib/leadCascade";
 import { deleteGroupAvatarRows, maybeScheduleGroupAvatar } from "./lib/groupAvatarOps";
+import { GROUP_AVATAR_SYNC_MAX_SCHEDULES } from "./lib/groupAvatar";
 import { createLeadFromGroupMemberCore } from "./lib/groupMemberLead";
 import { groupMediaModeValidator, groupMediaOverrideModeValidator } from "./schema";
 import {
@@ -1311,6 +1312,7 @@ export const internalUpsertGroupsFromSync = internalMutation({
 
     const participantJobs: { groupChatId: Id<"groupChats">; jid: string }[] = [];
     let upserted = 0;
+    let avatarSchedules = 0;
     for (const raw of args.groups) {
       const group = raw as ParsedGroupInfo;
       const fields = groupFieldsFromGateway(group, ourLid, ourPhone, now);
@@ -1342,7 +1344,12 @@ export const internalUpsertGroupsFromSync = internalMutation({
           await ctx.db.patch(prev._id, patch);
         }
         // Foto da sala (só acompanhada; o carimbo evita reagendar a cada sync).
-        await maybeScheduleGroupAvatar(ctx, { group: { ...prev, ...patch, _id: prev._id } as Doc<"groupChats"> });
+        // No máximo GROUP_AVATAR_SYNC_MAX_SCHEDULES por execução (fila de 10 min e teto diário
+        // do canal são compartilhados com o contato); os demais vêm por mensagem/abertura/próximo sync.
+        if (avatarSchedules < GROUP_AVATAR_SYNC_MAX_SCHEDULES &&
+            await maybeScheduleGroupAvatar(ctx, { group: { ...prev, ...patch, _id: prev._id } as Doc<"groupChats"> })) {
+          avatarSchedules += 1;
+        }
         // Sala legada: o espelho da conversa conta o array, que só o diff
         // atualiza — ele sincroniza no fim.
         if (migrated) {

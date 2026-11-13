@@ -382,3 +382,91 @@ describe("exclusão", () => {
     expect(state).toEqual({ rows: 0, files: 0, groups: 0 });
   });
 });
+
+describe("proteção do canal (foto de contato 1 a 1)", () => {
+  const pacingOf = (t: T, s: Awaited<ReturnType<typeof seed>>) =>
+    t.run(async (ctx) =>
+      ctx.db.query("channelAvatarPacing").withIndex("by_channel_config", (q) => q.eq("channelConfigId", s.configId)).first()
+    );
+
+  test("erro de grupo não soma no disjuntor do canal nem o pausa; 429 continua pausando", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("channelAvatarPacing", {
+        organizationId: s.organizationId, channelConfigId: s.configId, nextFetchAt: 0, errorStreak: 4,
+      });
+    });
+    await fetchPhoto(t, s, { status: 500, body: { code: 500, success: false, error: "boom" } });
+    expect(await pacingOf(t, s)).toMatchObject({ errorStreak: 4 });
+    expect((await pacingOf(t, s))!.pausedUntil).toBeUndefined();
+    expect((await rowOf(t, s.groupChatId))!).toMatchObject({ status: "error", failures: 1 });
+    await cancelPending(t);
+
+    await t.mutation(internal.groupAvatar.internalRecordGroupAvatarCheck, { ...fetchArgs(s), outcome: "rate_limited" });
+    expect((await pacingOf(t, s))!.pausedUntil).toBeGreaterThan(Date.now());
+  });
+
+  test("sucesso de grupo não zera o errorStreak de contato", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("channelAvatarPacing", {
+        organizationId: s.organizationId, channelConfigId: s.configId, nextFetchAt: 0, errorStreak: 3,
+      });
+    });
+    await fetchPhoto(t, s, { body: okBody() });
+    expect((await rowOf(t, s.groupChatId))!.status).toBe("ok");
+    expect((await pacingOf(t, s))!.errorStreak).toBe(3);
+    await cancelPending(t);
+  });
+
+  test("busca de grupo para com 100 no dia; contato ainda tem o resto do teto", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("channelAvatarPacing", {
+        organizationId: s.organizationId, channelConfigId: s.configId, nextFetchAt: 0,
+        day: new Date(Date.now()).toISOString().slice(0, 10), dayCount: 100,
+      });
+    });
+    await receive(t, s);
+    expect(await runScheduling(t)).toEqual(["throttled"]);
+    expect((await pacingOf(t, s))!.dayCount).toBe(100);
+    await cancelPending(t);
+  });
+});
+
+describe("sync de grupos", () => {
+  test("agenda foto de no máximo 5 grupos por execução", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const jids: string[] = [];
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      for (let i = 0; i < 8; i++) {
+        const jid = `1203630000000001${i}0@g.us`;
+        jids.push(jid);
+        const groupChatId = await ctx.db.insert("groupChats", {
+          organizationId: s.organizationId, channelConfigId: s.configId, jid, subject: `G${i}`,
+          monitored: true, createdAt: now, updatedAt: now,
+        });
+        const conversationId = await ctx.db.insert("conversations", {
+          organizationId: s.organizationId, kind: "group", externalChatId: jid, groupChatId, channel: "whatsapp",
+          channelConfigId: s.configId, status: "active", messageCount: 0, createdAt: now, updatedAt: now,
+        });
+        await ctx.db.patch(groupChatId, { conversationId });
+      }
+    });
+    await t.mutation(internal.groupChats.internalUpsertGroupsFromSync, {
+      channelConfigId: s.configId,
+      full: false,
+      groups: jids.map((jid, i) => ({
+        jid, subject: `G${i}`, isAnnounce: false, isLocked: false, isEphemeral: false, isCommunityParent: false,
+        participants: [], participantsCount: 0,
+      })),
+    });
+    expect(await pendingNames(t, "internalMaybeScheduleGroup")).toHaveLength(5);
+    await cancelPending(t);
+  });
+});

@@ -45,16 +45,27 @@ const keyArgs = {
 };
 
 /** Primeira resposta boa do gateway: zera a pausa/strikes do canal. */
-export async function noteGatewaySuccess(ctx: MutationCtx, channelConfigId: Id<"channelConfigs">): Promise<void> {
+export async function noteGatewaySuccess(
+  ctx: MutationCtx,
+  channelConfigId: Id<"channelConfigs">,
+  opts: { keepErrorStreak?: boolean } = {}
+): Promise<void> {
   const pacing = await ctx.db
     .query("channelAvatarPacing")
     .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
     .first();
   if (
     pacing &&
-    (pacing.strikes !== undefined || pacing.pausedUntil !== undefined || pacing.errorStreak !== undefined)
+    (pacing.strikes !== undefined ||
+      pacing.pausedUntil !== undefined ||
+      (!opts.keepErrorStreak && pacing.errorStreak !== undefined))
   ) {
-    await ctx.db.patch(pacing._id, { strikes: undefined, pausedUntil: undefined, errorStreak: undefined });
+    // `keepErrorStreak` (foto de GRUPO): a sequência de erros é contador de CONTATO.
+    await ctx.db.patch(pacing._id, {
+      strikes: undefined,
+      pausedUntil: undefined,
+      ...(opts.keepErrorStreak ? {} : { errorStreak: undefined }),
+    });
   }
 }
 

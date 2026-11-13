@@ -112,6 +112,23 @@ export function filterConversations<T extends FilterableConversation>(
   });
 }
 
+/**
+ * Conversa aberta que o servidor já não devolve (ex.: "Não lidas" some com ela
+ * ao ser marcada como lida): entra de volta na lista, na posição da hora da
+ * última mensagem (lista do mais recente ao mais antigo). Sem duplicar quando o
+ * servidor ainda a devolve; sem hora, vai ao topo.
+ */
+export function mergeOpenConversation<T extends { _id?: string; lastMessageAt?: number | null }>(
+  list: readonly T[],
+  open: T | null | undefined
+): T[] {
+  if (!open || list.some((c) => c._id === open._id)) return [...list];
+  const at = open.lastMessageAt;
+  const index = typeof at === "number" ? list.findIndex((c) => (c.lastMessageAt ?? 0) < at) : 0;
+  const pos = index === -1 ? list.length : index;
+  return [...list.slice(0, pos), open, ...list.slice(pos)];
+}
+
 /** Conversas com mensagem não lida no lote carregado (contador do chip "Não lidas"). */
 export function countUnreadConversations(list: readonly { unreadCount?: number | null }[]): number {
   return list.reduce((n, c) => n + ((c.unreadCount ?? 0) > 0 ? 1 : 0), 0);

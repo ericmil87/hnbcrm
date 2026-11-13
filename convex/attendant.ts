@@ -57,7 +57,7 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { createHandoffCore } from "./handoffs";
 import { coalesceKeys, createNotification } from "./lib/notify";
 import { attendantActive, isSticker, visionEnabledForOrg } from "./lib/mediaEnrichment";
-import { docReadOf, pdfHistoryText } from "./lib/pdfRead";
+import { docReadOf, isDocReadStale, PDF_READ_STALE_CODE, pdfHistoryText } from "./lib/pdfRead";
 import { campaignContextForConversation } from "./lib/campaignContext";
 // Simulador de GRUPO (F4): o mesmo prompt que o runtime do agente de grupo usa.
 // `lib/groupAgentCore.ts` é puro e NÃO importa este arquivo — é o que mantém a
@@ -1199,7 +1199,15 @@ export async function hasMediaAwaitingEnrichment(
     // espera o texto em vez de responder "não consigo abrir" (o defeito que o
     // dono viu). `done/scanned/failed/skipped` não seguram.
     if (m.contentType === "file") {
-      if (docReadOf(m.metadata)?.status === "pending") return true;
+      const doc = docReadOf(m.metadata);
+      if (isDocReadStale(doc, Date.now())) {
+        // Action morta (OOM/timeout): fecha como `failed`/STALE e não segura a fila.
+        await ctx.db.patch(m._id, {
+          metadata: { ...(m.metadata ?? {}), docRead: { ...doc!, status: "failed", at: Date.now(), error: PDF_READ_STALE_CODE } },
+        });
+        continue;
+      }
+      if (doc?.status === "pending") return true;
       continue;
     }
 

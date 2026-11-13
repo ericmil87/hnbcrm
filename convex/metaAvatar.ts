@@ -50,7 +50,20 @@ export const internalReserveMetaAvatar = internalMutation({
     const slot = planMetaAvatarSlot(pacing, now);
     if (!slot) {
       // Teto/pausa: não repete a cada mensagem (1 h, como "canal indisponível").
-      if (row) await ctx.db.patch(row._id, { nextCheckAt: Math.max(row.nextCheckAt, now + AVATAR_CONFIG_SKIP_BACKOFF_MS) });
+      if (row) {
+        await ctx.db.patch(row._id, { nextCheckAt: Math.max(row.nextCheckAt, now + AVATAR_CONFIG_SKIP_BACKOFF_MS) });
+      } else {
+        // Sem linha, cada evento refaria consulta + reserva: grava a linha com o recuo.
+        await ctx.db.insert("contactAvatars", {
+          organizationId: args.organizationId,
+          contactId: args.contactId,
+          channelConfigId: args.channelConfigId,
+          status: "none",
+          checkedAt: 0,
+          nextCheckAt: now + AVATAR_CONFIG_SKIP_BACKOFF_MS,
+          source: args.source,
+        });
+      }
       return false;
     }
     const pacingPatch = { day: slot.day, dayCount: slot.dayCount };

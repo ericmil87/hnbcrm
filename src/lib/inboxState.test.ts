@@ -13,6 +13,7 @@ import {
   decideConversationParamAction,
   emptyListMessage,
   filterConversations,
+  mergeOpenConversation,
   isHandoffPending,
   linkedMatchesView,
   listFilterKey,
@@ -399,5 +400,28 @@ describe("estado da IA na linha", () => {
     expect(isPlausibleConvexId("k17abcdefghijklmnopqrstuvwxyz0123".slice(0, 32))).toBe(true);
     expect(isPlausibleConvexId("<script>")).toBe(false);
     expect(isPlausibleConvexId(null)).toBe(false);
+  });
+});
+
+describe("mergeOpenConversation", () => {
+  const list: { _id: string; lastMessageAt?: number }[] = [
+    { _id: "a", lastMessageAt: 300 },
+    { _id: "b", lastMessageAt: 200 },
+    { _id: "c", lastMessageAt: 100 },
+  ];
+  it("sem conversa aberta devolve a lista", () => {
+    expect(mergeOpenConversation(list, null)).toEqual(list);
+  });
+  it("não duplica quando o servidor ainda a devolve", () => {
+    expect(mergeOpenConversation(list, { _id: "b", lastMessageAt: 200 }).map((c) => c._id)).toEqual(["a", "b", "c"]);
+  });
+  it("entra na posição da última mensagem", () => {
+    expect(mergeOpenConversation(list, { _id: "x", lastMessageAt: 250 }).map((c) => c._id)).toEqual(["a", "x", "b", "c"]);
+    expect(mergeOpenConversation(list, { _id: "x", lastMessageAt: 50 }).map((c) => c._id)).toEqual(["a", "b", "c", "x"]);
+    expect(mergeOpenConversation(list, { _id: "x", lastMessageAt: 999 }).map((c) => c._id)).toEqual(["x", "a", "b", "c"]);
+  });
+  it("sem hora vai ao topo; lista vazia", () => {
+    expect(mergeOpenConversation(list, { _id: "x" }).map((c) => c._id)[0]).toBe("x");
+    expect(mergeOpenConversation([], { _id: "x", lastMessageAt: 1 }).map((c) => c._id)).toEqual(["x"]);
   });
 });

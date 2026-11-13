@@ -88,6 +88,7 @@ export async function refreshMetaContactAvatar(
     const image = await downloadAvatarImage(profile.picUrl, {
       allowUrl: isAllowedMetaAvatarUrl,
       maxBytes: META_AVATAR_MAX_BYTES,
+      followOneRedirect: true, // lookaside.fbsbx.com responde 302 para o fbcdn
     });
     if (!image) return await record("error");
     storedId = await ctx.storage.store(new Blob([image.bytes], { type: image.mime }));

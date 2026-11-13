@@ -551,3 +551,51 @@ describe("JPEG embutido (puro)", () => {
     expect(pdfHistoryText({ ...base, metadata: { docRead: { status: "pending", at: 1 } } }, {})).toBeNull();
   });
 });
+
+describe("modo leitura do plano e pending órfão", () => {
+  test("org read_only/canceled/teste vencido: não agenda leitura nem grava pending", async () => {
+    const billings = [
+      { plan: "profissional", status: "read_only" },
+      { plan: "profissional", status: "canceled" },
+      { plan: "profissional", status: "trial", trialEndsAt: 1 },
+    ];
+    for (const billing of billings) {
+      const t = mk();
+      const seed = await seedOrg(t);
+      await t.run((ctx) => ctx.db.patch(seed.organizationId, { billing: { ...billing, updatedAt: Date.now() } as any }));
+      const messageId = await receivePdf(t, seed, await storeFile(t, seed, textPdf([COMPROVANTE])));
+      expect(await scheduledPdfReads(t)).toHaveLength(0);
+      expect((await getMsg(t, messageId))!.metadata!.docRead).toBeUndefined();
+    }
+  });
+
+  const makeStale = (t: TestConvex<typeof schema>, messageId: Id<"messages">) =>
+    t.run(async (ctx) => {
+      const m = (await ctx.db.get(messageId))!;
+      const docRead = { ...(m.metadata!.docRead as object), at: Date.now() - 11 * 60_000 };
+      await ctx.db.patch(messageId, { metadata: { ...m.metadata, docRead } });
+    });
+
+  test("pending com mais de 10 min vira failed/STALE ao ser encontrado pelo atendente e libera a fila", async () => {
+    const t = mk();
+    const seed = await seedOrg(t);
+    const messageId = await receivePdf(t, seed, await storeFile(t, seed, textPdf([COMPROVANTE])));
+    const awaiting = () =>
+      t.run((ctx) => hasMediaAwaitingEnrichment(ctx as any, seed.conversationId, 0, { visionEnabled: false }));
+    expect(await awaiting()).toBe(true);
+    await makeStale(t, messageId);
+    expect(await awaiting()).toBe(false);
+    expect((await getMsg(t, messageId))!.metadata!.docRead).toMatchObject({ status: "failed", error: "STALE" });
+  });
+
+  test("o claim de um pending órfão (sem force) fecha como STALE e não relê", async () => {
+    const t = mk();
+    const seed = await seedOrg(t);
+    const messageId = await receivePdf(t, seed, await storeFile(t, seed, textPdf([COMPROVANTE])));
+    await makeStale(t, messageId);
+    expect(await t.mutation(internal.pdfReadState.internalClaimPdfRead, { messageId })).toBe(false);
+    expect((await getMsg(t, messageId))!.metadata!.docRead).toMatchObject({ status: "failed", error: "STALE" });
+    // reprocesso (force) continua reabrindo
+    expect(await t.mutation(internal.pdfReadState.internalClaimPdfRead, { messageId, force: true })).toBe(true);
+  });
+});

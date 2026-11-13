@@ -20,7 +20,6 @@ import {
   AVATAR_REFUSED_BACKOFF_MS,
   avatarPauseMs,
   computeNextCheckAt,
-  pacingAfterAvatarError,
 } from "./lib/contactAvatar";
 import { classifyAvatarChannel } from "./lib/contactAvatarOps";
 import { groupAvatarConversationPatch } from "./lib/groupAvatar";
@@ -214,7 +213,7 @@ export const internalApplyGroupAvatar = internalMutation({
       if (effect.write) await ctx.db.patch(conversation._id, { groupAvatarUrl: effect.groupAvatarUrl });
     }
     await stampGroupAvatar(ctx, group, { avatarNextCheckAt: nextCheckAt, pictureUrl: url });
-    await noteGatewaySuccess(ctx, args.channelConfigId);
+    await noteGatewaySuccess(ctx, args.channelConfigId, { keepErrorStreak: true });
     return true;
   },
 });
@@ -293,7 +292,7 @@ export const internalRecordGroupAvatarCheck = internalMutation({
         const nextCheckAt = computeNextCheckAt("ok", 0, now);
         await ctx.db.patch(row._id, { status: "ok", checkedAt: now, nextCheckAt, failures: undefined, pendingSince: undefined });
         if (ownGroup) await stampGroupAvatar(ctx, ownGroup, { avatarNextCheckAt: nextCheckAt });
-        await noteGatewaySuccess(ctx, args.channelConfigId);
+        await noteGatewaySuccess(ctx, args.channelConfigId, { keepErrorStreak: true });
         return null;
       }
       case "hidden":
@@ -303,7 +302,7 @@ export const internalRecordGroupAvatarCheck = internalMutation({
           checkedAt: now,
           nextCheckAt: now + AVATAR_ABSENT_RENEW_MS,
         });
-        await noteGatewaySuccess(ctx, args.channelConfigId);
+        await noteGatewaySuccess(ctx, args.channelConfigId, { keepErrorStreak: true });
         return null;
       case "rate_limited": {
         const pacing = await pacingOf();
@@ -327,10 +326,8 @@ export const internalRecordGroupAvatarCheck = internalMutation({
       }
       case "refused":
       case "error": {
-        if (args.outcome === "error") {
-          const pacing = await pacingOf();
-          if (pacing) await ctx.db.patch(pacing._id, pacingAfterAvatarError(pacing, now));
-        }
+        // Erro de GRUPO não conta no disjuntor do canal (resposta do gateway para
+        // grupo/comunidade não medida): só o recuo por grupo abaixo. 429 pausa o canal.
         const failures = Math.min((row.failures ?? 0) + 1, 10);
         const nextCheckAt =
           args.outcome === "refused" ? now + AVATAR_REFUSED_BACKOFF_MS : computeNextCheckAt("error", failures, now);

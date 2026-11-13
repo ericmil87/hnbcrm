@@ -25,6 +25,8 @@ export const EMBEDDED_JPEG_MIN_BYTES = 8 * 1024;
 const MIN_SIDE_PX = 200;
 const MAX_STREAMS_SCANNED = 2000;
 const MAX_DICT_CHARS = 4000;
+/** Teto de caracteres varridos para frente (`endstream`) na soma de todos os streams: PDF hostil não custa segundos. */
+const MAX_SCAN_CHARS = 64 * 1024 * 1024;
 
 function latin1(bytes: Uint8Array): string {
   const parts: string[] = [];
@@ -68,14 +70,17 @@ export function findFirstEmbeddedJpeg(pdf: Uint8Array, maxBytes: number): Embedd
   const text = latin1(pdf);
   const re = /stream(?:\r\n|\n)/g;
   let seen = 0;
+  let scanned = 0;
   for (let m = re.exec(text); m && seen < MAX_STREAMS_SCANNED; m = re.exec(text)) {
     seen++;
     const streamAt = m.index;
     // "endstream" também casa com /stream/: ignore.
     if (streamAt >= 3 && text.slice(streamAt - 3, streamAt) === "end") continue;
-    const objAt = text.lastIndexOf("obj", streamAt);
-    if (objAt < 0 || streamAt - objAt > MAX_DICT_CHARS) continue;
-    const dict = text.slice(objAt, streamAt);
+    // Janela de MAX_DICT_CHARS antes do stream (lastIndexOf sem janela voltaria até o início do arquivo).
+    const windowStart = Math.max(0, streamAt - MAX_DICT_CHARS);
+    const objRel = text.slice(windowStart, streamAt).lastIndexOf("obj");
+    if (objRel < 0) continue;
+    const dict = text.slice(windowStart + objRel, streamAt);
     if (!/\/Subtype\s*\/Image\b/.test(dict)) continue;
     if (/\/ImageMask\s+true\b/.test(dict)) continue;
     const filters = filterNames(dict);
@@ -86,7 +91,8 @@ export function findFirstEmbeddedJpeg(pdf: Uint8Array, maxBytes: number): Embedd
     if (width < MIN_SIDE_PX || height < MIN_SIDE_PX) continue;
     const start = streamAt + m[0].length;
     const end = text.indexOf("endstream", start);
-    if (end < 0) continue;
+    scanned += (end < 0 ? text.length : end) - start;
+    if (end < 0 || scanned > MAX_SCAN_CHARS) break; // sem `endstream` aqui = sem nos próximos
     let stop = end;
     while (stop > start && (text.charCodeAt(stop - 1) === 0x0a || text.charCodeAt(stop - 1) === 0x0d)) stop--;
     const size = stop - start;

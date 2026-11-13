@@ -10,6 +10,7 @@ import {
   Mic,
   MoreVertical,
   SlidersHorizontal,
+  FileText,
 } from "lucide-react";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Avatar } from "@/components/ui/Avatar";
@@ -27,7 +28,7 @@ import {
 } from "@/components/inbox/ConversationListItem";
 import type { InboxChannelAccount, InboxFilterState } from "@/lib/channelAccounts";
 import { formatListTime, formatMonthValue } from "@/lib/format";
-import { inboxSearchState, searchCountLabel, snippetWindow } from "@/lib/inboxSearch";
+import { inboxSearchState, readingMatchInfo, searchCountLabel, snippetWindow } from "@/lib/inboxSearch";
 import {
   ContactSearchRow,
   SearchSectionHeader,
@@ -52,6 +53,7 @@ export interface InboxSearchResult {
   snippetText: string;
   matchedTranscript?: boolean;
   matchedImage?: boolean;
+  contentType?: string;
 }
 
 export interface ConversationListLabelOption extends ConversationListLabel {
@@ -237,9 +239,12 @@ function SearchResults({ search, now }: { search: ConversationListSearch; now: n
                   {result.matchedTranscript && (
                     <Mic size={14} className="shrink-0" aria-label="Encontrado na transcrição" />
                   )}
-                  {result.matchedImage && (
-                    <ImageIcon size={14} className="shrink-0" aria-label="Encontrado na leitura da imagem" />
-                  )}
+                  {result.matchedImage &&
+                    (readingMatchInfo(result.contentType).kind === "file" ? (
+                      <FileText size={14} className="shrink-0" aria-label={readingMatchInfo(result.contentType).label} />
+                    ) : (
+                      <ImageIcon size={14} className="shrink-0" aria-label={readingMatchInfo(result.contentType).label} />
+                    ))}
                   <span className="truncate">{renderSnippet(result.snippetText, term.trim())}</span>
                 </span>
               </span>

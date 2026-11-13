@@ -25,6 +25,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { orgAiActive } from "./agentSecurity";
+import { resolveEntitlements } from "./entitlements";
 import { isPdfCandidate, PDF_READ_MAX_BYTES, pdfLabelName } from "./pdfRead";
 
 type OrgDoc = Doc<"organizations"> | null;
@@ -130,7 +131,7 @@ export async function scheduleAudioTranscription(
  * Ponto único de agendamento da LEITURA DE PDF (texto, sem LLM): chamado pelos
  * ingests de mensagem com anexo, nos dois sentidos (a equipe mandar uma tabela
  * de preços também vale: a IA passa a saber o que foi enviado; nunca acorda a
- * IA). Gate de produto: `attendantActive(org)` — extrair texto não custa
+ * IA). Gate de produto: `attendantActive(org)` + plano fora do modo leitura (`aiAllowed`) — extrair texto não custa
  * modelo, então não depende de `visionEnabled` (opt-in pago); só o ramo do PDF
  * escaneado exige a visão, decidido na action. Só agenda para PDF por mime/nome
  * (os bytes `%PDF-` a action confere) e grava `metadata.docRead.status:"pending"`
@@ -155,6 +156,8 @@ export async function schedulePdfRead(
   if (!file || !isPdfCandidate(file.mimeType, file.name)) return false;
   const org = await ctx.db.get(file.organizationId);
   if (!attendantActive(org)) return false;
+  // Modo leitura do plano (teste vencido/read_only/canceled): a IA não responde, não lê.
+  if (!resolveEntitlements(org!, Date.now()).aiAllowed) return false;
   const message = await ctx.db.get(args.messageId);
   if (!message || message.organizationId !== file.organizationId) return false;
   if (message.metadata?.docRead) return false;

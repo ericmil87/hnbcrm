@@ -16,6 +16,17 @@ export const PDF_READ_MAX_CHARS = 6000;
 export const PDF_READ_OUTBOUND_HISTORY_CHARS = 2000;
 /** Claim em voo não é refeito antes disto (mesmo molde da visão). */
 export const PDF_READ_PENDING_RETRY_AFTER_MS = 2 * 60 * 1000;
+/**
+ * `pending` há mais que isto (desde `at`, que o claim preserva) = a action morreu (OOM/timeout):
+ * quem encontrar o estado grava `failed`/`STALE` (sem cron). Texto nunca chega depois disso.
+ */
+export const PDF_READ_STALE_AFTER_MS = 10 * 60 * 1000;
+export const PDF_READ_STALE_CODE = "STALE";
+
+/** Leitura `pending` órfã? (pura; `now` do chamador) */
+export function isDocReadStale(doc: { status: string; at: number } | undefined, now: number): boolean {
+  return doc?.status === "pending" && now - doc.at > PDF_READ_STALE_AFTER_MS;
+}
 
 export type DocReadStatus = "pending" | "done" | "scanned" | "failed" | "skipped";
 

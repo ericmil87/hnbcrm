@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
+import { chipsWheelDelta } from "@/lib/chipsWheel";
 import { cn } from "@/lib/utils";
 
 export interface FilterChip {
@@ -37,9 +38,10 @@ export function FilterChips({ chips, onToggle, ariaLabel, className }: FilterChi
     const el = barRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
-      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX) || el.scrollWidth <= el.clientWidth) return;
+      const delta = chipsWheelDelta(e, el);
+      if (delta === null) return;
       e.preventDefault();
-      el.scrollLeft += e.deltaY;
+      el.scrollLeft += delta;
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);

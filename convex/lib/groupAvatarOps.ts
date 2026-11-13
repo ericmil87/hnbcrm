@@ -18,10 +18,12 @@ import {
   AVATAR_CONFIG_SKIP_BACKOFF_MS,
   AVATAR_NON_BRIDGE_BACKOFF_MS,
   AVATAR_PENDING_TTL_MS,
+  avatarDayKey,
   isAvatarCheckDue,
   planAvatarSlot,
 } from "./contactAvatar";
 import {
+  GROUP_AVATAR_DAILY_CAP,
   GROUP_AVATAR_THROTTLE_STAMP_MS,
   groupAvatarEligible,
   groupAvatarStampDue,
@@ -108,7 +110,9 @@ export async function scheduleGroupAvatarFetch(
     .query("channelAvatarPacing")
     .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
     .first();
-  const slot = planAvatarSlot(pacing, now, Math.random());
+  // Fatia do teto diário para grupos: o resto dos 300 fica para contatos.
+  const groupUsed = pacing?.day === avatarDayKey(now) ? (pacing.dayCount ?? 0) : 0;
+  const slot = groupUsed >= GROUP_AVATAR_DAILY_CAP ? null : planAvatarSlot(pacing, now, Math.random());
   if (!slot) {
     await stampGroupAvatar(ctx, group, { avatarNextCheckAt: now + GROUP_AVATAR_THROTTLE_STAMP_MS });
     return "throttled";

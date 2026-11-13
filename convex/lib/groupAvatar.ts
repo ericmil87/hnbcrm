@@ -39,6 +39,15 @@ export function groupAvatarStampDue(group: { avatarNextCheckAt?: number }, now: 
   return group.avatarNextCheckAt === undefined || now >= group.avatarNextCheckAt;
 }
 
+/**
+ * Fatia do teto diário do canal (`AVATAR_DAILY_CAP_PER_CHANNEL`, compartilhado com a foto
+ * do contato) que a foto de GRUPO pode usar: com `dayCount` >= isto, buscas de grupo param
+ * no dia e o resto fica para contatos.
+ */
+export const GROUP_AVATAR_DAILY_CAP = 100;
+/** Grupos que cada execução do sync de grupos pode agendar para foto (o resto vem por mensagem/abertura/próximo sync). */
+export const GROUP_AVATAR_SYNC_MAX_SCHEDULES = 5;
+
 /** Recuo do carimbo quando o canal não pode buscar agora (teto/pausa/fila). */
 export const GROUP_AVATAR_THROTTLE_STAMP_MS = 15 * 60_000;
 

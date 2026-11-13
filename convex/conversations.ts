@@ -481,18 +481,22 @@ export const getConversations = query({
       ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR)
       : limit;
     let conversations;
-    // Filtro por ETAPA: parte dos LEADS da etapa (índice by_organization_and_stage,
-    // mais novos primeiro, teto STAGE_FILTER_LEAD_CAP) e vai às conversas de cada um
-    // por `by_lead`; os leads já lidos viram o `leadMap` (sem reler). Não depende de
-    // as conversas estarem entre as 200 mais recentes da org.
+    // Filtro por ETAPA: lê até STAGE_FILTER_LEAD_CAP + 1 leads da etapa (índice
+    // by_organization_and_stage). Etapa com ATÉ o teto: caminho exato (conversas de
+    // cada lead por `by_lead`, os leads lidos viram o `leadMap`; contatos só dos
+    // leads com conversa). Acima do teto: cai nos ramos gerais abaixo (pós-filtro por
+    // `lead.stageId` sobre as conversas mais recentes, piso de 200), que privilegia
+    // quem está ativo; ali "lote cheio = há mais" segue valendo (slice final).
     let stageLeadMap: Map<string, any> | null = null;
-    if (stageOnly) {
-      const stageLeads = await ctx.db.query("leads")
+    const stageLeads = stageOnly
+      ? await ctx.db.query("leads")
         .withIndex("by_organization_and_stage", (q) =>
           q.eq("organizationId", args.organizationId).eq("stageId", args.stageId!)
         )
         .order("desc")
-        .take(STAGE_FILTER_LEAD_CAP);
+        .take(STAGE_FILTER_LEAD_CAP + 1)
+      : [];
+    if (stageOnly && stageLeads.length <= STAGE_FILTER_LEAD_CAP) {
       const perLead = await Promise.all(stageLeads.map((l) =>
         ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", l._id)).take(10)
       ));
@@ -550,7 +554,7 @@ export const getConversations = query({
           q.eq("organizationId", args.organizationId).eq("archivedAt", undefined).eq("hasUnread", true)
         )
         .order("desc")
-        .take(limit);
+        .take(readLimit); // com pós-filtro `readLimit` é o piso; sem, é `limit`
     } else if (unreadByIndex) {
       // "Não lidas" nas ativas: só conversas com `unreadCount > 0` (o take não
       // gasta vagas com lidas). A ordem do índice é por contador; o sort final
@@ -609,7 +613,10 @@ export const getConversations = query({
 
     // Batch fetch related data
     const leadMap = stageLeadMap ?? await batchGet(ctx.db, conversations.map(c => c.leadId));
-    const leads = Array.from(leadMap.values());
+    // Caminho de etapa: contatos/responsáveis só dos leads que têm conversa no resultado.
+    const leads: any[] = stageLeadMap
+      ? conversations.map(c => (c.leadId ? stageLeadMap!.get(c.leadId) : undefined)).filter(Boolean)
+      : Array.from(leadMap.values());
     const [contactMap, assigneeMap, extrasMap, aiCtx] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),

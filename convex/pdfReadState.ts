@@ -13,7 +13,9 @@ import {
   DocReadMeta,
   docReadOf,
   isPdfCandidate,
+  isDocReadStale,
   PDF_READ_PENDING_RETRY_AFTER_MS,
+  PDF_READ_STALE_CODE,
   pdfLabelName,
 } from "./lib/pdfRead";
 
@@ -69,6 +71,13 @@ export const internalClaimPdfRead = internalMutation({
     const now = Date.now();
     if (existing && !args.force) {
       if (existing.status !== "pending") return false;
+      if (isDocReadStale(existing, now)) {
+        // A action anterior morreu: não reabre (o atendente já seguiu sem o texto).
+        await ctx.db.patch(args.messageId, {
+          metadata: { ...(message.metadata ?? {}), docRead: { ...existing, status: "failed", at: now, error: PDF_READ_STALE_CODE } },
+        });
+        return false;
+      }
       if (existing.claimedAt !== undefined && now - existing.claimedAt < PDF_READ_PENDING_RETRY_AFTER_MS) return false;
     }
     const metadata = { ...(message.metadata ?? {}) };

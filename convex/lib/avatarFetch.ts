@@ -17,15 +17,29 @@ import {
 export type DownloadedAvatar = { bytes: Uint8Array; mime: AvatarMime; size: number };
 
 /**
- * Baixa a imagem: sem seguir redirecionamento (3xx/opaco = erro), host do destino
- * conferido de novo, `Content-Length` e corpo lido com teto, tipo pelos BYTES.
+ * Baixa a imagem: sem seguir redirecionamento (3xx/opaco = erro; só `followOneRedirect`,
+ * usado pela Meta, segue UM, com o host de destino validado por `allowUrl` antes de
+ * buscar; o segundo redirect é erro), host do destino conferido de novo, `Content-Length` e corpo lido com teto, tipo pelos BYTES.
  * `null` em qualquer recusa ou falha de rede.
  */
 export async function downloadAvatarImage(
   url: string,
-  opts: { allowUrl: (url: string) => boolean; maxBytes: number }
+  opts: { allowUrl: (url: string) => boolean; maxBytes: number; followOneRedirect?: boolean }
 ): Promise<DownloadedAvatar | null> {
-  const img = await fetch(url, { redirect: "manual", signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
+  const get = (u: string) => fetch(u, { redirect: "manual", signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS) });
+  let img = await get(url);
+  if (opts.followOneRedirect && img.status >= 300 && img.status < 400) {
+    const location = img.headers.get("location");
+    await img.body?.cancel().catch(() => undefined);
+    let target: string | null = null;
+    try {
+      target = location ? new URL(location, url).href : null;
+    } catch {
+      target = null;
+    }
+    if (!target || !opts.allowUrl(target)) return null;
+    img = await get(target);
+  }
   const declared = Number(img.headers.get("content-length") ?? "0");
   if (img.status < 200 || img.status >= 300 || declared > opts.maxBytes || (img.url && !opts.allowUrl(img.url))) {
     await img.body?.cancel().catch(() => undefined);

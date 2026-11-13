@@ -815,7 +815,16 @@ export const internalIngestEvent = internalAction({
       metadata,
     });
 
-    // Foto do contato: depois de gravar a mensagem (best-effort, nunca lança). Reusa o
+    // F3: "pare"/"parar"/"stop"/"sair" sozinho na mensagem = opt-out do
+    // follow-up da IA para ESTA identidade. Não silencia o atendente.
+    if (event.kind === "message" && text && isMetaOptOutKeyword(text)) {
+      await ctx.runMutation(internal.metaMessaging.internalMarkIdentityOptOut, {
+        identityId: routed.identityId,
+        source: "keyword",
+      });
+    }
+    // Foto do contato: por ÚLTIMO (depois da mensagem e do opt-out, que não esperam ~14 s de
+    // rede; best-effort, nunca lança). Reusa o
     // perfil acima quando ele já foi buscado; senão refaz a chamada (1 por contato/semana).
     if (routed.avatarDue && config.metaConnectionId) {
       await refreshMetaContactAvatar(ctx, {
@@ -829,14 +838,6 @@ export const internalIngestEvent = internalAction({
       });
     }
 
-    // F3: "pare"/"parar"/"stop"/"sair" sozinho na mensagem = opt-out do
-    // follow-up da IA para ESTA identidade. Não silencia o atendente.
-    if (event.kind === "message" && text && isMetaOptOutKeyword(text)) {
-      await ctx.runMutation(internal.metaMessaging.internalMarkIdentityOptOut, {
-        identityId: routed.identityId,
-        source: "keyword",
-      });
-    }
     return null;
   },
 });
