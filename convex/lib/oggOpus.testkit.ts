@@ -1,13 +1,16 @@
 /**
  * Test-only builder of a tiny, SYNTHETIC Ogg/Opus byte stream (no real audio):
  * OpusHead, OpusTags, then one page per audio packet with the given sizes. The
- * packet payloads are zeros and the page CRC is left at 0, which is enough for
+ * packet payloads are a TOC byte plus zeros and the page CRC is left at 0, which is enough for
  * `readOggOpus` (it reads structure, not audio). Lives outside `*.test.ts` so
  * two test files can share it; nothing in production imports it.
  */
 const SAMPLES_PER_PACKET = 960; // 20 ms at 48 kHz
 
-function page(packet: Uint8Array, granule: number, sequence: number): Uint8Array {
+/** TOC of a CELT fullband 20 ms mono packet with one frame: 960 samples. */
+const OPUS_TOC_CELT_20MS = 0xf8;
+
+function page(packet: Uint8Array, granule: number, sequence: number, last = false): Uint8Array {
   const lacing: number[] = [];
   let left = packet.length;
   while (left >= 255) {
@@ -17,6 +20,7 @@ function page(packet: Uint8Array, granule: number, sequence: number): Uint8Array
   lacing.push(left);
   const out = new Uint8Array(27 + lacing.length + packet.length);
   out.set([0x4f, 0x67, 0x67, 0x53], 0); // "OggS"
+  out[5] = sequence === 0 ? 2 : last ? 4 : 0; // BOS / EOS
   const view = new DataView(out.buffer);
   view.setUint32(6, granule >>> 0, true);
   view.setUint32(10, Math.floor(granule / 4294967296), true);
@@ -28,7 +32,15 @@ function page(packet: Uint8Array, granule: number, sequence: number): Uint8Array
   return out;
 }
 
-export function buildSyntheticOggOpus(packetSizes: readonly number[], preSkip = 312): Uint8Array {
+/**
+ * `granuleOf(i)` = granule of the page that holds audio packet `i` (0-based).
+ * Default: the exact running sample count, which is what a valid stream has.
+ */
+export function buildSyntheticOggOpus(
+  packetSizes: readonly number[],
+  preSkip = 312,
+  granuleOf: (packetIndex: number) => number = (i) => (i + 1) * SAMPLES_PER_PACKET
+): Uint8Array {
   const head = new Uint8Array(19);
   head.set(new TextEncoder().encode("OpusHead"), 0);
   head[8] = 1; // version
@@ -39,7 +51,9 @@ export function buildSyntheticOggOpus(packetSizes: readonly number[], preSkip = 
   tags.set(new TextEncoder().encode("OpusTags"), 0);
   const pages = [page(head, 0, 0), page(tags, 0, 1)];
   packetSizes.forEach((size, i) => {
-    pages.push(page(new Uint8Array(size), preSkip + (i + 1) * SAMPLES_PER_PACKET, i + 2));
+    const packet = new Uint8Array(size);
+    packet[0] = OPUS_TOC_CELT_20MS;
+    pages.push(page(packet, granuleOf(i), i + 2, i === packetSizes.length - 1));
   });
   const total = pages.reduce((n, p) => n + p.length, 0);
   const out = new Uint8Array(total);

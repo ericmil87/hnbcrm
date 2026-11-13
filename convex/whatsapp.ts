@@ -49,7 +49,7 @@ import {
 } from "./lib/bridgeSend";
 import { toDataUri } from "./lib/bridgeMedia";
 import { convertVoiceNoteToOggOpus } from "./lib/voiceNoteConvert";
-import { readOggOpus } from "./lib/oggOpus";
+import { readOggOpus, repairOggOpusTimeline } from "./lib/oggOpus";
 import { checkMetaWhatsappAudio } from "./lib/metaWhatsappAudio";
 import { closeTypingPresenceBracket, openTypingPresenceBracket } from "./lib/bridgePresence";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
@@ -663,7 +663,12 @@ async function sendViaBridge(
       // Duração e waveform: a resposta da IA já traz as suas (medidas do PCM); a
       // gravação humana tira as dela do próprio ogg que vai sair. Sem `Seconds`
       // o WhatsApp mostra a nota sem duração e não deixa tocar (prod, 13/11/2026).
-      const oggBytes = converted ?? (bridgeAudioNeedsConversion(file.mimeType) ? null : bytes);
+      const rawOgg = converted ?? (bridgeAudioNeedsConversion(file.mimeType) ? null : bytes);
+      // O conversor devolve, para gravação do navegador, um ogg com a marcação de
+      // tempo das páginas fora da regra (RFC 7845 §4.5): o WhatsApp mostra a nota e
+      // não toca. `repairOggOpusTimeline` regrava a marcação; arquivo já certo (voz
+      // da IA) volta igual e arquivo ilegível segue como veio.
+      const oggBytes = rawOgg ? repairOggOpusTimeline(rawOgg) ?? rawOgg : null;
       const measured = message.metadata?.voiceNote ? null : oggBytes ? readOggOpus(oggBytes) : null;
       const plan = planBridgeAudioSend({
         fileMimeType: file.mimeType,
@@ -671,7 +676,7 @@ async function sendViaBridge(
         converted: converted !== null,
         voiceNote: message.metadata?.voiceNote ?? (measured ? { seconds: measured.seconds, waveform: measured.waveform } : undefined),
       });
-      if (plan.useConverted && converted) bytes = converted;
+      if (plan.kind === "audio" && oggBytes) bytes = oggBytes;
       voiceFields = plan.voiceFields;
       sendMime = plan.sendMime;
       sendKind = plan.kind;
