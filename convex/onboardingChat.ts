@@ -275,6 +275,8 @@ export const ackMaterialsNotice = mutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     if (session.materialsNoticeAckAt !== undefined) return { acknowledgedAt: session.materialsNoticeAckAt };
     const now = Date.now();
     await ctx.db.patch(session._id, { materialsNoticeAckAt: now, materialsNoticeAckBy: member._id, updatedAt: now });
@@ -329,6 +331,8 @@ export const ensureEmailCodeSent = mutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     const maskedEmail = maskEmailForDisplay(user.email) || null;
     if (typeof user.emailVerificationTime === "number") return { sent: false, reason: "already_verified" as const, maskedEmail };
     if (session.emailCodeAutoSentAt !== undefined) return { sent: false, reason: "already_requested" as const, maskedEmail };
@@ -619,6 +623,8 @@ export const internalAppendMessage = internalMutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     const max = args.role === "assistant" ? REPLY_MAX + 200 : MESSAGE_TEXT_MAX;
     return await ctx.db.insert("onboardingMessages", {
       organizationId: args.organizationId,
@@ -846,6 +852,8 @@ export const internalAddPendingMaterial = internalMutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     const list = session.pendingMaterials ?? [];
     if (list.some((m) => m.url === args.url)) return { stored: true, count: list.length };
     if (list.length >= PENDING_MATERIALS_MAX) return { stored: false, count: list.length };

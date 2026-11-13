@@ -759,7 +759,7 @@ export const internalSaveDraft = internalMutation({
   },
   returns: saveResultValidator,
   handler: async (ctx, args) => {
-    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    const session = await loadActiveSessionOfOrg(ctx, args.organizationId, args.sessionId);
     return await writeDraft(ctx, {
       session,
       draft: args.draft,
@@ -785,7 +785,7 @@ export const internalUpdateSummary = internalMutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    const session = await loadActiveSessionOfOrg(ctx, args.organizationId, args.sessionId);
     const delta = args.messageCountDelta ?? 0;
     if (!Number.isInteger(delta) || delta < 0 || delta > 100) {
       throw new ConvexError("messageCountDelta deve ser um inteiro de 0 a 100");
@@ -822,7 +822,7 @@ export const internalApproveSection = internalMutation({
   returns: v.object({ status: v.union(v.literal("approved"), v.literal("unchanged"), v.literal("stale"), v.literal("no_draft")) }),
   handler: async (ctx, args) => {
     if (!(APPROVAL_SECTIONS as readonly string[]).includes(args.section)) throw new ConvexError("Seção inválida");
-    const session = await loadSessionOfOrg(ctx, args.organizationId, args.sessionId);
+    const session = await loadActiveSessionOfOrg(ctx, args.organizationId, args.sessionId);
     if (!session.draft) return { status: "no_draft" as const };
     const section = args.section as ApprovalSection;
     const current = sectionSignature(session.draft, section);
