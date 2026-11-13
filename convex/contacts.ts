@@ -1,6 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import { searchContactsByText } from "./lib/contactTextSearch";
 import { deleteFileRow } from "./lib/storageUsage";
+import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
+import { deleteContactAvatarArtifacts, manualAvatarFields } from "./lib/contactAvatarOps";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
@@ -258,6 +260,9 @@ export const createContact = mutation({
       tags: args.tags || [],
       searchText: searchText || undefined,
       photoFileId: args.photoFileId,
+      ...(args.photoFileId
+        ? await manualAvatarFields(ctx, { organizationId: args.organizationId, photoFileId: args.photoFileId })
+        : {}),
       bio: args.bio,
       linkedinUrl: args.linkedinUrl,
       instagramUrl: args.instagramUrl,
@@ -408,6 +413,14 @@ export const updateContact = mutation({
 
     await ctx.db.patch(args.contactId, {
       ...changes,
+      // Foto manual mudou: `avatarUrl` (o que a lista mostra) acompanha.
+      ...("photoFileId" in changes
+        ? await manualAvatarFields(ctx, {
+            organizationId: contact.organizationId,
+            contactId: contact._id,
+            photoFileId: changes.photoFileId,
+          })
+        : {}),
       searchText: searchText || undefined,
       // Número novo = nova pergunta ao WhatsApp (lib/whatsappCheck).
       ...numberEditClears(contact, changes),
@@ -468,6 +481,8 @@ export const deleteContact = mutation({
     });
 
     await deleteMetaIdentitiesForContact(ctx, args.contactId);
+    // LGPD: foto do WhatsApp (linha lateral + arquivo + blob) e foto manual.
+    await deleteContactAvatarArtifacts(ctx, contact);
     await ctx.db.delete(args.contactId);
     return null;
   },
@@ -660,6 +675,9 @@ export const internalCreateContact = internalMutation({
       tags: args.tags || [],
       searchText: searchText || undefined,
       photoFileId: args.photoFileId,
+      ...(args.photoFileId
+        ? await manualAvatarFields(ctx, { organizationId: args.organizationId, photoFileId: args.photoFileId })
+        : {}),
       bio: args.bio,
       linkedinUrl: args.linkedinUrl,
       instagramUrl: args.instagramUrl,
@@ -745,6 +763,14 @@ export const internalUpdateContact = internalMutation({
 
     await ctx.db.patch(args.contactId, {
       ...changes,
+      // Foto manual mudou: `avatarUrl` (o que a lista mostra) acompanha.
+      ...("photoFileId" in changes
+        ? await manualAvatarFields(ctx, {
+            organizationId: contact.organizationId,
+            contactId: contact._id,
+            photoFileId: changes.photoFileId,
+          })
+        : {}),
       searchText: searchText || undefined,
       // Número novo = nova pergunta ao WhatsApp (lib/whatsappCheck).
       ...numberEditClears(contact, changes),
@@ -849,17 +875,28 @@ export const updateContactPhoto = mutation({
     const userMember = await requireAuth(ctx, contact.organizationId);
     const now = Date.now();
 
-    // Delete old photo file if exists
-    if (contact.photoFileId) {
+    if (args.photoFileId) {
+      const next = await ctx.db.get(args.photoFileId);
+      if (!next || next.organizationId !== contact.organizationId) throw new Error("File not found");
+    }
+
+    // Foto manual antiga: pela porta de exclusão (o blob só cai sem outra referência).
+    if (contact.photoFileId && contact.photoFileId !== args.photoFileId) {
       const oldFile = await ctx.db.get(contact.photoFileId);
-      if (oldFile) {
-        await ctx.storage.delete(oldFile.storageId);
+      if (oldFile && oldFile.organizationId === contact.organizationId) {
+        await deleteBlobIfUnreferenced(ctx, oldFile);
         await deleteFileRow(ctx, oldFile);
       }
     }
 
+    // A manual vence; ao remover, cai para a foto do WhatsApp guardada (ou nada).
     await ctx.db.patch(args.contactId, {
       photoFileId: args.photoFileId,
+      ...(await manualAvatarFields(ctx, {
+        organizationId: contact.organizationId,
+        contactId: contact._id,
+        photoFileId: args.photoFileId,
+      })),
       updatedAt: now,
     });
 

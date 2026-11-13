@@ -306,6 +306,14 @@ export const webhookReceive = httpAction(async (ctx, request) => {
         newContent: parsed.edit.newContent,
       });
     }
+  } else if (parsed.kind === "picture") {
+    // Foto de perfil trocada/removida (1 a 1): só marca vencida ou remove a
+    // guardada; NUNCA busca no evento. Contato desconhecido = ignora sem escrever.
+    await ctx.runMutation(internal.contactAvatar.internalApplyPictureEvent, {
+      channelConfigId: config._id,
+      phone: parsed.picture.phone,
+      remove: parsed.picture.remove,
+    });
   } else if (parsed.kind === "chat_presence") {
     // Contato digitando/parou — patch barato na conversa, some via TTL no cliente.
     await ctx.runMutation(internal.conversations.internalSetContactPresence, {

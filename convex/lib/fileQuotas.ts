@@ -30,20 +30,30 @@ function getOrganizationTier(_organizationId: Id<"organizations">): "free" | "pr
   return "free";
 }
 
-/** Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `cap` docs. */
+/**
+ * Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `4 × cap` docs.
+ * Foto de perfil do contato (`metadata.kind:"contact_avatar"`, lib/contactAvatarOps)
+ * NÃO conta: é automática e, contada, 100 contatos novos no dia recusariam a
+ * mídia recebida e os uploads da equipe.
+ */
 async function countUploadsLast24h(
   ctx: QueryCtx,
   organizationId: Id<"organizations">,
   cap: number
 ): Promise<number> {
   const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-  const recent = await ctx.db
+  let counted = 0;
+  let read = 0;
+  for await (const file of ctx.db
     .query("files")
     .withIndex("by_organization_and_created", (q) =>
       q.eq("organizationId", organizationId).gt("createdAt", oneDayAgo)
-    )
-    .take(cap);
-  return recent.length;
+    )) {
+    read += 1;
+    if ((file.metadata as { kind?: unknown } | undefined)?.kind !== "contact_avatar") counted += 1;
+    if (counted >= cap || read >= cap * 4) break;
+  }
+  return counted;
 }
 
 /**
@@ -178,4 +188,20 @@ export async function getStorageStats(
     uploadsLast24h: usage.uploadsLast24h,
     dailyQuota: quota.uploadsPerDay,
   };
+}
+
+/**
+ * Quota da foto de perfil do contato (automática): só o TOTAL da org vale — o
+ * teto diário de uploads e o teto por arquivo não se aplicam. NÃO lança.
+ */
+export async function checkAvatarQuota(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; fileSize: number }
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const quota = FILE_QUOTAS[getOrganizationTier(args.organizationId)];
+  const usage = await readStorageUsageForWrite(ctx, args.organizationId);
+  if (usage.bytes + args.fileSize > quota.totalStorage) {
+    return { ok: false, reason: "cota de armazenamento excedida" };
+  }
+  return { ok: true };
 }

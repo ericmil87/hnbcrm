@@ -129,6 +129,11 @@ export const BRIDGE_WEBHOOK_EVENTS = [
   // Sem eles o CRM só descobre que saiu/entrou gente na próxima sincronização.
   "GroupInfo",
   "JoinedGroup",
+  // Foto de perfil trocada/removida (`Picture`): só marca a foto guardada como
+  // vencida (a busca vem no próximo gatilho). Canal JÁ pareado só passa a receber
+  // depois de reconectar (o `Connect()` regrava a assinatura); NÃO forçamos
+  // reconexão. Sem o evento a foto ainda se renova a cada 7 dias.
+  "Picture",
 ] as const;
 
 /**

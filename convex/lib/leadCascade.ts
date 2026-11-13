@@ -29,6 +29,7 @@ import { deleteRuntime } from "./conversationRuntime";
 import { resolveEntityNotifications, type ResolveTarget } from "./notificationResolve";
 import { scheduleWebhookEvent } from "./webhookDispatch";
 import { deleteMetaIdentitiesForContact } from "./metaIdentity";
+import { deleteContactAvatarArtifacts, deleteContactAvatarRows } from "./contactAvatarOps";
 
 // Escritas por execução do job. Convex aceita muito mais por transação; o teto
 // baixo mantém cada execução curta e o re-agendamento previsível.
@@ -349,6 +350,10 @@ export async function cascadeContactRefs(
   contactId: Id<"contacts">,
   budget: WriteBudget
 ): Promise<boolean> {
+  // Foto de perfil do WhatsApp (linha lateral + arquivo + blob): o contato já
+  // não existe, então a foto manual (`photoFileId`) sai pela varredura de
+  // `files` abaixo. Idempotente: sem linha, nada a fazer.
+  budget.left -= await deleteContactAvatarRows(ctx, contactId);
   while (budget.left > 0) {
     const page = await ctx.db
       .query("tasks")
@@ -472,6 +477,8 @@ export async function hardDeleteLead(
     createdAt: now,
   });
   await deleteMetaIdentitiesForContact(ctx, contact._id);
+  // LGPD: foto do WhatsApp (linha lateral, arquivo, blob) e foto manual saem junto.
+  await deleteContactAvatarArtifacts(ctx, contact);
   await ctx.db.delete(contact._id);
 
   return { deletedContactId: contact._id };

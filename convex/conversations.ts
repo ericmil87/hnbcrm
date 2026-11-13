@@ -44,6 +44,8 @@ import { assertManualSendAllowed, clearNotFoundFails, clearWhatsappCheck, record
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
+import { maybeScheduleContactAvatar } from "./lib/contactAvatarOps";
+import { contactAvatarFetchEnabled } from "./lib/contactAvatar";
 import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
 import { discardDuplicateAttachments } from "./lib/fileRefs";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
@@ -1069,6 +1071,8 @@ export const searchConversationsByContact = query({
       unreadCount: v.number(),
       archived: v.boolean(),
       isGroup: v.literal(false),
+      // Foto exibida do contato (já vem no doc lido; sem leitura nova).
+      avatarUrl: v.optional(v.string()),
     })
   ),
   handler: async (ctx, args) => {
@@ -1144,6 +1148,7 @@ export const searchConversationsByContact = query({
         unreadCount: conversation.unreadCount ?? 0,
         archived: !!conversation.archivedAt,
         isGroup: false as const,
+        ...(contact.avatarUrl ? { avatarUrl: contact.avatarUrl } : {}),
       };
     });
   },
@@ -2181,8 +2186,9 @@ export const internalReceiveMessage = internalMutation({
 
     // Mensagem RECEBIDA prova que o número existe no WhatsApp: derruba o marcador
     // "sem WhatsApp" (lib/whatsappCheck) — o envio automático volta a valer.
+    let inboundContact: Doc<"contacts"> | null = null;
     if (args.channel === "whatsapp" && lead.contactId) {
-      const inboundContact = await ctx.db.get(lead.contactId);
+      inboundContact = await ctx.db.get(lead.contactId);
       if (inboundContact?.whatsappCheck?.status === "not_on_whatsapp") {
         await clearWhatsappCheck(ctx, inboundContact._id);
       }
@@ -2285,6 +2291,18 @@ export const internalReceiveMessage = internalMutation({
       ...(await channelConfigPatchFor(ctx, conversation, args.channelConfigId)),
       ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
+
+    // Foto de perfil do WhatsApp (bridge, 1 a 1): porta única de agendamento.
+    // Caminho quente sem o que fazer = 1 leitura indexada de `contactAvatars`
+    // (o contato e a conversa já foram lidos acima).
+    if (args.channel === "whatsapp" && inboundContact) {
+      await maybeScheduleContactAvatar(ctx, {
+        contact: inboundContact,
+        conversation,
+        channelConfigId: args.channelConfigId,
+        importedFromHistory: args.metadata?.importedFromHistory === true,
+      });
+    }
 
     // Origem do anúncio (Meta Click-to-WhatsApp): primeiro toque, só com o
     // módulo de atribuição ligado (lib/leadAttribution).
@@ -3515,6 +3533,22 @@ export const markConversationRead = mutation({
       reason: "conversation_opened",
       types: ["new_message", "conversation_transferred", "ai_draft_pending"],
     });
+
+    // Foto de perfil do contato (contatos antigos sem carga em lote): só 1 a 1
+    // de canal bridge; a porta confere tudo e não escreve quando não há o que fazer.
+    if (
+      conversation.channel === "whatsapp" &&
+      conversation.kind !== "group" &&
+      conversation.channelConfigId &&
+      contactAvatarFetchEnabled()
+    ) {
+      const lead = await getLeadRef(ctx.db, conversation.leadId);
+      const contact =
+        lead && lead.organizationId === conversation.organizationId && lead.contactId
+          ? await ctx.db.get(lead.contactId)
+          : null;
+      await maybeScheduleContactAvatar(ctx, { contact, conversation });
+    }
 
     if (!seesWholeInbox(reader)) return null;
 
