@@ -2,7 +2,9 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
-## [Não publicada]
+## [0.82.0] - 2026-11-13
+
+_Conversas no padrão do WhatsApp no celular e no computador, foto de perfil, a IA lendo PDF e a configuração por conversa mais fluida._
 
 ### Conversas: acabamento no padrão do WhatsApp
 
