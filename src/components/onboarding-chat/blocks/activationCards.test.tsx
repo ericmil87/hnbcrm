@@ -227,7 +227,7 @@ describe("OperacaoProntaView", () => {
     const test = screen.getByRole("button", { name: "Testar a sua IA" });
     const connect = screen.getByRole("button", { name: "Conectar o WhatsApp" });
     const crm = screen.getByRole("link", { name: "Abrir o meu CRM" });
-    expect(crm).toHaveAttribute("href", "/app");
+    expect(crm).toHaveAttribute("href", "/app/painel");
     expect(test.className).toMatch(/bg-brand-600/);
     expect(connect.className).not.toMatch(/bg-brand-600/);
     expect(crm.className).not.toMatch(/bg-brand-600/);
@@ -266,5 +266,27 @@ describe("OperacaoProntaView", () => {
   it("sem mudança, sem o aviso", () => {
     renderWithRouter(<OperacaoProntaView {...props} />);
     expect(screen.queryByRole("button", { name: "Atualizar a operação" })).toBeNull();
+  });
+});
+
+describe("OperacaoProntaView com a tela dedicada de teste", () => {
+  const base = { summary: { ...summary, funnelName: "Funil da clínica", stageCount: 6 }, tested: false, connected: false };
+  const wrap = (el: React.ReactElement) => <MemoryRouter>{el}</MemoryRouter>;
+
+  it("'Testar a sua IA' abre a tela (não espreme o simulador no cartão); sem 'Funil Funil'", async () => {
+    const onOpenTest = vi.fn();
+    render(wrap(<OperacaoProntaView {...base} onOpenTest={onOpenTest} simulator={<p>Simulador no cartão</p>} />));
+    expect(screen.getByRole("list", { name: "O que foi criado" })).toHaveTextContent("Funil da clínica com 6 etapas");
+    expect(screen.getByRole("list", { name: "O que foi criado" })).not.toHaveTextContent("Funil Funil");
+    await userEvent.click(screen.getByRole("button", { name: "Testar a sua IA" }));
+    expect(onOpenTest).toHaveBeenCalled();
+    expect(screen.queryByText("Simulador no cartão")).not.toBeInTheDocument();
+  });
+
+  it("'conectar o WhatsApp' vindo da tela de teste abre a conexão no cartão", () => {
+    const { rerender } = render(wrap(<OperacaoProntaView {...base} tested onOpenTest={vi.fn()} connectCard={<p>Fluxo de conexão</p>} connectSignal={0} />));
+    expect(screen.queryByText("Fluxo de conexão")).not.toBeInTheDocument();
+    rerender(wrap(<OperacaoProntaView {...base} tested onOpenTest={vi.fn()} connectCard={<p>Fluxo de conexão</p>} connectSignal={1} />));
+    expect(screen.getByText("Fluxo de conexão")).toBeInTheDocument();
   });
 });

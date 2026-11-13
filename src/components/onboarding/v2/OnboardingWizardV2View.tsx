@@ -1,10 +1,8 @@
 import type { ReactNode } from "react";
-import { Sparkles } from "lucide-react";
+import { MessagesSquare } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Stepper } from "@/components/ui/Stepper";
-import { Tooltip } from "@/components/ui/Tooltip";
-import { cn } from "@/lib/utils";
 import { stepLabel, type WizardStepDef, type WizardStepId } from "@/lib/onboardingWizard";
 
 export interface WizardNavProps {
@@ -79,10 +77,11 @@ export interface OnboardingWizardV2ViewProps {
   deferLoading?: boolean;
   /** Aviso no topo (ex.: conta sem e-mail). */
   notice?: string;
-  /** "Configurar conversando": ausente = não oferece; `disabledReason` mostra o botão travado. */
-  copilot?: { onToggle: () => void; open: boolean; disabledReason?: string };
-  /** Painel do Copiloto na coluna lateral (desktop). O celular o abre numa folha, fora daqui. */
-  sidePanel?: ReactNode;
+  /**
+   * "Configurar conversando": leva à conversa de configuração (`/comecar`).
+   * Ausente = não oferece (sem IA no servidor).
+   */
+  onOpenConversation?: () => void;
   children: ReactNode;
 }
 
@@ -95,24 +94,9 @@ export function OnboardingWizardV2View({
   onDefer,
   deferLoading,
   notice,
-  copilot,
-  sidePanel,
+  onOpenConversation,
   children,
 }: OnboardingWizardV2ViewProps) {
-  const copilotAction = copilot && (
-    <Button variant="secondary" onClick={copilot.onToggle} disabled={!!copilot.disabledReason} aria-pressed={copilot.open}>
-      <Sparkles size={16} aria-hidden="true" />
-      Configurar conversando
-    </Button>
-  );
-  const copilotButton =
-    copilot?.disabledReason && copilotAction ? (
-      <Tooltip content={copilot.disabledReason} asInfo>
-        {copilotAction}
-      </Tooltip>
-    ) : (
-      copilotAction
-    );
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4 p-4 md:p-6">
       <PageHeader
@@ -120,7 +104,12 @@ export function OnboardingWizardV2View({
         subtitle="Em poucos passos seu CRM e seu Atendente IA ficam prontos."
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            {copilotButton}
+            {onOpenConversation && (
+              <Button variant="secondary" onClick={onOpenConversation}>
+                <MessagesSquare size={16} aria-hidden="true" />
+                Configurar conversando
+              </Button>
+            )}
             <Button variant="ghost" onClick={onDefer} loading={deferLoading}>
               Continuar depois
             </Button>
@@ -139,19 +128,9 @@ export function OnboardingWizardV2View({
           {notice}
         </p>
       )}
-      <div className={cn("grid gap-4", sidePanel && "lg:grid-cols-[minmax(0,1fr)_380px]")}>
-        <section aria-label={stepLabel(current)} className="min-w-0 space-y-4">
-          {children}
-        </section>
-        {sidePanel && (
-          <aside
-            aria-label="Configurar conversando"
-            className="h-[70vh] supports-[height:100dvh]:h-[70dvh] overflow-hidden rounded-card border border-border bg-surface-raised lg:sticky lg:top-4"
-          >
-            {sidePanel}
-          </aside>
-        )}
-      </div>
+      <section aria-label={stepLabel(current)} className="min-w-0 space-y-4">
+        {children}
+      </section>
     </div>
   );
 }

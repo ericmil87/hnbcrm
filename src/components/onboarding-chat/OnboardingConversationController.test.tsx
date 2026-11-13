@@ -229,3 +229,65 @@ describe("OnboardingConversationController", () => {
     expect(field()).toBeDisabled();
   });
 });
+
+describe("OnboardingConversationController: recomeçar a conversa", () => {
+  beforeEach(() => vi.stubGlobal("sessionStorage", memoryStorage()));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("menu do cabeçalho → confirmação → cancela o streaming, chama o recomeço e limpa a mensagem do hero e o campo", async () => {
+    saveOnboardingDraft("Tenho uma pousada", null);
+    const f = streamingFetch();
+    const onRestart = vi.fn(async () => ({ ok: true as const }));
+    const onIntentConsumed = vi.fn();
+    render(ui(props({ fetchImpl: f.fetchImpl, intent: null, onRestart, onIntentConsumed, history: loaded([msg("m1", "assistant", "Oi!")]) })));
+    await userEvent.type(field(), "rascunho que não foi");
+    await userEvent.click(screen.getByRole("button", { name: "Mais opções da conversa" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Recomeçar a conversa" }));
+    expect(screen.getByText(/Nada foi criado no seu CRM ainda/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Recomeçar$/ }));
+    await waitFor(() => expect(onRestart).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(/Nada foi criado no seu CRM ainda/)).not.toBeInTheDocument());
+    expect(field().value).toBe("");
+    expect(sessionStorage.getItem(ONBOARDING_DRAFT_KEY)).toBeNull();
+    expect(onIntentConsumed).toHaveBeenCalled();
+  });
+
+  it("recomeço durante um turno: o stream é abortado antes", async () => {
+    const f = streamingFetch();
+    let aborted = false;
+    const onRestart = vi.fn(async () => {
+      aborted = f.mock.mock.calls[0]?.[1]?.signal?.aborted === true;
+      return { ok: true as const };
+    });
+    render(ui(props({ fetchImpl: f.fetchImpl, onRestart })));
+    await userEvent.type(field(), "tenho uma loja{Enter}");
+    await waitFor(() => expect(f.mock).toHaveBeenCalledTimes(1));
+    await userEvent.click(screen.getByRole("button", { name: "Mais opções da conversa" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Recomeçar a conversa" }));
+    await userEvent.click(screen.getByRole("button", { name: /^Recomeçar$/ }));
+    await waitFor(() => expect(onRestart).toHaveBeenCalled());
+    expect(aborted).toBe(true);
+  });
+
+  it("falha do recomeço: mensagem do servidor na confirmação, nada some", async () => {
+    const f = streamingFetch();
+    const onRestart = vi.fn(async () => ({ ok: false as const, message: "Você recomeçou a conversa várias vezes em pouco tempo." }));
+    render(ui(props({ fetchImpl: f.fetchImpl, onRestart, chatState: { stage: "draft", lastChips: [], applied: true } })));
+    await userEvent.click(screen.getByRole("button", { name: "Mais opções da conversa" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Recomeçar a conversa" }));
+    expect(screen.getByText(/o que já foi criado no seu CRM continua lá/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Recomeçar$/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/várias vezes/);
+  });
+
+  it("sem onRestart: sem o menu", () => {
+    render(ui(props()));
+    expect(screen.queryByRole("button", { name: "Mais opções da conversa" })).not.toBeInTheDocument();
+  });
+
+  it("depois de recomeçar, foca o campo quando a conversa fica pronta", async () => {
+    const { rerender } = render(ui(props({ focusComposerOnReady: true, history: { results: [], status: "LoadingFirstPage", loadMore: vi.fn() } })));
+    rerender(ui(props({ focusComposerOnReady: true, history: loaded() })));
+    await waitFor(() => expect(document.activeElement).toBe(field()));
+  });
+});

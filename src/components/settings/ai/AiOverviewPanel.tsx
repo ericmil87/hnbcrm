@@ -11,6 +11,7 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { ActivationCard } from "./ActivationCard";
 import { ActivationWizardCard } from "./ActivationWizardCard";
 import { AttendantCard } from "./AttendantCard";
+import { BridgeAiMutedNotice } from "./BridgeAiCard";
 
 /** Painel `ai` (visão geral): ligar a IA, status do atendente, modo e teste. */
 export function AiOverviewPanel({ organizationId }: { organizationId: Id<"organizations"> }) {
@@ -34,6 +35,8 @@ export function AiOverviewPanel({ organizationId }: { organizationId: Id<"organi
 
   return (
     <div className="space-y-6">
+      {/* IA ligada + número por QR code conectado + sem o aceite: a IA está muda nele. */}
+      <BridgeAiMutedNotice organizationId={organizationId} status={status} />
       {aiSectionOrder(status).map((card) => (
         <Fragment key={card}>{cards[card]}</Fragment>
       ))}

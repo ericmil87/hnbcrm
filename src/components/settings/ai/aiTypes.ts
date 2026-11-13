@@ -19,6 +19,8 @@ export type AiStatus = {
   bridgeAiAckDone: boolean;
   hasAttendant: boolean;
   hasBridgeChannel: boolean;
+  /** Número por QR code conectado (sessão ativa). Ausente em clientes antigos = falso. */
+  hasConnectedBridgeChannel?: boolean;
   models: { copilot: string; attendant: string; classify: string; complex?: string };
   strictZdr: boolean;
   monthlyConversationBudget: number | null;

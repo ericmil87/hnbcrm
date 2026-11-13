@@ -9,10 +9,12 @@ import type { HistoryMessage } from "@/lib/onboardingChat";
 import type { OnboardingIntent } from "@/lib/onboardingIntent";
 import { uploadAttachmentFile } from "@/lib/onboardingAttachments";
 import { writeSelectedOrgId } from "@/lib/selectedOrg";
+import { OnboardingTestScreen } from "./OnboardingTestScreen";
 import {
   HISTORY_PAGE,
   OnboardingConversationController,
   type ConversationAccess,
+  type RestartResult,
 } from "./OnboardingConversationController";
 
 export { GREETING_CHIPS, WIZARD_HREF } from "./OnboardingConversationController";
@@ -84,10 +86,27 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
   );
 
   const onSession = useCallback((id: string) => setSessionId(id as Id<"onboardingSessions">), []);
+
+  // "Recomeçar a conversa": arquiva a sessão no servidor e troca o `sessionId`; o controller remonta
+  // (`key`) na saudação, sem recarregar a página, e foca o campo quando a conversa nova fica pronta.
+  const restartConversation = useMutation(api.onboardingSessions.restartConversation);
+  const [focusAfterRestart, setFocusAfterRestart] = useState(false);
+  const onRestart = useCallback(async (): Promise<RestartResult> => {
+    if (!sessionId) return { ok: false, message: "A conversa ainda não está pronta. Tente em instantes." };
+    try {
+      const r = await restartConversation({ organizationId, sessionId });
+      setFocusAfterRestart(true);
+      setSessionId(r.sessionId);
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, message: mutationErrorMessage(err, "Não foi possível recomeçar a conversa. Tente de novo.") };
+    }
+  }, [organizationId, sessionId, restartConversation]);
   const onPreferForm = useCallback(() => writeSelectedOrgId(organizationId), [organizationId]);
 
   return (
     <OnboardingConversationController
+      key={sessionId ?? "abrindo"}
       organizationId={organizationId}
       access={access}
       sessionId={sessionId}
@@ -108,6 +127,7 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
               applied: chatState.applied,
               tested: chatState.tested,
               connected: chatState.connected,
+              priorApplied: chatState.priorApplied,
             }
           : null
       }
@@ -120,6 +140,9 @@ export function OnboardingConversation({ organizationId, intent, onIntentConsume
       onPreferForm={onPreferForm}
       orgPicker={orgPicker}
       uploadFile={uploadFile}
+      onRestart={onRestart}
+      focusComposerOnReady={focusAfterRestart}
+      renderTestScreen={(p) => <OnboardingTestScreen {...p} organizationId={organizationId} />}
     />
   );
 }

@@ -47,25 +47,22 @@ describe("OnboardingWizardV2View", () => {
     expect(onDefer).toHaveBeenCalled();
   });
 
-  it("só oferece Configurar conversando quando recebe a opção", () => {
+  it("Configurar conversando leva à conversa (sem painel lateral) e só aparece com a opção", () => {
     const { rerender } = render(<OnboardingWizardV2View {...baseProps}>x</OnboardingWizardV2View>);
     expect(screen.queryByRole("button", { name: /Configurar conversando/ })).toBeNull();
-    const onToggle = vi.fn();
+    const onOpenConversation = vi.fn();
     rerender(
-      <OnboardingWizardV2View {...baseProps} copilot={{ onToggle, open: false }}>
+      <OnboardingWizardV2View {...baseProps} onOpenConversation={onOpenConversation}>
         x
       </OnboardingWizardV2View>,
     );
-    fireEvent.click(screen.getByRole("button", { name: /Configurar conversando/ }));
-    expect(onToggle).toHaveBeenCalled();
-    rerender(
-      <OnboardingWizardV2View {...baseProps} copilot={{ onToggle, open: false, disabledReason: "Marque a caixa no passo 1." }}>
-        x
-      </OnboardingWizardV2View>,
-    );
-    // O Tooltip envolve o botão travado num span com role="button" (alvo da dica).
-    const buttons = screen.getAllByRole("button", { name: /Configurar conversando/ });
-    expect(buttons.some((b) => b.tagName === "BUTTON" && (b as HTMLButtonElement).disabled)).toBe(true);
+    const button = screen.getByRole("button", { name: /Configurar conversando/ });
+    expect(button).not.toBeDisabled();
+    expect(button).not.toHaveAttribute("aria-pressed");
+    fireEvent.click(button);
+    expect(onOpenConversation).toHaveBeenCalledTimes(1);
+    // O antigo painel do Copiloto na coluna lateral não existe mais.
+    expect(screen.queryByRole("complementary", { name: /Configurar conversando/ })).toBeNull();
   });
 
   it("mostra o aviso no topo", () => {

@@ -18,6 +18,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { requireAuth, requirePermission, requireAccountWithEmail } from "./lib/auth";
 import { assertPlanWritable } from "./lib/readOnly";
 import { patchChannelTranscriptionCore } from "./lib/attendantConfigOps";
+import { applyOnboardingDefaultsToNewChannel } from "./lib/onboardingChannelDefaults";
 import { buildAuditDescription } from "./lib/auditDescription";
 import { encryptSecret, decryptSecret, secretLast4 } from "./lib/secretCrypto";
 import { normalizeHistoryDays, normalizeHistoryLimit } from "./lib/bridgeHistory";
@@ -1602,6 +1603,12 @@ export const internalInsertConfig = internalMutation({
       severity: "high",
       createdAt: now,
     });
+
+    // Primeiro número depois da conversa de configuração com o pacote
+    // recomendado: nasce com a transcrição ligada (regra e condições em
+    // `lib/onboardingChannelDefaults.ts`; org sem conversa aplicada não muda).
+    const created = await ctx.db.get(configId);
+    if (created) await applyOnboardingDefaultsToNewChannel(ctx, { config: created, member: userMember });
 
     return configId;
   },

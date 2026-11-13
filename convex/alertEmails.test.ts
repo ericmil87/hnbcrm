@@ -223,7 +223,7 @@ describe("repasse", () => {
     expect(jobs.length).toBe(n1 * 2);
     expect(jobs[jobs.length - 1].templateData.pendingLabel).toBe("3");
     expect(buildTemplate("handoffRequested", { ...jobs[jobs.length - 1].templateData }).subject).toBe(
-      "Novo repasse — 3 pendentes",
+      "Novo pedido de ajuda (3 pendentes)",
     );
     await cancelPendingJobs(t);
   });

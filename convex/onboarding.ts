@@ -15,6 +15,7 @@ import {
   type SavedStepStatus,
 } from "./lib/onboardingStatus";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { hasAppliedOnboardingConversation, withWizardDeferred } from "./lib/wizardDeferral";
 
 const wizardDataValidator = v.optional(v.any());
 
@@ -111,6 +112,10 @@ async function computeShouldShowWizard(
   // Org legada (wizardCompletedAt sem wizardVersion) nunca recebe o wizard à
   // força: `orgWizardCompleted` já cobre; o adiamento v2 também esconde.
   if (!input.isAdmin || input.orgWizardCompleted || input.deferred) return false;
+  // Operação montada pela conversa de configuração (`/comecar`): o Painel e o
+  // checklist cuidam do resto. Derivado aqui para as orgs que aplicaram antes
+  // de a aplicação gravar `wizardDeferredAt` (sem migração).
+  if (await hasAppliedOnboardingConversation(ctx, input.organizationId)) return false;
   if (input.memberWizardCompleted !== null) return !input.memberWizardCompleted;
 
   const existingLead = await ctx.db
@@ -692,7 +697,8 @@ export const deferWizard = mutation({
     await requirePermission(ctx, args.organizationId, "settings", "manage");
     const org = await loadOrgOrThrow(ctx, args.organizationId);
     const now = Date.now();
-    await patchOnboardingMeta(ctx, org, (meta) => ({ ...meta, wizardDeferredAt: now }), now);
+    // Mesmo campo que a aplicação do rascunho da conversa grava (`lib/wizardDeferral.ts`).
+    await patchOnboardingMeta(ctx, org, (meta) => ({ ...withWizardDeferred(meta, now), wizardDeferredAt: now }), now);
     return null;
   },
 });

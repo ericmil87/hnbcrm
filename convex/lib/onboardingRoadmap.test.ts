@@ -12,6 +12,7 @@ import {
   roadmapProgress,
   sectionSignature,
   stepMessage,
+  nextStepLabel,
   taskCard,
   taskChips,
   taskStepIndex,
@@ -246,6 +247,26 @@ describe("falas determinísticas", () => {
 
   test("nenhuma fala cita elemento de tela que o servidor não anexa", () => {
     for (const n of NOTICES) for (const t of TASKS) expect(stepMessage(n, t)).not.toMatch(/abaixo|cartão abaixo|botão abaixo/i);
+  });
+
+  test("sem frase colada repetida: ativar + testar não diz duas vezes que a operação foi montada", () => {
+    const m = stepMessage("activated", "test");
+    expect(m).toBe("Pronto, a sua IA está ligada e a operação foi montada. Que tal testar a sua IA agora, como se você fosse um cliente?");
+    // Nenhuma combinação repete a mesma ideia ("montada" duas vezes, ou uma frase inteira em dobro).
+    for (const n of NOTICES)
+      for (const t of TASKS) {
+        const msg = stepMessage(n, t);
+        expect(msg.match(/montad[ao]/gi)?.length ?? 0).toBeLessThanOrEqual(1);
+        const sentences = msg.split(/(?<=[.?!])\s+/).map((x) => x.trim().toLowerCase()).filter(Boolean);
+        expect(new Set(sentences).size).toBe(sentences.length);
+      }
+    // Sem LLM antes, a fala do passo continua completa.
+    expect(stepMessage("next", "test")).toContain("Sua operação está montada.");
+  });
+
+  test("rótulos da barra dizem a ação (não 'Ver')", () => {
+    for (const t of TASKS) expect(nextStepLabel(t)).not.toMatch(/^Ver /);
+    expect(nextStepLabel("approve_persona")).toBe("Conferir o jeito de atender");
   });
 
   test("e-mail confirmado com material guardado avisa que vai ler", () => {

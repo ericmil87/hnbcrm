@@ -4,12 +4,15 @@ import { coherentChips, type ApprovalSection, type RoadmapFacts } from "../../..
 import { useOnboardingStream, type OnboardingTurnResult } from "@/hooks/useOnboardingStream";
 import {
   blockKindOf,
+  plainModelText,
   buildTimeline,
-  cardIsLatest,
+  CRM_HOME_HREF,
   chatProgress,
   currentChips,
   isBareEmailCode,
   nextStepFor,
+  nextStepMode,
+  timelineHasCard,
   pendingFileDrain,
   shouldProcessPending,
   type HistoryMessage,
@@ -33,12 +36,14 @@ import {
 import { onboardingEventKey, type OnboardingAttachment, type OnboardingEvent } from "@/lib/onboardingStream";
 import { AttachmentSheet, type SubmitAttachmentResult, type UploadPhase } from "./attachments/AttachmentSheet";
 import { VoiceSheet } from "./attachments/VoiceSheet";
+import { RestartConversationDialog } from "./RestartConversationDialog";
+import { revealInScroller, scrollParentOf } from "@/lib/onboardingScroll";
 import { OnboardingBlockView } from "./blocks/registry";
 import type { BlockContext, LiveFacts } from "./blocks/types";
 
 export const WIZARD_HREF = "/app/configuracao-inicial";
 /** Saída da conversa para o CRM (organização já existe neste ponto). */
-export const APP_HREF = "/app";
+export const APP_HREF = CRM_HOME_HREF;
 export const HISTORY_PAGE = 30;
 
 /** Chips da conversa VAZIA (sem mensagem do hero): neutros e úteis para qualquer negócio. */
@@ -74,7 +79,24 @@ export interface ChatStateFacts {
   applied?: boolean;
   tested?: boolean;
   connected?: boolean;
+  /** A operação já foi montada por uma conversa anterior (recomeçada). */
+  priorApplied?: boolean;
 }
+
+export interface TestScreenRenderProps {
+  /** Perguntas sugeridas do segmento (do cartão final do servidor). */
+  suggestions: string[];
+  onClose: () => void;
+  /** "Está bom, conectar o WhatsApp": fecha e abre a conexão no cartão final. */
+  onConnect: () => void;
+  /** Primeira resposta da IA no teste (marca o passo como feito; NÃO fecha a tela). */
+  onTested: () => void;
+  tested: boolean;
+  connected: boolean;
+}
+
+/** Resultado de "Recomeçar a conversa" (o container chama `restartConversation`). */
+export type RestartResult = { ok: true } | { ok: false; message: string };
 
 export interface OnboardingConversationControllerProps {
   organizationId: string;
@@ -107,6 +129,18 @@ export interface OnboardingConversationControllerProps {
   renderGateBlock?: (gate: "cartaoConta" | "avisoMateriais", ctx: BlockContext) => ReactNode;
   /** Cartão compacto do código de e-mail no começo da conversa. Padrão: o registro de blocos. */
   renderEmailCard?: (ctx: BlockContext) => ReactNode;
+  /**
+   * "Recomeçar a conversa" (menu do cabeçalho, com confirmação). O container arquiva a sessão e
+   * troca o `sessionId` (a conversa remonta na saudação). Sem ela, o menu não aparece.
+   */
+  onRestart?: () => Promise<RestartResult>;
+  /** Foca o campo de mensagem quando a conversa ficar pronta (depois de recomeçar). */
+  focusComposerOnReady?: boolean;
+  /**
+   * Tela dedicada de teste da IA (o container liga o simulador). Fica na conversa, fora das
+   * mensagens: nenhuma mensagem nova (inclusive a do `tested`) a fecha. Sem ela, o teste fica no cartão.
+   */
+  renderTestScreen?: (p: TestScreenRenderProps) => ReactNode;
   /** Injeções para teste. */
   fetchImpl?: typeof fetch;
   siteUrl?: string;
@@ -129,11 +163,25 @@ function fileLabel(draft: AttachmentDraft): string {
 }
 
 /** Rola até o cartão mais recente de um tipo (o da última mensagem, a mais abaixo). */
-function scrollToCard(kind: string | null) {
-  if (!kind || typeof document === "undefined") return;
-  const nodes = document.querySelectorAll(`[data-onboarding-card="${kind}"]`);
-  const target = nodes[nodes.length - 1];
-  target?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+function latestCardNode(kind: string | null): HTMLElement | null {
+  if (!kind || typeof document === "undefined") return null;
+  const nodes = document.querySelectorAll<HTMLElement>(`[data-onboarding-card="${kind}"]`);
+  return nodes[nodes.length - 1] ?? null;
+}
+
+/**
+ * Rola até o cartão mais recente de um tipo (o topo à vista) e o destaca por um instante (anel; o
+ * pulso só sem movimento reduzido). Devolve se achou o cartão.
+ */
+function goToCard(kind: string | null): boolean {
+  const node = latestCardNode(kind);
+  if (!node) return false;
+  revealInScroller(node);
+  node.dataset.highlight = "on";
+  window.setTimeout(() => {
+    if (node.dataset.highlight === "on") delete node.dataset.highlight;
+  }, 1600);
+  return true;
 }
 
 /**
@@ -159,6 +207,9 @@ export function OnboardingConversationController({
   confirmEmailCode,
   renderGateBlock,
   renderEmailCard,
+  onRestart,
+  focusComposerOnReady = false,
+  renderTestScreen,
   fetchImpl,
   siteUrl,
 }: OnboardingConversationControllerProps) {
@@ -180,7 +231,7 @@ export function OnboardingConversationController({
   const queueIdRef = useRef(0);
 
   const stream = useOnboardingStream({ organizationId, sessionId, token, onSession, fetchImpl, siteUrl });
-  const { send: streamSend, isStreaming, turn, error: streamError, clearError } = stream;
+  const { send: streamSend, isStreaming, turn, error: streamError, clearError, abort: abortStream } = stream;
 
   // Histórico ainda carregando conta como "não pronto": nada de saudação, chips nem envio.
   const ready = access.kind === "ready" && sessionId !== null && history.status !== "LoadingFirstPage" && !!token;
@@ -211,8 +262,10 @@ export function OnboardingConversationController({
       emailVerified,
       maskedEmail: chatState?.maskedEmail ?? null,
       pendingMaterials,
+      priorApplied: chatState?.priorApplied ?? false,
     }),
     [
+      chatState?.priorApplied,
       draft,
       chatState?.approvals,
       chatState?.aiActive,
@@ -448,6 +501,46 @@ export function OnboardingConversationController({
     onIntentConsumed?.();
   }, [intent, startTurn, onIntentConsumed]);
 
+  // ── Recomeçar a conversa ──────────────────────────────────────────────────
+  const [restartOpen, setRestartOpen] = useState(false);
+  const [restartState, setRestartState] = useState<{ busy: boolean; error: string | null }>({ busy: false, error: null });
+  const confirmRestart = useCallback(async () => {
+    if (!onRestart) return;
+    setRestartState({ busy: true, error: null });
+    // O streaming em andamento é cancelado ANTES: nada dele entra na conversa nova.
+    abortStream();
+    turnIdRef.current++;
+    eventQueueRef.current = [];
+    setPendingMeta(null);
+    setQueuedFiles([]);
+    setLocalNotes([]);
+    setBlocked(null);
+    setFailedAttachment(null);
+    setLastFailedText(null);
+    setLastFailedEvent(null);
+    clearError();
+    const r = await onRestart().catch((): RestartResult => ({ ok: false, message: "Não foi possível recomeçar a conversa. Tente de novo." }));
+    if (!r.ok) {
+      setRestartState({ busy: false, error: r.message });
+      return;
+    }
+    // A mensagem do hero guardada também sai (recomeçar = saudação inicial).
+    intentSentRef.current = true;
+    clearOnboardingIntent();
+    onIntentConsumed?.();
+    setComposer("");
+    setRestartState({ busy: false, error: null });
+    setRestartOpen(false);
+  }, [onRestart, abortStream, clearError, onIntentConsumed]);
+
+  // Depois de recomeçar: foco no campo assim que a conversa nova estiver pronta.
+  const focusPendingRef = useRef(focusComposerOnReady);
+  useEffect(() => {
+    if (!ready || !focusPendingRef.current) return;
+    focusPendingRef.current = false;
+    document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensagem para o Copiloto"]')?.focus();
+  }, [ready]);
+
   const pending: PendingTurn | null = useMemo(() => {
     if (!pendingMeta) return null;
     return {
@@ -466,32 +559,112 @@ export function OnboardingConversationController({
 
   const timeline = useMemo(() => buildTimeline(history.results, pending), [history.results, pending]);
 
-  // Estável entre deltas: os blocos não re-renderizam a cada pedaço de texto.
-  const blockCtx = useMemo(
-    () => ({ organizationId, sessionId, sendText: send, sendEvent, busy: isStreaming, facts }),
-    [organizationId, sessionId, send, sendEvent, isStreaming, facts]
+  // ── Ação da pessoa (a conversa mostra o que chegar em seguida, mesmo que ela tenha rolado) ──
+  const [actionTick, setActionTick] = useState(0);
+  const bumpAction = useCallback(() => setActionTick((t) => t + 1), []);
+  const userSend = useCallback(
+    (raw: string) => {
+      bumpAction();
+      send(raw);
+    },
+    [bumpAction, send]
+  );
+  const userSendEvent = useCallback(
+    (event: OnboardingEvent) => {
+      bumpAction();
+      sendEvent(event);
+    },
+    [bumpAction, sendEvent]
   );
 
-  // ── Próximo passo (sempre visível; nunca dispara sozinho ao montar) ───────
+  // ── Teste da IA em tela dedicada (estado da conversa: mensagem nova não o fecha) ──
+  const [testOpen, setTestOpen] = useState(false);
+  const [connectSignal, setConnectSignal] = useState(0);
+  const canOpenTest = !!renderTestScreen;
+  const openTest = useCallback(() => setTestOpen(true), []);
+  const testedSentRef = useRef(false);
+
+  const hasUserMessage = timeline.some((t) => t.role === "user");
+
+  // Estável entre deltas: os blocos não re-renderizam a cada pedaço de texto.
+  const blockCtx = useMemo(
+    () => ({
+      organizationId,
+      sessionId,
+      sendText: userSend,
+      sendEvent: userSendEvent,
+      busy: isStreaming,
+      facts,
+      ...(canOpenTest ? { openTest } : {}),
+      connectSignal,
+      collapseEmailCard: hasUserMessage,
+    }),
+    [organizationId, sessionId, userSend, userSendEvent, isStreaming, facts, canOpenTest, openTest, connectSignal, hasUserMessage]
+  );
+
+  // ── Próximo passo: SEMPRE um efeito visível; some quando o cartão do passo está na tela ──
   const next = nextStepFor(roadmapFacts);
+  const cardInTimeline = timelineHasCard(timeline, next.cardKind);
+  const [cardVisible, setCardVisible] = useState(false);
+  useEffect(() => {
+    setCardVisible(false);
+    const node = latestCardNode(next.cardKind);
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    // "À vista" = a parte de baixo do cartão (onde ficam os botões) está dentro da área de mensagens.
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        const rb = entry.rootBounds;
+        const r = entry.boundingClientRect;
+        setCardVisible(entry.isIntersecting && (!rb || (r.bottom <= rb.bottom + 1 && r.bottom >= rb.top + 48)));
+      },
+      { root: scrollParentOf(node), threshold: Array.from({ length: 21 }, (_, i) => i / 20) }
+    );
+    io.observe(node);
+    return () => io.disconnect();
+  }, [next.cardKind, timeline]);
+  const mode = nextStepMode({ task: next.task, cardKind: next.cardKind, cardInTimeline, cardVisible, canOpenTest });
+
+  // Pedido ao servidor (o cartão não está na conversa): rola até ele quando chegar.
+  const revealWhenArrivesRef = useRef<string | null>(null);
+  useEffect(() => {
+    const kind = revealWhenArrivesRef.current;
+    if (!kind || !timelineHasCard(timeline, kind)) return;
+    revealWhenArrivesRef.current = null;
+    window.setTimeout(() => goToCard(kind), 0);
+  }, [timeline]);
+
   const onNextStep = useCallback(() => {
-    if (next.task === "describe_business") {
+    if (next.task === "describe_business" || !next.cardKind) {
       document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Mensagem para o Copiloto"]')?.focus();
       return;
     }
-    if (cardIsLatest(timeline, next.cardKind)) {
-      scrollToCard(next.cardKind);
+    if (next.task === "test" && canOpenTest) {
+      openTest();
       return;
     }
-    // O cartão do passo não está na última mensagem (ou a sessão foi retomada): pede de novo.
-    sendEvent({ kind: "next" });
-    // Se o servidor não repetir (nada mudou), leva a pessoa ao cartão que já existe.
-    window.setTimeout(() => scrollToCard(next.cardKind), 600);
-  }, [next.task, next.cardKind, timeline, sendEvent]);
+    // O cartão está na conversa (mesmo longe, mais acima): rola até ele e destaca.
+    if (cardInTimeline && goToCard(next.cardKind)) return;
+    // Não está: pede ao servidor e rola quando ele chegar.
+    revealWhenArrivesRef.current = next.cardKind;
+    userSendEvent({ kind: "next" });
+  }, [next.task, next.cardKind, canOpenTest, openTest, cardInTimeline, userSendEvent]);
   const nextStep: NextStepBarProps = {
     label: next.label,
     ...(next.task === "done" ? { href: APP_HREF } : { onPress: onNextStep }),
   };
+
+  // Perguntas de teste do segmento: as do cartão final mais recente (montadas pelo servidor).
+  const testSuggestions = useMemo(() => {
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      for (const b of timeline[i].blocks) {
+        if (blockKindOf(b) === "operacaoPronta") {
+          const prompts = (b as { prompts?: unknown }).prompts;
+          return Array.isArray(prompts) ? prompts.filter((p): p is string => typeof p === "string").map((p) => plainModelText(p)).filter(Boolean).slice(0, 4) : [];
+        }
+      }
+    }
+    return [];
+  }, [timeline]);
 
   const preview = <DraftPreviewPanel draft={draft} ctx={blockCtx} progress={progress} nextStep={nextStep} />;
   const previewSheet = <DraftPreviewPanel draft={draft} ctx={blockCtx} progress={progress} nextStep={nextStep} inSheet />;
@@ -564,8 +737,11 @@ export function OnboardingConversationController({
     onPreferForm,
     composerValue: composer,
     onComposerChange: setComposer,
-    onSubmit: submitComposer,
-    onChip: send,
+    onSubmit: (raw: string) => {
+      bumpAction();
+      submitComposer(raw);
+    },
+    onChip: userSend,
     blockCtx,
     progress,
   };
@@ -673,8 +849,43 @@ export function OnboardingConversationController({
       onLoadMore={() => history.loadMore(HISTORY_PAGE)}
       preview={preview}
       previewSheet={previewSheet}
-      nextStep={nextStep}
+      nextStep={mode === "hidden" ? undefined : nextStep}
+      onRestart={onRestart ? () => setRestartOpen(true) : undefined}
+      userActionTick={actionTick}
+      takeover={
+        testOpen && renderTestScreen
+          ? renderTestScreen({
+              suggestions: testSuggestions,
+              tested: facts.tested,
+              connected: facts.connected,
+              onClose: () => setTestOpen(false),
+              onConnect: () => {
+                setTestOpen(false);
+                setConnectSignal((n) => n + 1);
+                window.setTimeout(() => goToCard("operacaoPronta"), 50);
+              },
+              onTested: () => {
+                if (testedSentRef.current || facts.tested) return;
+                testedSentRef.current = true;
+                sendEvent({ kind: "notify", what: "tested" });
+              },
+            })
+          : undefined
+      }
     />
+    {onRestart && (
+      <RestartConversationDialog
+        open={restartOpen}
+        onClose={() => {
+          setRestartOpen(false);
+          setRestartState({ busy: false, error: null });
+        }}
+        onConfirm={() => void confirmRestart()}
+        applied={facts.applied || facts.priorApplied === true}
+        busy={restartState.busy}
+        error={restartState.error}
+      />
+    )}
     <AttachmentSheet open={sheet === "attach"} onClose={() => setSheet(null)} onSubmit={submitAttachment} phase={uploadPhase} />
     <VoiceSheet open={sheet === "voice"} onClose={() => setSheet(null)} onSubmit={submitAttachment} phase={uploadPhase} />
     </>

@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { buildEmailVerificationTemplate, buildWelcomeTemplate } from "./authEmailTemplates";
-import { buildHandoffRequestedTemplate } from "./emailTemplates";
+import { buildDailyDigestTemplate, buildHandoffRequestedTemplate } from "./emailTemplates";
 
 test("amostras de e-mail (só com EMAIL_SAMPLES_DIR)", () => {
   const samples = {
@@ -18,6 +18,15 @@ test("amostras de e-mail (só com EMAIL_SAMPLES_DIR)", () => {
       origin: "ai_tool",
       fromMemberName: "Atendente IA",
       leadUrl: "https://hnbcrm.com/app/repasses?handoff=abc",
+    }),
+    digest: buildDailyDigestTemplate({
+      date: "11/11/2026",
+      orgName: "Clínica Aurora",
+      newLeadsCount: 7,
+      completedTasksCount: 4,
+      pendingHandoffsCount: 2,
+      overdueTasksCount: 1,
+      appUrl: "https://hnbcrm.com",
     }),
   };
   for (const s of Object.values(samples)) expect(s.html).toContain("<html");

@@ -36,6 +36,12 @@ interface QrCodeConnectFormProps {
   /** Número novo criado: segue para o passo de conexão. */
   onCreated?: (configId: Id<"channelConfigs">) => void;
   onBack?: () => void;
+  /**
+   * IA da org ligada e sem o aceite da IA no QR code: o aceite de banimento também libera a IA
+   * neste tipo de número (`grant` = `aiSettings.setBridgeAiAck`, auditado). Só roda depois do
+   * clique em "Conectar número" com a caixa marcada e com o número criado.
+   */
+  aiAck?: { grant: () => Promise<unknown> };
 }
 
 /**
@@ -53,6 +59,7 @@ export function QrCodeConnectForm({
   createManagedChannel,
   onCreated,
   onBack,
+  aiAck,
 }: QrCodeConnectFormProps) {
   const isEditing = !!config;
   const managedAvailable = defaults?.managedAvailable ?? false;
@@ -71,7 +78,20 @@ export function QrCodeConnectForm({
   // Editar um número que já existe não pede o aceite de novo.
   const needsRiskAck = !isEditing;
 
-  const finish = (id?: Id<"channelConfigs">) => {
+  const finish = async (id?: Id<"channelConfigs">) => {
+    // Número novo com a IA ligada: o mesmo aceite libera a IA no QR code (porta própria, auditada).
+    if (id && aiAck && riskAccepted) {
+      try {
+        await aiAck.grant();
+        toast.success("A IA também vai responder neste número");
+      } catch (error) {
+        toast.error(
+          error instanceof Error && error.message
+            ? error.message
+            : "Não foi possível liberar a IA neste número. Libere em Recursos da IA.",
+        );
+      }
+    }
     if (id && onCreated) onCreated(id);
     else onClose();
   };
@@ -99,7 +119,7 @@ export function QrCodeConnectForm({
             error: (error) => (error instanceof Error ? error.message : "Não foi possível atualizar o número."),
           }
         ).unwrap();
-        finish();
+        await finish();
       } else if (source === "existing") {
         const id = await toast.promise(
           createChannelConfig({
@@ -117,7 +137,7 @@ export function QrCodeConnectForm({
             error: (error) => (error instanceof Error ? error.message : "Não foi possível conectar o número."),
           }
         ).unwrap();
-        finish(id);
+        await finish(id);
       } else {
         const id = await toast.promise(
           createManagedChannel({
@@ -133,7 +153,7 @@ export function QrCodeConnectForm({
             error: (error) => (error instanceof Error ? error.message : "Não foi possível conectar o número."),
           }
         ).unwrap();
-        finish(id);
+        await finish(id);
       }
     } catch {
       // toast.promise já mostrou o erro
@@ -159,7 +179,9 @@ export function QrCodeConnectForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {needsRiskAck && <QrRiskNotice accepted={riskAccepted} onAcceptedChange={setRiskAccepted} />}
+      {needsRiskAck && (
+        <QrRiskNotice accepted={riskAccepted} onAcceptedChange={setRiskAccepted} aiAlsoAnswers={!!aiAck} />
+      )}
 
       <Input
         label="Nome de exibição"

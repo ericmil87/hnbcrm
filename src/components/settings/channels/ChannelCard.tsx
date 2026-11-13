@@ -16,6 +16,8 @@ import { BridgeGroupsPanel } from "@/components/settings/BridgeGroupsPanel";
 import { ChannelTranscriptionToggle } from "./ChannelTranscriptionToggle";
 import type { ChannelConfig } from "./types";
 import { BridgeHistoryPanel } from "./BridgeHistoryPanel";
+import { BridgeAiMutedNotice } from "@/components/settings/ai/BridgeAiCard";
+import { usePermissions } from "@/hooks/usePermissions";
 
 // --- One channel card (provider-aware) ---
 export function ChannelCard({
@@ -44,6 +46,10 @@ export function ChannelCard({
   onCopy: (field: string, value: string, message: string) => void;
 }) {
   const isBridge = config.provider === "bridge";
+  // Número por QR code conectado: a IA pode estar muda nele (sem o aceite da IA no QR code).
+  const bridgeConnected = isBridge && config.status === "active" && config.bridgeSessionState === "connected";
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, bridgeConnected ? { organizationId } : "skip");
+  const { can } = usePermissions(organizationId);
   const phoneNotificationsOn = config.bridgePhoneNotifications ?? true;
   // Subtitle: prefer a human phone number; sem número ainda, "Aguardando conexão".
   const subtitle = config.displayPhoneNumber ?? (isBridge ? "Aguardando conexão" : config.phoneNumberId);
@@ -165,6 +171,12 @@ export function ChannelCard({
           </PermissionGate>
         </div>
       </div>
+
+      {bridgeConnected && (
+        <div className="mt-3">
+          <BridgeAiMutedNotice organizationId={organizationId} status={aiStatus} canManage={can("settings", "manage")} />
+        </div>
+      )}
 
       <div className="mt-3">
         <ChannelTranscriptionToggle

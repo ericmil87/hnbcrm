@@ -12,11 +12,13 @@
  */
 import { v } from "convex/values";
 import { internalMutation, MutationCtx } from "./_generated/server";
+import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { auditTextSnapshot } from "./lib/auditText";
 import { resolveDisclosureMode } from "./lib/disclosure";
 import {
   migrateMemberTexts,
+  normalizeStoredKnowledgePage,
   readAgentTexts,
   restoreMemberTextsToDoc,
   writeAgentTexts,
@@ -517,5 +519,58 @@ export const internalRestoreAgentTextsToDoc = internalMutation({
       isDone: page.isDone,
       continueCursor: page.continueCursor,
     };
+  },
+});
+
+/**
+ * Tira do texto ARMAZENADO do conhecimento o envelope `<crm_data untrusted>`
+ * que a aplicação do rascunho da conversa de configuração gravava até
+ * 12/11/2026. Não muda o que o modelo recebe: a leitura (`readAgentTexts`) e a
+ * montagem do prompt (`knowledgePromptBlock`, `lib/agentKnowledge.ts`) já
+ * desembrulham de forma tolerante; a op só deixa o dado limpo.
+ *
+ *   npx convex run opsAgentProfile:internalNormalizeStoredKnowledge '{}'                 # dry run (padrão)
+ *   npx convex run opsAgentProfile:internalNormalizeStoredKnowledge '{"dryRun":false}'   # executa
+ * (PROD: o mesmo com `--prod`, dry run primeiro.) Dry run relata UMA página
+ * (avance com `cursor`); a execução real percorre a tabela sozinha,
+ * reagendando-se pelo cursor. Sem auditoria por linha (o texto exibido é o
+ * mesmo, só a marcação some) e sem texto no retorno: só contagens.
+ */
+export const internalNormalizeStoredKnowledge = internalMutation({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    withEnvelope: v.number(),
+    rewritten: v.number(),
+    organizations: v.number(),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+    scheduledNext: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const raw = args.pageSize ?? 100;
+    if (!Number.isInteger(raw) || raw < 1) throw new Error("pageSize deve ser um inteiro ≥ 1");
+    const pageSize = Math.min(raw, 200);
+    const page = await normalizeStoredKnowledgePage(ctx, {
+      cursor: args.cursor ?? null,
+      pageSize,
+      dryRun,
+      now: Date.now(),
+    });
+    const scheduledNext = !dryRun && !page.isDone;
+    if (scheduledNext) {
+      await ctx.scheduler.runAfter(0, internal.opsAgentProfile.internalNormalizeStoredKnowledge, {
+        dryRun: false,
+        cursor: page.continueCursor,
+        pageSize,
+      });
+    }
+    return { dryRun, ...page, scheduledNext };
   },
 });

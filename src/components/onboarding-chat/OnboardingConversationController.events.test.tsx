@@ -6,6 +6,7 @@ import { buildBlock } from "../../../convex/lib/onboardingBlocks";
 import { cardSignature } from "../../../convex/lib/onboardingRoadmap";
 import type { HistoryMessage } from "@/lib/onboardingChat";
 import { draftFixture } from "@/test/onboardingDraftFixture";
+import { BlockOverridesContext } from "./blocks/registry";
 import { OnboardingConversationController, type ChatStateFacts, type OnboardingConversationControllerProps } from "./OnboardingConversationController";
 
 const enc = new TextEncoder();
@@ -118,7 +119,7 @@ describe("barra do próximo passo", () => {
   it("sempre visível, com o rótulo do roteiro; nada é enviado ao montar", async () => {
     const fetchMock = okFetch();
     render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch })));
-    expect(within(bar()).getByRole("button", { name: /Ver o meu funil/ })).toBeInTheDocument();
+    expect(within(bar()).getByRole("button", { name: /Conferir o meu funil/ })).toBeInTheDocument();
     await act(async () => {
       await new Promise((r) => setTimeout(r, 20));
     });
@@ -129,16 +130,30 @@ describe("barra do próximo passo", () => {
     const user = userEvent.setup();
     const fetchMock = okFetch();
     render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch })));
-    await user.click(within(bar()).getByRole("button", { name: /Ver o meu funil/ }));
+    await user.click(within(bar()).getByRole("button", { name: /Conferir o meu funil/ }));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("sessão retomada (a última mensagem não traz o cartão): a barra pede o passo de novo, com o evento next", async () => {
+  it("o cartão está mais acima (não é a última mensagem): rola até ele e o destaca, sem pedir ao servidor", async () => {
     const user = userEvent.setup();
     const fetchMock = okFetch();
     const history = { results: [msg("u1", "user", "Valeu"), msg("a1", "assistant", "Este é o seu funil.", [funilBlock])], status: "Exhausted" as const, loadMore: vi.fn() };
     render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch, history })));
-    await user.click(within(bar()).getByRole("button", { name: /Ver o meu funil/ }));
+    const card = document.querySelector<HTMLElement>('[data-onboarding-card="funilPreview"]')!;
+    const spy = vi.fn();
+    card.scrollIntoView = spy;
+    await user.click(within(bar()).getByRole("button", { name: /Conferir o meu funil/ }));
+    expect(card.dataset.highlight).toBe("on");
+    expect(spy).toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("o cartão não está na conversa: a barra pede o passo ao servidor (evento next)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = okFetch();
+    const history = { results: [msg("u1", "user", "Valeu"), msg("a1", "assistant", "Combinado.")], status: "Exhausted" as const, loadMore: vi.fn() };
+    render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch, history })));
+    await user.click(within(bar()).getByRole("button", { name: /Conferir o meu funil/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(bodyOf(fetchMock, 0).event).toEqual({ kind: "next" });
   });
@@ -149,12 +164,12 @@ describe("barra do próximo passo", () => {
       .fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: "Limite de uso atingido.", code: "budget" }), { status: 429 }))
       .mockImplementation(async () => sseResponse([{ type: "delta", text: "Segue." }, DONE]));
-    const history = { results: [msg("u1", "user", "Valeu"), msg("a1", "assistant", "Este é o seu funil.", [funilBlock])], status: "Exhausted" as const, loadMore: vi.fn() };
+    const history = { results: [msg("u1", "user", "Valeu"), msg("a1", "assistant", "Combinado.")], status: "Exhausted" as const, loadMore: vi.fn() };
     render(ui(props({ fetchImpl: fetchMock as unknown as typeof fetch, history })));
     await user.type(field(), "Oi{Enter}");
     expect(await screen.findByRole("alert")).toHaveTextContent("Limite de uso atingido.");
     expect(screen.getByRole("button", { name: /Tentar de novo/ })).toBeInTheDocument();
-    await user.click(within(bar()).getByRole("button", { name: /Ver o meu funil/ }));
+    await user.click(within(bar()).getByRole("button", { name: /Conferir o meu funil/ }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(bodyOf(fetchMock, 1).event).toEqual({ kind: "next" });
   });
@@ -168,7 +183,7 @@ describe("barra do próximo passo", () => {
 
   it("tudo pronto: o próximo passo é o link 'Abrir o meu CRM'", () => {
     render(ui(props({ chatState: chat({ aiActive: true, applied: true, tested: true, connected: true }) })));
-    expect(within(bar()).getByRole("link", { name: "Abrir o meu CRM" })).toHaveAttribute("href", "/app");
+    expect(within(bar()).getByRole("link", { name: "Abrir o meu CRM" })).toHaveAttribute("href", "/app/painel");
   });
 });
 
@@ -318,5 +333,55 @@ describe("process_pending", () => {
       await new Promise((r) => setTimeout(r, 40));
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("teste da IA em tela dedicada", () => {
+  const ready = chat({ aiActive: true, applied: true, approvals: {} });
+  const screenStub = (p: import("./OnboardingConversationController").TestScreenRenderProps) => (
+    <div data-testid="tela-teste">
+      <p>Teste {p.tested ? "feito" : "pendente"}</p>
+      <p>Sugestões: {p.suggestions.join(" | ")}</p>
+      <button type="button" onClick={p.onTested}>
+        Primeira resposta
+      </button>
+      <button type="button" onClick={p.onClose}>
+        Sair do teste
+      </button>
+    </div>
+  );
+
+  it("a barra 'Testar a minha IA' abre a tela; a 1ª resposta marca o teste e a tela NÃO fecha (nem com mensagem nova)", async () => {
+    const user = userEvent.setup();
+    const fetchMock = okFetch();
+    const p = props({ fetchImpl: fetchMock as unknown as typeof fetch, chatState: ready, history: { results: [msg("a1", "assistant", "Combinado.")], status: "Exhausted", loadMore: vi.fn() }, renderTestScreen: screenStub });
+    const { rerender } = render(ui(p));
+    await user.click(within(bar()).getByRole("button", { name: "Testar a minha IA" }));
+    expect(screen.getByTestId("tela-teste")).toBeInTheDocument();
+    // A conversa continua montada (escondida): nada do estado dela se perde.
+    expect(screen.getByRole("log", { hidden: true })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Primeira resposta" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(bodyOf(fetchMock, 0).event).toEqual({ kind: "notify", what: "tested" });
+    // Uma vez só.
+    await user.click(screen.getByRole("button", { name: "Primeira resposta" }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // Chega a resposta do evento (mensagem nova + tested no servidor): a tela continua aberta.
+    rerender(ui({ ...p, chatState: { ...ready, tested: true }, history: { results: [msg("a2", "assistant", "Gostou do teste?"), msg("a1", "assistant", "Combinado.")], status: "Exhausted", loadMore: vi.fn() } }));
+    expect(screen.getByTestId("tela-teste")).toHaveTextContent("Teste feito");
+    await user.click(screen.getByRole("button", { name: "Sair do teste" }));
+    expect(screen.queryByTestId("tela-teste")).not.toBeInTheDocument();
+  });
+
+  it("as sugestões do segmento vêm do cartão final do servidor", async () => {
+    const user = userEvent.setup();
+    const final = { kind: "operacaoPronta", summary: { businessName: "B", funnelName: "Funil", stageCount: 3, attendantName: "Bia", knowledgeCount: 1, quickReplyCount: 0, hoursLabel: "24h" }, tested: false, connected: false, prompts: ["Quanto custa?", "Vocês abrem sábado?"] };
+    render(
+      <BlockOverridesContext.Provider value={{ operacaoPronta: () => <p>Cartão final</p> }}>
+        {ui(props({ chatState: ready, history: { results: [msg("a1", "assistant", "Pronto.", [final])], status: "Exhausted", loadMore: vi.fn() }, renderTestScreen: screenStub }))}
+      </BlockOverridesContext.Provider>
+    );
+    await user.click(within(bar()).getByRole("button", { name: "Testar a minha IA" }));
+    expect(screen.getByTestId("tela-teste")).toHaveTextContent("Quanto custa? | Vocês abrem sábado?");
   });
 });

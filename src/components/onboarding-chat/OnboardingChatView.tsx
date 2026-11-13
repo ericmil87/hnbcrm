@@ -1,13 +1,15 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ClipboardList, LayoutDashboard, ListChecks, RotateCcw, X } from "lucide-react";
+import { ClipboardList, LayoutDashboard, ListChecks, MoreVertical, RotateCcw, X } from "lucide-react";
 import { ChatWindow, ChipRow, Composer, TypingDots } from "@/components/landing/kit";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 import { Button, buttonClassName } from "@/components/ui/Button";
+import { Menu } from "@/components/ui/Menu";
 import { Modal } from "@/components/ui/Modal";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { AI_PROCESSING_NOTICE, supersededBlockKeys, type ProgressView, type TimelineItem } from "@/lib/onboardingChat";
+import { isNearBottom, newContentScroll } from "@/lib/onboardingScroll";
 import { cn } from "@/lib/utils";
 import { MessageItem } from "./MessageItem";
 import { NextStepBar, type NextStepBarProps } from "./NextStepBar";
@@ -59,6 +61,15 @@ export interface OnboardingChatViewProps {
   onMic?: () => void;
   /** Conteúdo depois da última mensagem (ex.: cartão de conta/aviso pedido por um anexo recusado). */
   tail?: ReactNode;
+  /** "Recomeçar a conversa" no menu do cabeçalho (abre a confirmação). Ausente = sem o menu. */
+  onRestart?: () => void;
+  /**
+   * Muda a cada ação da pessoa (enviar, tocar num cartão): o conteúdo que chegar em seguida é
+   * mostrado mesmo que ela tenha rolado para cima. Sem ação, só segue quem estava no fim.
+   */
+  userActionTick?: number;
+  /** Tela que toma o lugar da conversa (ex.: teste da IA). A conversa continua montada, escondida. */
+  takeover?: ReactNode;
 }
 
 /**
@@ -97,6 +108,9 @@ export function OnboardingChatView({
   onAttach,
   onMic,
   tail,
+  onRestart,
+  userActionTick = 0,
+  takeover,
 }: OnboardingChatViewProps) {
   const coarse = useMediaQuery("(pointer: coarse)");
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -107,16 +121,44 @@ export function OnboardingChatView({
   const last = timeline[timeline.length - 1];
   const lastSignature = `${last?.key ?? ""}:${last?.text.length ?? 0}:${last?.blocks.length ?? 0}:${showTypingBubble}`;
 
-  // Mantém o fim da conversa à vista quando chega mensagem/texto; carregar
-  // mensagens antigas (o primeiro item muda, o último não) não rola.
+  // Quem rolou para cima para ler não é puxado para baixo (só quem está no fim ou acabou de agir).
+  const followRef = useRef(true);
+  const actedTickRef = useRef(userActionTick);
+  useEffect(() => {
+    const scroller = endRef.current?.parentElement;
+    if (!scroller) return;
+    const onScroll = () => {
+      followRef.current = isNearBottom({ scrollTop: scroller.scrollTop, height: scroller.clientHeight, scrollHeight: scroller.scrollHeight });
+    };
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    return () => scroller.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // Conteúdo novo no fim: cola no fim, ou mostra o TOPO de um cartão/mensagem mais alto que a tela.
+  // Carregar mensagens antigas (o primeiro item muda, o último não) não rola.
   useLayoutEffect(() => {
     const firstKey = timeline[0]?.key ?? null;
     const prependedOnly = firstKeyRef.current !== null && firstKey !== firstKeyRef.current;
     firstKeyRef.current = firstKey;
     if (prependedOnly) return;
     const scroller = endRef.current?.parentElement;
-    if (scroller) scroller.scrollTop = scroller.scrollHeight;
-  }, [lastSignature, timeline]);
+    if (!scroller) return;
+    const userActed = actedTickRef.current !== userActionTick;
+    actedTickRef.current = userActionTick;
+    const items = scroller.querySelectorAll<HTMLElement>("[data-timeline-item]");
+    const lastEl = items[items.length - 1];
+    const mode = newContentScroll({
+      followBottom: followRef.current,
+      userActed,
+      lastItemHeight: lastEl?.offsetHeight ?? 0,
+      viewHeight: scroller.clientHeight,
+    });
+    if (mode === "bottom") scroller.scrollTop = scroller.scrollHeight;
+    else if (mode === "item-top" && lastEl) {
+      scroller.scrollTop = Math.max(0, lastEl.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 12);
+      followRef.current = false;
+    }
+  }, [lastSignature, timeline, userActionTick]);
 
   const focusComposer = () => {
     // No toque, focar abriria o teclado sem a pessoa pedir.
@@ -187,7 +229,8 @@ export function OnboardingChatView({
 
   return (
     <div className="flex h-screen flex-col bg-surface-base supports-[height:100dvh]:h-[100dvh]">
-      <header className="flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-1.5 md:px-4">
+      {/* Com a tela de teste aberta, no celular ela é tela cheia (o cabeçalho dela tem a saída). */}
+      <header className={cn("flex shrink-0 items-center gap-2 border-b border-border-subtle px-3 py-1.5 md:px-4", takeover && "hidden lg:flex")}>
         <Link
           to="/"
           aria-label="HNBCRM, página inicial"
@@ -197,7 +240,7 @@ export function OnboardingChatView({
           <span className="ml-2 hidden font-display text-base font-bold text-text-primary sm:inline">HNBCRM</span>
         </Link>
         <div className="flex-1" />
-        {preview && (
+        {preview && !takeover && (
           <Button type="button" variant="secondary" size="sm" className="shrink-0 whitespace-nowrap lg:hidden" onClick={() => setSheetOpen(true)}>
             <ListChecks className="size-4" aria-hidden="true" />
             Sua operação
@@ -224,11 +267,23 @@ export function OnboardingChatView({
           <span className="sr-only sm:hidden">Prefiro preencher um formulário</span>
         </Link>
         <PublicThemeButton />
+        {onRestart && (
+          <Menu
+            ariaLabel="Opções da conversa"
+            items={[{ id: "restart", label: "Recomeçar a conversa", icon: <RotateCcw className="size-4" aria-hidden="true" />, onSelect: onRestart }]}
+            trigger={(props) => (
+              <Button {...props} type="button" variant="ghost" size="sm" iconOnly aria-label="Mais opções da conversa" className="min-h-11 min-w-11 shrink-0">
+                <MoreVertical className="size-4" aria-hidden="true" />
+              </Button>
+            )}
+          />
+        )}
       </header>
 
       <main className="flex min-h-0 flex-1">
         <h1 className="sr-only">Configure o seu CRM conversando com o Copiloto</h1>
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:p-4">
+        {takeover && <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-4xl flex-1 flex-col lg:p-4">{takeover}</div>}
+        <div hidden={!!takeover} className={cn("flex min-h-0 min-w-0 flex-1 flex-col lg:p-4", takeover && "hidden")}>
           <ChatWindow
             title="Copiloto HNBCRM"
             subtitle="online"
@@ -253,20 +308,21 @@ export function OnboardingChatView({
             </p>
             {intro}
             {timeline.map((item) => (
-              <MessageItem
-                key={item.key}
-                item={item}
-                blockCtx={blockCtx}
-                isLatest={item.key === latestAssistantKey && item.key === last?.key}
-                superseded={superseded}
-              />
+              <div key={item.key} data-timeline-item>
+                <MessageItem
+                  item={item}
+                  blockCtx={blockCtx}
+                  isLatest={item.key === latestAssistantKey && item.key === last?.key}
+                  superseded={superseded}
+                />
+              </div>
             ))}
             {tail}
             {showTypingBubble && <TypingDots label={status || "digitando…"} />}
             <div ref={endRef} aria-hidden="true" />
           </ChatWindow>
         </div>
-        {preview && (
+        {preview && !takeover && (
           <div className="hidden w-[22rem] shrink-0 border-l border-border-subtle bg-surface-sunken lg:flex lg:flex-col xl:w-[26rem]">
             {preview}
           </div>

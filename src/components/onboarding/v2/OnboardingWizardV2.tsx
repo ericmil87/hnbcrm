@@ -5,12 +5,9 @@ import { toast } from "sonner";
 import { Building2, ChevronsUpDown, Lock, LogOut } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { LazyCopilotPanel } from "@/components/copilot/LazyCopilotPanel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Modal } from "@/components/ui/Modal";
 import { Spinner } from "@/components/ui/Spinner";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -32,6 +29,7 @@ import {
   type WizardStepId,
 } from "@/lib/onboardingWizard";
 import { TAB_ROUTES } from "@/lib/routes";
+import { writeSelectedOrgId } from "@/lib/selectedOrg";
 import { OnboardingWizardV2View } from "./OnboardingWizardV2View";
 import { StepAttendant } from "./StepAttendant";
 import { StepBusiness } from "./StepBusiness";
@@ -43,7 +41,8 @@ import { StepTest } from "./StepTest";
 import { StepWhatsapp } from "./StepWhatsapp";
 import { BrandLogo } from "@/components/ui/BrandLogo";
 
-const COPILOT_HINT = "Marque “Quero que a IA me ajude” no passo 1.";
+/** A conversa de configuração (P3.1): escolhe a org pela salva neste navegador (`lib/selectedOrg.ts`). */
+const CONVERSATION_ROUTE = "/comecar";
 
 interface OnboardingWizardV2Props {
   /** Quando o `AuthLayout` renderiza o assistente em tela cheia (sem `Outlet`). */
@@ -60,7 +59,6 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
   usePageTitle("Configuração inicial");
   const navigate = useNavigate();
   const { can, isLoading: permsLoading } = usePermissions(organizationId);
-  const wide = useMediaQuery("(min-width: 1024px)");
 
   const status = useQuery(api.onboarding.getOnboardingStatus, { organizationId });
   const progress = useQuery(api.onboarding.getOnboardingProgress, { organizationId });
@@ -79,7 +77,6 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
   const paramStep = parseStepParam(searchParams.get(WIZARD_STEP_PARAM), status);
   const current = paramStep ?? resume;
   const [local, setLocal] = useState<WizardData>({});
-  const [copilotOpen, setCopilotOpen] = useState(false);
   const [deferring, setDeferring] = useState(false);
   const [finishing, setFinishing] = useState(false);
   const [skipping, setSkipping] = useState(false);
@@ -314,21 +311,16 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
   return renderView(body);
 
   function renderView(content: React.ReactNode) {
-    const copilotOffered = status?.capabilities?.llm !== false && aiStatus !== undefined;
-    const copilotReady = aiStatus?.active === true && aiStatus.copilotEnabled;
-    const panel = (
-      <LazyCopilotPanel
-        variant="embedded"
-        purpose="setup"
-        organizationId={organizationId}
-        initialThreadId={data.setupThreadId}
-        onThreadChange={(id) => {
-          setLocal((l) => ({ ...l, setupThreadId: id ?? undefined }));
-          void persist(current as WizardStepId, { setupThreadId: id });
-        }}
-      />
-    );
-    const showSide = copilotOpen && copilotReady && wide;
+    // "Configurar conversando" leva à conversa de configuração (`/comecar`), na
+    // MESMA organização: ela lê a org salva neste navegador e revalida contra as
+    // orgs da pessoa. Sem IA no servidor a conversa não roda: o botão some.
+    const openConversation =
+      status?.capabilities?.llm !== false
+        ? () => {
+            writeSelectedOrgId(organizationId);
+            void navigate(CONVERSATION_ROUTE);
+          }
+        : undefined;
     return (
       <>
         {chrome && <FullScreenChrome {...chrome} />}
@@ -342,24 +334,10 @@ export function OnboardingWizardV2({ organizationId: orgProp, chrome }: Onboardi
           onDefer={() => void handleDefer()}
           deferLoading={deferring}
           notice={status?.accountHasEmail === false ? NO_EMAIL_NOTICE : undefined}
-          copilot={
-            copilotOffered && (copilotReady || !aiActive)
-              ? {
-                  open: copilotOpen,
-                  onToggle: () => setCopilotOpen((o) => !o),
-                  disabledReason: copilotReady ? undefined : COPILOT_HINT,
-                }
-              : undefined
-          }
-          sidePanel={showSide ? panel : undefined}
+          onOpenConversation={openConversation}
         >
           {content}
         </OnboardingWizardV2View>
-        {copilotOpen && copilotReady && !wide && (
-          <Modal open onClose={() => setCopilotOpen(false)} title="Configurar conversando">
-            <div className="h-[70vh] supports-[height:100dvh]:h-[70dvh]">{panel}</div>
-          </Modal>
-        )}
       </>
     );
   }

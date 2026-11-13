@@ -29,6 +29,7 @@ import { maskEmailForDisplay } from "./lib/emailAddress";
 import { requestEmailVerificationCodeCore } from "./emailVerification";
 import { coherentChips, type RoadmapFacts } from "./lib/onboardingRoadmap";
 import { ensureOnboardingSession } from "./onboardingSessions";
+import { ARCHIVED_SESSION_MESSAGE } from "./lib/onboardingRestart";
 import { onboardingBlockValidator } from "./lib/onboardingBlocks";
 import { onboardingDraftValidator } from "./lib/onboardingDraft";
 import { siteKeyOf, MAX_PAGES_PER_SITE } from "./lib/htmlExtract";
@@ -199,6 +200,8 @@ export const getChatState = query({
       tested: v.boolean(),
       /** Canal conectado ou "conectar depois" escolhido (`channelStepAt`). */
       connected: v.boolean(),
+      /** A operação já foi montada por uma conversa anterior (recomeçada). */
+      priorApplied: v.optional(v.boolean()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -250,6 +253,7 @@ export const getChatState = query({
       applied: facts.applied,
       tested: facts.tested,
       connected: facts.connected,
+      priorApplied: session?.priorAppliedAt !== undefined,
     };
   },
 });
@@ -506,6 +510,8 @@ export const internalPrepareTurn = internalMutation({
     if (args.sessionId) {
       const s = await ctx.db.get(args.sessionId);
       if (!s || s.organizationId !== args.organizationId) refuse("invalid_input", "Sessão de onboarding não encontrada");
+      // Conversa recomeçada (outra aba, ou turno que chegou depois do recomeço): nada entra na sessão arquivada.
+      if (s.archivedAt !== undefined) refuse("invalid_input", ARCHIVED_SESSION_MESSAGE);
       session = s;
     } else {
       session = await ensureOnboardingSession(ctx, args.organizationId, member);

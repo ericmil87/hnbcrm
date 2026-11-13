@@ -60,6 +60,9 @@ describe("vitrine de DEV do onboarding", () => {
       </MemoryRouter>
     );
     expect(screen.getByRole("log")).toBeInTheDocument();
-    expect(screen.getAllByRole("group", { name: "Próximo passo" }).length).toBeGreaterThan(0);
+    // Sem barra do próximo passo à vista: telas de entrada (só a escolha) e a tela de teste por cima da conversa.
+    if (!["escolha", "escolha-varias", "nao-admin", "teste"].includes(estado)) {
+      expect(screen.getAllByRole("group", { name: "Próximo passo" }).length).toBeGreaterThan(0);
+    }
   });
 });

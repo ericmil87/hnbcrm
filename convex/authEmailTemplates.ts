@@ -46,7 +46,7 @@ export function buildPasswordResetTemplate(data: {
           <span style="display: inline-block; padding: 16px 32px; background: ${BG_SOFT}; border: 1px solid ${BORDER_COLOR}; border-radius: 8px; font-size: 32px; font-weight: 700; letter-spacing: 8px; color: ${CODE_COLOR};">${escapeHtml(data.code)}</span>
         </div>
         ${paragraph(`Esse código expira em ${data.expiresMinutes} minutos.`)}
-        ${paragraph("Se você não pediu essa redefinição, pode ignorar este e-mail — sua senha continua a mesma.")}
+        ${paragraph("Se você não pediu essa redefinição, pode ignorar este e-mail. Sua senha continua a mesma.")}
       `,
     }),
   };
@@ -93,7 +93,7 @@ export function buildWelcomeTemplate(data: {
 }): TemplateResult {
   const firstName = welcomeFirstName(data.memberName);
   const orgName = escapeHtml(data.orgName);
-  const hello = firstName ? `Bem-vindo(a) ao HNBCRM, ${escapeHtml(firstName)}!` : "Bem-vindo(a) ao HNBCRM!";
+  const hello = firstName ? `Bem-vindo(a) ao HNBCRM, ${escapeHtml(firstName)}` : "Bem-vindo(a) ao HNBCRM";
   const startUrl = `${data.appUrl}/comecar`;
   const steps = [
     `<a href="${safeUrl(startUrl)}" style="color: #006B58; font-weight: 600;">Conte sobre o seu negócio</a> para o Copiloto montar a operação`,
@@ -104,7 +104,7 @@ export function buildWelcomeTemplate(data: {
     ${steps.map((step) => `<li style="margin-bottom: 4px;">${step}</li>`).join("")}
   </ol>`;
   return {
-    subject: firstName ? `Bem-vindo ao HNBCRM, ${line(firstName)}!` : "Bem-vindo ao HNBCRM!",
+    subject: firstName ? `Bem-vindo ao HNBCRM, ${line(firstName)}` : "Bem-vindo ao HNBCRM",
     html: baseTemplate({
       preheader: `${firstName ? escapeHtml(firstName) + ", s" : "S"}ua organização ${orgName} já está pronta no HNBCRM.`,
       appUrl: data.appUrl,
@@ -148,7 +148,7 @@ export function buildAddedToOrgTemplate(data: {
       preheader: `${memberName}, você agora faz parte de ${orgName} no HNBCRM.`,
       appUrl: data.appUrl,
       content: `
-        ${heading(`Olá, ${memberName}!`)}
+        ${heading(`Olá, ${memberName}`)}
         ${paragraph(`Você foi adicionado(a)${by} à organização <strong style="color: ${TEXT_PRIMARY};">${orgName}</strong> no HNBCRM.`)}
         ${paragraph(
           data.pendingPasswordChange

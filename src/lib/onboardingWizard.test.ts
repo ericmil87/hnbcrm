@@ -247,12 +247,10 @@ describe("passo 4", () => {
 });
 
 describe("dados do membro", () => {
-  it("lê só strings", () => {
-    expect(readWizardData({ connectedChannelId: "c", funnelBoardId: 3, setupThreadId: "t" })).toEqual({
-      connectedChannelId: "c",
-      funnelBoardId: undefined,
-      setupThreadId: "t",
-    });
+  it("lê só strings; a thread do antigo Copiloto de configuração (`setupThreadId`) é ignorada", () => {
+    const data = readWizardData({ connectedChannelId: "c", funnelBoardId: 3, setupThreadId: "t" });
+    expect(data).toEqual({ connectedChannelId: "c", funnelBoardId: undefined });
+    expect("setupThreadId" in data).toBe(false);
     expect(readWizardData(null)).toEqual({});
   });
 });

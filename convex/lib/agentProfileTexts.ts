@@ -20,13 +20,27 @@
  */
 import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx, QueryCtx } from "../_generated/server";
+import {
+  KNOWLEDGE_ENVELOPE_LABEL,
+  displayKnowledge,
+  hasStoredEnvelope,
+  isEnvelopedKnowledge,
+  knowledgeForPrompt,
+  unwrapStoredKnowledge,
+} from "./agentKnowledge";
+import { wrapUntrusted } from "./promptEnvelope";
 
 export type AgentProfile = NonNullable<Doc<"teamMembers">["agentProfile"]>;
 
 export type AgentTexts = { systemPrompt: string | null; knowledge: string | null };
 
-/** Patch de texto: `undefined` mantém o atual; string (inclusive "") grava. */
-export type AgentTextsPatch = { systemPrompt?: string; knowledge?: string };
+/**
+ * Patch de texto: `undefined` mantém o atual; string (inclusive "") grava.
+ * `knowledgeEnvelope: true` marca o conhecimento como gerado pela conversa de
+ * configuração (só `applyOnboardingDraftCore` passa); ausente = mantém a marca
+ * que o membro já tem (salvar pela tela nunca tira nem põe a marca).
+ */
+export type AgentTextsPatch = { systemPrompt?: string; knowledge?: string; knowledgeEnvelope?: boolean };
 
 export function isAgentTextsMigrated(member: Pick<Doc<"teamMembers">, "agentProfile">): boolean {
   return member.agentProfile?.textsMigratedAt !== undefined;
@@ -48,18 +62,96 @@ async function getTextsRow(
     .unique();
 }
 
-/** Textos do agente (persona + conhecimento). Membro sem perfil = tudo null. */
+/** Texto como está gravado (sem desembrulhar) + se conta como "da conversa". */
+async function readRawTexts(
+  ctx: QueryCtx,
+  member: Pick<Doc<"teamMembers">, "_id" | "agentProfile">
+): Promise<AgentTexts & { envelope: boolean }> {
+  const profile = member.agentProfile;
+  if (!profile) return { systemPrompt: null, knowledge: null, envelope: false };
+  if (profile.textsMigratedAt === undefined) {
+    const knowledge = profile.knowledge ?? null;
+    return { systemPrompt: profile.systemPrompt ?? null, knowledge, envelope: isEnvelopedKnowledge(knowledge, false) };
+  }
+  const row = await getTextsRow(ctx, member._id);
+  const knowledge = row?.knowledge ?? null;
+  return {
+    systemPrompt: row?.systemPrompt ?? null,
+    knowledge,
+    envelope: isEnvelopedKnowledge(knowledge, row?.knowledgeEnvelope === true),
+  };
+}
+
+/**
+ * Textos do agente (persona + conhecimento) para EXIBIR e editar. Membro sem
+ * perfil = tudo null. O conhecimento sai sem o envelope `<crm_data>` que versões
+ * antigas gravavam no texto; texto sem envelope sai idêntico ao gravado.
+ */
 export async function readAgentTexts(
   ctx: QueryCtx,
   member: Pick<Doc<"teamMembers">, "_id" | "agentProfile">
 ): Promise<AgentTexts> {
-  const profile = member.agentProfile;
-  if (!profile) return { systemPrompt: null, knowledge: null };
-  if (profile.textsMigratedAt === undefined) {
-    return { systemPrompt: profile.systemPrompt ?? null, knowledge: profile.knowledge ?? null };
+  const raw = await readRawTexts(ctx, member);
+  return { systemPrompt: raw.systemPrompt, knowledge: displayKnowledge(raw.knowledge) };
+}
+
+/**
+ * Textos do agente para os construtores de PROMPT (atendente/simulador,
+ * publicações e agente de grupo). Conhecimento da conversa de configuração
+ * (marca ou envelope legado) chega já envelopado (`knowledgeForPrompt`); o
+ * escrito pela empresa chega exatamente como gravado, como antes.
+ */
+export async function readAgentTextsForPrompt(
+  ctx: QueryCtx,
+  member: Pick<Doc<"teamMembers">, "_id" | "agentProfile">
+): Promise<AgentTexts> {
+  const raw = await readRawTexts(ctx, member);
+  return { systemPrompt: raw.systemPrompt, knowledge: knowledgeForPrompt(raw.knowledge, raw.envelope) };
+}
+
+/**
+ * Op `opsAgentProfile:internalNormalizeStoredKnowledge`: uma página de
+ * `agentProfileTexts`, regravando sem envelope o conhecimento que o tem e
+ * gravando a marca `knowledgeEnvelope` (o prompt continua envelopado).
+ * Fica aqui porque este é o único módulo que mexe nos textos do agente.
+ */
+export async function normalizeStoredKnowledgePage(
+  ctx: MutationCtx,
+  args: { cursor: string | null; pageSize: number; dryRun: boolean; now: number }
+): Promise<{
+  scanned: number;
+  withEnvelope: number;
+  rewritten: number;
+  organizations: number;
+  continueCursor: string;
+  isDone: boolean;
+}> {
+  const page = await ctx.db
+    .query("agentProfileTexts")
+    .paginate({ numItems: args.pageSize, cursor: args.cursor });
+  let withEnvelope = 0;
+  let rewritten = 0;
+  const orgs = new Set<string>();
+  for (const row of page.page) {
+    if (!hasStoredEnvelope(row.knowledge)) continue;
+    withEnvelope++;
+    orgs.add(row.organizationId);
+    if (args.dryRun) continue;
+    await ctx.db.patch(row._id, {
+      knowledge: unwrapStoredKnowledge(row.knowledge!),
+      knowledgeEnvelope: true,
+      updatedAt: args.now,
+    });
+    rewritten++;
   }
-  const row = await getTextsRow(ctx, member._id);
-  return { systemPrompt: row?.systemPrompt ?? null, knowledge: row?.knowledge ?? null };
+  return {
+    scanned: page.page.length,
+    withEnvelope,
+    rewritten,
+    organizations: orgs.size,
+    continueCursor: page.continueCursor,
+    isDone: page.isDone,
+  };
 }
 
 /**
@@ -69,9 +161,14 @@ export async function readAgentTexts(
 async function upsertTextsRow(
   ctx: MutationCtx,
   member: Pick<Doc<"teamMembers">, "_id" | "organizationId">,
-  texts: { systemPrompt: string | undefined; knowledge: string | undefined },
+  texts: { systemPrompt: string | undefined; knowledge: string | undefined; knowledgeEnvelope: boolean },
   now: number
 ): Promise<void> {
+  // Nunca grava o envelope no texto: o conhecimento da conversa leva a MARCA, e
+  // a leitura para o prompt envelopa. Texto sem envelope fica idêntico.
+  const knowledge = texts.knowledge === undefined ? undefined : unwrapStoredKnowledge(texts.knowledge);
+  // Sem marca = campo ausente (a linha de quem nunca usou a conversa não muda de forma).
+  const knowledgeEnvelope = texts.knowledgeEnvelope ? true : undefined;
   const row = await getTextsRow(ctx, member._id);
   if (row) {
     if (row.organizationId !== member.organizationId) {
@@ -79,7 +176,8 @@ async function upsertTextsRow(
     }
     await ctx.db.patch(row._id, {
       systemPrompt: texts.systemPrompt,
-      knowledge: texts.knowledge,
+      knowledge,
+      knowledgeEnvelope,
       updatedAt: now,
     });
   } else {
@@ -87,7 +185,8 @@ async function upsertTextsRow(
       organizationId: member.organizationId,
       teamMemberId: member._id,
       systemPrompt: texts.systemPrompt,
-      knowledge: texts.knowledge,
+      knowledge,
+      ...(knowledgeEnvelope ? { knowledgeEnvelope } : {}),
       updatedAt: now,
     });
   }
@@ -114,13 +213,19 @@ export async function writeAgentTexts(
   const profile = member.agentProfile;
   if (!profile) throw new Error("Membro não é um agente de IA com perfil");
   const now = opts.now ?? Date.now();
-  const current = await readAgentTexts(ctx, member);
+  const current = await readRawTexts(ctx, member);
   await upsertTextsRow(
     ctx,
     member,
     {
       systemPrompt: patch.systemPrompt ?? current.systemPrompt ?? undefined,
       knowledge: patch.knowledge ?? current.knowledge ?? undefined,
+      // A marca do membro se mantém (salvar pela tela, Copiloto, ops); só a
+      // aplicação da conversa a põe. Texto colado com o envelope legado também conta.
+      knowledgeEnvelope:
+        patch.knowledgeEnvelope === true ||
+        current.envelope ||
+        (patch.knowledge !== undefined && hasStoredEnvelope(patch.knowledge)),
     },
     now
   );
@@ -148,7 +253,11 @@ export async function insertAgentTextsForNewMember(
   await upsertTextsRow(
     ctx,
     member,
-    { systemPrompt: texts.systemPrompt, knowledge: texts.knowledge },
+    {
+      systemPrompt: texts.systemPrompt,
+      knowledge: texts.knowledge,
+      knowledgeEnvelope: texts.knowledgeEnvelope === true || hasStoredEnvelope(texts.knowledge),
+    },
     now
   );
 }
@@ -168,7 +277,11 @@ export async function migrateMemberTexts(
   await upsertTextsRow(
     ctx,
     member,
-    { systemPrompt: profile.systemPrompt, knowledge: profile.knowledge },
+    {
+      systemPrompt: profile.systemPrompt,
+      knowledge: profile.knowledge,
+      knowledgeEnvelope: hasStoredEnvelope(profile.knowledge),
+    },
     now
   );
   await ctx.db.patch(member._id, {
@@ -195,7 +308,16 @@ export async function restoreMemberTextsToDoc(
     agentProfile: {
       ...(rest as AgentProfile),
       ...(row?.systemPrompt !== undefined ? { systemPrompt: row.systemPrompt } : {}),
-      ...(row?.knowledge !== undefined ? { knowledge: row.knowledge } : {}),
+      // O doc não tem a marca: conhecimento da conversa volta com o envelope no
+      // texto (a forma legada, que a leitura reconhece).
+      ...(row?.knowledge !== undefined
+        ? {
+            knowledge:
+              row.knowledgeEnvelope === true && row.knowledge.trim()
+                ? wrapUntrusted(KNOWLEDGE_ENVELOPE_LABEL, row.knowledge)
+                : row.knowledge,
+          }
+        : {}),
     },
     updatedAt: now,
   });

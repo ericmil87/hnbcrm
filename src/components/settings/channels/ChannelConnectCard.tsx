@@ -1,9 +1,12 @@
 import { useState } from "react";
+import { useMutation, useQuery } from "convex/react";
 import { Cloud, Radio } from "lucide-react";
 import { toast } from "sonner";
+import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { Card } from "@/components/ui/Card";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { asksAiAckOnQrConnect } from "@/lib/bridgeAiAck";
 import { CONNECT_NARROW_QUERY, defaultConnectMode, type ConnectMode } from "@/lib/channelConnect";
 import { VOCAB } from "@/lib/vocab";
 import { MetaForm } from "./MetaForm";
@@ -32,6 +35,11 @@ export interface ChannelConnectCardViewProps extends ChannelConnectCardProps {
   defaults: QrConnectDefaults | undefined;
   defaultCountryCode?: string;
   actions: ChannelConnectActions;
+  /**
+   * IA da org ligada e sem o aceite da IA no QR code: o aceite de banimento do QR code também
+   * libera a IA (uma confirmação só). Ausente = só o aceite de banimento, como antes.
+   */
+  aiAck?: { grant: () => Promise<unknown> };
 }
 
 type Step = "choose" | "meta" | "qr-setup" | "pair";
@@ -48,6 +56,7 @@ export function ChannelConnectCardView({
   defaults,
   defaultCountryCode,
   actions,
+  aiAck,
 }: ChannelConnectCardViewProps) {
   const [step, setStep] = useState<Step>(configId ? "pair" : "choose");
   const [pairId, setPairId] = useState<Id<"channelConfigs"> | undefined>(configId);
@@ -99,6 +108,7 @@ export function ChannelConnectCardView({
           createChannelConfig={actions.createChannelConfig}
           updateChannelConfig={actions.updateChannelConfig}
           createManagedChannel={actions.createManagedChannel}
+          aiAck={aiAck}
           onCreated={(id) => {
             setPairId(id);
             setStep("pair");
@@ -166,6 +176,14 @@ export function ChannelConnectCard(props: ChannelConnectCardProps) {
   const narrow = useMediaQuery(CONNECT_NARROW_QUERY);
   const defaultCountryCode = useOrgDefaultCountry(organizationId);
   const defaults = useQrConnectDefaults(organizationId, !!configId);
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, { organizationId });
+  const setBridgeAiAck = useMutation(api.aiSettings.setBridgeAiAck);
+  // Aceite da IA no QR code junto com o de banimento (mesmo clique): só com a IA ligada e sem o
+  // aceite. Grava pela porta de sempre (`setBridgeAiAck`, audit `high`); nunca sem o clique.
+  const aiAck =
+    aiStatus && asksAiAckOnQrConnect(aiStatus)
+      ? { grant: () => setBridgeAiAck({ organizationId, accept: true, riskAck: true }) }
+      : undefined;
 
   return (
     <ChannelConnectCardView
@@ -174,6 +192,7 @@ export function ChannelConnectCard(props: ChannelConnectCardProps) {
       defaults={configId ? { managedAvailable: false } : defaults}
       defaultCountryCode={defaultCountryCode}
       actions={actions}
+      aiAck={aiAck}
     />
   );
 }

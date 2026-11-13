@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, ReactNode, Ref } from "react";
 import { cn } from "@/lib/utils";
 import { ModelText } from "../ModelText";
 
@@ -16,12 +16,15 @@ export interface BlockCardProps {
   /** Ações padronizadas do cartão (botão principal + secundário), depois do conteúdo. */
   footer?: ReactNode;
   className?: string;
+  /** Ref da moldura (rolagem até o cartão quando ele abre um editor). */
+  cardRef?: Ref<HTMLElement>;
 }
 
 /** Moldura comum dos blocos ricos dentro da conversa (largura de bolha, tokens de superfície). */
-export function BlockCard({ title, icon: Icon, purpose, badge, note, children, footer, className }: BlockCardProps) {
+export function BlockCard({ title, icon: Icon, purpose, badge, note, children, footer, className, cardRef }: BlockCardProps) {
   return (
     <section
+      ref={cardRef}
       aria-label={title}
       className={cn(
         "w-full max-w-md rounded-card border border-border-subtle bg-surface-raised p-3 text-sm text-text-primary shadow-card",

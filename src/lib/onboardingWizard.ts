@@ -384,7 +384,6 @@ export function attendantRename(name: string, currentName: string): string | und
 export interface WizardData {
   connectedChannelId?: Id<"channelConfigs">;
   funnelBoardId?: Id<"boards">;
-  setupThreadId?: string;
 }
 
 export function readWizardData(raw: unknown): WizardData {
@@ -393,7 +392,6 @@ export function readWizardData(raw: unknown): WizardData {
   return {
     connectedChannelId: str("connectedChannelId") as Id<"channelConfigs"> | undefined,
     funnelBoardId: str("funnelBoardId") as Id<"boards"> | undefined,
-    setupThreadId: str("setupThreadId"),
   };
 }
 

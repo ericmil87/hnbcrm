@@ -6,6 +6,7 @@ import { startHref } from "@/lib/onboardingEntry";
 import { cn } from "@/lib/utils";
 import { LANDING_ANCHORS, PRIMARY_CTA_LABEL } from "./sections/landingCopy";
 import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
+import { useSessionHint } from "@/hooks/useSessionHint";
 
 interface NavLink {
   href: string;
@@ -31,10 +32,13 @@ const linkClass = cn(
 /**
  * Cabeçalho fixo da landing: logo, navegação por âncoras (segunda linha com
  * rolagem horizontal no celular), botão de tema, Entrar e Testar grátis.
- * "Testar grátis" vai para `/comecar` (`startHref`).
+ * "Testar grátis" vai para `/comecar` (`startHref`). Com sessão neste
+ * navegador (marca local, lida depois da hidratação), os dois viram
+ * "Abrir o meu CRM".
  */
 export function LandingHeader() {
   const links = landingNavLinks();
+  const signedIn = useSessionHint();
   return (
     <header className="sticky top-0 z-40 border-b border-border-subtle bg-surface-base/95 backdrop-blur supports-[backdrop-filter]:bg-surface-base/80">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-2 px-4 pt-2 md:flex-nowrap md:py-2">
@@ -53,12 +57,20 @@ export function LandingHeader() {
         </nav>
         <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
           <PublicThemeButton />
-          <Link to="/entrar" className={buttonClassName("ghost", "sm")}>
-            Entrar
-          </Link>
-          <Link to={startHref()} className={buttonClassName("primary", "sm")}>
-            {PRIMARY_CTA_LABEL}
-          </Link>
+          {signedIn ? (
+            <Link to="/app" className={buttonClassName("primary", "sm")}>
+              Abrir o meu CRM
+            </Link>
+          ) : (
+            <>
+              <Link to="/entrar" className={buttonClassName("ghost", "sm")}>
+                Entrar
+              </Link>
+              <Link to={startHref()} className={buttonClassName("primary", "sm")}>
+                {PRIMARY_CTA_LABEL}
+              </Link>
+            </>
+          )}
         </div>
       </div>
     </header>
