@@ -44,6 +44,8 @@ import { assertManualSendAllowed, clearNotFoundFails, clearWhatsappCheck, record
 import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
+import { maybeScheduleContactAvatar } from "./lib/contactAvatarOps";
+import { contactAvatarFetchEnabled } from "./lib/contactAvatar";
 import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
 import { discardDuplicateAttachments } from "./lib/fileRefs";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
@@ -1069,6 +1071,8 @@ export const searchConversationsByContact = query({
       unreadCount: v.number(),
       archived: v.boolean(),
       isGroup: v.literal(false),
+      // Foto exibida do contato (já vem no doc lido; sem leitura nova).
+      avatarUrl: v.optional(v.string()),
     })
   ),
   handler: async (ctx, args) => {
@@ -1144,6 +1148,7 @@ export const searchConversationsByContact = query({
         unreadCount: conversation.unreadCount ?? 0,
         archived: !!conversation.archivedAt,
         isGroup: false as const,
+        ...(contact.avatarUrl ? { avatarUrl: contact.avatarUrl } : {}),
       };
     });
   },
@@ -2181,8 +2186,9 @@ export const internalReceiveMessage = internalMutation({
 
     // Mensagem RECEBIDA prova que o número existe no WhatsApp: derruba o marcador
     // "sem WhatsApp" (lib/whatsappCheck) — o envio automático volta a valer.
+    let inboundContact: Doc<"contacts"> | null = null;
     if (args.channel === "whatsapp" && lead.contactId) {
-      const inboundContact = await ctx.db.get(lead.contactId);
+      inboundContact = await ctx.db.get(lead.contactId);
       if (inboundContact?.whatsappCheck?.status === "not_on_whatsapp") {
         await clearWhatsappCheck(ctx, inboundContact._id);
       }
@@ -2285,6 +2291,18 @@ export const internalReceiveMessage = internalMutation({
       ...(await channelConfigPatchFor(ctx, conversation, args.channelConfigId)),
       ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
+
+    // Foto de perfil do WhatsApp (bridge, 1 a 1): porta única de agendamento.
+    // Caminho quente sem o que fazer = 1 leitura indexada de `contactAvatars`
+    // (o contato e a conversa já foram lidos acima).
+    if (args.channel === "whatsapp" && inboundContact) {
+      await maybeScheduleContactAvatar(ctx, {
+        contact: inboundContact,
+        conversation,
+        channelConfigId: args.channelConfigId,
+        importedFromHistory: args.metadata?.importedFromHistory === true,
+      });
+    }
 
     // Origem do anúncio (Meta Click-to-WhatsApp): primeiro toque, só com o
     // módulo de atribuição ligado (lib/leadAttribution).
@@ -3541,6 +3559,24 @@ export const markConversationRead = mutation({
     // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
     // lista) e avança a marca d'água — independe dos recibos logo abaixo.
     await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+    // Foto de perfil do contato: só ao abrir com não lidas (o front chama esta
+    // mutation a cada mensagem vista, a cada ~400 ms; sem não lidas retornamos
+    // acima sem ler nada). Custo: lead + contato + 1 linha lateral; vencida →
+    // agenda `internalMaybeSchedule`. Contato antigo SEM não lidas ganha a foto
+    // quando escrever de novo (o ingest dispara o mesmo gatilho).
+    if (
+      conversation.channel === "whatsapp" &&
+      conversation.kind !== "group" &&
+      conversation.channelConfigId &&
+      contactAvatarFetchEnabled()
+    ) {
+      const avatarLead = await getLeadRef(ctx.db, conversation.leadId);
+      const avatarContact =
+        avatarLead && avatarLead.organizationId === conversation.organizationId && avatarLead.contactId
+          ? await ctx.db.get(avatarLead.contactId)
+          : null;
+      await maybeScheduleContactAvatar(ctx, { contact: avatarContact, conversation });
+    }
 
     // Instagram/Messenger: "visto" para o cliente (best-effort, um POST por leitura).
     if (conversation.channel === "instagram" || conversation.channel === "messenger") {

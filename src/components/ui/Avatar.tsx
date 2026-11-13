@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Bot } from "lucide-react";
 
@@ -18,6 +19,10 @@ interface AvatarProps {
 }
 
 export function Avatar({ name, type = "human", size = "md", status, imageUrl, className }: AvatarProps) {
+  // Imagem que não carrega (arquivo apagado, rede) volta às iniciais; a falha é
+  // lembrada POR URL, então uma foto nova é tentada de novo.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showImage = Boolean(imageUrl) && failedUrl !== imageUrl;
   const initials = name
     .split(" ")
     .map((n) => n[0])
@@ -34,8 +39,16 @@ export function Avatar({ name, type = "human", size = "md", status, imageUrl, cl
         )}
         aria-label={`${name} (${type === "ai" ? "IA" : "Humano"})`}
       >
-        {imageUrl ? (
-          <img src={imageUrl} alt="" className="w-full h-full object-cover" />
+        {showImage ? (
+          <img
+            src={imageUrl ?? undefined}
+            alt=""
+            loading="lazy"
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onError={() => setFailedUrl(imageUrl ?? null)}
+            className="w-full h-full object-cover"
+          />
         ) : (
           initials
         )}

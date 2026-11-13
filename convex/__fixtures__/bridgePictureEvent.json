@@ -1,0 +1,35 @@
+{
+  "_fixture": "SINTÉTICA — montada a partir da struct types/events.Picture do whatsmeow (JID, Author, Timestamp, Remove, PictureID). O payload REAL do evento Picture NÃO foi capturado do gateway: revalidar com um evento vivo antes de tratar os nomes de campo como confirmados.",
+  "changed": {
+    "type": "Picture",
+    "event": {
+      "JID": "15550000001@s.whatsapp.net",
+      "Author": "15550000001@s.whatsapp.net",
+      "Timestamp": "2026-11-10T12:00:00Z",
+      "Remove": false,
+      "PictureID": "1700000000"
+    }
+  },
+  "removed": {
+    "type": "Picture",
+    "event": {
+      "JID": "15550000001@s.whatsapp.net",
+      "Author": "15550000001@s.whatsapp.net",
+      "Timestamp": "2026-11-10T12:05:00Z",
+      "Remove": true,
+      "PictureID": ""
+    }
+  },
+  "group": {
+    "type": "Picture",
+    "event": { "JID": "120363000000000000@g.us", "Author": "15550000002@s.whatsapp.net", "Timestamp": "2026-11-10T12:00:00Z", "Remove": false, "PictureID": "1700000001" }
+  },
+  "lid": {
+    "type": "Picture",
+    "event": { "JID": "180002129735765@lid", "Timestamp": "2026-11-10T12:00:00Z", "Remove": false, "PictureID": "1700000002" }
+  },
+  "newsletter": {
+    "type": "Picture",
+    "event": { "JID": "120363000000000001@newsletter", "Timestamp": "2026-11-10T12:00:00Z", "Remove": false }
+  }
+}

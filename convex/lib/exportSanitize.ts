@@ -29,6 +29,10 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   // Estado efêmero da conversa (presença/lock da IA/pacing — fase 4b), recomputável.
   "conversationRuntime",
   "channelPacing",
+  // Foto de perfil do WhatsApp (derivada, aponta para o storage DESTE deployment) e
+  // o ritmo das buscas por canal.
+  "contactAvatars",
+  "channelAvatarPacing",
   "agentRuns",
   // Contador mensal de uso/custo de IA (v0.69) — derivado de `agentRuns`.
   "aiUsageMonthly",
@@ -124,6 +128,8 @@ export const DENY_PATHS: readonly string[] = [
   // Segredo de assinatura do webhook (redundante com o padrão `secret`, mantido
   // explícito porque é o caso citado no plano).
   "webhooks.secret",
+  // Foto exibida: URL do storage deste deployment (derivada, nunca restaurável).
+  "contacts.avatarUrl",
   // Vínculo com a tabela de auth — o backup não expõe contas de usuário.
   "teamMembers.userId",
   // Rota BYO de LLM: aponta para a chave cifrada em `orgSecrets`.

@@ -11,6 +11,8 @@
  * JSON) and PascalCase (Go struct) key spellings so it survives whichever
  * serialization wuzapi emits.
  */
+import { isPhoneJid } from "./startConversation";
+
 
 export interface ParsedBridgeMedia {
   kind: string; // "image" | "sticker" | "audio" | "video" | "document"
@@ -137,8 +139,22 @@ export interface ParsedBridgeGroupPresence {
   state: "composing" | "paused";
 }
 
+/**
+ * whatsmeow `Picture` (foto de perfil trocada/removida) de um USUÁRIO 1 a 1.
+ * Payload REAL não capturado: campos do upstream (`JID`, `Author`, `Timestamp`,
+ * `Remove`, `PictureID`). Só o telefone e a bandeira `remove` importam; nunca
+ * dispara busca (só marca a foto como vencida).
+ */
+export interface ParsedBridgePicture {
+  phone: string;
+  remove: boolean;
+  pictureId?: string;
+  timestamp: number;
+}
+
 export type ParsedBridgeEvent =
   | { kind: "message"; message: ParsedBridgeInbound }
+  | { kind: "picture"; picture: ParsedBridgePicture }
   | { kind: "receipt"; receipt: ParsedBridgeReceipt }
   | { kind: "reaction"; reaction: ParsedBridgeReaction }
   | { kind: "chat_presence"; presence: ParsedBridgePresence }
@@ -1499,6 +1515,7 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
   const t = (type ?? "").toLowerCase();
   if (t.includes("receipt") || t === "ack") return parseReceipt(event);
   if (t === "chatpresence" || t === "chat_presence") return parseChatPresence(event);
+  if (t === "picture") return parsePictureEvent(event);
   if (t === "groupinfo" || t === "group_info") return parseGroupInfoEvent(event);
   if (t === "joinedgroup" || t === "joined_group") return parseJoinedGroupEvent(event);
   if (t === "loggedout" || t === "logged_out") {
@@ -1530,6 +1547,34 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
   }
   // Presence, HistorySync, Connected, etc. — not ingested here
   return { kind: "ignored", reason: type ? `unhandled type ${type}` : "unrecognized" };
+}
+
+/**
+ * whatsmeow `Picture`: só JID de TELEFONE de usuário. Grupo (`@g.us`), `@lid`,
+ * newsletter/broadcast e JID ausente são ignorados (nada escrito).
+ */
+function parsePictureEvent(event: Record<string, any>): ParsedBridgeEvent {
+  const jid = String(pick(event, "JID", "Jid", "jid") ?? "");
+  if (!jid) return { kind: "ignored", reason: "picture without jid" };
+  if (jid.endsWith("@g.us")) return { kind: "ignored", reason: "group picture" };
+  if (isNewsletterOrBroadcastJid(jid)) return { kind: "ignored", reason: "newsletter/broadcast picture" };
+  if (isLidJid(jid) || !isPhoneJid(jid)) return { kind: "ignored", reason: "picture of non-phone jid" };
+  const phone = jidToPhone(jid);
+  if (!phone) return { kind: "ignored", reason: "picture without phone" };
+  const remove = pick(event, "Remove", "remove") === true;
+  const rawId = pick(event, "PictureID", "PictureId", "pictureId", "pictureID");
+  const pictureId =
+    typeof rawId === "string" && rawId ? rawId : typeof rawId === "number" ? String(rawId) : undefined;
+  const ts = pick(event, "Timestamp", "timestamp");
+  return {
+    kind: "picture",
+    picture: {
+      phone,
+      remove,
+      ...(pictureId ? { pictureId } : {}),
+      timestamp: ts === undefined ? Date.now() : parseTimestamp(ts),
+    },
+  };
 }
 
 /**

@@ -30,7 +30,11 @@ function getOrganizationTier(_organizationId: Id<"organizations">): "free" | "pr
   return "free";
 }
 
-/** Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `cap` docs. */
+/**
+ * Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `cap` docs. A foto de
+ * perfil do contato fica fora da conta de propósito: ela grava `createdAt: 0`
+ * (ver `contactAvatar.internalApplyContactAvatar`), fora deste range de índice.
+ */
 async function countUploadsLast24h(
   ctx: QueryCtx,
   organizationId: Id<"organizations">,
@@ -178,4 +182,20 @@ export async function getStorageStats(
     uploadsLast24h: usage.uploadsLast24h,
     dailyQuota: quota.uploadsPerDay,
   };
+}
+
+/**
+ * Quota da foto de perfil do contato (automática): só o TOTAL da org vale — o
+ * teto diário de uploads e o teto por arquivo não se aplicam. NÃO lança.
+ */
+export async function checkAvatarQuota(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; fileSize: number }
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const quota = FILE_QUOTAS[getOrganizationTier(args.organizationId)];
+  const usage = await readStorageUsageForWrite(ctx, args.organizationId);
+  if (usage.bytes + args.fileSize > quota.totalStorage) {
+    return { ok: false, reason: "cota de armazenamento excedida" };
+  }
+  return { ok: true };
 }

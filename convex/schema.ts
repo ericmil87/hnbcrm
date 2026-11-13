@@ -1091,6 +1091,11 @@ const applicationTables = {
 
     // Identity
     photoFileId: v.optional(v.id("files")),
+    // Foto exibida (derivada, NUNCA vem do cliente nem entra em backup/CSV): URL do
+    // storage DESTE deployment (`ctx.storage.getUrl`, estável enquanto o arquivo
+    // existir). Foto manual (`photoFileId`) vence a do WhatsApp (`contactAvatars`).
+    // Só é escrita quando o valor exibido muda (lib/contactAvatar.ts).
+    avatarUrl: v.optional(v.string()),
     bio: v.optional(v.string()),
 
     // Social Profiles
@@ -3823,6 +3828,55 @@ const applicationTables = {
     // respostas REATIVAS de quem está falando com a empresa agora.
     followUpDaily: v.optional(v.object({ day: v.string(), sent: v.number() })),
   }).index("by_channel_config", ["channelConfigId"]),
+
+  /**
+   * Foto de perfil do WhatsApp por contato (bridge, só 1 a 1). Tabela LATERAL:
+   * `getConversations` nunca a lê; o que a lista mostra é `contacts.avatarUrl`
+   * (desnormalizado). Uma linha por contato. `url` é a URL do STORAGE do Convex
+   * (nunca `pps.whatsapp.net`, que expira em ~10 dias). `pendingSince` evita
+   * agendar duas buscas do mesmo contato. Fora do backup (derivada).
+   * Ver lib/contactAvatar.ts e docs/architecture/whatsapp-bridge.md.
+   */
+  contactAvatars: defineTable({
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+    channelConfigId: v.id("channelConfigs"),
+    status: v.union(
+      v.literal("ok"),
+      v.literal("hidden"),
+      v.literal("none"),
+      v.literal("error")
+    ),
+    pictureId: v.optional(v.string()),
+    fileId: v.optional(v.id("files")),
+    storageId: v.optional(v.id("_storage")),
+    url: v.optional(v.string()),
+    checkedAt: v.number(),
+    nextCheckAt: v.number(),
+    failures: v.optional(v.number()),
+    pendingSince: v.optional(v.number()),
+  })
+    .index("by_contact", ["contactId"])
+    .index("by_organization", ["organizationId"]),
+
+  /**
+   * Ritmo das buscas de foto por canal, SEPARADO de `channelPacing` (o cursor de
+   * ENVIO): uma busca de foto nunca atrasa nem conflita com mensagem enviada.
+   * `nextFetchAt` = próximo horário livre; `pausedUntil`/`strikes` = pausa por 429.
+   */
+  channelAvatarPacing: defineTable({
+    organizationId: v.id("organizations"),
+    channelConfigId: v.id("channelConfigs"),
+    nextFetchAt: v.number(),
+    pausedUntil: v.optional(v.number()),
+    strikes: v.optional(v.number()),
+    // Teto diário (dia UTC) de buscas do número e `error` seguidos (disjuntor).
+    day: v.optional(v.string()),
+    dayCount: v.optional(v.number()),
+    errorStreak: v.optional(v.number()),
+  })
+    .index("by_channel_config", ["channelConfigId"])
+    .index("by_organization", ["organizationId"]),
 
   // Segredos por-org (BYO API key de LLM), cifrados via lib/secretCrypto.
   // NUNCA retornar encryptedValue a clientes — masking via last4.
