@@ -14,6 +14,7 @@ import { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { decryptSecret } from "./secretCrypto";
+import { imageSizeFields } from "./imageSize";
 import {
   BridgeMediaKind,
   base64ToBytes,
@@ -132,6 +133,7 @@ export async function fetchAndStoreBridgeMedia(
       name: media.filename ?? `whatsapp-${args.externalId}`,
       mimeType,
       size: bytes.byteLength,
+      ...imageSizeFields(mimeType, bytes),
     });
     if (saved.ok) return { ok: true, fileId: saved.fileId };
     // Mimetype fora da allowlist ou quota estourada (o blob já foi apagado lá).

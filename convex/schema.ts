@@ -3038,6 +3038,11 @@ const applicationTables = {
     // que a IA envia a partir da agenda externa). Dedupe por org+URL: o mesmo
     // flyer vira UM blob, reaproveitado em cada envio.
     sourceUrl: v.optional(v.string()),
+    // Dimensões em pixels (só imagens; já com a orientação EXIF aplicada):
+    // a bolha do thread reserva o espaço antes de a imagem carregar
+    // (`lib/imageSize.ts`). Ausente = imagem antiga ou formato não lido.
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_organization", ["organizationId"])

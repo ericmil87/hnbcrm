@@ -53,6 +53,7 @@ import { readOggOpus, repairOggOpusTimeline } from "./lib/oggOpus";
 import { checkMetaWhatsappAudio } from "./lib/metaWhatsappAudio";
 import { closeTypingPresenceBracket, openTypingPresenceBracket } from "./lib/bridgePresence";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
+import { IMAGE_HEADER_BYTES, imageSizeFields, sanitizeImageSize } from "./lib/imageSize";
 import { applyCampaignDeliveryUpdate, freezeChannelForBridgeRateLimit } from "./lib/campaignHooks";
 import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
 import { applyInboundWelcomeDeliveryFailure } from "./lib/inboundLeadWelcomeHooks";
@@ -252,6 +253,7 @@ export const internalIngestMessage = internalAction({
               name: args.message.media.filename ?? `whatsapp-${args.message.media.id}`,
               mimeType,
               size: blob.size,
+              ...imageSizeFields(mimeType, await blob.slice(0, IMAGE_HEADER_BYTES).arrayBuffer()),
             });
             // Mimetype fora da allowlist ou quota estourada: a mensagem segue
             // para o inbox sem o anexo, com o motivo à vista.
@@ -1819,6 +1821,9 @@ export const internalSaveInboundAttachment = internalMutation({
     name: v.string(),
     mimeType: v.string(),
     size: v.number(),
+    // Dimensões da imagem, lidas dos bytes por quem baixou (`lib/imageSize.ts`).
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
   },
   returns: v.union(
     v.object({ ok: v.literal(true), fileId: v.id("files") }),
@@ -1857,6 +1862,7 @@ export const internalSaveInboundAttachment = internalMutation({
       mimeType: args.mimeType,
       size: args.size,
       fileType: "message_attachment",
+      ...sanitizeImageSize(args.mimeType, args.width, args.height),
       createdAt: Date.now(),
     });
     return { ok: true as const, fileId };

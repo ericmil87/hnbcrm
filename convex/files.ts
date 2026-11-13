@@ -11,9 +11,10 @@ import {
   insertFileRow,
 } from "./lib/storageUsage";
 import { internal } from "./_generated/api";
-import { mutation, query, internalMutation, internalQuery, MutationCtx } from "./_generated/server";
+import { mutation, query, internalAction, internalMutation, internalQuery, MutationCtx } from "./_generated/server";
 import { requireAuth, requirePermission } from "./lib/auth";
 import { validateFileUpload } from "./lib/fileValidation";
+import { IMAGE_HEADER_BYTES, readImageSize, sanitizeImageSize } from "./lib/imageSize";
 import { checkUploadQuota } from "./lib/fileQuotas";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
 import { Id } from "./_generated/dataModel";
@@ -67,6 +68,11 @@ export const saveFile = mutation({
     leadId: v.optional(v.id("leads")),
     teamMemberId: v.optional(v.id("teamMembers")),
     metadata: v.optional(v.record(v.string(), v.any())),
+    // Dimensões da imagem medidas pelo navegador (a mutation não lê o blob).
+    // Opcionais (cliente antigo não manda) e só gravadas se forem inteiros em
+    // 1..20000 num `image/*`; fora disso são ignoradas, sem erro.
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
   },
   returns: v.id("files"),
   handler: async (ctx, args) => {
@@ -100,6 +106,7 @@ export const saveFile = mutation({
       teamMemberId: args.teamMemberId,
       uploadedBy: userMember._id,
       metadata: args.metadata,
+      ...sanitizeImageSize(args.mimeType, args.width, args.height),
       createdAt: Date.now(),
     });
 
@@ -555,6 +562,165 @@ export const internalRebuildStorageUsage = internalMutation({
       dryRun,
       orgs,
       changedCount: orgs.filter((o) => o.changed).length,
+      continueCursor: page.isDone ? null : page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
+
+// ── Backfill de dimensões de imagem (`files.width`/`height`) ────────────────
+//
+// Imagens de mensagem gravadas antes de `lib/imageSize.ts` não têm dimensões e
+// a bolha delas ainda cresce quando a imagem carrega. Esta op lê só o COMEÇO
+// de cada blob (pedido com `Range` e leitura cortada em `IMAGE_HEADER_BYTES`,
+// então custa pouco mesmo se o servidor ignorar o `Range`) e grava o par.
+// Idempotente e aditiva: quem já tem dimensões é pulado; formato não lido fica
+// como está (a UI cai no comportamento sem dimensões).
+//
+//   npx convex run files:internalBackfillImageDimensions '{}'                 # dryRun, 1 página
+//   npx convex run files:internalBackfillImageDimensions '{"dryRun":false}'   # grava e se reagenda
+
+const DIMENSIONS_PAGE_DEFAULT = 40;
+const DIMENSIONS_PAGE_MAX = 100;
+
+export const internalListImagesWithoutDimensions = internalQuery({
+  args: { cursor: v.union(v.string(), v.null()), pageSize: v.number() },
+  returns: v.object({
+    scanned: v.number(),
+    candidates: v.array(
+      v.object({ fileId: v.id("files"), mimeType: v.string(), url: v.union(v.string(), v.null()) })
+    ),
+    continueCursor: v.string(),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("files")
+      .paginate({ numItems: args.pageSize, cursor: args.cursor });
+    const candidates = [];
+    for (const file of page.page) {
+      if (file.fileType !== "message_attachment") continue;
+      if (!file.mimeType.toLowerCase().startsWith("image/")) continue;
+      if (file.width && file.height) continue;
+      candidates.push({
+        fileId: file._id,
+        mimeType: file.mimeType,
+        url: await ctx.storage.getUrl(file.storageId),
+      });
+    }
+    return {
+      scanned: page.page.length,
+      candidates,
+      continueCursor: page.continueCursor,
+      isDone: page.isDone,
+    };
+  },
+});
+
+export const internalPatchImageDimensions = internalMutation({
+  args: {
+    rows: v.array(v.object({ fileId: v.id("files"), width: v.number(), height: v.number() })),
+  },
+  returns: v.number(),
+  handler: async (ctx, args) => {
+    let patched = 0;
+    for (const row of args.rows) {
+      const file = await ctx.db.get(row.fileId);
+      if (!file || (file.width && file.height)) continue;
+      const size = sanitizeImageSize(file.mimeType, row.width, row.height);
+      if (!("width" in size)) continue;
+      await ctx.db.patch(row.fileId, size);
+      patched++;
+    }
+    return patched;
+  },
+});
+
+/** Lê no máximo `max` bytes do começo de uma URL do storage; `null` em falha. */
+async function fetchHead(url: string, max: number): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { Range: `bytes=0-${max - 1}` },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    if (!res.body) return new Uint8Array(await res.arrayBuffer()).subarray(0, max);
+    const reader = res.body.getReader();
+    const out = new Uint8Array(max);
+    let size = 0;
+    while (size < max) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const part = value.byteLength > max - size ? value.subarray(0, max - size) : value;
+      out.set(part, size);
+      size += part.byteLength;
+    }
+    await reader.cancel().catch(() => {});
+    return out.subarray(0, size);
+  } catch {
+    return null;
+  }
+}
+
+export const internalBackfillImageDimensions = internalAction({
+  args: {
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    candidates: v.number(),
+    measured: v.number(),
+    unreadable: v.number(),
+    patched: v.number(),
+    continueCursor: v.union(v.string(), v.null()),
+    isDone: v.boolean(),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun ?? true;
+    const requested = Number.isFinite(args.pageSize) ? Math.floor(args.pageSize!) : DIMENSIONS_PAGE_DEFAULT;
+    const pageSize = Math.min(DIMENSIONS_PAGE_MAX, Math.max(1, requested));
+    const page: {
+      scanned: number;
+      candidates: Array<{ fileId: Id<"files">; mimeType: string; url: string | null }>;
+      continueCursor: string;
+      isDone: boolean;
+    } = await ctx.runQuery(internal.files.internalListImagesWithoutDimensions, {
+      cursor: args.cursor ?? null,
+      pageSize,
+    });
+
+    const rows: Array<{ fileId: Id<"files">; width: number; height: number }> = [];
+    let unreadable = 0;
+    for (const candidate of page.candidates) {
+      const head = candidate.url ? await fetchHead(candidate.url, IMAGE_HEADER_BYTES) : null;
+      const size = readImageSize(head);
+      if (size) rows.push({ fileId: candidate.fileId, ...size });
+      else unreadable++;
+    }
+
+    let patched = 0;
+    if (!dryRun) {
+      if (rows.length > 0) {
+        patched = await ctx.runMutation(internal.files.internalPatchImageDimensions, { rows });
+      }
+      if (!page.isDone) {
+        await ctx.scheduler.runAfter(0, internal.files.internalBackfillImageDimensions, {
+          dryRun: false,
+          cursor: page.continueCursor,
+          pageSize,
+        });
+      }
+    }
+    return {
+      dryRun,
+      scanned: page.scanned,
+      candidates: page.candidates.length,
+      measured: rows.length,
+      unreadable,
+      patched,
       continueCursor: page.isDone ? null : page.continueCursor,
       isDone: page.isDone,
     };

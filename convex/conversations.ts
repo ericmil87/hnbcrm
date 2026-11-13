@@ -820,6 +820,8 @@ export const getMessages = query({
           mimeType: file.mimeType,
           size: file.size,
           url: attachmentUrlMap.get(fileId) ?? null,
+          // Dimensões da imagem (quando gravadas): a bolha reserva o espaço.
+          ...(file.width && file.height ? { width: file.width, height: file.height } : {}),
         };
       }).filter(Boolean);
 
@@ -1628,6 +1630,7 @@ export const forwardMessage = mutation({
           mimeType: file.mimeType,
           size: file.size,
           fileType: "message_attachment",
+          ...(file.width && file.height ? { width: file.width, height: file.height } : {}),
           createdAt: now,
         });
         copies.push(copyId);
@@ -1879,6 +1882,8 @@ export const internalGetMessages = internalQuery({
           mimeType: file.mimeType,
           size: file.size,
           url: attachmentUrlMap.get(fileId) ?? null,
+          // Dimensões da imagem (quando gravadas): a bolha reserva o espaço.
+          ...(file.width && file.height ? { width: file.width, height: file.height } : {}),
         };
       }).filter(Boolean);
 

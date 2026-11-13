@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { acceptedUploadMimes, validateUpload } from "@/lib/channelCapabilities";
 import { ACCEPTED_ATTACHMENT_TYPES, MAX_ATTACHMENTS } from "@/lib/composerFiles";
+import { measureImageFile } from "@/lib/imageMeasure";
 
 export interface UploadedFile {
   fileId: Id<"files">;
@@ -75,6 +76,9 @@ export function useAttachmentUpload({
     let completed = 0;
     try {
       for (const file of files) {
+        // Imagem: mede aqui (o servidor não lê o blob) para a bolha já nascer
+        // do tamanho final. Em paralelo ao upload; falha = sobe sem dimensões.
+        const measuring = measureImageFile(file);
         const uploadUrl = await generateUploadUrl({ organizationId });
         const response = await fetch(uploadUrl, {
           method: "POST",
@@ -85,6 +89,7 @@ export function useAttachmentUpload({
           throw new Error(`Não foi possível enviar ${file.name}.`);
         }
         const { storageId } = await response.json();
+        const dimensions = await measuring;
         const fileId = await saveFile({
           organizationId,
           storageId,
@@ -92,6 +97,7 @@ export function useAttachmentUpload({
           mimeType: file.type,
           size: file.size,
           fileType: "message_attachment",
+          ...(dimensions ?? {}),
         });
         newFiles.push({ fileId, name: file.name, mimeType: file.type, size: file.size });
         completed++;
