@@ -81,6 +81,7 @@ import { cronsDisabled } from "./lib/cronGuard";
 import { pendingFollowUpsForConversation, resolveFollowUpOutcome } from "./lib/followUpOps";
 import { isOptOutText } from "./lib/campaignHooks";
 import { deleteFileRow, insertFileRow } from "./lib/storageUsage";
+import { headOfChunks, imageSizeFields } from "./lib/imageSize";
 import { emitChannelDegraded } from "./lib/channelHealthSignals";
 import {
   evaluateHealth,
@@ -679,6 +680,7 @@ async function downloadMetaAttachments(
         name: fileNameFor(surface, att, mime, i),
         mimeType: mime,
         size: body.size,
+        ...imageSizeFields(mime, headOfChunks(body.chunks)),
       });
       if (saved.ok) {
         outcomes.push({ kind: "saved", fileId: saved.fileId, mime });
