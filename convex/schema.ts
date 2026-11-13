@@ -1541,6 +1541,10 @@ const applicationTables = {
     // Não lidas pela EQUIPE (compartilhado, não por membro): ingress incrementa,
     // markConversationRead zera. Ausente = 0 (conversas antigas nascem "lidas").
     unreadCount: v.optional(v.number()),
+    // Espelho de `unreadCount > 0` (`true` ou AUSENTE, nunca false), mantido só
+    // por `lib/unreadFields.unreadFields`. Alimenta o índice por TEMPO do chip
+    // "Não lidas"; sem backfill das lidas (ausente = lida).
+    hasUnread: v.optional(v.literal(true)),
     lastReadAt: v.optional(v.number()),
     // "Assumir conversa"/"Pausar IA" explícito: IA não responde até este timestamp
     // (Number.MAX_SAFE_INTEGER = pausa indefinida até reativar).
@@ -1642,6 +1646,8 @@ const applicationTables = {
     // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
     // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
     .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"])
+    // Chip "Não lidas" por TEMPO da última mensagem (flag `hasUnread`, ver lib/unreadFields.ts).
+    .index("by_organization_and_archived_and_has_unread_and_last_message", ["organizationId", "archivedAt", "hasUnread", "lastMessageAt"])
     // Filas da Central (setor/unidade) por última mensagem, com o filtro de
     // arquivadas no índice — sem take(200) + filtro depois (perf Convex I/O, onda 2).
     .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])

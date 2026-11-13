@@ -16,6 +16,8 @@ export const CONVERSATIONS_MAX_LIMIT = 500;
  * a página viria menor que `limit` com conversas existindo.
  */
 export const CONVERSATIONS_POST_FILTER_READ_FLOOR = 200;
+/** Teto de leads lidos pelo filtro por etapa de `getConversations` (leads mais novos da etapa). */
+export const STAGE_FILTER_LEAD_CAP = 200;
 /** Thread: as N mensagens mais RECENTES, devolvidas em ordem ASC. */
 export const MESSAGES_DEFAULT_LIMIT = 50;
 export const MESSAGES_MAX_LIMIT = 500;

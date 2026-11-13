@@ -71,9 +71,11 @@ import {
   CONVERSATIONS_DEFAULT_LIMIT,
   CONVERSATIONS_MAX_LIMIT,
   CONVERSATIONS_POST_FILTER_READ_FLOOR,
+  STAGE_FILTER_LEAD_CAP,
   MESSAGES_DEFAULT_LIMIT,
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
+import { unreadFields, inboxUnreadTimeIndexEnabled } from "./lib/unreadFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import { normalizeCampaignPhone } from "./lib/phone";
@@ -471,11 +473,40 @@ export const getConversations = query({
     // "Não lidas" por índice: a ordem do índice é por CONTADOR, não por tempo.
     // Com o piso, as mais recentes entram mesmo com contador pequeno (a lista sai
     // por tempo); acima do piso ainda trunca por contador.
-    const readLimit = hasPostFilter || unreadByIndex
+    // Com `INBOX_UNREAD_TIME_INDEX=1` o ramo lê pelo índice por TEMPO (`hasUnread`)
+    // e `limit` basta (sem piso); desligado = comportamento anterior.
+    const unreadByTime = unreadByIndex && inboxUnreadTimeIndexEnabled();
+    const readLimit = hasPostFilter || (unreadByIndex && !unreadByTime)
       ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR)
       : limit;
     let conversations;
-    if (!args.leadId && args.channelConfigId) {
+    // Filtro por ETAPA: parte dos LEADS da etapa (índice by_organization_and_stage,
+    // mais novos primeiro, teto STAGE_FILTER_LEAD_CAP) e vai às conversas de cada um
+    // por `by_lead`; os leads já lidos viram o `leadMap` (sem reler). Não depende de
+    // as conversas estarem entre as 200 mais recentes da org.
+    let stageLeadMap: Map<string, any> | null = null;
+    if (stageOnly) {
+      const stageLeads = await ctx.db.query("leads")
+        .withIndex("by_organization_and_stage", (q) =>
+          q.eq("organizationId", args.organizationId).eq("stageId", args.stageId!)
+        )
+        .order("desc")
+        .take(STAGE_FILTER_LEAD_CAP);
+      const perLead = await Promise.all(stageLeads.map((l) =>
+        ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", l._id)).take(10)
+      ));
+      stageLeadMap = new Map(stageLeads.map((l) => [l._id as string, l]));
+      conversations = perLead.flat();
+      if (args.channelConfigId) conversations = conversations.filter(c => c.channelConfigId === args.channelConfigId);
+      if (args.archived) conversations = conversations.filter(c => !!c.archivedAt);
+      else conversations = conversations.filter(c => !c.archivedAt);
+      conversations.sort((a, b) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt));
+      // Sem filtro que dependa de lead/contato: corta antes de ler os contatos.
+      if (!mineOnly && !args.assignedTo && !aiFilter && !args.assignedToMe && !unreadOnly &&
+          !args.channel && !args.unitId && !args.departmentId && !args.noDepartment) {
+        conversations = conversations.slice(0, limit);
+      }
+    } else if (!args.leadId && args.channelConfigId) {
       // Conta: o índice já devolve só as conversas daquele config e da org.
       // Setor/unidade/responsável ficam como pós-filtros abaixo.
       conversations = await ctx.db.query("conversations")
@@ -509,6 +540,15 @@ export const getConversations = query({
     } else if (args.leadId) {
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
+        .take(limit);
+    } else if (unreadByTime) {
+      // "Não lidas" por TEMPO: `hasUnread` (porta lib/unreadFields) + lastMessageAt
+      // desc; `take(limit)` exato, "Carregar mais" funciona (lote cheio = há mais).
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_archived_and_has_unread_and_last_message", (q) =>
+          q.eq("organizationId", args.organizationId).eq("archivedAt", undefined).eq("hasUnread", true)
+        )
+        .order("desc")
         .take(limit);
     } else if (unreadByIndex) {
       // "Não lidas" nas ativas: só conversas com `unreadCount > 0` (o take não
@@ -567,7 +607,7 @@ export const getConversations = query({
     }
 
     // Batch fetch related data
-    const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
+    const leadMap = stageLeadMap ?? await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
     const [contactMap, assigneeMap, extrasMap, aiCtx] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
@@ -1175,7 +1215,7 @@ export const setConversationArchived = mutation({
       archivedAt: args.archived ? now : undefined,
       // Arquivar = dar a conversa por lida: zera o contador (badge e teto de
       // `getInboxUnreadCount`). Desarquivar NÃO restaura o contador.
-      ...(args.archived ? { unreadCount: 0, lastReadAt: now } : {}),
+      ...(args.archived ? { ...unreadFields(0), lastReadAt: now } : {}),
       updatedAt: now,
     });
     return null;
@@ -1209,7 +1249,7 @@ export const bulkSetConversationsArchived = mutation({
       await ctx.db.patch(conversationId, {
         archivedAt: args.archived ? now : undefined,
         // Mesma regra do `setConversationArchived`: arquivar zera o contador.
-        ...(args.archived ? { unreadCount: 0, lastReadAt: now } : {}),
+        ...(args.archived ? { ...unreadFields(0), lastReadAt: now } : {}),
         updatedAt: now,
       });
       changed++;
@@ -2285,7 +2325,7 @@ export const internalReceiveMessage = internalMutation({
       lastMessageAt: now,
       lastInboundAt: now, // (re)opens the 24h customer-service window
       messageCount: conversation.messageCount + 1,
-      unreadCount: (conversation.unreadCount ?? 0) + 1, // zerado por markConversationRead
+      ...unreadFields((conversation.unreadCount ?? 0) + 1), // zerado por markConversationRead
       updatedAt: now,
       ...firstInboundPatch(conversation, now),
       ...(await channelConfigPatchFor(ctx, conversation, args.channelConfigId)),
@@ -2738,7 +2778,7 @@ export const internalReceiveGroupMessage = internalMutation({
       lastMessageAt: Math.max(conversation.lastMessageAt ?? 0, sentAt),
       lastInboundAt: sentAt,
       messageCount: conversation.messageCount + 1,
-      unreadCount: (conversation.unreadCount ?? 0) + 1,
+      ...unreadFields((conversation.unreadCount ?? 0) + 1),
       updatedAt: now,
       ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
@@ -3558,7 +3598,7 @@ export const markConversationRead = mutation({
 
     // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
     // lista) e avança a marca d'água — independe dos recibos logo abaixo.
-    await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+    await ctx.db.patch(args.conversationId, { ...unreadFields(0), lastReadAt: now });
     // Foto de perfil do contato: só ao abrir com não lidas (o front chama esta
     // mutation a cada mensagem vista, a cada ~400 ms; sem não lidas retornamos
     // acima sem ler nada). Custo: lead + contato + 1 linha lateral; vencida →

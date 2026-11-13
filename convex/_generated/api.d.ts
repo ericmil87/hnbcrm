@@ -336,6 +336,7 @@ import type * as opsMeta from "../opsMeta.js";
 import type * as opsMigration from "../opsMigration.js";
 import type * as opsPurge from "../opsPurge.js";
 import type * as opsSearchFold from "../opsSearchFold.js";
+import type * as opsUnreadIndex from "../opsUnreadIndex.js";
 import type * as opsTasks from "../opsTasks.js";
 import type * as opsTelegram from "../opsTelegram.js";
 import type * as optOuts from "../optOuts.js";
@@ -713,6 +714,7 @@ declare const fullApi: ApiFromModules<{
   opsMigration: typeof opsMigration;
   opsPurge: typeof opsPurge;
   opsSearchFold: typeof opsSearchFold;
+  opsUnreadIndex: typeof opsUnreadIndex;
   opsTasks: typeof opsTasks;
   opsTelegram: typeof opsTelegram;
   optOuts: typeof optOuts;
