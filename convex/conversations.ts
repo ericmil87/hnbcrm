@@ -45,6 +45,7 @@ import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
 import { maybeScheduleContactAvatar } from "./lib/contactAvatarOps";
+import { maybeScheduleGroupAvatar } from "./lib/groupAvatarOps";
 import { contactAvatarFetchEnabled } from "./lib/contactAvatar";
 import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
 import { discardDuplicateAttachments } from "./lib/fileRefs";
@@ -2743,6 +2744,10 @@ export const internalReceiveGroupMessage = internalMutation({
       ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
 
+    // Foto da sala: o doc do grupo e a conversa JÁ estão lidos; o carimbo
+    // `avatarNextCheckAt` decide sem nenhuma leitura nem escrita no caso comum.
+    await maybeScheduleGroupAvatar(ctx, { group, conversation });
+
     // `activities` exige leadId e a timeline é do lead — num grupo o rastro da
     // sala vive em `groupChats.timeline`, e uma linha por mensagem a encheria.
 
@@ -3576,6 +3581,14 @@ export const markConversationRead = mutation({
           ? await ctx.db.get(avatarLead.contactId)
           : null;
       await maybeScheduleContactAvatar(ctx, { contact: avatarContact, conversation });
+    }
+
+    // Foto da sala (mesmo padrão): só ao abrir com não lidas; 1 leitura do doc do grupo.
+    if (conversation.kind === "group" && conversation.groupChatId && contactAvatarFetchEnabled()) {
+      const avatarGroup = await ctx.db.get(conversation.groupChatId);
+      if (avatarGroup && avatarGroup.organizationId === conversation.organizationId) {
+        await maybeScheduleGroupAvatar(ctx, { group: avatarGroup, conversation });
+      }
     }
 
     // Instagram/Messenger: "visto" para o cliente (best-effort, um POST por leitura).

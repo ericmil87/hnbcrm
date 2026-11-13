@@ -11,23 +11,18 @@ import { internalAction, internalMutation, internalQuery } from "./_generated/se
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { decryptSecret } from "./lib/secretCrypto";
-import {
-  AVATAR_FETCH_TIMEOUT_MS,
-  MAX_AVATAR_BYTES,
-  buildAvatarRequestBody,
-  isAllowedAvatarUrl,
-  parseAvatarResponse,
-  readBodyCapped,
-  validateAvatarBytes,
-} from "./lib/bridgeAvatar";
+import { fetchGatewayAvatar } from "./lib/avatarFetch";
 import {
   AVATAR_ABSENT_RENEW_MS,
+  AVATAR_OK_RENEW_MS,
   AVATAR_CONFIG_SKIP_BACKOFF_MS,
   AVATAR_REFUSED_BACKOFF_MS,
   avatarPauseMs,
   pacingAfterAvatarError,
   avatarPhoneFor,
   computeNextCheckAt,
+  otherChannelPhotoStillValid,
+  avatarRowSource,
   whatsappAvatarContactPatch,
 } from "./lib/contactAvatar";
 import {
@@ -50,7 +45,7 @@ const keyArgs = {
 };
 
 /** Primeira resposta boa do gateway: zera a pausa/strikes do canal. */
-async function noteGatewaySuccess(ctx: MutationCtx, channelConfigId: Id<"channelConfigs">): Promise<void> {
+export async function noteGatewaySuccess(ctx: MutationCtx, channelConfigId: Id<"channelConfigs">): Promise<void> {
   const pacing = await ctx.db
     .query("channelAvatarPacing")
     .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
@@ -153,61 +148,24 @@ export const internalFetchContactAvatar = internalAction({
         return null;
       }
       const token = await decryptSecret(plan.tokenEncrypted);
-      const res = await fetch(`${plan.baseUrl.replace(/\/+$/, "")}/user/avatar`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", token },
-        body: buildAvatarRequestBody(plan.phone),
-        signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
+      const result = await fetchGatewayAvatar({
+        baseUrl: plan.baseUrl,
+        token,
+        target: plan.phone,
+        pictureId: plan.pictureId,
+        hasBlob: plan.hasBlob,
       });
-      const text = await res.text();
-      let body: unknown = text;
-      try {
-        body = JSON.parse(text);
-      } catch {
-        /* texto cru */
-      }
-      const parsed = parseAvatarResponse(res.status, body);
-      if (parsed.kind !== "ok") {
-        await record(parsed.kind);
+      if (result.kind === "outcome") {
+        await record(result.outcome);
         return null;
       }
-      if (!isAllowedAvatarUrl(parsed.url)) {
-        await record("error");
-        return null;
-      }
-      if (plan.hasBlob && plan.pictureId && parsed.pictureId === plan.pictureId) {
-        await record("same");
-        return null;
-      }
-      // Sem seguir redirecionamento (o CDN medido responde 200 direto): um 3xx/opaco é erro.
-      const img = await fetch(parsed.url, {
-        redirect: "manual",
-        signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
-      });
-      const declared = Number(img.headers.get("content-length") ?? "0");
-      if (
-        img.status < 200 ||
-        img.status >= 300 ||
-        declared > MAX_AVATAR_BYTES ||
-        (img.url && !isAllowedAvatarUrl(img.url))
-      ) {
-        await img.body?.cancel().catch(() => undefined);
-        await record("error");
-        return null;
-      }
-      const bytes = await readBodyCapped(img, MAX_AVATAR_BYTES);
-      const checked = bytes ? validateAvatarBytes(bytes) : null;
-      if (!bytes || !checked) {
-        await record("error");
-        return null;
-      }
-      storedId = await ctx.storage.store(new Blob([bytes], { type: checked.mime }));
+      storedId = await ctx.storage.store(new Blob([result.image.bytes], { type: result.image.mime }));
       await ctx.runMutation(internal.contactAvatar.internalApplyContactAvatar, {
         ...args,
         storageId: storedId,
-        mimeType: checked.mime,
-        size: checked.size,
-        ...(parsed.pictureId ? { pictureId: parsed.pictureId } : {}),
+        mimeType: result.image.mime,
+        size: result.image.size,
+        ...(result.pictureId ? { pictureId: result.pictureId } : {}),
       });
       storedId = null; // a mutation assumiu o blob (guarda ou apaga)
     } catch (e) {
@@ -232,6 +190,8 @@ export const internalApplyContactAvatar = internalMutation({
     mimeType: v.string(),
     size: v.number(),
     pictureId: v.optional(v.string()),
+    /** Quem buscou a foto (padrão `whatsapp`). */
+    source: v.optional(v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger"))),
   },
   returns: v.boolean(),
   handler: async (ctx, args) => {
@@ -248,6 +208,11 @@ export const internalApplyContactAvatar = internalMutation({
     if (!row || row.organizationId !== args.organizationId) return await discard();
     const config = await ctx.db.get(args.channelConfigId);
     const now = Date.now();
+    const source = args.source ?? "whatsapp";
+    if (otherChannelPhotoStillValid(row, source, now)) {
+      await ctx.db.patch(row._id, { pendingSince: undefined });
+      return await discard();
+    }
     if (!config || config.organizationId !== args.organizationId) {
       await ctx.db.patch(row._id, { pendingSince: undefined });
       return await discard();
@@ -270,7 +235,7 @@ export const internalApplyContactAvatar = internalMutation({
     const fileId = await insertFileRow(ctx, {
       organizationId: args.organizationId,
       storageId: args.storageId,
-      name: "whatsapp-avatar",
+      name: source === "whatsapp" ? "whatsapp-avatar" : "meta-avatar",
       mimeType: args.mimeType,
       size: args.size,
       // `files.fileType` não tem literal próprio (schema só aditivo): "other" +
@@ -286,6 +251,7 @@ export const internalApplyContactAvatar = internalMutation({
     });
     await ctx.db.patch(row._id, {
       channelConfigId: args.channelConfigId,
+      source,
       status: "ok",
       pictureId: args.pictureId,
       fileId,
@@ -325,6 +291,7 @@ export const internalRecordAvatarCheck = internalMutation({
       v.literal("paused"),
       v.literal("refused")
     ),
+    source: v.optional(v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger"))),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -363,6 +330,14 @@ export const internalRecordAvatarCheck = internalMutation({
         return null;
       case "hidden":
       case "none": {
+        if (row.url && avatarRowSource(row) !== (args.source ?? "whatsapp")) {
+          // A foto guardada é de OUTRO canal: o "sem foto" deste não a apaga.
+          await ctx.db.patch(row._id, {
+            pendingSince: undefined,
+            nextCheckAt: Math.max(row.nextCheckAt, now + AVATAR_OK_RENEW_MS),
+          });
+          return null;
+        }
         const contact = await ctx.db.get(args.contactId);
         await removeWhatsappAvatar(ctx, row, contact && contact.organizationId === args.organizationId ? contact : null, {
           status: args.outcome,

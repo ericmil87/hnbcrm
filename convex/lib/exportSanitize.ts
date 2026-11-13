@@ -32,6 +32,7 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   // Foto de perfil do WhatsApp (derivada, aponta para o storage DESTE deployment) e
   // o ritmo das buscas por canal.
   "contactAvatars",
+  "groupAvatars",
   "channelAvatarPacing",
   "agentRuns",
   // Contador mensal de uso/custo de IA (v0.69) — derivado de `agentRuns`.
@@ -130,6 +131,10 @@ export const DENY_PATHS: readonly string[] = [
   "webhooks.secret",
   // Foto exibida: URL do storage deste deployment (derivada, nunca restaurável).
   "contacts.avatarUrl",
+  // Foto da sala: URL do storage e carimbo de conferência (derivados de `groupAvatars`).
+  "conversations.groupAvatarUrl",
+  "groupChats.pictureUrl",
+  "groupChats.avatarNextCheckAt",
   // Vínculo com a tabela de auth — o backup não expõe contas de usuário.
   "teamMembers.userId",
   // Rota BYO de LLM: aponta para a chave cifrada em `orgSecrets`.

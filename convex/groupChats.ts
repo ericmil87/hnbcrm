@@ -65,6 +65,7 @@ import {
 import { createNotification } from "./lib/notify";
 import { notificationCopy } from "./lib/notificationCopy";
 import { deleteConversationCascade, newBudget } from "./lib/leadCascade";
+import { deleteGroupAvatarRows, maybeScheduleGroupAvatar } from "./lib/groupAvatarOps";
 import { createLeadFromGroupMemberCore } from "./lib/groupMemberLead";
 import { groupMediaModeValidator, groupMediaOverrideModeValidator } from "./schema";
 import {
@@ -639,6 +640,8 @@ export async function setMonitoredHandler(ctx: MutationCtx, args: SetMonitoredAr
       await ctx.scheduler.runAfter(0, internal.groupChats.internalRefreshGroup, {
         groupChatId: group._id,
       });
+      // Foto da sala: passou a acompanhar (o carimbo mantém a foto já guardada sem rebuscar).
+      await maybeScheduleGroupAvatar(ctx, { group: { ...group, monitored: true, conversationId } });
     }
 
     await ctx.db.insert("auditLogs", {
@@ -1338,6 +1341,8 @@ export const internalUpsertGroupsFromSync = internalMutation({
         if (syncPatchChanges(prev, patch)) {
           await ctx.db.patch(prev._id, patch);
         }
+        // Foto da sala (só acompanhada; o carimbo evita reagendar a cada sync).
+        await maybeScheduleGroupAvatar(ctx, { group: { ...prev, ...patch, _id: prev._id } as Doc<"groupChats"> });
         // Sala legada: o espelho da conversa conta o array, que só o diff
         // atualiza — ele sincroniza no fim.
         if (migrated) {
@@ -2315,6 +2320,7 @@ export const internalCascadeDeleteChannelGroups = internalMutation({
       // linha apagada conta no orçamento; a sala só sai quando as duas
       // tabelas dela estão vazias (senão para e continua na próxima execução).
       if (!(await deleteGroupSideTables(ctx, group._id, budget))) break;
+      budget.left -= await deleteGroupAvatarRows(ctx, group._id);
       if (budget.left <= 0) break;
       await ctx.db.delete(group._id);
       budget.left -= 1;
