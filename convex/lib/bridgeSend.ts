@@ -299,9 +299,18 @@ export type BridgeAudioSendPlan = {
 export type BridgeVoiceNoteFields = {
   PTT: true;
   MimeType: string;
-  Seconds: number;
+  /** Absent on a human recording (no duration measured): the gateway omits it. */
+  Seconds?: number;
   Waveform?: string;
 };
+
+/**
+ * Fields of a voice note with no measured duration (human recording): the
+ * data-URI carries only `audio/ogg` (see `toDataUri`), so the codec is declared
+ * here, exactly like the attendant's voice reply, which is the path verified
+ * live.
+ */
+export const PLAIN_VOICE_NOTE_FIELDS: BridgeVoiceNoteFields = { PTT: true, MimeType: "audio/ogg; codecs=opus" };
 
 /** Mime declared to WhatsApp for a voice note. */
 export const VOICE_NOTE_MIME = "audio/ogg; codecs=opus";
@@ -340,12 +349,12 @@ export function planBridgeAudioSend(input: {
   voiceNote?: unknown;
 }): BridgeAudioSendPlan {
   const base = baseMime(input.fileMimeType);
-  const voiceFields = bridgeVoiceNoteFields(input.voiceNote);
+  const voiceFields = bridgeVoiceNoteFields(input.voiceNote) ?? PLAIN_VOICE_NOTE_FIELDS;
   if (base === "audio/ogg") {
-    return { kind: "audio", sendMime: input.fileMimeType, useConverted: false, ...(voiceFields ? { voiceFields } : {}) };
+    return { kind: "audio", sendMime: "audio/ogg", useConverted: false, voiceFields };
   }
   if (input.converted) {
-    return { kind: "audio", sendMime: "audio/ogg; codecs=opus", useConverted: true, ...(voiceFields ? { voiceFields } : {}) };
+    return { kind: "audio", sendMime: "audio/ogg", useConverted: true, voiceFields };
   }
   const ext = AUDIO_DOCUMENT_EXT[base];
   const name = (input.fileName || "").trim() || "nota-de-voz";

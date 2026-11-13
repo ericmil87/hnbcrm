@@ -185,7 +185,11 @@ describe("nota de voz no bridge", () => {
 
     const send = callTo(fetchMock, "/chat/send/");
     expect(send![0]).toBe(`${BRIDGE_BASE_URL}/chat/send/audio`);
-    expect(String(jsonBody(send).Audio)).toMatch(/^data:audio\/ogg; codecs=opus;base64,/);
+    // O data-URI leva só o tipo base: o gateway recusa espaço depois do `;`
+    // ("could not decode base64 encoded data", prod 13/11/2026). O codec vai no corpo.
+    expect(String(jsonBody(send).Audio)).toMatch(/^data:audio\/ogg;base64,/);
+    expect(jsonBody(send).MimeType).toBe("audio/ogg; codecs=opus");
+    expect(jsonBody(send).PTT).toBe(true);
 
     const message = await t.run(async (ctx) => ctx.db.get(messageId));
     expect(message!.deliveryStatus).toBe("sent");
@@ -258,11 +262,12 @@ describe("nota de voz no bridge", () => {
     expect(callTo(fetchMock, "/convert")).toBeUndefined();
     const body = jsonBody(callTo(fetchMock, "/chat/send/audio"));
     expect(String(body.Audio)).toMatch(/^data:audio\/ogg;base64,/);
-    // Áudio humano: o corpo não ganhou campos novos (PTT segue o padrão do gateway).
-    expect(body.PTT).toBeUndefined();
+    // Áudio humano: declara PTT e o codec (o data-URI só leva `audio/ogg`), sem
+    // duração nem waveform, que só a resposta da IA mede.
+    expect(body.PTT).toBe(true);
+    expect(body.MimeType).toBe("audio/ogg; codecs=opus");
     expect(body.Seconds).toBeUndefined();
     expect(body.Waveform).toBeUndefined();
-    expect(body.MimeType).toBeUndefined();
   });
 
   test("resposta em áudio da IA (P4.1): PTT + Seconds + Waveform (base64 de 64 bytes) + MimeType", async () => {
