@@ -70,13 +70,13 @@ describe("templates de e-mail de auth", () => {
   test("boas-vindas: saúda pelo nome; sem nome (vazio ou o próprio e-mail) não mostra e-mail", () => {
     const base = { orgName: "Acme", appUrl: "https://hnbcrm.com" };
     const named = buildWelcomeTemplate({ ...base, memberName: "Ana Souza" });
-    expect(named.html).toContain("Bem-vindo(a) ao HNBCRM, Ana Souza!");
-    expect(named.subject).toBe("Bem-vindo ao HNBCRM, Ana Souza!");
+    expect(named.html).toContain("Bem-vindo(a) ao HNBCRM, Ana Souza");
+    expect(named.subject).toBe("Bem-vindo ao HNBCRM, Ana Souza");
     for (const memberName of ["fulano@dominio.com", "", "   "]) {
       const r = buildWelcomeTemplate({ ...base, memberName });
-      expect(r.html).toContain("Bem-vindo(a) ao HNBCRM!");
+      expect(r.html).toContain("Bem-vindo(a) ao HNBCRM");
       expect(r.html).not.toContain("fulano");
-      expect(r.subject).toBe("Bem-vindo ao HNBCRM!");
+      expect(r.subject).toBe("Bem-vindo ao HNBCRM");
     }
   });
 

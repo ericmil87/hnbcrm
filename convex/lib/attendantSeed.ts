@@ -20,6 +20,8 @@ export type AttendantSeedOverrides = {
   persona?: string;
   /** Conhecimento já montado. Ausente = FAQ a partir das quickReplies da org. */
   faq?: string;
+  /** O `faq` veio da conversa de configuração: vai envelopado ao prompt (marca no store de textos). */
+  knowledgeEnvelope?: true;
   handoffKeywords?: string[];
   language?: string;
   pipelineConfig?: { boardId?: Id<"boards">; initialStageId?: Id<"stages"> };
@@ -75,7 +77,11 @@ export async function seedAttendantCore(
   await insertAgentTextsForNewMember(
     ctx,
     { _id: attendantId, organizationId: org._id },
-    { systemPrompt: overrides.persona ?? persona.systemPrompt, knowledge: faq },
+    {
+      systemPrompt: overrides.persona ?? persona.systemPrompt,
+      knowledge: faq,
+      ...(overrides.knowledgeEnvelope ? { knowledgeEnvelope: true } : {}),
+    },
     now
   );
 

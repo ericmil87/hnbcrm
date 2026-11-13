@@ -406,13 +406,19 @@ describe("aplicação", () => {
     const persona = texts.systemPrompt!;
     const knowledge = texts.knowledge!;
     for (const free of FREE_TEXTS(d)) expect(persona).not.toContain(free);
-    expect(persona).toContain("inteligência artificial");
+    expect(persona).toContain("atendente virtual");
     expect(persona).toContain('Trate o cliente por "você"');
-    expect(knowledge.startsWith(OPEN_TAG)).toBe(true);
-    expect(knowledge.trimEnd().endsWith(CLOSE_TAG)).toBe(true);
-    const inside = knowledge.slice(OPEN_TAG.length, knowledge.lastIndexOf(CLOSE_TAG));
-    for (const free of FREE_TEXTS(d)) expect(inside).toContain(free);
-    expect(knowledge.indexOf(CLOSE_TAG)).toBe(knowledge.lastIndexOf(CLOSE_TAG));
+    // Texto legível para o administrador: sem nome de ferramenta nem jargão de prompt.
+    expect(persona).not.toMatch(/requestHandoff|bloco de dados|crm_data/);
+    // Conhecimento gravado SEM o envelope (a montagem do prompt é quem envelopa).
+    expect(knowledge).not.toContain(OPEN_TAG);
+    expect(knowledge).not.toContain(CLOSE_TAG);
+    for (const free of FREE_TEXTS(d)) expect(knowledge).toContain(free);
+    // Marca de origem: o conhecimento da conversa vai envelopado ao prompt.
+    const row = await t.run(async (ctx) =>
+      ctx.db.query("agentProfileTexts").withIndex("by_member", (q) => q.eq("teamMemberId", snap.ai[0]._id)).unique(),
+    );
+    expect(row?.knowledgeEnvelope).toBe(true);
   });
 
   test("item suspeito não entra no prompt nem vira resposta rápida", async () => {
@@ -542,6 +548,10 @@ describe("aplicação", () => {
     expect(last.quickReplies.find((q) => q.shortcut === "endereco")?.content).toBe("Texto do usuário");
     expect(last.ai).toHaveLength(1);
     expect(last.ai[0].name).toBe("Ana");
+    // Reaplicar regera o conhecimento sem envelope (nunca acumula marcação).
+    const regenerated = (await attendantTexts(t, s.a.orgId)).knowledge!;
+    expect(regenerated).not.toContain(OPEN_TAG);
+    expect(regenerated).not.toContain(CLOSE_TAG);
   });
 
   test("atendente que já existia não é sobrescrito sem pedido explícito; com pedido, audit high + snapshot", async () => {

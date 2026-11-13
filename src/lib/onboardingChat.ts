@@ -48,15 +48,18 @@ function stepsView(current: number, complete: boolean): ProgressStepView[] {
   }));
 }
 
-/** Antes do login / sem organização: o passo é criar a conta. */
-export function accountProgress(): ProgressView {
+/** Rótulo da barra na tela de entrada de quem já tem empresa (não é "criar a conta"). */
+export const ENTRY_STEP_LABEL = "Escolha o que fazer";
+
+/** Antes do login / sem organização: o passo é criar a conta. Na tela de entrada, `ENTRY_STEP_LABEL`. */
+export function accountProgress(label: string = ACCOUNT_STEP_LABEL): ProgressView {
   const total = ROADMAP_STEPS.length;
   return {
     index: 0,
     total,
-    label: ACCOUNT_STEP_LABEL,
+    label,
     ratio: 0,
-    valueText: `${ACCOUNT_STEP_LABEL}, antes da etapa 1 de ${total}`,
+    valueText: `${label}, antes da etapa 1 de ${total}`,
     complete: false,
     steps: stepsView(0, false),
   };
@@ -92,6 +95,46 @@ export interface NextStep {
 export function nextStepFor(facts: RoadmapFacts): NextStep {
   const task = nextTask(facts);
   return { task, label: nextStepLabel(task), cardKind: taskCard(task) };
+}
+
+/** "Abrir o meu CRM" (fim da conversa, cabeçalho, tela de entrada): o Painel, nunca o assistente antigo. */
+export const CRM_HOME_HREF = "/app/painel";
+
+/**
+ * Linha do resumo do funil ("Funil Atendimento com 5 etapas"). Sem "Funil Funil …" quando o nome
+ * já começa com a palavra (o nome é do rascunho: texto puro, aparado).
+ */
+export function funnelSummaryLine(rawName: string, stageCount: number): string {
+  const name = plainModelText(rawName).trim();
+  const stages = `${stageCount} ${stageCount === 1 ? "etapa" : "etapas"}`;
+  if (!name) return `Funil com ${stages}`;
+  return /^funil\b/i.test(name) ? `${name} com ${stages}` : `Funil ${name} com ${stages}`;
+}
+
+/**
+ * O que a barra do próximo passo faz agora (sempre um efeito visível, nunca um botão morto):
+ * - `hidden`: o cartão do passo está na tela com o botão dele à vista (dois botões verdes competindo, não);
+ * - `scroll`: o cartão existe na conversa, fora da área visível: rola até ele e o destaca;
+ * - `request`: o cartão não está na conversa: pede ao servidor (evento `next`) e rola quando chegar;
+ * - `focus`: não há cartão (contar sobre o negócio): leva ao campo de mensagem;
+ * - `open_test`: o passo é testar: abre a tela de teste;
+ * - `link`: fim (abre o CRM).
+ */
+export type NextStepMode = "hidden" | "scroll" | "request" | "focus" | "open_test" | "link";
+
+export function nextStepMode(input: { task: string; cardKind: string | null; cardInTimeline: boolean; cardVisible: boolean; canOpenTest?: boolean }): NextStepMode {
+  if (input.task === "done") return "link";
+  // O cartão do passo, com o botão dele, está na tela: a barra sai (um botão verde só).
+  if (input.cardKind && input.cardInTimeline && input.cardVisible) return "hidden";
+  if (input.task === "test" && input.canOpenTest) return "open_test";
+  if (!input.cardKind) return "focus";
+  return input.cardInTimeline ? "scroll" : "request";
+}
+
+/** O cartão do tipo está na conversa (a ocorrência mais recente nunca é recolhida). */
+export function timelineHasCard(timeline: readonly Pick<TimelineItem, "role" | "blocks">[], kind: string | null): boolean {
+  if (!kind) return false;
+  return timeline.some((t) => t.role === "assistant" && t.blocks.some((b) => blockKindOf(b) === kind));
 }
 
 /** O texto digitado é só o código de 6 dígitos do e-mail (com o e-mail ainda por confirmar, vale como o código). */

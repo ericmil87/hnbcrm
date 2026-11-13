@@ -213,7 +213,17 @@ export async function applyFunnelTemplateCore(
     // Idempotência: mesmo payload de novo devolve o board criado antes.
     const wanted = stages.map(stageSignature).join("|");
     let existing: Id<"boards"> | undefined;
-    for (const b of live.filter((x) => !x.isDefault && x.name === boardName)) {
+    // O board padrão que não pôde ser trocado (tem leads, é de org legada) mas já tem
+    // exatamente estas etapas é o MESMO funil: reaplicar (ex.: depois de recomeçar a
+    // conversa) não pode criar uma cópia sem a pessoa perceber.
+    if (defaultBoard) {
+      const have = await ctx.db
+        .query("stages")
+        .withIndex("by_board_and_order", (q) => q.eq("boardId", defaultBoard._id))
+        .take(100);
+      if (have.map(stageSignature).join("|") === wanted) existing = defaultBoard._id;
+    }
+    for (const b of existing ? [] : live.filter((x) => !x.isDefault && x.name === boardName)) {
       const have = await ctx.db
         .query("stages")
         .withIndex("by_board_and_order", (q) => q.eq("boardId", b._id))

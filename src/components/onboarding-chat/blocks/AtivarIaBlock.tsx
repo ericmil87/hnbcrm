@@ -26,7 +26,7 @@ import {
   type ActivationStepId,
 } from "@/lib/onboardingActivate";
 import { applyBlockedReason, describeApplyResult } from "@/lib/onboardingApplyView";
-import { plainModelText } from "@/lib/onboardingChat";
+import { funnelSummaryLine, plainModelText } from "@/lib/onboardingChat";
 import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
 import { liveBlockContext, useDraftEditor } from "../useDraftEditor";
@@ -49,6 +49,11 @@ export interface AtivarIaViewProps {
   /** Modo atual do atendente (só para a linha de sucesso de quem volta à conversa). */
   activeMode?: ActivationMode | null;
   note?: string;
+  /**
+   * A operação já foi montada por uma conversa anterior (recomeçada): avisa, antes do clique, o que
+   * montar de novo faz no CRM (atendente mantido, funil com leads nunca apagado, funil diferente = um a mais).
+   */
+  priorApplied?: boolean;
   /** Sem organização ou sessão: o botão fica desligado. */
   disabled?: boolean;
   /** Chamadas reais (a tela não conhece o Convex). */
@@ -59,9 +64,13 @@ export interface AtivarIaViewProps {
 
 const STEP_ORDER: ActivationStepId[] = ["accept", "apply", "mode"];
 
+/** Aviso de quem já montou a operação antes e recomeçou a conversa. */
+export const REAPPLY_NOTICE =
+  "Você já montou uma operação antes. Montar de novo mantém o atendente que já existe, não apaga funil com leads e não cria de novo um funil igual ao atual; um funil diferente entra como um funil a mais.";
+
 function SummaryList({ summary }: { summary: Summary }) {
   const lines = [
-    `Funil ${plainModelText(summary.funnelName)} com ${summary.stageCount} ${summary.stageCount === 1 ? "etapa" : "etapas"}`,
+    funnelSummaryLine(summary.funnelName, summary.stageCount),
     `${VOCAB.attendant.name} chamada ${plainModelText(summary.attendantName)}`,
     `${formatCount(summary.knowledgeCount)} ${summary.knowledgeCount === 1 ? "informação" : "informações"} para ela responder`,
     ...(summary.quickReplyCount > 0 ? [`${formatCount(summary.quickReplyCount)} ${summary.quickReplyCount === 1 ? "resposta rápida" : "respostas rápidas"}`] : []),
@@ -175,6 +184,7 @@ export function AtivarIaView({
   recommendedMode,
   activeMode = null,
   note,
+  priorApplied = false,
   disabled = false,
   deps,
   onActivated,
@@ -284,6 +294,9 @@ export function AtivarIaView({
     >
       <div className="space-y-3">
         <SummaryList summary={summary} />
+        {priorApplied && !alreadyApplied && (
+          <p className="rounded-field bg-surface-sunken p-2 text-caption text-text-secondary">{REAPPLY_NOTICE}</p>
+        )}
 
         {!aiActive && state.steps.accept !== "done" && (
           <div className="space-y-2 rounded-field bg-surface-sunken p-2">
@@ -443,6 +456,7 @@ export function AtivarIaBlock({ block, ctx }: BlockProps<"ativarIa">) {
       recommendedMode={block.recommendedMode}
       activeMode={activeMode}
       note={block.note}
+      priorApplied={ctx.facts?.priorApplied === true}
       disabled={!organizationId || !sessionId}
       deps={deps}
       onActivated={() => ctx.sendEvent({ kind: "notify", what: "activated" })}

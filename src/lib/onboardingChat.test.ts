@@ -239,3 +239,45 @@ describe("currentChips", () => {
     expect(currentChips([], ["Saudação"])).toEqual(["Saudação"]);
   });
 });
+
+describe("próximo passo, resumo do funil e link do CRM (correções de produção)", () => {
+  it("a barra sempre faz algo visível; some quando o cartão do passo está na tela", async () => {
+    const { nextStepMode } = await import("./onboardingChat");
+    const base = { task: "approve_persona", cardKind: "personaCard", cardInTimeline: true, cardVisible: false };
+    expect(nextStepMode(base)).toBe("scroll");
+    expect(nextStepMode({ ...base, cardVisible: true })).toBe("hidden");
+    expect(nextStepMode({ ...base, cardInTimeline: false })).toBe("request");
+    expect(nextStepMode({ task: "describe_business", cardKind: null, cardInTimeline: false, cardVisible: false })).toBe("focus");
+    expect(nextStepMode({ task: "done", cardKind: "operacaoPronta", cardInTimeline: true, cardVisible: true })).toBe("link");
+    // Testar: abre a tela de teste; com o cartão final na tela (botão "Testar" à vista) a barra some.
+    expect(nextStepMode({ task: "test", cardKind: "operacaoPronta", cardInTimeline: true, cardVisible: false, canOpenTest: true })).toBe("open_test");
+    expect(nextStepMode({ task: "test", cardKind: "operacaoPronta", cardInTimeline: true, cardVisible: true, canOpenTest: true })).toBe("hidden");
+    // Ativar no celular: o cartão com "Montar" à vista esconde a barra (sem dois botões verdes).
+    expect(nextStepMode({ task: "activate", cardKind: "ativarIa", cardInTimeline: true, cardVisible: true })).toBe("hidden");
+  });
+
+  it("cartão na conversa", async () => {
+    const { timelineHasCard } = await import("./onboardingChat");
+    const tl = [
+      { role: "user" as const, blocks: [] },
+      { role: "assistant" as const, blocks: [{ kind: "funilPreview" }] as never },
+    ];
+    expect(timelineHasCard(tl, "funilPreview")).toBe(true);
+    expect(timelineHasCard(tl, "personaCard")).toBe(false);
+    expect(timelineHasCard(tl, null)).toBe(false);
+  });
+
+  it("sem 'Funil Funil': o nome que já começa com Funil não ganha o prefixo", async () => {
+    const { funnelSummaryLine } = await import("./onboardingChat");
+    expect(funnelSummaryLine("Funil da clínica", 6)).toBe("Funil da clínica com 6 etapas");
+    expect(funnelSummaryLine("funil Vendas", 1)).toBe("funil Vendas com 1 etapa");
+    expect(funnelSummaryLine("Passeios", 5)).toBe("Funil Passeios com 5 etapas");
+    expect(funnelSummaryLine("Funileiro Zé", 3)).toBe("Funil Funileiro Zé com 3 etapas");
+    expect(funnelSummaryLine("  ", 2)).toBe("Funil com 2 etapas");
+  });
+
+  it("Abrir o meu CRM vai ao Painel", async () => {
+    const { CRM_HOME_HREF } = await import("./onboardingChat");
+    expect(CRM_HOME_HREF).toBe("/app/painel");
+  });
+});

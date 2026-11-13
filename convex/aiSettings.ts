@@ -89,6 +89,9 @@ export const getAiStatus = query({
     // v4.2: estado p/ o wizard de ativação em 1 fluxo.
     hasAttendant: v.boolean(),
     hasBridgeChannel: v.boolean(),
+    // Número por QR code de fato conectado (sessão `connected`): com a IA ativa
+    // e sem `bridgeAiAck`, a IA fica muda nele e a UI mostra o aviso que resolve.
+    hasConnectedBridgeChannel: v.boolean(),
     models: v.object({
       copilot: v.string(),
       attendant: v.string(),
@@ -153,6 +156,13 @@ export const getAiStatus = query({
       ),
       hasBridgeChannel: channelConfigs.some(
         (c) => c.channel === "whatsapp" && c.provider === "bridge" && c.status === "active"
+      ),
+      hasConnectedBridgeChannel: channelConfigs.some(
+        (c) =>
+          c.channel === "whatsapp" &&
+          c.provider === "bridge" &&
+          c.status === "active" &&
+          c.bridgeSessionState === "connected"
       ),
       models: {
         copilot: aiConfig?.providerConfig?.models.copilot ?? DEFAULT_MODELS.copilot,

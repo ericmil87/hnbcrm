@@ -1,9 +1,10 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronUp, SlidersHorizontal } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { CARD_PURPOSE, type OnboardingBlock } from "../../../../convex/lib/onboardingBlocks";
 import type { DraftCardKind } from "../../../../convex/lib/onboardingRoadmap";
+import { focusFirstField, revealInScroller } from "@/lib/onboardingScroll";
 import { BlockCard, type BlockCardProps } from "./BlockCard";
 
 /** "Para que serve" do cartão: a frase do servidor, ou a fixa para mensagens antigas que não a trazem. */
@@ -54,9 +55,27 @@ export function ApprovableCard({ approval, compact, formOpen = false, onAdjust, 
   const badge = approval ? <ApprovalBadge approved={approval.approved} /> : undefined;
   const collapsed = !!approval?.approved && !compact && !expanded && !formOpen;
 
+  // Abriu o editor ("Ajustar") ou o conteúdo ("Ver"): traz o cartão à vista (topo visível, sem
+  // ficar atrás da barra do próximo passo nem do campo) e, no editor, foca o primeiro campo.
+  const cardRef = useRef<HTMLElement>(null);
+  const revealed = useRef({ form: false, expanded: false });
+  useEffect(() => {
+    const el = cardRef.current;
+    const openedForm = formOpen && !revealed.current.form;
+    const openedView = expanded && !revealed.current.expanded;
+    revealed.current = { form: formOpen, expanded };
+    if (!el || (!openedForm && !openedView)) return;
+    const raf = typeof window.requestAnimationFrame === "function" ? window.requestAnimationFrame : (cb: FrameRequestCallback) => window.setTimeout(cb, 0);
+    raf(() => {
+      revealInScroller(el);
+      if (openedForm) focusFirstField(el);
+    });
+  }, [formOpen, expanded]);
+
   if (collapsed) {
     return (
       <BlockCard
+        cardRef={cardRef}
         title={card.title}
         icon={card.icon}
         badge={badge}
@@ -113,7 +132,7 @@ export function ApprovableCard({ approval, compact, formOpen = false, onAdjust, 
   );
   const hasFooter = !formOpen && (canApprove || !!onAdjust || !!extraActions || (approval?.approved && expanded && !compact));
   return (
-    <BlockCard {...card} badge={badge} footer={hasFooter ? footer : undefined}>
+    <BlockCard {...card} cardRef={cardRef} badge={badge} footer={hasFooter ? footer : undefined}>
       {children}
     </BlockCard>
   );

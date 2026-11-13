@@ -4,7 +4,11 @@ import type { OnboardingDraft } from "../../../../convex/lib/onboardingDraft";
 import { cardSignature } from "../../../../convex/lib/onboardingRoadmap";
 import type { RoadmapFacts } from "../../../../convex/lib/onboardingRoadmap";
 import type { ApplyResult } from "../../../../convex/lib/onboardingApply";
-import { chatProgress, nextStepFor, type TimelineItem } from "@/lib/onboardingChat";
+import { ENTRY_STEP_LABEL, accountProgress, chatProgress, nextStepFor, type TimelineItem } from "@/lib/onboardingChat";
+import { newOrgTrialNotice } from "@/lib/onboardingEntryChoice";
+import { EntryChoiceView } from "../EntryChoice";
+import { RestartConversationDialog } from "../RestartConversationDialog";
+import { AttendantChatView } from "@/components/ai/AttendantChatView";
 import type { ActivationDeps } from "@/lib/onboardingActivate";
 import { CopilotNote } from "../ConversationIntro";
 import { DraftPreviewPanel } from "../DraftPreviewPanel";
@@ -19,7 +23,7 @@ import { BlockOverridesContext, type BlockOverrides } from "../blocks/registry";
 import type { BlockContext, BlockOf, LiveFacts } from "../blocks/types";
 
 /** Estados da vitrine (`?vitrine=onboarding&estado=`). */
-export const SHOWCASE_STATES = ["inicio", "funil", "atendente", "ativar", "email", "final", "erro"] as const;
+export const SHOWCASE_STATES = ["inicio", "funil", "atendente", "ativar", "email", "final", "erro", "escolha", "escolha-varias", "nao-admin", "recomecar", "teste", "email-compacto"] as const;
 export type ShowcaseState = (typeof SHOWCASE_STATES)[number];
 
 const noop = () => {};
@@ -95,6 +99,74 @@ interface Scenario {
   error?: string;
 }
 
+/** Estados da tela de entrada de quem já tem empresa (não são conversa). */
+type EntryState = "escolha" | "escolha-varias" | "nao-admin";
+const isEntryState = (s: ShowcaseState): s is EntryState => s === "escolha" || s === "escolha-varias" || s === "nao-admin";
+
+function EntryShowcase({ estado }: { estado: EntryState }) {
+  const trial = newOrgTrialNotice("shared_active", Date.UTC(2026, 11, 10, 15));
+  const intro =
+    estado === "nao-admin" ? (
+      <EntryChoiceView
+        variant="not_admin"
+        orgName="Bugre Tur"
+        state="configured"
+        notice={null}
+        stepLabel={null}
+        options={["open_crm", "create"]}
+        primary="open_crm"
+        trialNotice={newOrgTrialNotice("fresh", null)}
+        onChoose={noop}
+      />
+    ) : estado === "escolha" ? (
+      <EntryChoiceView
+        orgName="Bugre Tur"
+        state="configured"
+        notice={null}
+        stepLabel={null}
+        options={["open_crm", "adjust", "create"]}
+        primary="open_crm"
+        intentMessage="Tenho uma pousada em Maragogi e quero responder os hóspedes no WhatsApp"
+        trialNotice={trial}
+        onChoose={noop}
+      />
+    ) : (
+      <EntryChoiceView
+        orgName="Pousada Sol"
+        state="in_progress"
+        notice={null}
+        stepLabel="Atendente"
+        orgs={[
+          { id: "a", name: "Bugre Tur" },
+          { id: "b", name: "Pousada Sol" },
+        ]}
+        selectedOrgId="b"
+        onSelectOrg={noop}
+        options={["continue", "open_crm", "create"]}
+        primary="continue"
+        trialNotice={trial}
+        onChoose={noop}
+      />
+    );
+  return (
+    <OnboardingChatView
+      progress={accountProgress(ENTRY_STEP_LABEL)}
+      intro={intro}
+      timeline={[]}
+      typing={false}
+      chips={[]}
+      onChip={noop}
+      composerValue=""
+      onComposerChange={noop}
+      onSubmit={noop}
+      composerDisabled
+      composerPlaceholder="Escolha uma opção acima"
+      blockCtx={{ organizationId: null, sessionId: null, sendText: noop, sendEvent: noop, busy: true }}
+      formHref="/app/configuracao-inicial"
+    />
+  );
+}
+
 function scenario(state: ShowcaseState): Scenario {
   const sigOf = (k: "funilPreview" | "personaCard" | "conhecimentoLista") => cardSignature(DRAFT, k);
   const base: RoadmapFacts = { draft: DRAFT, approvals: {}, aiActive: false, applied: false, tested: false, connected: false, emailVerified: true };
@@ -151,7 +223,33 @@ function scenario(state: ShowcaseState): Scenario {
           item("a1", "assistant", "Pronto, a sua IA está ligada e a operação foi montada. Que tal testar a sua IA agora, como se você fosse um cliente?", [block("operacaoPronta", { appliedDraftHash: "hash-vivo", aiActive: true })]),
         ],
       };
+    case "escolha":
+    case "escolha-varias":
+    case "nao-admin":
+      return { timeline: [], facts: base };
+    case "teste":
+      return {
+        facts: { ...base, approvals: { funnel: sigOf("funilPreview"), persona: sigOf("personaCard"), knowledge: sigOf("conhecimentoLista") }, aiActive: true, applied: true, tested: true },
+        timeline: [item("a1", "assistant", "Pronto, a sua IA está ligada e a operação foi montada.", [block("operacaoPronta", { appliedDraftHash: "hash-vivo", aiActive: true })])],
+      };
+    case "email-compacto":
+      return {
+        facts: { ...base, draft: null, emailVerified: false },
+        timeline: [
+          item("u1", "user", "sou bugueiro em porto de galinhas, vendo passeios"),
+          item("a1", "assistant", "Que legal, Porto de Galinhas! Os passeios saem de onde e duram quanto tempo, em média?"),
+        ],
+      };
+    case "recomecar":
     case "erro":
+      if (state === "recomecar") {
+        return {
+          facts: { ...base, approvals: { funnel: sigOf("funilPreview"), persona: sigOf("personaCard"), knowledge: sigOf("conhecimentoLista") }, aiActive: true, applied: true },
+          timeline: [
+            item("a1", "assistant", "Pronto, a sua IA está ligada e a operação foi montada.", [block("operacaoPronta", { appliedDraftHash: "hash-vivo", aiActive: true })]),
+          ],
+        };
+      }
       return {
         facts: { ...base, approvals: { funnel: sigOf("funilPreview") } },
         timeline: [
@@ -169,11 +267,16 @@ function scenario(state: ShowcaseState): Scenario {
  * de um bugueiro de Porto de Galinhas, sem Convex, para ver cada estado em 390 px e 1440 px. Só entra no bundle de DEV.
  */
 export function OnboardingShowcase({ estado, reducedMotion }: { estado: ShowcaseState; reducedMotion?: boolean }) {
+  if (isEntryState(estado)) return <EntryShowcase estado={estado} />;
+  return <ConversationShowcase estado={estado} reducedMotion={reducedMotion} />;
+}
+
+function ConversationShowcase({ estado, reducedMotion }: { estado: ShowcaseState; reducedMotion?: boolean }) {
   const sc = useMemo(() => scenario(estado), [estado]);
   const facts: LiveFacts = { ...sc.facts, maskedEmail: MASKED, pendingMaterials: estado === "email" ? 1 : 0 };
   const progress = chatProgress(sc.facts);
   const next = nextStepFor(sc.facts);
-  const nextStep: NextStepBarProps = { label: next.label, ...(next.task === "done" ? { href: "/app" } : { onPress: noop }) };
+  const nextStep: NextStepBarProps = { label: next.label, ...(next.task === "done" ? { href: "/app/painel" } : { onPress: noop }) };
   const blockCtx: Omit<BlockContext, "isLatest"> = { organizationId: "org", sessionId: "sessao", sendText: noop, sendEvent: noop, busy: false, facts };
 
   const overrides: BlockOverrides = useMemo(
@@ -216,7 +319,11 @@ export function OnboardingShowcase({ estado, reducedMotion }: { estado: Showcase
   );
 
   const intro =
-    estado === "inicio" ? (
+    estado === "email-compacto" ? (
+      <div className="pl-2">
+        <CartaoContaView verified={false} maskedEmail={MASKED} compact collapsed onRequest={async () => ({ sent: true })} onConfirm={async () => ({ verified: false })} />
+      </div>
+    ) : estado === "inicio" ? (
       <>
         {sc.intro}
         <div className="pl-2">
@@ -246,14 +353,38 @@ export function OnboardingShowcase({ estado, reducedMotion }: { estado: Showcase
         onSubmit={noop}
         blockCtx={blockCtx}
         formHref="/app/configuracao-inicial"
-        appHref="/app"
+        appHref="/app/painel"
         error={sc.error}
         onRetry={sc.error ? noop : undefined}
         onDismissError={sc.error ? noop : undefined}
-        nextStep={nextStep}
+        // Na conversa real a barra some quando o cartão do passo, com o botão dele, está na tela (estado final).
+        nextStep={estado === "final" ? undefined : nextStep}
         preview={<DraftPreviewPanel {...previewProps} />}
         previewSheet={<DraftPreviewPanel {...previewProps} inSheet />}
+        onRestart={noop}
+        takeover={
+          estado === "teste" ? (
+            <AttendantChatView
+              attendantName="Duda"
+              transcript={[
+                { role: "customer", content: "Oi! Quanto custa o passeio de buggy?" },
+                { role: "agent", content: "Oi! O passeio de 2h custa R$ 280 por buggy, para até 4 pessoas. Quer que eu veja um horário para você?" },
+                { role: "customer", content: "Pode ser sábado de manhã?" },
+              ]}
+              busy
+              input=""
+              onInputChange={noop}
+              onSend={noop}
+              suggestions={["Aceitam cartão?", "Criança pode ir?", "Onde é a saída?"]}
+              onSuggestion={noop}
+              onReset={noop}
+              onExit={noop}
+              primaryAction={{ label: "Está bom, conectar o WhatsApp", onClick: noop }}
+            />
+          ) : undefined
+        }
       />
+      {estado === "recomecar" && <RestartConversationDialog open onClose={noop} onConfirm={noop} applied />}
     </BlockOverridesContext.Provider>
   );
 }

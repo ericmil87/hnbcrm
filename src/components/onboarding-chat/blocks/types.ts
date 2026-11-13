@@ -26,6 +26,8 @@ export interface LiveFacts {
   emailVerified: boolean;
   maskedEmail?: string | null;
   pendingMaterials?: number;
+  /** A operação já foi montada por uma conversa anterior (recomeçada): montar de novo avisa o que acontece. */
+  priorApplied?: boolean;
 }
 
 /**
@@ -54,6 +56,12 @@ export interface BlockContext {
   isLatest: boolean;
   /** Prévia do desktop (`DraftPreviewPanel`): os mesmos cartões, mais enxutos. */
   compact?: boolean;
+  /** Abre a tela dedicada de teste da IA (a conversa a controla; nenhum evento a fecha). */
+  openTest?: () => void;
+  /** Muda quando a tela de teste pede "conectar o WhatsApp": o cartão final abre a conexão. */
+  connectSignal?: number;
+  /** A pessoa já escreveu na conversa: o cartão de e-mail do começo fica recolhido numa linha. */
+  collapseEmailCard?: boolean;
 }
 
 export interface BlockProps<K extends OnboardingBlockKind> {

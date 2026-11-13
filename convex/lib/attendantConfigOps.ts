@@ -205,6 +205,12 @@ export async function updateAgentProfileCore(
     autopilotRiskAck?: boolean;
     via?: ConfigVia;
     rename?: string;
+    /**
+     * Só servidor (nunca no validator público): o conhecimento gravado veio da
+     * conversa de configuração e vai envelopado ao prompt (`agentProfileTexts.
+     * knowledgeEnvelope`). Ausente = mantém a marca que o atendente já tem.
+     */
+    knowledgeEnvelope?: true;
   }
 ): Promise<null> {
   const { agent, member, patch, autopilotRiskAck } = params;
@@ -387,7 +393,11 @@ export async function updateAgentProfileCore(
     ? await writeAgentTexts(
         ctx,
         agent,
-        { systemPrompt: patchSystemPrompt, knowledge: patchKnowledge },
+        {
+          systemPrompt: patchSystemPrompt,
+          knowledge: patchKnowledge,
+          ...(params.knowledgeEnvelope && patchKnowledge !== undefined ? { knowledgeEnvelope: true } : {}),
+        },
         { profile: next, now }
       )
     : next;

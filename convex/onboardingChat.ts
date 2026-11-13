@@ -29,6 +29,7 @@ import { maskEmailForDisplay } from "./lib/emailAddress";
 import { requestEmailVerificationCodeCore } from "./emailVerification";
 import { coherentChips, type RoadmapFacts } from "./lib/onboardingRoadmap";
 import { ensureOnboardingSession } from "./onboardingSessions";
+import { ARCHIVED_SESSION_MESSAGE } from "./lib/onboardingRestart";
 import { onboardingBlockValidator } from "./lib/onboardingBlocks";
 import { onboardingDraftValidator } from "./lib/onboardingDraft";
 import { siteKeyOf, MAX_PAGES_PER_SITE } from "./lib/htmlExtract";
@@ -199,6 +200,8 @@ export const getChatState = query({
       tested: v.boolean(),
       /** Canal conectado ou "conectar depois" escolhido (`channelStepAt`). */
       connected: v.boolean(),
+      /** A operação já foi montada por uma conversa anterior (recomeçada). */
+      priorApplied: v.optional(v.boolean()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -250,6 +253,7 @@ export const getChatState = query({
       applied: facts.applied,
       tested: facts.tested,
       connected: facts.connected,
+      priorApplied: session?.priorAppliedAt !== undefined,
     };
   },
 });
@@ -271,6 +275,8 @@ export const ackMaterialsNotice = mutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     if (session.materialsNoticeAckAt !== undefined) return { acknowledgedAt: session.materialsNoticeAckAt };
     const now = Date.now();
     await ctx.db.patch(session._id, { materialsNoticeAckAt: now, materialsNoticeAckBy: member._id, updatedAt: now });
@@ -325,6 +331,8 @@ export const ensureEmailCodeSent = mutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     const maskedEmail = maskEmailForDisplay(user.email) || null;
     if (typeof user.emailVerificationTime === "number") return { sent: false, reason: "already_verified" as const, maskedEmail };
     if (session.emailCodeAutoSentAt !== undefined) return { sent: false, reason: "already_requested" as const, maskedEmail };
@@ -506,6 +514,8 @@ export const internalPrepareTurn = internalMutation({
     if (args.sessionId) {
       const s = await ctx.db.get(args.sessionId);
       if (!s || s.organizationId !== args.organizationId) refuse("invalid_input", "Sessão de onboarding não encontrada");
+      // Conversa recomeçada (outra aba, ou turno que chegou depois do recomeço): nada entra na sessão arquivada.
+      if (s.archivedAt !== undefined) refuse("invalid_input", ARCHIVED_SESSION_MESSAGE);
       session = s;
     } else {
       session = await ensureOnboardingSession(ctx, args.organizationId, member);
@@ -613,6 +623,8 @@ export const internalAppendMessage = internalMutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     const max = args.role === "assistant" ? REPLY_MAX + 200 : MESSAGE_TEXT_MAX;
     return await ctx.db.insert("onboardingMessages", {
       organizationId: args.organizationId,
@@ -840,6 +852,8 @@ export const internalAddPendingMaterial = internalMutation({
     if (!session || session.organizationId !== args.organizationId) {
       throw new ConvexError("Sessão de onboarding não encontrada");
     }
+    // Conversa recomeçada (em outra aba ou durante um turno): a sessão arquivada não recebe mais escrita.
+    if (session.archivedAt !== undefined) throw new ConvexError(ARCHIVED_SESSION_MESSAGE);
     const list = session.pendingMaterials ?? [];
     if (list.some((m) => m.url === args.url)) return { stored: true, count: list.length };
     if (list.length >= PENDING_MATERIALS_MAX) return { stored: false, count: list.length };

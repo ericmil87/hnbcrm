@@ -110,6 +110,13 @@ export function emailIntroLine(maskedEmail: string | null | undefined): string {
     : "Te mandei um código de 6 dígitos no seu e-mail; quando chegar, é só colar aqui. Enquanto isso, me conta do seu negócio.";
 }
 
+/** O código não trava a conversa: dito no cartão, para a pessoa não ficar esperando. */
+export const EMAIL_CODE_OPTIONAL_LINE =
+  "Pode seguir conversando; o código só é necessário para eu ler site, PDF, imagem ou áudio.";
+
+/** Linha recolhida do cartão de e-mail (depois da primeira resposta da pessoa). */
+export const EMAIL_PENDING_LINE = "E-mail por confirmar";
+
 /** Mensagem de quando o envio automático não saiu (o botão de reenviar fica à vista). */
 export function ensureResultMessage(r: { sent: boolean; reason?: EnsureReason }): string | null {
   if (r.sent) return null;

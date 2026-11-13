@@ -29,7 +29,7 @@ describe("CartaoContaView", () => {
     render(<CartaoContaView {...p} nowFn={() => 1000} />);
     expect(p.onRequest).not.toHaveBeenCalled();
     expect(screen.getByText(/Enviamos um código de 6 dígitos para bu…te@milfont\.net/)).toBeInTheDocument();
-    expect(screen.getByText(/libera o envio de site, PDF, imagem e áudio/)).toBeInTheDocument();
+    expect(screen.getByText(/Pode seguir conversando; o código só é necessário para eu ler site, PDF, imagem ou áudio/)).toBeInTheDocument();
     expect(screen.getByText(/Confira o spam ou reenvie/)).toBeInTheDocument();
   });
 
@@ -204,5 +204,29 @@ describe("UploadProgressoBlock", () => {
     expect(container.textContent).toContain("Site fora do ar");
     expect(container.querySelector("b")).toBeNull();
     expect(screen.queryByText(/adicionado/)).toBeNull();
+  });
+});
+
+describe("CartaoContaView discreto (o código não trava a conversa)", () => {
+  const base = { verified: false, maskedEmail: "bu…te@milfont.net", compact: true, onRequest: vi.fn(async () => ({ sent: true })), onConfirm: vi.fn(async () => ({ verified: false })) };
+
+  it("diz que dá para seguir conversando", () => {
+    render(<CartaoContaView {...base} />);
+    expect(screen.getByText(/Pode seguir conversando/)).toBeInTheDocument();
+  });
+
+  it("recolhido numa linha 'E-mail por confirmar · Colar código' que reabre o cartão com foco no campo", async () => {
+    const { rerender } = render(<CartaoContaView {...base} />);
+    expect(screen.getByLabelText("Código de 6 dígitos")).toBeInTheDocument();
+    rerender(<CartaoContaView {...base} collapsed />);
+    expect(screen.queryByLabelText("Código de 6 dígitos")).not.toBeInTheDocument();
+    expect(screen.getByText("E-mail por confirmar")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Colar código" }));
+    expect(screen.getByLabelText("Código de 6 dígitos")).toHaveFocus();
+  });
+
+  it("confirmado: linha de sucesso, recolhido ou não", () => {
+    render(<CartaoContaView {...base} verified collapsed />);
+    expect(screen.getByRole("status")).toHaveTextContent("E-mail confirmado");
   });
 });

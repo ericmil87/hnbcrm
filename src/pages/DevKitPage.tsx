@@ -9,7 +9,7 @@ import { applyTheme } from "@/lib/themeDom";
 
 // Vitrine do onboarding (`?vitrine=onboarding&estado=`): só DEV, fora do bundle de produção.
 const OnboardingShowcase = lazy(() => import("@/components/onboarding-chat/dev/OnboardingShowcase").then((m) => ({ default: m.OnboardingShowcase })));
-const SHOWCASE_STATES = ["inicio", "funil", "atendente", "ativar", "email", "final", "erro"] as const;
+const SHOWCASE_STATES = ["inicio", "funil", "atendente", "ativar", "email", "final", "erro", "escolha", "escolha-varias", "nao-admin", "recomecar", "teste", "email-compacto"] as const;
 type ShowcaseState = (typeof SHOWCASE_STATES)[number];
 
 /**
@@ -17,7 +17,7 @@ type ShowcaseState = (typeof SHOWCASE_STATES)[number];
  * `import.meta.env.DEV` (ver `main.tsx`), então esta página não entra no build
  * de produção. `?tema=whatsapp-dark` aplica um tema sem gravar nada (capturas);
  * `?movimento=reduzido` mostra o estado final de todas as peças;
- * `?vitrine=onboarding&estado=inicio|funil|atendente|ativar|email|final|erro` mostra a conversa `/comecar` com dados fixos.
+ * `?vitrine=onboarding&estado=inicio|funil|atendente|ativar|email|final|erro|escolha|escolha-varias|nao-admin|recomecar|teste|email-compacto` mostra a conversa `/comecar` com dados fixos.
  */
 export function DevKitPage() {
   const [params] = useSearchParams();

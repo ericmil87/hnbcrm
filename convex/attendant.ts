@@ -72,7 +72,7 @@ import {
   upsertRuntime,
 } from "./lib/conversationRuntime";
 import { buildDisclosurePromptLine, resolveDisclosurePolicy } from "./lib/disclosure";
-import { readAgentTexts } from "./lib/agentProfileTexts";
+import { readAgentTextsForPrompt } from "./lib/agentProfileTexts";
 import { toWhatsAppText } from "./lib/whatsappText";
 import { toPlainChatText } from "./lib/chatText";
 import { META_AI_WINDOW_MARGIN_MS, metaConversationWindow } from "./lib/metaSend";
@@ -1606,7 +1606,7 @@ export const internalClaimForProcessing = internalMutation({
         maxToolCalls: profile.maxToolCallsPerRun ?? DEFAULT_MAX_TOOL_CALLS,
         temperature: profile.temperature ?? 0.3,
         // Persona + conhecimento: `agentProfileTexts` (ou o doc, se legado).
-        ...(await readAgentTexts(ctx, agent!)),
+        ...(await readAgentTextsForPrompt(ctx, agent!)),
         language: profile.language ?? "pt-BR",
         // Tradução automática: idioma detectado da conversa (dica para `language:"auto"`).
         conversationLang: conversation.translation?.lang ?? null,
@@ -5885,7 +5885,7 @@ export const internalGetSimulatorSetup = internalQuery({
       providerConfig: providerConfig ?? null,
       maxToolCalls: profile.maxToolCallsPerRun ?? DEFAULT_MAX_TOOL_CALLS,
       temperature: profile.temperature ?? 0.3,
-      ...(await readAgentTexts(ctx, agent)),
+      ...(await readAgentTextsForPrompt(ctx, agent)),
       language: profile.language ?? "pt-BR",
       advanceRules: profile.pipelineConfig?.advanceRules ?? null,
       allowMoveStages: profile.pipelineConfig?.allowMoveStages !== false,

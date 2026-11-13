@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Check, FlaskConical, LayoutDashboard, MessageCircle, PartyPopper, RefreshCw } from "lucide-react";
@@ -11,7 +11,7 @@ import { Button, buttonClassName } from "@/components/ui/Button";
 import { pickEditableAttendant } from "@/lib/attendantConfig";
 import { mutationErrorMessage } from "@/lib/errors";
 import { formatCount } from "@/lib/format";
-import { plainModelText } from "@/lib/onboardingChat";
+import { CRM_HOME_HREF, funnelSummaryLine, plainModelText } from "@/lib/onboardingChat";
 import { buildActivationDeps, runActivation, INITIAL_ACTIVATION, type ActivationMode } from "@/lib/onboardingActivate";
 import { cn } from "@/lib/utils";
 import { OnboardingTutorial } from "../tutorial/OnboardingTutorial";
@@ -21,7 +21,7 @@ import type { BlockOf, BlockProps } from "./types";
 type Summary = BlockOf<"operacaoPronta">["summary"];
 
 /** Saída da conversa para o CRM (a organização já existe neste ponto). */
-export const CRM_HREF = "/app";
+export const CRM_HREF = CRM_HOME_HREF;
 
 export interface OperacaoProntaViewProps {
   summary: Summary;
@@ -43,6 +43,13 @@ export interface OperacaoProntaViewProps {
   crmHref?: string;
   /** Depois da primeira resposta do teste: o tutorial guiado. */
   tutorial?: ReactNode;
+  /**
+   * Abre o teste na tela dedicada da conversa (ampla, fora do cartão). Presente = o botão não abre
+   * o simulador dentro do cartão.
+   */
+  onOpenTest?: () => void;
+  /** Muda quando a tela de teste pede "conectar o WhatsApp": abre a conexão aqui. */
+  connectSignal?: number;
 }
 
 type Open = "test" | "connect" | null;
@@ -66,8 +73,16 @@ export function OperacaoProntaView({
   onSkipConnect,
   crmHref = CRM_HREF,
   tutorial,
+  onOpenTest,
+  connectSignal = 0,
 }: OperacaoProntaViewProps) {
   const [open, setOpen] = useState<Open>(null);
+  const lastSignal = useRef(connectSignal);
+  useEffect(() => {
+    if (connectSignal === lastSignal.current) return;
+    lastSignal.current = connectSignal;
+    setOpen("connect");
+  }, [connectSignal]);
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
 
@@ -87,7 +102,7 @@ export function OperacaoProntaView({
   };
 
   const lines = [
-    `Funil ${plainModelText(summary.funnelName)} com ${summary.stageCount} ${summary.stageCount === 1 ? "etapa" : "etapas"}`,
+    funnelSummaryLine(summary.funnelName, summary.stageCount),
     `${plainModelText(summary.attendantName)} atendendo`,
     `${formatCount(summary.knowledgeCount)} ${summary.knowledgeCount === 1 ? "informação" : "informações"} para responder`,
     plainModelText(summary.hoursLabel),
@@ -126,14 +141,14 @@ export function OperacaoProntaView({
           type="button"
           size="lg"
           variant={variant("test")}
-          aria-expanded={open === "test"}
-          onClick={() => setOpen(open === "test" ? null : "test")}
+          aria-expanded={onOpenTest ? undefined : open === "test"}
+          onClick={() => (onOpenTest ? onOpenTest() : setOpen(open === "test" ? null : "test"))}
         >
           {tested ? <Check className="size-4" aria-hidden="true" /> : <FlaskConical className="size-4" aria-hidden="true" />}
           Testar a sua IA
           {tested && <span className="sr-only"> (feito)</span>}
         </Button>
-        {open === "test" && (
+        {open === "test" && !onOpenTest && (
           <div className="rounded-field border border-border-subtle bg-surface-sunken p-2">
             {missingAttendant ? (
               <p className="text-text-secondary">Não encontrei o atendente ainda. Atualize a operação e tente de novo.</p>
@@ -232,7 +247,7 @@ export function OperacaoProntaBlock({ block, ctx }: BlockProps<"operacaoPronta">
       onUpdate={onUpdate}
       missingAttendant={attendants !== undefined && !attendant}
       simulator={
-        organizationId && attendant ? (
+        organizationId && attendant && !ctx.openTest ? (
           <AttendantSimulator
             variant="inline"
             organizationId={organizationId}
@@ -248,7 +263,9 @@ export function OperacaoProntaBlock({ block, ctx }: BlockProps<"operacaoPronta">
           />
         ) : undefined
       }
-      tutorial={testedHere ? <OnboardingTutorial /> : undefined}
+      tutorial={testedHere && !ctx.openTest ? <OnboardingTutorial /> : undefined}
+      onOpenTest={ctx.openTest}
+      connectSignal={ctx.connectSignal}
       connectCard={
         organizationId ? (
           <ChannelConnectCard

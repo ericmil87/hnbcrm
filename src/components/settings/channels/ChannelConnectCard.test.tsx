@@ -108,3 +108,51 @@ describe("ChannelConnectCardView: configuração manual", () => {
     expect(screen.queryByLabelText("Token de administrador do servidor")).not.toBeInTheDocument();
   });
 });
+
+describe("ChannelConnectCardView: IA ligada ao conectar por QR code", () => {
+  it("uma confirmação só: a frase da IA aparece, e o aceite da IA é gravado só depois do clique e do número criado", async () => {
+    const user = userEvent.setup();
+    const grant = vi.fn().mockResolvedValue(null);
+    const { actions, onConnected } = setup({ aiAck: { grant } });
+    await user.click(screen.getByRole("button", { name: /WhatsApp por QR code/ }));
+
+    expect(screen.getByText("A IA da sua empresa também vai responder neste número.")).toBeInTheDocument();
+    const box = screen.getByRole("checkbox", { name: /assumo o risco de banimento do número, também com a IA/ });
+    const connect = screen.getByRole("button", { name: "Conectar número" });
+    expect(connect).toBeDisabled();
+    expect(grant).not.toHaveBeenCalled();
+
+    await user.click(box);
+    expect(grant).not.toHaveBeenCalled(); // marcar a caixa não grava nada
+    await user.click(connect);
+    await waitFor(() => expect(grant).toHaveBeenCalledTimes(1));
+    expect(actions.createManagedChannel).toHaveBeenCalledTimes(1);
+    // A ordem: o número nasce primeiro; o aceite da IA vem depois, pela porta própria.
+    expect(actions.createManagedChannel.mock.invocationCallOrder[0]).toBeLessThan(grant.mock.invocationCallOrder[0]);
+    expect(onConnected).not.toHaveBeenCalled(); // segue para o passo de conexão
+    expect(await screen.findByRole("radio", { name: "Usar QR code" })).toBeInTheDocument();
+  });
+
+  it("falha ao criar o número não grava o aceite da IA", async () => {
+    const user = userEvent.setup();
+    const grant = vi.fn().mockResolvedValue(null);
+    const { actions } = setup({ aiAck: { grant } });
+    actions.createManagedChannel.mockRejectedValueOnce(new Error("Servidor fora do ar"));
+    await user.click(screen.getByRole("button", { name: /WhatsApp por QR code/ }));
+    await user.click(screen.getByRole("checkbox", { name: /assumo o risco de banimento/ }));
+    await user.click(screen.getByRole("button", { name: "Conectar número" }));
+    await waitFor(() => expect(actions.createManagedChannel).toHaveBeenCalledTimes(1));
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it("sem IA ligada (ou já aceito): aviso e rótulo de sempre, nenhum aceite de IA", async () => {
+    const user = userEvent.setup();
+    const { actions } = setup();
+    await user.click(screen.getByRole("button", { name: /WhatsApp por QR code/ }));
+    expect(screen.queryByText(/A IA da sua empresa também vai responder/)).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Entendo e assumo o risco de banimento do número." })).toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: /assumo o risco de banimento/ }));
+    await user.click(screen.getByRole("button", { name: "Conectar número" }));
+    await waitFor(() => expect(actions.createManagedChannel).toHaveBeenCalledTimes(1));
+  });
+});

@@ -939,6 +939,10 @@ const applicationTables = {
     teamMemberId: v.id("teamMembers"),
     systemPrompt: v.optional(v.string()),
     knowledge: v.optional(v.string()),
+    // Conhecimento gerado pela conversa de configuração (`/comecar`): a montagem
+    // do prompt o põe no envelope `<crm_data untrusted>` (`lib/agentKnowledge.ts`).
+    // Ausente = conhecimento escrito pela empresa, vai ao prompt como sempre foi.
+    knowledgeEnvelope: v.optional(v.boolean()),
     updatedAt: v.number(),
   })
     .index("by_member", ["teamMemberId"])
@@ -3905,6 +3909,15 @@ const applicationTables = {
     ),
     // Envio automático do código de e-mail (uma vez por sessão, mesmo se recusado).
     emailCodeAutoSentAt: v.optional(v.number()),
+    // "Recomeçar a conversa" (`onboardingSessions.restartConversation`): a sessão antiga é
+    // ARQUIVADA (fica fora da vista, o texto continua até a purga da org) e nasce uma nova que
+    // herda só o que não pode zerar (gasto da sessão, ciência do aviso, envio do código).
+    archivedAt: v.optional(v.number()),
+    archivedBy: v.optional(v.id("teamMembers")),
+    // Na sessão NOVA: de qual sessão ela recomeçou e quando a operação já tinha sido montada
+    // antes (a conversa recomeça, o que foi criado no CRM continua).
+    restartedFrom: v.optional(v.id("onboardingSessions")),
+    priorAppliedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),

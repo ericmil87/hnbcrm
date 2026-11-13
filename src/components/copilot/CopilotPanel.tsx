@@ -19,34 +19,15 @@ const SUGGESTIONS = [
   "Resuma as métricas do mês",
 ];
 
-interface CopilotPanelBaseProps {
+interface CopilotPanelProps {
   organizationId: Id<"organizations">;
-  /** "setup": conversa de configuração inicial (thread próprio). */
-  purpose?: "setup";
-  /** Thread guardada fora do navegador (o wizard grava em `wizardData`). */
-  initialThreadId?: string | null;
-  /** A thread mudou (criada ou descartada): quem usa o painel pode guardá-la. */
-  onThreadChange?: (threadId: string | null) => void;
+  open: boolean;
+  onClose: () => void;
 }
 
-type CopilotPanelProps =
-  | (CopilotPanelBaseProps & {
-      /** Gaveta lateral (padrão). */
-      variant?: "drawer";
-      open: boolean;
-      onClose: () => void;
-    })
-  | (CopilotPanelBaseProps & {
-      /** Ocupa o contêiner pai, sem chrome de gaveta; sempre ativo. */
-      variant: "embedded";
-      open?: boolean;
-      onClose?: () => void;
-    });
-
 export function CopilotPanel(props: CopilotPanelProps) {
-  const { organizationId, purpose } = props;
-  const variant = props.variant ?? "drawer";
-  const active = props.open === true || variant === "embedded";
+  const { organizationId } = props;
+  const active = props.open === true;
   const {
     streamingText,
     activeTools,
@@ -56,12 +37,7 @@ export function CopilotPanel(props: CopilotPanelProps) {
     sendMessage,
     startNewThread,
     discardThread,
-  } = useCopilotStream(
-    organizationId,
-    purpose || props.initialThreadId || props.onThreadChange
-      ? { purpose, initialThreadId: props.initialThreadId, onThreadChange: props.onThreadChange }
-      : undefined
-  );
+  } = useCopilotStream(organizationId);
 
   // Painel FECHADO não assina o histórico: a query reativa seria reexecutada a
   // cada mensagem do thread mesmo sem ninguém olhando. Ao reabrir, o último
@@ -210,21 +186,6 @@ export function CopilotPanel(props: CopilotPanelProps) {
       </div>
     </>
   );
-
-  if (props.variant === "embedded") {
-    return (
-      <div className="flex h-full min-h-0 flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center justify-between border-b border-border px-4 md:px-6">
-          <div className="flex items-center gap-2 py-2">
-            <Sparkles size={18} className="text-brand-500 shrink-0" aria-hidden="true" />
-            <h2 className="text-base font-semibold text-text-primary">Copiloto</h2>
-          </div>
-          {newThreadButton}
-        </div>
-        {content}
-      </div>
-    );
-  }
 
   return (
     <SlideOver

@@ -472,7 +472,7 @@ describe("avisos 1×/mês", () => {
     });
     expect(tpl.subject).toMatch(/Teto de gastos de IA atingido/);
     expect(tpl.html).toContain("&lt;b&gt;Org&lt;/b&gt;");
-    expect(tpl.html).toContain("RASCUNHO");
+    expect(tpl.html).toContain("deixar as respostas como rascunho");
   });
 });
 

@@ -7,6 +7,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { AttendantChatView } from "./AttendantChatView";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import {
@@ -263,19 +264,30 @@ interface AttendantSimulatorBaseProps {
   metaEnabled?: boolean;
 }
 
+/**
+ * `chat` (opcional, aditivo): teste com cara de WhatsApp ocupando a altura do pai (tela dedicada da
+ * conversa `/comecar`). Erros aparecem na conversa (não em toast) e há "Recomeçar teste".
+ * `inline` e `modal` seguem exatamente como antes.
+ */
 export type AttendantSimulatorProps = AttendantSimulatorBaseProps &
-  ({ variant: "inline"; onClose?: undefined } | { variant: "modal"; onClose: () => void });
+  (
+    | { variant: "inline"; onClose?: undefined }
+    | { variant: "modal"; onClose: () => void }
+    | {
+        variant: "chat";
+        onClose?: undefined;
+        /** Nome do atendente no cabeçalho e nas respostas. */
+        attendantName: string;
+        /** Sair do teste. */
+        onExit: () => void;
+        exitLabel?: string;
+        /** Ação principal depois do teste ("Está bom, conectar o WhatsApp"). */
+        primaryAction?: { label: string; onClick: () => void };
+      }
+  );
 
-export function AttendantSimulator({
-  organizationId,
-  agentMemberId,
-  suggestions,
-  variant,
-  onAdjustPersona,
-  onFirstReply,
-  onClose,
-  metaEnabled = false,
-}: AttendantSimulatorProps) {
+export function AttendantSimulator(props: AttendantSimulatorProps) {
+  const { organizationId, agentMemberId, suggestions, variant, onAdjustPersona, onFirstReply, onClose, metaEnabled = false } = props;
   const simulate = useAction(api.attendant.simulateAttendant);
   const [transcript, setTranscript] = useState<SimTurn[]>([]);
   const [input, setInput] = useState("");
@@ -284,7 +296,10 @@ export function AttendantSimulator({
   const [senderName, setSenderName] = useState("Eric");
   const [busy, setBusy] = useState(false);
   const [transport, setTransport] = useState<SimTransport>("meta");
+  const [chatError, setChatError] = useState<string | null>(null);
   const firstReplyFired = useRef(false);
+  // `chat`: o erro fica na conversa; os demais seguem com o toast de sempre.
+  const showError = (message: string) => (variant === "chat" ? setChatError(message) : toast.error(message));
 
   const send = async (override?: string) => {
     const text = (override ?? input).trim();
@@ -302,6 +317,7 @@ export function AttendantSimulator({
       },
     ];
     setTranscript(next);
+    setChatError(null);
     setBusy(true);
     try {
       const result = await simulate({
@@ -319,7 +335,7 @@ export function AttendantSimulator({
         ...(metaEnabled && transport !== "meta" ? { transport } : {}),
       });
       if (result.error) {
-        toast.error(result.error);
+        showError(result.error);
       } else if (result.reply) {
         setTranscript((prev) => [...prev, { role: "agent", content: result.reply!, actions: result.actions }]);
         if (!firstReplyFired.current) {
@@ -328,15 +344,39 @@ export function AttendantSimulator({
         }
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Não foi possível simular.");
+      showError(e instanceof Error ? e.message : "Não foi possível simular.");
     } finally {
       setBusy(false);
     }
   };
 
+  if (props.variant === "chat") {
+    return (
+      <AttendantChatView
+        attendantName={props.attendantName}
+        transcript={transcript}
+        busy={busy}
+        input={input}
+        onInputChange={setInput}
+        onSend={() => void send()}
+        suggestions={suggestions}
+        onSuggestion={(s) => void send(s)}
+        onReset={() => {
+          setTranscript([]);
+          setChatError(null);
+          setInput("");
+        }}
+        onExit={props.onExit}
+        exitLabel={props.exitLabel}
+        primaryAction={props.primaryAction}
+        error={chatError}
+      />
+    );
+  }
+
   const view = (
     <AttendantSimulatorView
-      variant={variant}
+      variant={variant === "modal" ? "modal" : "inline"}
       transcript={transcript}
       busy={busy}
       input={input}

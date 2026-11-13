@@ -54,7 +54,11 @@ export function MessageItem({ item, blockCtx, isLatest, superseded }: MessageIte
             return superseded?.has(key) && kind ? (
               <CollapsedBlock key={key} kind={kind} />
             ) : (
-              <div key={key} data-onboarding-card={kind ?? undefined} className="flex w-full flex-col items-start">
+              <div
+                key={key}
+                data-onboarding-card={kind ?? undefined}
+                className="flex w-full flex-col items-start rounded-card transition-shadow data-[highlight=on]:ring-2 data-[highlight=on]:ring-brand-500 data-[highlight=on]:ring-offset-2 data-[highlight=on]:ring-offset-surface-base motion-safe:data-[highlight=on]:animate-pulse"
+              >
                 <OnboardingBlockView block={block} ctx={ctx} />
               </div>
             );

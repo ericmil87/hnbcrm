@@ -242,11 +242,11 @@ export function nextStepLabel(task: RoadmapTask): string {
     case "describe_business":
       return "Contar sobre o meu negócio";
     case "approve_funnel":
-      return "Ver o meu funil";
+      return "Conferir o meu funil";
     case "approve_persona":
-      return "Ver o jeito de atender";
+      return "Conferir o jeito de atender";
     case "approve_knowledge":
-      return "Ver o que a IA sabe";
+      return "Conferir o que a IA sabe";
     case "activate":
       return "Ativar a minha IA";
     case "test":
@@ -435,13 +435,22 @@ const NOTICE_LEAD: Record<RoadmapNotice, string> = {
  * diz o próximo passo. Texto fixo (sem LLM): nunca falha por limite de uso e
  * nunca cita um elemento que o servidor não anexou.
  */
+/**
+ * Fala do passo quando a frase de reconhecimento JÁ disse o contexto (sem colagem repetida:
+ * "a operação foi montada. Sua operação está montada.").
+ */
+const TASK_INTRO_AFTER: Partial<Record<RoadmapNotice, Partial<Record<RoadmapTask, string>>>> = {
+  activated: { test: "Que tal testar a sua IA agora, como se você fosse um cliente?" },
+};
+
 export function stepMessage(notice: RoadmapNotice, task: RoadmapTask, extra: { pendingMaterials?: number } = {}): string {
   const lead = NOTICE_LEAD[notice];
   const pending =
     notice === "email_verified" && (extra.pendingMaterials ?? 0) > 0
       ? " Já vou ler o que você tinha mandado."
       : "";
-  return [lead + pending, TASK_INTRO[task]].filter((s) => s.trim().length > 0).join(" ");
+  const intro = TASK_INTRO_AFTER[notice]?.[task] ?? TASK_INTRO[task];
+  return [lead + pending, intro].filter((s) => s.trim().length > 0).join(" ");
 }
 
 /** Material recebido antes da confirmação do e-mail: guardado, lido depois. */

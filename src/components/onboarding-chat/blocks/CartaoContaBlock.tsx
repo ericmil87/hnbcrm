@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { CheckCircle2, UserCheck } from "lucide-react";
+import { CheckCircle2, MailWarning, UserCheck } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import {
+  EMAIL_CODE_OPTIONAL_LINE,
+  EMAIL_PENDING_LINE,
   confirmResultMessage,
   emailCodeSentLine,
   emailIntroLine,
@@ -37,6 +39,11 @@ export interface CartaoContaViewProps {
   initialMessage?: string | null;
   /** Versão compacta do começo da conversa (frase do Copiloto + campo). */
   compact?: boolean;
+  /**
+   * Recolhe numa linha ("E-mail por confirmar · Colar código") que reabre o cartão. A conversa liga
+   * depois da primeira resposta da pessoa: o código não trava nada e não precisa ocupar a tela.
+   */
+  collapsed?: boolean;
   onRequest: () => Promise<{ sent: boolean; reason?: RequestReason; canResendAt?: number }>;
   onConfirm: (code: string) => Promise<{ verified: boolean; reason?: ConfirmReason; attemptsLeft?: number }>;
   /** Chamado UMA vez quando a pessoa confirma o código por este cartão (a conversa avisa o Copiloto). */
@@ -72,6 +79,7 @@ export function CartaoContaView({
   canResendAt,
   initialMessage = null,
   compact = false,
+  collapsed = false,
   onRequest,
   onConfirm,
   onVerified,
@@ -86,6 +94,17 @@ export function CartaoContaView({
   const inputRef = useRef<HTMLInputElement>(null);
   const confirmingRef = useRef(false);
   const verifiedHereRef = useRef(false);
+  const [open, setOpen] = useState(!collapsed);
+  const openedByUserRef = useRef(false);
+  useEffect(() => {
+    if (collapsed) setOpen(false);
+  }, [collapsed]);
+  useEffect(() => {
+    if (open && openedByUserRef.current) {
+      openedByUserRef.current = false;
+      inputRef.current?.focus();
+    }
+  }, [open]);
 
   useEffect(() => {
     if (canResendAt !== undefined) setResendAt((cur) => Math.max(cur ?? 0, canResendAt));
@@ -107,6 +126,29 @@ export function CartaoContaView({
   }, [done, onVerified]);
 
   if (verified || done) return <EmailConfirmedLine />;
+  if (!open) {
+    return (
+      <p className="inline-flex max-w-md flex-wrap items-center gap-x-2 rounded-field border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-1 text-sm text-text-primary">
+        <MailWarning className="size-4 shrink-0 text-semantic-warning" aria-hidden="true" />
+        <span>{EMAIL_PENDING_LINE}</span>
+        <span aria-hidden="true" className="text-text-muted">
+          ·
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-expanded={false}
+          onClick={() => {
+            openedByUserRef.current = true;
+            setOpen(true);
+          }}
+        >
+          Colar código
+        </Button>
+      </p>
+    );
+  }
 
   const request = async () => {
     setBusy("request");
@@ -160,15 +202,10 @@ export function CartaoContaView({
   return (
     <BlockCard title="Confirme o seu e-mail" icon={UserCheck} note={note}>
       <p className="text-sm text-text-primary">{compact ? emailIntroLine(maskedEmail) : `${emailCodeSentLine(maskedEmail)} Digite ou cole aqui quando chegar.`}</p>
-      {!compact && (
+      <p className="mt-1 text-caption text-text-secondary">{EMAIL_CODE_OPTIONAL_LINE}</p>
+      {!compact && pendingCount > 0 && (
         <p className="mt-1 text-caption text-text-secondary">
-          Confirmar o e-mail libera o envio de site, PDF, imagem e áudio.
-          {pendingCount > 0 && (
-            <>
-              {" "}
-              Guardei <span className="tabular-nums">{pendingCount}</span> {pendingCount === 1 ? "material" : "materiais"} para ler assim que você confirmar.
-            </>
-          )}
+          Guardei <span className="tabular-nums">{pendingCount}</span> {pendingCount === 1 ? "material" : "materiais"} para ler assim que você confirmar.
         </p>
       )}
       <form onSubmit={submit} className="mt-3 space-y-2" noValidate>
@@ -259,6 +296,7 @@ export function CartaoContaBlock({ block, ctx }: BlockProps<"cartaoConta">) {
       pendingCount={ctx.facts?.pendingMaterials ?? block.pendingCount ?? 0}
       note={block.note}
       compact={ctx.compact}
+      collapsed={ctx.compact === true && ctx.collapseEmailCard === true}
       canResendAt={status?.canResendAt ?? auto?.canResendAt}
       initialMessage={auto?.message ?? null}
       onRequest={() => requestCode({})}

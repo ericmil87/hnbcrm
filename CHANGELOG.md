@@ -21,9 +21,25 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Fim da conversa com caminho claro:** "Sua operação está pronta", com Testar a sua IA, Conectar o WhatsApp e Abrir o meu CRM.
 - **Criar a organização pede só o nome.** O identificador é gerado automaticamente.
 
+### Comece conversando: para quem já usa o HNBCRM, e ajustes depois do primeiro teste
+
+- **Se você já tem uma empresa e abre "Começar",** o Copiloto pergunta o que você quer fazer: abrir o seu CRM, continuar de onde parou, ajustar a operação conversando (nada muda sem o seu clique) ou criar outra empresa (avisamos antes como fica o teste grátis). Com várias empresas, você escolhe para qual, entre as que administra. A mensagem que você escreveu na página inicial só é usada depois da sua escolha.
+- **Quem não administra a empresa** recebe uma explicação clara e pode abrir o CRM ou criar a própria empresa. Com o plano em modo leitura ou o teto de IA atingido, a tela diz o motivo e leva ao plano ou ao uso.
+- **Novo "Recomeçar a conversa"** no menu da conversa: ela volta ao começo, mas o que já foi criado no seu CRM, o aceite de IA e o e-mail confirmado continuam valendo.
+- **O botão do próximo passo** agora sempre leva você ao cartão certo e o destaca, e some quando o cartão já está na tela. A conversa rola sozinha para mostrar o que você abriu, sem atrapalhar quando você está lendo mais acima.
+- **O código do e-mail não trava a conversa:** pode seguir conversando, e o cartão fica discreto até você precisar dele.
+- **O teste da sua IA abre numa tela própria,** no visual do WhatsApp, com sugestões de perguntas e "Recomeçar teste". Ele não fecha mais depois da primeira resposta.
+- **"Abrir o meu CRM" leva ao Painel.** Quem configura pela conversa não vê mais o assistente de formulário abrir sozinho. No assistente, "Configurar conversando" leva à conversa de configuração.
+- **"O que a IA sabe do seu negócio" mostra só o seu texto,** sem marcação técnica. A proteção contra instruções escondidas em materiais continua, aplicada na hora de montar a resposta da IA.
+- **WhatsApp por QR code com a IA ligada:** ao conectar o número, a mesma confirmação do aviso de risco já libera a IA nele. Se a IA estiver sem responder num número por QR code, aparece um aviso com o botão que resolve, em Recursos da IA, no cartão do número e na Visão geral.
+- O primeiro número conectado depois da conversa de configuração nasce com a transcrição de áudios ligada.
+- Na página inicial, quem já entrou vê "Abrir o meu CRM".
+- Corrigidos textos repetidos na configuração e a criação de um funil duplicado ao montar de novo um funil igual ao atual.
+
 ### E-mails com a marca nova
 
 - Todos os e-mails do HNBCRM agora usam o logo novo e o verde da marca. O e-mail de boas-vindas chama você pelo nome e traz os primeiros passos atuais.
+- Os textos dos e-mails foram revisados: acentuação corrigida e os termos atuais do produto (por exemplo, "pedido de ajuda" no lugar de "repasse").
 
 ### Site
 

@@ -26,7 +26,7 @@
  */
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
-import { readAgentTexts } from "./lib/agentProfileTexts";
+import { readAgentTextsForPrompt } from "./lib/agentProfileTexts";
 import { draftNotificationAlreadyPending } from "./lib/notificationResolve";
 import { notificationCopy } from "./lib/notificationCopy";
 import {
@@ -524,7 +524,7 @@ export const internalClaimGroupTurn = internalMutation({
 
     const profile = agent.agentProfile!;
     // Persona + conhecimento: `agentProfileTexts` (ou o doc, se legado).
-    const agentTexts = await readAgentTexts(ctx, agent);
+    const agentTexts = await readAgentTextsForPrompt(ctx, agent);
     const providerConfig = org.settings.aiConfig?.providerConfig;
     const model =
       providerConfig?.products?.groupAgent?.model ??

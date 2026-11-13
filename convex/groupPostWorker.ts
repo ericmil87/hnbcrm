@@ -26,7 +26,7 @@
  */
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
-import { readAgentTexts } from "./lib/agentProfileTexts";
+import { readAgentTextsForPrompt } from "./lib/agentProfileTexts";
 import {
   internalAction,
   internalMutation,
@@ -897,7 +897,7 @@ export const internalGetGenerateContext = internalQuery({
     const useCustom = ai.persona === "custom" && (ai.customPersona ?? "").trim().length > 0;
     // Texto do atendente só quando a publicação usa a voz ou o conhecimento dele.
     const attendantTexts =
-      attendant && (!useCustom || ai.useKnowledge) ? await readAgentTexts(ctx, attendant) : null;
+      attendant && (!useCustom || ai.useKnowledge) ? await readAgentTextsForPrompt(ctx, attendant) : null;
     const persona = useCustom ? ai.customPersona!.trim() : attendantTexts?.systemPrompt ?? null;
     const knowledge = ai.useKnowledge ? attendantTexts?.knowledge ?? null : null;
     // Mesma regra de `externalAgendaForRun` (attendant.ts), restrita a quando a
