@@ -2,6 +2,7 @@
 // Nota de voz gravada no navegador (P0.0 áudio no iPhone): conversão para
 // ogg/opus, reserva do bridge (documento, nunca data:audio/mp4|webm no
 // endpoint de áudio) e checagem prévia na API oficial (Meta recusa webm).
+import syntheticVoiceNote from "./__fixtures__/voiceNoteSynthetic.json";
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
@@ -134,12 +135,12 @@ async function sendVoiceNote(
 }
 
 /** Answers /convert (fake ogg bytes or 500), the Graph API and the bridge. */
-function networkMock(convertOk = true) {
+function networkMock(convertOk = true, convertedBytes: Uint8Array = new Uint8Array([0x4f, 0x67, 0x67, 0x53, 1, 2, 3])) {
   return vi.fn(async (url: string) => {
     const u = String(url);
     if (u.includes("/convert")) {
       return convertOk
-        ? new Response(new Uint8Array([0x4f, 0x67, 0x67, 0x53, 1, 2, 3]), { status: 200 })
+        ? new Response(convertedBytes as BodyInit, { status: 200 })
         : new Response("erro", { status: 500 });
     }
     if (u.includes("graph.facebook.com")) {
@@ -194,6 +195,27 @@ describe("nota de voz no bridge", () => {
     const message = await t.run(async (ctx) => ctx.db.get(messageId));
     expect(message!.deliveryStatus).toBe("sent");
     expect(message!.metadata?.dispatchNote).toBeUndefined();
+  });
+
+  test("gravação humana convertida leva duração e waveform lidas do ogg (sem elas o WhatsApp não toca)", async () => {
+    withWhisper();
+    const t = convexTest(schema, modules);
+    const seeded = await seedChannel(t, "bridge");
+    const messageId = await sendVoiceNote(t, seeded, "audio/webm", "nota-de-voz-9.webm");
+
+    const binary = atob(syntheticVoiceNote.base64);
+    const ogg = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) ogg[i] = binary.charCodeAt(i);
+    const fetchMock = networkMock(true, ogg);
+    vi.stubGlobal("fetch", fetchMock);
+    await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
+
+    const body = jsonBody(callTo(fetchMock, "/chat/send/audio"));
+    expect(body.PTT).toBe(true);
+    expect(body.MimeType).toBe("audio/ogg; codecs=opus");
+    expect(body.Seconds).toBe(2);
+    // 64 bytes 0–100 em base64.
+    expect(atob(String(body.Waveform))).toHaveLength(64);
   });
 
   test("webm do Chrome mantém o nome voice-note no /convert", async () => {

@@ -49,6 +49,7 @@ import {
 } from "./lib/bridgeSend";
 import { toDataUri } from "./lib/bridgeMedia";
 import { convertVoiceNoteToOggOpus } from "./lib/voiceNoteConvert";
+import { readOggOpus } from "./lib/oggOpus";
 import { checkMetaWhatsappAudio } from "./lib/metaWhatsappAudio";
 import { closeTypingPresenceBracket, openTypingPresenceBracket } from "./lib/bridgePresence";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
@@ -659,11 +660,16 @@ async function sendViaBridge(
       const converted = bridgeAudioNeedsConversion(file.mimeType)
         ? await convertVoiceNoteToOggOpus(bytes, file.mimeType)
         : null;
+      // Duração e waveform: a resposta da IA já traz as suas (medidas do PCM); a
+      // gravação humana tira as dela do próprio ogg que vai sair. Sem `Seconds`
+      // o WhatsApp mostra a nota sem duração e não deixa tocar (prod, 13/11/2026).
+      const oggBytes = converted ?? (bridgeAudioNeedsConversion(file.mimeType) ? null : bytes);
+      const measured = message.metadata?.voiceNote ? null : oggBytes ? readOggOpus(oggBytes) : null;
       const plan = planBridgeAudioSend({
         fileMimeType: file.mimeType,
         fileName: file.name,
         converted: converted !== null,
-        voiceNote: message.metadata?.voiceNote,
+        voiceNote: message.metadata?.voiceNote ?? (measured ? { seconds: measured.seconds, waveform: measured.waveform } : undefined),
       });
       if (plan.useConverted && converted) bytes = converted;
       voiceFields = plan.voiceFields;
