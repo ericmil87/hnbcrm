@@ -15,17 +15,16 @@ import {
   Phone,
   Sparkles,
   UserRound,
-  Users,
   Video,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
-import { ChannelOriginBadge } from "@/components/inbox/ChannelOriginBadge";
+import { GroupAvatar } from "@/components/inbox/GroupAvatar";
 import { ColorChip, AttributionIcon } from "@/components/inbox/central/CentralChips";
 import type { LeadAttribution } from "@/components/inbox/central/centralMeta";
 import { useLongPress } from "@/components/inbox/useLongPress";
 import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
 import { accountBadgeLabel, channelIcon, channelLabel, type InboxChannelAccount } from "@/lib/channelAccounts";
-import { formatDate, formatListTime } from "@/lib/format";
+import { formatListTime } from "@/lib/format";
 import {
   activeBotSuspicion,
   isHandoffPending,
@@ -45,6 +44,8 @@ export interface ConversationListEntry {
   channelProvider?: string | null;
   channelConfigId?: string | null;
   groupChat?: { subject?: string; participantsCount?: number } | null;
+  /** Foto do grupo (URL do storage); ausente = ícone de grupo. Só em conversa de grupo. */
+  groupAvatarUrl?: string | null;
   /** `avatarUrl`: foto do contato (manual ou do WhatsApp), URL do storage; ausente = iniciais. */
   contact?: { firstName?: string | null; lastName?: string | null; avatarUrl?: string | null } | null;
   lead?: {
@@ -97,9 +98,10 @@ interface ConversationListItemProps {
   central?: ConversationListCentralChips;
   onClick: () => void;
   /**
-   * `compact` = celular (< md), estilo WhatsApp: avatar com o canal no canto,
-   * 2 linhas (nome + hora | prévia + não lidas), separador depois do avatar.
-   * `default` = a linha do desktop, igual a antes.
+   * Mesma linha estilo WhatsApp nos dois: avatar (foto) com o canal no canto,
+   * nome + hora, prévia + não lidas, 3ª linha de CRM, separador depois do avatar.
+   * `compact` = celular (< md; toque longo seleciona); `default` = desktop (md+),
+   * com "Pediu ajuda" por extenso, responsável e membros do grupo.
    */
   variant?: "default" | "compact";
   /** Tocar e segurar (só toque/caneta): entra na seleção com este item. */
@@ -222,16 +224,23 @@ export function leadTitleToShow(c: ConversationListEntry): string | null {
   return norm(title) === norm(conversationDisplayName(c)) ? null : title;
 }
 
-/** Uma linha da lista de conversas (apresentacional: tudo por props). */
-export function ConversationListItem(props: ConversationListItemProps) {
-  return props.variant === "compact" ? <CompactItem {...props} /> : <DefaultItem {...props} />;
+/**
+ * Uma linha da lista de conversas (apresentacional: tudo por props). A mesma
+ * linha serve ao celular (`compact`) e ao desktop (`default`): o layout do
+ * WhatsApp (avatar com foto, nome + hora, mensagem + não lidas) é o mesmo; o
+ * desktop, que tem espaço, escreve "Pediu ajuda" e mostra o responsável e a
+ * contagem de membros na 3ª linha (de CRM).
+ */
+export function ConversationListItem({ variant = "default", ...props }: ConversationListItemProps) {
+  return <ConversationRow {...props} desktop={variant !== "compact"} />;
 }
 
 const BADGE_CLASS =
   "flex shrink-0 items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold leading-none tabular-nums";
 
-/** Celular: 2 linhas estilo WhatsApp. */
-function CompactItem({
+const WARNING_ICON_CLASS = "shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning";
+
+function ConversationRow({
   conversation,
   selected,
   selectionMode,
@@ -245,7 +254,8 @@ function CompactItem({
   now,
   preview,
   showAi,
-}: ConversationListItemProps) {
+  desktop,
+}: Omit<ConversationListItemProps, "variant"> & { desktop: boolean }) {
   // Sempre ligado (com `onLongPress`) e decide dentro: desligar ao entrar na
   // seleção tirava o `onClickCapture` antes do dedo sair, e o clique do iOS ao
   // soltar desmarcava o item recém-selecionado ("0 selecionadas").
@@ -263,8 +273,16 @@ function CompactItem({
   const accountLabel = showAccount && account ? accountBadgeLabel(account) : "";
   const hasCentral = Boolean(central && (central.unit || central.department || central.attribution));
   const aiMode = visibleAiMode(conversation, now ?? Date.now(), showAi);
+  const handoffPending = isHandoffPending(conversation.lead?.handoffState);
+  const membersCount = conversation.groupChat?.participantsCount ?? 0;
+  const assignee = desktop ? conversation.assignee : null;
   // Informações de CRM numa 3ª linha só, discreta: a 2ª é toda da mensagem.
-  const hasCrmLine = Boolean(accountLabel || leadTitle || hasCentral);
+  // No desktop ela também leva o "Pediu ajuda" por extenso, os membros do
+  // grupo e o responsável; no celular, o pedido de ajuda é o ícone da 2ª linha.
+  const hasCrmLine = Boolean(
+    accountLabel || leadTitle || hasCentral || (desktop && (handoffPending || assignee || (isGroup && membersCount > 0)))
+  );
+  const highlighted = (!selectionMode && selected) || (selectionMode && checked);
 
   return (
     <div
@@ -282,10 +300,12 @@ function CompactItem({
       aria-current={!selectionMode && selected ? "true" : undefined}
       aria-pressed={selectionMode ? checked : undefined}
       className={cn(
-        "flex items-center gap-3 pl-4 cursor-pointer select-none transition-colors [-webkit-touch-callout:none]",
+        "flex items-center gap-3 cursor-pointer select-none transition-colors [-webkit-touch-callout:none]",
+        desktop ? "border-l-2 border-transparent pl-3.5" : "pl-4",
         "hover:bg-surface-overlay active:bg-surface-overlay",
         "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
-        ((!selectionMode && selected) || (selectionMode && checked)) && "bg-brand-500/10"
+        highlighted && "bg-brand-500/10",
+        desktop && !selectionMode && selected && "border-l-brand-500"
       )}
     >
       {selectionMode && (
@@ -304,9 +324,7 @@ function CompactItem({
       {/* Avatar com o canal no canto (no lugar da pílula "WhatsApp"). */}
       <span className="relative shrink-0" aria-hidden="true">
         {isGroup ? (
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-surface-sunken text-text-secondary">
-            <Users size={22} />
-          </span>
+          <GroupAvatar imageUrl={conversation.groupAvatarUrl} size="lg" />
         ) : (
           <Avatar name={name} size="lg" imageUrl={conversation.contact?.avatarUrl} />
         )}
@@ -373,21 +391,13 @@ function CompactItem({
               </span>
             ))}
           </p>
-          {isHandoffPending(conversation.lead?.handoffState) && (
-            <span
-              role="img"
-              aria-label="Pediu ajuda"
-              className="shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning"
-            >
+          {handoffPending && !desktop && (
+            <span role="img" aria-label="Pediu ajuda" className={WARNING_ICON_CLASS}>
               <ArrowLeftRight size={12} aria-hidden="true" />
             </span>
           )}
           {activeBotSuspicion(conversation) && (
-            <span
-              role="img"
-              aria-label="Suspeita de robô"
-              className="shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning"
-            >
+            <span role="img" aria-label="Suspeita de robô" className={WARNING_ICON_CLASS}>
               <Bot size={12} aria-hidden />
             </span>
           )}
@@ -401,6 +411,17 @@ function CompactItem({
 
         {hasCrmLine && (
           <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-text-muted">
+            {desktop && handoffPending && (
+              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-micro font-medium text-semantic-warning">
+                <ArrowLeftRight size={11} aria-hidden="true" />
+                Pediu ajuda
+              </span>
+            )}
+            {desktop && isGroup && membersCount > 0 && (
+              <span className="shrink-0 tabular-nums">
+                {membersCount} membro{membersCount === 1 ? "" : "s"}
+              </span>
+            )}
             {accountLabel && <span className="shrink-0">{accountLabel}</span>}
             {accountLabel && leadTitle && (
               <span aria-hidden="true" className="shrink-0">
@@ -427,196 +448,18 @@ function CompactItem({
                 )}
               </>
             )}
+            {assignee && (
+              <span className="ml-auto flex shrink-0 items-center pl-1" data-testid="row-assignee">
+                <Avatar
+                  name={assignee.name || "?"}
+                  type={assignee.type === "ai" ? "ai" : "human"}
+                  size="xs"
+                />
+                <span className="sr-only">Responsável: {assignee.name || "sem nome"}</span>
+              </span>
+            )}
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-/** Desktop (md+): a linha de sempre. */
-function DefaultItem({
-  conversation,
-  selected,
-  selectionMode,
-  checked,
-  labelById,
-  account,
-  showAccount,
-  central,
-  onClick,
-  preview,
-  now,
-  showAi,
-}: ConversationListItemProps) {
-  const unread = conversation.unreadCount ?? 0;
-  const aiMode = visibleAiMode(conversation, now ?? Date.now(), showAi);
-  const PreviewIcon = conversation.lastMessagePreview
-    ? previewIcon(conversation.lastMessageContentType ?? null, conversation.lastMessageBridgeType ?? null)
-    : null;
-  const membersCount = conversation.groupChat?.participantsCount ?? 0;
-
-  return (
-    <div
-      role="button"
-      tabIndex={0}
-      onClick={onClick}
-      onKeyDown={(e) => {
-        if (e.target !== e.currentTarget) return;
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          onClick();
-        }
-      }}
-      aria-current={!selectionMode && selected ? "true" : undefined}
-      aria-pressed={selectionMode ? checked : undefined}
-      className={cn(
-        "p-4 border-b border-border cursor-pointer transition-colors",
-        "hover:bg-surface-overlay active:bg-surface-overlay",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
-        unread > 0 && !selected && "bg-brand-500/5",
-        !selectionMode && selected && "bg-brand-500/10 border-l-2 border-l-brand-500",
-        selectionMode && checked && "bg-brand-500/10"
-      )}
-    >
-      <div className="flex items-center justify-between mb-2">
-        {selectionMode && (
-          <span
-            data-testid="selection-box"
-            className={cn(
-              "mr-2 flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-colors",
-              checked ? "bg-brand-600 border-brand-600 text-white" : "border-border-strong"
-            )}
-            aria-hidden
-          >
-            {checked && <Check size={11} />}
-          </span>
-        )}
-        <h3
-          className={cn(
-            "flex items-center gap-1.5 min-w-0 flex-1 text-text-primary truncate",
-            unread > 0 ? "font-semibold" : "font-medium"
-          )}
-        >
-          {conversation.kind === "group" && (
-            <Users size={14} className="shrink-0 text-text-muted" aria-label="Conversa de grupo" />
-          )}
-          <span className="truncate">{conversationDisplayName(conversation)}</span>
-          {(conversation.labelIds ?? []).map((labelId) => {
-            const label = labelById.get(labelId);
-            return label ? (
-              <span
-                key={labelId}
-                className="h-2 w-2 rounded-full shrink-0"
-                style={{ backgroundColor: label.color }}
-                title={label.name}
-              />
-            ) : null;
-          })}
-        </h3>
-        <ChannelOriginBadge
-          channel={conversation.channel}
-          transport={conversation.channelProvider}
-          account={account}
-          showAccount={showAccount}
-        />
-      </div>
-
-      {conversation.kind === "group" && (
-        <p className="mb-1 text-sm text-text-secondary tabular-nums">
-          {membersCount} membro{membersCount === 1 ? "" : "s"}
-        </p>
-      )}
-
-      {conversation.lead && (
-        <div className="flex items-center gap-1.5 mb-1 min-w-0">
-          <p className="flex-1 min-w-0 text-sm text-text-secondary truncate">{conversation.lead.title}</p>
-          {isHandoffPending(conversation.lead.handoffState) && (
-            <span
-              className="shrink-0 inline-flex items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-micro font-medium text-semantic-warning"
-              title="Pedido de ajuda pendente: aguardando alguém da equipe assumir"
-            >
-              <ArrowLeftRight size={12} aria-hidden="true" />
-              Pediu ajuda
-            </span>
-          )}
-          {activeBotSuspicion(conversation) && (
-            <span
-              className="shrink-0 inline-flex items-center rounded-full bg-semantic-warning/10 p-1 text-semantic-warning"
-              title="Suspeita de robô"
-              aria-label="Suspeita de robô"
-              role="img"
-            >
-              <Bot size={12} aria-hidden />
-            </span>
-          )}
-        </div>
-      )}
-
-      {central && (central.unit || central.department || central.attribution) && (
-        <div className="mb-1.5 flex min-w-0 items-center gap-1">
-          {central.attribution && <AttributionIcon attribution={central.attribution} />}
-          {central.unit && (
-            <ColorChip name={central.unit.name} color={central.unit.color} title={`Unidade: ${central.unit.name}`} />
-          )}
-          {central.department && (
-            <ColorChip
-              name={central.department.name}
-              color={central.department.color}
-              title={`Departamento: ${central.department.name}`}
-            />
-          )}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between gap-2">
-        {preview && preview.kind !== "message" ? (
-          <span className="flex min-w-0 items-center gap-1 text-xs text-text-muted">{overridePreview(preview)}</span>
-        ) : conversation.lastMessagePreview ? (
-          <span
-            className={cn(
-              "flex items-center gap-1 min-w-0 text-xs",
-              unread > 0 ? "text-text-primary font-medium" : "text-text-muted"
-            )}
-          >
-            {PreviewIcon ? <PreviewIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" /> : null}
-            <span className="truncate">
-              {conversation.lastMessageDirection === "outbound" ? "Você: " : ""}
-              {conversationPreviewText(
-                conversation.lastMessagePreview,
-                conversation.lastMessageBridgeType ?? null,
-                conversation.lastMessageRevoked === true
-              )}
-            </span>
-          </span>
-        ) : (
-          <span className="text-xs text-text-muted tabular-nums">
-            {conversation.messageCount} {conversation.messageCount === 1 ? "mensagem" : "mensagens"}
-          </span>
-        )}
-        <div className="flex items-center gap-2 shrink-0">
-          {aiMode && <AiRowIndicator mode={aiMode} />}
-          {conversation.assignee && (
-            <Avatar
-              name={conversation.assignee.name || "?"}
-              type={conversation.assignee.type === "ai" ? "ai" : "human"}
-              size="sm"
-            />
-          )}
-          {conversation.lastMessageAt && (
-            <span className={cn("text-xs tabular-nums", unread > 0 ? "text-brand-500 font-medium" : "text-text-muted")}>
-              {formatDate(conversation.lastMessageAt)}
-            </span>
-          )}
-          {unread > 0 && (
-            <span
-              className="min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-badge-unread text-badge-unread-fg text-micro font-semibold leading-none tabular-nums"
-              aria-label={`${unread} mensagens não lidas`}
-            >
-              {unread > 99 ? "99+" : unread}
-            </span>
-          )}
-        </div>
       </div>
     </div>
   );

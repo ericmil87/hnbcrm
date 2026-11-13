@@ -4,7 +4,6 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import { useInboxChannelAccounts } from "@/hooks/useInboxChannelAccounts";
 import { useOrgModules } from "@/hooks/useOrgModules";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import {
   INBOX_FILTER_STORAGE_KEY,
@@ -32,7 +31,7 @@ import {
 /**
  * Filtros da lista de Conversas.
  * - Estado de tela, na URL (replace, não polui o histórico): `?archived=1`,
- *   `?label=<id>`, `?unread=1` (chip "Não lidas" do celular), `?mine=1` ("Minhas", celular e desktop),
+ *   `?label=<id>`, `?unread=1` (chip "Não lidas"), `?mine=1` ("Minhas", celular e desktop),
  *   `?stage=<stageId>` (etapa do funil) e `?ai=on|off` (IA atendendo / desligada); os três últimos são filtros de servidor.
  * - Preferência pessoal, em `localStorage`: Diretas/Grupos e Canal/Conta.
  * - Fila (Central, opcional por org): estado local.
@@ -57,10 +56,8 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const setStageId = (next: string | null) => stageParam.set(next);
   const setAiFilter = (next: InboxAiFilter | null) => aiParam.set(next ?? "");
   const showArchived = archivedParam.value;
-  // "Não lidas" é chip só do celular: no desktop não há controle para desligá-lo,
-  // então `?unread=1` nem vale lá (gate na fonte).
-  const isMobile = useMediaQuery("(max-width: 767px)");
-  const unreadOnly = isMobile && unreadParam.value;
+  // "Não lidas" é chip nos dois layouts (celular e desktop).
+  const unreadOnly = unreadParam.value;
   const unreadArgs = unreadOnly ? { unreadOnly: true as const } : {};
   const setShowArchived = archivedParam.set;
   /** Celular: abrir Arquivadas desliga "Não lidas" na mesma escrita da URL. */
