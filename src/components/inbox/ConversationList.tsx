@@ -33,6 +33,7 @@ import {
   type InboxContactResult,
 } from "@/components/inbox/ContactSearchResults";
 import { KIND_FILTERS, emptyListMessage, type ConversationKindFilter } from "@/lib/inboxState";
+import type { ListPreview } from "@/lib/listPreview";
 import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
 
@@ -82,6 +83,9 @@ export interface ConversationListFilters {
   labels: readonly ConversationListLabelOption[];
   labelId: string | null;
   onLabelChange: (labelId: string | null) => void;
+  /** "Minhas": responsável do lead ou conversa roteada para mim. */
+  mine: boolean;
+  onMineChange: (mine: boolean) => void;
   queueFilterActive: boolean;
 }
 
@@ -112,6 +116,8 @@ interface ConversationListProps {
   accountFor: (c: ConversationListEntry) => InboxChannelAccount | null;
   showAccountFor: (c: ConversationListEntry) => boolean;
   centralFor?: (c: ConversationListEntry) => ConversationListCentralChips | undefined;
+  /** "digitando…" / "Rascunho:" por conversa (ausente = só a última mensagem). */
+  previewFor?: (conversationId: string) => ListPreview;
   onSelect: (id: string) => void;
   /** "Nova conversa" (ausente = sem permissão ou sem número para enviar). */
   onNewConversation?: () => void;
@@ -261,6 +267,15 @@ function FilterBar({ filters, selection }: { filters: ConversationListFilters; s
           }))}
         />
       )}
+      <Button
+        type="button"
+        variant={filters.mine ? "secondary" : "ghost"}
+        size="sm"
+        aria-pressed={filters.mine}
+        onClick={() => filters.onMineChange(!filters.mine)}
+      >
+        Minhas
+      </Button>
       {/* Canal e Conta (D11): valem também para WhatsApp com 2+ números. */}
       {filters.channelChipVisible && (
         <div className="min-w-0 flex-1 basis-32 max-w-[11rem]">
@@ -418,6 +433,7 @@ export function ConversationList({
   accountFor,
   showAccountFor,
   centralFor,
+  previewFor,
   onSelect,
   onNewConversation,
   attentionBanner,
@@ -438,6 +454,7 @@ export function ConversationList({
     queueFilterActive: filters.queueFilterActive,
     labelId: filters.labelId,
     unreadOnly: isMobile ? mobile?.unreadOnly : false,
+    mine: filters.mine,
   });
   const searchMonthRow = search.active && (
     <div className="flex items-center gap-2">
@@ -577,6 +594,7 @@ export function ConversationList({
                     account={accountFor(conversation)}
                     showAccount={showAccountFor(conversation)}
                     central={centralFor?.(conversation)}
+                    preview={previewFor?.(conversation._id)}
                     onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
                     onLongPress={() => mobile.onLongPress(conversation._id)}
                   />
@@ -648,6 +666,7 @@ export function ConversationList({
               account={accountFor(conversation)}
               showAccount={showAccountFor(conversation)}
               central={centralFor?.(conversation)}
+              preview={previewFor?.(conversation._id)}
               onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
             />
           ))

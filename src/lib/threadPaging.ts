@@ -76,6 +76,8 @@ export interface ThreadScrollDecision {
   scrollTop: number | "bottom" | null;
   scrolledConversationId: string | null;
   nearBottom: boolean;
+  /** Rolagem inicial desta conversa (o hook pode trocar o fim pelo divisor de não lidas). */
+  initial: boolean;
 }
 
 /**
@@ -92,6 +94,7 @@ export function decideThreadScroll(input: ThreadScrollInput): ThreadScrollDecisi
       scrollTop: scrollTopAfterPrepend(anchor, input.scrollHeight),
       scrolledConversationId: input.scrolledConversationId,
       nearBottom: input.nearBottom,
+      initial: false,
     };
   }
   if (input.scrolledConversationId !== input.conversationId) {
@@ -100,6 +103,7 @@ export function decideThreadScroll(input: ThreadScrollInput): ThreadScrollDecisi
       scrollTop: "bottom",
       scrolledConversationId: input.conversationId,
       nearBottom: true,
+      initial: true,
     };
   }
   return {
@@ -107,7 +111,43 @@ export function decideThreadScroll(input: ThreadScrollInput): ThreadScrollDecisi
     scrollTop: input.nearBottom ? "bottom" : null,
     scrolledConversationId: input.scrolledConversationId,
     nearBottom: input.nearBottom,
+    initial: false,
   };
+}
+
+/** Rolagem que deixa o divisor de não lidas no topo da área visível (com folga). */
+export function dividerScrollTop(m: {
+  dividerTop: number;
+  containerTop: number;
+  scrollTop: number;
+  gap?: number;
+}): number {
+  return Math.max(0, Math.round(m.dividerTop - m.containerTop + m.scrollTop - (m.gap ?? 8)));
+}
+
+/** Recebidas (não internas) depois da mensagem de referência; 0 se ela não está na lista. */
+export function countInboundAfter(messages: readonly ThreadMessageLike[], baselineId: string | null): number {
+  if (!baselineId) return 0;
+  const idx = messages.findIndex((m) => m._id === baselineId);
+  if (idx < 0) return 0;
+  let n = 0;
+  for (let i = idx + 1; i < messages.length; i++) {
+    if (messages[i].direction === "inbound" && !messages[i].isInternal) n++;
+  }
+  return n;
+}
+
+export const JUMP_TO_LATEST_LABEL = "Ir para as mensagens mais recentes";
+
+/** `aria-label` do botão "ir para o fim", com o contador quando há novas. */
+export function jumpToLatestLabel(count: number): string {
+  if (count <= 0) return JUMP_TO_LATEST_LABEL;
+  return `${JUMP_TO_LATEST_LABEL}, ${count} ${count === 1 ? "nova" : "novas"}`;
+}
+
+/** Texto do badge (teto 99+). */
+export function jumpBadgeText(count: number): string {
+  return count > 99 ? "99+" : String(count);
 }
 
 export type JumpDecision =

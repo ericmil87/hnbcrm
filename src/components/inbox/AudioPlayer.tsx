@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, Pause, Mic } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatAudioSpeed, useAudioSpeed } from "@/lib/audioSpeed";
 
 interface AudioPlayerProps {
   src: string;
@@ -10,8 +11,6 @@ interface AudioPlayerProps {
   isVoiceNote?: boolean;
   className?: string;
 }
-
-const SPEEDS = [1, 1.5, 2] as const;
 
 function formatTime(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
@@ -30,7 +29,7 @@ export function AudioPlayer({
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [speedIndex, setSpeedIndex] = useState(0);
+  const [speed, cycleSpeed] = useAudioSpeed();
 
   const outbound = variant === "outbound";
 
@@ -58,8 +57,8 @@ export function AudioPlayer({
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
-    audio.playbackRate = SPEEDS[speedIndex];
-  }, [speedIndex]);
+    audio.playbackRate = speed;
+  }, [speed]);
 
   const togglePlay = () => {
     const audio = audioRef.current;
@@ -69,10 +68,6 @@ export function AudioPlayer({
     } else {
       void audio.play();
     }
-  };
-
-  const cycleSpeed = () => {
-    setSpeedIndex((prev) => (prev + 1) % SPEEDS.length);
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -97,11 +92,13 @@ export function AudioPlayer({
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onEnded={() => {
+          // Volta ao início; a velocidade escolhida permanece (preferência do aparelho).
           setPlaying(false);
           setCurrentTime(0);
         }}
         onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
         onLoadedMetadata={(e) => {
+          e.currentTarget.playbackRate = speed;
           const d = e.currentTarget.duration;
           if (Number.isFinite(d)) setDuration(d);
         }}
@@ -160,9 +157,9 @@ export function AudioPlayer({
               "shrink-0 px-1.5 py-0.5 rounded-full text-micro font-semibold tabular-nums transition-colors",
               tone.speed
             )}
-            aria-label="Alterar velocidade de reprodução"
+            aria-label={`Velocidade de reprodução: ${formatAudioSpeed(speed)}. Alterar`}
           >
-            {SPEEDS[speedIndex]}x
+            {formatAudioSpeed(speed)}
           </button>
         </div>
       </div>

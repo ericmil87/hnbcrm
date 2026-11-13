@@ -73,6 +73,7 @@ export function Inbox() {
     queueArgs: filters.queueArgs,
     channelArgs: filters.channelArgs,
     unreadArgs: filters.unreadArgs,
+    mineArgs: filters.mineArgs,
     isSearching,
   });
   const { validConversations } = list;

@@ -6,6 +6,50 @@ interface StoredDraft {
   savedAt: number;
 }
 
+type DraftListener = (conversationId: string | null) => void;
+const listeners = new Set<DraftListener>();
+
+/** Notifies readers (the conversation list) that a stored draft changed; `null` = several/unknown. */
+function emitDraftChange(conversationId: string | null): void {
+  for (const l of listeners) l(conversationId);
+}
+
+/** Reactive read of drafts: called after every write in this tab and on `storage` events from other tabs. */
+export function subscribeDrafts(listener: DraftListener): () => void {
+  listeners.add(listener);
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === null || e.key.startsWith(PREFIX)) listener(null);
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
+/** Non-empty, unexpired drafts of one member in one organization, by conversation id. One storage scan. */
+export function listDrafts(organizationId: string, memberId: string, now: number = Date.now()): Map<string, string> {
+  const out = new Map<string, string>();
+  const prefix = `${PREFIX}${organizationId}:${memberId}:`;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(prefix)) continue;
+      try {
+        const parsed = JSON.parse(localStorage.getItem(k) ?? "null") as Partial<StoredDraft> | null;
+        if (!parsed || typeof parsed.text !== "string" || typeof parsed.savedAt !== "number") continue;
+        if (now - parsed.savedAt > DRAFT_TTL_MS || parsed.text.trim() === "") continue;
+        out.set(k.slice(prefix.length), parsed.text);
+      } catch {
+        /* unreadable entry: ignore */
+      }
+    }
+  } catch {
+    /* storage unavailable */
+  }
+  return out;
+}
+
 /** Key per organization + member + conversation: a draft never crosses tenants or accounts on a shared device. */
 export function draftKey(organizationId: string, memberId: string, conversationId: string): string {
   return `${PREFIX}${organizationId}:${memberId}:${conversationId}`;
@@ -17,10 +61,12 @@ export function saveDraft(organizationId: string, memberId: string, conversation
   try {
     if (text.trim() === "") {
       localStorage.removeItem(key);
+      emitDraftChange(conversationId);
       return true;
     }
     const value: StoredDraft = { text, savedAt: now };
     localStorage.setItem(key, JSON.stringify(value));
+    emitDraftChange(conversationId);
     return true;
   } catch {
     return false;
@@ -50,6 +96,7 @@ export function loadDraft(organizationId: string, memberId: string, conversation
 export function clearDraft(organizationId: string, memberId: string, conversationId: string): void {
   try {
     localStorage.removeItem(draftKey(organizationId, memberId, conversationId));
+    emitDraftChange(conversationId);
   } catch {
     /* ignore */
   }
@@ -77,6 +124,7 @@ export function purgeExpiredDrafts(now: number = Date.now()): number {
         removed++;
       }
     }
+    if (removed > 0) emitDraftChange(null);
   } catch {
     /* storage unavailable */
   }
@@ -92,6 +140,7 @@ export function clearStoredDrafts(): void {
       if (k && k.startsWith(PREFIX)) keys.push(k);
     }
     for (const k of keys) localStorage.removeItem(k);
+    if (keys.length > 0) emitDraftChange(null);
   } catch {
     /* storage unavailable */
   }

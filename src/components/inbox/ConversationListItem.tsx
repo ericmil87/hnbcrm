@@ -26,6 +26,7 @@ import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
 import { accountBadgeLabel, channelIcon, channelLabel, type InboxChannelAccount } from "@/lib/channelAccounts";
 import { formatDate, formatListTime } from "@/lib/format";
 import { activeBotSuspicion, isHandoffPending, type BotSuspicion, type LeadHandoffState } from "@/lib/inboxState";
+import type { ListPreview } from "@/lib/listPreview";
 import { cn } from "@/lib/utils";
 
 /** Campos de uma linha de `conversations.getConversations` que a lista usa. */
@@ -91,6 +92,29 @@ interface ConversationListItemProps {
   onLongPress?: () => void;
   /** "Agora" da hora do `compact` (prop para a linha seguir pura). */
   now?: number;
+  /** Prévia no lugar da última mensagem: "digitando…" ou "Rascunho: …" (ausente = mensagem). */
+  preview?: ListPreview;
+}
+
+const HIGHLIGHT = "text-brand-500";
+
+/** "digitando…" / "Rascunho: texto" na cor de destaque; `null` = mostrar a última mensagem. */
+function overridePreview(preview: ListPreview | undefined) {
+  if (preview?.kind === "typing") {
+    return (
+      <span className={cn("truncate font-medium", HIGHLIGHT)} role="status">
+        digitando…
+      </span>
+    );
+  }
+  if (preview?.kind === "draft") {
+    return (
+      <span className="truncate">
+        <span className={cn("font-medium", HIGHLIGHT)}>Rascunho:</span> {preview.text}
+      </span>
+    );
+  }
+  return null;
 }
 
 // Ícone de mídia da prévia da última mensagem.
@@ -162,6 +186,7 @@ function CompactItem({
   onClick,
   onLongPress,
   now,
+  preview,
 }: ConversationListItemProps) {
   // Sempre ligado (com `onLongPress`) e decide dentro: desligar ao entrar na
   // seleção tirava o `onClickCapture` antes do dedo sair, e o clique do iOS ao
@@ -275,7 +300,7 @@ function CompactItem({
                 {leadTitle} ·
               </span>
             )}
-            {conversation.lastMessagePreview ? (
+            {overridePreview(preview) ?? (conversation.lastMessagePreview ? (
               <>
                 {PreviewIcon ? <PreviewIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
                 <span className="truncate">
@@ -291,7 +316,7 @@ function CompactItem({
               <span className="truncate tabular-nums">
                 {conversation.messageCount} {conversation.messageCount === 1 ? "mensagem" : "mensagens"}
               </span>
-            )}
+            ))}
           </p>
           {isHandoffPending(conversation.lead?.handoffState) && (
             <span
@@ -349,6 +374,7 @@ function DefaultItem({
   showAccount,
   central,
   onClick,
+  preview,
 }: ConversationListItemProps) {
   const unread = conversation.unreadCount ?? 0;
   const PreviewIcon = conversation.lastMessagePreview
@@ -470,7 +496,9 @@ function DefaultItem({
       )}
 
       <div className="flex items-center justify-between gap-2">
-        {conversation.lastMessagePreview ? (
+        {preview && preview.kind !== "message" ? (
+          <span className="flex min-w-0 items-center gap-1 text-xs text-text-muted">{overridePreview(preview)}</span>
+        ) : conversation.lastMessagePreview ? (
           <span
             className={cn(
               "flex items-center gap-1 min-w-0 text-xs",

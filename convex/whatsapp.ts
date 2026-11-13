@@ -52,7 +52,7 @@ import { convertVoiceNoteToOggOpus } from "./lib/voiceNoteConvert";
 import { checkMetaWhatsappAudio } from "./lib/metaWhatsappAudio";
 import { closeTypingPresenceBracket, openTypingPresenceBracket } from "./lib/bridgePresence";
 import { checkInboundMediaMimeType } from "./lib/fileValidation";
-import { applyCampaignDeliveryUpdate } from "./lib/campaignHooks";
+import { applyCampaignDeliveryUpdate, freezeChannelForBridgeRateLimit } from "./lib/campaignHooks";
 import { applyFollowUpDeliveryUpdate } from "./lib/followUpOps";
 import { applyInboundWelcomeDeliveryFailure } from "./lib/inboundLeadWelcomeHooks";
 import { checkInboundMediaQuota } from "./lib/fileQuotas";
@@ -1369,6 +1369,19 @@ export const internalDecideBridgeFailure = internalMutation({
         metadata: { ...meta, bridgeAttempts: attempts, selfHealAt: now },
       });
       return "selfheal" as const;
+    }
+
+    // Rate limit do gateway em QUALQUER envio do canal (campanha, post de grupo,
+    // humano ou IA): o número está sendo contido, então o envio AUTOMÁTICO em
+    // volume (campanhas e posts de grupo) congela, com duração crescente. A
+    // mensagem humana 1:1 e a resposta da IA não são seguradas pelo congelamento:
+    // seguem só com o retry abaixo.
+    if (args.kind === "rate_limited") {
+      const source = meta.campaign ? "campaign" : meta.groupPost ? "group_post" : "conversation";
+      const conv = await ctx.db.get(message.conversationId);
+      if (conv?.channelConfigId) {
+        await freezeChannelForBridgeRateLimit(ctx, conv.channelConfigId, conv.organizationId, Date.now(), source);
+      }
     }
 
     const plan = bridgeRetryPlan(args.kind, attempts, meta.bridgeRateRetried === true);

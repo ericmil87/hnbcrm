@@ -243,3 +243,26 @@ describe("conversationDisplayName", () => {
     expect(conversationDisplayName({ ...base, kind: "group", groupChat: null })).toBe("Grupo");
   });
 });
+
+describe("ConversationListItem: prévia digitando / rascunho", () => {
+  for (const variant of ["default", "compact"] as const) {
+    it(`${variant}: rascunho troca a prévia e destaca o rótulo`, () => {
+      renderItem({}, { variant, preview: { kind: "draft", text: "Estou chegando" } });
+      expect(screen.getByText("Rascunho:")).toHaveClass("text-brand-500");
+      expect(screen.getByText(/Estou chegando/)).toBeInTheDocument();
+      expect(screen.queryByText("Posso confirmar?")).not.toBeInTheDocument();
+    });
+
+    it(`${variant}: digitando troca a prévia`, () => {
+      renderItem({}, { variant, preview: { kind: "typing" } });
+      expect(screen.getByRole("status")).toHaveTextContent("digitando…");
+      expect(screen.queryByText("Posso confirmar?")).not.toBeInTheDocument();
+    });
+
+    it(`${variant}: mensagem mantém a última mensagem`, () => {
+      renderItem({}, { variant, preview: { kind: "message" } });
+      expect(screen.getByText("Posso confirmar?")).toBeInTheDocument();
+      expect(screen.queryByText("Rascunho:")).not.toBeInTheDocument();
+    });
+  }
+});

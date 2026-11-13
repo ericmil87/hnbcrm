@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router";
+import { useNavigate, useOutletContext } from "react-router";
 import { CheckSquare, Plus, SlidersHorizontal } from "lucide-react";
 import { accountBadgeLabel, channelLabel, shouldShowAccount } from "@/lib/channelAccounts";
 import { applyInboxChip, countUnreadConversations, inboxFilterChips } from "@/lib/inboxState";
@@ -16,6 +16,9 @@ import { InboxFiltersSheet, hasSheetFilters } from "@/components/inbox/InboxFilt
 import { usePageHeader } from "@/components/layout/pageHeader";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useNow } from "@/hooks/useNow";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useListPreviews } from "@/components/inbox/useListPreviews";
+import type { AppOutletContext } from "@/components/layout/AuthLayout";
 
 interface InboxListColumnProps {
   className?: string;
@@ -58,6 +61,10 @@ export function InboxListColumn({
   onNewConversation,
 }: InboxListColumnProps) {
   const navigate = useNavigate();
+  const { organizationId } = useOutletContext<AppOutletContext>();
+  const { member } = usePermissions(organizationId);
+  // "digitando…" (uma assinatura leve da org) e "Rascunho:" (armazenamento local) nas prévias.
+  const previewFor = useListPreviews({ organizationId, memberId: member?._id, openId: selectedId });
   const { centralModules, centralEnabled, showArchived, kindFilter, filterLabelId, conversationLabels } = filters;
   // Celular (< md): layout estilo WhatsApp; desktop fica como sempre (D1).
   const isMobile = useMediaQuery("(max-width: 767px)");
@@ -105,6 +112,7 @@ export function InboxListColumn({
   const chipState = {
     kind: kindFilter,
     unreadOnly: filters.unreadOnly,
+    mine: filters.mine,
     labelId: filterLabelId,
     channel: channelFilter.channel,
     configId: channelFilter.configId,
@@ -172,6 +180,7 @@ export function InboxListColumn({
             }
           : undefined
       }
+      previewFor={previewFor}
       onSelect={onSelect}
       onNewConversation={onNewConversation}
       attentionBanner={<AttentionBanner count={attentionCount} />}
@@ -201,6 +210,8 @@ export function InboxListColumn({
         labels: conversationLabels ?? [],
         labelId: filterLabelId,
         onLabelChange: filters.setFilterLabelId,
+        mine: filters.mine,
+        onMineChange: filters.setMine,
         queueFilterActive: filters.queueFilterActive,
       }}
       selection={{

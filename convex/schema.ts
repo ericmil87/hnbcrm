@@ -1679,7 +1679,12 @@ const applicationTables = {
     updatedAt: v.number(),
   })
     .index("by_conversation", ["conversationId"])
-    .index("by_organization", ["organizationId"]),
+    .index("by_organization", ["organizationId"])
+    // "digitando…" na lista do inbox: `getTypingConversations` lê só as linhas da org
+    // com presença recente (range em `contactPresence.at`), nunca a org inteira.
+    // Sem `staged`: a tabela tinha 197 linhas em PROD em 13/11/2026 (backfill imediato)
+    // e a query que usa o índice entra no mesmo deploy.
+    .index("by_organization_and_presence_at", ["organizationId", "contactPresence.at"]),
 
   // Messages
   messages: defineTable({
@@ -3802,6 +3807,10 @@ const applicationTables = {
     // campanhas não disparam antes disto; o atendimento reativo segue. As
     // publicações programadas em grupo respeitam o MESMO congelamento.
     campaignFrozenUntil: v.optional(v.number()),
+    // Reincidência do `rate_limited` do bridge (lib/bridgeRateFreeze): ocorrências
+    // seguidas e quando foi a última; decide a duração CRESCENTE do congelamento
+    // acima. Zera sozinho depois de um período limpo (calculado na leitura).
+    bridgeRateLimit: v.optional(v.object({ strikes: v.number(), lastAt: v.number() })),
     // Publicações programadas em grupo (F3): SLOTS disparados no dia UTC, COM
     // enforcement (teto em lib/groupPostCore.MAX_POSTS_PER_CHANNEL_PER_DAY).
     // Um slot que posta em 5 grupos conta 1 — quem espaça as 5 mensagens é o

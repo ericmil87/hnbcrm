@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { useShowOriginalPref } from "@/lib/translationPrefs";
 import { bubbleTranslation, conversationLanguageState, hasFreshUntranslated } from "@/lib/translationRules";
@@ -13,6 +13,7 @@ import { MESSAGES_MAX_LIMIT } from "@/lib/inboxPaging";
 import { cn } from "@/lib/utils";
 import { formatDayLabel } from "@/lib/format";
 import { layoutThread } from "@/lib/threadLayout";
+import { stepUnreadMarker, unreadDividerLabel, type UnreadMarkerState } from "@/lib/unreadDivider";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Spinner } from "@/components/ui/Spinner";
@@ -28,6 +29,7 @@ import { useRetryDelivery } from "@/components/inbox/useRetryDelivery";
 import { useGroupMode } from "@/components/inbox/useGroupMode";
 import { useMarkReadAndPresence } from "@/components/inbox/useMarkReadAndPresence";
 import { useThreadPaging } from "@/components/inbox/useThreadPaging";
+import { ScrollToBottomButton } from "@/components/inbox/ScrollToBottomButton";
 
 const EMPTY_MESSAGES: InboxMessage[] = [];
 
@@ -67,8 +69,29 @@ export function ConversationThread({
   const conversation = useConversationDoc(conversationId);
   // Bolhas só aparecem com o canal conhecido: o scroll inicial e o salto esperam o mesmo `ready`.
   const messageDocReady = conversation !== undefined && conversation !== null;
-  const paging = useThreadPaging(conversationId, pendingJumpRef, messageDocReady);
+  // Marco do divisor "Mensagens não lidas": capturado na abertura, ANTES de
+  // markConversationRead zerar o contador (que o gate `markReadReady` segura).
+  // Estado derivado em layout effect (sem piscar) e fixo enquanto a conversa está aberta.
+  const [unreadState, setUnreadState] = useState<UnreadMarkerState | null>(null);
+  const markerOfThisConversation = unreadState?.conversationId === conversationId ? unreadState : null;
+  const markerResolved = markerOfThisConversation?.resolved === true;
+  const unreadMarker = markerOfThisConversation?.marker ?? null;
+  const paging = useThreadPaging(
+    conversationId,
+    pendingJumpRef,
+    messageDocReady && markerResolved,
+    unreadMarker !== null
+  );
   const { messages, loadingOlder } = paging;
+  useLayoutEffect(() => {
+    setUnreadState((prev) =>
+      stepUnreadMarker(prev, {
+        conversationId,
+        doc: conversation as { _id: string; unreadCount?: number } | null | undefined,
+        messages: messages as InboxMessage[] | undefined,
+      })
+    );
+  }, [conversationId, conversation, messages]);
   // Resultado da busca na conversa já aberta: rola (e sobe o limite se preciso).
   // Um pedido que já existia ao montar é de antes deste thread e é ignorado.
   const handledJumpRef = useRef(jumpRequest?.nonce ?? null);
@@ -82,6 +105,8 @@ export function ConversationThread({
     conversationId,
     messages,
     showPresence: embedded,
+    ready: markerResolved,
+    atBottom: paging.atBottom,
   });
   const { isGroupConversation, groupNameByKey } = useGroupMode(conversation, messages);
 
@@ -124,7 +149,7 @@ export function ConversationThread({
   const [describingIds, setDescribingIds] = useState<Set<string>>(() => new Set());
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
 
-  const ready = messageDocReady && messages !== undefined;
+  const ready = messageDocReady && messages !== undefined && markerResolved;
   // Blocos estilo WhatsApp (cauda, espaço, rótulo) e separadores de dia.
   // Transferência e rascunho da IA não são bolhas: quebram o bloco.
   const threadMessages = ready ? (messages as InboxMessage[]) : EMPTY_MESSAGES;
@@ -266,6 +291,7 @@ export function ConversationThread({
           canReply={canReply}
         />
       )}
+      <div className="relative flex-1 min-h-0 flex flex-col">
       <div
         ref={paging.scrollRef}
         onScroll={paging.onScroll}
@@ -325,6 +351,18 @@ export function ConversationThread({
                   <div className="flex justify-center py-2" role="separator" aria-label={formatDayLabel(message.createdAt, now)}>
                     <span className="rounded-full bg-bubble-system px-3 py-1 text-caption font-medium text-bubble-system-fg shadow-bubble">
                       {formatDayLabel(message.createdAt, now)}
+                    </span>
+                  </div>
+                )}
+                {unreadMarker?.firstUnreadId === message._id && (
+                  <div
+                    data-unread-divider
+                    className="flex justify-center py-2"
+                    role="separator"
+                    aria-label={unreadDividerLabel(unreadMarker.count)}
+                  >
+                    <span className="rounded-full bg-bubble-system px-3 py-1 text-caption font-medium text-bubble-system-fg shadow-bubble">
+                      {unreadDividerLabel(unreadMarker.count)}
                     </span>
                   </div>
                 )}
@@ -399,6 +437,10 @@ export function ConversationThread({
             );
           })}
         </div>
+      </div>
+      {ready && !paging.atBottom && (
+        <ScrollToBottomButton count={paging.newBelow} onClick={paging.scrollToBottom} />
+      )}
       </div>
 
       <ConfirmDialog {...retryAckDialogProps} />
