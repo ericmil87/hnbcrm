@@ -45,7 +45,7 @@ describe("ConversationListItem", () => {
     expect(screen.getByText("Maria Silva")).toBeInTheDocument();
     expect(screen.getByText("Reserva de março")).toBeInTheDocument();
     expect(screen.getByText("Posso confirmar?")).toBeInTheDocument();
-    expect(screen.getByText("09/03/2025")).toBeInTheDocument();
+    expect(screen.getByText("09/03/25")).toBeInTheDocument();
   });
 
   it("prefixa 'Você:' em mensagem enviada e usa o contador quando não há prévia", () => {
@@ -61,7 +61,8 @@ describe("ConversationListItem", () => {
   it("grupo: assunto da sala, ícone e contagem de membros", () => {
     renderItem({ kind: "group", groupChat: { subject: "Vendas SP", participantsCount: 12 }, lead: null });
     expect(screen.getByText("Vendas SP")).toBeInTheDocument();
-    expect(screen.getByLabelText("Conversa de grupo")).toBeInTheDocument();
+    expect(screen.getByText(/Conversa de grupo/)).toHaveClass("sr-only");
+    expect(screen.getByTestId("group-avatar")).toBeInTheDocument();
     expect(screen.getByText("12 membros")).toBeInTheDocument();
   });
 
@@ -322,5 +323,140 @@ describe("ConversationListItem: indicador da IA", () => {
       { variant: "compact", now: NOW2, showAi: true }
     );
     expect(screen.getByRole("img", { name: "IA desligada" })).toBeInTheDocument();
+  });
+});
+
+describe("ConversationListItem default (desktop): mesma linha do celular, sem perder função", () => {
+  const NOW3 = new Date(2026, 10, 13, 15).getTime();
+  const desktop = { variant: "default" as const, now: NOW3, showAccount: false };
+
+  it("foto do contato no avatar, canal no canto e hora curta", () => {
+    const { container } = renderWithRouter(
+      <ConversationListItem
+        conversation={{
+          ...base,
+          contact: { firstName: "Maria", lastName: "Silva", avatarUrl: "https://x.test/maria.jpg" },
+          lastMessageAt: new Date(2026, 10, 13, 9, 5).getTime(),
+        }}
+        selected={false}
+        selectionMode={false}
+        checked={false}
+        labelById={new Map()}
+        onClick={() => {}}
+        {...desktop}
+      />
+    );
+    expect(container.querySelector("img")).toHaveAttribute("src", "https://x.test/maria.jpg");
+    expect(screen.getByText("09:05")).toBeInTheDocument();
+    expect(screen.getByText("WhatsApp")).toHaveClass("sr-only");
+  });
+
+  it("sem foto, iniciais", () => {
+    const { container } = renderWithRouter(
+      <ConversationListItem
+        conversation={base}
+        selected={false}
+        selectionMode={false}
+        checked={false}
+        labelById={new Map()}
+        onClick={() => {}}
+        {...desktop}
+      />
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("MS")).toBeInTheDocument();
+  });
+
+  it("selecionada destaca a linha com a borda de acento", () => {
+    renderItem({}, { ...desktop, selected: true });
+    const row = screen.getByRole("button");
+    expect(row).toHaveAttribute("aria-current", "true");
+    expect(row).toHaveClass("bg-brand-500/10", "border-l-brand-500");
+  });
+
+  it("modo seleção: caixa e aria-pressed", () => {
+    renderItem({}, { ...desktop, selectionMode: true, checked: true });
+    expect(screen.getByRole("button")).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("selection-box")).toBeInTheDocument();
+  });
+
+  it("'Pediu ajuda' por extenso na 3ª linha, sem ícone duplicado na 2ª", () => {
+    renderItem({ lead: { title: "L", handoffState: { status: "pending" } } }, desktop);
+    expect(screen.getByText("Pediu ajuda")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: "Pediu ajuda" })).toBeNull();
+  });
+
+  it("responsável do lead aparece como mini-avatar na linha de CRM", () => {
+    renderItem({ assignee: { name: "Ana Souza", type: "human" } }, desktop);
+    expect(screen.getByTestId("row-assignee")).toHaveTextContent("Responsável: Ana Souza");
+  });
+
+  it("no celular o responsável não ocupa a linha", () => {
+    renderItem({ assignee: { name: "Ana Souza", type: "human" } }, { ...desktop, variant: "compact" });
+    expect(screen.queryByTestId("row-assignee")).toBeNull();
+  });
+
+  it("etiquetas, conta de origem e título do lead", () => {
+    renderItem(
+      { labelIds: ["a"], channelConfigId: "cfg" },
+      {
+        ...desktop,
+        showAccount: true,
+        account: { _id: "cfg", channel: "whatsapp", name: "Loja", phoneNumber: "+5511999991234" } as never,
+        labelById: new Map([["a", { name: "VIP", color: "#10b981" }]]),
+      }
+    );
+    expect(screen.getByTitle("VIP")).toBeInTheDocument();
+    expect(screen.getByText("Reserva de março")).toBeInTheDocument();
+  });
+
+  it("grupo sem foto: ícone; com foto: imagem; foto que falha volta ao ícone", () => {
+    const group = { kind: "group", groupChat: { subject: "Vendas SP", participantsCount: 1 }, lead: null };
+    const first = renderWithRouter(
+      <ConversationListItem
+        conversation={{ ...base, ...group }}
+        selected={false}
+        selectionMode={false}
+        checked={false}
+        labelById={new Map()}
+        onClick={() => {}}
+        {...desktop}
+      />
+    );
+    expect(first.container.querySelector("img")).toBeNull();
+    expect(screen.getByText("1 membro")).toBeInTheDocument();
+    first.unmount();
+    const second = renderWithRouter(
+      <ConversationListItem
+        conversation={{ ...base, ...group, groupAvatarUrl: "https://x.test/g.jpg" }}
+        selected={false}
+        selectionMode={false}
+        checked={false}
+        labelById={new Map()}
+        onClick={() => {}}
+        {...desktop}
+      />
+    );
+    const img = second.container.querySelector("img");
+    expect(img).toHaveAttribute("src", "https://x.test/g.jpg");
+    fireEvent.error(img!);
+    expect(second.container.querySelector("img")).toBeNull();
+  });
+
+  it("grupo com foto também no celular", () => {
+    const { container } = renderWithRouter(
+      <ConversationListItem
+        conversation={{ ...base, kind: "group", groupChat: { subject: "G" }, lead: null, groupAvatarUrl: "https://x.test/g.jpg" }}
+        selected={false}
+        selectionMode={false}
+        checked={false}
+        labelById={new Map()}
+        showAccount={false}
+        onClick={() => {}}
+        variant="compact"
+        now={NOW3}
+      />
+    );
+    expect(container.querySelector("img")).toHaveAttribute("src", "https://x.test/g.jpg");
   });
 });

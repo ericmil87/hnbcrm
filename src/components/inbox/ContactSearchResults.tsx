@@ -1,8 +1,9 @@
 import { Avatar } from "@/components/ui/Avatar";
 import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
-import { channelLabel } from "@/lib/channelAccounts";
-import { formatDate } from "@/lib/format";
+import { channelIcon, channelLabel } from "@/lib/channelAccounts";
+import { formatListTime } from "@/lib/format";
 import { contactResultName } from "@/lib/inboxSearch";
+import { cn } from "@/lib/utils";
 
 /** Linha de `conversations.searchConversationsByContact`. */
 export interface InboxContactResult {
@@ -32,22 +33,33 @@ export function SearchSectionHeader({ children }: { children: string }) {
 interface ContactSearchRowProps {
   result: InboxContactResult;
   onOpen: (result: InboxContactResult) => void;
+  /** "Agora" da hora (prop para a linha seguir pura); ausente = relógio atual. */
+  now?: number;
 }
 
-/** Uma conversa achada pelo contato: avatar, nome, prévia da última mensagem e hora (apresentacional). */
-export function ContactSearchRow({ result, onOpen }: ContactSearchRowProps) {
+/**
+ * Uma conversa achada pelo contato, na mesma linguagem da lista: avatar (foto)
+ * com o canal no canto, nome + hora, prévia + não lidas (apresentacional).
+ */
+export function ContactSearchRow({ result, onOpen, now }: ContactSearchRowProps) {
   const name = contactResultName(result);
   const unread = result.unreadCount;
+  const ChannelIcon = channelIcon(result.channel, null);
   return (
     <button
       type="button"
       onClick={() => onOpen(result)}
-      className="flex w-full items-center gap-3 border-b border-border px-4 py-3 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+      className="flex w-full items-center gap-3 pl-4 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
     >
-      <Avatar name={result.contactName.trim() || result.fallbackName?.trim() || "?"} size="md" imageUrl={result.avatarUrl} />
-      <span className="min-w-0 flex-1">
+      <span className="relative shrink-0" aria-hidden="true">
+        <Avatar name={result.contactName.trim() || result.fallbackName?.trim() || "?"} size="lg" imageUrl={result.avatarUrl} />
+        <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-surface-base text-brand-500 ring-1 ring-border">
+          <ChannelIcon size={12} />
+        </span>
+      </span>
+      <span className="min-w-0 flex-1 border-b border-border py-3 pr-4">
         <span className="flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text-primary">{name}</span>
+          <span className="min-w-0 flex-1 truncate text-base font-semibold leading-tight text-text-primary">{name}</span>
           <span className="sr-only">{channelLabel(result.channel)}</span>
           {result.archived && (
             <span className="shrink-0 rounded-full bg-surface-sunken px-2 py-0.5 text-micro text-text-muted">
@@ -55,11 +67,18 @@ export function ContactSearchRow({ result, onOpen }: ContactSearchRowProps) {
             </span>
           )}
           {result.lastMessageAt !== null && (
-            <span className="shrink-0 text-xs text-text-muted tabular-nums">{formatDate(result.lastMessageAt)}</span>
+            <span
+              className={cn(
+                "shrink-0 text-caption tabular-nums",
+                unread > 0 ? "font-semibold text-brand-500" : "text-text-muted"
+              )}
+            >
+              {formatListTime(result.lastMessageAt, now ?? Date.now())}
+            </span>
           )}
         </span>
-        <span className="mt-0.5 flex items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
+        <span className="mt-1 flex items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm leading-tight text-text-muted">
             {result.lastMessagePreview
               ? `${result.lastMessageDirection === "outbound" ? "Você: " : ""}${conversationPreviewText(
                   result.lastMessagePreview,
