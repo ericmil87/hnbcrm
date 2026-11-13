@@ -352,7 +352,7 @@ export function emptyListMessage(input: {
   }
   if (mine) return { text: "Nenhuma conversa atribuída a você", chooseGroups: false };
   // Etapa e IA são pós-filtros do servidor sobre as conversas mais recentes (como "Minhas").
-  if (stageId) return { text: "Nenhuma conversa nesta etapa entre as mais recentes", chooseGroups: false };
+  if (stageId) return { text: "Nenhuma conversa nesta etapa", chooseGroups: false };
   if (ai) {
     return {
       text: `Nenhuma conversa com a ${ai === "on" ? "IA atendendo" : "IA desligada"} entre as mais recentes`,

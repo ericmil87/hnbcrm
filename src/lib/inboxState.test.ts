@@ -369,7 +369,7 @@ describe("filtros Etapa e IA (chips)", () => {
 
   it("lista vazia explica etapa e IA (olham as conversas mais recentes)", () => {
     const e = { kind: "all" as const, showArchived: false, queueFilterActive: false, labelId: null };
-    expect(emptyListMessage({ ...e, stageId: "s1" }).text).toBe("Nenhuma conversa nesta etapa entre as mais recentes");
+    expect(emptyListMessage({ ...e, stageId: "s1" }).text).toBe("Nenhuma conversa nesta etapa");
     expect(emptyListMessage({ ...e, ai: "on" }).text).toBe("Nenhuma conversa com a IA atendendo entre as mais recentes");
     expect(emptyListMessage({ ...e, ai: "off" }).text).toBe("Nenhuma conversa com a IA desligada entre as mais recentes");
   });
