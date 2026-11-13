@@ -100,7 +100,9 @@ import {
   parseMetaMessagingWebhook,
   verifyMetaSignature,
 } from "./lib/metaMessagingParse";
-import { graphBase, profileEndpoint, sendEndpoint } from "./lib/metaGraph";
+import { graphBase, sendEndpoint } from "./lib/metaGraph";
+import { fetchMetaProfile, refreshMetaContactAvatar, type MetaProfile } from "./lib/metaAvatarOps";
+import { contactAvatarFetchEnabled, isAvatarCheckDue } from "./lib/contactAvatar";
 import {
   MetaOAuthErrorCode,
   UsablePage,
@@ -421,6 +423,8 @@ export const internalRouteMetaInbound = internalMutation({
       contactId: v.id("contacts"),
       identityId: v.id("contactChannelIdentities"),
       needsProfile: v.boolean(),
+      /** Foto do contato vencida (uma leitura indexada de `contactAvatars`). */
+      avatarDue: v.boolean(),
     })
   ),
   handler: async (ctx, args) => {
@@ -454,12 +458,25 @@ export const internalRouteMetaInbound = internalMutation({
     }
 
     const identity = await ctx.db.get(identityId);
+    // Foto do contato (Instagram/Messenger): sem linha ou vencida. Só leitura; quem
+    // escreve é `internalReserveMetaAvatar`, fora desta transação.
+    let avatarDue = false;
+    if (contactAvatarFetchEnabled()) {
+      const avatarRow = await ctx.db
+        .query("contactAvatars")
+        .withIndex("by_contact", (q) => q.eq("contactId", contactId))
+        .first();
+      avatarDue =
+        !(avatarRow && avatarRow.organizationId !== config.organizationId) &&
+        isAvatarCheckDue(avatarRow, Date.now());
+    }
     return {
       organizationId: config.organizationId,
       leadId,
       contactId,
       identityId,
       needsProfile: identity?.profileFetchedAt === undefined,
+      avatarDue,
     };
   },
 });
@@ -572,31 +589,6 @@ export const internalClearIdentityOptOut = internalMutation({
     return { cleared: true };
   },
 });
-
-async function fetchMetaProfile(
-  conn: Doc<"metaConnections"> | null,
-  surface: "messenger" | "instagram",
-  userId: string
-): Promise<{ name?: string; username?: string }> {
-  if (!conn || conn.authState === "revoked" || !conn.tokenEncrypted) return {};
-  try {
-    const token = await decryptSecret(conn.tokenEncrypted);
-    const url = profileEndpoint(
-      { authMethod: conn.authMethod, surface, pageId: conn.pageId, igAccountId: conn.igAccountId },
-      userId,
-      surface
-    );
-    const res = await graphCall(url, { token, timeoutMs: 4000 });
-    if (!res.ok) return {};
-    const b = res.body;
-    const s = (x: unknown) => (typeof x === "string" && x.trim() ? x.trim() : undefined);
-    if (surface === "instagram") return { name: s(b.name), username: s(b.username) };
-    const name = [s(b.first_name), s(b.last_name)].filter(Boolean).join(" ");
-    return { name: name || undefined };
-  } catch {
-    return {}; // segue sem nome (§13 item 9)
-  }
-}
 
 /** Timeout/abort = URL expirada ou lenta; qualquer outra exceção = erro. */
 function expiredOrError(e: unknown): "expired" | "error" {
@@ -779,18 +771,21 @@ export const internalIngestEvent = internalAction({
     });
     if (!routed) return null;
 
+    let connection: Doc<"metaConnections"> | null = null;
+    let profile: MetaProfile | undefined;
+    if ((routed.needsProfile || routed.avatarDue) && config.metaConnectionId) {
+      connection = await ctx.runQuery(internal.metaMessaging.internalGetMetaConnection, {
+        connectionId: config.metaConnectionId,
+      });
+    }
     if (routed.needsProfile && config.metaConnectionId) {
-      const conn: Doc<"metaConnections"> | null = await ctx.runQuery(
-        internal.metaMessaging.internalGetMetaConnection,
-        { connectionId: config.metaConnectionId }
-      );
-      const profile = await fetchMetaProfile(conn, event.surface, event.userId);
+      profile = await fetchMetaProfile(connection, event.surface, event.userId);
       if (profile.name || profile.username) {
         await ctx.runMutation(internal.metaMessaging.internalRouteMetaInbound, {
           configId: args.configId,
           surface: event.surface,
           userId: event.userId,
-          profile,
+          profile: { name: profile.name, username: profile.username },
         });
       }
     }
@@ -819,6 +814,20 @@ export const internalIngestEvent = internalAction({
       externalId: event.mid,
       metadata,
     });
+
+    // Foto do contato: depois de gravar a mensagem (best-effort, nunca lança). Reusa o
+    // perfil acima quando ele já foi buscado; senão refaz a chamada (1 por contato/semana).
+    if (routed.avatarDue && config.metaConnectionId) {
+      await refreshMetaContactAvatar(ctx, {
+        organizationId: routed.organizationId,
+        contactId: routed.contactId,
+        channelConfigId: args.configId,
+        surface: event.surface,
+        userId: event.userId,
+        connection,
+        profile,
+      });
+    }
 
     // F3: "pare"/"parar"/"stop"/"sair" sozinho na mensagem = opt-out do
     // follow-up da IA para ESTA identidade. Não silencia o atendente.

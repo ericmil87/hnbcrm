@@ -127,8 +127,11 @@ export function sniffAvatarMime(bytes: Uint8Array): AvatarMime | null {
 }
 
 /** Valida o arquivo baixado: peso e tipo. `null` = recusado. */
-export function validateAvatarBytes(bytes: Uint8Array): { mime: AvatarMime; size: number } | null {
-  if (bytes.length === 0 || bytes.length > MAX_AVATAR_BYTES) return null;
+export function validateAvatarBytes(
+  bytes: Uint8Array,
+  max: number = MAX_AVATAR_BYTES
+): { mime: AvatarMime; size: number } | null {
+  if (bytes.length === 0 || bytes.length > max) return null;
   const mime = sniffAvatarMime(bytes);
   return mime ? { mime, size: bytes.length } : null;
 }

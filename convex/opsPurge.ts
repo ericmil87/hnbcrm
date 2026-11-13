@@ -21,6 +21,7 @@ const BATCH = 250;
 const ORG_TABLES: { table: string; index: string }[] = [
   // Foto de perfil do contato: linha lateral e ritmo do canal antes de `files`/`contacts`.
   { table: "contactAvatars", index: "by_organization" },
+  { table: "groupAvatars", index: "by_organization" },
   { table: "channelAvatarPacing", index: "by_organization" },
   { table: "files", index: "by_organization" },
   { table: "messages", index: "by_organization" },

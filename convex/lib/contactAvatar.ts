@@ -60,6 +60,29 @@ export function computeNextCheckAt(status: AvatarStatus, failures: number, now: 
   }
 }
 
+export type AvatarSource = "whatsapp" | "instagram" | "messenger";
+
+/** Quem obteve a foto da linha: ausente = WhatsApp (linhas anteriores ao Instagram/Messenger). */
+export function avatarRowSource(row: { source?: AvatarSource }): AvatarSource {
+  return row.source ?? "whatsapp";
+}
+
+/**
+ * Regra entre canais (uma foto por contato): a foto `ok` de OUTRO canal ainda válida
+ * (não vencida) nunca é trocada; só preenche quando não há foto, está vencida ou veio
+ * do mesmo canal. E o "sem foto/oculta" de um canal não apaga a foto de outro.
+ */
+export function otherChannelPhotoStillValid(
+  row: { status: string; url?: string; source?: AvatarSource; nextCheckAt: number },
+  source: AvatarSource,
+  now: number
+): boolean {
+  return row.status === "ok" && !!row.url && avatarRowSource(row) !== source && row.nextCheckAt > now;
+}
+
+/** Teto do arquivo da foto do Instagram/Messenger (a do WhatsApp é miniatura de ~2 KB; a da Meta vem maior). Acima disso: `error` com recuo, nada é guardado. */
+export const META_AVATAR_MAX_BYTES = 500 * 1024;
+
 export type AvatarRowState = {
   nextCheckAt: number;
   pendingSince?: number;
@@ -118,6 +141,21 @@ export function planAvatarSlot(
   const runAt = Math.max(now, pacing?.nextFetchAt ?? 0);
   if (runAt - now > AVATAR_MAX_QUEUE_MS) return null;
   return { runAt, nextFetchAt: runAt + avatarGapMs(rand), day, dayCount: used + 1 };
+}
+
+/**
+ * Teto diário e pausa do canal para a Graph (Instagram/Messenger): como
+ * `planAvatarSlot`, sem fila nem intervalo. `null` = pausado ou teto atingido.
+ */
+export function planMetaAvatarSlot(
+  pacing: AvatarPacingState | null | undefined,
+  now: number
+): { day: string; dayCount: number } | null {
+  if (pacing?.pausedUntil !== undefined && pacing.pausedUntil > now) return null;
+  const day = avatarDayKey(now);
+  const used = pacing?.day === day ? (pacing.dayCount ?? 0) : 0;
+  if (used >= AVATAR_DAILY_CAP_PER_CHANNEL) return null;
+  return { day, dayCount: used + 1 };
 }
 
 /**

@@ -93,8 +93,8 @@ describe("evento Picture (fixture SINTÉTICA)", () => {
     });
   });
 
-  test("grupo, LID, newsletter e lixo são ignorados", () => {
-    expect(parseBridgeEvent(pictureFixtures.group).kind).toBe("ignored");
+  test("grupo vira group_picture; LID, newsletter e lixo são ignorados", () => {
+    expect(parseBridgeEvent(pictureFixtures.group).kind).toBe("group_picture");
     expect(parseBridgeEvent(pictureFixtures.lid).kind).toBe("ignored");
     expect(parseBridgeEvent(pictureFixtures.newsletter).kind).toBe("ignored");
     expect(parseBridgeEvent({ type: "Picture", event: {} }).kind).toBe("ignored");
