@@ -74,6 +74,8 @@ export function Inbox() {
     channelArgs: filters.channelArgs,
     unreadArgs: filters.unreadArgs,
     mineArgs: filters.mineArgs,
+    stageArgs: filters.stageArgs,
+    aiArgs: filters.aiArgs,
     isSearching,
   });
   const { validConversations } = list;

@@ -49,6 +49,53 @@ export function shouldPinAfterResize(m: {
   return Math.round(m.prevClientHeight) !== Math.round(m.clientHeight);
 }
 
+export interface ThreadBoxSize {
+  /** Altura da caixa rolável (encolhe com o teclado ou o composer). */
+  clientHeight: number;
+  /** Altura do conteúdo (cresce quando imagem, áudio, prévia ou tradução terminam de carregar). */
+  scrollHeight: number;
+}
+
+/**
+ * A caixa OU o conteúdo do thread mudaram de tamanho sem a pessoa rolar. Mídia
+ * que termina de carregar acima da tela empurra o resto para baixo, e o Safari
+ * do iPhone não compensa a rolagem sozinho (sem âncora de rolagem do CSS): a
+ * conversa aberta "no fim" ou "no divisor" deixava de estar lá.
+ * - `holdingDivider` (abertura no divisor de não lidas ainda valendo): refaz a
+ *   rolagem até o divisor;
+ * - leitor no fim: continua no fim;
+ * - leitor rolado para cima, ou nada mudou: não mexe.
+ */
+export function resizeScrollAction(m: {
+  prev: ThreadBoxSize | null;
+  next: ThreadBoxSize;
+  holdingDivider: boolean;
+  nearBottom: boolean;
+}): "divider" | "bottom" | null {
+  if (m.prev === null) return null;
+  const boxChanged = Math.round(m.prev.clientHeight) !== Math.round(m.next.clientHeight);
+  const contentChanged = Math.round(m.prev.scrollHeight) !== Math.round(m.next.scrollHeight);
+  if (!boxChanged && !contentChanged) return null;
+  if (m.holdingDivider) return "divider";
+  const pinBox = shouldPinAfterResize({
+    prevClientHeight: m.prev.clientHeight,
+    clientHeight: m.next.clientHeight,
+    nearBottom: m.nearBottom,
+  });
+  return pinBox || (contentChanged && m.nearBottom) ? "bottom" : null;
+}
+
+/** Folga (px) entre a rolagem aplicada e a lida: arredondamento de subpixel não é gesto. */
+export const OPEN_ANCHOR_TOLERANCE_PX = 2;
+
+/**
+ * A rolagem saiu de onde a abertura a deixou (dedo, roda, barra, teclado): a
+ * pessoa assumiu e a abertura no divisor para de ser refeita.
+ */
+export function leftOpenAnchor(m: { applied: number; scrollTop: number; tolerance?: number }): boolean {
+  return Math.abs(m.scrollTop - m.applied) > (m.tolerance ?? OPEN_ANCHOR_TOLERANCE_PX);
+}
+
 export function makePrependAnchor(
   conversationId: string,
   limit: number,

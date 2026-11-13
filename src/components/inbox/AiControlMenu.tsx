@@ -10,12 +10,14 @@ import { Popover } from "@/components/ui/Popover";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { mutationErrorMessage } from "@/lib/errors";
 import { formatFollowUpDueAt } from "@/lib/followUp";
-import { aiStateChipInfo, type AiConvState } from "@/lib/inboxState";
+import { aiStateChipInfo, rowAiMode, type AiConvState } from "@/lib/inboxState";
 import { cn } from "@/lib/utils";
 
 interface AiControlMenuProps {
   conversationId: Id<"conversations">;
   aiPausedUntil?: number;
+  /** `aiMode` da conversa (`getConversationById`): "off" sem pausa = a IA não atende (não é "IA ativa"). */
+  aiMode?: string | null;
   hasPendingDraft: boolean;
   aiState: AiConvState;
   /** Sem `inbox:reply` o menu só informa o estado. */
@@ -30,8 +32,12 @@ const rowClass =
  * abre o estado, "Assumir conversa" / "Devolver à IA", "Pedir resposta
  * sugerida" e o follow-up pendente. No desktop mostra também o rótulo.
  */
-export function AiControlMenu({ conversationId, aiPausedUntil, hasPendingDraft, aiState, canReply }: AiControlMenuProps) {
-  const paused = aiPausedUntil !== undefined && aiPausedUntil > Date.now();
+export function AiControlMenu({ conversationId, aiPausedUntil, aiMode, hasPendingDraft, aiState, canReply }: AiControlMenuProps) {
+  const now = Date.now();
+  const paused = aiPausedUntil !== undefined && aiPausedUntil > now;
+  // Mesma regra da lista (`rowAiMode`); só muda o RÓTULO, as ações seguem as de `paused`.
+  const off = !paused && !!aiMode && rowAiMode({ aiMode, aiPausedUntil }, now) === "off";
+  const quiet = paused || off;
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [open, setOpen] = useState(false);
   const [returnOpen, setReturnOpen] = useState(false);
@@ -46,8 +52,12 @@ export function AiControlMenu({ conversationId, aiPausedUntil, hasPendingDraft, 
   const processing = aiState?.status === "pending" || aiState?.status === "processing";
   const waiting =
     aiStateChipInfo(aiState)?.tone === "waiting" && !(paused && aiState?.reason === "ia_pausada");
-  const stateText = paused ? "IA pausada nesta conversa" : "IA ativa nesta conversa";
-  const triggerLabel = paused ? "IA pausada" : "IA ativa";
+  const stateText = paused
+    ? "IA pausada nesta conversa"
+    : off
+      ? "IA desligada nesta conversa"
+      : "IA ativa nesta conversa";
+  const triggerLabel = paused ? "IA pausada" : off ? "IA desligada" : "IA ativa";
 
   const handleAssume = () => {
     setOpen(false);
@@ -93,7 +103,7 @@ export function AiControlMenu({ conversationId, aiPausedUntil, hasPendingDraft, 
         className={cn(
           "relative inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-full px-0 text-xs font-medium transition-colors hover:bg-surface-overlay md:h-9 md:min-w-0 md:px-3 md:bg-surface-overlay/60",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
-          paused ? "text-text-muted" : "text-ai-400",
+          quiet ? "text-text-muted" : "text-ai-400",
           processing && "motion-safe:animate-pulse",
           open && "bg-surface-overlay"
         )}
@@ -121,7 +131,7 @@ export function AiControlMenu({ conversationId, aiPausedUntil, hasPendingDraft, 
       >
         <div className="flex flex-col">
           <div className="flex items-center gap-2 px-4 pb-2 pt-1 text-sm font-medium text-text-primary">
-            <Sparkles size={16} aria-hidden className={paused ? "text-text-muted" : "text-ai-400"} />
+            <Sparkles size={16} aria-hidden className={quiet ? "text-text-muted" : "text-ai-400"} />
             {stateText}
           </div>
           <div className="px-4 pb-2 empty:hidden">

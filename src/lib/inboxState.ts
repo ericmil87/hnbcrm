@@ -1,5 +1,6 @@
 import { VOCAB } from "./vocab";
 import { aiStateReasonLabel } from "./aiStateReasons";
+import { isAiPaused, type ConversationAiMode } from "../../convex/lib/conversationAiMode";
 
 // Lógica pura da tela de Conversas (sem React): suspeita de robô, repasse
 // pendente, chip de estado da IA, filtros da lista e a decisão "param da URL →
@@ -116,6 +117,8 @@ export function countUnreadConversations(list: readonly { unreadCount?: number |
   return list.reduce((n, c) => n + ((c.unreadCount ?? 0) > 0 ? 1 : 0), 0);
 }
 
+export type InboxAiFilter = "on" | "off";
+
 /** Filtros de tela que os chips do celular ligam/desligam. */
 export interface InboxChipState {
   kind: ConversationKindFilter;
@@ -123,6 +126,10 @@ export interface InboxChipState {
   /** Chip "Minhas": responsável do lead ou conversa roteada para mim (filtro de servidor, `mine`). */
   mine: boolean;
   labelId: string | null;
+  /** Chip "Etapa": etapa do funil (filtro de servidor, `stageId`). */
+  stageId: string | null;
+  /** Chip "IA": só onde a IA atende ("on") ou só onde não atende ("off") (filtro de servidor, `ai`). */
+  ai: InboxAiFilter | null;
   /** Canal/conta (preferência em localStorage, escolhida no ⋯ ou no desktop). */
   channel: string | null;
   configId: string | null;
@@ -134,6 +141,8 @@ export const NO_CHIP_FILTERS: InboxChipState = {
   unreadOnly: false,
   mine: false,
   labelId: null,
+  stageId: null,
+  ai: null,
   channel: null,
   configId: null,
 };
@@ -169,6 +178,8 @@ export function inboxFilterChips(
     unreadMore = false,
     channelLabel,
     accountLabel,
+    stageLabel,
+    showAi = false,
   }: {
     labels: readonly { _id: string; name: string; color: string }[];
     showGroups: boolean;
@@ -177,10 +188,21 @@ export function inboxFilterChips(
     /** Rótulos do canal/conta ativos (ex.: "Instagram", "WhatsApp ····1234"). */
     channelLabel?: string;
     accountLabel?: string;
+    /** Nome da etapa escolhida (ainda desconhecido = "Etapa"). */
+    stageLabel?: string;
+    /** A org usa IA (ver `listShowsAi`): mostra o chip "IA". */
+    showAi?: boolean;
   }
 ): InboxChip[] {
   const none =
-    state.kind === "all" && !state.unreadOnly && !state.mine && !state.labelId && !state.channel && !state.configId;
+    state.kind === "all" &&
+    !state.unreadOnly &&
+    !state.mine &&
+    !state.labelId &&
+    !state.stageId &&
+    !state.ai &&
+    !state.channel &&
+    !state.configId;
   const chips: InboxChip[] = [
     { id: "all", label: "Todas", pressed: none },
     {
@@ -201,8 +223,17 @@ export function inboxFilterChips(
   for (const l of labels) {
     chips.push({ id: `${LABEL_CHIP}${l._id}`, label: l.name, color: l.color, pressed: state.labelId === l._id });
   }
+  chips.push({ id: "stage", label: state.stageId ? stageLabel || "Etapa" : "Etapa", pressed: !!state.stageId });
+  if (showAi || state.ai) {
+    chips.push({ id: "ai", label: state.ai ? AI_FILTER_LABEL[state.ai] : "IA", pressed: !!state.ai });
+  }
   return chips;
 }
+
+export const AI_FILTER_LABEL: Record<InboxAiFilter, string> = {
+  on: "IA atendendo",
+  off: "IA desligada",
+};
 
 /** Próximo estado ao tocar num chip: "Todas" limpa tudo; os demais ligam/desligam. */
 export function applyInboxChip(id: string, state: InboxChipState): InboxChipState {
@@ -211,6 +242,9 @@ export function applyInboxChip(id: string, state: InboxChipState): InboxChipStat
   if (id === "account") return { ...state, configId: null };
   if (id === "unread") return { ...state, unreadOnly: !state.unreadOnly };
   if (id === "mine") return { ...state, mine: !state.mine };
+  // "Etapa" e "IA" escolhem num menu; tocar aqui só desliga (quem liga é o menu).
+  if (id === "stage") return { ...state, stageId: null };
+  if (id === "ai") return { ...state, ai: null };
   if (id === "group") return { ...state, kind: state.kind === "group" ? "all" : "group" };
   if (id === "direct") return { ...state, kind: state.kind === "direct" ? "all" : "direct" };
   if (id.startsWith(LABEL_CHIP)) {
@@ -298,8 +332,10 @@ export function emptyListMessage(input: {
   labelId: string | null;
   unreadOnly?: boolean;
   mine?: boolean;
+  stageId?: string | null;
+  ai?: InboxAiFilter | null;
 }): { text: string; chooseGroups: boolean } {
-  const { kind, showArchived, queueFilterActive, labelId, unreadOnly, mine } = input;
+  const { kind, showArchived, queueFilterActive, labelId, unreadOnly, mine, stageId, ai } = input;
   if (kind === "group") {
     return showArchived
       ? { text: "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas", chooseGroups: false }
@@ -315,8 +351,54 @@ export function emptyListMessage(input: {
     };
   }
   if (mine) return { text: "Nenhuma conversa atribuída a você", chooseGroups: false };
+  // Etapa e IA são pós-filtros do servidor sobre as conversas mais recentes (como "Minhas").
+  if (stageId) return { text: "Nenhuma conversa nesta etapa entre as mais recentes", chooseGroups: false };
+  if (ai) {
+    return {
+      text: `Nenhuma conversa com a ${ai === "on" ? "IA atendendo" : "IA desligada"} entre as mais recentes`,
+      chooseGroups: false,
+    };
+  }
   if (unreadOnly) return { text: "Nenhuma conversa não lida", chooseGroups: false };
   if (showArchived) return { text: "Nenhuma conversa arquivada", chooseGroups: false };
   if (labelId) return { text: "Nenhuma conversa com essa etiqueta", chooseGroups: false };
   return { text: VOCAB.conversations.empty.title, chooseGroups: false };
+}
+
+/** Id de documento do Convex (32 caracteres minúsculos/dígitos): barra lixo da URL antes de virar arg. */
+export function isPlausibleConvexId(value: string | null | undefined): value is string {
+  return !!value && /^[a-z0-9]{32}$/.test(value);
+}
+
+/** Campos da linha que dizem se a IA atende (`getConversations`; ausente = servidor antigo). */
+export interface AiRowFields {
+  aiMode?: string | null;
+  aiAttending?: boolean | null;
+  aiPausedUntil?: number | null;
+}
+
+/**
+ * Estado da IA da linha, igual ao do cabeçalho: o servidor não lê o relógio,
+ * então uma pausa COM PRAZO só aparece aqui (`isAiPaused` com `now`).
+ * `null` = campo ausente (nada a mostrar).
+ */
+export function rowAiMode(row: AiRowFields, now: number): ConversationAiMode | null {
+  const mode =
+    row.aiMode === "auto" || row.aiMode === "suggest" || row.aiMode === "off"
+      ? row.aiMode
+      : typeof row.aiAttending === "boolean"
+        ? row.aiAttending
+          ? "auto"
+          : "off"
+        : null;
+  if (mode === null) return null;
+  return mode !== "off" && isAiPaused(row.aiPausedUntil ?? undefined, now) ? "off" : mode;
+}
+
+/**
+ * Org que usa IA? Só então a lista mostra "desligada" (org sem IA vem toda
+ * `off`) e o chip "IA". Filtro `?ai=` ativo mantém tudo visível para poder limpar.
+ */
+export function listShowsAi(rows: readonly AiRowFields[], aiFilterActive: boolean): boolean {
+  return aiFilterActive || rows.some((r) => r.aiAttending === true || (r.aiMode && r.aiMode !== "off"));
 }

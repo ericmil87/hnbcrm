@@ -6,9 +6,11 @@ import {
   isContactTyping,
   isNearBottom,
   isStandbyActive,
+  leftOpenAnchor,
   makePrependAnchor,
   newestInbound,
   readSignature,
+  resizeScrollAction,
   shouldPinAfterResize,
 } from "./threadPaging";
 
@@ -127,6 +129,47 @@ describe("shouldPinAfterResize", () => {
   it("sem medida anterior ou mesma altura: não mexe", () => {
     expect(shouldPinAfterResize({ prevClientHeight: null, clientHeight: 340, nearBottom: true })).toBe(false);
     expect(shouldPinAfterResize({ prevClientHeight: 340.2, clientHeight: 340, nearBottom: true })).toBe(false);
+  });
+});
+
+describe("resizeScrollAction (mídia carregando depois da rolagem inicial, teclado)", () => {
+  const box = { clientHeight: 676, scrollHeight: 3794 };
+  // Medido no navegador sem âncora de rolagem (como o Safari do iPhone): a imagem carrega, +240 px.
+  const grown = { clientHeight: 676, scrollHeight: 4034 };
+
+  it("conteúdo cresceu com o leitor no fim: continua no fim", () => {
+    expect(resizeScrollAction({ prev: box, next: grown, holdingDivider: false, nearBottom: true })).toBe("bottom");
+  });
+  it("conteúdo cresceu com o leitor rolado para cima: não mexe", () => {
+    expect(resizeScrollAction({ prev: box, next: grown, holdingDivider: false, nearBottom: false })).toBeNull();
+  });
+  it("abertura no divisor ainda valendo: refaz a rolagem até o divisor (conteúdo ou caixa)", () => {
+    expect(resizeScrollAction({ prev: box, next: grown, holdingDivider: true, nearBottom: false })).toBe("divider");
+    expect(resizeScrollAction({ prev: box, next: grown, holdingDivider: true, nearBottom: true })).toBe("divider");
+    const keyboard = { clientHeight: 340, scrollHeight: 3794 };
+    expect(resizeScrollAction({ prev: box, next: keyboard, holdingDivider: true, nearBottom: false })).toBe("divider");
+  });
+  it("caixa encolheu (teclado) com o leitor no fim: continua no fim; no meio: não mexe", () => {
+    const keyboard = { clientHeight: 340, scrollHeight: 3794 };
+    expect(resizeScrollAction({ prev: box, next: keyboard, holdingDivider: false, nearBottom: true })).toBe("bottom");
+    expect(resizeScrollAction({ prev: box, next: keyboard, holdingDivider: false, nearBottom: false })).toBeNull();
+  });
+  it("nada mudou (subpixel) ou sem medida anterior: não mexe, nem com o divisor valendo", () => {
+    const same = { clientHeight: 676.2, scrollHeight: 3794.4 };
+    expect(resizeScrollAction({ prev: box, next: same, holdingDivider: true, nearBottom: true })).toBeNull();
+    expect(resizeScrollAction({ prev: null, next: grown, holdingDivider: true, nearBottom: true })).toBeNull();
+  });
+});
+
+describe("leftOpenAnchor", () => {
+  it("rolagem igual à aplicada (com folga de subpixel): a abertura continua valendo", () => {
+    expect(leftOpenAnchor({ applied: 4420, scrollTop: 4420 })).toBe(false);
+    expect(leftOpenAnchor({ applied: 4420, scrollTop: 4420.67 })).toBe(false);
+    expect(leftOpenAnchor({ applied: 4420, scrollTop: 4418 })).toBe(false);
+  });
+  it("a pessoa rolou (para cima ou para baixo): a abertura acabou", () => {
+    expect(leftOpenAnchor({ applied: 4420, scrollTop: 4380 })).toBe(true);
+    expect(leftOpenAnchor({ applied: 4420, scrollTop: 4423 })).toBe(true);
   });
 });
 

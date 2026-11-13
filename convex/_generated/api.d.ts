@@ -137,6 +137,7 @@ import type * as lib_chatText from "../lib/chatText.js";
 import type * as lib_checkoutPricing from "../lib/checkoutPricing.js";
 import type * as lib_contactSearchRank from "../lib/contactSearchRank.js";
 import type * as lib_contactTextSearch from "../lib/contactTextSearch.js";
+import type * as lib_conversationAiMode from "../lib/conversationAiMode.js";
 import type * as lib_conversationHolder from "../lib/conversationHolder.js";
 import type * as lib_conversationListFields from "../lib/conversationListFields.js";
 import type * as lib_conversationRuntime from "../lib/conversationRuntime.js";
@@ -508,6 +509,7 @@ declare const fullApi: ApiFromModules<{
   "lib/checkoutPricing": typeof lib_checkoutPricing;
   "lib/contactSearchRank": typeof lib_contactSearchRank;
   "lib/contactTextSearch": typeof lib_contactTextSearch;
+  "lib/conversationAiMode": typeof lib_conversationAiMode;
   "lib/conversationHolder": typeof lib_conversationHolder;
   "lib/conversationListFields": typeof lib_conversationListFields;
   "lib/conversationRuntime": typeof lib_conversationRuntime;

@@ -60,7 +60,7 @@ src/
 ├── hooks/useTasksUrlState.ts   # Tarefas URL state: ?view=list|status, ?smart=, ?status=, ?assignee=, ?label=, ?project= (replace, one write for compound changes); pure part in lib/tasksFilters.ts (codecs, resolveTaskIds) + test
 ├── hooks/useAuditUrlState.ts   # Histórico URL state: ?entity=&action=&actor=&severity=&from=&to= (replace) and ?log= (push); pure part in lib/auditFilters.ts + test; cursorStack stays in state
 ├── lib/campaignFilters.ts      # Campanhas ?status=&provider= codecs (replace)
-├── hooks/useInboxFilters.ts    # Conversas filters: `?archived=1`, `?label=<id>` and `?unread=1` (mobile chip) (URL, replace; `applyChipState`); direct/group and channel/account (localStorage); Central queue
+├── hooks/useInboxFilters.ts    # Conversas filters: `?archived=1`, `?label=<id>`, `?unread=1` (mobile chip), `?mine=1`, `?stage=<id>` and `?ai=on|off` (URL, replace; `applyChipState`); direct/group and channel/account (localStorage); Central queue
 ├── hooks/useConversationList.ts # list batches 50→500, keep-previous, infinite sentinel
 ├── hooks/useConversationSelection.ts # `?conversation=` (push) ↔ open conversation, deep-link resolver state, `?nova=`, `location.state` draft; test next to it
 ├── hooks/useBulkConversationSelection.ts # multi-select in the list: archive/unarchive/label in bulk

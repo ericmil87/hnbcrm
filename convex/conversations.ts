@@ -84,6 +84,7 @@ import {
 } from "./lib/contactSearchRank";
 import { maybeBufferInboundForRelay } from "./lib/telegramRelay";
 import { withMessageSearch } from "./lib/messageSearch";
+import { listAiMode } from "./lib/conversationAiMode";
 
 type ConversationChannel =
   | "whatsapp"
@@ -376,6 +377,19 @@ export async function getOrCreateConversation(
   });
 }
 
+// Leitura FIXA por execução (nunca por conversa) para `conversationAiMode`: o
+// doc da org e os membros IA (poucos; mesma leitura do `findAttendantForConversation`).
+async function loadAiModeContext(ctx: QueryCtx, organizationId: Id<"organizations">) {
+  const [org, aiMembers] = await Promise.all([
+    ctx.db.get(organizationId),
+    ctx.db
+      .query("teamMembers")
+      .withIndex("by_organization_and_type", (q) => q.eq("organizationId", organizationId).eq("type", "ai"))
+      .take(20),
+  ]);
+  return { org, aiMembers };
+}
+
 // Get conversations for organization
 export const getConversations = query({
   args: {
@@ -417,6 +431,13 @@ export const getConversations = query({
     // mais recentes até o piso/`limit`, como `assignedTo`/`channel`; sem `mine`
     // a query não muda. Ignorado com `leadId`.
     mine: v.optional(v.boolean()),
+    // Filtro por ETAPA do funil (`lead.stageId`): pós-filtro no map final, como
+    // `mine`. Ignorado com `leadId`; grupo (sem lead) nunca casa. Etapa de outra
+    // org não casa nada (compara com o lead já lido, que é da org).
+    stageId: v.optional(v.id("stages")),
+    // IA por conversa (`aiAttending`/`aiMode` em cada linha): "on" = só onde a IA
+    // responde ou sugere, "off" = só onde não. Pós-filtro, ignorado com `leadId`.
+    ai: v.optional(v.union(v.literal("on"), v.literal("off"))),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -424,6 +445,8 @@ export const getConversations = query({
     const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
     const mineOnly = !args.leadId && args.mine === true;
     const unreadOnly = !args.leadId && args.unreadOnly === true;
+    const stageOnly = !args.leadId && !!args.stageId;
+    const aiFilter = args.leadId ? undefined : args.ai;
     // Ativas, sem conta/setor/unidade: o índice de não lidas já devolve só elas.
     const unreadByIndex =
       unreadOnly && !args.archived && !args.channelConfigId && !args.departmentId && !args.noDepartment && !args.unitId;
@@ -441,9 +464,14 @@ export const getConversations = query({
       ((args.departmentId || args.noDepartment) && !!args.unitId) ||
       (!!args.channelConfigId && (!!args.departmentId || !!args.noDepartment || !!args.unitId)) ||
       !!args.assignedToMe || !!args.assignedTo || !!args.channel || mineOnly ||
-      (unreadOnly && !unreadByIndex)
+      (unreadOnly && !unreadByIndex) || stageOnly || !!aiFilter
     );
-    const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
+    // "Não lidas" por índice: a ordem do índice é por CONTADOR, não por tempo.
+    // Com o piso, as mais recentes entram mesmo com contador pequeno (a lista sai
+    // por tempo); acima do piso ainda trunca por contador.
+    const readLimit = hasPostFilter || unreadByIndex
+      ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR)
+      : limit;
     let conversations;
     if (!args.leadId && args.channelConfigId) {
       // Conta: o índice já devolve só as conversas daquele config e da org.
@@ -483,7 +511,7 @@ export const getConversations = query({
     } else if (unreadByIndex) {
       // "Não lidas" nas ativas: só conversas com `unreadCount > 0` (o take não
       // gasta vagas com lidas). A ordem do índice é por contador; o sort final
-      // reordena por última mensagem.
+      // reordena por última mensagem (lê até o piso, ver `readLimit`).
       conversations = await ctx.db.query("conversations")
         .withIndex("by_organization_and_archived_and_unread", (q) =>
           q.eq("organizationId", args.organizationId).eq("archivedAt", undefined).gt("unreadCount", 0)
@@ -539,10 +567,11 @@ export const getConversations = query({
     // Batch fetch related data
     const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
     const leads = Array.from(leadMap.values());
-    const [contactMap, assigneeMap, extrasMap] = await Promise.all([
+    const [contactMap, assigneeMap, extrasMap, aiCtx] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
       inboxRowExtras(ctx, conversations),
+      loadAiModeContext(ctx, args.organizationId),
     ]);
 
     const conversationsWithData = conversations.map(conversation => {
@@ -554,25 +583,28 @@ export const getConversations = query({
       // aquele responsável.
       if (mineOnly && lead?.assignedTo !== me._id && conversation.assignedTo !== me._id) return null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
+      if (stageOnly && lead?.stageId !== args.stageId) return null;
+      // Grupo vem `null`: sem indicador na linha e fora dos dois lados do filtro.
+      const aiMode = listAiMode({ ...aiCtx, conversation, lead, contact });
+      if (aiFilter && (aiMode === null || (aiMode !== "off") !== (aiFilter === "on"))) return null;
       return {
         ...conversation,
         kind: conversation.kind ?? "direct",
         lead,
         contact,
         assignee,
+        aiMode,
+        aiAttending: aiMode === null ? null : aiMode !== "off",
         ...extrasMap.get(conversation._id)!,
       };
     }).filter(Boolean);
 
-    // Não lidas primeiro; dentro de cada grupo, última mensagem primeiro.
-    conversationsWithData.sort((a: any, b: any) => {
-      const aUnread = (a.unreadCount ?? 0) > 0 ? 1 : 0;
-      const bUnread = (b.unreadCount ?? 0) > 0 ? 1 : 0;
-      if (aUnread !== bUnread) return bUnread - aUnread;
-      return (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt);
-    });
+    // Só por tempo da última mensagem (a conversa não pula de lugar ao ser lida).
+    conversationsWithData.sort(
+      (a: any, b: any) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt)
+    );
 
-    // Nenhum ramo lê mais que `limit`; o slice fica como garantia do contrato
+    // Ramos com pós-filtro (e o de não lidas) leem até o piso; o slice fica como garantia do contrato
     // do "Carregar mais" do front (lote cheio = há mais).
     return conversationsWithData.slice(0, limit);
   },
@@ -650,12 +682,17 @@ export const getConversationById = query({
       inboxRowExtras(ctx, [conversation]),
     ]);
 
+    const aiCtx = await loadAiModeContext(ctx, conversation.organizationId);
+    const aiMode = listAiMode({ ...aiCtx, conversation, lead, contact });
+
     return {
       ...conversation,
       kind: conversation.kind ?? "direct",
       lead,
       contact,
       assignee,
+      aiMode,
+      aiAttending: aiMode === null ? null : aiMode !== "off",
       ...extrasMap.get(conversation._id)!,
     };
   },

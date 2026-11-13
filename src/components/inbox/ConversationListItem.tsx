@@ -13,6 +13,7 @@ import {
   Mic,
   MousePointerClick,
   Phone,
+  Sparkles,
   UserRound,
   Users,
   Video,
@@ -25,7 +26,14 @@ import { useLongPress } from "@/components/inbox/useLongPress";
 import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
 import { accountBadgeLabel, channelIcon, channelLabel, type InboxChannelAccount } from "@/lib/channelAccounts";
 import { formatDate, formatListTime } from "@/lib/format";
-import { activeBotSuspicion, isHandoffPending, type BotSuspicion, type LeadHandoffState } from "@/lib/inboxState";
+import {
+  activeBotSuspicion,
+  isHandoffPending,
+  rowAiMode,
+  type BotSuspicion,
+  type LeadHandoffState,
+} from "@/lib/inboxState";
+import type { ConversationAiMode } from "../../../convex/lib/conversationAiMode";
 import type { ListPreview } from "@/lib/listPreview";
 import { cn } from "@/lib/utils";
 
@@ -56,6 +64,11 @@ export interface ConversationListEntry {
   lastMessageAt?: number | null;
   messageCount: number;
   unreadCount?: number | null;
+  /** A IA atende esta conversa (`aiMode !== "off"`). Ausente = servidor antigo: nada é mostrado. */
+  aiAttending?: boolean | null;
+  aiMode?: string | null;
+  /** Pausa da IA (prazo ou indefinida): o servidor não lê o relógio, a linha confere com `now`. */
+  aiPausedUntil?: number | null;
 }
 
 export interface ConversationListLabel {
@@ -94,6 +107,49 @@ interface ConversationListItemProps {
   now?: number;
   /** Prévia no lugar da última mensagem: "digitando…" ou "Rascunho: …" (ausente = mensagem). */
   preview?: ListPreview;
+  /**
+   * A org usa IA (`listShowsAi`): só então "IA desligada" aparece (org sem IA
+   * vem toda desligada e a lista ficaria cheia de ícone riscado).
+   */
+  showAi?: boolean;
+}
+
+const AI_LABEL: Record<ConversationAiMode, string> = {
+  auto: "IA respondendo",
+  suggest: "IA sugerindo respostas",
+  off: "IA desligada",
+};
+
+/**
+ * Indicador da IA na linha: o mesmo `Sparkles` do cabeçalho da conversa
+ * (`AiControlMenu`; `Bot` âmbar da linha é "Suspeita de robô"). Atendendo =
+ * `text-ai-400`; desligada = cinza e riscado. Ponto único de troca do símbolo.
+ */
+export function AiRowIndicator({ mode }: { mode: ConversationAiMode }) {
+  const off = mode === "off";
+  return (
+    <span
+      role="img"
+      aria-label={AI_LABEL[mode]}
+      className={cn("relative inline-flex shrink-0 items-center justify-center", off ? "text-text-muted" : "text-ai-400")}
+    >
+      <Sparkles size={14} aria-hidden="true" className={off ? "opacity-70" : undefined} />
+      {off && (
+        <span
+          aria-hidden="true"
+          data-testid="ai-off-slash"
+          className="absolute left-0 right-0 top-1/2 h-0.5 -rotate-45 rounded-full bg-text-muted ring-1 ring-surface-base"
+        />
+      )}
+    </span>
+  );
+}
+
+/** Estado da IA a mostrar na linha (`null` = nada). */
+function visibleAiMode(c: ConversationListEntry, now: number, showAi: boolean | undefined): ConversationAiMode | null {
+  const mode = rowAiMode(c, now);
+  if (mode === null) return null;
+  return mode === "off" && !showAi ? null : mode;
 }
 
 const HIGHLIGHT = "text-brand-500";
@@ -187,6 +243,7 @@ function CompactItem({
   onLongPress,
   now,
   preview,
+  showAi,
 }: ConversationListItemProps) {
   // Sempre ligado (com `onLongPress`) e decide dentro: desligar ao entrar na
   // seleção tirava o `onClickCapture` antes do dedo sair, e o clique do iOS ao
@@ -204,6 +261,9 @@ function CompactItem({
   const ChannelIcon = channelIcon(conversation.channel, conversation.channelProvider);
   const accountLabel = showAccount && account ? accountBadgeLabel(account) : "";
   const hasCentral = Boolean(central && (central.unit || central.department || central.attribution));
+  const aiMode = visibleAiMode(conversation, now ?? Date.now(), showAi);
+  // Informações de CRM numa 3ª linha só, discreta: a 2ª é toda da mensagem.
+  const hasCrmLine = Boolean(accountLabel || leadTitle || hasCentral);
 
   return (
     <div
@@ -294,12 +354,6 @@ function CompactItem({
               unread > 0 ? "text-text-secondary" : "text-text-muted"
             )}
           >
-            {accountLabel && <span className="shrink-0 text-caption">{accountLabel} ·</span>}
-            {leadTitle && (
-              <span className="max-w-[45%] shrink-0 truncate text-caption font-medium text-text-secondary" title={leadTitle}>
-                {leadTitle} ·
-              </span>
-            )}
             {overridePreview(preview) ?? (conversation.lastMessagePreview ? (
               <>
                 {PreviewIcon ? <PreviewIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" /> : null}
@@ -336,6 +390,7 @@ function CompactItem({
               <Bot size={12} aria-hidden />
             </span>
           )}
+          {aiMode && <AiRowIndicator mode={aiMode} />}
           {unread > 0 && (
             <span className={cn(BADGE_CLASS, "h-5 min-w-[20px] px-1.5")} aria-label={`${unread} mensagens não lidas`}>
               {unread > 99 ? "99+" : unread}
@@ -343,18 +398,33 @@ function CompactItem({
           )}
         </div>
 
-        {hasCentral && central && (
-          <div className="mt-1 flex min-w-0 items-center gap-1">
-            {central.attribution && <AttributionIcon attribution={central.attribution} />}
-            {central.unit && (
-              <ColorChip name={central.unit.name} color={central.unit.color} title={`Unidade: ${central.unit.name}`} />
+        {hasCrmLine && (
+          <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-text-muted">
+            {accountLabel && <span className="shrink-0">{accountLabel}</span>}
+            {accountLabel && leadTitle && (
+              <span aria-hidden="true" className="shrink-0">
+                ·
+              </span>
             )}
-            {central.department && (
-              <ColorChip
-                name={central.department.name}
-                color={central.department.color}
-                title={`Departamento: ${central.department.name}`}
-              />
+            {leadTitle && (
+              <span className="min-w-0 truncate" title={leadTitle}>
+                {leadTitle}
+              </span>
+            )}
+            {hasCentral && central && (
+              <>
+                {central.attribution && <AttributionIcon attribution={central.attribution} />}
+                {central.unit && (
+                  <ColorChip name={central.unit.name} color={central.unit.color} title={`Unidade: ${central.unit.name}`} />
+                )}
+                {central.department && (
+                  <ColorChip
+                    name={central.department.name}
+                    color={central.department.color}
+                    title={`Departamento: ${central.department.name}`}
+                  />
+                )}
+              </>
             )}
           </div>
         )}
@@ -375,8 +445,11 @@ function DefaultItem({
   central,
   onClick,
   preview,
+  now,
+  showAi,
 }: ConversationListItemProps) {
   const unread = conversation.unreadCount ?? 0;
+  const aiMode = visibleAiMode(conversation, now ?? Date.now(), showAi);
   const PreviewIcon = conversation.lastMessagePreview
     ? previewIcon(conversation.lastMessageContentType ?? null, conversation.lastMessageBridgeType ?? null)
     : null;
@@ -521,6 +594,7 @@ function DefaultItem({
           </span>
         )}
         <div className="flex items-center gap-2 shrink-0">
+          {aiMode && <AiRowIndicator mode={aiMode} />}
           {conversation.assignee && (
             <Avatar
               name={conversation.assignee.name || "?"}

@@ -5,7 +5,7 @@ import { activeTabForPath, TAB_ROUTES } from "./routes";
  * modo, busca, dia e página do Funil/Agenda/Contatos, aba dos painéis de lead e
  * contato, filtros de enum e datas de Tarefas, Histórico e Campanhas) e valem em
  * qualquer org. Todo o resto (`owner`, `assignee`, `actor`, `project`, `member`,
- * `log`, `unit`, `?contact=`, `?conversation=`, `?task=`, `?lead=`, `?handoff=`, `?label=`,
+ * `log`, `unit`, `?contact=`, `?conversation=`, `?task=`, `?lead=`, `?handoff=`, `?label=`, `?stage=`,
  * `?campanha=`, `?post=`…) aponta para uma entidade da org ANTERIOR — as queries
  * autorizam pela org da entidade, então a tela da org nova mostraria o registro
  * da antiga ao lado das listas dela.
@@ -16,6 +16,7 @@ const ORG_AGNOSTIC_PARAMS = new Set([
   "archived",
   "unread",
   "mine",
+  "ai",
   "view",
   "q",
   "date",

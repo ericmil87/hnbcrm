@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   KIND_FILTER_KEY,
+  isPlausibleConvexId,
+  listShowsAi,
+  rowAiMode,
   activeBotSuspicion,
   aiStateChipInfo,
   applyInboxChip,
@@ -249,11 +252,11 @@ describe("chips da lista (celular)", () => {
 
   it("Todas pressionado sem filtro; Grupos só com grupo; uma por etiqueta", () => {
     const chips = inboxFilterChips(none, { labels, showGroups: false, unreadCount: 0 });
-    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "mine", "label:l1"]);
+    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "mine", "label:l1", "stage"]);
     expect(chips[0].pressed).toBe(true);
     expect(chips[1].count).toBeUndefined();
     const withGroups = inboxFilterChips(none, { labels: [], showGroups: true, unreadCount: 12 });
-    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "mine", "group"]);
+    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "mine", "group", "stage"]);
     expect(withGroups[1].count).toBe(12);
   });
 
@@ -263,6 +266,7 @@ describe("chips da lista (celular)", () => {
       { id: "unread", label: "Não lidas", pressed: false, count: undefined },
       { id: "mine", label: "Minhas", pressed: false },
       { id: "direct", label: "Diretas", pressed: true },
+      { id: "stage", label: "Etapa", pressed: false },
     ]);
     const group = inboxFilterChips({ ...none, kind: "group" }, { labels: [], showGroups: false, unreadCount: 0 });
     expect(group.find((c) => c.id === "group")?.pressed).toBe(true);
@@ -315,6 +319,7 @@ describe("chips da lista (celular)", () => {
       ["mine", "Minhas", false],
       ["channel", "Instagram", true],
       ["account", "@casalumiar", true],
+      ["stage", "Etapa", false],
     ]);
     expect(applyInboxChip("account", withChannel)).toEqual({ ...withChannel, configId: null });
     expect(applyInboxChip("channel", withChannel)).toEqual(none);
@@ -326,5 +331,73 @@ describe("chips da lista (celular)", () => {
     expect(unread).toMatchObject({ count: 12, countMore: true });
     const [, zero] = inboxFilterChips(none, { labels: [], showGroups: false, unreadCount: 0, unreadMore: true });
     expect(zero.countMore).toBeUndefined();
+  });
+});
+
+describe("filtros Etapa e IA (chips)", () => {
+  const none = NO_CHIP_FILTERS;
+  const base = { labels: [], showGroups: false, unreadCount: 0 };
+
+  it("Etapa vem depois de Grupos e das etiquetas; IA depois de Etapa, só com IA na org", () => {
+    const labels = [{ _id: "l1", name: "VIP", color: "#10b981" }];
+    expect(inboxFilterChips(none, { ...base, labels, showGroups: true }).map((c) => c.id)).toEqual([
+      "all", "unread", "mine", "group", "label:l1", "stage",
+    ]);
+    expect(inboxFilterChips(none, { ...base, labels, showGroups: true, showAi: true }).map((c) => c.id)).toEqual([
+      "all", "unread", "mine", "group", "label:l1", "stage", "ai",
+    ]);
+  });
+
+  it("etapa escolhida mostra o nome (ou 'Etapa' sem nome) e desmarca Todas", () => {
+    const named = inboxFilterChips({ ...none, stageId: "s1" }, { ...base, stageLabel: "Proposta" });
+    expect(named.find((c) => c.id === "stage")).toMatchObject({ label: "Proposta", pressed: true });
+    expect(named[0].pressed).toBe(false);
+    expect(inboxFilterChips({ ...none, stageId: "s1" }, base).find((c) => c.id === "stage")?.label).toBe("Etapa");
+  });
+
+  it("filtro de IA ativo sempre tem chip (mesmo sem IA no lote) com o rótulo da opção", () => {
+    const chips = inboxFilterChips({ ...none, ai: "off" }, base);
+    expect(chips.find((c) => c.id === "ai")).toMatchObject({ label: "IA desligada", pressed: true });
+    expect(chips[0].pressed).toBe(false);
+  });
+
+  it("tocar no chip ativo limpa; Todas limpa tudo", () => {
+    expect(applyInboxChip("stage", { ...none, stageId: "s1" }).stageId).toBeNull();
+    expect(applyInboxChip("ai", { ...none, ai: "on" }).ai).toBeNull();
+    expect(applyInboxChip("all", { ...none, stageId: "s1", ai: "on" })).toEqual(none);
+  });
+
+  it("lista vazia explica etapa e IA (olham as conversas mais recentes)", () => {
+    const e = { kind: "all" as const, showArchived: false, queueFilterActive: false, labelId: null };
+    expect(emptyListMessage({ ...e, stageId: "s1" }).text).toBe("Nenhuma conversa nesta etapa entre as mais recentes");
+    expect(emptyListMessage({ ...e, ai: "on" }).text).toBe("Nenhuma conversa com a IA atendendo entre as mais recentes");
+    expect(emptyListMessage({ ...e, ai: "off" }).text).toBe("Nenhuma conversa com a IA desligada entre as mais recentes");
+  });
+});
+
+describe("estado da IA na linha", () => {
+  const NOW = 1_000_000;
+  it("campo ausente = null (servidor antigo)", () => {
+    expect(rowAiMode({}, NOW)).toBeNull();
+  });
+  it("usa aiMode; cai em aiAttending sem aiMode", () => {
+    expect(rowAiMode({ aiMode: "suggest" }, NOW)).toBe("suggest");
+    expect(rowAiMode({ aiAttending: true }, NOW)).toBe("auto");
+    expect(rowAiMode({ aiAttending: false }, NOW)).toBe("off");
+  });
+  it("pausa com prazo (que o servidor não vê) desliga; pausa vencida não", () => {
+    expect(rowAiMode({ aiMode: "auto", aiPausedUntil: NOW + 1 }, NOW)).toBe("off");
+    expect(rowAiMode({ aiMode: "auto", aiPausedUntil: NOW - 1 }, NOW)).toBe("auto");
+  });
+  it("listShowsAi: org sem IA (tudo off) esconde; IA em alguma linha ou filtro ativo mostra", () => {
+    expect(listShowsAi([{ aiMode: "off", aiAttending: false }], false)).toBe(false);
+    expect(listShowsAi([{}], false)).toBe(false);
+    expect(listShowsAi([{ aiMode: "off" }, { aiMode: "suggest", aiAttending: true }], false)).toBe(true);
+    expect(listShowsAi([{ aiMode: "off" }], true)).toBe(true);
+  });
+  it("isPlausibleConvexId barra lixo da URL", () => {
+    expect(isPlausibleConvexId("k17abcdefghijklmnopqrstuvwxyz0123".slice(0, 32))).toBe(true);
+    expect(isPlausibleConvexId("<script>")).toBe(false);
+    expect(isPlausibleConvexId(null)).toBe(false);
   });
 });

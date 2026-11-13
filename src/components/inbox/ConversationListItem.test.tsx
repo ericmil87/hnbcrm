@@ -266,3 +266,61 @@ describe("ConversationListItem: prévia digitando / rascunho", () => {
     });
   }
 });
+
+describe("ConversationListItem compact: prévia e CRM", () => {
+  const NOW2 = new Date(2026, 10, 7, 12).getTime();
+  const compact = { variant: "compact" as const, now: NOW2, showAccount: false };
+
+  it("a 2ª linha é toda da mensagem; o título do lead vai para a linha de CRM", () => {
+    renderItem({ lead: { title: "Maria — Vivência Maré Nova" }, lastMessageDirection: "outbound" }, compact);
+    const preview = screen.getByText(/Você: Posso confirmar\?/);
+    expect(preview.closest("p")).not.toHaveTextContent("Vivência");
+    const lead = screen.getByText("Maria — Vivência Maré Nova");
+    expect(lead.closest("p")).toBeNull();
+    expect(lead).toHaveClass("truncate");
+  });
+
+  it("sem título diferente do nome e sem conta, não há linha de CRM", () => {
+    renderItem({ lead: { title: "Maria Silva" } }, compact);
+    expect(screen.queryByText("Maria Silva", { selector: "span.truncate.min-w-0" })).toBeNull();
+  });
+});
+
+describe("ConversationListItem: indicador da IA", () => {
+  const NOW2 = new Date(2026, 10, 7, 12).getTime();
+  for (const variant of ["default", "compact"] as const) {
+    it(`${variant}: atendendo tem rótulo acessível`, () => {
+      renderItem({ aiMode: "auto", aiAttending: true }, { variant, now: NOW2, showAi: true });
+      expect(screen.getByRole("img", { name: "IA respondendo" })).toBeInTheDocument();
+    });
+  }
+
+  it("sugerindo e desligada", () => {
+    renderItem({ aiMode: "suggest", aiAttending: true }, { variant: "compact", now: NOW2, showAi: true });
+    expect(screen.getByRole("img", { name: "IA sugerindo respostas" })).toBeInTheDocument();
+  });
+
+  it("desligada aparece riscada só quando a org usa IA", () => {
+    renderItem({ aiMode: "off", aiAttending: false }, { variant: "compact", now: NOW2, showAi: true });
+    expect(screen.getByRole("img", { name: "IA desligada" })).toBeInTheDocument();
+    expect(screen.getByTestId("ai-off-slash")).toBeInTheDocument();
+  });
+
+  it("org sem IA (showAi falso): nada de ícone riscado", () => {
+    renderItem({ aiMode: "off", aiAttending: false }, { variant: "compact", now: NOW2, showAi: false });
+    expect(screen.queryByRole("img", { name: "IA desligada" })).toBeNull();
+  });
+
+  it("servidor antigo (sem o campo): nada", () => {
+    renderItem({}, { variant: "compact", now: NOW2, showAi: true });
+    expect(screen.queryByRole("img", { name: /^IA / })).toBeNull();
+  });
+
+  it("pausa com prazo vira desligada na linha", () => {
+    renderItem(
+      { aiMode: "auto", aiAttending: true, aiPausedUntil: NOW2 + 3600_000 },
+      { variant: "compact", now: NOW2, showAi: true }
+    );
+    expect(screen.getByRole("img", { name: "IA desligada" })).toBeInTheDocument();
+  });
+});

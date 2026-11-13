@@ -160,7 +160,7 @@ describe("unread da equipe por conversa", () => {
     expect(count).toBe(3);
   });
 
-  test("getConversations: não lidas primeiro, depois última mensagem desc", async () => {
+  test("getConversations: ordem só por última mensagem (lida recente fica acima de não lida antiga)", async () => {
     const t = setup();
     const { organizationId, adminUserId, leadA, leadB, leadC } = await seedOrg(t);
     const t0 = Date.now();
@@ -175,8 +175,7 @@ describe("unread da equipe por conversa", () => {
 
     const asAdmin = t.withIdentity({ subject: `${adminUserId}|s1` });
 
-    // Lê a conversa mais RECENTE (C): ela vai para o grupo de lidas, atrás
-    // das não lidas B e A — e entre B e A vence a de mensagem mais nova.
+    // Lê a conversa mais RECENTE (C): continua no topo (não pula de lugar).
     const conversationC = await t.run(async (ctx) => {
       const conversations = await ctx.db
         .query("conversations")
@@ -192,9 +191,9 @@ describe("unread da equipe por conversa", () => {
       organizationId,
     })) as Array<{ leadId: Id<"leads">; unreadCount?: number }>;
 
-    expect(list.map((c) => c.leadId)).toEqual([leadB, leadA, leadC]);
-    expect((list[0].unreadCount ?? 0) > 0).toBe(true);
-    expect(list[2].unreadCount ?? 0).toBe(0);
+    expect(list.map((c) => c.leadId)).toEqual([leadC, leadB, leadA]);
+    expect(list[0].unreadCount ?? 0).toBe(0);
+    expect((list[2].unreadCount ?? 0) > 0).toBe(true);
   });
 });
 

@@ -6,6 +6,14 @@ import {
   withoutSearchParam,
 } from "./orgSwitch";
 
+describe("pathAfterOrgSwitch (filtros da lista de Conversas)", () => {
+  it("etapa (id de outra org) cai como a etiqueta; IA e Minhas valem em qualquer org", () => {
+    expect(pathAfterOrgSwitch("/app/entrada", "?stage=abc&label=l1&mine=1&ai=on")).toBe(
+      "/app/entrada?mine=1&ai=on"
+    );
+  });
+});
+
 describe("pathAfterOrgSwitch", () => {
   it("remove deep-links de entidade e mantém a aba", () => {
     expect(pathAfterOrgSwitch("/app/entrada", "?conversation=abc")).toBe("/app/entrada");
