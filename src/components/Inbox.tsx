@@ -20,7 +20,7 @@ import { useInboxFilters } from "@/hooks/useInboxFilters";
 import { useConversationList } from "@/hooks/useConversationList";
 import { useConversationSelection } from "@/hooks/useConversationSelection";
 import { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
-import { filterConversations } from "@/lib/inboxState";
+import { filterConversations, mergeOpenConversation } from "@/lib/inboxState";
 import { jumpableMatches } from "@/lib/inboxSearch";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { NewConversationModal } from "@/components/inbox/NewConversationModal";
@@ -132,9 +132,10 @@ export function Inbox() {
   const filteredConversations = filterConversations(validConversations, {
     kind: kindFilter, labelId: filterLabelId, unreadOnly: filters.unreadOnly, keepId: selectedConversation,
   });
-  const listedConversations: ConversationListEntry[] = selection.pinnedConversation
-    ? [selection.pinnedConversation as ConversationListEntry, ...filteredConversations]
-    : filteredConversations;
+  const listedConversations: ConversationListEntry[] = mergeOpenConversation(
+    filteredConversations as ConversationListEntry[],
+    selection.pinnedConversation as ConversationListEntry | null
+  );
 
   // Conversa de GRUPO (v0.57): sala, assunto e membros (nomes por JID ficam no thread).
   const { isGroupConversation, groupChatId, groupChat, groupSubject, groupParticipantsCount } =

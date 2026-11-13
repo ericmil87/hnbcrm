@@ -152,9 +152,16 @@ export interface ParsedBridgePicture {
   timestamp: number;
 }
 
+/** `Picture` de GRUPO (`@g.us`): só marca a foto da sala como vencida ou removida. */
+export interface ParsedBridgeGroupPicture {
+  groupJid: string;
+  remove: boolean;
+}
+
 export type ParsedBridgeEvent =
   | { kind: "message"; message: ParsedBridgeInbound }
   | { kind: "picture"; picture: ParsedBridgePicture }
+  | { kind: "group_picture"; picture: ParsedBridgeGroupPicture }
   | { kind: "receipt"; receipt: ParsedBridgeReceipt }
   | { kind: "reaction"; reaction: ParsedBridgeReaction }
   | { kind: "chat_presence"; presence: ParsedBridgePresence }
@@ -1550,13 +1557,18 @@ export function parseBridgeEvent(payload: unknown): ParsedBridgeEvent {
 }
 
 /**
- * whatsmeow `Picture`: só JID de TELEFONE de usuário. Grupo (`@g.us`), `@lid`,
+ * whatsmeow `Picture`: JID de TELEFONE de usuário ou de GRUPO (`@g.us`, `group_picture`). `@lid`,
  * newsletter/broadcast e JID ausente são ignorados (nada escrito).
  */
 function parsePictureEvent(event: Record<string, any>): ParsedBridgeEvent {
   const jid = String(pick(event, "JID", "Jid", "jid") ?? "");
   if (!jid) return { kind: "ignored", reason: "picture without jid" };
-  if (jid.endsWith("@g.us")) return { kind: "ignored", reason: "group picture" };
+  if (jid.endsWith("@g.us")) {
+    return {
+      kind: "group_picture",
+      picture: { groupJid: jid, remove: pick(event, "Remove", "remove") === true },
+    };
+  }
   if (isNewsletterOrBroadcastJid(jid)) return { kind: "ignored", reason: "newsletter/broadcast picture" };
   if (isLidJid(jid) || !isPhoneJid(jid)) return { kind: "ignored", reason: "picture of non-phone jid" };
   const phone = jidToPhone(jid);

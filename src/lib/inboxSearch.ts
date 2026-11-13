@@ -93,3 +93,10 @@ export function contactResultName(row: {
   if (row.fallbackName?.trim()) return row.fallbackName.trim();
   return row.phoneSuffix ? `Sem nome · final ${row.phoneSuffix}` : "Sem nome";
 }
+
+/** Rótulo do ícone "casou na leitura": arquivo (PDF) guarda o texto lido no mesmo campo da imagem. */
+export function readingMatchInfo(contentType?: string | null): { kind: "file" | "image"; label: string } {
+  return contentType === "file"
+    ? { kind: "file", label: "Encontrado no texto do arquivo" }
+    : { kind: "image", label: "Encontrado na leitura da imagem" };
+}

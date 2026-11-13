@@ -60,7 +60,7 @@ import {
 import { spendBlockedNow } from "./aiSpend";
 import { createHandoffCore } from "./handoffs";
 import { coalesceKeys, createNotification } from "./lib/notify";
-import { visionEnabledForOrg } from "./lib/mediaEnrichment";
+import { attendantActive, visionEnabledForOrg } from "./lib/mediaEnrichment";
 import { membersWithPermission } from "./lib/groupChatCore";
 import {
   findParticipantByKey,
@@ -463,12 +463,14 @@ export const internalClaimGroupTurn = internalMutation({
     // Espera pelo enriquecimento da mídia — mesma regra do 1:1: sem isto a IA
     // responde ao "[imagem]" cru quando alguém manda um print e a menciona.
     const visionEnabled = visionEnabledForOrg(org);
-    if (process.env.WHISPER_SERVICE_URL || visionEnabled) {
+    // PDF de grupo lido no recebimento (`pdfRead.ts`) também segura o turno.
+    if (process.env.WHISPER_SERVICE_URL || visionEnabled || attendantActive(org)) {
       const waitUntil = item.mediaWaitUntil ?? item.createdAt + MEDIA_MAX_WAIT_MS;
       if (
         now < waitUntil &&
         (await hasMediaAwaitingEnrichment(ctx, conversation._id, item.createdAt - MEDIA_MAX_WAIT_MS, {
           visionEnabled,
+          audio: !!process.env.WHISPER_SERVICE_URL || visionEnabled,
         }))
       ) {
         await ctx.db.patch(item._id, {

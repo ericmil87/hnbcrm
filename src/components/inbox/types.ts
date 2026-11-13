@@ -9,6 +9,9 @@ export interface InboxAttachmentFile {
   mimeType: string;
   size: number;
   url: string | null;
+  /** Dimensões da imagem em pixels (ausentes em anexos antigos). */
+  width?: number;
+  height?: number;
 }
 
 export interface InboxMessage {

@@ -24,7 +24,7 @@ import {
   applyCampaignGroupReplyHook,
 } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
-import { scheduleAudioTranscription } from "./lib/mediaEnrichment";
+import { scheduleAudioTranscription, schedulePdfRead } from "./lib/mediaEnrichment";
 import { configProvider } from "./channelConfigs";
 import { ChannelTransport, configTransport } from "./lib/channelTransport";
 import { metaConversationWindow, metaWindowClosesAt, reactionNoteFor } from "./lib/metaSend";
@@ -45,6 +45,7 @@ import { RADAR_MIN_CHARS, matchesKeyword } from "./lib/groupAgentCore";
 import { parseTestCommand, phoneAllowedForReset } from "./testReset";
 import { getLeadRef } from "./lib/leadRef";
 import { maybeScheduleContactAvatar } from "./lib/contactAvatarOps";
+import { maybeScheduleGroupAvatar } from "./lib/groupAvatarOps";
 import { contactAvatarFetchEnabled } from "./lib/contactAvatar";
 import { getRuntime, upsertRuntime } from "./lib/conversationRuntime";
 import { discardDuplicateAttachments } from "./lib/fileRefs";
@@ -71,9 +72,11 @@ import {
   CONVERSATIONS_DEFAULT_LIMIT,
   CONVERSATIONS_MAX_LIMIT,
   CONVERSATIONS_POST_FILTER_READ_FLOOR,
+  STAGE_FILTER_LEAD_CAP,
   MESSAGES_DEFAULT_LIMIT,
   MESSAGES_MAX_LIMIT,
 } from "./lib/inboxLimits";
+import { unreadFields, inboxUnreadTimeIndexEnabled } from "./lib/unreadFields";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import { normalizeCampaignPhone } from "./lib/phone";
@@ -471,11 +474,44 @@ export const getConversations = query({
     // "Não lidas" por índice: a ordem do índice é por CONTADOR, não por tempo.
     // Com o piso, as mais recentes entram mesmo com contador pequeno (a lista sai
     // por tempo); acima do piso ainda trunca por contador.
-    const readLimit = hasPostFilter || unreadByIndex
+    // Com `INBOX_UNREAD_TIME_INDEX=1` o ramo lê pelo índice por TEMPO (`hasUnread`)
+    // e `limit` basta (sem piso); desligado = comportamento anterior.
+    const unreadByTime = unreadByIndex && inboxUnreadTimeIndexEnabled();
+    const readLimit = hasPostFilter || (unreadByIndex && !unreadByTime)
       ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR)
       : limit;
     let conversations;
-    if (!args.leadId && args.channelConfigId) {
+    // Filtro por ETAPA: lê até STAGE_FILTER_LEAD_CAP + 1 leads da etapa (índice
+    // by_organization_and_stage). Etapa com ATÉ o teto: caminho exato (conversas de
+    // cada lead por `by_lead`, os leads lidos viram o `leadMap`; contatos só dos
+    // leads com conversa). Acima do teto: cai nos ramos gerais abaixo (pós-filtro por
+    // `lead.stageId` sobre as conversas mais recentes, piso de 200), que privilegia
+    // quem está ativo; ali "lote cheio = há mais" segue valendo (slice final).
+    let stageLeadMap: Map<string, any> | null = null;
+    const stageLeads = stageOnly
+      ? await ctx.db.query("leads")
+        .withIndex("by_organization_and_stage", (q) =>
+          q.eq("organizationId", args.organizationId).eq("stageId", args.stageId!)
+        )
+        .order("desc")
+        .take(STAGE_FILTER_LEAD_CAP + 1)
+      : [];
+    if (stageOnly && stageLeads.length <= STAGE_FILTER_LEAD_CAP) {
+      const perLead = await Promise.all(stageLeads.map((l) =>
+        ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", l._id)).take(10)
+      ));
+      stageLeadMap = new Map(stageLeads.map((l) => [l._id as string, l]));
+      conversations = perLead.flat();
+      if (args.channelConfigId) conversations = conversations.filter(c => c.channelConfigId === args.channelConfigId);
+      if (args.archived) conversations = conversations.filter(c => !!c.archivedAt);
+      else conversations = conversations.filter(c => !c.archivedAt);
+      conversations.sort((a, b) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt));
+      // Sem filtro que dependa de lead/contato: corta antes de ler os contatos.
+      if (!mineOnly && !args.assignedTo && !aiFilter && !args.assignedToMe && !unreadOnly &&
+          !args.channel && !args.unitId && !args.departmentId && !args.noDepartment) {
+        conversations = conversations.slice(0, limit);
+      }
+    } else if (!args.leadId && args.channelConfigId) {
       // Conta: o índice já devolve só as conversas daquele config e da org.
       // Setor/unidade/responsável ficam como pós-filtros abaixo.
       conversations = await ctx.db.query("conversations")
@@ -510,6 +546,15 @@ export const getConversations = query({
       conversations = await ctx.db.query("conversations")
         .withIndex("by_lead_and_channel", (q) => q.eq("leadId", args.leadId!))
         .take(limit);
+    } else if (unreadByTime) {
+      // "Não lidas" por TEMPO: `hasUnread` (porta lib/unreadFields) + lastMessageAt
+      // desc; `take(limit)` exato, "Carregar mais" funciona (lote cheio = há mais).
+      conversations = await ctx.db.query("conversations")
+        .withIndex("by_organization_and_archived_and_has_unread_and_last_message", (q) =>
+          q.eq("organizationId", args.organizationId).eq("archivedAt", undefined).eq("hasUnread", true)
+        )
+        .order("desc")
+        .take(readLimit); // com pós-filtro `readLimit` é o piso; sem, é `limit`
     } else if (unreadByIndex) {
       // "Não lidas" nas ativas: só conversas com `unreadCount > 0` (o take não
       // gasta vagas com lidas). A ordem do índice é por contador; o sort final
@@ -567,8 +612,11 @@ export const getConversations = query({
     }
 
     // Batch fetch related data
-    const leadMap = await batchGet(ctx.db, conversations.map(c => c.leadId));
-    const leads = Array.from(leadMap.values());
+    const leadMap = stageLeadMap ?? await batchGet(ctx.db, conversations.map(c => c.leadId));
+    // Caminho de etapa: contatos/responsáveis só dos leads que têm conversa no resultado.
+    const leads: any[] = stageLeadMap
+      ? conversations.map(c => (c.leadId ? stageLeadMap!.get(c.leadId) : undefined)).filter(Boolean)
+      : Array.from(leadMap.values());
     const [contactMap, assigneeMap, extrasMap, aiCtx] = await Promise.all([
       batchGet(ctx.db, leads.map((l: any) => l?.contactId)),
       batchGet(ctx.db, leads.map((l: any) => l?.assignedTo)),
@@ -820,6 +868,8 @@ export const getMessages = query({
           mimeType: file.mimeType,
           size: file.size,
           url: attachmentUrlMap.get(fileId) ?? null,
+          // Dimensões da imagem (quando gravadas): a bolha reserva o espaço.
+          ...(file.width && file.height ? { width: file.width, height: file.height } : {}),
         };
       }).filter(Boolean);
 
@@ -1175,7 +1225,7 @@ export const setConversationArchived = mutation({
       archivedAt: args.archived ? now : undefined,
       // Arquivar = dar a conversa por lida: zera o contador (badge e teto de
       // `getInboxUnreadCount`). Desarquivar NÃO restaura o contador.
-      ...(args.archived ? { unreadCount: 0, lastReadAt: now } : {}),
+      ...(args.archived ? { ...unreadFields(0), lastReadAt: now } : {}),
       updatedAt: now,
     });
     return null;
@@ -1209,7 +1259,7 @@ export const bulkSetConversationsArchived = mutation({
       await ctx.db.patch(conversationId, {
         archivedAt: args.archived ? now : undefined,
         // Mesma regra do `setConversationArchived`: arquivar zera o contador.
-        ...(args.archived ? { unreadCount: 0, lastReadAt: now } : {}),
+        ...(args.archived ? { ...unreadFields(0), lastReadAt: now } : {}),
         updatedAt: now,
       });
       changed++;
@@ -1555,6 +1605,15 @@ export const sendMessage = mutation({
       isInternal: args.isInternal,
     });
 
+    // PDF que a equipe mandou: o texto é lido (sem LLM) para a IA saber o que foi
+    // enviado; nunca acorda a IA (porta única, `lib/mediaEnrichment`).
+    await schedulePdfRead(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      isInternal: args.isInternal,
+    });
+
     return messageId;
   },
 });
@@ -1628,6 +1687,7 @@ export const forwardMessage = mutation({
           mimeType: file.mimeType,
           size: file.size,
           fileType: "message_attachment",
+          ...(file.width && file.height ? { width: file.width, height: file.height } : {}),
           createdAt: now,
         });
         copies.push(copyId);
@@ -1879,6 +1939,8 @@ export const internalGetMessages = internalQuery({
           mimeType: file.mimeType,
           size: file.size,
           url: attachmentUrlMap.get(fileId) ?? null,
+          // Dimensões da imagem (quando gravadas): a bolha reserva o espaço.
+          ...(file.width && file.height ? { width: file.width, height: file.height } : {}),
         };
       }).filter(Boolean);
 
@@ -2107,6 +2169,14 @@ export async function internalSendMessageCore(
     isInternal: args.isInternal,
   });
 
+  // PDF que a equipe mandou: texto lido (sem LLM), nunca acorda a IA.
+  await schedulePdfRead(ctx, {
+    messageId,
+    contentType: args.contentType,
+    attachments: args.attachments,
+    isInternal: args.isInternal,
+  });
+
   return messageId;
 }
 
@@ -2285,7 +2355,7 @@ export const internalReceiveMessage = internalMutation({
       lastMessageAt: now,
       lastInboundAt: now, // (re)opens the 24h customer-service window
       messageCount: conversation.messageCount + 1,
-      unreadCount: (conversation.unreadCount ?? 0) + 1, // zerado por markConversationRead
+      ...unreadFields((conversation.unreadCount ?? 0) + 1), // zerado por markConversationRead
       updatedAt: now,
       ...firstInboundPatch(conversation, now),
       ...(await channelConfigPatchFor(ctx, conversation, args.channelConfigId)),
@@ -2362,6 +2432,13 @@ export const internalReceiveMessage = internalMutation({
       messageId,
       contentType: args.contentType,
       attachments: args.attachments,
+    });
+    // PDF do cliente: texto lido no recebimento (gate `attendantActive`, sem LLM).
+    await schedulePdfRead(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
     });
 
     // Tradução automática (F1): no-op sem o módulo; grupo e mensagem do
@@ -2524,6 +2601,12 @@ export const internalReceiveDeviceMessage = internalMutation({
 
     // Áudio gravado no celular: transcrito (histórico importado não — ver lib).
     await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
+    });
+    await schedulePdfRead(ctx, {
       messageId,
       contentType: args.contentType,
       attachments: args.attachments,
@@ -2738,10 +2821,14 @@ export const internalReceiveGroupMessage = internalMutation({
       lastMessageAt: Math.max(conversation.lastMessageAt ?? 0, sentAt),
       lastInboundAt: sentAt,
       messageCount: conversation.messageCount + 1,
-      unreadCount: (conversation.unreadCount ?? 0) + 1,
+      ...unreadFields((conversation.unreadCount ?? 0) + 1),
       updatedAt: now,
       ...(await lastMessagePatchForId(ctx, conversation, messageId)),
     });
+
+    // Foto da sala: o doc do grupo e a conversa JÁ estão lidos; o carimbo
+    // `avatarNextCheckAt` decide sem nenhuma leitura nem escrita no caso comum.
+    await maybeScheduleGroupAvatar(ctx, { group, conversation });
 
     // `activities` exige leadId e a timeline é do lead — num grupo o rastro da
     // sala vive em `groupChats.timeline`, e uma linha por mensagem a encheria.
@@ -2773,6 +2860,12 @@ export const internalReceiveGroupMessage = internalMutation({
       messageId,
       contentType: args.contentType,
       attachments: args.attachments,
+    });
+    await schedulePdfRead(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
     });
 
     // Tradução automática (F1): grupo nunca é traduzido — a conversa já
@@ -3558,7 +3651,7 @@ export const markConversationRead = mutation({
 
     // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
     // lista) e avança a marca d'água — independe dos recibos logo abaixo.
-    await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+    await ctx.db.patch(args.conversationId, { ...unreadFields(0), lastReadAt: now });
     // Foto de perfil do contato: só ao abrir com não lidas (o front chama esta
     // mutation a cada mensagem vista, a cada ~400 ms; sem não lidas retornamos
     // acima sem ler nada). Custo: lead + contato + 1 linha lateral; vencida →
@@ -3576,6 +3669,14 @@ export const markConversationRead = mutation({
           ? await ctx.db.get(avatarLead.contactId)
           : null;
       await maybeScheduleContactAvatar(ctx, { contact: avatarContact, conversation });
+    }
+
+    // Foto da sala (mesmo padrão): só ao abrir com não lidas; 1 leitura do doc do grupo.
+    if (conversation.kind === "group" && conversation.groupChatId && contactAvatarFetchEnabled()) {
+      const avatarGroup = await ctx.db.get(conversation.groupChatId);
+      if (avatarGroup && avatarGroup.organizationId === conversation.organizationId) {
+        await maybeScheduleGroupAvatar(ctx, { group: avatarGroup, conversation });
+      }
     }
 
     // Instagram/Messenger: "visto" para o cliente (best-effort, um POST por leitura).

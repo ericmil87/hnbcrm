@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Download, FileText, File as FileIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { attachmentBox, type AttachmentBox } from "@/lib/attachmentBox";
 import { AudioPlayer } from "./AudioPlayer";
 import { ImageLightbox } from "./ImageLightbox";
 import {
@@ -18,6 +19,21 @@ interface MessageAttachmentsProps {
   sticker?: boolean;
   /** Marks audio attachments as voice notes (mic glyph). */
   voiceNote?: boolean;
+}
+
+/**
+ * Imagem com dimensões conhecidas: a caixa final já vale antes de carregar
+ * (atributos + `aspect-ratio`), então a bolha não cresce e a leitura não pula.
+ * `max-w-full` + altura automática mantêm a proporção se a bolha for mais
+ * estreita. Sem dimensões (anexo antigo) devolve `null` e vale o CSS de sempre.
+ */
+function reservedBox(box: AttachmentBox | null) {
+  if (!box) return null;
+  return {
+    width: box.width,
+    height: box.height,
+    style: { width: box.width, aspectRatio: `${box.width} / ${box.height}` },
+  };
 }
 
 function DocumentIcon({ mimeType }: { mimeType: string }) {
@@ -60,19 +76,26 @@ export function MessageAttachments({
 
         // Sticker — small, transparent, no lightbox.
         if (sticker && isImageMime(file.mimeType)) {
+          const reserved = reservedBox(attachmentBox(file.width, file.height, "sticker"));
           return (
             <img
               key={file._id}
               src={file.url}
               alt="Figurinha"
               loading="lazy"
-              className="max-w-[128px] max-h-[128px] object-contain"
+              {...(reserved ?? {})}
+              className={
+                reserved
+                  ? "max-w-full h-auto object-contain"
+                  : "max-w-[128px] max-h-[128px] object-contain"
+              }
             />
           );
         }
 
         // Image — thumbnail that opens a lightbox.
         if (isImageMime(file.mimeType)) {
+          const reserved = reservedBox(attachmentBox(file.width, file.height, "image"));
           return (
             <button
               key={file._id}
@@ -85,7 +108,12 @@ export function MessageAttachments({
                 src={file.url}
                 alt={file.name}
                 loading="lazy"
-                className="max-w-[240px] max-h-[240px] object-cover rounded-lg"
+                {...(reserved ?? {})}
+                className={
+                  reserved
+                    ? "max-w-full h-auto object-cover rounded-lg"
+                    : "max-w-[240px] max-h-[240px] object-cover rounded-lg"
+                }
               />
             </button>
           );

@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
-import { ArrowLeft, ChevronDown, ChevronUp, Image as ImageIcon, Mic, X } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, FileText, Image as ImageIcon, Mic, X } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { useConversationInteraction } from "@/components/inbox/conversationInteraction";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { formatDateTime } from "@/lib/format";
-import { SEARCH_MESSAGES_CAP, jumpableMatches, matchCounterLabel, snippetWindow, stepMatch } from "@/lib/inboxSearch";
+import { SEARCH_MESSAGES_CAP, jumpableMatches, matchCounterLabel, readingMatchInfo, snippetWindow, stepMatch } from "@/lib/inboxSearch";
 import { cn } from "@/lib/utils";
 
 const iconButton =
@@ -18,6 +18,7 @@ export interface ConversationSearchMatch {
   snippetText: string;
   matchedTranscript?: boolean;
   matchedImage?: boolean;
+  contentType?: string;
 }
 
 export interface ConversationSearchBarViewProps {
@@ -104,9 +105,12 @@ export function ConversationSearchBarView({
         <p className="flex items-center gap-1.5 px-4 pb-1.5 text-xs text-text-secondary">
           <span className="shrink-0 text-text-muted tabular-nums">{formatDateTime(current.createdAt)}</span>
           {current.matchedTranscript && <Mic size={12} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />}
-          {current.matchedImage && (
-            <ImageIcon size={12} className="shrink-0 text-text-muted" aria-label="Encontrado na leitura da imagem" />
-          )}
+          {current.matchedImage &&
+            (readingMatchInfo(current.contentType).kind === "file" ? (
+              <FileText size={12} className="shrink-0 text-text-muted" aria-label={readingMatchInfo(current.contentType).label} />
+            ) : (
+              <ImageIcon size={12} className="shrink-0 text-text-muted" aria-label={readingMatchInfo(current.contentType).label} />
+            ))}
           <span className="min-w-0 truncate">
             {snippet.ellipsis ? "…" : ""}
             {snippet.before}

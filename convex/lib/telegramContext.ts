@@ -21,6 +21,7 @@ import {
 import { maskDigitRuns } from "./telegramFormat";
 import { wrapUntrustedJson } from "./promptEnvelope";
 import { isSticker } from "./mediaEnrichment";
+import { docReadOf } from "./pdfRead";
 import { translatedPreview } from "./notificationCopy";
 import { resolveTranslationSettings } from "./translationGate";
 
@@ -53,6 +54,10 @@ export async function messageText(
     imageDescription: m.imageDescription,
     fileName: file?.name,
     fileMime: file?.mimeType,
+    // Contexto do LLM (sem `preview`): trecho do PDF lido; cartões/relay não levam.
+    ...(!preview && m.contentType === "file" && docReadOf(m.metadata)?.status === "done" && m.imageDescription
+      ? { fileText: m.imageDescription }
+      : {}),
     sticker: isSticker(m.metadata as Record<string, unknown> | undefined),
   });
 }

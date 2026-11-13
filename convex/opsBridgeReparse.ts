@@ -22,6 +22,7 @@
  *
  *   npx convex run opsBridgeReparse:internalReparseUnknownBridgeMessages '{"dryRun":true}'
  */
+import { unreadFields } from "./lib/unreadFields";
 import { v } from "convex/values";
 import { withMessageSearchPatch } from "./lib/messageSearch";
 import { internalMutation } from "./_generated/server";
@@ -254,7 +255,7 @@ export const internalReparseUnknownBridgeMessages = internalMutation({
         const conversation = await getConversation(conversationId);
         if (!conversation) continue;
         await ctx.db.patch(conversationId, {
-          unreadCount: Math.max(0, (conversation.unreadCount ?? 0) - delta),
+          ...unreadFields((conversation.unreadCount ?? 0) - delta),
           ...(clearPreview.has(conversationId) ? CLEARED_LAST_MESSAGE_PATCH : {}),
         });
         clearPreview.delete(conversationId);

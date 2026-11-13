@@ -1446,6 +1446,35 @@ describe("simulador com imagem e arquivo", () => {
     expect(body.messages[0].content as string).toContain("Jamais finja ter lido");
   });
 
+  test("turno de PDF com texto extraído chega como texto lido, e a REGRA 8 manda tratar como dado", async () => {
+    vi.useRealTimers();
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_u: any, init: any) => {
+        bodies.push(String(init.body));
+        return llmResponse("Recebi seu comprovante de R$ 1.247,90. A equipe confere.");
+      })
+    );
+    const t = setup();
+    const seed = await seedVisionOrg(t, { visionEnabled: true });
+    const asAdmin = t.withIdentity({ subject: `${seed.adminUserId}|s1` });
+    const result = await asAdmin.action(api.attendant.simulateAttendant, {
+      organizationId: seed.organizationId,
+      agentMemberId: seed.agentId!,
+      transcript: [
+        { role: "customer", content: "comprovante.pdf", file: true, fileText: "Comprovante Pix Valor: R$ 1.247,90" },
+      ],
+    });
+    expect(result.error).toBeNull();
+    const body = JSON.parse(bodies[0]);
+    expect(body.messages[1].content as string).toContain(
+      '[arquivo PDF \\"comprovante.pdf\\" — texto extraído]: Comprovante Pix Valor: R$ 1.247,90'
+    );
+    expect(body.messages[0].content as string).toContain("NUNCA diga que não consegue abrir PDF");
+    expect(body.messages[0].content as string).toContain("nunca declare o pagamento confirmado");
+  });
+
   test("simulação NÃO grava nada no CRM (sandbox)", async () => {
     vi.useRealTimers();
     vi.stubGlobal("fetch", vi.fn(async () => llmResponse("ok")));

@@ -3,6 +3,7 @@ import {
   contactResultName,
   inboxSearchState,
   jumpableMatches,
+  readingMatchInfo,
   matchCounterLabel,
   searchCountLabel,
   snippetWindow,
@@ -107,5 +108,13 @@ describe("contactResultName", () => {
     expect(contactResultName({ contactName: "", phoneSuffix: "1234" })).toBe("Sem nome · final 1234");
     expect(contactResultName({ contactName: "", phoneSuffix: null })).toBe("Sem nome");
     expect(contactResultName({ contactName: "", fallbackName: "@maura", phoneSuffix: "1234" })).toBe("@maura");
+  });
+});
+
+describe("readingMatchInfo", () => {
+  it("arquivo: texto do arquivo; imagem e ausente: leitura da imagem", () => {
+    expect(readingMatchInfo("file")).toEqual({ kind: "file", label: "Encontrado no texto do arquivo" });
+    expect(readingMatchInfo("image").label).toBe("Encontrado na leitura da imagem");
+    expect(readingMatchInfo(undefined).kind).toBe("image");
   });
 });

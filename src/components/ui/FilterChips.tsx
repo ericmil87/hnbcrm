@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
+import { chipsWheelDelta } from "@/lib/chipsWheel";
 import { cn } from "@/lib/utils";
 
 export interface FilterChip {
@@ -28,8 +29,23 @@ interface FilterChipsProps {
  */
 export function FilterChips({ chips, onToggle, ariaLabel, className }: FilterChipsProps) {
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  const barRef = useRef<HTMLDivElement>(null);
   const [focusIndex, setFocusIndex] = useState(0);
   const active = Math.min(focusIndex, Math.max(0, chips.length - 1));
+
+  // Mouse: a roda vertical rola a fileira na horizontal (sem barra de rolagem).
+  useEffect(() => {
+    const el = barRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const delta = chipsWheelDelta(e, el);
+      if (delta === null) return;
+      e.preventDefault();
+      el.scrollLeft += delta;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const n = chips.length;
@@ -47,6 +63,7 @@ export function FilterChips({ chips, onToggle, ariaLabel, className }: FilterChi
 
   return (
     <div
+      ref={barRef}
       role="toolbar"
       aria-label={ariaLabel}
       aria-orientation="horizontal"

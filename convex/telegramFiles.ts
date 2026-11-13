@@ -32,6 +32,7 @@ import { downloadTelegramFile, getFile } from "./lib/telegramApi";
 import { handleTelegramReplyFile, type ActionResult } from "./lib/telegramActions";
 import { conversationCrmUrl } from "./lib/telegramMedia";
 import { discardPromptDraft } from "./lib/telegramDrafts";
+import { imageSizeFields } from "./lib/imageSize";
 import {
   MAX_TELEGRAM_FILE_BYTES,
   extensionOf,
@@ -246,7 +247,7 @@ export const internalReceiveReplyFile = internalAction({
     const storageId = await ctx.storage.store(new Blob([dl.bytes], { type: mime }));
     const saved: { ok: true; fileId: Id<"files"> } | { ok: false; reason: string; code?: "mime" | "quota" } = await ctx.runMutation(
       internal.whatsapp.internalSaveInboundAttachment,
-      { organizationId: target.organizationId, storageId, name, mimeType: mime, size: dl.bytes.byteLength },
+      { organizationId: target.organizationId, storageId, name, mimeType: mime, size: dl.bytes.byteLength, ...imageSizeFields(mime, new Uint8Array(dl.bytes)) },
     );
     if (!saved.ok) {
       // The port already deleted the blob.

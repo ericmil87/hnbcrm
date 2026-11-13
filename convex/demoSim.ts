@@ -26,6 +26,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { contactKindValidator, leadAttributionValidator } from "./schema";
 import { normalizeCampaignKey } from "./lib/orgModules";
 import { firstInboundPatch, firstResponsePatch } from "./lib/conversationTiming";
+import { unreadFields } from "./lib/unreadFields";
 import { transferConversationCore } from "./lib/conversationTransfer";
 import { leadCreationStagePatch, moveLeadToStageCore } from "./lib/leadStageMove";
 import { writeAgentTexts } from "./lib/agentProfileTexts";
@@ -869,7 +870,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
         ...(dept ? { departmentId: dept._id } : {}),
         ...(convAssignee ? { assignedTo: convAssignee._id } : {}),
         ...(op.contactKind ? { contactKind: op.contactKind } : {}),
-        unreadCount: 0,
+        ...unreadFields(0),
         messageCount: 0,
         createdAt: at,
         updatedAt: at,
@@ -910,13 +911,13 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
       if (inbound) {
         Object.assign(patch, {
           lastInboundAt: Math.max(conversation.lastInboundAt ?? 0, at),
-          unreadCount: (conversation.unreadCount ?? 0) + 1,
+          ...unreadFields((conversation.unreadCount ?? 0) + 1),
           ...firstInboundPatch(conversation, at),
         });
       } else if (op.direction === "outbound") {
         Object.assign(patch, firstResponsePatch(conversation, op.senderType === "ai" ? "ai" : "human", at));
         // Humano respondendo = alguém leu a conversa.
-        if (op.senderType === "human") Object.assign(patch, { unreadCount: 0, lastReadAt: at });
+        if (op.senderType === "human") Object.assign(patch, { ...unreadFields(0), lastReadAt: at });
       }
       await ctx.db.patch(conversation._id, patch);
       // Mensagem do contato chegou = ele parou de digitar (presença no runtime, fase 4b).
@@ -1110,7 +1111,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
       const at = nowOr(op.at, realNow);
       await ctx.db.patch(conversation._id, {
         archivedAt: at,
-        unreadCount: 0,
+        ...unreadFields(0),
         updatedAt: at,
       });
       await clearRuntimeField(ctx, conversation._id, "contactPresence");
@@ -1122,7 +1123,7 @@ async function applyOp(ctx: MutationCtx, state: ApplyState, op: Op, realNow: num
 
     case "markRead": {
       const conversation = await loadConversation(ctx, state, op.conversationId);
-      await ctx.db.patch(conversation._id, { unreadCount: 0, lastReadAt: nowOr(op.at, realNow) });
+      await ctx.db.patch(conversation._id, { ...unreadFields(0), lastReadAt: nowOr(op.at, realNow) });
       return { type: op.type, conversationId: conversation._id };
     }
   }

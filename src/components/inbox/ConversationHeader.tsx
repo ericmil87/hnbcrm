@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, PhoneOff, Users } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, PhoneOff } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { AiControlMenu } from "@/components/inbox/AiControlMenu";
 import { ReturnToAiButton } from "@/components/inbox/AiDraftCard";
 import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
+import { GroupAvatar } from "@/components/inbox/GroupAvatar";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { ConversationSearchBar } from "@/components/inbox/ConversationSearchBar";
 import { FollowUpChip } from "@/components/inbox/FollowUpChip";
@@ -351,9 +352,7 @@ export function ConversationHeader({
     : `Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`;
 
   const avatar = isGroup ? (
-    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-overlay text-text-muted">
-      <Users size={20} aria-hidden />
-    </span>
+    <GroupAvatar imageUrl={(conversation as { groupAvatarUrl?: string | null }).groupAvatarUrl} size="md" />
   ) : (
     <Avatar
       name={displayName === "Sem nome" ? "?" : displayName}

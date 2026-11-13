@@ -1541,6 +1541,10 @@ const applicationTables = {
     // Não lidas pela EQUIPE (compartilhado, não por membro): ingress incrementa,
     // markConversationRead zera. Ausente = 0 (conversas antigas nascem "lidas").
     unreadCount: v.optional(v.number()),
+    // Espelho de `unreadCount > 0` (`true` ou AUSENTE, nunca false), mantido só
+    // por `lib/unreadFields.unreadFields`. Alimenta o índice por TEMPO do chip
+    // "Não lidas"; sem backfill das lidas (ausente = lida).
+    hasUnread: v.optional(v.literal(true)),
     lastReadAt: v.optional(v.number()),
     // "Assumir conversa"/"Pausar IA" explícito: IA não responde até este timestamp
     // (Number.MAX_SAFE_INTEGER = pausa indefinida até reativar).
@@ -1612,6 +1616,8 @@ const applicationTables = {
     // Grupo: nome da sala e membros ativos (espelho de `groupChats`).
     groupSubject: v.optional(v.string()),
     groupParticipantsCount: v.optional(v.number()),
+    // Foto da sala (URL do storage; derivado de `groupAvatars`, só escrito quando a foto muda de verdade).
+    groupAvatarUrl: v.optional(v.string()),
     // Provider do `channelConfigId` (janela de 24 h só existe no meta).
     channelProvider: v.optional(
       v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger"))
@@ -1642,6 +1648,8 @@ const applicationTables = {
     // Badge da sidebar só das ATIVAS (archivedAt ausente) com unreadCount > 0:
     // arquivadas não ocupam o teto de `getInboxUnreadCount` (perf Convex I/O, fase 2).
     .index("by_organization_and_archived_and_unread", ["organizationId", "archivedAt", "unreadCount"])
+    // Chip "Não lidas" por TEMPO da última mensagem (flag `hasUnread`, ver lib/unreadFields.ts).
+    .index("by_organization_and_archived_and_has_unread_and_last_message", ["organizationId", "archivedAt", "hasUnread", "lastMessageAt"])
     // Filas da Central (setor/unidade) por última mensagem, com o filtro de
     // arquivadas no índice — sem take(200) + filtro depois (perf Convex I/O, onda 2).
     .index("by_organization_and_department_and_archived_and_last_message", ["organizationId", "departmentId", "archivedAt", "lastMessageAt"])
@@ -1826,6 +1834,8 @@ const applicationTables = {
     topic: v.optional(v.string()),
     ownerJid: v.optional(v.string()),
     pictureUrl: v.optional(v.string()),
+    // Próxima conferência da foto da sala (carimbo que o ingest lê SEM abrir `groupAvatars`).
+    avatarNextCheckAt: v.optional(v.number()),
     createdAtWa: v.optional(v.number()),
     isAnnounce: v.optional(v.boolean()),
     isLocked: v.optional(v.boolean()),
@@ -3038,6 +3048,11 @@ const applicationTables = {
     // que a IA envia a partir da agenda externa). Dedupe por org+URL: o mesmo
     // flyer vira UM blob, reaproveitado em cada envio.
     sourceUrl: v.optional(v.string()),
+    // Dimensões em pixels (só imagens; já com a orientação EXIF aplicada):
+    // a bolha do thread reserva o espaço antes de a imagem carregar
+    // (`lib/imageSize.ts`). Ausente = imagem antiga ou formato não lido.
+    width: v.optional(v.number()),
+    height: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_organization", ["organizationId"])
@@ -3855,8 +3870,40 @@ const applicationTables = {
     nextCheckAt: v.number(),
     failures: v.optional(v.number()),
     pendingSince: v.optional(v.number()),
+    // Quem obteve a foto guardada. Ausente = WhatsApp (linhas anteriores à foto do Instagram/Messenger).
+    source: v.optional(
+      v.union(v.literal("whatsapp"), v.literal("instagram"), v.literal("messenger"))
+    ),
   })
     .index("by_contact", ["contactId"])
+    .index("by_organization", ["organizationId"]),
+
+  /**
+   * Foto de perfil do GRUPO do WhatsApp (bridge). Irmã de `contactAvatars` (que tem
+   * `contactId` obrigatório): uma linha por sala. A lista de conversas NÃO a lê:
+   * mostra `conversations.groupAvatarUrl`. Mesmo vencimento/ritmo/teto do contato.
+   * Fora do backup (derivada). Ver lib/groupAvatarOps.ts.
+   */
+  groupAvatars: defineTable({
+    organizationId: v.id("organizations"),
+    groupChatId: v.id("groupChats"),
+    channelConfigId: v.id("channelConfigs"),
+    status: v.union(
+      v.literal("ok"),
+      v.literal("hidden"),
+      v.literal("none"),
+      v.literal("error")
+    ),
+    pictureId: v.optional(v.string()),
+    fileId: v.optional(v.id("files")),
+    storageId: v.optional(v.id("_storage")),
+    url: v.optional(v.string()),
+    checkedAt: v.number(),
+    nextCheckAt: v.number(),
+    failures: v.optional(v.number()),
+    pendingSince: v.optional(v.number()),
+  })
+    .index("by_group_chat", ["groupChatId"])
     .index("by_organization", ["organizationId"]),
 
   /**

@@ -8,16 +8,17 @@ import {
   MessageSquare,
   MessageSquarePlus,
   Mic,
-  Users,
+  MoreVertical,
+  SlidersHorizontal,
+  FileText,
 } from "lucide-react";
 import type { Id } from "../../../convex/_generated/dataModel";
+import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { FilterChips, type FilterChip } from "@/components/ui/FilterChips";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
 import { SearchInput } from "@/components/ui/SearchInput";
-import { SegmentedControl } from "@/components/ui/SegmentedControl";
-import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import {
   ConversationListItem,
@@ -25,18 +26,15 @@ import {
   type ConversationListEntry,
   type ConversationListLabel,
 } from "@/components/inbox/ConversationListItem";
-import { accountFullLabel, channelLabel, type InboxChannelAccount, type InboxFilterState } from "@/lib/channelAccounts";
-import { formatDate, formatMonthValue } from "@/lib/format";
-import { inboxSearchState, searchCountLabel, snippetWindow } from "@/lib/inboxSearch";
+import type { InboxChannelAccount, InboxFilterState } from "@/lib/channelAccounts";
+import { formatListTime, formatMonthValue } from "@/lib/format";
+import { inboxSearchState, readingMatchInfo, searchCountLabel, snippetWindow } from "@/lib/inboxSearch";
 import {
   ContactSearchRow,
   SearchSectionHeader,
   type InboxContactResult,
 } from "@/components/inbox/ContactSearchResults";
-import { StageFilterButton } from "@/components/inbox/InboxStageFilter";
 import {
-  AI_FILTER_LABEL,
-  KIND_FILTERS,
   emptyListMessage,
   listShowsAi,
   type ConversationKindFilter,
@@ -55,6 +53,7 @@ export interface InboxSearchResult {
   snippetText: string;
   matchedTranscript?: boolean;
   matchedImage?: boolean;
+  contentType?: string;
 }
 
 export interface ConversationListLabelOption extends ConversationListLabel {
@@ -151,29 +150,32 @@ interface ConversationListProps {
   onChooseGroups: () => void;
   /**
    * `mobile` (< md): estilo WhatsApp, sem título próprio (o do AppShell é o
-   * único), busca em pílula, chips, "Arquivadas" como 1ª linha e itens de 2
-   * linhas. "Nova conversa", "Selecionar" e os filtros de canal/tipo ficam no
-   * cabeçalho do AppShell (`usePageHeader`). `default` = desktop de sempre.
+   * único); "Nova conversa", "Selecionar" e os filtros de canal/tipo ficam no
+   * cabeçalho do AppShell (`usePageHeader`). `default` (md+): o mesmo corpo
+   * (busca em pílula, uma fileira de chips, "Arquivadas" como 1ª linha, itens
+   * de 3 linhas) com título, "Nova conversa" e um menu ⋯ próprios.
    */
   layout?: "default" | "mobile";
-  /** Obrigatório com `layout="mobile"`. */
-  mobile?: ConversationListMobile;
+  /** Chips e relógio da lista (os dois layouts). */
+  quick: ConversationListQuick;
   className?: string;
 }
 
-export interface ConversationListMobile {
+export interface ConversationListQuick {
   chips: readonly FilterChip[];
   onChip: (id: string) => void;
   unreadOnly: boolean;
-  /** Toque longo num item: entra na seleção com ele marcado. */
-  onLongPress: (id: string) => void;
+  /** Toque longo num item: entra na seleção com ele marcado (só celular). */
+  onLongPress?: (id: string) => void;
   /** "Agora" da hora dos itens. */
   now: number;
   /** Abre Arquivadas (desliga "Não lidas" na mesma escrita da URL). */
   onOpenArchived: () => void;
+  /** Abre a folha "Tipo e canal" (ausente = nada para filtrar ali); item do menu ⋯ do desktop. */
+  onOpenFilters?: () => void;
 }
 
-function SearchResults({ search }: { search: ConversationListSearch }) {
+function SearchResults({ search, now }: { search: ConversationListSearch; now: number }) {
   const { results, term, month, onOpenResult, contactResults, onOpenContactResult } = search;
   const { status } = inboxSearchState({ contacts: contactResults, messages: results });
   if (status === "loading") {
@@ -200,6 +202,7 @@ function SearchResults({ search }: { search: ConversationListSearch }) {
             <ContactSearchRow
               key={`contact:${result.conversationId}`}
               result={result}
+              now={now}
               onOpen={(r) => onOpenContactResult?.(r)}
             />
           ))}
@@ -217,24 +220,34 @@ function SearchResults({ search }: { search: ConversationListSearch }) {
               key={result._id}
               type="button"
               onClick={() => onOpenResult(result)}
-              className="w-full text-left p-4 border-b border-border hover:bg-surface-overlay transition-colors"
+              className="flex w-full items-center gap-3 pl-4 text-left transition-colors hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
             >
-              <div className="flex items-center justify-between gap-2 mb-0.5">
-                <span className="text-sm font-medium text-text-primary truncate">
-                  {result.contactName}
-                  {result.direction !== "inbound" && <span className="text-text-muted font-normal"> · você</span>}
+              <span aria-hidden="true" className="shrink-0">
+                <Avatar name={result.contactName.trim() || "?"} size="lg" />
+              </span>
+              <span className="min-w-0 flex-1 border-b border-border py-3 pr-4">
+                <span className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-base font-semibold leading-tight text-text-primary">
+                    {result.contactName}
+                    {result.direction !== "inbound" && <span className="font-normal text-text-muted"> · você</span>}
+                  </span>
+                  <span className="shrink-0 text-caption text-text-muted tabular-nums">
+                    {formatListTime(result.createdAt, now)}
+                  </span>
                 </span>
-                <span className="shrink-0 text-xs text-text-muted tabular-nums">{formatDate(result.createdAt)}</span>
-              </div>
-              <p className="text-xs text-text-secondary truncate flex items-center gap-1">
-                {result.matchedTranscript && (
-                  <Mic size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na transcrição" />
-                )}
-                {result.matchedImage && (
-                  <ImageIcon size={11} className="shrink-0 text-text-muted" aria-label="Encontrado na leitura da imagem" />
-                )}
-                <span className="truncate">{renderSnippet(result.snippetText, term.trim())}</span>
-              </p>
+                <span className="mt-1 flex items-center gap-1 text-sm leading-tight text-text-muted">
+                  {result.matchedTranscript && (
+                    <Mic size={14} className="shrink-0" aria-label="Encontrado na transcrição" />
+                  )}
+                  {result.matchedImage &&
+                    (readingMatchInfo(result.contentType).kind === "file" ? (
+                      <FileText size={14} className="shrink-0" aria-label={readingMatchInfo(result.contentType).label} />
+                    ) : (
+                      <ImageIcon size={14} className="shrink-0" aria-label={readingMatchInfo(result.contentType).label} />
+                    ))}
+                  <span className="truncate">{renderSnippet(result.snippetText, term.trim())}</span>
+                </span>
+              </span>
             </button>
           ))}
         </section>
@@ -255,128 +268,6 @@ function renderSnippet(content: string, term: string) {
       <mark className="bg-brand-500/30 text-text-primary rounded px-0.5">{snippet.match}</mark>
       {snippet.after}
     </>
-  );
-}
-
-function FilterBar({ filters, selection }: { filters: ConversationListFilters; selection: ConversationListSelection }) {
-  const { channel } = filters;
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <SegmentedControl
-        ariaLabel="Mostrar conversas"
-        size="sm"
-        value={filters.showArchived ? "archived" : "active"}
-        onValueChange={(v) => filters.onShowArchivedChange(v === "archived")}
-        options={[
-          { value: "active", label: "Ativas" },
-          { value: "archived", label: "Arquivadas" },
-        ]}
-      />
-      {/* Diretas x grupos — só aparece quando a org tem grupo algum. */}
-      {filters.showKindFilter && (
-        <SegmentedControl
-          ariaLabel="Tipo de conversa"
-          size="sm"
-          value={filters.kind}
-          onValueChange={(v) => filters.onKindChange(v as ConversationKindFilter)}
-          options={KIND_FILTERS.map((f) => ({
-            value: f.id,
-            label: f.label,
-            icon: f.id === "group" ? <Users size={12} aria-hidden="true" /> : undefined,
-          }))}
-        />
-      )}
-      <Button
-        type="button"
-        variant={filters.mine ? "secondary" : "ghost"}
-        size="sm"
-        aria-pressed={filters.mine}
-        onClick={() => filters.onMineChange(!filters.mine)}
-      >
-        Minhas
-      </Button>
-      {/* Canal e Conta (D11): valem também para WhatsApp com 2+ números. */}
-      {filters.channelChipVisible && (
-        <div className="min-w-0 flex-1 basis-32 max-w-[11rem]">
-          <Select
-            size="sm"
-            aria-label="Filtrar por canal"
-            className="coarse:min-h-11"
-            value={channel.channel ?? ""}
-            onValueChange={(v) => filters.onChannelChange({ channel: v || null, configId: null })}
-            options={[
-              { value: "", label: "Todos os canais" },
-              ...filters.channelOptions.map((ch) => ({ value: ch, label: channelLabel(ch) })),
-            ]}
-          />
-        </div>
-      )}
-      {filters.accountChoices.length > 0 && (
-        <div className="min-w-0 flex-1 basis-32 max-w-[12rem]">
-          <Select
-            size="sm"
-            aria-label="Filtrar por conta"
-            className="coarse:min-h-11"
-            value={channel.configId ?? ""}
-            onValueChange={(v) => filters.onChannelChange({ channel: channel.channel, configId: v || null })}
-            options={[
-              { value: "", label: "Todas as contas" },
-              ...filters.accountChoices.map((a) => ({ value: a._id as string, label: accountFullLabel(a) })),
-            ]}
-          />
-        </div>
-      )}
-      {filters.labels.length > 0 && (
-        <div className="min-w-0 flex-1 basis-32 max-w-[12rem]">
-          <Select
-            size="sm"
-            aria-label={`Filtrar por ${VOCAB.label.one}`}
-            className="coarse:min-h-11"
-            value={filters.labelId ?? ""}
-            onValueChange={(v) => filters.onLabelChange(v || null)}
-            options={[
-              { value: "", label: "Todas as etiquetas" },
-              ...filters.labels.map((l) => ({ value: l._id, label: l.name })),
-            ]}
-          />
-        </div>
-      )}
-      {filters.stage && (
-        <StageFilterButton
-          organizationId={filters.stage.organizationId}
-          stageId={filters.stage.id}
-          stageName={filters.stage.name}
-          onChoose={filters.stage.onChange}
-        />
-      )}
-      {filters.ai?.show && (
-        <div className="min-w-0 flex-1 basis-32 max-w-[12rem]">
-          <Select
-            size="sm"
-            aria-label="Filtrar por Atendente IA"
-            className="coarse:min-h-11"
-            value={filters.ai.value ?? ""}
-            onValueChange={(v) => filters.ai?.onChange(v === "on" || v === "off" ? v : null)}
-            options={[
-              { value: "", label: "IA: todas" },
-              { value: "on", label: AI_FILTER_LABEL.on },
-              { value: "off", label: AI_FILTER_LABEL.off },
-            ]}
-          />
-        </div>
-      )}
-      <Button
-        type="button"
-        variant={selection.mode ? "secondary" : "ghost"}
-        size="sm"
-        className="ml-auto"
-        aria-pressed={selection.mode}
-        onClick={selection.onToggleMode}
-      >
-        <CheckSquare size={14} aria-hidden="true" />
-        {selection.mode ? "Cancelar" : "Selecionar"}
-      </Button>
-    </div>
   );
 }
 
@@ -487,7 +378,7 @@ export function ConversationList({
   paging,
   onChooseGroups,
   layout = "default",
-  mobile,
+  quick,
   className,
 }: ConversationListProps) {
   const isMobile = layout === "mobile";
@@ -496,7 +387,7 @@ export function ConversationList({
     showArchived: filters.showArchived,
     queueFilterActive: filters.queueFilterActive,
     labelId: filters.labelId,
-    unreadOnly: isMobile ? mobile?.unreadOnly : false,
+    unreadOnly: quick.unreadOnly,
     mine: filters.mine,
     stageId: filters.stage?.id,
     ai: filters.ai?.value,
@@ -564,166 +455,155 @@ export function ConversationList({
     </div>
   );
 
-  if (isMobile && mobile) {
-    return (
-      <div className={cn("w-full bg-surface-base flex flex-col min-h-0", className)}>
-        <div className="shrink-0 space-y-2 px-4 pt-2 pb-2">
-          {filters.showArchived && !search.active && (
-            <button
-              type="button"
-              onClick={() => filters.onShowArchivedChange(false)}
-              className="-ml-2 flex min-h-11 items-center gap-2 rounded-full pr-3 pl-2 text-text-primary hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-            >
-              <ArrowLeft size={20} aria-hidden="true" />
-              <span className="sr-only">Voltar de </span>
-              <span className="text-lg font-semibold">Arquivadas</span>
-            </button>
-          )}
-          {attentionBanner}
-          <SearchInput
-            variant="pill"
-            value={search.term}
-            onValueChange={search.onTermChange}
-            placeholder="Buscar contatos e mensagens…"
-            ariaLabel="Buscar contatos e mensagens"
-          />
-          {search.active ? (
-            searchMonthRow
-          ) : (
-            <FilterChips
-              ariaLabel="Filtrar conversas"
-              chips={mobile.chips}
-              onToggle={mobile.onChip}
-              className="-mx-4 px-4"
-            />
-          )}
-          {!search.active && queueBar}
-        </div>
-
-        <div ref={paging.scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
-          {search.active ? (
-            <SearchResults search={search} />
-          ) : (
-            <>
-              {!filters.showArchived && (
-                <button
-                  type="button"
-                  onClick={mobile.onOpenArchived}
-                  className="flex w-full items-center gap-3 pl-4 text-left hover:bg-surface-overlay active:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
-                >
-                  <span className="flex w-12 shrink-0 justify-center text-text-muted" aria-hidden="true">
-                    <Archive size={20} />
-                  </span>
-                  <span className="flex min-h-12 flex-1 items-center border-b border-border pr-4 text-base font-medium text-text-secondary">
-                    Arquivadas
-                  </span>
-                </button>
-              )}
-              {conversations.length === 0 ? (
-                <EmptyState
-                  icon={MessageSquare}
-                  size="sm"
-                  title={empty.text}
-                  description={empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined}
-                  action={empty.chooseGroups ? { label: "Escolher grupos", onClick: onChooseGroups } : undefined}
-                />
-              ) : (
-                conversations.map((conversation) => (
-                  <ConversationListItem
-                    key={conversation._id}
-                    variant="compact"
-                    now={mobile.now}
-                    conversation={conversation}
-                    selected={selectedId === conversation._id}
-                    selectionMode={selection.mode}
-                    checked={selection.selectedIds.has(conversation._id)}
-                    labelById={labelById}
-                    account={accountFor(conversation)}
-                    showAccount={showAccountFor(conversation)}
-                    central={centralFor?.(conversation)}
-                    preview={previewFor?.(conversation._id)}
-                    showAi={showAi}
-                    onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
-                    onLongPress={() => mobile.onLongPress(conversation._id)}
-                  />
-                ))
-              )}
-              <LoadMore paging={paging} />
-            </>
-          )}
-        </div>
-
-        {selection.mode && (
-          <BulkBar selection={selection} showArchived={filters.showArchived} labels={filters.labels} showCancel />
-        )}
-      </div>
-    );
-  }
+  const menuItems: MenuItem[] = [
+    {
+      id: "select",
+      label: selection.mode ? "Cancelar seleção" : "Selecionar conversas",
+      icon: <CheckSquare size={16} aria-hidden="true" />,
+      onSelect: selection.onToggleMode,
+    },
+    ...(quick.onOpenFilters
+      ? [
+          {
+            id: "filters",
+            label: "Filtrar por tipo e canal",
+            icon: <SlidersHorizontal size={16} aria-hidden="true" />,
+            onSelect: quick.onOpenFilters,
+          },
+        ]
+      : []),
+  ];
 
   return (
-    <div className={cn("w-full md:w-80 lg:w-96 bg-surface-raised md:border-r md:border-border flex flex-col min-h-0", className)}>
-      <div className="p-4 border-b border-border space-y-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="text-lg font-semibold text-text-primary">{VOCAB.conversations.title}</h2>
-          {onNewConversation && (
-            <Button
-              type="button"
-              size="sm"
-              variant="secondary"
-              onClick={onNewConversation}
-              className="h-11 w-11 p-0 md:h-8 md:w-auto md:px-3"
-              aria-label="Nova conversa"
-            >
-              <MessageSquarePlus size={16} aria-hidden="true" />
-              <span className="hidden md:inline">Nova conversa</span>
-            </Button>
-          )}
-        </div>
+    <div
+      className={cn(
+        "flex w-full min-h-0 flex-col",
+        isMobile ? "bg-surface-base" : "bg-surface-raised md:w-80 md:border-r md:border-border lg:w-96",
+        className
+      )}
+    >
+      <div className={cn("shrink-0 space-y-2 px-4 pb-2", isMobile ? "pt-2" : "pt-4")}>
+        {!isMobile && (
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-lg font-semibold text-text-primary">{VOCAB.conversations.title}</h2>
+            <div className="flex items-center gap-1">
+              {onNewConversation && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={onNewConversation}
+                  className="h-11 w-11 p-0 md:h-8 md:w-auto md:px-3"
+                  aria-label="Nova conversa"
+                >
+                  <MessageSquarePlus size={16} aria-hidden="true" />
+                  <span className="hidden md:inline">Nova conversa</span>
+                </Button>
+              )}
+              <Menu
+                ariaLabel="Mais ações"
+                align="end"
+                items={menuItems}
+                trigger={(props) => (
+                  <Button type="button" size="sm" variant="ghost" iconOnly aria-label="Mais ações" {...props}>
+                    <MoreVertical size={18} aria-hidden="true" />
+                  </Button>
+                )}
+              />
+            </div>
+          </div>
+        )}
+        {filters.showArchived && !search.active && (
+          <button
+            type="button"
+            onClick={() => filters.onShowArchivedChange(false)}
+            className="-ml-2 flex min-h-11 items-center gap-2 rounded-full pr-3 pl-2 text-text-primary hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+          >
+            <ArrowLeft size={20} aria-hidden="true" />
+            <span className="sr-only">Voltar de </span>
+            <span className="text-lg font-semibold">Arquivadas</span>
+          </button>
+        )}
         {attentionBanner}
         <SearchInput
+          variant="pill"
           value={search.term}
           onValueChange={search.onTermChange}
           placeholder="Buscar contatos e mensagens…"
           ariaLabel="Buscar contatos e mensagens"
         />
-        {!search.active && <FilterBar filters={filters} selection={selection} />}
-        {!search.active && queueBar}
-        {searchMonthRow}
-      </div>
-
-      <div ref={paging.scrollRef} className="overflow-y-auto flex-1">
         {search.active ? (
-          <SearchResults search={search} />
-        ) : conversations.length === 0 ? (
-          <EmptyState
-            icon={MessageSquare}
-            size="sm"
-            title={empty.text}
-            description={empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined}
-            action={empty.chooseGroups ? { label: "Escolher grupos", onClick: onChooseGroups } : undefined}
-          />
+          searchMonthRow
         ) : (
-          conversations.map((conversation) => (
-            <ConversationListItem
-              key={conversation._id}
-              conversation={conversation}
-              selected={selectedId === conversation._id}
-              selectionMode={selection.mode}
-              checked={selection.selectedIds.has(conversation._id)}
-              labelById={labelById}
-              account={accountFor(conversation)}
-              showAccount={showAccountFor(conversation)}
-              central={centralFor?.(conversation)}
-              preview={previewFor?.(conversation._id)}
-              showAi={showAi}
-              onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
-            />
-          ))
+          <FilterChips
+            ariaLabel="Filtrar conversas"
+            chips={quick.chips}
+            onToggle={quick.onChip}
+            className="-mx-4 px-4"
+          />
         )}
-        {!search.active && <LoadMore paging={paging} />}
+        {!search.active && queueBar}
       </div>
 
-      {selection.mode && <BulkBar selection={selection} showArchived={filters.showArchived} labels={filters.labels} />}
+      <div ref={paging.scrollRef} className="flex-1 overflow-y-auto overscroll-contain">
+        {search.active ? (
+          <SearchResults search={search} now={quick.now} />
+        ) : (
+          <>
+            {!filters.showArchived && (
+              <button
+                type="button"
+                onClick={quick.onOpenArchived}
+                className={cn(
+                  "flex w-full items-center gap-3 text-left hover:bg-surface-overlay active:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500",
+                  isMobile ? "pl-4" : "border-l-2 border-transparent pl-3.5"
+                )}
+              >
+                <span className="flex w-12 shrink-0 justify-center text-text-muted" aria-hidden="true">
+                  <Archive size={20} />
+                </span>
+                <span className="flex min-h-12 flex-1 items-center border-b border-border pr-4 text-base font-medium text-text-secondary">
+                  Arquivadas
+                </span>
+              </button>
+            )}
+            {conversations.length === 0 ? (
+              <EmptyState
+                icon={MessageSquare}
+                size="sm"
+                title={empty.text}
+                description={empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined}
+                action={empty.chooseGroups ? { label: "Escolher grupos", onClick: onChooseGroups } : undefined}
+              />
+            ) : (
+              conversations.map((conversation) => (
+                <ConversationListItem
+                  key={conversation._id}
+                  variant={isMobile ? "compact" : "default"}
+                  now={quick.now}
+                  conversation={conversation}
+                  selected={selectedId === conversation._id}
+                  selectionMode={selection.mode}
+                  checked={selection.selectedIds.has(conversation._id)}
+                  labelById={labelById}
+                  account={accountFor(conversation)}
+                  showAccount={showAccountFor(conversation)}
+                  central={centralFor?.(conversation)}
+                  preview={previewFor?.(conversation._id)}
+                  showAi={showAi}
+                  onClick={() => (selection.mode ? selection.onToggle(conversation._id) : onSelect(conversation._id))}
+                  onLongPress={isMobile && quick.onLongPress ? () => quick.onLongPress?.(conversation._id) : undefined}
+                />
+              ))
+            )}
+            <LoadMore paging={paging} />
+          </>
+        )}
+      </div>
+
+      {selection.mode && (
+        <BulkBar selection={selection} showArchived={filters.showArchived} labels={filters.labels} showCancel={isMobile} />
+      )}
     </div>
   );
 }

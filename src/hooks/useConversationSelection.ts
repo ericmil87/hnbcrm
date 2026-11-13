@@ -68,16 +68,27 @@ export function useConversationSelection({
   // A conversa do deep-link entra no topo da lista enquanto estiver aberta e
   // fora da lista carregada (fora do lote carregado, ou arquivada ainda
   // carregando), mas só se ela PERTENCE à aba/filtro em tela.
+  // Última versão da conversa aberta vista na lista: quando o servidor deixa de
+  // devolvê-la (ex.: "Não lidas" ao marcar como lida) ela segue na lista e no
+  // cabeçalho até o resolver trazer o documento atual (sem piscar).
+  const lastSeenRef = useRef<ConversationDoc | null>(null);
+  const inListDoc = validConversations.find((c) => c._id === selectedConversation);
+  useEffect(() => {
+    if (inListDoc) lastSeenRef.current = inListDoc;
+    else if (lastSeenRef.current && lastSeenRef.current._id !== selectedConversation) lastSeenRef.current = null;
+  }, [inListDoc, selectedConversation]);
+  const lastSeen = lastSeenRef.current?._id === selectedConversation ? lastSeenRef.current : null;
+  const heldDoc =
+    linkedConversation?._id === selectedConversation ? linkedConversation : lastSeen;
+
   const pinnedConversation =
-    linkedConversation &&
-    linkedMatchesView(linkedConversation, showArchived, kindFilter) &&
-    linkedConversation._id === selectedConversation &&
-    !validConversations.some((c) => c._id === linkedConversation._id)
-      ? linkedConversation
+    heldDoc &&
+    linkedMatchesView(heldDoc, showArchived, kindFilter) &&
+    heldDoc._id === selectedConversation &&
+    !validConversations.some((c) => c._id === heldDoc._id)
+      ? heldDoc
       : null;
-  const currentConversation: ConversationDoc | undefined =
-    validConversations.find((c) => c._id === selectedConversation) ??
-    (linkedConversation?._id === selectedConversation ? linkedConversation : undefined);
+  const currentConversation: ConversationDoc | undefined = inListDoc ?? heldDoc ?? undefined;
 
   const applySelection = useCallback((conversationId: string) => {
     setSelectedConversation(conversationId);

@@ -314,6 +314,13 @@ export const webhookReceive = httpAction(async (ctx, request) => {
       phone: parsed.picture.phone,
       remove: parsed.picture.remove,
     });
+  } else if (parsed.kind === "group_picture") {
+    // Foto de GRUPO trocada/removida: só marca vencida ou remove; nunca busca no evento.
+    await ctx.runMutation(internal.groupAvatar.internalApplyGroupPictureEvent, {
+      channelConfigId: config._id,
+      groupJid: parsed.picture.groupJid,
+      remove: parsed.picture.remove,
+    });
   } else if (parsed.kind === "chat_presence") {
     // Contato digitando/parou — patch barato na conversa, some via TTL no cliente.
     await ctx.runMutation(internal.conversations.internalSetContactPresence, {

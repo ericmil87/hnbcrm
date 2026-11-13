@@ -69,7 +69,7 @@ export function InboxListColumn({
   // "digitando…" (uma assinatura leve da org) e "Rascunho:" (armazenamento local) nas prévias.
   const previewFor = useListPreviews({ organizationId, memberId: member?._id, openId: selectedId });
   const { centralModules, centralEnabled, showArchived, kindFilter, filterLabelId, conversationLabels } = filters;
-  // Celular (< md): layout estilo WhatsApp; desktop fica como sempre (D1).
+  // Celular (< md): cabeçalho no AppShell; desktop (md+): título e menu ⋯ na própria coluna. Chips e linhas são os mesmos.
   const isMobile = useMediaQuery("(max-width: 767px)");
   const [filtersSheetOpen, setFiltersSheetOpen] = useState(false);
   const [stageSheetOpen, setStageSheetOpen] = useState(false);
@@ -79,7 +79,7 @@ export function InboxListColumn({
   const stageName = stageNameById(stageGroups, filters.stageId);
   const showAi = listShowsAi(list.validConversations, !!filters.aiFilter);
   // Relógio da hora dos itens (vira "Ontem" na virada do dia sem outro render).
-  const now = useNow(isMobile);
+  const now = useNow();
   const sheetFilters = {
     showKindFilter,
     channelChipVisible: filters.channelChipVisible,
@@ -133,8 +133,7 @@ export function InboxListColumn({
   return (
     <>
     {stageNameSource}
-    {isMobile && (
-      <>
+    <>
         <StageFilterSheet
           open={stageSheetOpen}
           onClose={() => setStageSheetOpen(false)}
@@ -148,10 +147,8 @@ export function InboxListColumn({
           value={filters.aiFilter}
           onChoose={filters.setAiFilter}
         />
-      </>
-    )}
-    {isMobile && (
-      <InboxFiltersSheet
+    </>
+    <InboxFiltersSheet
         open={filtersSheetOpen}
         onClose={() => setFiltersSheetOpen(false)}
         kind={kindFilter}
@@ -161,12 +158,9 @@ export function InboxListColumn({
         onChannelChange={filters.updateChannelFilter}
         channelOptions={filters.channelOptions}
       />
-    )}
     <ConversationList
       layout={isMobile ? "mobile" : "default"}
-      mobile={
-        isMobile
-          ? {
+      quick={{
               chips: inboxFilterChips(chipState, {
                 labels: (conversationLabels ?? []).map((l) => ({ _id: l._id as string, name: l.name, color: l.color })),
                 showGroups: showKindFilter,
@@ -184,12 +178,11 @@ export function InboxListColumn({
                 else filters.applyChipState(applyInboxChip(id, chipState));
               },
               unreadOnly: filters.unreadOnly,
-              onLongPress: bulk.startSelectionWith,
+              onLongPress: isMobile ? bulk.startSelectionWith : undefined,
               now,
               onOpenArchived: filters.openArchived,
-            }
-          : undefined
-      }
+              onOpenFilters: hasSheetFilters(sheetFilters) ? () => setFiltersSheetOpen(true) : undefined,
+      }}
       className={cn(
         // Central ligada: a coluna não encolhe (a barra de filas e a de
         // roteamento disputavam espaço e a lista caía para ~230 px).
