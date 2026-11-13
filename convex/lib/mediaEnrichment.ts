@@ -25,6 +25,7 @@ import { Doc, Id } from "../_generated/dataModel";
 import { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { orgAiActive } from "./agentSecurity";
+import { isPdfCandidate, PDF_READ_MAX_BYTES, pdfLabelName } from "./pdfRead";
 
 type OrgDoc = Doc<"organizations"> | null;
 type ChannelConfigDoc = Doc<"channelConfigs"> | null;
@@ -122,5 +123,52 @@ export async function scheduleAudioTranscription(
   await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, {
     messageId: args.messageId,
   });
+  return true;
+}
+
+/**
+ * Ponto único de agendamento da LEITURA DE PDF (texto, sem LLM): chamado pelos
+ * ingests de mensagem com anexo, nos dois sentidos (a equipe mandar uma tabela
+ * de preços também vale: a IA passa a saber o que foi enviado; nunca acorda a
+ * IA). Gate de produto: `attendantActive(org)` — extrair texto não custa
+ * modelo, então não depende de `visionEnabled` (opt-in pago); só o ramo do PDF
+ * escaneado exige a visão, decidido na action. Só agenda para PDF por mime/nome
+ * (os bytes `%PDF-` a action confere) e grava `metadata.docRead.status:"pending"`
+ * NA MESMA transação, para o claim do atendente esperar a leitura (nunca
+ * esperar por arquivo que não será lido). Arquivo acima do teto vira `failed`
+ * `TOO_LARGE` direto, sem action.
+ */
+export async function schedulePdfRead(
+  ctx: MutationCtx,
+  args: {
+    messageId: Id<"messages">;
+    contentType: string | undefined;
+    attachments: readonly Id<"files">[] | undefined;
+    isInternal?: boolean;
+    metadata?: Record<string, unknown> | undefined;
+  }
+): Promise<boolean> {
+  if (args.contentType !== "file" || !args.attachments || args.attachments.length === 0) return false;
+  if (args.isInternal === true) return false;
+  if (args.metadata?.[IMPORTED_FROM_HISTORY_KEY] === true || args.metadata?.mediaDeferred) return false;
+  const file = await ctx.db.get(args.attachments[0]);
+  if (!file || !isPdfCandidate(file.mimeType, file.name)) return false;
+  const org = await ctx.db.get(file.organizationId);
+  if (!attendantActive(org)) return false;
+  const message = await ctx.db.get(args.messageId);
+  if (!message || message.organizationId !== file.organizationId) return false;
+  if (message.metadata?.docRead) return false;
+  const now = Date.now();
+  const fileName = pdfLabelName(file.name);
+  if (file.size > PDF_READ_MAX_BYTES) {
+    await ctx.db.patch(message._id, {
+      metadata: { ...(message.metadata ?? {}), docRead: { status: "failed", at: now, kind: "pdf", fileName, error: "TOO_LARGE" } },
+    });
+    return false;
+  }
+  await ctx.db.patch(message._id, {
+    metadata: { ...(message.metadata ?? {}), docRead: { status: "pending", at: now, kind: "pdf", fileName } },
+  });
+  await ctx.scheduler.runAfter(0, internal.pdfRead.internalReadPdf, { messageId: message._id });
   return true;
 }

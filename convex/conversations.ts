@@ -24,7 +24,7 @@ import {
   applyCampaignGroupReplyHook,
 } from "./lib/campaignHooks";
 import { applyOutboundMessageSideEffects } from "./lib/outboundSideEffects";
-import { scheduleAudioTranscription } from "./lib/mediaEnrichment";
+import { scheduleAudioTranscription, schedulePdfRead } from "./lib/mediaEnrichment";
 import { configProvider } from "./channelConfigs";
 import { ChannelTransport, configTransport } from "./lib/channelTransport";
 import { metaConversationWindow, metaWindowClosesAt, reactionNoteFor } from "./lib/metaSend";
@@ -1597,6 +1597,15 @@ export const sendMessage = mutation({
       isInternal: args.isInternal,
     });
 
+    // PDF que a equipe mandou: o texto é lido (sem LLM) para a IA saber o que foi
+    // enviado; nunca acorda a IA (porta única, `lib/mediaEnrichment`).
+    await schedulePdfRead(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      isInternal: args.isInternal,
+    });
+
     return messageId;
   },
 });
@@ -2152,6 +2161,14 @@ export async function internalSendMessageCore(
     isInternal: args.isInternal,
   });
 
+  // PDF que a equipe mandou: texto lido (sem LLM), nunca acorda a IA.
+  await schedulePdfRead(ctx, {
+    messageId,
+    contentType: args.contentType,
+    attachments: args.attachments,
+    isInternal: args.isInternal,
+  });
+
   return messageId;
 }
 
@@ -2408,6 +2425,13 @@ export const internalReceiveMessage = internalMutation({
       contentType: args.contentType,
       attachments: args.attachments,
     });
+    // PDF do cliente: texto lido no recebimento (gate `attendantActive`, sem LLM).
+    await schedulePdfRead(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
+    });
 
     // Tradução automática (F1): no-op sem o módulo; grupo e mensagem do
     // aparelho são recusados pelo gate (lib/translationGate). A conversa já
@@ -2569,6 +2593,12 @@ export const internalReceiveDeviceMessage = internalMutation({
 
     // Áudio gravado no celular: transcrito (histórico importado não — ver lib).
     await scheduleAudioTranscription(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
+    });
+    await schedulePdfRead(ctx, {
       messageId,
       contentType: args.contentType,
       attachments: args.attachments,
@@ -2818,6 +2848,12 @@ export const internalReceiveGroupMessage = internalMutation({
       messageId,
       contentType: args.contentType,
       attachments: args.attachments,
+    });
+    await schedulePdfRead(ctx, {
+      messageId,
+      contentType: args.contentType,
+      attachments: args.attachments,
+      metadata: args.metadata,
     });
 
     // Tradução automática (F1): grupo nunca é traduzido — a conversa já

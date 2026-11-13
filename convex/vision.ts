@@ -946,6 +946,49 @@ export const internalGetImageMessageIfEligible = internalQuery({
 });
 
 /**
+ * PDF ESCANEADO (`pdfRead.ts`): a imagem JPEG que veio embutida no PDF (stream
+ * `/DCTDecode` cru, sem rasterizar) foi guardada num blob TEMPORÁRIO e passa
+ * pelo MESMO passe de visão das imagens do WhatsApp (mesmo gate
+ * `visionEnabled`, mesma cadeia, mesmo teto de 5 MB, mesma conta em
+ * `agentRuns`); o resultado cai em `metadata.vision` + `imageDescription` da
+ * mensagem do PDF. O chamador apaga o blob temporário.
+ */
+export const internalGetPdfImageMessage = internalQuery({
+  args: { messageId: v.id("messages"), storageId: v.id("_storage"), size: v.number() },
+  returns: v.union(imageMessageResultValidator, v.null()),
+  handler: async (ctx, args) => {
+    const message = await ctx.db.get(args.messageId);
+    if (!message || message.contentType !== "file" || isGone(message)) return null;
+    const org = await ctx.db.get(message.organizationId);
+    if (!shouldDescribeImage(org)) return null;
+    const aiConfig = org!.settings.aiConfig;
+    return {
+      messageId: message._id,
+      organizationId: message.organizationId,
+      conversationId: message.conversationId,
+      leadId: message.leadId,
+      metadata: message.metadata,
+      storageId: args.storageId,
+      mimeType: "image/jpeg",
+      size: args.size,
+      providerConfig: aiConfig?.providerConfig ?? null,
+      strictZdr: aiConfig?.providerConfig?.strictZdr === true,
+      runMemberId: await findAiRunMemberId(ctx, message.organizationId),
+    };
+  },
+});
+
+export const internalDescribePdfImage = internalAction({
+  args: { messageId: v.id("messages"), storageId: v.id("_storage"), size: v.number() },
+  returns: visionResultValidator,
+  handler: async (ctx, args): Promise<VisionResult> => {
+    const message = await ctx.runQuery(internal.vision.internalGetPdfImageMessage, args);
+    if (!message) return { status: "skipped" };
+    return await runVision(ctx, message);
+  },
+});
+
+/**
  * Membro IA que "assina" a run de visão em agentRuns. Prefere o atendente; cai
  * para qualquer membro IA ativo. `null` quando a org não tem nenhum (possível
  * com o toggle do canal ligado e o atendente desligado) — nesse caso a leitura
