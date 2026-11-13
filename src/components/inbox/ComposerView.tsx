@@ -1,7 +1,8 @@
-import type { FormEvent, KeyboardEvent, ReactNode, RefObject } from "react";
+import type { ClipboardEvent, FormEvent, KeyboardEvent, ReactNode, Ref, RefObject } from "react";
 import { Clock, Ellipsis, Loader2, MessageSquareText, Send, StickyNote, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { composerMaxRows, isSendKeyFor } from "@/lib/composerRules";
+import { decidePaste } from "@/lib/composerFiles";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Button } from "@/components/ui/Button";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
@@ -69,6 +70,13 @@ export interface ComposerViewProps {
    * digitado nesse intervalo seria apagado quando o envio termina.
    */
   fieldReadOnly?: boolean;
+  /**
+   * Colar arquivo (captura de tela, imagem copiada) no campo: chega aqui já
+   * nomeado. Colar só texto segue o comportamento normal do navegador.
+   */
+  onAttachFiles?: (files: File[]) => void;
+  /** Ref do `<form>` (o container usa a coluna pai como alvo de arrastar). */
+  rootRef?: Ref<HTMLFormElement>;
   /** Item "Respostas rápidas" do menu "Mais opções" (só quando o recurso está ligado). */
   onOpenQuickReplies?: () => void;
 }
@@ -110,6 +118,8 @@ export function ComposerView({
   sendingLabel,
   fieldReadOnly = false,
   onOpenQuickReplies,
+  onAttachFiles,
+  rootRef,
 }: ComposerViewProps) {
   const coarse = useMediaQuery("(pointer: coarse)");
   const isDesktop = useMediaQuery("(min-width: 768px)");
@@ -127,6 +137,14 @@ export function ComposerView({
       e.preventDefault();
       if (canSend && !blocked && !sending) onSend();
     }
+  };
+
+  const handlePaste = (e: ClipboardEvent<HTMLDivElement>) => {
+    if (!onAttachFiles) return;
+    const decision = decidePaste(e.clipboardData, new Date());
+    if (!decision.intercept) return;
+    e.preventDefault();
+    onAttachFiles(decision.files);
   };
 
   const sendLabel = sending && sendingLabel ? sendingLabel : isInternal ? "Adicionar nota" : "Enviar";
@@ -160,7 +178,7 @@ export function ComposerView({
   const showNoteBar = isInternal && showInternalToggle;
 
   return (
-    <form onSubmit={submit} className="shrink-0 border-t border-border-subtle bg-composer pb-safe">
+    <form ref={rootRef} onSubmit={submit} className="shrink-0 border-t border-border-subtle bg-composer pb-safe">
       <div className={cn("w-full px-2 py-1.5", variant === "page" && "mx-auto max-w-4xl")}>
         {windowInfo && (
           <p
@@ -220,6 +238,7 @@ export function ComposerView({
               {attachButton}
               <div
                 data-testid="composer-pill"
+                onPaste={handlePaste}
                 className={cn(
                   "flex min-h-11 min-w-0 flex-1 items-end rounded-3xl border pl-1 pr-1 transition-colors",
                   isInternal

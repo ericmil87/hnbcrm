@@ -41,7 +41,10 @@ import {
   replyAuthorLabel,
   replyPreviewText,
 } from "@/lib/composerRules";
-import { FileUploadButton, type UploadedFile } from "@/components/ui/FileUploadButton";
+import { FileUploadButton } from "@/components/ui/FileUploadButton";
+import { useAttachmentUpload, type UploadedFile } from "@/hooks/useAttachmentUpload";
+import { useFileDropTarget } from "@/hooks/useFileDropTarget";
+import { FileDropOverlay } from "@/components/inbox/FileDropOverlay";
 import { ComposerView } from "@/components/inbox/ComposerView";
 import { useConversationInteraction } from "@/components/inbox/conversationInteraction";
 import { EmojiPickerButton } from "@/components/inbox/EmojiPickerButton";
@@ -164,6 +167,49 @@ export function Composer({
     `${conversation?.contact?.firstName ?? ""} ${conversation?.contact?.lastName ?? ""}`.trim();
 
   const typing = useTypingBroadcast(conversationId, canSendTyping);
+
+  // Anexos: botão de clipe, colar e arrastar usam o mesmo upload (mesma validação e limite).
+  const attachmentUploader = useAttachmentUpload({
+    organizationId,
+    uploadedFiles: stagedFiles,
+    onFilesUploaded: (newFiles) => setStagedFiles((prev) => [...prev, ...newFiles]),
+    channel,
+    transport,
+  });
+  const attachDisabled = sending || blocked || mediaBlocked || recorderActive;
+  const attachFiles = (files: File[]) => {
+    // Mesmo aviso do botão desligado; conversa encerrada não faz nada.
+    if (mediaBlocked && !blocked) toast.error(MEDIA_BLOCKED_HINT);
+    // Enviando ou gravando: o colar/soltar já foi interceptado, então avisa em vez de engolir o arquivo.
+    else if (!blocked && (sending || recorderActive)) toast.error("Não foi possível anexar agora. Tente de novo em instantes.");
+    if (attachDisabled) return;
+    void attachmentUploader.uploadFiles(files, { strictType: true });
+  };
+  const attachFilesRef = useRef(attachFiles);
+  attachFilesRef.current = attachFiles;
+
+  // Alvo do arrastar: a coluna da conversa (pai do composer), com realce.
+  const formRef = useRef<HTMLFormElement | null>(null);
+  const [dropColumn, setDropColumn] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const form = formRef.current;
+    const parent = form?.parentElement;
+    const column = parent && parent !== document.body ? parent : (form ?? null);
+    if (!column) return;
+    // O realce é absoluto: a coluna precisa ser contexto de posicionamento.
+    const previous = column.style.position;
+    const needsPosition = getComputedStyle(column).position === "static";
+    if (needsPosition) column.style.position = "relative";
+    setDropColumn(column);
+    return () => {
+      if (needsPosition) column.style.position = previous;
+      setDropColumn(null);
+    };
+  }, [canReply]);
+  const { dragging: draggingFile } = useFileDropTarget({
+    target: canReply ? dropColumn : null,
+    onFiles: (files) => attachFilesRef.current(files),
+  });
 
   // Tradução automática: módulo da org + conversa 1 a 1 (o chip decide se aparece).
   const translationSettings = useTranslationSettings(translationFeatureOn ? organizationId : null);
@@ -436,7 +482,10 @@ export function Composer({
           .
         </p>
       )}
+      <FileDropOverlay container={dropColumn} active={draggingFile && !attachDisabled} />
       <ComposerView
+        rootRef={formRef}
+        onAttachFiles={attachFiles}
         variant={variant}
         text={text}
         onTextChange={(value) => {
@@ -565,6 +614,7 @@ export function Composer({
           <FileUploadButton
             organizationId={organizationId}
             uploadedFiles={stagedFiles}
+            uploader={attachmentUploader}
             onFilesUploaded={(newFiles) => setStagedFiles((prev) => [...prev, ...newFiles])}
             onFilesRemoved={(fileId) => setStagedFiles((prev) => prev.filter((f) => f.fileId !== fileId))}
             // Botão de 44 px redondo; os arquivos anexados viram uma bandeja acima da linha.

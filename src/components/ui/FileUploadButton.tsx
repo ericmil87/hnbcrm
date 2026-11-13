@@ -1,41 +1,15 @@
 import { Tooltip } from "./Tooltip";
-import React, { useRef, useState } from "react";
-import { useMutation } from "convex/react";
-import { api } from "../../../convex/_generated/api";
+import React, { useRef } from "react";
 import { Id } from "../../../convex/_generated/dataModel";
 import { Paperclip, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "sonner";
-import { acceptedUploadMimes, UPLOAD_RULES_HINT, validateUpload } from "@/lib/channelCapabilities";
+import { acceptedUploadMimes, UPLOAD_RULES_HINT } from "@/lib/channelCapabilities";
+import { ACCEPTED_ATTACHMENT_TYPES, MAX_ATTACHMENTS as MAX_FILES } from "@/lib/composerFiles";
+import { useAttachmentUpload, type AttachmentUploader, type UploadedFile } from "@/hooks/useAttachmentUpload";
 
-const ACCEPTED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "application/pdf",
-  "application/msword",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-  "application/vnd.ms-excel",
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-  "text/plain",
-  "text/csv",
-  "application/json",
-  "audio/mpeg",
-  "audio/wav",
-  "audio/ogg",
-  "video/mp4",
-  "video/3gpp",
-].join(",");
+export type { UploadedFile };
 
-const MAX_FILES = 5;
-
-export interface UploadedFile {
-  fileId: Id<"files">;
-  name: string;
-  mimeType: string;
-  size: number;
-}
+const ACCEPTED_TYPES = ACCEPTED_ATTACHMENT_TYPES.join(",");
 
 interface FileUploadButtonProps {
   organizationId: Id<"organizations">;
@@ -54,6 +28,8 @@ interface FileUploadButtonProps {
    * bandeja flutuando acima da linha do composer, sem empurrar o campo.
    */
   variant?: "default" | "composer";
+  /** Upload compartilhado com colar/arrastar (o composer cria um e passa aqui). */
+  uploader?: AttachmentUploader;
 }
 
 export function FileUploadButton({
@@ -67,14 +43,12 @@ export function FileUploadButton({
   transport,
   className,
   variant = "default",
+  uploader,
 }: FileUploadButtonProps) {
   const composer = variant === "composer";
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
-  const [progress, setProgress] = useState(0);
-
-  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
-  const saveFile = useMutation(api.files.saveFile);
+  const own = useAttachmentUpload({ organizationId, uploadedFiles, onFilesUploaded, channel, transport });
+  const { uploading, progress, uploadFiles } = uploader ?? own;
 
   const handleClick = () => {
     if (disabled || uploading) return;
@@ -84,79 +58,8 @@ export function FileUploadButton({
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = e.target.files;
     if (!selectedFiles || selectedFiles.length === 0) return;
-
-    const filesToUpload = Array.from(selectedFiles);
-
-    // Regras do canal (Instagram/Messenger): tipo e tamanho antes de gastar upload.
-    for (const f of filesToUpload) {
-      const problem = validateUpload(channel, transport, f);
-      if (problem) {
-        toast.error(problem);
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        return;
-      }
-    }
-
-    // Validate count
-    if (uploadedFiles.length + filesToUpload.length > MAX_FILES) {
-      toast.error(`Máximo de ${MAX_FILES} arquivos por mensagem`);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      return;
-    }
-
-    setUploading(true);
-    setProgress(0);
-
-    const newFiles: UploadedFile[] = [];
-    let completed = 0;
-
-    try {
-      for (const file of filesToUpload) {
-        // Get upload URL
-        const uploadUrl = await generateUploadUrl({ organizationId });
-
-        // Upload file to Convex storage
-        const response = await fetch(uploadUrl, {
-          method: "POST",
-          headers: { "Content-Type": file.type },
-          body: file,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Não foi possível enviar ${file.name}.`);
-        }
-
-        const { storageId } = await response.json();
-
-        // Save file metadata
-        const fileId = await saveFile({
-          organizationId,
-          storageId,
-          name: file.name,
-          mimeType: file.type,
-          size: file.size,
-          fileType: "message_attachment",
-        });
-
-        newFiles.push({
-          fileId,
-          name: file.name,
-          mimeType: file.type,
-          size: file.size,
-        });
-
-        completed++;
-        setProgress(Math.round((completed / filesToUpload.length) * 100));
-      }
-
-      onFilesUploaded(newFiles);
-    } catch (error: any) {
-      toast.error(error.message || "Não foi possível enviar o arquivo.");
-    } finally {
-      setUploading(false);
-      setProgress(0);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    await uploadFiles(Array.from(selectedFiles));
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleRemoveFile = (fileId: Id<"files">) => {

@@ -30,7 +30,7 @@ import {
 /**
  * Filtros da lista de Conversas.
  * - Estado de tela, na URL (replace, não polui o histórico): `?archived=1`,
- *   `?label=<id>` e `?unread=1` (chip "Não lidas" do celular).
+ *   `?label=<id>`, `?unread=1` (chip "Não lidas" do celular) e `?mine=1` ("Minhas", celular e desktop).
  * - Preferência pessoal, em `localStorage`: Diretas/Grupos e Canal/Conta.
  * - Fila (Central, opcional por org): estado local.
  */
@@ -38,6 +38,11 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const archivedParam = useSearchParamState("archived", booleanParam);
   const labelParam = useSearchParamState("label", stringParam);
   const unreadParam = useSearchParamState("unread", booleanParam);
+  // "Minhas": valem no celular (chip) e no desktop (botão); filtro de servidor (`mine`).
+  const mineParam = useSearchParamState("mine", booleanParam);
+  const mine = mineParam.value;
+  const mineArgs = mine ? { mine: true as const } : {};
+  const setMine = (next: boolean) => mineParam.set(next);
   const showArchived = archivedParam.value;
   // "Não lidas" é chip só do celular: no desktop não há controle para desligá-lo,
   // então `?unread=1` nem vale lá (gate na fonte).
@@ -46,7 +51,7 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const unreadArgs = unreadOnly ? { unreadOnly: true as const } : {};
   const setShowArchived = archivedParam.set;
   /** Celular: abrir Arquivadas desliga "Não lidas" na mesma escrita da URL. */
-  const openArchived = () => archivedParam.set(true, { also: { unread: null } });
+  const openArchived = () => archivedParam.set(true, { also: { unread: null, mine: null } });
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
   // Etiqueta apagada (ou colada de outra org) na URL não pode deixar a lista
@@ -127,8 +132,8 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
     if (next.channel !== channelFilter.channel || next.configId !== channelFilter.configId) {
       updateChannelFilter({ channel: next.channel, configId: next.configId });
     }
-    if (next.unreadOnly !== unreadOnly || next.labelId !== filterLabelId) {
-      unreadParam.set(next.unreadOnly, { also: { label: next.labelId } });
+    if (next.unreadOnly !== unreadOnly || next.labelId !== filterLabelId || next.mine !== mine) {
+      unreadParam.set(next.unreadOnly, { also: { label: next.labelId, mine: next.mine ? "1" : null } });
     }
   };
 
@@ -137,6 +142,9 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
     showArchived,
     unreadOnly,
     unreadArgs,
+    mine,
+    mineArgs,
+    setMine,
     openArchived,
     applyChipState,
     setShowArchived,

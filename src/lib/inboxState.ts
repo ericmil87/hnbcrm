@@ -120,6 +120,8 @@ export function countUnreadConversations(list: readonly { unreadCount?: number |
 export interface InboxChipState {
   kind: ConversationKindFilter;
   unreadOnly: boolean;
+  /** Chip "Minhas": responsável do lead ou conversa roteada para mim (filtro de servidor, `mine`). */
+  mine: boolean;
   labelId: string | null;
   /** Canal/conta (preferência em localStorage, escolhida no ⋯ ou no desktop). */
   channel: string | null;
@@ -130,6 +132,7 @@ export interface InboxChipState {
 export const NO_CHIP_FILTERS: InboxChipState = {
   kind: "all",
   unreadOnly: false,
+  mine: false,
   labelId: null,
   channel: null,
   configId: null,
@@ -177,7 +180,7 @@ export function inboxFilterChips(
   }
 ): InboxChip[] {
   const none =
-    state.kind === "all" && !state.unreadOnly && !state.labelId && !state.channel && !state.configId;
+    state.kind === "all" && !state.unreadOnly && !state.mine && !state.labelId && !state.channel && !state.configId;
   const chips: InboxChip[] = [
     { id: "all", label: "Todas", pressed: none },
     {
@@ -187,6 +190,7 @@ export function inboxFilterChips(
       count: unreadCount > 0 ? unreadCount : undefined,
       ...(unreadCount > 0 && unreadMore ? { countMore: true } : {}),
     },
+    { id: "mine", label: "Minhas", pressed: state.mine },
   ];
   if (state.channel) chips.push({ id: "channel", label: channelLabel || state.channel, pressed: true });
   if (state.configId) chips.push({ id: "account", label: accountLabel || "Conta", pressed: true });
@@ -206,6 +210,7 @@ export function applyInboxChip(id: string, state: InboxChipState): InboxChipStat
   if (id === "channel") return { ...state, channel: null, configId: null };
   if (id === "account") return { ...state, configId: null };
   if (id === "unread") return { ...state, unreadOnly: !state.unreadOnly };
+  if (id === "mine") return { ...state, mine: !state.mine };
   if (id === "group") return { ...state, kind: state.kind === "group" ? "all" : "group" };
   if (id === "direct") return { ...state, kind: state.kind === "direct" ? "all" : "direct" };
   if (id.startsWith(LABEL_CHIP)) {
@@ -292,8 +297,9 @@ export function emptyListMessage(input: {
   queueFilterActive: boolean;
   labelId: string | null;
   unreadOnly?: boolean;
+  mine?: boolean;
 }): { text: string; chooseGroups: boolean } {
-  const { kind, showArchived, queueFilterActive, labelId, unreadOnly } = input;
+  const { kind, showArchived, queueFilterActive, labelId, unreadOnly, mine } = input;
   if (kind === "group") {
     return showArchived
       ? { text: "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas", chooseGroups: false }
@@ -308,6 +314,7 @@ export function emptyListMessage(input: {
       chooseGroups: false,
     };
   }
+  if (mine) return { text: "Nenhuma conversa atribuída a você", chooseGroups: false };
   if (unreadOnly) return { text: "Nenhuma conversa não lida", chooseGroups: false };
   if (showArchived) return { text: "Nenhuma conversa arquivada", chooseGroups: false };
   if (labelId) return { text: "Nenhuma conversa com essa etiqueta", chooseGroups: false };

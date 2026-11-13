@@ -14,8 +14,10 @@ import {
   nextLimit,
 } from "@/lib/inboxPaging";
 import {
+  countInboundAfter,
   decideJump,
   decideThreadScroll,
+  dividerScrollTop,
   isNearBottom,
   makePrependAnchor,
   shouldPinAfterResize,
@@ -35,7 +37,9 @@ export function useThreadPaging(
   conversationId: string | null,
   pendingJumpRef: MutableRefObject<string | null>,
   /** As bolhas já estão na tela (conversa e mensagens carregadas): só então rola ou salta. */
-  ready = true
+  ready = true,
+  /** Divisor de não lidas: a rolagem inicial da conversa para nele em vez de no fim. */
+  hasUnreadDivider = false
 ) {
   const [page, setPage] = useState<{ key: string | null; limit: number }>(() => ({
     key: null,
@@ -55,9 +59,29 @@ export function useThreadPaging(
   const scrolledConvRef = useRef<string | null>(null);
   const anchorRef = useRef<PrependAnchor | null>(null);
 
+  // Espelho em estado do `nearBottomRef` (botão "ir para o fim" e marcar como lida).
+  const [atBottom, setAtBottom] = useState(true);
+  const [newBelow, setNewBelow] = useState(0);
+  const baselineRef = useRef<{ conversationId: string | null; id: string | null }>({
+    conversationId: null,
+    id: null,
+  });
+
   const onScroll = () => {
     const el = scrollRef.current;
-    if (el) nearBottomRef.current = isNearBottom(el);
+    if (!el) return;
+    nearBottomRef.current = isNearBottom(el);
+    setAtBottom(nearBottomRef.current);
+  };
+
+  const scrollToBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    nearBottomRef.current = true;
+    // Salto direto, sem animação: com `smooth` o `onScroll` do meio do caminho dava "longe do fim", o
+    // botão reaparecia e uma mensagem que chegasse nesse intervalo não fixava no fim.
+    el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    setAtBottom(true);
   };
 
   // Rolagem guardada ao pedir o lote anterior: quando ele chega (conteúdo
@@ -97,9 +121,37 @@ export function useThreadPaging(
     anchorRef.current = decision.anchor;
     scrolledConvRef.current = decision.scrolledConversationId;
     nearBottomRef.current = decision.nearBottom;
-    if (decision.scrollTop === "bottom") el.scrollTop = el.scrollHeight;
-    else if (decision.scrollTop !== null) el.scrollTop = decision.scrollTop;
+    const divider = decision.initial && hasUnreadDivider
+      ? el.querySelector<HTMLElement>("[data-unread-divider]")
+      : null;
+    if (divider) {
+      // Abre onde a pessoa parou (como o WhatsApp); a âncora do histórico não muda.
+      el.scrollTop = dividerScrollTop({
+        dividerTop: divider.getBoundingClientRect().top,
+        containerTop: el.getBoundingClientRect().top,
+        scrollTop: el.scrollTop,
+      });
+      nearBottomRef.current = isNearBottom(el);
+      setAtBottom(nearBottomRef.current);
+    } else if (decision.scrollTop === "bottom") {
+      el.scrollTop = el.scrollHeight;
+      if (decision.initial) setAtBottom(true);
+    } else if (decision.scrollTop !== null) el.scrollTop = decision.scrollTop;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, messagesRaw, limit, conversationId, ready]);
+
+  // Recebidas que chegam com a pessoa rolada para cima: o contador do botão
+  // "ir para o fim" (a referência é a última mensagem vista no fim).
+  useEffect(() => {
+    if (!messages) return;
+    const base = baselineRef.current;
+    if (base.conversationId !== conversationId || atBottom) {
+      baselineRef.current = { conversationId, id: messages.at(-1)?._id ?? null };
+      setNewBelow(0);
+    } else {
+      setNewBelow(countInboundAfter(messages, base.id));
+    }
+  }, [messages, atBottom, conversationId]);
 
   // Teclado do celular abrindo (container segue a visualViewport) ou composer
   // crescendo encolhem o thread sem evento de `scroll`: quem estava no fim
@@ -175,6 +227,9 @@ export function useThreadPaging(
     highlightId,
     scrollRef,
     onScroll,
+    atBottom,
+    newBelow,
+    scrollToBottom,
     sentinelRef,
     loadOlder,
     jumpToMessage,

@@ -41,6 +41,39 @@ function Harness(props: Partial<ComposerViewProps> & { initialText?: string; ini
   );
 }
 
+describe("ComposerView: colar arquivo", () => {
+  function pasteInto(field: HTMLElement, data: { files?: File[]; text?: string }) {
+    const clipboardData = {
+      files: data.files ?? [],
+      items: [],
+      types: [...(data.files?.length ? ["Files"] : []), ...(data.text ? ["text/plain"] : [])],
+      getData: (format: string) => (format === "text/plain" ? (data.text ?? "") : ""),
+    };
+    // fireEvent devolve false quando algum handler chamou preventDefault.
+    return fireEvent.paste(field, { clipboardData });
+  }
+
+  it("colar uma imagem anexa com nome sensato e cancela o colar padrão", () => {
+    const onAttachFiles = vi.fn();
+    render(<Harness onAttachFiles={onAttachFiles} />);
+    const shot = new File(["x"], "image.png", { type: "image/png" });
+    const notCancelled = pasteInto(screen.getByPlaceholderText("Digite uma mensagem..."), { files: [shot] });
+    expect(notCancelled).toBe(false);
+    expect(onAttachFiles).toHaveBeenCalledTimes(1);
+    const [files] = onAttachFiles.mock.calls[0] as [File[]];
+    expect(files).toHaveLength(1);
+    expect(files[0].name).toMatch(/^imagem-colada-\d{8}-\d{6}\.png$/);
+  });
+
+  it("colar só texto não é interceptado", () => {
+    const onAttachFiles = vi.fn();
+    render(<Harness onAttachFiles={onAttachFiles} />);
+    const notCancelled = pasteInto(screen.getByPlaceholderText("Digite uma mensagem..."), { text: "olá" });
+    expect(notCancelled).toBe(true);
+    expect(onAttachFiles).not.toHaveBeenCalled();
+  });
+});
+
 describe("ComposerView", () => {
   it("Enter envia e Shift+Enter não", () => {
     const onSend = vi.fn();

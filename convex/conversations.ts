@@ -411,11 +411,18 @@ export const getConversations = query({
     // sem conta/setor/unidade usa o índice [org, archivedAt, unreadCount] (sem
     // pós-filtro); nos demais ramos vira pós-filtro com o piso de leitura.
     unreadOnly: v.optional(v.boolean()),
+    // Chip "Minhas": só conversas em que EU sou o responsável do lead OU a
+    // conversa foi roteada para mim (Central). O membro vem do `requireAuth`,
+    // nunca de um arg. Pós-filtro no map final (o lead já está lido): olha as
+    // mais recentes até o piso/`limit`, como `assignedTo`/`channel`; sem `mine`
+    // a query não muda. Ignorado com `leadId`.
+    mine: v.optional(v.boolean()),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const me = await requireAuth(ctx, args.organizationId);
     const limit = clampLimit(args.limit, CONVERSATIONS_DEFAULT_LIMIT, CONVERSATIONS_MAX_LIMIT);
+    const mineOnly = !args.leadId && args.mine === true;
     const unreadOnly = !args.leadId && args.unreadOnly === true;
     // Ativas, sem conta/setor/unidade: o índice de não lidas já devolve só elas.
     const unreadByIndex =
@@ -433,7 +440,7 @@ export const getConversations = query({
     const hasPostFilter = !args.leadId && (
       ((args.departmentId || args.noDepartment) && !!args.unitId) ||
       (!!args.channelConfigId && (!!args.departmentId || !!args.noDepartment || !!args.unitId)) ||
-      !!args.assignedToMe || !!args.assignedTo || !!args.channel ||
+      !!args.assignedToMe || !!args.assignedTo || !!args.channel || mineOnly ||
       (unreadOnly && !unreadByIndex)
     );
     const readLimit = hasPostFilter ? Math.max(limit, CONVERSATIONS_POST_FILTER_READ_FLOOR) : limit;
@@ -545,6 +552,7 @@ export const getConversations = query({
       // Filtro por responsável é do LEAD: uma conversa de grupo não tem lead e
       // portanto nunca casa — sai da lista filtrada, como qualquer conversa sem
       // aquele responsável.
+      if (mineOnly && lead?.assignedTo !== me._id && conversation.assignedTo !== me._id) return null;
       if (args.assignedTo && lead?.assignedTo !== args.assignedTo) return null;
       return {
         ...conversation,
@@ -679,6 +687,43 @@ export const getConversationPresence = query({
     return { state, at };
   },
 });
+
+/**
+ * "Digitando…" das conversas da org para a LISTA do inbox (uma assinatura por
+ * coluna, cruzada no cliente por `conversationId`).
+ *
+ * Custo: lê só as linhas de `conversationRuntime` da org com presença depois
+ * de `since` (índice `by_organization_and_presence_at`, `take(MAX)`), nunca a
+ * tabela inteira nem o doc da conversa — então não reexecuta a lista e só roda
+ * de novo quando uma dessas poucas linhas muda. `since` vem do cliente (query
+ * não usa `Date.now()`): ele o mantém estável por alguns minutos para não
+ * trocar a assinatura a cada tecla. O TTL de 12 s é aplicado no cliente sobre
+ * `at`. Mesma visibilidade da lista (`getConversations`): qualquer membro ativo
+ * da org; de outra org vem erro do `requireAuth`.
+ */
+export const getTypingConversations = query({
+  args: { organizationId: v.id("organizations"), since: v.number() },
+  returns: v.array(v.object({ conversationId: v.id("conversations"), at: v.number() })),
+  handler: async (ctx, args) => {
+    await requireAuth(ctx, args.organizationId);
+    const rows = await ctx.db
+      .query("conversationRuntime")
+      .withIndex("by_organization_and_presence_at", (q) =>
+        q.eq("organizationId", args.organizationId).gt("contactPresence.at", args.since)
+      )
+      .order("desc")
+      .take(TYPING_SCAN_CAP);
+    const out: { conversationId: Id<"conversations">; at: number }[] = [];
+    for (const row of rows) {
+      if (row.contactPresence?.state === "composing") {
+        out.push({ conversationId: row.conversationId, at: row.contactPresence.at });
+      }
+    }
+    return out;
+  },
+});
+
+const TYPING_SCAN_CAP = 50;
 
 // Get messages for conversation — as `limit` mais RECENTES (default 50, teto
 // 500), devolvidas em ordem ASC (mais antiga primeiro), como sempre. Antes era

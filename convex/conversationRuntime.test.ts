@@ -292,6 +292,120 @@ describe("presença do contato", () => {
   });
 });
 
+describe("getTypingConversations (lista do inbox)", () => {
+  test("devolve só 'composing' depois de `since`, isolado por organização", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    const other = await seedOrg(t, "outra-org-typing");
+    const asMember = t.withIdentity({ subject: `${seed.userId}|s1` });
+    const asOutsider = t.withIdentity({ subject: `${other.userId}|s2` });
+
+    expect(await asMember.query(api.conversations.getTypingConversations, { organizationId: seed.organizationId, since: 0 })).toEqual([]);
+
+    await t.mutation(internal.conversations.internalSetContactPresence, {
+      organizationId: seed.organizationId,
+      phone: PHONE,
+      state: "composing",
+    });
+    const at = Date.now();
+    const args = { organizationId: seed.organizationId, since: at - 12_000 };
+    expect(await asMember.query(api.conversations.getTypingConversations, args)).toEqual([
+      { conversationId: seed.conversationId, at },
+    ]);
+    // Corte do cliente: presença mais velha que `since` não entra.
+    expect(await asMember.query(api.conversations.getTypingConversations, { ...args, since: at })).toEqual([]);
+
+    // Outra organização: erro do requireAuth, nunca a presença desta.
+    await expect(asOutsider.query(api.conversations.getTypingConversations, args)).rejects.toThrow();
+    await expect(t.query(api.conversations.getTypingConversations, args)).rejects.toThrow();
+    // A outra org consultando a própria vê lista vazia.
+    expect(
+      await asOutsider.query(api.conversations.getTypingConversations, { organizationId: other.organizationId, since: 0 })
+    ).toEqual([]);
+
+    // "paused" some da lista.
+    vi.setSystemTime(at + 1000);
+    await t.mutation(internal.conversations.internalSetContactPresence, {
+      organizationId: seed.organizationId,
+      phone: PHONE,
+      state: "paused",
+    });
+    expect(await asMember.query(api.conversations.getTypingConversations, args)).toEqual([]);
+  });
+});
+
+describe("getConversations mine (chip Minhas)", () => {
+  async function seedMine(t: TestConvex<typeof schema>) {
+    const seed = await seedOrg(t);
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const base = (await ctx.db.get(seed.leadId))!;
+      const { _id, _creationTime, ...leadFields } = base;
+      const userB = await ctx.db.insert("users", {});
+      const memberB = await ctx.db.insert("teamMembers", {
+        organizationId: seed.organizationId,
+        userId: userB,
+        name: "Outro",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      const mk = async (leadAssignee: Id<"teamMembers"> | undefined, convAssignee?: Id<"teamMembers">, lastMessageAt = now) => {
+        const leadId = await ctx.db.insert("leads", { ...leadFields, assignedTo: leadAssignee });
+        return await ctx.db.insert("conversations", {
+          organizationId: seed.organizationId,
+          leadId,
+          channel: "whatsapp",
+          channelConfigId: seed.configId,
+          status: "active",
+          messageCount: 0,
+          assignedTo: convAssignee,
+          lastMessageAt,
+          createdAt: now,
+          updatedAt: now,
+        });
+      };
+      const leadMine = await mk(seed.humanId);
+      const leadOther = await mk(memberB);
+      const routedToMe = await mk(memberB, seed.humanId);
+      const unassigned = await mk(undefined);
+      return { seed, userB, memberB, leadMine, leadOther, routedToMe, unassigned };
+    });
+  }
+
+  test("só o que é meu (lead ou roteada), por membro e por organização", async () => {
+    const t = setup();
+    const x = await seedMine(t);
+    const other = await seedOrg(t, "outra-org-mine");
+    const asA = t.withIdentity({ subject: `${x.seed.userId}|s1` });
+    const asB = t.withIdentity({ subject: `${x.userB}|s2` });
+    const org = x.seed.organizationId;
+    const ids = (rows: ({ _id: string } | null)[]) => rows.map((r) => r!._id).sort();
+
+    const mineA = await asA.query(api.conversations.getConversations, { organizationId: org, mine: true });
+    expect(ids(mineA)).toEqual(ids([{ _id: x.leadMine }, { _id: x.routedToMe }]));
+
+    // Membro B vê as dele (lead) e não as de A.
+    const mineB = await asB.query(api.conversations.getConversations, { organizationId: org, mine: true });
+    expect(ids(mineB)).toEqual(ids([{ _id: x.leadOther }, { _id: x.routedToMe }]));
+
+    // Sem `mine` o resultado é o de sempre: todas.
+    const all = await asA.query(api.conversations.getConversations, { organizationId: org });
+    const allFalse = await asA.query(api.conversations.getConversations, { organizationId: org, mine: false });
+    expect(all.length).toBe(5);
+    expect(ids(allFalse)).toEqual(ids(all));
+
+    // Outra organização: erro e nada vaza.
+    const asOther = t.withIdentity({ subject: `${other.userId}|s3` });
+    await expect(asOther.query(api.conversations.getConversations, { organizationId: org, mine: true })).rejects.toThrow();
+    expect(
+      await asOther.query(api.conversations.getConversations, { organizationId: other.organizationId, mine: true })
+    ).toEqual([]);
+  });
+});
+
 describe("lock do turno de IA no runtime", () => {
   async function seedAttendant(t: TestConvex<typeof schema>) {
     const seed = await seedOrg(t);

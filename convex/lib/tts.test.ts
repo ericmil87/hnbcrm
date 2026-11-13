@@ -308,11 +308,12 @@ describe("envio de voice note no bridge (campos opcionais)", () => {
     expect(bridgeVoiceNoteFields(undefined)).toBeUndefined();
   });
 
-  test("planBridgeAudioSend: áudio humano sem metadata continua idêntico; voz da IA ganha os campos", () => {
+  test("planBridgeAudioSend: áudio humano declara PTT e codec, sem duração; voz da IA ganha os campos medidos", () => {
     expect(planBridgeAudioSend({ fileMimeType: "audio/ogg", fileName: "a.ogg", converted: false })).toEqual({
       kind: "audio",
       sendMime: "audio/ogg",
       useConverted: false,
+      voiceFields: { PTT: true, MimeType: "audio/ogg; codecs=opus" },
     });
     const plan = planBridgeAudioSend({
       fileMimeType: "audio/ogg",

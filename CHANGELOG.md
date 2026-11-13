@@ -4,6 +4,21 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Não publicada]
 
+### Conversas: acabamento no padrão do WhatsApp
+
+- **Áudio gravado no app volta a chegar ao cliente.** A nota de voz gravada pelo navegador ou pelo app instalado (inclusive no iPhone) falhava no envio em números conectados por QR code. Corrigido: ela sai como mensagem de voz normal.
+- **A conversa só é marcada como lida quando você está olhando a tela.** Com a aba em segundo plano ou a janela sem foco, o cliente não vê mais "lido" no WhatsApp antes da hora, e a notificação não some do celular do número.
+- **Divisor "Mensagens não lidas".** Ao abrir uma conversa com mensagens novas, a tela começa no ponto em que você parou, como no WhatsApp.
+- **Botão para ir às mensagens mais recentes,** que aparece ao rolar para cima e conta as mensagens que chegaram enquanto você lia o histórico.
+- **Colar e arrastar para anexar.** Cole uma captura de tela ou imagem (Ctrl/Cmd+V) direto no campo de mensagem, ou arraste arquivos para a conversa e solte.
+- **Lista de conversas mostra "Rascunho:" e "digitando…".** O texto que você começou e não enviou aparece na prévia da conversa, e dá para ver quem está escrevendo sem abrir a conversa.
+- **Novo filtro "Minhas".** Mostra só as conversas em que você é o responsável. Fica junto dos outros filtros (chip no celular, botão no computador) e combina com eles.
+- **Áudios em 1,25× e 1,75×.** A velocidade de reprodução ganhou dois passos, e o app lembra a última que você escolheu.
+
+### Campanhas e grupos: pausa automática quando o WhatsApp pede para desacelerar
+
+- Quando o WhatsApp sinaliza limite de envio num número conectado por QR code, as campanhas e as publicações agendadas em grupo desse número pausam por alguns minutos e retomam sozinhas. Se o sinal se repetir, a pausa aumenta, até 1 hora. As conversas do dia a dia e as respostas da IA não são seguradas.
+
 ### Aplicativo instalado (PWA)
 
 - **Ícone do app com mais cor.** O ícone do HNBCRM na tela inicial ficou com o logo maior e em duas cores (balão da pessoa em branco, balão da IA em verde vivo) sobre o verde da marca. Assim ele continua colorido também quando o iPhone está com os ícones no modo escuro, que antes o deixava preto e branco. No Android e no computador o Chrome atualiza o ícone sozinho nos próximos dias. No iPhone é preciso remover o app da Tela de Início e adicioná-lo de novo pelo Safari.

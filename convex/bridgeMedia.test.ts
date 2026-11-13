@@ -152,12 +152,20 @@ describe("bridgeSend media builders (pure)", () => {
       kind: "audio",
       sendMime: "audio/ogg",
       useConverted: false,
+      voiceFields: { PTT: true, MimeType: "audio/ogg; codecs=opus" },
     });
+    // Convertido: o data-URI leva só `audio/ogg` (o gateway recusa espaço depois
+    // do `;`); o codec vai no campo MimeType do corpo.
     expect(planBridgeAudioSend({ fileMimeType: "audio/mp4", fileName: "a.m4a", converted: true })).toEqual({
       kind: "audio",
-      sendMime: "audio/ogg; codecs=opus",
+      sendMime: "audio/ogg",
       useConverted: true,
+      voiceFields: { PTT: true, MimeType: "audio/ogg; codecs=opus" },
     });
+    // Gravação do Firefox ("audio/ogg; codecs=opus"): o parâmetro nunca vai para o data-URI.
+    expect(planBridgeAudioSend({ fileMimeType: "audio/ogg; codecs=opus", fileName: "a.ogg", converted: false }).sendMime).toBe("audio/ogg");
+    expect(toDataUri(new Uint8Array([79, 103]), "audio/ogg; codecs=opus")).toBe("data:audio/ogg;base64,T2c=");
+    expect(toDataUri(new Uint8Array([79, 103]), "")).toBe("data:application/octet-stream;base64,T2c=");
     expect(planBridgeAudioSend({ fileMimeType: "audio/mp4", fileName: "nota-de-voz-1.m4a", converted: false })).toEqual({
       kind: "document",
       sendMime: "audio/mp4",

@@ -14,6 +14,8 @@ import { createNotification } from "./notify";
 import { notificationCopy, type NotificationCopy } from "./notificationCopy";
 import { getLeadRef } from "./leadRef";
 import { scheduleWebhookEvent } from "./webhookDispatch";
+import { planBridgeRateFreeze } from "./bridgeRateFreeze";
+import { maskDigitRuns } from "./telegramFormat";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const CAMPAIGN_REPLY_WINDOW_MS = 7 * DAY_MS;
@@ -327,6 +329,53 @@ export async function freezeChannelForCampaigns(
       campaignFrozenUntil: until,
     });
   }
+}
+
+/**
+ * `rate_limited` do bridge em qualquer envio do canal (`source` diz de onde
+ * veio o sinal): congela o canal para campanhas/posts com duração
+ * crescente na reincidência (`lib/bridgeRateFreeze`), pelo MESMO
+ * `campaignFrozenUntil` da 131048. Não pausa nem falha nada: o worker de
+ * campanhas (`capsExceeded`) e o de posts de grupo reagendam sozinhos e o
+ * operador vê "Canal congelado" na linha do tempo. Rastro em `auditLogs` (sem
+ * telefone). Devolve null quando o canal já estava congelado (mesmo incidente).
+ */
+export async function freezeChannelForBridgeRateLimit(
+  ctx: MutationCtx,
+  channelConfigId: Id<"channelConfigs">,
+  organizationId: Id<"organizations">,
+  now: number,
+  source: "campaign" | "group_post" | "conversation"
+): Promise<{ until: number; strikes: number } | null> {
+  const row = await ctx.db
+    .query("channelPacing")
+    .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
+    .first();
+  const plan = planBridgeRateFreeze({ prev: row?.bridgeRateLimit, frozenUntil: row?.campaignFrozenUntil, now });
+  if (!plan.escalated) return null;
+  await freezeChannelForCampaigns(ctx, channelConfigId, organizationId, plan.until);
+  const fresh = await ctx.db
+    .query("channelPacing")
+    .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
+    .first();
+  if (fresh) await ctx.db.patch(fresh._id, { bridgeRateLimit: plan.state });
+  const config = await ctx.db.get(channelConfigId);
+  // O nome do canal pode ser o próprio número: sequências de dígitos saem mascaradas.
+  const channelName = config?.displayName ? maskDigitRuns(config.displayName) : undefined;
+  const minutes = Math.round(plan.durationMs / 60000);
+  await ctx.db.insert("auditLogs", {
+    organizationId,
+    entityType: "channelConfig",
+    entityId: channelConfigId,
+    action: "update",
+    actorType: "system",
+    changes: { after: { campaignFrozenUntil: plan.until, strikes: plan.state.strikes } },
+    metadata: { name: channelName, channel: "whatsapp", reason: "bridge_rate_limited", source, automatic: true },
+    description: `Canal «${channelName ?? "WhatsApp"}» congelado por ${minutes} min para campanhas e publicações em grupo: o WhatsApp pediu para desacelerar (limite de taxa, ocorrência ${plan.state.strikes})`,
+    severity: "medium",
+    createdAt: now,
+  });
+  return { until: plan.until, strikes: plan.state.strikes };
 }
 
 async function recipientForMessage(

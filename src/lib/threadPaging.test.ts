@@ -129,3 +129,37 @@ describe("shouldPinAfterResize", () => {
     expect(shouldPinAfterResize({ prevClientHeight: 340.2, clientHeight: 340, nearBottom: true })).toBe(false);
   });
 });
+
+describe("rolagem inicial e botão ir para o fim", () => {
+  it("marca a rolagem inicial da conversa", () => {
+    expect(decideThreadScroll({ ...base, anchor: null, scrolledConversationId: null }).initial).toBe(true);
+    expect(decideThreadScroll({ ...base, anchor: null, nearBottom: true }).initial).toBe(false);
+  });
+  it("dividerScrollTop deixa o divisor perto do topo", async () => {
+    const { dividerScrollTop } = await import("./threadPaging");
+    expect(dividerScrollTop({ dividerTop: 500, containerTop: 100, scrollTop: 0 })).toBe(392);
+    expect(dividerScrollTop({ dividerTop: 100, containerTop: 100, scrollTop: 0 })).toBe(0);
+  });
+  it("countInboundAfter conta só recebidas depois da referência", async () => {
+    const { countInboundAfter } = await import("./threadPaging");
+    const msgs = [
+      { _id: "a", direction: "inbound", createdAt: 1 },
+      { _id: "b", direction: "outbound", createdAt: 2 },
+      { _id: "c", direction: "inbound", createdAt: 3 },
+      { _id: "d", direction: "inbound", isInternal: true, createdAt: 4 },
+      { _id: "e", direction: "inbound", createdAt: 5 },
+    ];
+    expect(countInboundAfter(msgs, "a")).toBe(2);
+    expect(countInboundAfter(msgs, "e")).toBe(0);
+    expect(countInboundAfter(msgs, "zzz")).toBe(0);
+    expect(countInboundAfter(msgs, null)).toBe(0);
+  });
+  it("rótulo e badge", async () => {
+    const { jumpToLatestLabel, jumpBadgeText } = await import("./threadPaging");
+    expect(jumpToLatestLabel(0)).toBe("Ir para as mensagens mais recentes");
+    expect(jumpToLatestLabel(1)).toBe("Ir para as mensagens mais recentes, 1 nova");
+    expect(jumpToLatestLabel(3)).toBe("Ir para as mensagens mais recentes, 3 novas");
+    expect(jumpBadgeText(120)).toBe("99+");
+    expect(jumpBadgeText(7)).toBe("7");
+  });
+});

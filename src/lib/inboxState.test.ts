@@ -249,11 +249,11 @@ describe("chips da lista (celular)", () => {
 
   it("Todas pressionado sem filtro; Grupos só com grupo; uma por etiqueta", () => {
     const chips = inboxFilterChips(none, { labels, showGroups: false, unreadCount: 0 });
-    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "label:l1"]);
+    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "mine", "label:l1"]);
     expect(chips[0].pressed).toBe(true);
     expect(chips[1].count).toBeUndefined();
     const withGroups = inboxFilterChips(none, { labels: [], showGroups: true, unreadCount: 12 });
-    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "group"]);
+    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "mine", "group"]);
     expect(withGroups[1].count).toBe(12);
   });
 
@@ -261,10 +261,29 @@ describe("chips da lista (celular)", () => {
     expect(inboxFilterChips({ ...none, kind: "direct" }, { labels: [], showGroups: false, unreadCount: 0 })).toEqual([
       { id: "all", label: "Todas", pressed: false },
       { id: "unread", label: "Não lidas", pressed: false, count: undefined },
+      { id: "mine", label: "Minhas", pressed: false },
       { id: "direct", label: "Diretas", pressed: true },
     ]);
     const group = inboxFilterChips({ ...none, kind: "group" }, { labels: [], showGroups: false, unreadCount: 0 });
     expect(group.find((c) => c.id === "group")?.pressed).toBe(true);
+  });
+
+  it("Minhas: liga, combina com Não lidas/Grupos e Todas limpa", () => {
+    const chips = inboxFilterChips({ ...none, mine: true }, { labels: [], showGroups: false, unreadCount: 0 });
+    expect(chips.find((c) => c.id === "mine")?.pressed).toBe(true);
+    expect(chips.find((c) => c.id === "all")?.pressed).toBe(false);
+    const on = applyInboxChip("mine", none);
+    expect(on.mine).toBe(true);
+    const combined = applyInboxChip("group", applyInboxChip("unread", on));
+    expect(combined).toMatchObject({ mine: true, unreadOnly: true, kind: "group" });
+    expect(applyInboxChip("mine", on).mine).toBe(false);
+    expect(applyInboxChip("all", combined)).toEqual(none);
+  });
+
+  it("Minhas: estado vazio próprio", () => {
+    expect(
+      emptyListMessage({ kind: "all", showArchived: false, queueFilterActive: false, labelId: null, mine: true }).text
+    ).toBe("Nenhuma conversa atribuída a você");
   });
 
   it("applyInboxChip: Todas limpa; os outros ligam e desligam", () => {
@@ -293,6 +312,7 @@ describe("chips da lista (celular)", () => {
     expect(chips.map((c) => [c.id, c.label, c.pressed])).toEqual([
       ["all", "Todas", false],
       ["unread", "Não lidas", false],
+      ["mine", "Minhas", false],
       ["channel", "Instagram", true],
       ["account", "@casalumiar", true],
     ]);

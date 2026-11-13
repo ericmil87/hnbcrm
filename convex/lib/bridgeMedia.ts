@@ -289,8 +289,19 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-/** Build the `data:<mime>;base64,<payload>` URI wuzapi's send endpoints expect. */
+/**
+ * Build the `data:<mime>;base64,<payload>` URI wuzapi's send endpoints expect.
+ *
+ * Only the BASE type goes in the URI, never its parameters: the gateway parses
+ * it with a strict Go data-URL lexer that rejects a space after `;`, so
+ * `data:audio/ogg; codecs=opus;base64,...` (the mime of every converted voice
+ * note, and of a Firefox recording) came back as "could not decode base64
+ * encoded data" and no browser voice note ever left through the bridge
+ * (prod, 10/11 and 13/11/2026). The full mime travels in the `MimeType` body
+ * field when it matters (`bridgeVoiceNoteFields`).
+ */
 export function toDataUri(bytes: Uint8Array, mimeType: string): string {
-  const mime = mimeType && mimeType.length > 0 ? mimeType : "application/octet-stream";
+  const base = (mimeType ?? "").split(";")[0].trim();
+  const mime = base.length > 0 ? base : "application/octet-stream";
   return `data:${mime};base64,${bytesToBase64(bytes)}`;
 }
