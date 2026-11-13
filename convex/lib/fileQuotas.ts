@@ -31,10 +31,9 @@ function getOrganizationTier(_organizationId: Id<"organizations">): "free" | "pr
 }
 
 /**
- * Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `4 × cap` docs.
- * Foto de perfil do contato (`metadata.kind:"contact_avatar"`, lib/contactAvatarOps)
- * NÃO conta: é automática e, contada, 100 contatos novos no dia recusariam a
- * mídia recebida e os uploads da equipe.
+ * Uploads (linhas de `files`) nas últimas 24 h — lê no máximo `cap` docs. A foto de
+ * perfil do contato fica fora da conta de propósito: ela grava `createdAt: 0`
+ * (ver `contactAvatar.internalApplyContactAvatar`), fora deste range de índice.
  */
 async function countUploadsLast24h(
   ctx: QueryCtx,
@@ -42,18 +41,13 @@ async function countUploadsLast24h(
   cap: number
 ): Promise<number> {
   const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-  let counted = 0;
-  let read = 0;
-  for await (const file of ctx.db
+  const recent = await ctx.db
     .query("files")
     .withIndex("by_organization_and_created", (q) =>
       q.eq("organizationId", organizationId).gt("createdAt", oneDayAgo)
-    )) {
-    read += 1;
-    if ((file.metadata as { kind?: unknown } | undefined)?.kind !== "contact_avatar") counted += 1;
-    if (counted >= cap || read >= cap * 4) break;
-  }
-  return counted;
+    )
+    .take(cap);
+  return recent.length;
 }
 
 /**

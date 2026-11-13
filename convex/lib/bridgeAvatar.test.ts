@@ -4,6 +4,7 @@ import {
   buildAvatarRequestBody,
   isAllowedAvatarUrl,
   parseAvatarResponse,
+  readBodyCapped,
   sniffAvatarMime,
   validateAvatarBytes,
 } from "./bridgeAvatar";
@@ -98,5 +99,20 @@ describe("evento Picture (fixture SINTÉTICA)", () => {
     expect(parseBridgeEvent(pictureFixtures.newsletter).kind).toBe("ignored");
     expect(parseBridgeEvent({ type: "Picture", event: {} }).kind).toBe("ignored");
     expect(parseBridgeEvent({ type: "Picture", event: { JID: 5 } }).kind).toBe("ignored");
+  });
+});
+
+describe("readBodyCapped", () => {
+  test("lê até o teto e corta o que passa dele (stream)", async () => {
+    const ok = await readBodyCapped(new Response(new Uint8Array(100).fill(1)), 200);
+    expect(ok?.length).toBe(100);
+    expect(await readBodyCapped(new Response(new Uint8Array(500)), 200)).toBeNull();
+    const chunks = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(150));
+      },
+    });
+    // Corpo sem fim: só termina porque a leitura é cortada no teto.
+    expect(await readBodyCapped(new Response(chunks), 200)).toBeNull();
   });
 });

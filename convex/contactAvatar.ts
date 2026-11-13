@@ -17,19 +17,23 @@ import {
   buildAvatarRequestBody,
   isAllowedAvatarUrl,
   parseAvatarResponse,
+  readBodyCapped,
   validateAvatarBytes,
 } from "./lib/bridgeAvatar";
 import {
   AVATAR_ABSENT_RENEW_MS,
+  AVATAR_CONFIG_SKIP_BACKOFF_MS,
   AVATAR_REFUSED_BACKOFF_MS,
   avatarPauseMs,
+  pacingAfterAvatarError,
   avatarPhoneFor,
   computeNextCheckAt,
   whatsappAvatarContactPatch,
 } from "./lib/contactAvatar";
 import {
-  channelAllowsAvatarFetch,
+  classifyAvatarChannel,
   expireWhatsappAvatar,
+  scheduleContactAvatarFetch,
   removeWhatsappAvatar,
   removeWhatsappAvatarNow,
 } from "./lib/contactAvatarOps";
@@ -51,10 +55,31 @@ async function noteGatewaySuccess(ctx: MutationCtx, channelConfigId: Id<"channel
     .query("channelAvatarPacing")
     .withIndex("by_channel_config", (q) => q.eq("channelConfigId", channelConfigId))
     .first();
-  if (pacing && (pacing.strikes !== undefined || pacing.pausedUntil !== undefined)) {
-    await ctx.db.patch(pacing._id, { strikes: undefined, pausedUntil: undefined });
+  if (
+    pacing &&
+    (pacing.strikes !== undefined || pacing.pausedUntil !== undefined || pacing.errorStreak !== undefined)
+  ) {
+    await ctx.db.patch(pacing._id, { strikes: undefined, pausedUntil: undefined, errorStreak: undefined });
   }
 }
+
+/**
+ * Agendamento de fato (o gatilho do ingest/abrir conversa só agenda ESTA mutation):
+ * revalida tudo, reserva o horário no cursor do canal e agenda a action. Fica fora
+ * da transação do ingest para o doc único do canal nunca virar disputa de OCC.
+ */
+export const internalMaybeSchedule = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    contactId: v.id("contacts"),
+    conversationId: v.id("conversations"),
+    channelConfigId: v.optional(v.id("channelConfigs")),
+  },
+  returns: v.string(),
+  handler: async (ctx, args) => {
+    return await scheduleContactAvatarFetch(ctx, args);
+  },
+});
 
 /**
  * Plano da busca, relido na hora de executar: contato e canal da MESMA org,
@@ -79,8 +104,8 @@ export const internalGetAvatarPlan = internalQuery({
     const contact = await ctx.db.get(args.contactId);
     if (!contact || contact.organizationId !== args.organizationId) return null;
     const config = await ctx.db.get(args.channelConfigId);
-    if (!channelAllowsAvatarFetch(config, args.organizationId)) return null;
-    if (!config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
+    if (classifyAvatarChannel(config, args.organizationId) !== "ok") return null;
+    if (!config || !config.bridgeBaseUrl || !config.bridgeTokenEncrypted) return null;
     const row = await ctx.db
       .query("contactAvatars")
       .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
@@ -108,7 +133,7 @@ export const internalFetchContactAvatar = internalAction({
   returns: v.null(),
   handler: async (ctx, args) => {
     const record = async (
-      outcome: "same" | "hidden" | "none" | "error" | "rate_limited" | "skipped" | "refused"
+      outcome: "same" | "hidden" | "none" | "error" | "rate_limited" | "skipped" | "paused" | "refused"
     ) => {
       try {
         await ctx.runMutation(internal.contactAvatar.internalRecordAvatarCheck, { ...args, outcome });
@@ -119,8 +144,12 @@ export const internalFetchContactAvatar = internalAction({
     let storedId: Id<"_storage"> | null = null;
     try {
       const plan = await ctx.runQuery(internal.contactAvatar.internalGetAvatarPlan, args);
-      if (!plan || (plan.pausedUntil !== null && plan.pausedUntil > Date.now())) {
+      if (!plan) {
         await record("skipped");
+        return null;
+      }
+      if (plan.pausedUntil !== null && plan.pausedUntil > Date.now()) {
+        await record("paused");
         return null;
       }
       const token = await decryptSecret(plan.tokenEncrypted);
@@ -150,18 +179,25 @@ export const internalFetchContactAvatar = internalAction({
         await record("same");
         return null;
       }
+      // Sem seguir redirecionamento (o CDN medido responde 200 direto): um 3xx/opaco é erro.
       const img = await fetch(parsed.url, {
-        redirect: "error",
+        redirect: "manual",
         signal: AbortSignal.timeout(AVATAR_FETCH_TIMEOUT_MS),
       });
       const declared = Number(img.headers.get("content-length") ?? "0");
-      if (!img.ok || declared > MAX_AVATAR_BYTES) {
+      if (
+        img.status < 200 ||
+        img.status >= 300 ||
+        declared > MAX_AVATAR_BYTES ||
+        (img.url && !isAllowedAvatarUrl(img.url))
+      ) {
+        await img.body?.cancel().catch(() => undefined);
         await record("error");
         return null;
       }
-      const bytes = new Uint8Array(await img.arrayBuffer());
-      const checked = validateAvatarBytes(bytes);
-      if (!checked) {
+      const bytes = await readBodyCapped(img, MAX_AVATAR_BYTES);
+      const checked = bytes ? validateAvatarBytes(bytes) : null;
+      if (!bytes || !checked) {
         await record("error");
         return null;
       }
@@ -242,7 +278,11 @@ export const internalApplyContactAvatar = internalMutation({
       // listaria a foto como arquivo do contato.
       fileType: "other",
       metadata: { kind: "contact_avatar", contactId: args.contactId },
-      createdAt: now,
+      // `createdAt: 0` de propósito: o teto diário de uploads (`countUploadsLast24h`)
+      // lê o índice `by_organization_and_created` com `createdAt > agora-24h`, então a
+      // foto automática fica FORA da contagem sem custo de leitura. O horário real
+      // está em `_creationTime` e em `contactAvatars.checkedAt`.
+      createdAt: 0,
     });
     await ctx.db.patch(row._id, {
       channelConfigId: args.channelConfigId,
@@ -282,6 +322,7 @@ export const internalRecordAvatarCheck = internalMutation({
       v.literal("error"),
       v.literal("rate_limited"),
       v.literal("skipped"),
+      v.literal("paused"),
       v.literal("refused")
     ),
   },
@@ -295,7 +336,20 @@ export const internalRecordAvatarCheck = internalMutation({
     const now = Date.now();
     switch (args.outcome) {
       case "skipped":
-        await ctx.db.patch(row._id, { pendingSince: undefined });
+        // Falta persistente de configuração (canal sem URL/token, inativo, sessão caída):
+        // só reconfere em 1 h, para não reagendar a cada mensagem. Linha já fora de
+        // pendência (outra busca terminou) não é tocada.
+        if (row.pendingSince !== undefined) {
+          await ctx.db.patch(row._id, {
+            pendingSince: undefined,
+            nextCheckAt: Math.max(row.nextCheckAt, now + AVATAR_CONFIG_SKIP_BACKOFF_MS),
+          });
+        }
+        return null;
+      case "paused":
+        // Pausa do canal (429/disjuntor): só libera a trava; o agendamento já recusa
+        // enquanto a pausa durar (sem escrita por mensagem).
+        if (row.pendingSince !== undefined) await ctx.db.patch(row._id, { pendingSince: undefined });
         return null;
       case "same":
         await ctx.db.patch(row._id, {
@@ -341,6 +395,14 @@ export const internalRecordAvatarCheck = internalMutation({
       }
       case "refused":
       case "error": {
+        if (args.outcome === "error") {
+          // Disjuntor: 5 `error` seguidos no canal o pausam como o 429.
+          const pacing = await ctx.db
+            .query("channelAvatarPacing")
+            .withIndex("by_channel_config", (q) => q.eq("channelConfigId", args.channelConfigId))
+            .first();
+          if (pacing) await ctx.db.patch(pacing._id, pacingAfterAvatarError(pacing, now));
+        }
         const failures = Math.min((row.failures ?? 0) + 1, 10);
         await ctx.db.patch(row._id, {
           status: "error",

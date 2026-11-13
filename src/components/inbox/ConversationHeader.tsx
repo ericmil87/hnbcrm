@@ -355,7 +355,11 @@ export function ConversationHeader({
       <Users size={20} aria-hidden />
     </span>
   ) : (
-    <Avatar name={displayName === "Sem nome" ? "?" : displayName} size="md" />
+    <Avatar
+      name={displayName === "Sem nome" ? "?" : displayName}
+      size="md"
+      imageUrl={(conversation.contact as { avatarUrl?: string | null } | null | undefined)?.avatarUrl}
+    />
   );
   const subtitleLine = subtitle ? (
     <span className={cn("block truncate text-xs", subtitleTone)} role={subtitle.tone === "typing" ? "status" : undefined}>

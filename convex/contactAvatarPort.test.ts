@@ -39,3 +39,26 @@ test("nenhum módulo grava pps.whatsapp.net em contato", () => {
     .map((f) => f.rel);
   expect(offenders).toEqual([]);
 });
+
+test("o gatilho do ingest só lê contactAvatars: canal e cursor ficam em scheduleContactAvatarFetch", () => {
+  const ops = files.find((f) => f.rel === "lib/contactAvatarOps.ts")!.text;
+  const start = ops.indexOf("export async function maybeScheduleContactAvatar");
+  const end = ops.indexOf("export type ScheduleOutcome");
+  const trigger = ops.slice(start, end);
+  expect(trigger).toContain("internal.contactAvatar.internalMaybeSchedule");
+  expect(trigger).toContain("try {");
+  expect(trigger).not.toContain("channelAvatarPacing");
+  expect(trigger).not.toContain("ctx.db.patch");
+  expect(trigger).not.toContain("ctx.db.insert");
+  expect(trigger).not.toContain("ctx.db.get(");
+  // Só o gatilho agenda a mutation de agendamento.
+  const offenders = files
+    .filter((f) => f.text.includes("internal.contactAvatar.internalMaybeSchedule") && f.rel !== "lib/contactAvatarOps.ts")
+    .map((f) => f.rel);
+  expect(offenders).toEqual([]);
+});
+
+test("a purga da org e o rollback de importação conhecem a foto de perfil", () => {
+  expect(files.find((f) => f.rel === "opsPurge.ts")!.text).toContain('table: "contactAvatars"');
+  expect(files.find((f) => f.rel === "imports.ts")!.text).toContain("deleteContactAvatarArtifacts");
+});

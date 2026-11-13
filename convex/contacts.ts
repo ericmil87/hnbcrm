@@ -2,7 +2,8 @@ import { ConvexError, v } from "convex/values";
 import { searchContactsByText } from "./lib/contactTextSearch";
 import { deleteFileRow } from "./lib/storageUsage";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
-import { deleteContactAvatarArtifacts, manualAvatarFields } from "./lib/contactAvatarOps";
+import { avatarFieldsOnNumberChange, deleteContactAvatarArtifacts, manualAvatarFields } from "./lib/contactAvatarOps";
+import { sanitizeEnrichFields } from "./lib/contactAvatar";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
 import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { batchGet } from "./lib/batchGet";
@@ -413,6 +414,8 @@ export const updateContact = mutation({
 
     await ctx.db.patch(args.contactId, {
       ...changes,
+      // Número de OUTRA pessoa: a foto do WhatsApp guardada era do número antigo.
+      ...(await avatarFieldsOnNumberChange(ctx, contact, changes)),
       // Foto manual mudou: `avatarUrl` (o que a lista mostra) acompanha.
       ...("photoFileId" in changes
         ? await manualAvatarFields(ctx, {
@@ -763,6 +766,8 @@ export const internalUpdateContact = internalMutation({
 
     await ctx.db.patch(args.contactId, {
       ...changes,
+      // Número de OUTRA pessoa: a foto do WhatsApp guardada era do número antigo.
+      ...(await avatarFieldsOnNumberChange(ctx, contact, changes)),
       // Foto manual mudou: `avatarUrl` (o que a lista mostra) acompanha.
       ...("photoFileId" in changes
         ? await manualAvatarFields(ctx, {
@@ -818,12 +823,14 @@ export const enrichContact = internalMutation({
     const now = Date.now();
     const before: Record<string, any> = {};
     const after: Record<string, any> = {};
+    // `fields` é livre (REST/MCP): sistema, derivados e a foto não passam por aqui.
+    const { fields: safeFields } = sanitizeEnrichFields(args.fields);
 
     // Build enrichmentMeta entries for each field
     const existingMeta = contact.enrichmentMeta || {};
     const newMeta: Record<string, { source: string; updatedAt: number; confidence?: number }> = { ...existingMeta };
 
-    for (const [key, value] of Object.entries(args.fields)) {
+    for (const [key, value] of Object.entries(safeFields)) {
       before[key] = (contact as any)[key];
       after[key] = value;
       newMeta[key] = {
@@ -833,11 +840,12 @@ export const enrichContact = internalMutation({
       };
     }
 
-    const merged = { ...contact, ...args.fields };
+    const merged = { ...contact, ...safeFields };
     const searchText = buildSearchText(merged);
 
     await ctx.db.patch(args.contactId, {
-      ...args.fields,
+      ...safeFields,
+      ...(await avatarFieldsOnNumberChange(ctx, contact, safeFields)),
       enrichmentMeta: newMeta,
       searchText: searchText || undefined,
       updatedAt: now,

@@ -115,6 +115,7 @@ export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importK
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
 import { leadCreationStagePatch } from "./lib/leadStageMove";
 import { deleteMetaIdentitiesForContact } from "./lib/metaIdentity";
+import { deleteContactAvatarArtifacts } from "./lib/contactAvatarOps";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 
 /** Cabeçalho legível a partir da chave (só para mensagens de erro). */
@@ -1297,6 +1298,8 @@ export const internalRollbackBatch = internalMutation({
         .first();
       if (stillLinked) continue; // outro lead passou a usar o contato — preserva
       await deleteMetaIdentitiesForContact(ctx, contactId);
+      // Foto do WhatsApp (e manual) do contato removido saem junto (sem órfão).
+      await deleteContactAvatarArtifacts(ctx, contact);
       await ctx.db.delete(contactId);
       deleted++;
     }

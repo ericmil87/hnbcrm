@@ -1,5 +1,12 @@
 import { describe, expect, test, afterEach, vi } from "vitest";
 import {
+  AVATAR_DAILY_CAP_PER_CHANNEL,
+  AVATAR_ERROR_STREAK_LIMIT,
+  ENRICH_BLOCKED_FIELDS,
+  avatarDayKey,
+  numberChangedPerson,
+  pacingAfterAvatarError,
+  sanitizeEnrichFields,
   AVATAR_ERROR_BACKOFF_MS,
   AVATAR_MAX_QUEUE_MS,
   avatarGapMs,
@@ -115,4 +122,67 @@ test("kill switch CONTACT_AVATAR_FETCH=0", () => {
   expect(contactAvatarFetchEnabled()).toBe(true);
   vi.stubEnv("CONTACT_AVATAR_FETCH", "0");
   expect(contactAvatarFetchEnabled()).toBe(false);
+});
+
+describe("teto diário e disjuntor", () => {
+  test("300 por dia UTC por canal; o dia seguinte zera", () => {
+    const now = Date.UTC(2026, 10, 13, 12);
+    const day = avatarDayKey(now);
+    expect(day).toBe("2026-11-13");
+    expect(planAvatarSlot({ nextFetchAt: 0, day, dayCount: AVATAR_DAILY_CAP_PER_CHANNEL - 1 }, now, 0)).toMatchObject({
+      dayCount: AVATAR_DAILY_CAP_PER_CHANNEL,
+    });
+    expect(planAvatarSlot({ nextFetchAt: 0, day, dayCount: AVATAR_DAILY_CAP_PER_CHANNEL }, now, 0)).toBeNull();
+    expect(
+      planAvatarSlot({ nextFetchAt: 0, day, dayCount: AVATAR_DAILY_CAP_PER_CHANNEL }, now + 24 * HOUR, 0)
+    ).toMatchObject({ dayCount: 1, day: "2026-11-14" });
+  });
+
+  test("5 error seguidos pausam com a escada do 429", () => {
+    let p: { strikes?: number; errorStreak?: number } = {};
+    for (let i = 1; i < AVATAR_ERROR_STREAK_LIMIT; i++) {
+      const next = pacingAfterAvatarError(p, 0);
+      expect(next).toEqual({ errorStreak: i });
+      p = next;
+    }
+    expect(pacingAfterAvatarError(p, 1000)).toEqual({ errorStreak: 0, strikes: 1, pausedUntil: 1000 + 15 * MIN });
+    expect(pacingAfterAvatarError({ errorStreak: 4, strikes: 1 }, 0)).toMatchObject({ strikes: 2, pausedUntil: 30 * MIN });
+  });
+});
+
+describe("sanitizeEnrichFields", () => {
+  test("remove sistema, derivados e foto; mantém campos legítimos", () => {
+    const { fields, dropped } = sanitizeEnrichFields({
+      avatarUrl: "x",
+      photoFileId: "f",
+      organizationId: "o",
+      _id: "i",
+      _creationTime: 1,
+      whatsappCheck: {},
+      whatsappFails: {},
+      whatsappLookup: {},
+      searchText: "s",
+      enrichmentMeta: {},
+      $set: 1,
+      city: "Curitiba",
+      customFields: { a: 1 },
+      linkedinUrl: "https://linkedin.com/in/x",
+    });
+    expect(Object.keys(fields).sort()).toEqual(["city", "customFields", "linkedinUrl"]);
+    expect(dropped).toContain("avatarUrl");
+    for (const key of ["avatarUrl", "photoFileId", "organizationId", "_id", "_creationTime", "whatsappCheck", "whatsappFails", "whatsappLookup", "searchText"]) {
+      expect(ENRICH_BLOCKED_FIELDS.includes(key) || key.startsWith("_")).toBe(true);
+    }
+  });
+});
+
+describe("numberChangedPerson", () => {
+  const spellings = (d: string) => (d === "5511999990001" ? ["5511999990001", "551199990001"] : [d]);
+  test("mesma grafia ou outra grafia do mesmo número não conta; outra pessoa conta", () => {
+    expect(numberChangedPerson({ phone: "5511999990001" }, { phone: "5511999990001" }, spellings)).toBe(false);
+    expect(numberChangedPerson({ phone: "5511999990001" }, { phone: "551199990001" }, spellings)).toBe(false);
+    expect(numberChangedPerson({ phone: "5511999990001" }, { phone: "5511988887777" }, spellings)).toBe(true);
+    expect(numberChangedPerson({ whatsappNumber: "5511999990001", phone: "1" }, { whatsappNumber: undefined, phone: "1" }, spellings)).toBe(true);
+    expect(numberChangedPerson({}, { phone: "5511988887777" }, spellings)).toBe(false);
+  });
 });

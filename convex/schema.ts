@@ -3870,6 +3870,10 @@ const applicationTables = {
     nextFetchAt: v.number(),
     pausedUntil: v.optional(v.number()),
     strikes: v.optional(v.number()),
+    // Teto diário (dia UTC) de buscas do número e `error` seguidos (disjuntor).
+    day: v.optional(v.string()),
+    dayCount: v.optional(v.number()),
+    errorStreak: v.optional(v.number()),
   })
     .index("by_channel_config", ["channelConfigId"])
     .index("by_organization", ["organizationId"]),

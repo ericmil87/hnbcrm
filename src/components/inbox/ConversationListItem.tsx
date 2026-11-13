@@ -45,7 +45,8 @@ export interface ConversationListEntry {
   channelProvider?: string | null;
   channelConfigId?: string | null;
   groupChat?: { subject?: string; participantsCount?: number } | null;
-  contact?: { firstName?: string | null; lastName?: string | null } | null;
+  /** `avatarUrl`: foto do contato (manual ou do WhatsApp), URL do storage; ausente = iniciais. */
+  contact?: { firstName?: string | null; lastName?: string | null; avatarUrl?: string | null } | null;
   lead?: {
     title?: string | null;
     handoffState?: LeadHandoffState;
@@ -307,7 +308,7 @@ function CompactItem({
             <Users size={22} />
           </span>
         ) : (
-          <Avatar name={name} size="lg" />
+          <Avatar name={name} size="lg" imageUrl={conversation.contact?.avatarUrl} />
         )}
         <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-surface-base text-brand-500 ring-1 ring-border">
           <ChannelIcon size={12} />

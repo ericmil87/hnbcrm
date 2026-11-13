@@ -7,9 +7,10 @@
  * e nunca devolve a URL inteira (só host, nomes dos parâmetros e a validade).
  */
 import { v } from "convex/values";
-import { internalAction, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { decryptSecret } from "./lib/secretCrypto";
+import { manualAvatarFields } from "./lib/contactAvatarOps";
 
 function describeUrl(raw: unknown): unknown {
   if (typeof raw !== "string" || raw.length === 0) return null;
@@ -152,5 +153,77 @@ export const internalAvatarReport = internalQuery({
     // Sem relógio em query: conta canais com pausa registrada (podem já ter vencido).
     const pausedChannels = pacing.filter((p) => p.pausedUntil !== undefined).length;
     return { ...out, pausedChannels, truncated };
+  },
+});
+
+const BACKFILL_PAGE = 150;
+
+/**
+ * Backfill da foto MANUAL: contatos com `photoFileId` e sem `avatarUrl` (feitos antes
+ * de `avatarUrl` existir) ganham o campo. Uma escrita por contato com foto manual.
+ * `dryRun` padrão true (só conta); a execução real se reagenda por cursor. Só números.
+ */
+export const internalBackfillManualAvatarUrl = internalMutation({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    withManualPhoto: v.number(),
+    needed: v.number(),
+    written: v.number(),
+    done: v.boolean(),
+    nextCursor: v.union(v.string(), v.null()),
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const numItems = Math.min(Math.max(Math.floor(args.pageSize ?? BACKFILL_PAGE), 1), 200);
+    const organizationId = args.organizationId;
+    const page = organizationId
+      ? await ctx.db
+          .query("contacts")
+          .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+          .paginate({ numItems, cursor: args.cursor ?? null })
+      : await ctx.db.query("contacts").paginate({ numItems, cursor: args.cursor ?? null });
+    let withManualPhoto = 0;
+    let needed = 0;
+    let written = 0;
+    for (const contact of page.page) {
+      if (!contact.photoFileId) continue;
+      withManualPhoto += 1;
+      if (contact.avatarUrl) continue;
+      needed += 1;
+      if (dryRun) continue;
+      const fields = await manualAvatarFields(ctx, {
+        organizationId: contact.organizationId,
+        contactId: contact._id,
+        photoFileId: contact.photoFileId,
+      });
+      if (fields.avatarUrl !== undefined) {
+        await ctx.db.patch(contact._id, { avatarUrl: fields.avatarUrl });
+        written += 1;
+      }
+    }
+    if (!dryRun && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.opsContactAvatar.internalBackfillManualAvatarUrl, {
+        ...(organizationId ? { organizationId } : {}),
+        dryRun: false,
+        cursor: page.continueCursor,
+        pageSize: numItems,
+      });
+    }
+    return {
+      dryRun,
+      scanned: page.page.length,
+      withManualPhoto,
+      needed,
+      written,
+      done: page.isDone,
+      nextCursor: page.isDone ? null : page.continueCursor,
+    };
   },
 });

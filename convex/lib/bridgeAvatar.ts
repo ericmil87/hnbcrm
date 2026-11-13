@@ -137,3 +137,34 @@ export function validateAvatarBytes(bytes: Uint8Array): { mime: AvatarMime; size
 export function buildAvatarRequestBody(phone: string): string {
   return JSON.stringify({ Phone: phone, Preview: true });
 }
+
+/**
+ * Lê o corpo no máximo até `max` bytes (stream): passou disso, cancela a leitura e
+ * devolve `null` — um servidor que ignora `Content-Length` não enche a memória.
+ */
+export async function readBodyCapped(res: Response, max: number): Promise<Uint8Array | null> {
+  if (!res.body) {
+    const buf = new Uint8Array(await res.arrayBuffer());
+    return buf.length > max ? null : buf;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.length;
+    if (total > max) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}

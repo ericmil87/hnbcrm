@@ -3534,22 +3534,6 @@ export const markConversationRead = mutation({
       types: ["new_message", "conversation_transferred", "ai_draft_pending"],
     });
 
-    // Foto de perfil do contato (contatos antigos sem carga em lote): só 1 a 1
-    // de canal bridge; a porta confere tudo e não escreve quando não há o que fazer.
-    if (
-      conversation.channel === "whatsapp" &&
-      conversation.kind !== "group" &&
-      conversation.channelConfigId &&
-      contactAvatarFetchEnabled()
-    ) {
-      const lead = await getLeadRef(ctx.db, conversation.leadId);
-      const contact =
-        lead && lead.organizationId === conversation.organizationId && lead.contactId
-          ? await ctx.db.get(lead.contactId)
-          : null;
-      await maybeScheduleContactAvatar(ctx, { contact, conversation });
-    }
-
     if (!seesWholeInbox(reader)) return null;
 
     const now = Date.now();
@@ -3575,6 +3559,24 @@ export const markConversationRead = mutation({
     // Zera o contador de não lidas da equipe (badge da sidebar + destaque na
     // lista) e avança a marca d'água — independe dos recibos logo abaixo.
     await ctx.db.patch(args.conversationId, { unreadCount: 0, lastReadAt: now });
+    // Foto de perfil do contato: só ao abrir com não lidas (o front chama esta
+    // mutation a cada mensagem vista, a cada ~400 ms; sem não lidas retornamos
+    // acima sem ler nada). Custo: lead + contato + 1 linha lateral; vencida →
+    // agenda `internalMaybeSchedule`. Contato antigo SEM não lidas ganha a foto
+    // quando escrever de novo (o ingest dispara o mesmo gatilho).
+    if (
+      conversation.channel === "whatsapp" &&
+      conversation.kind !== "group" &&
+      conversation.channelConfigId &&
+      contactAvatarFetchEnabled()
+    ) {
+      const avatarLead = await getLeadRef(ctx.db, conversation.leadId);
+      const avatarContact =
+        avatarLead && avatarLead.organizationId === conversation.organizationId && avatarLead.contactId
+          ? await ctx.db.get(avatarLead.contactId)
+          : null;
+      await maybeScheduleContactAvatar(ctx, { contact: avatarContact, conversation });
+    }
 
     // Instagram/Messenger: "visto" para o cliente (best-effort, um POST por leitura).
     if (conversation.channel === "instagram" || conversation.channel === "messenger") {
