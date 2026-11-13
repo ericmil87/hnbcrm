@@ -1,27 +1,21 @@
 import { describe, expect, test } from "vitest";
-import fixture from "../__fixtures__/voiceNoteSynthetic.json";
+import { buildSyntheticOggOpus, syntheticVoiceNote } from "./oggOpus.testkit";
 import { readOggOpus, sketchWaveform, VOICE_WAVEFORM_BARS } from "./oggOpus";
 import { bridgeVoiceNoteFields } from "./bridgeSend";
 
-function fixtureBytes(): Uint8Array {
-  const binary = atob(fixture.base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return bytes;
-}
+const fixtureBytes = syntheticVoiceNote;
 
 describe("readOggOpus", () => {
-  test("lê a duração e 64 barras de um ogg/opus (fixture sintético: 1 s de tom + 1 s de silêncio)", () => {
+  test("lê a duração e 64 barras de um ogg/opus (bytes sintéticos: 1 s de pacotes grandes + 1 s de pequenos)", () => {
     const info = readOggOpus(fixtureBytes());
     expect(info).not.toBeNull();
-    expect(info!.durationSeconds).toBeCloseTo(fixture.durationSeconds, 1);
+    expect(info!.durationSeconds).toBeCloseTo(2, 3);
     expect(info!.seconds).toBe(2);
     expect(info!.waveform).toHaveLength(VOICE_WAVEFORM_BARS);
     expect(info!.waveform.every((v) => Number.isInteger(v) && v >= 0 && v <= 100)).toBe(true);
     // O trecho de tom pesa mais que o de silêncio no fim.
-    const first = info!.waveform.slice(0, 16).reduce((a, b) => a + b, 0);
-    const last = info!.waveform.slice(-8).reduce((a, b) => a + b, 0);
-    expect(first).toBeGreaterThan(last);
+    expect(info!.waveform.slice(0, 32).every((v) => v === 100)).toBe(true);
+    expect(info!.waveform.slice(32).every((v) => v === 0)).toBe(true);
   });
 
   test("o resultado vira os campos do gateway (Seconds inteiro e Waveform válida)", () => {
@@ -42,10 +36,16 @@ describe("readOggOpus", () => {
     expect(readOggOpus(notOpus)).toBeNull();
   });
 
-  test("áudio muito curto arredonda para 1 segundo, nunca 0", () => {
-    const info = readOggOpus(fixtureBytes())!;
-    expect(Math.max(1, Math.round(0.2))).toBe(1);
-    expect(info.seconds).toBeGreaterThanOrEqual(1);
+  test("áudio muito curto arredonda para 1 segundo, nunca 0; pacote maior que 255 bytes conta inteiro", () => {
+    const info = readOggOpus(buildSyntheticOggOpus([300, 10, 10]))!;
+    expect(info.durationSeconds).toBeCloseTo(0.06, 3);
+    expect(info.seconds).toBe(1);
+    expect(info.waveform[0]).toBe(100);
+  });
+
+  test("pre-skip é descontado da duração", () => {
+    expect(readOggOpus(buildSyntheticOggOpus(new Array<number>(50).fill(40), 0))!.durationSeconds).toBeCloseTo(1, 3);
+    expect(readOggOpus(buildSyntheticOggOpus(new Array<number>(50).fill(40), 3840))!.durationSeconds).toBeCloseTo(1, 3);
   });
 });
 

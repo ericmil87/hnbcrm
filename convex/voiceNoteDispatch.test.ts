@@ -2,7 +2,7 @@
 // Nota de voz gravada no navegador (P0.0 áudio no iPhone): conversão para
 // ogg/opus, reserva do bridge (documento, nunca data:audio/mp4|webm no
 // endpoint de áudio) e checagem prévia na API oficial (Meta recusa webm).
-import syntheticVoiceNote from "./__fixtures__/voiceNoteSynthetic.json";
+import { syntheticVoiceNote } from "./lib/oggOpus.testkit";
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
@@ -203,10 +203,7 @@ describe("nota de voz no bridge", () => {
     const seeded = await seedChannel(t, "bridge");
     const messageId = await sendVoiceNote(t, seeded, "audio/webm", "nota-de-voz-9.webm");
 
-    const binary = atob(syntheticVoiceNote.base64);
-    const ogg = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) ogg[i] = binary.charCodeAt(i);
-    const fetchMock = networkMock(true, ogg);
+    const fetchMock = networkMock(true, syntheticVoiceNote());
     vi.stubGlobal("fetch", fetchMock);
     await t.action(internal.whatsapp.internalDispatchMessage, { messageId });
 
