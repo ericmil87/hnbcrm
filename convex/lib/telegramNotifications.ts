@@ -365,6 +365,8 @@ export function messageLineText(m: {
   fileName?: string;
   /** F4: mime of the first attachment (a video travels as `file`). */
   fileMime?: string;
+  /** Leitura do PDF (`metadata.docRead` done): trecho curto para o contexto do Copiloto. */
+  fileText?: string;
   sticker?: boolean;
 }): string {
   const caption = m.content?.trim() ?? "";
@@ -378,6 +380,10 @@ export function messageLineText(m: {
   }
   if (m.contentType === "file") {
     const label = `[📎 ${m.fileName ?? "arquivo"}]`;
+    if (m.fileText) {
+      const flat = m.fileText.replace(/\s+/g, " ").trim();
+      return `[📎 ${m.fileName ?? "arquivo"} — texto do PDF: ${flat.length > 600 ? `${flat.slice(0, 600)}…` : flat}]`;
+    }
     return caption && caption !== m.fileName ? `${label} ${caption}` : label;
   }
   return caption;

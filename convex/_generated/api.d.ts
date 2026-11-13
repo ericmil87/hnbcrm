@@ -338,6 +338,8 @@ import type * as opsPurge from "../opsPurge.js";
 import type * as opsSearchFold from "../opsSearchFold.js";
 import type * as opsTasks from "../opsTasks.js";
 import type * as opsTelegram from "../opsTelegram.js";
+import type * as pdfRead from "../pdfRead.js";
+import type * as pdfReadState from "../pdfReadState.js";
 import type * as optOuts from "../optOuts.js";
 import type * as orgModules from "../orgModules.js";
 import type * as orgSecrets from "../orgSecrets.js";
@@ -715,6 +717,8 @@ declare const fullApi: ApiFromModules<{
   opsSearchFold: typeof opsSearchFold;
   opsTasks: typeof opsTasks;
   opsTelegram: typeof opsTelegram;
+  pdfRead: typeof pdfRead;
+  pdfReadState: typeof pdfReadState;
   optOuts: typeof optOuts;
   orgModules: typeof orgModules;
   orgSecrets: typeof orgSecrets;

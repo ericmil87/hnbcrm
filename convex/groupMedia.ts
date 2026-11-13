@@ -15,7 +15,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
-import { scheduleAudioTranscription } from "./lib/mediaEnrichment";
+import { scheduleAudioTranscription, schedulePdfRead } from "./lib/mediaEnrichment";
 
 /**
  * Quanto tempo um clique segura a trava. O fetch do sob demanda tem timeout
@@ -257,6 +257,13 @@ export const internalCompleteDeferredMedia = internalMutation({
     });
     if (message.direction === "inbound") {
       await scheduleImageEnrichment(ctx, message._id, message.contentType);
+      // PDF de grupo só é lido depois que a política baixou a mídia (mensagem "com a gente").
+      await schedulePdfRead(ctx, {
+        messageId: message._id,
+        contentType: message.contentType,
+        attachments: [args.fileId],
+        metadata,
+      });
     }
     return "attached" as const;
   },

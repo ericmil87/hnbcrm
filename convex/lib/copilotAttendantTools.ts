@@ -28,6 +28,7 @@ import { hasPermission, resolvePermissions, type Permissions, type Role } from "
 import { safeTimezone } from "./promptDateTime";
 import { toolTime } from "./copilotDates";
 import { atLocal } from "./executiveReport";
+import { docReadOf } from "./pdfRead";
 
 export type AttendantToolScope = {
   organizationId: Id<"organizations">;
@@ -200,6 +201,9 @@ async function historyLine(db: Db, m: Doc<"messages">): Promise<string> {
   if (m.contentType === "audio") return `[áudio: ${m.transcriptText ? cut(m.transcriptText) : "sem transcrição"}]`;
   if (m.contentType === "file") {
     const file = m.attachments?.[0] ? await db.get(m.attachments[0]) : null;
+    if (docReadOf(m.metadata)?.status === "done" && m.imageDescription) {
+      return `[📎 ${file?.name ?? "arquivo"} — texto do PDF: ${cut(m.imageDescription, 400)}]${caption && caption !== file?.name ? ` ${cut(caption)}` : ""}`;
+    }
     return `[📎 ${file?.name ?? "arquivo"}]${caption && caption !== file?.name ? ` ${cut(caption)}` : ""}`;
   }
   return cut(caption);
