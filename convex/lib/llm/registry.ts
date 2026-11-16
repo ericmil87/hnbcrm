@@ -505,6 +505,12 @@ export interface ModelPrice {
   cachedInPerM?: number;
   /** true = sem preço publicado para o id exato; usa o conservador. */
   estimated?: boolean;
+  /**
+   * true = o provedor publica saída GRÁTIS (`outPerM: 0` é o preço real, não
+   * "esquecido"). Só o Jev (decisão sem texto gerado). Sem este selo, o teste de
+   * build exige `outPerM > 0` — é o que impede o bug "modelo sem preço custa 0".
+   */
+  freeOutput?: boolean;
 }
 
 export const MODEL_PRICES_COLLECTED_AT = "2026-10-03";
@@ -543,6 +549,9 @@ const PUBLISHED_MODEL_PRICES: Record<string, ModelPrice> = {
   "longcat-2.0": { inPerM: 0.3, outPerM: 1.2, cachedInPerM: 0.006 }, // mediana(1)
   "gpt-5.6-luna": { inPerM: 0.22, outPerM: 1.32, cachedInPerM: 0.022 }, // mediana(7)
   "muse-spark-1.2-contributor": { inPerM: 0.1, outPerM: 0.2, cachedInPerM: 0.002 }, // mediana(1) Meta
+  // Jev (typesafe/jev-1.13, só decisão — `lib/jev/`): entrada US$ 0,042/1M, saída grátis, sem cache
+  // (openrouter.ai/typesafe/jev-1.13, 15/11/2026). O `usage.cost` do provedor vence; isto só vale sem ele.
+  "jev-1.13": { inPerM: 0.042, outPerM: 0, freeOutput: true }, // oficial:TypeSafe
 };
 
 /**
