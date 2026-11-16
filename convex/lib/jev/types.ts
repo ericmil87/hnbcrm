@@ -82,6 +82,8 @@ export class JevError extends Error {
   readonly status?: number;
   readonly retryable: boolean;
   readonly retryAfterMs?: number;
+  /** Chamadas feitas até falhar (preenchido por `callJev`): o painel conta o que de fato saiu. */
+  attempts?: number;
   constructor(code: JevErrorCode, message: string, opts: { status?: number; retryable?: boolean; retryAfterMs?: number } = {}) {
     super(message);
     this.name = "JevError";

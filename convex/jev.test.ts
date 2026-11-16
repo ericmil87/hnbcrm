@@ -13,6 +13,7 @@ import type { Doc } from "./_generated/dataModel";
 import schema from "./schema";
 import { modulesOf } from "./lib/orgModules";
 import { JEV_KINDS, JEV_PRICE_ID, JEV_URL } from "./lib/jev/types";
+import { questionsToWire } from "./lib/jev/wire";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const MONTH = "2026-10";
@@ -31,10 +32,10 @@ afterEach(() => {
 
 const setup = () => convexTest(schema, modules);
 
-const QUESTIONS = {
+const QUESTIONS = questionsToWire({
   pede_humano: { type: "noul", instructions: "`mensagem` pede uma pessoa?" },
   intencao: { type: "choice", instructions: "Qual o pedido?", criteria: { preco: "valor", outro: "resto" } },
-};
+});
 const MENSAGEM = "me liga no 81 99999-8888 que eu quero o preço";
 
 function jevResponse(usage: Record<string, unknown> = { input_tokens: 400, output_tokens: 40, cost: 0.00002, is_byok: false }) {
@@ -269,7 +270,7 @@ describe("decisão gravada", () => {
     const again = await t.mutation(internal.jev.internalRecordDecision, {
       runId: r.runId, organizationId: seed.organizationId, kind: "triage", model: "x", stateHash: "0".repeat(64),
       questionsVersion: "triage@1", policiesVersion: "p@1", answers: [], promptTokens: 999, completionTokens: 9,
-      costUsdEstimate: 5, costEstimated: false, latencyMs: 1,
+      costUsdEstimate: 5, costEstimated: false, latencyMs: 1, requestCount: 1,
     });
     expect(again).toBeNull();
     await t.mutation(internal.jev.internalFailDecision, { runId: r.runId, organizationId: seed.organizationId, error: "tarde demais" });
@@ -288,7 +289,7 @@ describe("decisão gravada", () => {
     if (!begin.ok) throw new Error("esperava ok");
     const attempt = await t.mutation(internal.jev.internalRecordDecision, {
       runId: begin.runId, organizationId: b.organizationId, kind: "triage", model: "x", stateHash: "0".repeat(64),
-      questionsVersion: "q", policiesVersion: "p", answers: [], promptTokens: 1, completionTokens: 1, costUsdEstimate: 1, costEstimated: false, latencyMs: 1,
+      questionsVersion: "q", policiesVersion: "p", answers: [], promptTokens: 1, completionTokens: 1, costUsdEstimate: 1, costEstimated: false, latencyMs: 1, requestCount: 1,
     });
     expect(attempt).toBeNull();
     expect(await all(t, "jevDecisions")).toHaveLength(0);
@@ -334,7 +335,10 @@ describe("fail-open: nunca lança, nunca vira decisão", () => {
     const r1 = await t.action(internal.jev.internalDecide, decideArgs(seed, { state: { mensagem: "oi", telefone: "81999998888" } }));
     expect(r1).toMatchObject({ ok: false, reason: "invalid_input", code: "invalid_state" });
     expect(JSON.stringify(r1)).not.toContain("81999998888");
-    const r2 = await t.action(internal.jev.internalDecide, decideArgs(seed, { questions: { x: { type: "choice", instructions: "?", criteria: { a: "so uma" } } } }));
+    const r2 = await t.action(
+      internal.jev.internalDecide,
+      decideArgs(seed, { questions: [{ id: "x", type: "choice", instructions: "?", options: [{ key: "a", description: "só uma" }] }] })
+    );
     expect(r2).toMatchObject({ ok: false, reason: "invalid_input", code: "invalid_questions" });
     expect(fetchMock).not.toHaveBeenCalled();
     expect(await all(t, "agentRuns")).toHaveLength(0);
@@ -383,6 +387,90 @@ describe("retenção (retention.ts) e ops", () => {
       asAdmin.mutation(api.orgModules.setOrgModules, { organizationId: seed.organizationId, modules: { jev: true } as never })
     ).rejects.toThrow();
     expect((await asAdmin.query(api.orgModules.getOrgModules, { organizationId: seed.organizationId })).jev).toBe(false);
+  });
+});
+
+describe("achados da revisão do PR #157", () => {
+  test("opção de choice com acento/espaço/barra (nome de etapa) chega à action e à API", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, "acento");
+    const etapas = ["Inscrição em andamento", "Retorno / recorrente", "Não agendou"];
+    const questions = questionsToWire({
+      etapa: { type: "choice", instructions: "Em qual etapa está a conversa em `conversa`?", criteria: Object.fromEntries(etapas.map((e) => [e, `descrição de ${e}`])) },
+    });
+    const fetchMock = stubFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            model: "typesafe/jev-1.13-20260917",
+            answers: { etapa: { type: "choice", choice: "Inscrição em andamento", confidence: 0.8, probabilities: { "Inscrição em andamento": 0.8, "Retorno / recorrente": 0.15, "Não agendou": 0.05 } } },
+            usage: { input_tokens: 500, output_tokens: 30, cost: 0.00002 },
+          }),
+          { status: 200 }
+        )
+    );
+    const r = await t.action(internal.jev.internalDecide, decideArgs(seed, { kind: "stage", questions, state: { conversa: [{ de: "lead", texto: "paguei o sinal" }] } }));
+    expect(r.ok).toBe(true);
+    expect(Object.keys(sentBody(fetchMock).questions.etapa.criteria)).toEqual(etapas);
+    const [d] = await all(t, "jevDecisions");
+    expect(d!.answers[0]).toMatchObject({ id: "etapa", choice: "Inscrição em andamento" });
+    expect(d!.answers[0]!.probs![0]).toEqual({ k: "Inscrição em andamento", p: 0.8 });
+  });
+
+  test("requestCount = chamadas que de fato saíram (retry conta), na run feliz e na com erro", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, "attempts");
+    let n = 0;
+    stubFetch(() => (++n === 1 ? new Response(JSON.stringify({ error: { message: "x", code: 429 } }), { status: 429, headers: { "retry-after": "1" } }) : jevResponse()));
+    vi.useRealTimers(); // o retry dorme de verdade (1 s); sem timers falsos
+    const r = await t.action(internal.jev.internalDecide, decideArgs(seed));
+    expect(r.ok && r.latencyMs).toBeGreaterThanOrEqual(900);
+    expect((await all(t, "agentRuns"))[0]).toMatchObject({ status: "done", requestCount: 2 });
+  });
+
+  test("falha DEPOIS de pago: a run com erro carrega tokens e custo, e o gasto entra no contador", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, "pago");
+    const begin = await t.mutation(internal.jev.internalBeginDecision, { organizationId: seed.organizationId, kind: "triage" });
+    if (!begin.ok) throw new Error("esperava ok");
+    await t.mutation(internal.jev.internalFailDecision, {
+      runId: begin.runId, organizationId: seed.organizationId, error: "unexpected: gravação falhou",
+      requestCount: 3, promptTokens: 420, completionTokens: 40, costUsdEstimate: 0.000018, costEstimated: true,
+    });
+    expect((await all(t, "agentRuns"))[0]).toMatchObject({ status: "error", requestCount: 3, promptTokens: 420, costEstimated: true });
+    expect((await all(t, "aiUsageMonthly"))[0]).toMatchObject({ costUsdMicros: 18, runs: 1 });
+    expect(await all(t, "jevDecisions")).toHaveLength(0);
+  });
+
+  test("400 da API: o corpo (que pode ecoar o estado) NÃO vai para agentRuns.error nem para o retorno", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, "eco");
+    stubFetch(() => new Response(JSON.stringify({ error: { message: "Invalid value 'Maria Souza mora na Rua das Flores' at state.mensagem", code: 400 } }), { status: 400 }));
+    const r = await t.action(internal.jev.internalDecide, decideArgs(seed));
+    expect(r).toMatchObject({ ok: false, reason: "error", code: "bad_request" });
+    expect(JSON.stringify(r)).not.toContain("Maria");
+    const [run] = await all(t, "agentRuns");
+    expect(run!.error).not.toContain("Maria");
+    expect(run!.error).not.toContain("Rua das Flores");
+  });
+
+  test("retenção de verdade: a linha vencida é apagada e a recente fica", async () => {
+    const t = setup();
+    const seed = await seedOrg(t, "ret-real");
+    stubFetch(() => jevResponse());
+    await t.action(internal.jev.internalDecide, decideArgs(seed));
+    const day = 24 * 60 * 60 * 1000;
+    const created = Date.now();
+    vi.setSystemTime(created + 20 * day);
+    stubFetch(() => jevResponse());
+    await t.action(internal.jev.internalDecide, decideArgs(seed)); // 2ª decisão, mais nova
+    expect(await all(t, "jevDecisions")).toHaveLength(2);
+    vi.setSystemTime(created + 31 * day); // a 1ª tem 31 d, a 2ª tem 11 d
+    await t.mutation(internal.retention.internalRunRetentionNow, { dryRun: false, table: "jevDecisions" });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await all(t, "jevDecisions");
+    expect(left).toHaveLength(1);
+    expect(left[0]!.createdAt).toBe(created + 20 * day);
   });
 });
 

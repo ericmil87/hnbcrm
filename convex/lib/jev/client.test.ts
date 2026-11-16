@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   JEV_BACKOFF_MS,
   JEV_MAX_ATTEMPTS,
@@ -219,6 +219,52 @@ describe("erros terminais (uma tentativa só)", () => {
     const e = await failure(call(h));
     expect(e.code).toBe("bad_request");
     expect(e.message.length).toBeLessThan(500);
+  });
+  it("400/4xx NÃO copiam o corpo (pode ecoar o estado com nome do lead); só o código", async () => {
+    for (const status of [400, 422, 405]) {
+      const h = harness([json(status, { error: { message: "Invalid value 'Maria Souza, Rua das Flores 10' at state.mensagem", code: status } })]);
+      const e = await failure(call(h));
+      expect(e.message, String(status)).not.toContain("Maria");
+      expect(e.message, String(status)).not.toContain("Flores");
+      expect(e.message).toContain(String(status));
+    }
+  });
+  it("401/402/404/5xx mantêm a mensagem do servidor (não ecoam estado), já mascarada de dado pessoal", async () => {
+    const h = harness([json(404, { error: { message: "No allowed providers are available for the selected model", code: 404 } })]);
+    expect((await failure(call(h))).message).toContain("No allowed providers");
+    const h2 = harness([json(401, { error: { message: "User not found. contato 81 99999-8888", code: 401 } })]);
+    const e = await failure(call(h2));
+    expect(e.message).toContain("User not found");
+    expect(e.message).not.toContain("99999");
+  });
+  it("attempts na falha = quantas chamadas saíram (retry conta)", async () => {
+    const h = harness([json(503, { error: { message: "x" } }), json(503, { error: { message: "x" } }), json(400, { error: { code: 400 } })]);
+    const e = await failure(call(h));
+    expect(e.code).toBe("bad_request");
+    expect(e.attempts).toBe(3);
+    const h2 = harness(Array.from({ length: JEV_MAX_ATTEMPTS }, () => json(500, { error: { message: "boom" } })));
+    expect((await failure(call(h2, { deadlineMs: 60_000 }))).attempts).toBe(JEV_MAX_ATTEMPTS);
+  });
+  it("o prazo total limita também a tentativa em andamento (timeout da tentativa ≤ prazo restante)", async () => {
+    const seen: number[] = [];
+    const real = AbortSignal.timeout.bind(AbortSignal);
+    const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+      seen.push(ms);
+      return real(ms);
+    });
+    try {
+      const h = harness([json(503, { error: { message: "x" } }), json(200, okBody())]);
+      await call(h, { timeoutMs: 10_000, deadlineMs: 10_400 });
+      expect(seen[0]).toBe(10_000); // 1ª: o prazo (10,4 s) ainda é maior que o timeout
+      expect(seen[1]).toBe(9_900); // 2ª: só o que restou do prazo depois da pausa de 500 ms
+    } finally {
+      spy.mockRestore();
+    }
+  });
+  it("sem `nowMs` injetado usa Date.now (existe no runtime do Convex), não performance.now", async () => {
+    const h = harness([json(200, okBody())]);
+    const r = await callJev({ apiKey: KEY, state: STATE, questions: Q, fetchImpl: h.fetchImpl, sleepImpl: h.sleepImpl });
+    expect(r.latencyMs).toBeGreaterThanOrEqual(0);
   });
 });
 

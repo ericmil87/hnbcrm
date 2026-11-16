@@ -29,23 +29,40 @@ const CNPJ_RE = /(?<!\d)\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}(?!\d)/g;
 const CPF_RE = /(?<!\d)\d{3}\.?\d{3}\.?\d{3}-?\d{2}(?!\d)/g;
 const UUID_RE = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
 const CONVEX_ID_RE = /\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{32}\b/g;
-// Corrida de dígitos com separadores comuns de telefone (+55 (81) 99999-9999, 81 99999 9999…).
-const PHONE_RE = /(?<![\w])\+?\d[\d\s().-]{6,}\d(?![\w])/g;
-const DATE_LIKE_RE = /^\d{1,4}[./-]\d{1,2}[./-]\d{1,4}$/;
+// Celular brasileiro de 11 dígitos (DDD + 9 + 8) ANTES do CPF: sem isto "zap 81999998888" vira "[cpf]".
+const BR_MOBILE_RE = /(?<!\d)(?:\+?55[\s.-]?)?\(?\d{2}\)?[\s.-]?9\d{4}[\s.\-–—_]?\d{4}(?!\d)/g;
+// Corrida de dígitos com separadores comuns de telefone, inclusive travessão do autocorretor e "_".
+// Sem exigir fronteira de palavra à esquerda: "tel8133334444" e "whats5581999998888" também caem.
+const PHONE_RE = /(?<!\d)\+?\d[\d\s().\-–—_]{6,}\d(?!\d)/g;
+// O que parece telefone mas não é: data/hora ISO, data com barra, número com milhar ("12.345.678,00").
+// Protegido com sentinelas ANTES da máscara de telefone e restaurado depois.
+const KEEP_RES = [
+  /\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?/g,
+  /\d{1,2}\/\d{1,2}\/\d{2,4}(?:[ ,]+\d{1,2}:\d{2})?/g,
+  /\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?/g,
+];
+const SENTINEL = "\u0001";
 
 export function maskPersonalData(text: string): string {
-  let out = text.replace(URL_RE, "[link]").replace(EMAIL_RE, "[email]");
-  out = out.replace(CNPJ_RE, "[cnpj]").replace(CPF_RE, "[cpf]");
+  // Controle do ASCII (inclui a sentinela) não tem lugar numa conversa: vira espaço.
+  let out = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, " ").replace(URL_RE, "[link]").replace(EMAIL_RE, "[email]");
+  out = out.replace(CNPJ_RE, "[cnpj]").replace(BR_MOBILE_RE, "[telefone]").replace(CPF_RE, "[cpf]");
   out = out.replace(UUID_RE, "[id]").replace(CONVEX_ID_RE, "[id]");
+  const kept: string[] = [];
+  for (const re of KEEP_RES) {
+    out = out.replace(re, (m) => {
+      kept.push(m);
+      return `${SENTINEL}${kept.length - 1}${SENTINEL}`;
+    });
+  }
   out = out.replace(PHONE_RE, (m, offset: number) => {
     const digits = m.replace(/\D/g, "");
     if (digits.length < 8 || digits.length > 15) return m;
-    if (DATE_LIKE_RE.test(m.trim())) return m; // 15/11/2026, 2026-11-15
-    // Valor em reais (R$ 12.345.678) não é telefone.
+    // Valor em reais (R$ 12345678) não é telefone.
     if (/R\$\s*$/.test(out.slice(Math.max(0, offset - 4), offset))) return m;
     return "[telefone]";
   });
-  return out;
+  return out.replace(new RegExp(`${SENTINEL}(\\d+)${SENTINEL}`, "g"), (_m, i: string) => kept[Number(i)] ?? "");
 }
 
 function cut(text: string, max: number): string {
@@ -117,7 +134,11 @@ function sanitizeField(path: string, field: Field, value: unknown): unknown {
       for (const [k, x] of Object.entries(value)) {
         if (!FLAT_KEY_RE.test(k)) throw bad(`${path}: chave inválida (${k})`);
         if (typeof x === "string") out[k] = clean(x, MAX_SHORT_CHARS);
-        else if (typeof x === "number" && Number.isFinite(x)) out[k] = x;
+        else if (typeof x === "number" && Number.isFinite(x)) {
+          // Inteiro de 8+ dígitos parece telefone/documento: número cru não passa pela máscara de texto.
+          if (String(Math.trunc(Math.abs(x))).length >= 8) throw bad(`${path}.${k}: número com 8+ dígitos (parece telefone ou documento); envie como texto sem os dígitos`);
+          out[k] = x;
+        }
         else if (typeof x === "boolean") out[k] = x;
         else throw bad(`${path}.${k}: use texto, número ou booleano`);
       }

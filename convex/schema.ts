@@ -3222,8 +3222,9 @@ const applicationTables = {
     latencyMs: v.number(),
     createdAt: v.number(),
   })
-    .index("by_organization_and_created", ["organizationId", "createdAt"])
-    .index("by_conversation", ["conversationId"]),
+    // Sem índice por conversa: ninguém lê por ele na fase 0 e cada índice é uma escrita a mais por
+    // decisão (I/O do Convex). A fase 1 acrescenta `by_conversation` junto com o relatório que o usa.
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
 
   // Contador MENSAL de uso de IA por org (v0.69, T04). Incrementado na MESMA
   // transação de `agentRuns.internalFinishRun` (custo/runs/tokens, por kind) e

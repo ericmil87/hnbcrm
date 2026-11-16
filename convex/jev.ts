@@ -32,7 +32,7 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { callJev } from "./lib/jev/client";
 import { jevAnswerRowValidator, toAnswerRows, type JevAnswerRow } from "./lib/jev/answers";
 import { prepareJevState } from "./lib/jev/state";
-import { validateQuestions } from "./lib/jev/validate";
+import { jevQuestionWireValidator, questionsFromWire } from "./lib/jev/wire";
 import { JEV_PRICE_ID, JevError, JevValidationError } from "./lib/jev/types";
 
 // Tipos explícitos: a action chama `internal.jev.*` do PRÓPRIO arquivo; sem anotar o retorno o TS cai em
@@ -147,6 +147,8 @@ export const internalRecordDecision = internalMutation({
     costUsdEstimate: v.number(),
     costEstimated: v.boolean(),
     latencyMs: v.number(),
+    /** Chamadas que de fato saíram (retry conta): o painel mostra o que foi feito, não "1". */
+    requestCount: v.number(),
   },
   returns: v.union(v.id("jevDecisions"), v.null()),
   handler: async (ctx, args) => {
@@ -177,7 +179,7 @@ export const internalRecordDecision = internalMutation({
       status: "done",
       provider: "openrouter",
       model: JEV_PRICE_ID,
-      requestCount: 1,
+      requestCount: Math.max(1, Math.floor(args.requestCount)),
       promptTokens: args.promptTokens,
       completionTokens: args.completionTokens,
       costUsdEstimate: args.costUsdEstimate,
@@ -187,9 +189,21 @@ export const internalRecordDecision = internalMutation({
   },
 });
 
-/** Fecha a run com erro (sanitizado). Idempotente: run já fechada não é tocada. */
+/**
+ * Fecha a run com erro (sanitizado). Idempotente: run já fechada não é tocada. Quando o Jev já tinha
+ * respondido e cobrado mas a gravação falhou, o chamador manda os tokens/custo para o gasto não sumir.
+ */
 export const internalFailDecision = internalMutation({
-  args: { runId: v.id("agentRuns"), organizationId: v.id("organizations"), error: v.string() },
+  args: {
+    runId: v.id("agentRuns"),
+    organizationId: v.id("organizations"),
+    error: v.string(),
+    requestCount: v.optional(v.number()),
+    promptTokens: v.optional(v.number()),
+    completionTokens: v.optional(v.number()),
+    costUsdEstimate: v.optional(v.number()),
+    costEstimated: v.optional(v.boolean()),
+  },
   returns: v.null(),
   handler: async (ctx, args) => {
     const run = await ctx.db.get(args.runId);
@@ -199,7 +213,11 @@ export const internalFailDecision = internalMutation({
       status: "error",
       provider: "openrouter",
       model: JEV_PRICE_ID,
-      requestCount: 1,
+      requestCount: Math.max(1, Math.floor(args.requestCount ?? 1)),
+      ...(args.promptTokens !== undefined ? { promptTokens: args.promptTokens } : {}),
+      ...(args.completionTokens !== undefined ? { completionTokens: args.completionTokens } : {}),
+      ...(args.costUsdEstimate !== undefined ? { costUsdEstimate: args.costUsdEstimate } : {}),
+      ...(args.costEstimated ? { costEstimated: true } : {}),
       error: sanitizeLlmError(args.error),
     });
     return null;
@@ -222,10 +240,11 @@ export const internalDecide = internalAction({
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),
     triggerMessageId: v.optional(v.id("messages")),
-    // `v.any()` NÃO é a validação: `state` passa pela lista de campos permitidos
-    // (`sanitizeJevState`) e `questions` por `validateQuestions` antes de qualquer escrita.
+    // `state` é `v.any()` mas NÃO é validado por ele: passa pela lista de campos permitidos
+    // (`sanitizeJevState`) antes de qualquer escrita. `questions` vai em formato de fio (lista), porque
+    // opção de `choice` com acento não pode ser nome de campo de argumento (`lib/jev/wire.ts`).
     state: v.any(),
-    questions: v.any(),
+    questions: v.array(jevQuestionWireValidator),
     questionsVersion: v.string(),
     policiesVersion: v.string(),
   },
@@ -245,13 +264,16 @@ export const internalDecide = internalAction({
   handler: async (ctx, args): Promise<JevDecideResult> => {
     // Fail-open: nada aqui lança para o chamador.
     let runId: Id<"agentRuns"> | null = null;
+    // O que o provedor já cobrou quando a gravação falha depois da resposta: vai para a run com erro,
+    // para o gasto não sumir do contador.
+    let paid: { requestCount: number; promptTokens: number; completionTokens: number; costUsdEstimate: number; costEstimated: boolean } | null = null;
     try {
       // 1) Entrada local (pura, sem escrita): estado só com campos permitidos, perguntas válidas.
       let prepared: Awaited<ReturnType<typeof prepareJevState>>;
-      let questions: ReturnType<typeof validateQuestions>;
+      let questions: ReturnType<typeof questionsFromWire>;
       try {
         prepared = await prepareJevState(args.state);
-        questions = validateQuestions(args.questions);
+        questions = questionsFromWire(args.questions);
       } catch (e) {
         if (e instanceof JevValidationError) return { ok: false as const, reason: "invalid_input" as const, code: e.code, detail: e.message };
         throw e;
@@ -279,6 +301,13 @@ export const internalDecide = internalAction({
       const totals = addUsage(newUsageTotals(), result.usage, { canonicalModel: JEV_PRICE_ID, providerId: "openrouter" });
       if (result.costEstimated) totals.costEstimated = true;
       const fields = finishRunCostFields(totals);
+      paid = {
+        requestCount: result.attempts,
+        promptTokens: fields.promptTokens,
+        completionTokens: fields.completionTokens,
+        costUsdEstimate: fields.costUsdEstimate,
+        costEstimated: fields.costEstimated === true,
+      };
       const decisionId: Id<"jevDecisions"> | null = await ctx.runMutation(internal.jev.internalRecordDecision, {
         runId: thisRun,
         organizationId: args.organizationId,
@@ -297,6 +326,7 @@ export const internalDecide = internalAction({
         costUsdEstimate: fields.costUsdEstimate,
         costEstimated: fields.costEstimated === true,
         latencyMs: result.latencyMs,
+        requestCount: result.attempts,
       });
       return {
         ok: true as const,
@@ -313,9 +343,17 @@ export const internalDecide = internalAction({
       const detail = sanitizeLlmError(e instanceof Error ? e.message : String(e));
       if (runId) {
         try {
-          await ctx.runMutation(internal.jev.internalFailDecision, { runId, organizationId: args.organizationId, error: `${code}: ${detail}` });
+          await ctx.runMutation(internal.jev.internalFailDecision, {
+            runId,
+            organizationId: args.organizationId,
+            error: `${code}: ${detail}`,
+            requestCount: paid?.requestCount ?? (e instanceof JevError ? e.attempts : undefined) ?? 1,
+            ...(paid ? { promptTokens: paid.promptTokens, completionTokens: paid.completionTokens, costUsdEstimate: paid.costUsdEstimate, costEstimated: paid.costEstimated } : {}),
+          });
         } catch {
-          /* o chamador já vai seguir fail-open; o watchdog de retenção limpa runs órfãs */
+          // O chamador já segue fail-open. Se ESTA mutation também falhar (ou a action morrer entre o
+          // begin e o fim), a run fica `running`: a retenção só apaga runs terminais e não há watchdog
+          // de run órfã — mesma limitação dos demais `kind`. Raro; o contador mensal não a conta.
         }
       }
       return { ok: false as const, reason: "error" as const, code, detail };

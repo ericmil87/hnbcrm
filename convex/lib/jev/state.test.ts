@@ -62,6 +62,26 @@ describe("PII nunca entra no estado", () => {
     expect(json).toContain("[link]");
     expect(json).toContain("[id]");
   });
+  it("furos achados na revisão: travessão/underline, letra colada, celular de 11 dígitos, data e milhar", () => {
+    const m = maskPersonalData;
+    // separadores atípicos (autocorretor troca "-" por "–"/"—")
+    for (const t of ["81–99999–8888", "81—99999—8888", "81_99999_8888", "81.99999.8888", "(81) 99999 8888", "+55 81 99999-8888", "558199998888".replace("5581", "5581")]) {
+      const out = m(`me chama ${t} depois`);
+      expect(out, t).not.toMatch(/\d{4}/);
+      expect(out, t).toContain("[telefone]");
+    }
+    // letra colada antes do número
+    expect(m("tel8133334444")).toBe("tel[telefone]");
+    expect(m("whats5581999998888")).toBe("whats[telefone]");
+    // celular de 11 dígitos é TELEFONE, não CPF (o Jev não pode "ver" um documento onde havia um celular)
+    expect(m("zap 81999998888")).toBe("zap [telefone]");
+    expect(m("cpf 12345678909 e 123.456.789-09")).toBe("cpf [cpf] e [cpf]");
+    // não corrompe data/hora nem número com milhar
+    expect(m("dia 2026-11-15 14:30 e 15/11/2026 às 10:30")).toBe("dia 2026-11-15 14:30 e 15/11/2026 às 10:30");
+    expect(m("valor 12.345.678,00 e 1.500,00")).toBe("valor 12.345.678,00 e 1.500,00");
+    // caractere de controle (a sentinela interna) não passa a existir no texto
+    expect(m("a\u0001b")).toBe("a b");
+  });
   it("não mascara o que não é PII: preço, data, hora, quantidade pequena", () => {
     expect(maskPersonalData("sessão custa R$ 180,00, pacote R$ 1.500,00 e R$ 12.345.678 de teto")).toBe("sessão custa R$ 180,00, pacote R$ 1.500,00 e R$ 12.345.678 de teto");
     expect(maskPersonalData("dia 15/11/2026 às 10:30 ou 2026-11-15, 3 vezes por semana, 2 pessoas")).toBe("dia 15/11/2026 às 10:30 ou 2026-11-15, 3 vezes por semana, 2 pessoas");
@@ -78,6 +98,11 @@ describe("PII nunca entra no estado", () => {
   it("política só aceita chave simples e valor escalar", () => {
     rejects({ politica: { "Chave Ruim": 1 } }, /chave inválida/);
     rejects({ politica: { a: { b: 1 } } }, /texto, número ou booleano/);
+  });
+  it("política: número cru de 8+ dígitos (parece telefone/documento) é recusado; número pequeno e decimal passam", () => {
+    rejects({ politica: { contato: 81999998888 } }, /8\+ dígitos/);
+    rejects({ politica: { doc: -12345678 } }, /8\+ dígitos/);
+    expect(sanitizeJevState({ politica: { desconto_maximo: 0.15, parcelas: 12, teto: 1234567 } })).toEqual({ politica: { desconto_maximo: 0.15, parcelas: 12, teto: 1234567 } });
   });
 });
 
@@ -119,7 +144,9 @@ describe("hash estável", () => {
     expect(p1.stateHash).toBe(p2.stateHash);
     expect(JSON.stringify(p1)).not.toContain("9999");
   });
-  it("valor conhecido (regressão do formato do hash)", async () => {
-    expect(await stateHash({ a: 1 })).toBe("015abd7f5cc57a2dd94b7590f04ad8084273905ee33ec5cebeae62276a97f862");
+  it("formato do hash: sha256 hex do JSON canônico (calculado aqui de forma independente, sem literal)", async () => {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode('{"a":1}'));
+    const expected = Array.from(new Uint8Array(digest), (x) => x.toString(16).padStart(2, "0")).join("");
+    expect(await stateHash({ a: 1 })).toBe(expected);
   });
 });

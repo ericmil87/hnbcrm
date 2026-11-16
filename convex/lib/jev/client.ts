@@ -18,6 +18,7 @@
  */
 import { OPENROUTER_ZDR_PROVIDER_BODY } from "../llm/registry";
 import { sanitizeLlmError } from "../llm/sanitize";
+import { maskPersonalData } from "./state";
 import { JEV_MODEL, JEV_URL, JevError, JevValidationError, type JevQuestions, type JevResult } from "./types";
 import { assertRequestBodyShape, validateQuestions, validateResponse } from "./validate";
 
@@ -42,7 +43,7 @@ export interface CallJevArgs {
   sleepImpl?: (ms: number) => Promise<void>;
   /** [0,1): jitter determinístico em teste. */
   random?: () => number;
-  /** Relógio monotônico em ms (teste). */
+  /** Relógio em ms (teste). */
   nowMs?: () => number;
 }
 
@@ -71,15 +72,25 @@ export function parseRetryAfterMs(header: string | null, nowEpochMs: number = Da
   return Math.min(ms, JEV_RETRY_AFTER_CAP_MS);
 }
 
-function errorMessage(text: string): string {
-  let msg = text;
+/**
+ * Mensagem de um corpo de erro. NUNCA copia o corpo de um 4xx que pode ecoar o estado (o 400 do alpha
+ * devolve as issues do zod): ali só o `error.code`. Nome digitado pelo lead não é mascarável por regex
+ * e este texto vai para `agentRuns.error` — a regra do repo é "runs sem PII". 401/402/403/404 e 5xx não
+ * recebem estado de volta; passam por máscara de dados pessoais e por `sanitizeLlmError` do mesmo jeito.
+ */
+function errorMessage(text: string, status: number): string {
+  const echoesState = status === 400 || (status >= 405 && status < 500) || status === 422;
+  let msg = "";
+  let code: unknown;
   try {
-    const j = JSON.parse(text) as { error?: { message?: unknown } };
-    if (typeof j?.error?.message === "string") msg = j.error.message;
+    const j = JSON.parse(text) as { error?: { message?: unknown; code?: unknown } };
+    code = j?.error?.code;
+    if (!echoesState && typeof j?.error?.message === "string") msg = j.error.message;
   } catch {
-    /* corpo não-JSON: usa o texto */
+    if (!echoesState) msg = text;
   }
-  return sanitizeLlmError(msg.slice(0, ERROR_MESSAGE_MAX * 2)).slice(0, ERROR_MESSAGE_MAX);
+  if (echoesState) return typeof code === "number" || typeof code === "string" ? `código ${String(code).slice(0, 20)} (detalhe omitido)` : "detalhe omitido";
+  return sanitizeLlmError(maskPersonalData(msg.slice(0, ERROR_MESSAGE_MAX * 2))).slice(0, ERROR_MESSAGE_MAX);
 }
 
 function isInFlightBudget(text: string): boolean {
@@ -92,7 +103,7 @@ function isInFlightBudget(text: string): boolean {
 }
 
 function classify(status: number, text: string, retryAfterMs: number | undefined): JevError {
-  const msg = errorMessage(text);
+  const msg = errorMessage(text, status);
   if (status === 401 || status === 403) return new JevError("auth", `Chave recusada pelo OpenRouter (${status}): ${msg}`, { status });
   if (status === 402) {
     return isInFlightBudget(text)
@@ -115,7 +126,8 @@ export async function callJev(args: CallJevArgs): Promise<JevResult> {
   const doFetch: JevFetch = args.fetchImpl ?? ((input, init) => fetch(input, init));
   const sleep = args.sleepImpl ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const random = args.random ?? Math.random;
-  const now = args.nowMs ?? (() => performance.now());
+  // `Date.now()` (não `performance.now()`): é o relógio que o resto do repo usa em action e existe no runtime do Convex.
+  const now = args.nowMs ?? (() => Date.now());
   const timeoutMs = args.timeoutMs ?? JEV_TIMEOUT_MS;
   const deadlineMs = args.deadlineMs ?? JEV_DEADLINE_MS;
   const started = now();
@@ -123,12 +135,14 @@ export async function callJev(args: CallJevArgs): Promise<JevResult> {
   let last: JevError | undefined;
   for (let attempt = 1; attempt <= JEV_MAX_ATTEMPTS; attempt++) {
     let failure: JevError;
+    // O prazo total também limita a tentativa em andamento (senão o pior caso passa do prazo).
+    const attemptTimeoutMs = Math.max(1, Math.min(timeoutMs, deadlineMs - (now() - started)));
     try {
       const res = await doFetch(JEV_URL, {
         method: "POST",
         headers: { Authorization: `Bearer ${args.apiKey}`, "Content-Type": "application/json" },
         body: payload,
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.timeout(attemptTimeoutMs),
       });
       const text = await res.text();
       if (res.status === 200) {
@@ -162,12 +176,13 @@ export async function callJev(args: CallJevArgs): Promise<JevResult> {
     } catch (e) {
       if (e instanceof JevError) failure = e;
       else if (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError")) {
-        failure = new JevError("timeout", `Jev não respondeu em ${timeoutMs} ms`, { retryable: true });
+        failure = new JevError("timeout", `Jev não respondeu em ${Math.round(attemptTimeoutMs)} ms`, { retryable: true });
       } else {
-        failure = new JevError("network", `Falha de rede ao chamar o Jev: ${errorMessage(e instanceof Error ? e.message : String(e))}`, { retryable: true });
+        failure = new JevError("network", `Falha de rede ao chamar o Jev: ${errorMessage(e instanceof Error ? e.message : String(e), 0)}`, { retryable: true });
       }
     }
     last = failure;
+    failure.attempts = attempt;
     if (!failure.retryable || attempt === JEV_MAX_ATTEMPTS) throw failure;
     const base = JEV_BACKOFF_MS[attempt - 1]!;
     const wait = Math.min(JEV_RETRY_AFTER_CAP_MS, Math.max(failure.retryAfterMs ?? 0, base * (0.8 + 0.4 * random())));

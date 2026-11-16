@@ -59,9 +59,9 @@ export function validateQuestions(input: unknown): JevQuestions {
         if (keys.length < MIN_CHOICE_OPTIONS || keys.length > MAX_CHOICE_OPTIONS) {
           throw bad(`${id}: choice precisa de ${MIN_CHOICE_OPTIONS}..${MAX_CHOICE_OPTIONS} opções (veio ${keys.length})`);
         }
-        const criteria: Record<string, string> = {};
+        const criteria: Record<string, string> = Object.create(null);
         for (const k of keys) {
-          if (k.trim() === "" || k.length > MAX_OPTION_KEY_CHARS) throw bad(`${id}: opção inválida (vazia ou > ${MAX_OPTION_KEY_CHARS} caracteres)`);
+          if (k.trim() === "" || k.length > MAX_OPTION_KEY_CHARS || k === "__proto__") throw bad(`${id}: opção inválida (vazia, longa demais ou reservada)`);
           const d = q.criteria[k];
           if (typeof d !== "string" || d.trim() === "" || d.length > MAX_CRITERION_CHARS) {
             throw bad(`${id}: descrição da opção "${k}" precisa ser texto de 1..${MAX_CRITERION_CHARS} caracteres`);
