@@ -1,0 +1,55 @@
+# Jev — camada de decisão (`typesafe/jev-1.13` via OpenRouter)
+
+> Fase 0 (fundação sem caller), 16/11/2026. O Jev **não gera texto**: responde perguntas tipadas sobre um estado e devolve probabilidades sobre opções que NÓS definimos. Entra como juiz barato e auditável onde hoje há regex ou instrução enterrada no prompt; o **código** manda no fluxo e o atendente/copiloto continuam escrevendo o texto. Plano e pesquisa: `tmp/JEV-0*.md` (locais, gitignored). Regras curtas de código: `.claude/rules/ai-pipeline.md` (seção "Jev").
+
+## Estado atual (fase 0)
+
+**Nada chama o Jev ainda.** Existe só a fundação, atrás do módulo `settings.modules.jev` (desligado por padrão; na fase 0 só liga por ops: `jev:internalSetModule`, `dryRun` padrão, audit `high`, exige IA ativa; **não** está em `setOrgModules`). O guard `jevPort.test.ts` falha se algo além de `convex/jev.ts` referenciar `internal.jev.*`; a fase 1 muda a lista `CALLERS_PERMITIDOS` de propósito.
+
+| Peça | Onde |
+|---|---|
+| tipos, constantes (`JEV_URL`, `JEV_MODEL` pinado, `JEV_PRICE_ID`), erros | `convex/lib/jev/types.ts` |
+| validação PURA: perguntas, corpo, resposta | `lib/jev/validate.ts` |
+| estado sem PII (lista de campos permitidos, máscara, hash) | `lib/jev/state.ts` |
+| respostas enxutas para gravar/reler | `lib/jev/answers.ts` |
+| cliente HTTP (única porta de rede), retry, custo | `lib/jev/client.ts` |
+| estado/pergunta sintéticos do diagnóstico | `lib/jev/ping.ts` |
+| `internalDecide` (action), `internalBeginDecision`/`internalRecordDecision`/`internalFailDecision`, `internalSetModule` | `convex/jev.ts` |
+| `internalPingJev` (kill-switch de diagnóstico) | `convex/aiDiagnostics.ts` |
+| tabela `jevDecisions`, `agentRuns.kind:"jev"` | `convex/schema.ts`, `agentRuns.ts` |
+| retenção 30 d, fora do backup, purga da org | `retention.ts`, `lib/exportSanitize.ts`, `opsPurge.ts` |
+| preço `jev-1.13` (`outPerM:0` com selo `freeOutput`) | `lib/llm/registry.ts` |
+
+**Contrato do `internalDecide`.** Nunca lança (fail-open): devolve `{ok:true, runId, decisionId, model, answers, costUsdMicros, costEstimated, latencyMs}` ou `{ok:false, reason, code?, detail?}`. Ordem: (1) validação local pura (estado pela lista de campos, perguntas), **antes de qualquer escrita**; (2) `internalBeginDecision`: módulo `jev` → IA ativa (`orgAiActive`) → plano em leitura (`resolveEntitlements.aiAllowed`) → teto em R$ em `block` (`spendBlockedNow`) → ponteiros da MESMA org; só então abre `agentRuns(kind:"jev")`; (3) chamada; (4) `internalRecordDecision` grava a decisão e fecha a run (`internalFinishRun` → `recordRunUsage`) na mesma transação, idempotente (run que já não está `running` devolve `null`). `reason`: `module_off`, `ai_inactive`, `read_only`, `spend_blocked`, `scope_mismatch`, `invalid_input`, `no_key`, `error` (com `code` do `JevError`).
+
+**Privacidade (D8).** O estado é montado pelo chamador mas só passa pela lista `STATE_SCHEMA` (`mensagem`, `resposta`, `historico`, `janela`, `conversa`, `lead{etapa,origem,tags}`, `empresa{segmento,produtos,horario}`, `politica`); chave fora da lista é REJEITADA sem ecoar o valor. Texto livre é mascarado por regex (telefone, e-mail, CPF/CNPJ, links, UUID/ids do Convex); histórico fica com as últimas 8 falas de ≤ 500 caracteres. **Limitação declarada:** nomes e endereços digitados no corpo da conversa não são detectáveis por regex; por isso o estado nunca tem campo de nome e o corpo leva sempre `provider: OPENROUTER_ZDR_PROVIDER_BODY.provider` (`data_collection:"deny"`, fonte única no registry; `assertRequestBodyShape` recusa corpo sem ele). Em `agentRuns` e `jevDecisions` ficam só hash do estado canônico (calculado DEPOIS da máscara) e respostas.
+
+**`jevDecisions` (1 escrita por decisão).** `kind`, `agentRunId`, ponteiros opcionais, `model` (snapshot que atendeu), `requestId`, `stateHash`, `questionsVersion` (`"triage@1"`), `policiesVersion` (thresholds de `policies.ts` vigentes, para re-rodar a política offline), `answers` (lista enxuta, até 12 probabilidades por pergunta, sem `legend`), `promptTokens`, `costUsdMicros`, `costEstimated?`, `latencyMs`, `createdAt`. Índices: `by_organization_and_created`, `by_conversation`. Respostas são LISTA (não `Record`) porque nomes de campo do Convex só aceitam ASCII e as opções de `choice` serão nomes de etapa ("Inscrição em andamento"). Falha não grava decisão: o erro fica na run.
+
+**Cliente (`callJev`).** Corpo `{model, state, questions, provider}`; timeout 10 s por tentativa; até 4 tentativas com backoff 0,5/2/8 s ± 20 % de jitter e `Retry-After` (teto 10 s) dentro de um prazo total de 20 s. Retentados: 429, 5xx (incl. 524), 408, rede, timeout e 402 transitório (`metadata.limit_source:"openrouter_in_flight_budget"`). Terminais: 400 (`bad_request`), 401/403 (`auth`), 402 sem crédito (`credit`), 404 (`provider_unavailable`: nenhum provedor atende a política de dados), outros 4xx, e 200 fora do contrato (`invalid_response`, sem retry). Mensagens de erro passam por `sanitizeLlmError` e a chave nunca aparece nelas.
+
+**Custo.** `usage.cost` do provedor vence quando utilizável (número finito > 0, não BYOK); ausente, zero com tokens consumidos ou BYOK ⇒ `costEstimated:true` e o custo sai de `MODEL_PRICES["jev-1.13"]` = entrada US$ 0,042/1M, saída 0 (nunca o preço conservador de 3/15, que erraria 100×). `outPerM: 0` é o único preço zero permitido e só com `freeOutput:true`; o teste de `aiSpend.test.ts` exige `outPerM > 0` para todo o resto. Bump de versão do modelo = PR separado com re-medição.
+
+**Retenção e I/O.** `jevDecisions` entra em `retention.ts` com janela de 30 dias, pelo índice de sistema `by_creation_time` (padrão do `telegramOrgQuota`): sem índice extra, sem cron novo, com o preview/kill-switch/teto diário que a retenção já tem (`RETENTION_JEV_DECISIONS_DAYS` ajusta, piso 7 d). Fora do backup (`EXCLUDED_BACKUP_TABLES`) e dentro da purga da org (`opsPurge`). O golden set precisa ser exportado antes de 30 dias.
+
+## Decisões, pegadinhas medidas e histórico
+
+**Probe de 16/11/2026 (estados 100 % sintéticos; script `tmp/jev-probe/probe.mjs`, relatório `tmp/JEV-00-PROBE.md`).** Decisão: GO.
+
+- **Privacidade.** As 4 variantes do bloco `provider` (nenhum; só `deny`; o corpo do repo `deny + require_parameters + allow_fallbacks`; `deny + zdr:true`) voltam 200, atendidas por TypeSafe. O bloco é HONRADO, não ignorado: `only:["provedor inexistente"]` e `ignore:["TypeSafe"]` dão 404 com `routing_funnel`. Há um único provedor para o modelo.
+- **O alpha NÃO valida o que mandamos:** `choice` com 1 opção e `score` com 1 nível voltam 200; campo desconhecido no corpo (e dentro de `provider`) é ignorado. Daí `validate.ts` recusar do nosso lado e `assertRequestBodyShape` + listas `JEV_REQUEST_ALLOWED_KEYS`/`JEV_PROVIDER_ALLOWED_KEYS` com teste que quebra se o corpo ganhar campo novo.
+- **Respostas.** `usage.cost` presente e > 0 (≈ US$ 0,000021 por chamada de 3 perguntas; traz `is_byok` e `cost_details`); piso de ~350 tokens de entrada só de overhead (custo mínimo ≈ US$ 0,000015). `noul` NÃO traz `confidence`; `choice` e `score` trazem. Headers úteis: `x-generation-id`, `x-provider-name`; **nenhum header de rate limit**. Erros: 401 `{"error":{"message":"User not found.","code":401}}`; modelo inexistente é **400** (não 404); tipo `box` no 1.13 → 400; `questions` ausente → 400 com issues do zod. 402/429 reais não foram provocados (cobertos por teste com fetch simulado).
+- **Latência** (3 perguntas, ~500 tokens): p50 342 ms, p95 ≈ 465 ms; média 428 ms com 4 em paralelo.
+- **pt-BR** (6 mensagens × 3 paráfrases × 3 repetições): `choice` idêntico em 36/36 repetições, 0 empates em 108 choices, `confidence` presente em 100 % dos choices. `pede_humano` média 0,91 (paráfrase mais fraca 0,80); reclamações 9/9 `reclamacao`; "ok obrigado" `precisa_resposta` 0,10; preço 0,97; mensagem ambígua ("pode ser") 0,53 → cai na faixa incerta. **Sobreposição:** "não quero falar com robô" lê como reclamação (3/3/3 em `risco_reclamacao`); a ação é a mesma (handoff), o motivo gravado não. **`assunto_coberto` não serve sozinho para "fora de escopo"** ("ok obrigado" deu 0,41): combinar com `precisa_resposta`. **`urgencia` (score) é a pergunta mais instável** (spread até 0,99 na mesma frase): só para ordenar, nunca para agir.
+- **Sentimento** (12 janelas × 3 repetições; rótulos meus sobre texto sintético): 8/12 de acordo, `choice` 100 % estável; sarcasmo detectado 2/2 (noul 0,95 e 0,78); tendência 3/3. O único erro claro é o "ok." frio depois do preço de quem estava animado lido como `positivo` (p = 0,55) embora `tendencia` tenha dito `piorando`: combinar sentimento × tendência, não confiar só no choice. Os outros 3 desacordos eram rótulos meus discutíveis. A fronteira neutro × positivo é a frágil ("positivo" absorve neutros educados). Não prova nada em texto real.
+- **Etapa do funil** (9 cenários sintéticos × 2 repetições, 9 etapas de uma das cópias): com descrição por etapa, top-1 100 % em 3, 6 e 9 opções (p(ouro) 0,99–1,00); **só com o nome, 89 %** (`Atendido` → `Retorno / recorrente`, 2/2). **As etapas das cópias não têm descrição no banco**: sem descrição por etapa não há promessa. O 100 % é teto (cenários curtos escritos junto com as descrições); onde degrada de verdade só aparece no replay com as cópias.
+
+**Por que `lib/jev/` e não `lib/llm/`.** O `lib/llm` fala só Chat Completions; o Jev não tem `messages`/`tools`/texto e responde `answers`. Forçar gera `if (jev)` em toda função. Reaproveita o que é ortogonal: chave `OPENROUTER_API_KEY`, `MODEL_PRICES`, `addUsage`/`finishRunCostFields`, `internalFinishRun` → `recordRunUsage`, `sanitizeLlmError`, `OPENROUTER_ZDR_PROVIDER_BODY`.
+
+**Chamada HTTP não cabe em mutation.** `internalClaimForProcessing` (`attendant.ts`) é mutation. Na fase 1 o Jev roda NA ACTION do turno, antes do commit, e o veredito vai como argumento para `internalCommitAiReply`, que já revalida elegibilidade (TOCTOU é o desenho). Nada de chamada dentro do claim.
+
+**O guard determinístico continua obrigatório.** `lib/llmOutputGuard.ts` roda sempre, sem módulo; ordem: guard determinístico → Jev. Fail-open vale para a triagem; no guard de saída, falha do Jev significa "só o guard determinístico", nunca "bloqueia tudo".
+
+**Desvio do plano (a confirmar):** `expiresAt` + cron próprio de purga foram trocados por uma linha em `retention.ts` (janela por tabela, sem campo extra a gravar nem cron novo). Se for preciso estender a vida de uma linha específica (golden set), isso volta como campo.
+
+**Pendências para as próximas fases.** Fase 1 (sombra): catálogo `triage`/`output_guard` (`questions.ts`), `policies.ts` com `policiesVersion`, hook na action do turno, relatório. Avaliação com as cópias do DEV por replay (op `internal*`, `dryRun`, cursor), pulando as 74 conversas da AFT sem canal válido; rótulos automáticos (handoff criado, resposta em 24 h) têm viés — para `skip` e guard o Eric rotula uma amostra à mão. Medir I/O em `docs/perf/convex-io.md` ao fim da sombra.

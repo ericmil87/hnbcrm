@@ -25,6 +25,8 @@ paths:
   - "convex/lib/whatsappText.ts"
   - "convex/lib/chatText.ts"
   - "convex/lib/mediaEnrichment.ts"
+  - "convex/jev*.ts"
+  - "convex/lib/jev/**"
 ---
 
 # AI pipeline (copilot, attendant, vision, group agent, generated posts)
@@ -88,3 +90,9 @@ Rules distilled from incidents in production. Reasoning and timelines: `docs/arc
 - O próximo passo, os cartões de ação e a barra de etapas saem de `convex/lib/onboardingRoadmap.ts` (puro, importado pela tela); o modelo só pede cartões do rascunho. Cartão ou passo novo entra no roteiro, nunca numa instrução do prompt.
 - Ação de cartão concluída = evento sem LLM (`event` no SSE: `approve`, `notify`, `next`, `process_pending`); o servidor confere o fato antes de reconhecer. Não mande texto fingindo ser a pessoa.
 - "Responder sozinha" no onboarding só pelo clique no `ativarIa` → `aiSettings.updateAgentProfile` com `autopilotRiskAck`; `applyOnboardingDraftCore` nunca grava autopilot.
+
+## Jev (camada de decisão, `docs/architecture/jev.md`)
+- Fase 0 = fundação sem caller (`jevPort.test.ts`). Módulo `settings.modules.jev` desligado por padrão, só por ops (`jev:internalSetModule`); com a flag off nenhum caminho novo roda e `internalDecide` NUNCA lança (fail-open: `{ok:false, reason}`, o chamador segue o comportamento de hoje).
+- Rede só em `lib/jev/client.ts` (`callJev`; URL numa constante; corpo com `OPENROUTER_ZDR_PROVIDER_BODY.provider`, `assertRequestBodyShape` recusa campo novo ou sem `data_collection:"deny"`). O alpha NÃO valida o que mandamos: `validateQuestions`/`validateResponse` são a barreira. Chamada HTTP não cabe em mutation: o Jev roda na ACTION do turno, antes do commit, e o veredito vai ao commit como argumento.
+- Estado só pela lista de campos permitidos (`sanitizeJevState`, campo fora da lista é rejeitado) com texto livre mascarado; sem nome. Em `agentRuns`/`jevDecisions` só hash e respostas. `llmOutputGuard` continua obrigatório e vem ANTES do Jev; falha do Jev no guard de saída = só o guard determinístico.
+- Custo pela porta única (`agentRuns kind:"jev"` → `internalFinishRun`); sem `usage.cost` utilizável ⇒ `costEstimated` e `MODEL_PRICES["jev-1.13"]`. `outPerM: 0` só com `freeOutput:true`.
