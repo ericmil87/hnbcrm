@@ -102,6 +102,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "telegramRelayBuffer",
   "telegramAutoSteps",
   "telegramSuggestions",
+  // Jev: log técnico de decisões (hash + respostas); agregado recomputável, vence em 30 d.
+  "jevDecisions",
 ];
 
 /**

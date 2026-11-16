@@ -19,6 +19,7 @@ const modulesReturn = v.object({
   metaMessaging: v.boolean(),
   telegram: v.boolean(),
   translation: v.boolean(),
+  jev: v.boolean(),
   demoMode: v.boolean(),
 });
 

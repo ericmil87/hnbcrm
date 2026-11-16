@@ -4,6 +4,7 @@ import { authTables } from "@convex-dev/auth/server";
 import { uiThemeValidator } from "./lib/uiTheme";
 import { onboardingDraftValidator } from "./lib/onboardingDraft";
 import { onboardingBlockValidator } from "./lib/onboardingBlocks";
+import { jevAnswerRowValidator } from "./lib/jev/answers";
 
 // Shared saved-view filters validator — single source of truth, reused by
 // convex/savedViews.ts arg validators (never duplicate this shape inline).
@@ -671,6 +672,8 @@ export const orgModulesValidator = v.object({
   telegram: v.optional(v.boolean()),
   // Tradução automática no inbox (F1). NÃO é da Central: fora de assertAnyModule.
   translation: v.optional(v.boolean()),
+  // Jev (camada de decisão): default OFF. Só liga por ops nas fases 0–1; nenhum caller com a flag off.
+  jev: v.optional(v.boolean()),
 });
 
 // Tradução automática (F1): opções da org. Ausente = padrões (lib/translationGate.ts).
@@ -3145,7 +3148,9 @@ const applicationTables = {
       // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
       v.literal("onboarding"),
       // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
-      v.literal("tts")
+      v.literal("tts"),
+      // Jev (camada de decisão, docs/architecture/jev.md): 1 run por decisão.
+      v.literal("jev")
     ),
     status: v.union(
       v.literal("running"),
@@ -3187,6 +3192,38 @@ const applicationTables = {
     .index("by_organization_and_kind_and_started", ["organizationId", "kind", "startedAt"])
     // Retenção (fase 4a): runs terminais antigas, deployment-wide.
     .index("by_status_and_started", ["status", "startedAt"]),
+
+  // Jev (camada de decisão, docs/architecture/jev.md): 1 linha por decisão, SEM texto de
+  // conversa — só hash do estado, respostas enxutas (`lib/jev/answers.ts`) e custo. É o que
+  // permite re-calibrar threshold e re-rodar a política offline sem pagar chamada nova.
+  // Retenção: `retention.ts` (30 d, por `_creationTime`; sem índice extra); fora do backup.
+  jevDecisions: defineTable({
+    organizationId: v.id("organizations"),
+    // "triage" | "output_guard" | … (`JEV_KINDS`); string para o catálogo crescer sem migração.
+    kind: v.string(),
+    agentRunId: v.id("agentRuns"),
+    conversationId: v.optional(v.id("conversations")),
+    leadId: v.optional(v.id("leads")),
+    triggerMessageId: v.optional(v.id("messages")),
+    // Snapshot que atendeu (ex.: typesafe/jev-1.13-20260917).
+    model: v.string(),
+    requestId: v.optional(v.string()),
+    // sha256 do estado canônico — NUNCA o texto.
+    stateHash: v.string(),
+    // "triage@1": muda quando o catálogo muda (decisões antigas deixam de ser comparáveis).
+    questionsVersion: v.string(),
+    // Versão dos thresholds de `policies.ts` vigentes quando decidiu (rollback de calibração).
+    policiesVersion: v.string(),
+    answers: v.array(jevAnswerRowValidator),
+    promptTokens: v.number(),
+    costUsdMicros: v.number(),
+    // true = sem `usage.cost` do provedor (custo da tabela de preços).
+    costEstimated: v.optional(v.boolean()),
+    latencyMs: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_organization_and_created", ["organizationId", "createdAt"])
+    .index("by_conversation", ["conversationId"]),
 
   // Contador MENSAL de uso de IA por org (v0.69, T04). Incrementado na MESMA
   // transação de `agentRuns.internalFinishRun` (custo/runs/tokens, por kind) e

@@ -10,7 +10,7 @@ import { ConvexError } from "convex/values";
 import { QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 
-export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging" | "telegram" | "translation";
+export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging" | "telegram" | "translation" | "jev";
 
 export type OrgModules = {
   units: boolean;
@@ -23,6 +23,11 @@ export type OrgModules = {
   telegram: boolean;
   /** Tradução automática no inbox. NÃO é da Central: fora de `assertAnyModule`. */
   translation: boolean;
+  /**
+   * Jev: camada de decisão (docs/architecture/jev.md). NÃO é da Central. Fase 0–1: só liga por
+   * ops (`jev:internalSetModule`); nenhum caminho novo roda com a flag off.
+   */
+  jev: boolean;
   demoMode: boolean;
 };
 
@@ -34,6 +39,7 @@ export const MODULE_LABELS: Record<OrgModuleKey, string> = {
   metaMessaging: "Instagram e Messenger",
   telegram: "Telegram para a equipe",
   translation: "Tradução automática",
+  jev: "Decisões (Jev)",
 };
 
 /** Leitura pura do doc (serve a quem já carregou a org). */
@@ -47,6 +53,7 @@ export function modulesOf(org: Pick<Doc<"organizations">, "settings"> | null | u
     metaMessaging: m?.metaMessaging === true,
     telegram: m?.telegram === true,
     translation: m?.translation === true,
+    jev: m?.jev === true,
     demoMode: org?.settings?.demoMode === true,
   };
 }

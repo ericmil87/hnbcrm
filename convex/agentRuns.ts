@@ -32,7 +32,9 @@ export const internalStartRun = internalMutation({
       // Onboarding conversacional v2 (P2.4).
       v.literal("onboarding"),
       // P4.1: síntese de voz da resposta em áudio do atendente.
-      v.literal("tts")
+      v.literal("tts"),
+      // Jev (camada de decisão, docs/architecture/jev.md): 1 run por decisão.
+      v.literal("jev")
     ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),

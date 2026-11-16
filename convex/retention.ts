@@ -22,6 +22,7 @@
  * | telegramOrgQuota   | contador de arquivos por org/dia (só o dia corrente importa) | `_creationTime` | 7 d |
  * | pushSubscriptions  | aparelho parado (sem abrir o app nem receber push), com os vínculos (E1) | `lastSeenAt` | 60 d |
  * | pushDeliveryStats  | contadores de entrega do push (E1)            | `createdAt`     |  90 d  |
+ * | jevDecisions       | decisões do Jev (respostas + hash, sem texto; golden set sai antes) | `_creationTime` | 30 d |
  *
  * As três do Telegram (F0) têm piso próprio (`RETENTION_MIN_DAYS_BY_TABLE`):
  * são registros técnicos de vida curta, não histórico de negócio.
@@ -93,6 +94,7 @@ export const RETENTION_TABLES = [
   "telegramReconnects",
   "pushSubscriptions",
   "pushDeliveryStats",
+  "jevDecisions",
 ] as const;
 export type RetentionTable = (typeof RETENTION_TABLES)[number];
 
@@ -113,6 +115,7 @@ export const RETENTION_DEFAULT_DAYS: Record<RetentionTable, number> = {
   telegramReconnects: 7,
   pushSubscriptions: 60,
   pushDeliveryStats: 90,
+  jevDecisions: 30,
 };
 
 /** Env opcional que sobrepõe a janela padrão de cada tabela. */
@@ -132,6 +135,7 @@ export const RETENTION_ENV_DAYS: Record<RetentionTable, string> = {
   telegramReconnects: "RETENTION_TELEGRAM_RECONNECTS_DAYS",
   pushSubscriptions: "RETENTION_PUSH_SUBSCRIPTIONS_DAYS",
   pushDeliveryStats: "RETENTION_PUSH_DELIVERY_STATS_DAYS",
+  jevDecisions: "RETENTION_JEV_DECISIONS_DAYS",
 };
 
 /** Piso de qualquer janela (env ou override): um typo nunca apaga a semana. */
@@ -182,7 +186,8 @@ const tableValidator = v.union(
   v.literal("telegramOrgQuota"),
   v.literal("telegramReconnects"),
   v.literal("pushSubscriptions"),
-  v.literal("pushDeliveryStats")
+  v.literal("pushDeliveryStats"),
+  v.literal("jevDecisions")
 );
 
 const overridesValidator = v.object({
@@ -201,6 +206,7 @@ const overridesValidator = v.object({
   telegramReconnects: v.optional(v.number()),
   pushSubscriptions: v.optional(v.number()),
   pushDeliveryStats: v.optional(v.number()),
+  jevDecisions: v.optional(v.number()),
 });
 type Overrides = Partial<Record<RetentionTable, number>>;
 
@@ -360,6 +366,14 @@ function candidateRanges(db: QueryCtx["db"], table: RetentionTable, cutoff: numb
           (
             await db.query("pushDeliveryStats").withIndex("by_created_at", (q) => q.lt("createdAt", cutoff)).take(limit)
           ).map((d) => ({ id: d._id, ts: d.createdAt })),
+      ];
+    case "jevDecisions":
+      // Sem índice próprio (1 escrita por decisão, I/O do Convex): o índice de sistema por `_creationTime`.
+      return [
+        async (limit) =>
+          (
+            await db.query("jevDecisions").withIndex("by_creation_time", (q) => q.lt("_creationTime", cutoff)).take(limit)
+          ).map((d) => ({ id: d._id, ts: d._creationTime })),
       ];
   }
 }

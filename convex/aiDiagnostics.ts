@@ -12,6 +12,9 @@ import { chatWithFallback, resolvePlatformChain, ResolvedRoute, withReasoningEff
 import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
+import { callJev } from "./lib/jev/client";
+import { JEV_PING_QUESTIONS, JEV_PING_STATE } from "./lib/jev/ping";
+import { JevError } from "./lib/jev/types";
 
 type HopResult = {
   provider: string;
@@ -287,6 +290,38 @@ export const measureReasoning = internalAction({
       };
     } catch (e) {
       return { ok: false, ms: Date.now() - started, error: sanitizeLlmError(e instanceof Error ? e.message : String(e)) };
+    }
+  },
+});
+
+/**
+ * Diagnóstico do Jev (kill-switch de diagnóstico): 1 chamada com estado SINTÉTICO fixo
+ * (`lib/jev/ping.ts`, ~US$ 0,00002), pela mesma porta de produção (`callJev`: corpo com a
+ * trava de privacidade, retry, validação). Responde "Jev ok / alpha mudou / sem crédito /
+ * chave inválida". Não grava run nem decisão e não depende do módulo da org.
+ *   npx convex run aiDiagnostics:internalPingJev '{}'
+ */
+export const internalPingJev = internalAction({
+  args: {},
+  returns: v.object({
+    ok: v.boolean(),
+    code: v.optional(v.string()),
+    error: v.optional(v.string()),
+    model: v.optional(v.string()),
+    latencyMs: v.optional(v.number()),
+    attempts: v.optional(v.number()),
+    costUsd: v.optional(v.number()),
+    costEstimated: v.optional(v.boolean()),
+  }),
+  handler: async () => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) return { ok: false, code: "no_key", error: "OPENROUTER_API_KEY ausente neste deployment" };
+    try {
+      const r = await callJev({ apiKey, state: { ...JEV_PING_STATE }, questions: JEV_PING_QUESTIONS });
+      return { ok: true, model: r.model, latencyMs: r.latencyMs, attempts: r.attempts, costUsd: r.usage.costUsd, costEstimated: r.costEstimated };
+    } catch (e) {
+      const code = e instanceof JevError ? e.code : "unexpected";
+      return { ok: false, code, error: sanitizeLlmError(e instanceof Error ? e.message : String(e)) };
     }
   },
 });
