@@ -6,6 +6,7 @@
  * repetir 4 vezes o bug "modelo sem preço custa 0 e o teto nunca dispara".
  */
 import { describe, expect, test } from "vitest";
+import { JEV_PRICE_ID } from "./jev/types";
 import {
   CONSERVATIVE_MODEL_PRICE,
   MODEL_PRICES,
@@ -38,8 +39,22 @@ describe("tabela de preços (teste de build)", () => {
     expect(missing, `Sem preço em MODEL_PRICES: ${missing.join(", ")}`).toEqual([]);
     for (const [id, price] of Object.entries(MODEL_PRICES)) {
       expect(price.inPerM, id).toBeGreaterThan(0);
-      expect(price.outPerM, id).toBeGreaterThan(0);
+      // `outPerM: 0` só com o selo explícito `freeOutput` (saída realmente grátis, ex. Jev).
+      if (price.freeOutput === true) expect(price.outPerM, id).toBe(0);
+      else expect(price.outPerM, id).toBeGreaterThan(0);
     }
+  });
+
+  test("Jev: preço próprio (entrada 0,042/1M, saída grátis explícita), nunca o conservador", () => {
+    const p = modelPrice(JEV_PRICE_ID);
+    expect(p).toEqual({ inPerM: 0.042, outPerM: 0, freeOutput: true });
+    // 1.000 tokens de entrada = US$ 0,000042; sem `usage.cost` NÃO cai no 3/15 (100× errado).
+    const cost = estimateRunCost({ model: JEV_PRICE_ID, usage: { promptTokens: 1000, completionTokens: 70 } });
+    expect(cost.costUsd).toBeCloseTo(0.000042, 9);
+    expect(cost.costEstimated).toBe(false);
+    // `freeOutput` não vira escape: só vale com outPerM === 0 e nunca altera o conservador.
+    expect(CONSERVATIVE_MODEL_PRICE.outPerM).toBeGreaterThan(0);
+    expect(CONSERVATIVE_MODEL_PRICE.freeOutput).toBeUndefined();
   });
 
   test("preço da ROTA (oficial/mediana dos endpoints), não o topo barato do /models", () => {

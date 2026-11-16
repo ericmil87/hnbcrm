@@ -2,6 +2,12 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não lançado]
+
+### Interno (nada muda para quem usa o sistema)
+
+- **Base do Jev, o modelo que decide.** Prepara o terreno para um modelo de decisão barato (`typesafe/jev-1.13`) julgar pontos do atendimento hoje feitos por regras fixas. Nesta etapa nada o chama: o módulo nasce desligado em todas as organizações, não há tela nem comportamento novo, e só quem opera o sistema consegue ligá-lo. Mensagens de clientes só chegariam a ele com telefone, e-mail, CPF e links apagados.
+
 ## [0.82.0] - 2026-11-13
 
 _Conversas no padrão do WhatsApp no celular e no computador, foto de perfil, a IA lendo PDF e a configuração por conversa mais fluida._

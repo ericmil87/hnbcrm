@@ -26,6 +26,7 @@ export const USAGE_KIND_LABELS: Record<string, string> = {
   attendant_draft: "Escrever com IA (atendente)",
   onboarding: "Configuração por conversa",
   tts: "Respostas em áudio",
+  jev: "Decisões (Jev)",
 };
 
 export const SPEND_MODE_OPTIONS = [

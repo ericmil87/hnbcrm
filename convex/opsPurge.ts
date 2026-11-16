@@ -66,6 +66,8 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "webhooks", index: "by_organization" },
   { table: "agentRuns", index: "by_organization_and_started" },
   { table: "aiUsageMonthly", index: "by_organization_and_month" },
+  // Jev: decisões da org (hash + respostas, sem texto). `agentRunId` é só ponteiro; a ordem entre as duas tabelas é livre.
+  { table: "jevDecisions", index: "by_organization_and_created" },
   // Billing (B1): comercial (PII: documento, e-mail) e pacotes pré-pagos. LGPD: sai com a org.
   { table: "orgSubscriptions", index: "by_organization" },
   { table: "usageCredits", index: "by_organization_and_expires" },
