@@ -22,6 +22,8 @@ import { attendancePeriodStart, resolveEntitlements, usageCrossings } from "./en
 import { attendancesUsedInPeriod } from "./attendanceUsage";
 import { applySubscriptionChange } from "./entitlementsOps";
 import { formatBrl, monthKeyUtc } from "./aiSpend";
+import { appUrl } from "./appUrl";
+import { PREFERENCE_FLAG } from "./notificationPolicy";
 
 export type BillingNoticeType =
   | "plan_usage_warning"
@@ -58,6 +60,11 @@ export type BillingNoticeData = {
   effectiveAt?: string;
   /** `plan_refunded`: estorno de cobrança duplicada (troca de plano), não reembolso da conta. */
   duplicate?: boolean;
+  /** Forma de cobrança (`plan_charge_upcoming`/`plan_payment_received`); ausente = fatura. */
+  paymentMethod?: "card" | "invoice";
+  /** `plan_payment_received`: próxima cobrança (valor e data já formatados). */
+  nextChargeBrl?: string;
+  nextChargeDate?: string;
 };
 
 /** Humanos ativos que administram a org (`settings:manage`). Cap 25. */
@@ -105,7 +112,13 @@ function copyFor(type: BillingNoticeType, d: BillingNoticeData): NotificationCop
     case "plan_payment_received":
       return notificationCopy({ type, planLabel: d.planLabel, amountBrl: d.amountBrl });
     case "plan_charge_upcoming":
-      return notificationCopy({ type, planLabel: d.planLabel, amountBrl: d.amountBrl, dueDate: d.dueDate });
+      return notificationCopy({
+        type,
+        planLabel: d.planLabel,
+        amountBrl: d.amountBrl,
+        dueDate: d.dueDate,
+        paymentMethod: d.paymentMethod,
+      });
     case "plan_changed":
       return notificationCopy({ type, planLabel: d.planLabel ?? "novo" });
     case "plan_change_scheduled":
@@ -148,13 +161,27 @@ export async function notifyBillingAdmins(
       coalesce: { key: args.dedupeKey },
     });
     notified += 1;
-    // E-mail pelas preferencias do membro (flag `planAlert`); mesmo padrao do aviso de gasto.
+    // E-mail pela classe do tipo (`planAlert` uso, `billingNotices` desativavel, `billingCritical`
+    // obrigatorio). Tipos de cobranca sao acionaveis: o sino sempre registra, entao `id` existe.
     if (id) {
       await ctx.scheduler.runAfter(0, internal.email.dispatchNotification, {
         organizationId: args.organizationId,
         recipientMemberId: admin._id,
-        eventType: "planAlert",
-        templateData: { orgName: org.name, title: copy.title, body: copy.body },
+        eventType: PREFERENCE_FLAG[args.type as NotificationType],
+        templateData: {
+          type: args.type,
+          orgName: org.name,
+          title: copy.title,
+          body: copy.body,
+          ctaUrl: `${appUrl()}/app/configuracoes?secao=billing`,
+          ...(args.data.amountBrl ? { amountBrl: args.data.amountBrl } : {}),
+          ...(args.data.dueDate ? { dueDate: args.data.dueDate } : {}),
+          ...(args.data.planLabel ? { planLabel: args.data.planLabel } : {}),
+          ...(args.data.paymentMethod ? { paymentMethod: args.data.paymentMethod } : {}),
+          ...(args.data.nextChargeBrl ? { nextChargeBrl: args.data.nextChargeBrl } : {}),
+          ...(args.data.nextChargeDate ? { nextChargeDate: args.data.nextChargeDate } : {}),
+          ...(args.data.reason ? { reason: args.data.reason } : {}),
+        },
       });
     }
   }

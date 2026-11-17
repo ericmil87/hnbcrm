@@ -184,6 +184,33 @@ describe("dispatchNotification — gates e 'nunca lança'", () => {
     expect(sent).toBe(false);
   });
 
+  test("classes de cobrança: o template é fail-closed e o crítico nunca pede link de desativar", async () => {
+    const s = await seed(t);
+    // `billingNotices` exige `unsubUrl` (sem ele o despachante reteria o envio).
+    expect(() => buildTemplate("billingNotices", { orgName: "Acme", title: "Pagamento confirmado" })).toThrow(/unsubUrl/);
+    const crit = buildTemplate("billingCritical", { orgName: "Acme", title: "Fatura vencida" });
+    expect(crit.html).toContain("não pode ser desativado");
+    expect(crit.html).not.toContain("Desativar</a>");
+    // Com endereço válido e segredo ausente o e-mail da classe fica retido: não chega ao provedor.
+    vi.stubEnv("NOTIFICATION_UNSUB_SECRET", "");
+    const held = await t.mutation(internal.email.dispatchNotification, {
+      organizationId: s.orgA,
+      recipientMemberId: s.adminA.memberId,
+      eventType: "billingNotices",
+      templateData: { orgName: "Acme", title: "Pagamento confirmado" },
+    });
+    expect(held).toBe(false);
+    expect(console.error).not.toHaveBeenCalled();
+    // O crítico segue para o provedor (aqui: componente ausente, o log prova a tentativa).
+    await t.mutation(internal.email.dispatchNotification, {
+      organizationId: s.orgA,
+      recipientMemberId: s.adminA.memberId,
+      eventType: "billingCritical",
+      templateData: { orgName: "Acme", title: "Fatura vencida" },
+    });
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("billingCritical: falha ao enfileirar"), expect.anything());
+  });
+
   test("endereço suprimido não chega nem a tentar o envio", async () => {
     const s = await seed(t);
     await t.run(async (ctx) => {

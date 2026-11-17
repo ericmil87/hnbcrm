@@ -9,6 +9,10 @@
  *  - Ciclo de vida self-service (só `active`/`past_due` com assinatura): `cancelAt` vencido leva a
  *    org a `canceled` (só leitura, exportação liberada) e avisa; `scheduledChange.effectiveAt`
  *    vencido aplica a troca (downgrade) pela porta e avisa.
+ *  - "Cobrança a caminho" (só `active` com assinatura Asaas, sem cancelamento nem upgrade
+ *    pendente): D-3 (mensal/trimestral) ou D-7 (anual) antes de `currentPeriodEnd`, 1x por ciclo
+ *    (`chargeNoticeFor`, carimbado pela porta ANTES de avisar). Reaproveita a página de orgs e a
+ *    leitura da assinatura do ciclo de vida; legacy e `quiet` nem leem a assinatura.
  *  - Fora isso NUNCA toca `active`, `past_due`, `legacy` nem `canceled`: o resto só age em `trial`.
  *
  * Paginado por cursor (cada execução ~50 orgs); a página seguinte se agenda sozinha.
@@ -21,12 +25,15 @@ import { applySubscriptionChange, setBillingStatus } from "./lib/entitlementsOps
 import { notifyBillingAdmins } from "./lib/billingNotify";
 import { pauseCampaignCore } from "./lib/campaignHooks";
 import { repriceAfterLockExpiry } from "./lib/lockExpiry";
+import { formatBrl } from "./lib/aiSpend";
 import { lockAfterPlanChange } from "./lib/planChange";
 import { PLANS } from "./lib/plans";
 import { READ_ONLY_STALE_MS, expireScheduled } from "./scheduledMessages";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const TRIAL_NOTICE_DAYS = [7, 3, 1] as const;
+/** Antecedência do aviso "cobrança a caminho": 3 dias (mensal; trimestral idem) e 7 dias (anual). */
+export const CHARGE_NOTICE_DAYS = { monthly: 3, yearly: 7 } as const;
 const PAGE = 50;
 const CAMPAIGN_SCAN_CAP = 500;
 
@@ -104,12 +111,17 @@ export async function rearmScheduledMessagesForOrg(
  * plano (`scheduledChange`). Devolve true se mudou algo. Idempotente: depois de aplicado o campo some
  * (troca) ou o status deixa de ser `active`/`past_due` (cancelamento).
  */
-async function applyDueLifecycle(ctx: MutationCtx, org: Doc<"organizations">, now: number): Promise<boolean> {
+async function applyDueLifecycle(
+  ctx: MutationCtx,
+  org: Doc<"organizations">,
+  now: number
+): Promise<{ changed: boolean; sub: Doc<"orgSubscriptions"> | null }> {
   const sub = await ctx.db
     .query("orgSubscriptions")
     .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
     .first();
-  if (!sub || !org.billing) return false;
+  const unchanged = { changed: false, sub };
+  if (!sub || !org.billing) return unchanged;
   if (sub.cancelAt !== undefined && sub.cancelAt <= now) {
     await setBillingStatus(ctx, {
       organizationId: org._id,
@@ -124,7 +136,7 @@ async function applyDueLifecycle(ctx: MutationCtx, org: Doc<"organizations">, no
       data: {},
       dedupeKey: `plan_canceled:${org._id}:${sub.cancelAt}`,
     });
-    return true;
+    return { changed: true, sub };
   }
   const change = sub.scheduledChange;
   if (change && change.effectiveAt <= now) {
@@ -159,9 +171,56 @@ async function applyDueLifecycle(ctx: MutationCtx, org: Doc<"organizations">, no
       data: { planLabel: PLANS[change.plan].label },
       dedupeKey: `plan_changed:${org._id}:${change.effectiveAt}`,
     });
-    return true;
+    return { changed: true, sub };
   }
-  return false;
+  return unchanged;
+}
+
+/** Fim do ciclo (`currentPeriodEnd`) já cabe na janela do aviso? Pura, para teste. */
+export function chargeNoticeDue(sub: Doc<"orgSubscriptions">, now: number): boolean {
+  if (!sub.providerSubscriptionId || sub.currentPeriodEnd === undefined) return false;
+  if (sub.cancelAt !== undefined || sub.pendingUpgrade !== undefined) return false;
+  if (sub.chargeNoticeFor === sub.currentPeriodEnd) return false;
+  const days = sub.billingCycle === "yearly" ? CHARGE_NOTICE_DAYS.yearly : CHARGE_NOTICE_DAYS.monthly;
+  const left = sub.currentPeriodEnd - now;
+  return left > 0 && left <= days * DAY_MS;
+}
+
+/**
+ * Avisa "cobrança a caminho" 1x por `currentPeriodEnd`. Carimba ANTES de notificar (pela porta,
+ * audit none: é carimbo, não decisão). Valor: a troca agendada que vale até o fim do ciclo, senão
+ * `chargeCents`. Forma de pagamento ausente = fatura (o cartão recorrente chega no PR 2).
+ */
+async function maybeNotifyChargeUpcoming(
+  ctx: MutationCtx,
+  org: Doc<"organizations">,
+  sub: Doc<"orgSubscriptions">,
+  now: number
+): Promise<boolean> {
+  if (!chargeNoticeDue(sub, now) || sub.currentPeriodEnd === undefined) return false;
+  const end = sub.currentPeriodEnd;
+  await applySubscriptionChange(ctx, {
+    organizationId: org._id,
+    patch: { subscription: { chargeNoticeFor: end } },
+    source: "cron",
+    reason: "Aviso de cobrança a caminho",
+    audit: "none",
+  });
+  const change = sub.scheduledChange && sub.scheduledChange.effectiveAt <= end ? sub.scheduledChange : undefined;
+  const cents = change?.chargeCents ?? sub.chargeCents;
+  const plan = change?.plan ?? org.billing?.plan;
+  await notifyBillingAdmins(ctx, {
+    organizationId: org._id,
+    type: "plan_charge_upcoming",
+    data: {
+      dueDate: formatDay(end),
+      ...(cents !== undefined ? { amountBrl: formatBrl(cents / 100) } : {}),
+      ...(plan ? { planLabel: PLANS[plan].label } : {}),
+      paymentMethod: "invoice",
+    },
+    dedupeKey: `plan_charge_upcoming:${org._id}:${end}`,
+  });
+  return true;
 }
 
 export const internalBillingTick = internalMutation({
@@ -185,11 +244,18 @@ export const internalBillingTick = internalMutation({
     let lifecycle = 0;
     for (const org of page.page) {
       const billing = org.billing;
+      let sub: Doc<"orgSubscriptions"> | null = null;
       if (billing && (billing.status === "active" || billing.status === "past_due")) {
-        if (await applyDueLifecycle(ctx, org, now)) {
+        const result = await applyDueLifecycle(ctx, org, now);
+        if (result.changed) {
           lifecycle++;
           continue;
         }
+        sub = result.sub;
+      }
+      // Cobrança a caminho (só `active`; `quiet` fica fora do sistema de billing).
+      if (billing?.status === "active" && billing.quiet !== true && sub && (await maybeNotifyChargeUpcoming(ctx, org, sub, now))) {
+        noticesSent++;
       }
       // Fim da trava/desconto (só quem tem assinatura no Asaas e paga): reprecifica para a tabela.
       if (billing?.priceLock?.until !== undefined && billing.priceLock.until <= now) {

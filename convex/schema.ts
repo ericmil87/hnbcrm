@@ -3277,6 +3277,8 @@ const applicationTables = {
       })
     ),
     refundedAt: v.optional(v.number()),
+    // Aviso "cobranca a caminho" ja enviado para este `currentPeriodEnd` (carimbo do cron, 1x por ciclo).
+    chargeNoticeFor: v.optional(v.number()),
     // Assinatura apagada no Asaas (cancelamento/reembolso): o id sai de `providerSubscriptionId` e fica
     // aqui só para casar um webhook tardio (ex.: PAYMENT_REFUNDED).
     lastProviderSubscriptionId: v.optional(v.string()),
