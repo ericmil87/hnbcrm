@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { FileText } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { mutationErrorMessage } from "@/lib/errors";
-import { needsTermsAcceptance } from "@/lib/termsAcceptance";
+import { needsTermsAcceptance, versionToAccept } from "@/lib/termsAcceptance";
 import { api } from "../../../convex/_generated/api";
 
 const NO_ARGS = {} as const;
@@ -58,12 +58,12 @@ export function TermsAcceptanceBanner({ className }: { className?: string }) {
 
   return (
     <TermsAcceptanceBannerView
-      version={status.currentVersion}
+      version={versionToAccept(status)}
       accepting={accepting}
       className={className}
       onAccept={() => {
         setAccepting(true);
-        acceptTerms({ version: status.currentVersion, userAgent: navigator.userAgent.slice(0, 200) })
+        acceptTerms({ version: versionToAccept(status), userAgent: navigator.userAgent.slice(0, 200) })
           .then(() => toast.success("Termos aceitos"))
           .catch((e: unknown) => toast.error(mutationErrorMessage(e, "Não foi possível registrar o aceite.")))
           .finally(() => setAccepting(false));

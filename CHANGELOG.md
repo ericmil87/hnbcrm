@@ -2,6 +2,10 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Não publicado]
+
+- Termos de Uso: regras do cartão com renovação automática (só valem para quem assinar no cartão)
+
 ## [0.82.0] - 2026-11-13
 
 _Conversas no padrão do WhatsApp no celular e no computador, foto de perfil, a IA lendo PDF e a configuração por conversa mais fluida._

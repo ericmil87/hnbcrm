@@ -11,7 +11,7 @@ import { BrandLogo } from "@/components/ui/BrandLogo";
 import { PublicThemeButton } from "@/components/landing/PublicThemeButton";
 import { HomeLogoLink } from "@/components/landing/HomeLogoLink";
 
-const EFFECTIVE_DATE = "10 de novembro de 2026";
+const EFFECTIVE_DATE = "16 de novembro de 2026";
 
 const brl = (v: number) => formatMoney(v, "BRL", { fractionDigits: 0 });
 
@@ -355,8 +355,9 @@ export function TermsPage() {
               <p>
                 <span className="text-text-primary font-medium">Teste gratuito.</span> Quem cria uma
                 organização recebe {TRIAL.days} dias do plano {PLANS[TRIAL.plan].label}, com{" "}
-                {formatCount(TRIAL.aiAttendances)} atendimentos IA, sem informar cartão e sem cobrança
-                automática ao fim. É permitido um teste por pessoa; criar contas para obter novos testes é
+                {formatCount(TRIAL.aiAttendances)} atendimentos IA, sem precisar informar cartão. Se
+                você não cadastrar um cartão, não há cobrança ao fim do teste. Se cadastrar, a primeira
+                cobrança é no dia em que o teste termina (cláusula 8.3). É permitido um teste por pessoa; criar contas para obter novos testes é
                 abuso e pode levar ao encerramento. Ao fim do teste, a conta passa a só leitura (cláusula 8)
                 até a contratação de um plano.
               </p>
@@ -378,19 +379,39 @@ export function TermsPage() {
               </p>
             </LegalSection>
 
-            <LegalSection id="inadimplencia" title="8. Pagamento, atraso e modo só leitura">
-              <p>
-                O pagamento é feito por meio de cobrança enviada por e-mail (Pix, boleto ou cartão), e
-                emitimos nota fiscal a cada pagamento. Em caso de atraso, avisamos por e-mail. Se o atraso
-                passar de 7 dias, a conta{" "}
+            <LegalSection id="inadimplencia" title="8. Pagamento, renovação automática, atraso e modo só leitura">
+              <p id="formas-de-pagamento">
+                <span className="text-text-primary font-medium">8.1 Formas de pagamento.</span> Você pode pagar por cartão de crédito, Pix ou boleto, e emitimos nota fiscal a cada pagamento. O pagamento é processado pelo Asaas, nosso provedor de pagamentos.
+              </p>
+              <p id="cartao-renovacao">
+                <span className="text-text-primary font-medium">8.2 Cartão de crédito: renovação automática.</span> Se você escolher o cartão, a assinatura é renovada automaticamente, todo mês ou todo ano, conforme o ciclo que você escolheu. A cada renovação cobramos o valor do plano vigente no mesmo cartão, até você cancelar. Antes de confirmar, você vê o valor, o ciclo e a data da primeira cobrança. Ao confirmar o cadastro do cartão, você autoriza essas cobranças recorrentes.
+              </p>
+              <p id="cartao-teste">
+                <span className="text-text-primary font-medium">8.3 Cartão cadastrado durante o teste gratuito.</span> Se você cadastrar o cartão durante o teste, nada é cobrado agora. A primeira cobrança acontece no dia em que o teste termina, no valor do plano escolhido. Se você remover o cartão antes do fim do teste, nenhuma cobrança é feita, e a conta segue a regra do fim do teste (cláusula 7).
+              </p>
+              <p id="dados-do-cartao">
+                <span className="text-text-primary font-medium">8.4 Dados do cartão.</span> Os dados do cartão são informados na página segura do Asaas. O HNBCRM não recebe nem armazena número, validade ou código de segurança do cartão. Guardamos apenas a bandeira e os quatro últimos dígitos, para você reconhecer o cartão, e o resultado das cobranças.
+              </p>
+              <p id="pix-boleto">
+                <span className="text-text-primary font-medium">8.5 Pix e boleto.</span> Pagando por Pix ou boleto, você recebe uma fatura a cada ciclo e precisa pagar cada uma. Não há renovação automática nem débito sem a sua ação.
+              </p>
+              <p id="atraso">
+                <span className="text-text-primary font-medium">8.6 Cobrança recusada e atraso.</span> Se o banco recusar a cobrança no cartão,
+                avisamos por e-mail e o Asaas pode tentar de novo nos dias seguintes. Enquanto o emissor
+                tenta, a conta continua funcionando. Quando o cartão foi cadastrado durante o teste, damos
+                uma carência curta depois do fim do teste, para as tentativas de cobrança terminarem. Se o
+                atraso passar de 7 dias, a conta{" "}
                 <span className="text-text-primary font-medium">poderá ser colocada em modo só leitura</span>
                 , por decisão nossa, caso a caso: a equipe continua vendo tudo e exportando os dados, mas a
                 IA e o envio de mensagens e campanhas ficam pausados. As mensagens que chegarem continuam
-                sendo gravadas. Pagando o valor em aberto, o acesso volta.
+                sendo gravadas. Pagando o valor em aberto (por exemplo, informando um novo cartão), o
+                acesso volta.
               </p>
-              <p>
-                Nunca apagamos dados por atraso de pagamento. Em caso de multa e juros por atraso, valem os
-                limites da lei.
+              <p id="avisos-cobranca">
+                <span className="text-text-primary font-medium">8.7 Avisos por e-mail.</span> Enviamos aos administradores da organização dois tipos de e-mail sobre cobrança. Avisos que protegem a conta, como cartão recusado, fatura vencida, modo só leitura, cancelamento e reembolso, não podem ser desativados. Avisos de conveniência, como a lembrança de que uma cobrança está chegando e o recibo de pagamento, podem ser desativados em Configurações › Notificações ou por um link no próprio e-mail.
+              </p>
+              <p id="dados-e-multa">
+                <span className="text-text-primary font-medium">8.8 Dados e multa.</span> Nunca apagamos dados por atraso de pagamento. Em caso de multa e juros por atraso, valem os limites da lei.
               </p>
             </LegalSection>
 
@@ -408,15 +429,26 @@ export function TermsPage() {
                 <span className="text-text-primary font-medium">Troca de plano.</span> Você troca de plano
                 pelo painel "Uso e fatura". No upgrade, cobramos hoje o valor cheio do novo plano e um novo
                 ciclo começa hoje, sem crédito proporcional dos dias restantes do ciclo atual; o plano muda
-                quando o pagamento for confirmado. No downgrade, a troca vale a partir da próxima renovação
+                quando o pagamento for confirmado. Quem paga com cartão informa o cartão na página segura do Asaas
+                para o upgrade, e a cobrança automática do plano anterior é encerrada depois que o
+                primeiro pagamento do novo plano for confirmado, para você nunca pagar duas vezes. No
+                downgrade, a troca vale a partir da próxima renovação
                 e, até lá, você continua no plano atual. Dá para desfazer um downgrade agendado antes da
                 data.
               </p>
+              <p id="trocar-cartao">
+                <span className="text-text-primary font-medium">Trocar o cartão ou a forma de pagamento.</span> Você pode trocar o cartão, ou passar
+                de fatura (Pix ou boleto) para cartão automático, pelo painel "Uso e fatura". Você informa
+                o novo cartão na página segura do Asaas, e a cobrança anterior só é encerrada depois que
+                a nova for confirmada.
+              </p>
               <p>
                 <span className="text-text-primary font-medium">Cancelamento.</span> Você pode cancelar a
-                qualquer momento pelo painel "Uso e fatura", sem multa e sem fidelidade. A assinatura não é
-                renovada e o acesso vale até o fim do período já pago; depois a conta passa para modo
-                leitura, com a exportação dos dados liberada. Antes do fim do período você pode reativar a
+                qualquer momento em Configurações › Uso e fatura, sem multa e sem fidelidade. Cancelar
+                encerra a renovação automática: não haverá novas cobranças no cartão. O acesso vale até o
+                fim do período já pago; depois a conta passa para modo leitura, com a exportação dos dados
+                liberada. Quem cadastrou o cartão durante o teste e quer evitar a primeira cobrança deve
+                removê-lo antes do fim do teste, no mesmo painel. Antes do fim do período você pode reativar a
                 assinatura, sem cobrança no ato. Se preferir, também atendemos pedidos de cancelamento por
                 e-mail, em{" "}
                 <a
@@ -433,13 +465,21 @@ export function TermsPage() {
                 clientes, devolvemos o valor integral do primeiro pagamento se você pedir em até 7 dias
                 corridos depois dele, sem precisar explicar o motivo. Pelo painel, quando houver um único
                 pagamento, o reembolso é automático, pelo mesmo meio de pagamento, e a conta passa para
-                modo leitura. Nos demais casos (por exemplo, depois de uma troca de plano), fale com a
+                modo leitura. No cartão, o estorno é feito pelo mesmo cartão e pode levar até 10 dias
+                úteis para aparecer na fatura, conforme o prazo do emissor. Nos demais casos (por exemplo, depois de uma troca de plano), fale com a
                 gente e devolvemos o primeiro pagamento. As renovações não são reembolsáveis, salvo
                 exigência legal. Ficam
                 fora dessa garantia serviços de implantação já executados a seu pedido, atendimentos extras
                 já consumidos e taxas de terceiros (Meta, provedor de IA). O serviço é contratado para uso
                 profissional; essa garantia é uma liberalidade nossa e, quando o Código de Defesa do
                 Consumidor se aplicar ao seu caso, nada aqui reduz os direitos que ele garante.
+              </p>
+              <p id="avisos-renovacao">
+                <span className="text-text-primary font-medium">Avisos sobre renovação.</span> Procuramos avisar por e-mail, alguns dias antes,
+                quando uma cobrança no cartão vai acontecer (cerca de 3 dias antes no plano mensal e 7
+                dias antes no anual). Esse aviso é uma cortesia e pode ser desativado (cláusula 8.7). A
+                falta dele não impede a cobrança nem muda a data de renovação, que é a que você viu ao
+                contratar.
               </p>
             </LegalSection>
 
