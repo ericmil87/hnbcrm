@@ -705,7 +705,9 @@ export const internalApplyEvent = internalMutation({
             // Sem plano pendente nem gravado (ex.: venda manual sem checkout): só registra o pagamento.
             await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: paidSub }, source: "webhook", reason: "Pagamento confirmado (Asaas)", audit: "none" });
           } else if (billing && (billing.status === "active" || billing.status === "past_due") && billing.plan === targetPlan && !advancesPeriod) {
-            // Pagamento de ciclo antigo numa org já paga: só a fatura (já espelhada); status, atraso e período ficam.
+            // Pagamento de ciclo antigo numa org já paga: só a fatura (já espelhada); status, atraso e período
+            // ficam, e sem recibo (a org pode seguir em atraso por outra fatura).
+            return await finish("processed", "pagamento de ciclo anterior", orgId);
           } else if (billing && (billing.status === "active" || billing.status === "past_due") && billing.plan === targetPlan) {
             // Renovação: org já paga. past_due volta a active; active só carimba o pagamento.
             const { updatedAt: _u, ...current } = billing;
