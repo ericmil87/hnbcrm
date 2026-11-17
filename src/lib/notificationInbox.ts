@@ -124,6 +124,7 @@ export function notificationHref(n: InboxNotification): string | null {
     case "plan_read_only":
     case "plan_payment_overdue":
     case "plan_payment_received":
+    case "plan_charge_upcoming":
     case "plan_changed":
     case "plan_change_scheduled":
     case "plan_cancel_scheduled":

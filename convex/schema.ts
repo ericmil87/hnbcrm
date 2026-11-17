@@ -2484,6 +2484,7 @@ const applicationTables = {
       v.literal("plan_payment_overdue"),
       // Ciclo de vida self-service (Asaas): recibo, troca, agendamentos, cancelamento e reembolso.
       v.literal("plan_payment_received"),
+      v.literal("plan_charge_upcoming"),
       v.literal("plan_changed"),
       v.literal("plan_change_scheduled"),
       v.literal("plan_cancel_scheduled"),
@@ -2717,6 +2718,8 @@ const applicationTables = {
     aiSpendAlert: v.optional(v.boolean()),
     // Billing B4 — avisos de plano (franquia, excedente, teste); sino + e-mail `planAlert`.
     planAlert: v.optional(v.boolean()),
+    // Cobranca desativavel (recibo, cobranca a caminho, trocas); ausente = ligado. O critico nao tem coluna.
+    billingNotices: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),

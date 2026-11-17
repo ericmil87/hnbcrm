@@ -171,6 +171,21 @@ describe("mutations do membro", () => {
     expect(await dispatchReachesSend(org, org.admin, "taskAssigned")).toBe(true); // e-mail segue
   });
 
+  test("setChannelPref recusa billingCritical em qualquer canal; billingNotices e editavel", async () => {
+    const org = await seedOrg("obrig");
+    const me = as(org.admin.userId);
+    for (const channel of ["email", "telegram", "push"] as const) {
+      await expect(
+        me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel, flag: "billingCritical", enabled: false })
+      ).rejects.toThrow("Esse aviso é obrigatório");
+    }
+    await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "email", flag: "billingNotices", enabled: false });
+    const eff = await me.query(api.notificationPreferences.getMyEffectivePreferences, { organizationId: org.organizationId });
+    expect(eff.channels.email.billingNotices).toBe(false);
+    expect(eff.channels.telegram.billingNotices).toBe(true);
+    expect(eff.channels.email.billingCritical).toBe(true);
+  });
+
   test("pauseFor: o sino registra, Telegram e e-mail seguram; expira; resume limpa", async () => {
     const org = await seedOrg("pausa");
     await linkTelegram(org, org.admin);

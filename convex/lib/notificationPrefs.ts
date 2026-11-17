@@ -28,6 +28,7 @@ export const PREF_DEFAULTS = {
   channelSessionLost: true,
   aiSpendAlert: true,
   planAlert: true,
+  billingNotices: true,
 };
 
 export async function loadMemberPrefs(

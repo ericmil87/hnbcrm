@@ -6,6 +6,7 @@ import {
   DEFAULT_QUIET_END,
   DEFAULT_QUIET_START,
   KNOWN_FLAGS,
+  MANDATORY_FLAGS,
   channelAllows,
   isValidHHMM,
   isValidTimeZone,
@@ -374,6 +375,7 @@ export const setChannelPref = mutation({
   handler: async (ctx, args) => {
     const member = await requireAuth(ctx, args.organizationId);
     if (!KNOWN_FLAGS.includes(args.flag)) throw new ConvexError("Tipo de aviso desconhecido");
+    if (MANDATORY_FLAGS.has(args.flag)) throw new ConvexError("Esse aviso é obrigatório");
     const existing = await loadMemberPrefs(ctx, args.organizationId, member._id);
     const channels = {
       ...(existing?.channels ?? {}),

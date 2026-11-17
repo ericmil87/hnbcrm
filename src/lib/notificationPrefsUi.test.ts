@@ -165,3 +165,13 @@ describe("pushAvailability", () => {
     }
   });
 });
+
+describe("linhas de cobranca", () => {
+  const rows = buildMatrixGroups().flatMap((g) => g.rows);
+  it("billingNotices e editavel; billingCritical e travada; planAlert segue editavel", () => {
+    expect(rows.find((r) => r.flag === "billingNotices")?.locked).toBe(false);
+    expect(rows.find((r) => r.flag === "billingCritical")?.locked).toBe(true);
+    expect(rows.find((r) => r.flag === "planAlert")?.locked).toBe(false);
+    expect(rows.filter((r) => r.locked).map((r) => r.flag)).toEqual(["billingCritical"]);
+  });
+});
