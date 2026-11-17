@@ -24,6 +24,8 @@ const CASES: Record<string, Record<string, unknown>> = {
   groupPostFailed: { postName: EVIL, postId: EVIL, reason: EVIL, appUrl: "https://app.test" },
   aiSpendAlert: { level: "warn", orgName: EVIL, month: EVIL, costBrl: EVIL, capBrl: EVIL, pct: 80, mode: "warn", appUrl: "https://app.test" },
   planAlert: { orgName: EVIL, title: EVIL, body: EVIL, appUrl: "https://app.test" },
+  billingNotices: { type: EVIL, orgName: EVIL, title: EVIL, body: EVIL, amountBrl: EVIL, dueDate: EVIL, planLabel: EVIL, paymentMethod: "card", nextChargeBrl: EVIL, nextChargeDate: EVIL, ctaUrl: EVIL, unsubUrl: EVIL, appUrl: "https://app.test" },
+  billingCritical: { type: EVIL, orgName: EVIL, title: EVIL, body: EVIL, amountBrl: EVIL, dueDate: EVIL, planLabel: EVIL, reason: EVIL, ctaUrl: EVIL, appUrl: "https://app.test" },
   channelSessionLost: { orgName: EVIL, channelName: EVIL, phoneDisplay: EVIL, state: EVIL, detail: EVIL },
   channelSessionLostMeta: { orgName: EVIL, channelName: EVIL, state: EVIL, detail: EVIL, provider: "meta_messaging" },
 };

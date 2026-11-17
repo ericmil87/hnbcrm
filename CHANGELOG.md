@@ -4,6 +4,14 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Avisos de cobrança por e-mail
+
+- **Avisos de cobrança separados em classes.** Em Configurações › Notificações, "Avisos do plano" continua cuidando só do uso (franquia, teto, fim do teste). Cobrança a caminho, pagamento confirmado (recibo) e confirmações de troca de plano passam a ser avisos próprios e podem ser desativados. Falha de pagamento, modo leitura, cancelamento e reembolso são obrigatórios: protegem a conta e não têm como desativar.
+- **Desativar com 1 clique.** Os e-mails de cobrança e recibo trazem o link "Desativar" no rodapé e o cabeçalho de descadastro do próprio e-mail (Gmail e Apple Mail mostram o botão "Cancelar inscrição"). Nada muda ao abrir a página: só o clique em Desativar age, e dá para reativar na mesma tela.
+- **Lembrete "cobrança a caminho".** Os administradores de quem paga por fatura recebem um aviso 3 dias antes da renovação mensal (7 dias antes da anual), uma vez por ciclo, com valor e data. Não sai quando há cancelamento ou troca de plano em andamento.
+- **Recibo mais completo.** O aviso de pagamento confirmado mostra a forma de pagamento e a próxima cobrança.
+- **Mudança deliberada: quem desligou "Avisos do plano" volta a receber por e-mail os avisos de falha de pagamento, modo leitura, cancelamento e reembolso.** Antes, desligar essa opção também calava esses e-mails, e pausa ou horário de silêncio os descartava. Agora eles chegam sempre. Contas legadas e VIP (sem cobrança por aqui) continuam sem nenhum desses avisos.
+
 ### Cobrança
 
 - **Corrigido: pagamento confirmado depois não encurta mais o ciclo.** No cartão, o aviso de "recebido" chega semanas depois do de "confirmado". Se o de um ciclo anterior chegasse depois do atual, a data de fim do ciclo voltava um mês. Agora o fim do ciclo nunca recua, e o aviso de recebimento de um pagamento que já abriu o ciclo só atualiza a fatura, sem reabrir o período nem avisar de novo. Um pagamento atrasado de um ciclo anterior também não apaga mais o aviso de fatura vencida do ciclo atual, mas pagar a fatura vencida sempre tira a conta do atraso. Na troca de plano anual para mensal, a primeira mensal paga antes da data da troca já fecha o ciclo em um mês.

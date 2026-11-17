@@ -759,6 +759,17 @@ export const internalApplyEvent = internalMutation({
           data: {
             ...(targetPlan ? { planLabel: PLANS[targetPlan].label } : {}),
             ...(payment.value !== undefined ? { amountBrl: formatBrl(payment.value) } : {}),
+            // Forma de pagamento: hoje toda assinatura é por fatura (o cartão recorrente chega no PR 2).
+            paymentMethod: "invoice" as const,
+            // Próxima cobrança: o fim do ciclo gravado acima e o valor de cada cobrança.
+            ...(nextDue !== undefined
+              ? {
+                  nextChargeDate: new Date(nextDue).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }),
+                  ...((paidSub.chargeCents ?? sub.chargeCents) !== undefined
+                    ? { nextChargeBrl: formatBrl((paidSub.chargeCents ?? sub.chargeCents ?? 0) / 100) }
+                    : {}),
+                }
+              : {}),
           },
           dedupeKey: `plan_payment_received:${payment.id}`,
         });

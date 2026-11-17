@@ -178,3 +178,27 @@ export async function unsubIpThrottleKey(ipKey: string | null | undefined, secre
   const hex = Array.from(new Uint8Array(digest).slice(0, 8), (b) => b.toString(16).padStart(2, "0")).join("");
   return `unsub ip:${hex}`;
 }
+
+/**
+ * Cabeçalhos e link de descadastro de UM e-mail de `billingNotices` (RFC 8058). `null` = reter o
+ * envio (sem segredo válido ou sem `CONVEX_SITE_URL`: falha fechada, sem e-mail a mais sem opt-out).
+ * Só esta classe leva `List-Unsubscribe`; o chamador não deve chamar para as demais.
+ */
+export async function billingUnsubEmailExtras(
+  claims: UnsubClaims,
+  secrets: UnsubSecrets = unsubSecretsFromEnv(),
+): Promise<{ headers: Record<string, string>; unsubUrl: string } | null> {
+  if (!secrets.current) return null;
+  try {
+    const { pageUrl, oneClickUrl } = buildUnsubLinks(await signUnsubToken(secrets.current, claims));
+    return {
+      headers: {
+        "List-Unsubscribe": `<${oneClickUrl}>, <${pageUrl}>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      },
+      unsubUrl: pageUrl,
+    };
+  } catch {
+    return null;
+  }
+}
