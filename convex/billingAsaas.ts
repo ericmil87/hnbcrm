@@ -676,14 +676,24 @@ export const internalApplyEvent = internalMutation({
         await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
         const billing = org.billing;
         const targetPlan = sub.pendingPlanChange?.plan ?? billing?.plan;
-        // Só pula quando a org já está ativa no plano certo: se a fatura virou `paid` por outro caminho
-        // (PAYMENT_UPDATED, conciliação) sem o CONFIRMED ter ativado, o RECEIVED ainda ativa.
-        if (ev.event === "PAYMENT_RECEIVED" && alreadyPaid && billing?.status === "active" && billing.plan === targetPlan && !sub.pendingPlanChange) {
+        // Só pula quando a org já está paga (active/past_due) no plano certo: se a fatura virou `paid` por
+        // outro caminho (PAYMENT_UPDATED, conciliação) sem o CONFIRMED ter ativado, o RECEIVED ainda ativa.
+        // Em past_due o atraso é de OUTRA fatura (esta já estava paga): não pode ser apagado aqui.
+        if (
+          ev.event === "PAYMENT_RECEIVED" &&
+          alreadyPaid &&
+          (billing?.status === "active" || billing?.status === "past_due") &&
+          billing.plan === targetPlan &&
+          !sub.pendingPlanChange
+        ) {
           return await finish("processed", "pagamento já registrado como pago", orgId);
         }
         // Fim do ciclo = vencimento desta fatura paga + 1 ciclo (não o `nextDueDate` da assinatura).
         const paidDue = dayToMs(payment.dueDate);
         const nextDue = paidDue !== undefined ? periodEndAfter(paidDue, sub.billingCycle) : undefined;
+        // Pagamento de um ciclo que já ficou para trás (RECEIVED tardio do cartão sem fatura local)
+        // não quita o atraso atual: só o pagamento que faz o ciclo andar tira a org de past_due.
+        const advancesPeriod = sub.currentPeriodEnd === undefined || nextDue === undefined || nextDue > sub.currentPeriodEnd;
         const paidSub = {
           paymentStatus: "ok" as const,
           graceUntil: undefined,
@@ -694,6 +704,8 @@ export const internalApplyEvent = internalMutation({
           if (!targetPlan) {
             // Sem plano pendente nem gravado (ex.: venda manual sem checkout): só registra o pagamento.
             await applySubscriptionChange(ctx, { organizationId: orgId, patch: { subscription: paidSub }, source: "webhook", reason: "Pagamento confirmado (Asaas)", audit: "none" });
+          } else if (billing && (billing.status === "active" || billing.status === "past_due") && billing.plan === targetPlan && !advancesPeriod) {
+            // Pagamento de ciclo antigo numa org já paga: só a fatura (já espelhada); status, atraso e período ficam.
           } else if (billing && (billing.status === "active" || billing.status === "past_due") && billing.plan === targetPlan) {
             // Renovação: org já paga. past_due volta a active; active só carimba o pagamento.
             const { updatedAt: _u, ...current } = billing;
