@@ -77,6 +77,7 @@ export type CopyInput =
   | { type: "plan_read_only"; reason?: "trial_ended" | "manual"; endsAt?: string }
   | { type: "plan_payment_overdue"; dueDate?: string }
   | { type: "plan_payment_received"; planLabel?: string; amountBrl?: string }
+  | { type: "plan_charge_upcoming"; planLabel?: string; amountBrl?: string; dueDate?: string; paymentMethod?: "card" | "invoice" }
   | { type: "plan_changed"; planLabel: string }
   | { type: "plan_change_scheduled"; planLabel: string; effectiveAt: string }
   | { type: "plan_cancel_scheduled"; endsAt: string }
@@ -480,6 +481,17 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         title: "Pagamento confirmado",
         body: `Recebemos ${input.amountBrl ?? "o pagamento"}${input.planLabel ? ` do plano ${input.planLabel}` : ""}. O recibo e a nota fiscal ficam na fatura, em Configurações › Uso e fatura.`,
       };
+    case "plan_charge_upcoming": {
+      const when = input.dueDate ? `em ${input.dueDate}` : "em breve";
+      const what = input.amountBrl ?? "a próxima cobrança";
+      return {
+        title: "Cobrança a caminho",
+        body:
+          input.paymentMethod === "card"
+            ? `Sua assinatura renova ${when}: ${what}, no cartão cadastrado.`
+            : `Sua assinatura renova ${when}: ${what}${input.planLabel ? ` (plano ${input.planLabel})` : ""}. A fatura fica em Configurações › Uso e fatura.`,
+      };
+    }
     case "plan_changed":
       return { title: "Plano alterado", body: `Sua conta agora está no plano ${input.planLabel}.` };
     case "plan_change_scheduled":
@@ -619,6 +631,7 @@ export const COPY_TYPES = [
   "plan_read_only",
   "plan_payment_overdue",
   "plan_payment_received",
+  "plan_charge_upcoming",
   "plan_changed",
   "plan_change_scheduled",
   "plan_cancel_scheduled",

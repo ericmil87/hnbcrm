@@ -31,6 +31,7 @@ export type BillingNoticeType =
   | "plan_read_only"
   | "plan_payment_overdue"
   | "plan_payment_received"
+  | "plan_charge_upcoming"
   | "plan_changed"
   | "plan_change_scheduled"
   | "plan_cancel_scheduled"
@@ -103,6 +104,8 @@ function copyFor(type: BillingNoticeType, d: BillingNoticeData): NotificationCop
       return notificationCopy({ type, dueDate: d.dueDate });
     case "plan_payment_received":
       return notificationCopy({ type, planLabel: d.planLabel, amountBrl: d.amountBrl });
+    case "plan_charge_upcoming":
+      return notificationCopy({ type, planLabel: d.planLabel, amountBrl: d.amountBrl, dueDate: d.dueDate });
     case "plan_changed":
       return notificationCopy({ type, planLabel: d.planLabel ?? "novo" });
     case "plan_change_scheduled":

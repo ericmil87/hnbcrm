@@ -196,6 +196,20 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     },
   ],
   [
+    { type: "plan_charge_upcoming", amountBrl: "R$ 497,00", dueDate: "05/12/2026", planLabel: "Profissional" },
+    {
+      title: "Cobrança a caminho",
+      body: "Sua assinatura renova em 05/12/2026: R$ 497,00 (plano Profissional). A fatura fica em Configurações › Uso e fatura.",
+    },
+  ],
+  [
+    { type: "plan_charge_upcoming", amountBrl: "R$ 497,00", dueDate: "05/12/2026", paymentMethod: "card" },
+    {
+      title: "Cobrança a caminho",
+      body: "Sua assinatura renova em 05/12/2026: R$ 497,00, no cartão cadastrado.",
+    },
+  ],
+  [
     { type: "plan_payment_received", planLabel: "Profissional", amountBrl: "R$ 497,00" },
     {
       title: "Pagamento confirmado",

@@ -68,14 +68,17 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   plan_usage_reached: "planAlert",
   plan_overage_cap_reached: "planAlert",
   trial_ending: "planAlert",
-  plan_read_only: "planAlert",
-  plan_payment_overdue: "planAlert",
-  plan_payment_received: "planAlert",
-  plan_changed: "planAlert",
-  plan_change_scheduled: "planAlert",
-  plan_cancel_scheduled: "planAlert",
-  plan_canceled: "planAlert",
-  plan_refunded: "planAlert",
+  // Cobranca (desativavel): recibo, confirmacoes de troca e "cobranca a caminho".
+  plan_payment_received: "billingNotices",
+  plan_changed: "billingNotices",
+  plan_change_scheduled: "billingNotices",
+  plan_charge_upcoming: "billingNotices",
+  // Critico (obrigatorio, sem coluna): falta de pagamento, modo leitura, cancelamento, reembolso.
+  plan_payment_overdue: "billingCritical",
+  plan_read_only: "billingCritical",
+  plan_cancel_scheduled: "billingCritical",
+  plan_canceled: "billingCritical",
+  plan_refunded: "billingCritical",
   // Agenda v2 (A3c)
   appointment_conflict: "agendaConflict",
   // Agenda v2 (A4): resumo diário de agendamentos sem desfecho.
@@ -86,6 +89,12 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   appointment_created: "agendaActivity",
   appointment_suggestion: "agendaApproval",
 };
+
+/**
+ * Flags OBRIGATORIOS: sino e e-mail sempre entregam (ignoram preset, flag, canal, pausa e
+ * silencio). Telegram e push seguem a preferencia do membro, como qualquer outro aviso.
+ */
+export const MANDATORY_FLAGS = new Set<string>(["billingCritical"]);
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */
 const EVENT_FLAG_ALIAS: Record<string, string> = { taskOverdueSummary: "taskOverdue" };
@@ -119,6 +128,16 @@ export const ACTIONABLE_TYPES: readonly NotificationType[] = [
   "appointment_pending_approval",
   // Agenda v2 (C1): alguém precisa tocar para marcar
   "appointment_suggestion",
+  // Cobranca e criticos de plano: o sino sempre registra (nao depende mais do flag de uso).
+  "plan_payment_received",
+  "plan_changed",
+  "plan_change_scheduled",
+  "plan_charge_upcoming",
+  "plan_payment_overdue",
+  "plan_read_only",
+  "plan_cancel_scheduled",
+  "plan_canceled",
+  "plan_refunded",
 ];
 export const ACTIONABLE_FLAGS: readonly string[] = Array.from(
   new Set(ACTIONABLE_TYPES.map((t) => PREFERENCE_FLAG[t]))
@@ -136,6 +155,7 @@ export const NON_PERSONAL_FLAGS = new Set([
   "aiSpendAlert",
   "planAlert",
   "agendaActivity",
+  "billingNotices",
 ]);
 
 /**
@@ -168,6 +188,7 @@ export function channelAllows(
   prefs: PolicyPrefs | null | undefined,
   orgDefaults: PolicyOrgDefaults
 ): boolean {
+  if (MANDATORY_FLAGS.has(flag) && (channel === "bell" || channel === "email")) return true;
   const legacyOff = prefs?.[flag] === false;
   // Sino: acionável sempre registra (flag antigo vale só para os canais externos);
   // informativo segue o flag antigo.
@@ -248,6 +269,8 @@ export function shouldDeliver(args: {
   if (!channelAllows(flag, channel, prefs, args.orgDefaults)) return "off";
   // O sino registra sempre: pausa e silêncio só seguram o que "toca" fora do app.
   if (channel === "bell") return "deliver";
+  // Obrigatorio por e-mail (cobranca critica): nao espera pausa nem silencio.
+  if (channel === "email" && MANDATORY_FLAGS.has(flag)) return "deliver";
   if (URGENT_FLAGS.has(flag) && prefs?.urgentBypass !== false) return "deliver";
   if (activePausedUntil(prefs, args.legacyMutedUntil, now) !== undefined) return "hold_paused";
   // O resumo diário (e-mail das 8h) não é intrusivo: ignora o silêncio; a pausa continua valendo.

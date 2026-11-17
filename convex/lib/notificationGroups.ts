@@ -44,6 +44,7 @@ export const NOTIFICATION_TYPE_GROUP: Record<string, NotificationGroup> = {
   plan_read_only: "sistema",
   plan_payment_overdue: "sistema",
   plan_payment_received: "sistema",
+  plan_charge_upcoming: "sistema",
   plan_changed: "sistema",
   plan_change_scheduled: "sistema",
   plan_cancel_scheduled: "sistema",

@@ -74,6 +74,7 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "plan_read_only",
   "plan_payment_overdue",
   "plan_payment_received",
+  "plan_charge_upcoming",
   "plan_changed",
   "plan_change_scheduled",
   "plan_cancel_scheduled",

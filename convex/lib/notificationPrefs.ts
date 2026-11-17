@@ -31,6 +31,7 @@ export const PREF_DEFAULTS = {
   agendaConflict: true,
   agendaActivity: true,
   agendaApproval: true,
+  billingNotices: true,
 };
 
 export async function loadMemberPrefs(

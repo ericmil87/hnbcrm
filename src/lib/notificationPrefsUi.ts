@@ -4,7 +4,7 @@
  * `NOTIFICATION_TYPE_GROUP`); aqui só rótulos e arranjo.
  */
 import { formatDateTime, formatTime } from "./format";
-import { NON_PERSONAL_FLAGS, PREFERENCE_FLAG, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
+import { MANDATORY_FLAGS, NON_PERSONAL_FLAGS, PREFERENCE_FLAG, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
 import {
   NOTIFICATION_GROUPS,
   NOTIFICATION_TYPE_GROUP,
@@ -22,6 +22,8 @@ export interface FlagRow {
   channels: readonly MatrixChannel[];
   /** O tipo aparece no sino? (o resumo diário só sai por e-mail). */
   bell: boolean;
+  /** Obrigatório (`MANDATORY_FLAGS`): sino e e-mail ficam sempre ligados ("Sempre ligado"); Telegram e push seguem editáveis. */
+  locked: boolean;
 }
 
 const ALL_CHANNELS: readonly MatrixChannel[] = ["email", "telegram", "push"];
@@ -72,9 +74,11 @@ export const FLAG_COPY: Record<
   channelSessionLost: { label: "Canal desconectado", desc: "Quando um canal conectado perde a conexão" },
   aiSpendAlert: { label: "Gasto de IA do mês", desc: "Para administradores: perto do teto mensal ou ao atingi-lo" },
   agendaConflict: { label: "Conflito na agenda", desc: "Quando um agendamento fica sem sala ou profissional (fechamento ou remoção)" },
-  planAlert: { label: "Avisos do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
   agendaActivity: { label: "Agenda: atendimentos sem desfecho", desc: "Resumo diário, para quem gerencia a agenda, dos atendimentos do dia anterior que ainda não foram concluídos, cancelados ou marcados como falta" },
   agendaApproval: { label: "Agenda: horários para aprovar", desc: "Quando a IA registra um horário para você aprovar, ou quando o sistema percebe uma confirmação de horário na conversa e pede um toque para marcar" },
+  planAlert: { label: "Avisos de uso do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
+  billingNotices: { label: "Cobrança e recibos", desc: "Para administradores: cobrança a caminho, pagamento confirmado e confirmações de troca de plano" },
+  billingCritical: { label: "Falha de pagamento e cancelamento", desc: "Para administradores: cartão recusado, fatura vencida, modo leitura, cancelamento e reembolso" },
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 
@@ -104,6 +108,7 @@ export function buildMatrixGroups(): { group: NotificationGroup; rows: FlagRow[]
       desc: copy?.desc ?? "",
       group,
       bell: copy?.bell !== false,
+      locked: MANDATORY_FLAGS.has(flag),
       channels: (copy?.channels ?? ALL_CHANNELS).filter(
         (c) => (c !== "email" || EMAIL_FLAGS.has(flag)) && (c !== "push" || PUSH_PREFERENCE_FLAGS.includes(flag)),
       ),

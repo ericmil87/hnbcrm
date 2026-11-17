@@ -377,3 +377,18 @@ describe("billing.quiet: org silenciada", () => {
     expect(await notes(s.adminId)).toHaveLength(0);
   });
 });
+
+describe("tipos criticos nao furam a exclusao de org legacy/quiet", () => {
+  test("plan_payment_overdue em org quiet ou legacy: nenhum sino e nenhum e-mail agendado", async () => {
+    for (const billing of [paid({ quiet: true }), { status: "legacy" as const, updatedAt: 1 }]) {
+      t = convexTest(schema, modules);
+      const s = await seed(billing);
+      const sent = await t.run(async (ctx) =>
+        notifyBillingAdmins(ctx, { organizationId: s.organizationId, type: "plan_payment_overdue", data: { dueDate: "05/12/2026" }, dedupeKey: "crit" })
+      );
+      expect(sent).toBe(0);
+      expect(await notes(s.adminId)).toHaveLength(0);
+      expect(await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect())).toHaveLength(0);
+    }
+  });
+});

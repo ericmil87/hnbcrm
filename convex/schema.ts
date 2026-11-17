@@ -2536,6 +2536,7 @@ const applicationTables = {
       v.literal("plan_payment_overdue"),
       // Ciclo de vida self-service (Asaas): recibo, troca, agendamentos, cancelamento e reembolso.
       v.literal("plan_payment_received"),
+      v.literal("plan_charge_upcoming"),
       v.literal("plan_changed"),
       v.literal("plan_change_scheduled"),
       v.literal("plan_cancel_scheduled"),
@@ -2793,6 +2794,8 @@ const applicationTables = {
     // Agenda v2 — `agendaApproval` cobre DOIS usos: proposta da IA aguardando aprovação (`appointment_pending_approval`, D1)
     // e sugestão de 1 toque da confirmação do humano pelo WhatsApp (`appointment_suggestion`, C1). Sino + push + Telegram.
     agendaApproval: v.optional(v.boolean()),
+    // Cobranca desativavel (recibo, cobranca a caminho, trocas); ausente = ligado. O critico nao tem coluna.
+    billingNotices: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
