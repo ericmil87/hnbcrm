@@ -922,6 +922,9 @@ describe("período monotônico: RECEIVED tardio do cartão não recua o ciclo", 
     await deliver("PAYMENT_RECEIVED", "pay_prev");
     expect((await orgOf(s.organizationId))?.billing?.status).toBe("past_due");
     expect(await subOf(s.organizationId)).toMatchObject({ paymentStatus: "overdue", graceUntil: NOW + 5 * DAY, currentPeriodEnd: NEXT_END });
+    expect(await notices(s.organizationId, "plan_payment_received")).toHaveLength(0);
+    const evs = await t.run((ctx) => ctx.db.query("billingWebhookEvents").collect());
+    expect(evs.at(-1)).toMatchObject({ status: "processed", error: "pagamento de ciclo anterior" });
   });
 
   test("past_due com o RECEIVED de fatura já paga (do CONFIRMED anterior): continua past_due", async () => {
