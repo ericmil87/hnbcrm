@@ -213,7 +213,11 @@ export function isCustomized(
 ): boolean {
   for (const row of rows) {
     const base = preset === "all" ? true : preset === "none" ? false : !NON_PERSONAL_FLAGS.has(row.flag);
-    for (const channel of row.channels) if (value(channel, row.flag) !== base) return true;
+    for (const channel of row.channels) {
+      // Obrigatório: o e-mail fica sempre ligado e não é escolha da pessoa.
+      if (row.locked && channel === "email") continue;
+      if (value(channel, row.flag) !== base) return true;
+    }
   }
   return false;
 }
