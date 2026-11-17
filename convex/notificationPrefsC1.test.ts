@@ -9,6 +9,7 @@ import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { createNotification } from "./lib/notify";
+import { shouldDeliver } from "./lib/notificationPolicy";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -171,14 +172,17 @@ describe("mutations do membro", () => {
     expect(await dispatchReachesSend(org, org.admin, "taskAssigned")).toBe(true); // e-mail segue
   });
 
-  test("setChannelPref recusa billingCritical em qualquer canal; billingNotices e editavel", async () => {
+  test("setChannelPref recusa billingCritical so por e-mail (Telegram/push editaveis); billingNotices e editavel", async () => {
     const org = await seedOrg("obrig");
     const me = as(org.admin.userId);
-    for (const channel of ["email", "telegram", "push"] as const) {
-      await expect(
-        me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel, flag: "billingCritical", enabled: false })
-      ).rejects.toThrow("Esse aviso é obrigatório");
-    }
+    await expect(
+      me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "email", flag: "billingCritical", enabled: false })
+    ).rejects.toThrow("Esse aviso é obrigatório");
+    await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "telegram", flag: "billingCritical", enabled: false });
+    const row = await prefsOf(org, org.admin);
+    expect(row?.channels?.telegram?.billingCritical).toBe(false);
+    expect(shouldDeliver({ type: "plan_payment_overdue", channel: "telegram", prefs: row, now: NOW })).toBe("off");
+    expect(shouldDeliver({ type: "plan_payment_overdue", channel: "email", prefs: row, now: NOW })).toBe("deliver");
     await me.mutation(api.notificationPreferences.setChannelPref, { organizationId: org.organizationId, channel: "email", flag: "billingNotices", enabled: false });
     const eff = await me.query(api.notificationPreferences.getMyEffectivePreferences, { organizationId: org.organizationId });
     expect(eff.channels.email.billingNotices).toBe(false);

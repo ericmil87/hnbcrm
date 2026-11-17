@@ -10,6 +10,7 @@ import { sendTransactionalEmail } from "./email";
 import { buildEmailVerificationTemplate } from "./authEmailTemplates";
 import { requireAccountWithEmail } from "./lib/auth";
 import { cronsDisabled } from "./lib/cronGuard";
+import { UNSUB_IP_WINDOW_MS } from "./billingUnsub";
 import { internal } from "./_generated/api";
 import { maskEmailForDisplay, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 import {
@@ -283,9 +284,17 @@ export const internalPruneEmailVerificationCodes = internalMutation({
       .withIndex("by_window_start", (q) => q.lte("windowStart", now - EMAIL_CODE_DAY_MS))
       .take(PRUNE_BATCH);
     for (const row of throttles) await ctx.db.delete(row._id);
-    if (rows.length === PRUNE_BATCH || throttles.length === PRUNE_BATCH) {
+    // Tetos por IP da página pública de desativar avisos (`unsub ip:<hash>`, janela de 1 h): vencem antes das 24 h.
+    // Faixa de prefixo no índice by_email (`;` é o caractere seguinte a `:`); só apaga a linha com janela > 1 h.
+    const unsubRows = await ctx.db
+      .query("authEmailThrottle")
+      .withIndex("by_email", (q) => q.gte("email", "unsub ip:").lt("email", "unsub ip;"))
+      .take(PRUNE_BATCH);
+    const staleUnsub = unsubRows.filter((row) => row.windowStart <= now - UNSUB_IP_WINDOW_MS);
+    for (const row of staleUnsub) await ctx.db.delete(row._id);
+    if (rows.length === PRUNE_BATCH || throttles.length === PRUNE_BATCH || (unsubRows.length === PRUNE_BATCH && staleUnsub.length > 0)) {
       await ctx.scheduler.runAfter(0, internal.emailVerification.internalPruneEmailVerificationCodes, {});
     }
-    return rows.length + throttles.length;
+    return rows.length + throttles.length + staleUnsub.length;
   },
 });

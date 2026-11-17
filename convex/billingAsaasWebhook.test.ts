@@ -262,6 +262,52 @@ describe("atraso, estorno e assinatura encerrada", () => {
     expect(receipts[0].memberId).toBe(s.adminId);
   });
 
+  describe("recibo: proxima cobranca", () => {
+    const receiptOf = async (organizationId: Id<"organizations">) => {
+      const notes = await t.run((ctx) => ctx.db.query("notifications").withIndex("by_organization", (q) => q.eq("organizationId", organizationId)).collect());
+      return notes.filter((n) => n.type === "plan_payment_received");
+    };
+    const patchSub = (organizationId: Id<"organizations">, patch: Record<string, unknown>) =>
+      t.run(async (ctx) => {
+        const sub = await ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", organizationId)).first();
+        await ctx.db.patch(sub!._id, patch);
+      });
+
+    test("a data aparece no mesmo dia do vencimento (14/12/2026), nao no anterior", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      payment.dueDate = "2026-11-14";
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeDate).toBe("14/12/2026");
+    });
+
+    test("com cancelamento agendado nao ha proxima cobranca", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { cancelAt: Date.UTC(2026, 11, 10) });
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r).toBeDefined();
+      expect(r.data?.nextChargeDate).toBeUndefined();
+      expect(r.data?.nextChargeBrl).toBeUndefined();
+    });
+
+    test("troca agendada ate o proximo vencimento: o valor e o do plano novo", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { scheduledChange: { plan: "essencial", cycle: "monthly", effectiveAt: Date.UTC(2026, 11, 10), chargeCents: 19700 } });
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeBrl).toContain("197,00");
+    });
+
+    test("troca agendada depois do proximo vencimento nao muda o valor", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { scheduledChange: { plan: "essencial", cycle: "monthly", effectiveAt: Date.UTC(2027, 0, 10), chargeCents: 19700 } });
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeBrl).toContain("497,00");
+    });
+  });
+
   test("PAYMENT_OVERDUE: active -> past_due (carência 7 d) + aviso; nunca read_only", async () => {
     const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 });
     payment.status = "OVERDUE";

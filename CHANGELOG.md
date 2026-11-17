@@ -11,6 +11,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Lembrete "cobrança a caminho".** Os administradores de quem paga por fatura recebem um aviso 3 dias antes da renovação mensal (7 dias antes da anual), uma vez por ciclo, com valor e data. Não sai quando há cancelamento ou troca de plano em andamento.
 - **Recibo mais completo.** O aviso de pagamento confirmado mostra a forma de pagamento e a próxima cobrança.
 - **Mudança deliberada: quem desligou "Avisos do plano" volta a receber por e-mail os avisos de falha de pagamento, modo leitura, cancelamento e reembolso.** Antes, desligar essa opção também calava esses e-mails, e pausa ou horário de silêncio os descartava. Agora eles chegam sempre. Contas legadas e VIP (sem cobrança por aqui) continuam sem nenhum desses avisos.
+- **Quem tinha "Avisos do plano" desligado passa a receber recibos e confirmações de troca.** Eles agora são a classe nova "Cobrança e recibos", ligada por padrão, e dá para desligar em Configurações › Notificações ou pelo link "Desativar" do e-mail.
 
 ### Cobrança
 

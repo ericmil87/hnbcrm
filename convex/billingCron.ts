@@ -28,6 +28,7 @@ import { repriceAfterLockExpiry } from "./lib/lockExpiry";
 import { formatBrl } from "./lib/aiSpend";
 import { lockAfterPlanChange } from "./lib/planChange";
 import { PLANS } from "./lib/plans";
+import { formatDueDay } from "./lib/billingPeriod";
 import { READ_ONLY_STALE_MS, expireScheduled } from "./scheduledMessages";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -213,7 +214,7 @@ async function maybeNotifyChargeUpcoming(
     organizationId: org._id,
     type: "plan_charge_upcoming",
     data: {
-      dueDate: formatDay(end),
+      dueDate: formatDueDay(end),
       ...(cents !== undefined ? { amountBrl: formatBrl(cents / 100) } : {}),
       ...(plan ? { planLabel: PLANS[plan].label } : {}),
       paymentMethod: "invoice",

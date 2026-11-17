@@ -381,7 +381,8 @@ export const setChannelPref = mutation({
   handler: async (ctx, args) => {
     const member = await requireAuth(ctx, args.organizationId);
     if (!KNOWN_FLAGS.includes(args.flag)) throw new ConvexError("Tipo de aviso desconhecido");
-    if (MANDATORY_FLAGS.has(args.flag)) throw new ConvexError("Esse aviso é obrigatório");
+    // O e-mail de aviso obrigatório não se desliga; Telegram/push são editáveis.
+    if (MANDATORY_FLAGS.has(args.flag) && args.channel === "email") throw new ConvexError("Esse aviso é obrigatório");
     const existing = await loadMemberPrefs(ctx, args.organizationId, member._id);
     const channels = {
       ...(existing?.channels ?? {}),
