@@ -34,7 +34,7 @@ import { formatBrl } from "./lib/aiSpend";
 import { PLANS } from "./lib/plans";
 import { lockAfterPlanChange } from "./lib/planChange";
 import { firstPaidInvoice, paidSubscriptionCount } from "./lib/refund";
-import { periodEndAfter } from "./lib/billingPeriod";
+import { nextPaidPeriod, periodEndAfter } from "./lib/billingPeriod";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -666,17 +666,28 @@ export const internalApplyEvent = internalMutation({
       case "PAYMENT_RECEIVED": {
         if (!payment) return await finish("ignored", "pagamento não encontrado", orgId);
         if (!isPaidStatus(payment.status)) return await finish("ignored", `pagamento ${payment.status ?? "sem status"}`, orgId);
+        // Lê ANTES do upsert: cartão confirma e só semanas depois recebe. O RECEIVED de um pagamento que o
+        // CONFIRMED já deixou `paid` só espelha a fatura (não reabre período nem reavisa).
+        const prior = await ctx.db
+          .query("billingInvoices")
+          .withIndex("by_provider_payment_id", (q) => q.eq("providerPaymentId", payment.id))
+          .first();
+        const alreadyPaid = prior?.organizationId === orgId && prior.status === "paid";
         await upsertInvoiceFromPayment(ctx, { organizationId: orgId, payment, now });
         const billing = org.billing;
         const targetPlan = sub.pendingPlanChange?.plan ?? billing?.plan;
+        // Só pula quando a org já está ativa no plano certo: se a fatura virou `paid` por outro caminho
+        // (PAYMENT_UPDATED, conciliação) sem o CONFIRMED ter ativado, o RECEIVED ainda ativa.
+        if (ev.event === "PAYMENT_RECEIVED" && alreadyPaid && billing?.status === "active" && billing.plan === targetPlan && !sub.pendingPlanChange) {
+          return await finish("processed", "pagamento já registrado como pago", orgId);
+        }
         // Fim do ciclo = vencimento desta fatura paga + 1 ciclo (não o `nextDueDate` da assinatura).
         const paidDue = dayToMs(payment.dueDate);
         const nextDue = paidDue !== undefined ? periodEndAfter(paidDue, sub.billingCycle) : undefined;
         const paidSub = {
           paymentStatus: "ok" as const,
           graceUntil: undefined,
-          currentPeriodStart: now,
-          ...(nextDue !== undefined ? { currentPeriodEnd: nextDue } : {}),
+          ...nextPaidPeriod({ currentStart: sub.currentPeriodStart, currentEnd: sub.currentPeriodEnd, nextDue, now }),
           ...(subscription?.value !== undefined ? { chargeCents: Math.round(subscription.value * 100) } : {}),
         };
         try {
