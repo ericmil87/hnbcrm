@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { FlagRow } from "./notificationPrefsUi";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { KNOWN_FLAGS, NON_PERSONAL_FLAGS, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
@@ -89,6 +90,14 @@ describe("coluna No aparelho (push)", () => {
     }
     expect(rows.find((r) => r.flag === "leadAssigned")?.channels).not.toContain("push");
     expect(rows.find((r) => r.flag === "handoffRequested")?.channels).toContain("push");
+  });
+});
+
+describe("isCustomized com linha travada", () => {
+  it("o e-mail da linha obrigatória desligado não conta como ajuste", () => {
+    const row = { flag: "billingCritical", label: "x", desc: "x", group: "system", channels: ["email", "telegram"], bell: true, locked: true } as unknown as FlagRow;
+    expect(isCustomized("none", (c) => c === "email", [row])).toBe(false);
+    expect(isCustomized("none", (c) => c === "telegram", [row])).toBe(true);
   });
 });
 
