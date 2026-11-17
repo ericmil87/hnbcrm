@@ -4,7 +4,7 @@
  * `NOTIFICATION_TYPE_GROUP`); aqui só rótulos e arranjo.
  */
 import { formatDateTime, formatTime } from "./format";
-import { NON_PERSONAL_FLAGS, PREFERENCE_FLAG, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
+import { MANDATORY_FLAGS, NON_PERSONAL_FLAGS, PREFERENCE_FLAG, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
 import {
   NOTIFICATION_GROUPS,
   NOTIFICATION_TYPE_GROUP,
@@ -22,6 +22,8 @@ export interface FlagRow {
   channels: readonly MatrixChannel[];
   /** O tipo aparece no sino? (o resumo diário só sai por e-mail). */
   bell: boolean;
+  /** Obrigatório (`MANDATORY_FLAGS`): sino e e-mail ficam sempre ligados ("Sempre ligado"); Telegram e push seguem editáveis. */
+  locked: boolean;
 }
 
 const ALL_CHANNELS: readonly MatrixChannel[] = ["email", "telegram", "push"];
@@ -43,6 +45,8 @@ export const EMAIL_FLAGS: ReadonlySet<string> = new Set([
   "groupPostFailed",
   "aiSpendAlert",
   "planAlert",
+  "billingNotices",
+  "billingCritical",
   "channelSessionLost",
 ]);
 
@@ -71,7 +75,9 @@ export const FLAG_COPY: Record<
   campaignPaused: { label: "Campanha pausada por segurança", desc: "Quando um limite ou sinal de risco pausa uma campanha" },
   channelSessionLost: { label: "Canal desconectado", desc: "Quando um canal conectado perde a conexão" },
   aiSpendAlert: { label: "Gasto de IA do mês", desc: "Para administradores: perto do teto mensal ou ao atingi-lo" },
-  planAlert: { label: "Avisos do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
+  planAlert: { label: "Avisos de uso do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
+  billingNotices: { label: "Cobrança e recibos", desc: "Para administradores: cobrança a caminho, pagamento confirmado e confirmações de troca de plano" },
+  billingCritical: { label: "Falha de pagamento e cancelamento", desc: "Para administradores: cartão recusado, fatura vencida, modo leitura, cancelamento e reembolso" },
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 
@@ -101,6 +107,7 @@ export function buildMatrixGroups(): { group: NotificationGroup; rows: FlagRow[]
       desc: copy?.desc ?? "",
       group,
       bell: copy?.bell !== false,
+      locked: MANDATORY_FLAGS.has(flag),
       channels: (copy?.channels ?? ALL_CHANNELS).filter(
         (c) => (c !== "email" || EMAIL_FLAGS.has(flag)) && (c !== "push" || PUSH_PREFERENCE_FLAGS.includes(flag)),
       ),
@@ -205,7 +212,11 @@ export function isCustomized(
 ): boolean {
   for (const row of rows) {
     const base = preset === "all" ? true : preset === "none" ? false : !NON_PERSONAL_FLAGS.has(row.flag);
-    for (const channel of row.channels) if (value(channel, row.flag) !== base) return true;
+    for (const channel of row.channels) {
+      // Obrigatório: o e-mail fica sempre ligado e não é escolha da pessoa.
+      if (row.locked && channel === "email") continue;
+      if (value(channel, row.flag) !== base) return true;
+    }
   }
   return false;
 }

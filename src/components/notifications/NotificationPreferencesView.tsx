@@ -407,11 +407,16 @@ function MatrixBlock({
                       <div className="min-w-0">
                         <p className="text-sm font-medium text-text-primary">{row.label}</p>
                         <p className="text-xs text-text-secondary">{row.desc}</p>
+                        {row.locked && (
+                          <p className="mt-1 text-xs text-text-muted">{LOCKED_NOTE}</p>
+                        )}
                       </div>
                       <div className="flex items-center justify-between gap-2 md:justify-center">
                         <span className="text-xs text-text-muted md:hidden">Sino</span>
                         {!row.bell ? (
                           <NoCell text={`${row.label}: não aparece no sino`} />
+                        ) : row.locked ? (
+                          <AlwaysOnCell label={`${row.label}: sino`} />
                         ) : actionable ? (
                           <span className="inline-flex min-h-11 items-center gap-1 text-xs text-text-secondary">
                             <Lock size={14} aria-hidden="true" />
@@ -429,7 +434,9 @@ function MatrixBlock({
                       {columns.map((c) => (
                         <div key={c} className="flex items-center justify-between gap-2 md:justify-center">
                           <span className="text-xs text-text-muted md:hidden">{CHANNEL_LABEL[c]}</span>
-                          {row.channels.includes(c) ? (
+                          {row.channels.includes(c) && row.locked && c === "email" ? (
+                            <AlwaysOnCell label={`${row.label}: ${CHANNEL_LABEL[c]}`} />
+                          ) : row.channels.includes(c) ? (
                             <Switch
                               checked={valueOf(c, row.flag)}
                               onCheckedChange={(v) => onToggle(c, row.flag, v)}
@@ -456,6 +463,19 @@ function MatrixBlock({
         </div>
       )}
     </div>
+  );
+}
+
+const LOCKED_NOTE = "Protege a sua conta. Não pode ser desativado.";
+
+/** Célula de canal obrigatório: texto visível "Sempre ligado" com cadeado, sem controle. */
+function AlwaysOnCell({ label }: { label: string }) {
+  return (
+    <span className="inline-flex min-h-11 items-center gap-1 text-xs font-medium text-text-secondary">
+      <Lock size={14} aria-hidden="true" />
+      <span>Sempre ligado</span>
+      <span className="sr-only">{`: ${label} não pode ser desligado`}</span>
+    </span>
   );
 }
 

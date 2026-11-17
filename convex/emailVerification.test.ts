@@ -388,4 +388,15 @@ describe("endurecimento (revisão P2.6)", () => {
     const rows = await t.run(async (ctx) => ctx.db.query("authEmailThrottle").collect());
     expect(rows.map((r) => r.email)).toEqual(["verify-user-d:y"]);
   });
+
+  test("cron apaga teto por IP da desativacao (unsub ip:) com janela > 1 h; mantém o recente e o de outro prefixo", async () => {
+    await t.run(async (ctx) => {
+      await ctx.db.insert("authEmailThrottle", { email: "unsub ip:aaaaaaaaaaaaaaaa", windowStart: Date.now() - 3_600_001, count: 5 });
+      await ctx.db.insert("authEmailThrottle", { email: "unsub ip:bbbbbbbbbbbbbbbb", windowStart: Date.now() - 1000, count: 5 });
+      await ctx.db.insert("authEmailThrottle", { email: "verify-user-d:z", windowStart: Date.now() - 3_700_000, count: 1 });
+    });
+    await t.mutation(internal.emailVerification.internalPruneEmailVerificationCodes, {});
+    const rows = await t.run(async (ctx) => ctx.db.query("authEmailThrottle").collect());
+    expect(rows.map((r) => r.email).sort()).toEqual(["unsub ip:bbbbbbbbbbbbbbbb", "verify-user-d:z"]);
+  });
 });

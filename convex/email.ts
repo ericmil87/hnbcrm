@@ -6,6 +6,7 @@ import { buildTemplate } from "./emailTemplates";
 import { appUrl } from "./lib/appUrl";
 import { isDeliverableEmail, maskEmailForLog, normalizeEmail } from "./lib/emailAddress";
 import { isMembershipRevoked } from "./lib/auth";
+import { billingUnsubEmailExtras } from "./lib/billingUnsub";
 import { cronsDisabled } from "./lib/cronGuard";
 import { shouldDeliver } from "./lib/notificationPolicy";
 import { loadMemberPrefs, orgDefaultsOf } from "./lib/notificationPrefs";
@@ -36,7 +37,15 @@ const fromAddress = () => process.env.RESEND_FROM_EMAIL ?? "HNBCRM <noreply@mail
 // nada foi enfileirado.
 export async function sendTransactionalEmail(
   ctx: MutationCtx,
-  args: { to: string; subject: string; html: string; replyTo?: string; kind: string },
+  args: {
+    to: string;
+    subject: string;
+    html: string;
+    replyTo?: string;
+    kind: string;
+    /** Cabeçalhos extras (ex.: `List-Unsubscribe`). O componente recebe `{name,value}[]`. */
+    headers?: Record<string, string>;
+  },
 ): Promise<boolean> {
   const to = normalizeEmail(args.to);
   if (!isDeliverableEmail(to)) {
@@ -60,6 +69,9 @@ export async function sendTransactionalEmail(
       subject: args.subject,
       html: args.html,
       ...(args.replyTo && isDeliverableEmail(args.replyTo) ? { replyTo: [args.replyTo] } : {}),
+      ...(args.headers && Object.keys(args.headers).length > 0
+        ? { headers: Object.entries(args.headers).map(([name, value]) => ({ name, value })) }
+        : {}),
     });
     return true;
   } catch (error) {
@@ -130,10 +142,28 @@ export const dispatchNotification = internalMutation({
       if (decision !== "deliver") return false;
     }
 
+    // 2b. Avisos de cobrança desativáveis: link + `List-Unsubscribe` por destinatário. Sem segredo
+    // válido (ou sem `CONVEX_SITE_URL`) o e-mail é RETIDO: nunca sai sem o opt-out. As demais
+    // classes (inclusive `billingCritical`) nunca levam o cabeçalho.
+    let templateData = args.templateData;
+    let headers: Record<string, string> | undefined;
+    if (args.eventType === "billingNotices") {
+      const extras = await billingUnsubEmailExtras({
+        organizationId: args.organizationId,
+        memberId: args.recipientMemberId,
+      });
+      if (!extras) {
+        console.warn("[email] billingNotices: segredo de descadastro ausente ou inválido — e-mail retido");
+        return false;
+      }
+      headers = extras.headers;
+      templateData = { ...(args.templateData ?? {}), unsubUrl: extras.unsubUrl };
+    }
+
     // 3. Build template — eventType desconhecido não vira e-mail vazio
     let template;
     try {
-      template = buildTemplate(args.eventType, args.templateData);
+      template = buildTemplate(args.eventType, templateData);
     } catch (error) {
       console.error(`[email] ${args.eventType}:`, error instanceof Error ? error.message : String(error));
       return false;
@@ -145,6 +175,7 @@ export const dispatchNotification = internalMutation({
       subject: template.subject,
       html: template.html,
       kind: args.eventType,
+      ...(headers ? { headers } : {}),
     });
   },
 });

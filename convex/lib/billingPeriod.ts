@@ -65,3 +65,8 @@ export function resolvePeriod<T extends PeriodInvoice>(args: {
   if (!lastPaid) return { periodStart: null, periodEnd: null, lastPaid: null };
   return { periodStart: lastPaid.dueDate, periodEnd: periodEndAfter(lastPaid.dueDate, args.cycle), lastPaid };
 }
+
+/** "14/12/2026" de um dia gravado em meia-noite UTC (`currentPeriodEnd`, vencimento): sem fuso local, que recuaria o dia. */
+export function formatDueDay(ms: number): string {
+  return new Date(ms).toLocaleDateString("pt-BR", { timeZone: "UTC" });
+}
