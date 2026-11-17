@@ -4,20 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { KNOWN_FLAGS, ACTIONABLE_FLAGS } from "../../../convex/lib/notificationPolicy";
 import { NotificationPreferencesView, type NotificationPreferencesViewProps } from "./NotificationPreferencesView";
 
-// Antes de `billingCritical` entrar em EMAIL_FLAGS, força o canal e-mail na linha travada.
-vi.mock("@/lib/notificationPrefsUi", async (orig) => {
-  const mod = await orig<typeof import("@/lib/notificationPrefsUi")>();
-  return {
-    ...mod,
-    buildMatrixGroups: () =>
-      mod.buildMatrixGroups().map((g) => ({
-        ...g,
-        rows: g.rows.map((r) =>
-          r.locked && !r.channels.includes("email") ? { ...r, channels: ["email", ...r.channels] as typeof r.channels } : r,
-        ),
-      })),
-  };
-});
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() } }));
 
 describe("linha travada com e-mail", () => {
