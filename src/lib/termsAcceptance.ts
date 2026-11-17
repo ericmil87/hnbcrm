@@ -1,7 +1,15 @@
 /** Regras puras do aceite dos Termos (a versão vigente vem de `convex/lib/terms.ts`). */
 export interface TermsStatusLike {
+  /** Versão que precisa ser aceita para o banner sumir (igual ao aceite de quem já cumpre o mínimo). */
   currentVersion: string;
   acceptedVersion: string | null;
+  /** Versão do texto vigente (a que o aceite grava). Ausente em backend antigo. */
+  textVersion?: string;
+}
+
+/** Versão a enviar em `acceptTerms`: a do texto, não a de comparação. */
+export function versionToAccept(status: TermsStatusLike): string {
+  return status.textVersion ?? status.currentVersion;
 }
 
 /** Pede aceite só com sessão (status não nulo) e sem aceite da versão vigente. */

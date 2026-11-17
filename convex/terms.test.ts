@@ -8,7 +8,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { TERMS_VERSION } from "./lib/terms";
+import { isAcceptableSignupVersion, isAtLeastVersion, TERMS_MIN_ACCEPTED_VERSION, TERMS_VERSION } from "./lib/terms";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 let t: TestConvex<typeof schema>;
@@ -25,6 +25,53 @@ const mkUser = (email: string) => t.run((ctx) => ctx.db.insert("users", { email 
 const as = (userId: Id<"users">) => t.withIdentity({ subject: `${userId}|s1` });
 const rows = () => t.run((ctx) => ctx.db.query("termsAcceptances").collect());
 
+describe("versões dos Termos", () => {
+  test("constantes e comparação", () => {
+    expect(TERMS_VERSION).toBe("2026-11-16");
+    expect(TERMS_MIN_ACCEPTED_VERSION).toBe("2026-11-10");
+    expect(isAtLeastVersion(TERMS_VERSION, TERMS_MIN_ACCEPTED_VERSION)).toBe(true);
+    expect(isAtLeastVersion("2026-11-10", "2026-11-10")).toBe(true);
+    expect(isAtLeastVersion("2026-11-09", "2026-11-10")).toBe(false);
+  });
+
+  test("isAcceptableSignupVersion: entre a mínima e a vigente", () => {
+    expect(isAcceptableSignupVersion("2026-11-10")).toBe(true);
+    expect(isAcceptableSignupVersion("2026-11-16")).toBe(true);
+    expect(isAcceptableSignupVersion("2026-11-09")).toBe(false);
+    expect(isAcceptableSignupVersion("2027-01-01")).toBe(false);
+  });
+
+  test("aceite da versão mínima dispensa novo aceite (currentVersion == acceptedVersion)", async () => {
+    const u = await mkUser("min@acme.com.br");
+    await t.run((ctx) =>
+      ctx.db.insert("termsAcceptances", { userId: u, version: "2026-11-10", acceptedAt: 1 }),
+    );
+    expect(await as(u).query(api.terms.getMyTermsStatus, {})).toEqual({
+      currentVersion: "2026-11-10",
+      acceptedVersion: "2026-11-10",
+      minAcceptedVersion: TERMS_MIN_ACCEPTED_VERSION,
+      textVersion: TERMS_VERSION,
+    });
+  });
+
+  test("aceite antigo (anterior ao mínimo) precisa aceitar a versão do texto", async () => {
+    const u = await mkUser("old@acme.com.br");
+    await t.run((ctx) =>
+      ctx.db.insert("termsAcceptances", { userId: u, version: "2026-11-09", acceptedAt: 1 }),
+    );
+    const s = await as(u).query(api.terms.getMyTermsStatus, {});
+    expect(s).toMatchObject({ currentVersion: "2026-11-16", acceptedVersion: "2026-11-09" });
+    const r = await as(u).mutation(api.terms.acceptTerms, { version: "2026-11-16" });
+    expect(r).toEqual({ version: "2026-11-16", alreadyAccepted: false });
+    expect((await rows()).map((x) => x.version)).toContain("2026-11-16");
+  });
+
+  test("aceitar o mínimo antigo via mutation segue recusado (só a versão do texto grava)", async () => {
+    const u = await mkUser("rej@acme.com.br");
+    await expect(as(u).mutation(api.terms.acceptTerms, { version: "2026-11-10" })).rejects.toThrow(/atualizados/);
+  });
+});
+
 describe("getMyTermsStatus / acceptTerms", () => {
   test("não logado: status null e aceite recusado", async () => {
     expect(await t.query(api.terms.getMyTermsStatus, {})).toBeNull();
@@ -34,14 +81,24 @@ describe("getMyTermsStatus / acceptTerms", () => {
 
   test("aceita a versão vigente; status reflete; segundo aceite não duplica", async () => {
     const u = await mkUser("a@acme.com.br");
-    expect(await as(u).query(api.terms.getMyTermsStatus, {})).toEqual({ currentVersion: TERMS_VERSION, acceptedVersion: null });
+    expect(await as(u).query(api.terms.getMyTermsStatus, {})).toEqual({
+      currentVersion: TERMS_VERSION,
+      acceptedVersion: null,
+      minAcceptedVersion: TERMS_MIN_ACCEPTED_VERSION,
+      textVersion: TERMS_VERSION,
+    });
     const first = await as(u).mutation(api.terms.acceptTerms, { version: TERMS_VERSION, userAgent: "Mozilla/5.0 teste" });
     expect(first).toEqual({ version: TERMS_VERSION, alreadyAccepted: false });
     const again = await as(u).mutation(api.terms.acceptTerms, { version: TERMS_VERSION });
     expect(again.alreadyAccepted).toBe(true);
     expect(await rows()).toHaveLength(1);
     expect((await rows())[0]).toMatchObject({ userId: u, version: TERMS_VERSION, userAgent: "Mozilla/5.0 teste" });
-    expect(await as(u).query(api.terms.getMyTermsStatus, {})).toEqual({ currentVersion: TERMS_VERSION, acceptedVersion: TERMS_VERSION });
+    expect(await as(u).query(api.terms.getMyTermsStatus, {})).toEqual({
+      currentVersion: TERMS_VERSION,
+      acceptedVersion: TERMS_VERSION,
+      minAcceptedVersion: TERMS_MIN_ACCEPTED_VERSION,
+      textVersion: TERMS_VERSION,
+    });
   });
 
   test("versão diferente da atual é recusada (e nada é gravado)", async () => {
@@ -84,6 +141,25 @@ describe("createOrganization com acceptedTermsVersion", () => {
     ).rejects.toThrow(/atualizados/);
     expect(await t.run((ctx) => ctx.db.query("organizations").collect())).toHaveLength(0);
     await as(u).mutation(api.organizations.createOrganization, { name: "Org V", slug: "org-v" });
+    expect(await rows()).toHaveLength(0);
+  });
+
+  test("cadastro aceita versão entre a mínima e a vigente e grava a recebida", async () => {
+    const u = await mkUser("old@acme.com.br");
+    await as(u).mutation(api.organizations.createOrganization, { name: "Org Old", slug: "org-old", acceptedTermsVersion: "2026-11-10" });
+    expect((await rows()).map((r) => r.version)).toEqual(["2026-11-10"]);
+    const u2 = await mkUser("new@acme.com.br");
+    await as(u2).mutation(api.organizations.createOrganization, { name: "Org New", slug: "org-new", acceptedTermsVersion: "2026-11-16" });
+    expect((await rows()).map((r) => r.version).sort()).toEqual(["2026-11-10", "2026-11-16"]);
+  });
+
+  test("cadastro recusa versão abaixo da mínima ou futura", async () => {
+    const u = await mkUser("bad@acme.com.br");
+    for (const v of ["2026-11-09", "2027-01-01"]) {
+      await expect(
+        as(u).mutation(api.organizations.createOrganization, { name: "Org X", slug: "org-x", acceptedTermsVersion: v })
+      ).rejects.toThrow(/atualizados/);
+    }
     expect(await rows()).toHaveLength(0);
   });
 

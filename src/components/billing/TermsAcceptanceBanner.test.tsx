@@ -8,10 +8,10 @@ describe("TermsAcceptanceBannerView", () => {
     const onAccept = vi.fn();
     render(
       <MemoryRouter>
-        <TermsAcceptanceBannerView version="2026-11-10" accepting={false} onAccept={onAccept} />
+        <TermsAcceptanceBannerView version="2026-11-16" accepting={false} onAccept={onAccept} />
       </MemoryRouter>,
     );
-    expect(screen.getByRole("status").textContent).toContain("2026-11-10");
+    expect(screen.getByRole("status").textContent).toContain("2026-11-16");
     expect(screen.getByRole("link", { name: "Revisar e aceitar" }).getAttribute("href")).toBe("/termos");
     fireEvent.click(screen.getByRole("button", { name: "Aceito os Termos" }));
     expect(onAccept).toHaveBeenCalled();
