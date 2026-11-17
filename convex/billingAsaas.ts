@@ -34,7 +34,7 @@ import { formatBrl } from "./lib/aiSpend";
 import { PLANS } from "./lib/plans";
 import { lockAfterPlanChange } from "./lib/planChange";
 import { firstPaidInvoice, paidSubscriptionCount } from "./lib/refund";
-import { periodEndAfter } from "./lib/billingPeriod";
+import { formatDueDay, periodEndAfter } from "./lib/billingPeriod";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -727,14 +727,17 @@ export const internalApplyEvent = internalMutation({
             ...(payment.value !== undefined ? { amountBrl: formatBrl(payment.value) } : {}),
             // Forma de pagamento: hoje toda assinatura é por fatura (o cartão recorrente chega no PR 2).
             paymentMethod: "invoice" as const,
-            // Próxima cobrança: o fim do ciclo gravado acima e o valor de cada cobrança.
-            ...(nextDue !== undefined
-              ? {
-                  nextChargeDate: new Date(nextDue).toLocaleDateString("pt-BR", { timeZone: "America/Sao_Paulo" }),
-                  ...((paidSub.chargeCents ?? sub.chargeCents) !== undefined
-                    ? { nextChargeBrl: formatBrl((paidSub.chargeCents ?? sub.chargeCents ?? 0) / 100) }
-                    : {}),
-                }
+            // Próxima cobrança: o fim do ciclo gravado acima e o valor dela. Com cancelamento agendado não há
+            // próxima cobrança; com troca agendada até essa data, vale o valor do plano novo.
+            ...(nextDue !== undefined && sub.cancelAt === undefined
+              ? (() => {
+                  const change = sub.scheduledChange && sub.scheduledChange.effectiveAt <= nextDue ? sub.scheduledChange : undefined;
+                  const cents = change?.chargeCents ?? paidSub.chargeCents ?? sub.chargeCents;
+                  return {
+                    nextChargeDate: formatDueDay(nextDue),
+                    ...(cents !== undefined ? { nextChargeBrl: formatBrl(cents / 100) } : {}),
+                  };
+                })()
               : {}),
           },
           dedupeKey: `plan_payment_received:${payment.id}`,

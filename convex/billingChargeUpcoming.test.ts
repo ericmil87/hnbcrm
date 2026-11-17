@@ -111,6 +111,14 @@ describe("janela", () => {
     expect(n.coalesceKey).toBe(`plan_charge_upcoming:${s.organizationId}:${NOW + 3 * DAY}`);
   });
 
+  test("vencimento em meia-noite UTC aparece no mesmo dia (sem recuar um dia pelo fuso de Brasilia)", async () => {
+    const s = await seed({ sub: { currentPeriodEnd: Date.UTC(2026, 11, 14) } });
+    vi.setSystemTime(Date.parse("2026-12-11T12:00:00Z")); // D-3 em dias corridos
+    await tick();
+    const [n] = await noticesOf(s.organizationId);
+    expect(n.data?.dueDate).toBe("14/12/2026");
+  });
+
   test("chargeNoticeDue e pura e exige assinatura e fim do ciclo", () => {
     const base = { providerSubscriptionId: "s", currentPeriodEnd: NOW + DAY } as Doc<"orgSubscriptions">;
     expect(chargeNoticeDue(base, NOW)).toBe(true);

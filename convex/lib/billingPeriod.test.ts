@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addMonthsUtc, lastPaidSubscriptionInvoice, periodEndAfter, resolvePeriod } from "./billingPeriod";
+import { addMonthsUtc, formatDueDay, lastPaidSubscriptionInvoice, periodEndAfter, resolvePeriod } from "./billingPeriod";
 
 const d = (y: number, m: number, day: number) => Date.UTC(y, m - 1, day);
 
@@ -31,5 +31,12 @@ describe("resolvePeriod", () => {
     const invoices = [inv(d(2026, 12, 10), { providerSubscriptionId: "sub_old" }), inv(d(2026, 11, 10)), inv(d(2027, 1, 10), { kind: "overage" })];
     expect(lastPaidSubscriptionInvoice(invoices, ["sub_new"])?.dueDate).toBe(d(2026, 11, 10));
     expect(lastPaidSubscriptionInvoice(invoices, ["sub_old", "sub_new"])?.dueDate).toBe(d(2026, 12, 10));
+  });
+});
+
+describe("formatDueDay", () => {
+  test("meia-noite UTC mostra o mesmo dia (não o anterior, como em Brasília)", () => {
+    expect(formatDueDay(d(2026, 12, 14))).toBe("14/12/2026");
+    expect(formatDueDay(d(2027, 1, 1))).toBe("01/01/2027");
   });
 });
