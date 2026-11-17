@@ -147,6 +147,26 @@ describe("matriz", () => {
     expect(screen.getByRole("switch", { name: "Conversa transferida para você: Telegram" })).toBeInTheDocument();
   });
 
+  it("linha travada (falha de pagamento): sino 'Sempre ligado', sem controle de sino; Telegram segue editável", async () => {
+    const p = setup({ pushAvailable: true });
+    await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
+    expect(screen.getByText("Protege a sua conta. Não pode ser desativado.")).toBeInTheDocument();
+    expect(screen.getByText(/Falha de pagamento e cancelamento: sino não pode ser desligado/)).toBeInTheDocument();
+    expect(screen.getAllByText("Sempre ligado").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByRole("switch", { name: /Falha de pagamento e cancelamento: (Sino|E-mail)/ })).toBeNull();
+    const tg = screen.getByRole("switch", { name: "Falha de pagamento e cancelamento: Telegram" });
+    await userEvent.click(tg);
+    expect(p.onChannel).toHaveBeenCalledWith("telegram", "billingCritical", false);
+  });
+
+  it("linha de cobrança desativável (billingNotices) é editável e sem nota de bloqueio", async () => {
+    const p = setup();
+    await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Cobrança e recibos: Telegram" }));
+    expect(p.onChannel).toHaveBeenCalledWith("telegram", "billingNotices", false);
+    expect(screen.queryByText(/Cobrança e recibos: sino não pode ser desligado/)).toBeNull();
+  });
+
   it("não mostra a linha de convites travada", async () => {
     setup();
     await userEvent.click(screen.getByRole("button", { name: "Personalizar" }));
