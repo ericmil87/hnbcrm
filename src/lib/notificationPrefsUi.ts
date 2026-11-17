@@ -45,6 +45,8 @@ export const EMAIL_FLAGS: ReadonlySet<string> = new Set([
   "groupPostFailed",
   "aiSpendAlert",
   "planAlert",
+  "billingNotices",
+  "billingCritical",
   "channelSessionLost",
 ]);
 
