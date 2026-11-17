@@ -4,6 +4,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Cobrança
+
+- **Corrigido: pagamento confirmado depois não encurta mais o ciclo.** No cartão, o aviso de "recebido" chega semanas depois do de "confirmado". Se o de um ciclo anterior chegasse depois do atual, a data de fim do ciclo voltava um mês. Agora o fim do ciclo nunca recua, e um aviso de recebimento de um pagamento que já estava pago só atualiza a fatura, sem reabrir o período nem avisar de novo.
+
 ### Atendente IA: "hoje" e "amanhã" no dia certo
 
 - **A IA não repete mais um "amanhã" escrito na véspera.** Cada mensagem do histórico que o Atendente IA lê agora traz dia da semana, data e hora no fuso da sua conta (por exemplo "dom 22/11 22:29"). Antes ele via só um número, então, quando o cliente agradecia no próprio dia do horário marcado, a IA respondia "te espero amanhã às 10h". Só isso não bastou: com a data em cada mensagem a IA ainda errava o caso do "obrigada" depois do horário (agora dizia "te espero hoje às 10h", 5 de 6 respostas erradas na medição estrita; sem data eram 4 de 4), e "amanhã" continua certo quando é mesmo amanhã.

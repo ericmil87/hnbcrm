@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addMonthsUtc, lastPaidSubscriptionInvoice, periodEndAfter, resolvePeriod } from "./billingPeriod";
+import { addMonthsUtc, lastPaidSubscriptionInvoice, nextPaidPeriod, periodEndAfter, resolvePeriod } from "./billingPeriod";
 
 const d = (y: number, m: number, day: number) => Date.UTC(y, m - 1, day);
 
@@ -31,5 +31,36 @@ describe("resolvePeriod", () => {
     const invoices = [inv(d(2026, 12, 10), { providerSubscriptionId: "sub_old" }), inv(d(2026, 11, 10)), inv(d(2027, 1, 10), { kind: "overage" })];
     expect(lastPaidSubscriptionInvoice(invoices, ["sub_new"])?.dueDate).toBe(d(2026, 11, 10));
     expect(lastPaidSubscriptionInvoice(invoices, ["sub_old", "sub_new"])?.dueDate).toBe(d(2026, 12, 10));
+  });
+});
+
+describe("nextPaidPeriod", () => {
+  const now = d(2026, 11, 10);
+  const start = d(2026, 11, 1);
+  test("sem fim gravado: início agora e fim = nextDue (comportamento antigo)", () => {
+    expect(nextPaidPeriod({ nextDue: d(2026, 12, 5), now })).toEqual({ currentPeriodStart: now, currentPeriodEnd: d(2026, 12, 5) });
+    expect(nextPaidPeriod({ now })).toEqual({ currentPeriodStart: now });
+  });
+  test("fim anda para frente: início vira agora", () => {
+    expect(nextPaidPeriod({ currentStart: start, currentEnd: d(2026, 12, 5), nextDue: d(2027, 1, 5), now })).toEqual({
+      currentPeriodStart: now,
+      currentPeriodEnd: d(2027, 1, 5),
+    });
+  });
+  test("fim anterior ao atual não recua e mantém o início", () => {
+    expect(nextPaidPeriod({ currentStart: start, currentEnd: d(2027, 1, 5), nextDue: d(2026, 12, 5), now })).toEqual({
+      currentPeriodStart: start,
+      currentPeriodEnd: d(2027, 1, 5),
+    });
+  });
+  test("fim igual ao atual não mexe no início (não é estritamente maior)", () => {
+    expect(nextPaidPeriod({ currentStart: start, currentEnd: d(2026, 12, 5), nextDue: d(2026, 12, 5), now })).toEqual({
+      currentPeriodStart: start,
+      currentPeriodEnd: d(2026, 12, 5),
+    });
+  });
+  test("sem nextDue com fim gravado: nada anda", () => {
+    expect(nextPaidPeriod({ currentStart: start, currentEnd: d(2026, 12, 5), now })).toEqual({ currentPeriodStart: start, currentPeriodEnd: d(2026, 12, 5) });
+    expect(nextPaidPeriod({ currentEnd: d(2026, 12, 5), now })).toEqual({ currentPeriodEnd: d(2026, 12, 5) });
   });
 });

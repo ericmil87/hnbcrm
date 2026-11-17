@@ -874,3 +874,59 @@ describe("fim do ciclo ausente (org que pagou antes de o app gravar currentPerio
     expect((await subOf(b.organizationId))?.currentPeriodEnd).toBeUndefined();
   });
 });
+
+describe("período monotônico: RECEIVED tardio do cartão não recua o ciclo", () => {
+  const NEXT_END = Date.UTC(2027, 0, 5); // CONFIRMED do ciclo 05/12 já aplicado: fim 05/01/2027
+
+  test("RECEIVED tardio do ciclo anterior não recua currentPeriodEnd", async () => {
+    const s = await seed({ plan: "profissional", periodEnd: NEXT_END });
+    const before = await subOf(s.organizationId);
+    // Ciclo anterior (venc. 05/11 -> fim 05/12) sem fatura paga local: o RECEIVED chega depois do CONFIRMED do atual.
+    pays.pay_prev = { id: "pay_prev", subscription: "sub_old", customer: "cus_1", externalReference: s.organizationId, status: "RECEIVED", value: 497, dueDate: "2026-11-05" };
+    await deliver("PAYMENT_RECEIVED", "pay_prev");
+    const after = await subOf(s.organizationId);
+    expect(after?.currentPeriodEnd).toBe(NEXT_END);
+    expect(after?.currentPeriodStart).toBe(before?.currentPeriodStart);
+    expect(after?.paymentStatus).toBe("ok");
+    expect((await invoices(s.organizationId)).find((i) => i.providerPaymentId === "pay_prev")?.status).toBe("paid");
+  });
+
+  test("RECEIVED de fatura já paga não reabre período nem reavisa", async () => {
+    const s = await seed({ plan: "profissional" });
+    pays.pay_card = { id: "pay_card", subscription: "sub_old", customer: "cus_1", externalReference: s.organizationId, status: "CONFIRMED", value: 497, dueDate: "2026-12-05" };
+    await deliver("PAYMENT_CONFIRMED", "pay_card");
+    const confirmed = await subOf(s.organizationId);
+    expect(confirmed).toMatchObject({ currentPeriodStart: NOW, currentPeriodEnd: Date.UTC(2027, 0, 5) });
+    expect(await notices(s.organizationId, "plan_payment_received")).toHaveLength(1);
+
+    vi.setSystemTime(NOW + 20 * DAY); // semanas depois o cartão é recebido
+    pays.pay_card.status = "RECEIVED";
+    await deliver("PAYMENT_RECEIVED", "pay_card");
+    const received = await subOf(s.organizationId);
+    expect(received?.currentPeriodStart).toBe(NOW);
+    expect(received?.currentPeriodEnd).toBe(Date.UTC(2027, 0, 5));
+    expect(await notices(s.organizationId, "plan_payment_received")).toHaveLength(1);
+    const inv = (await invoices(s.organizationId)).find((i) => i.providerPaymentId === "pay_card");
+    expect(inv?.status).toBe("paid");
+  });
+
+  test("fatura já paga por outro caminho com org ainda em teste: o RECEIVED ativa", async () => {
+    const s = await seed({ status: "trial", paidDaysAgo: null, billingExtra: { trialEndsAt: NOW - DAY } });
+    pays.pay_card = { id: "pay_card", subscription: "sub_old", customer: "cus_1", externalReference: s.organizationId, status: "RECEIVED", value: 497, dueDate: "2026-12-05" };
+    await deliver("PAYMENT_UPDATED", "pay_card"); // espelha a fatura como paga, sem ativar
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("trial");
+    await deliver("PAYMENT_RECEIVED", "pay_card");
+    expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
+    expect(await notices(s.organizationId, "plan_payment_received")).toHaveLength(1);
+  });
+
+  test("org legacy sem assinatura vinculada: o RECEIVED não escreve nada", async () => {
+    const s = await seed({ status: "legacy", noSubscription: true });
+    pays.pay_vip = { id: "pay_vip", subscription: "sub_x", customer: "cus_1", externalReference: s.organizationId, status: "RECEIVED", value: 497, dueDate: "2026-12-05" };
+    await deliver("PAYMENT_RECEIVED", "pay_vip");
+    expect(await subOf(s.organizationId)).toBeNull();
+    expect((await orgOf(s.organizationId))?.billing).toMatchObject({ status: "legacy", updatedAt: 1 });
+    expect(await invoices(s.organizationId)).toHaveLength(0);
+    expect(await notices(s.organizationId, "plan_payment_received")).toHaveLength(0);
+  });
+});
