@@ -8,7 +8,7 @@ import { convexTest, TestConvex } from "convex-test";
 import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { isAtLeastVersion, TERMS_MIN_ACCEPTED_VERSION, TERMS_VERSION } from "./lib/terms";
+import { isAcceptableSignupVersion, isAtLeastVersion, TERMS_MIN_ACCEPTED_VERSION, TERMS_VERSION } from "./lib/terms";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 let t: TestConvex<typeof schema>;
@@ -32,6 +32,13 @@ describe("versões dos Termos", () => {
     expect(isAtLeastVersion(TERMS_VERSION, TERMS_MIN_ACCEPTED_VERSION)).toBe(true);
     expect(isAtLeastVersion("2026-11-10", "2026-11-10")).toBe(true);
     expect(isAtLeastVersion("2026-11-09", "2026-11-10")).toBe(false);
+  });
+
+  test("isAcceptableSignupVersion: entre a mínima e a vigente", () => {
+    expect(isAcceptableSignupVersion("2026-11-10")).toBe(true);
+    expect(isAcceptableSignupVersion("2026-11-16")).toBe(true);
+    expect(isAcceptableSignupVersion("2026-11-09")).toBe(false);
+    expect(isAcceptableSignupVersion("2027-01-01")).toBe(false);
   });
 
   test("aceite da versão mínima dispensa novo aceite (currentVersion == acceptedVersion)", async () => {
@@ -134,6 +141,25 @@ describe("createOrganization com acceptedTermsVersion", () => {
     ).rejects.toThrow(/atualizados/);
     expect(await t.run((ctx) => ctx.db.query("organizations").collect())).toHaveLength(0);
     await as(u).mutation(api.organizations.createOrganization, { name: "Org V", slug: "org-v" });
+    expect(await rows()).toHaveLength(0);
+  });
+
+  test("cadastro aceita versão entre a mínima e a vigente e grava a recebida", async () => {
+    const u = await mkUser("old@acme.com.br");
+    await as(u).mutation(api.organizations.createOrganization, { name: "Org Old", slug: "org-old", acceptedTermsVersion: "2026-11-10" });
+    expect((await rows()).map((r) => r.version)).toEqual(["2026-11-10"]);
+    const u2 = await mkUser("new@acme.com.br");
+    await as(u2).mutation(api.organizations.createOrganization, { name: "Org New", slug: "org-new", acceptedTermsVersion: "2026-11-16" });
+    expect((await rows()).map((r) => r.version).sort()).toEqual(["2026-11-10", "2026-11-16"]);
+  });
+
+  test("cadastro recusa versão abaixo da mínima ou futura", async () => {
+    const u = await mkUser("bad@acme.com.br");
+    for (const v of ["2026-11-09", "2027-01-01"]) {
+      await expect(
+        as(u).mutation(api.organizations.createOrganization, { name: "Org X", slug: "org-x", acceptedTermsVersion: v })
+      ).rejects.toThrow(/atualizados/);
+    }
     expect(await rows()).toHaveLength(0);
   });
 

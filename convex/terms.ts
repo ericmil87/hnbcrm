@@ -8,13 +8,18 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { mutation, query } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { isAtLeastVersion, TERMS_MIN_ACCEPTED_VERSION, TERMS_USER_AGENT_MAX, TERMS_VERSION } from "./lib/terms";
+import { isAcceptableSignupVersion, isAtLeastVersion, TERMS_MIN_ACCEPTED_VERSION, TERMS_USER_AGENT_MAX, TERMS_VERSION } from "./lib/terms";
 
 const WRONG_VERSION =
   "Os Termos de Uso foram atualizados. Recarregue a página para ler a versão atual antes de aceitar.";
 
 export function assertCurrentTermsVersion(version: string): void {
   if (version !== TERMS_VERSION) throw new ConvexError(WRONG_VERSION);
+}
+
+/** Cadastro de org: aceita qualquer versão entre a mínima e a vigente (grava a recebida). */
+export function assertSignupTermsVersion(version: string): void {
+  if (!isAcceptableSignupVersion(version)) throw new ConvexError(WRONG_VERSION);
 }
 
 /** Última versão aceita pelo usuário (a mais recente por ordem de gravação). */

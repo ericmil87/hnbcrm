@@ -19,5 +19,13 @@ export function isAtLeastVersion(a: string, b: string): boolean {
   return a >= b;
 }
 
+/**
+ * Versão aceitável no CADASTRO de org: entre a mínima e a vigente. Um PWA antigo (com a
+ * página /termos em cache) manda uma versão anterior que a pessoa de fato viu.
+ */
+export function isAcceptableSignupVersion(v: string): boolean {
+  return isAtLeastVersion(v, TERMS_MIN_ACCEPTED_VERSION) && isAtLeastVersion(TERMS_VERSION, v);
+}
+
 /** Teto do `userAgent` gravado no aceite (dado técnico, não é identificador). */
 export const TERMS_USER_AGENT_MAX = 200;

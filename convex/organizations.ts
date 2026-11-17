@@ -8,7 +8,7 @@ import { aiConfigValidator, notifPresetValidator } from "./schema";
 import { initialOrgBilling, initialTrialBilling } from "./lib/entitlementsOps";
 import { TRIAL } from "./lib/plans";
 import { pickFreeOrgSlug } from "./lib/orgSlug";
-import { assertCurrentTermsVersion, recordTermsAcceptance } from "./terms";
+import { assertSignupTermsVersion, recordTermsAcceptance } from "./terms";
 
 // Get user's organizations
 export const getUserOrganizations = query({
@@ -65,7 +65,7 @@ export const createOrganization = mutation({
     const user = await requireAccountWithEmail(ctx, userId);
 
     // Versão errada recusa ANTES de criar qualquer coisa (front desatualizado).
-    if (args.acceptedTermsVersion !== undefined) assertCurrentTermsVersion(args.acceptedTermsVersion);
+    if (args.acceptedTermsVersion !== undefined) assertSignupTermsVersion(args.acceptedTermsVersion);
 
     const slugTaken = async (candidate: string) =>
       (await ctx.db.query("organizations").withIndex("by_slug", (q) => q.eq("slug", candidate)).first()) !== null;

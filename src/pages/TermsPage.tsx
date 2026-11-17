@@ -358,8 +358,8 @@ export function TermsPage() {
                 {formatCount(TRIAL.aiAttendances)} atendimentos IA, sem precisar informar cartão. Se
                 você não cadastrar um cartão, não há cobrança ao fim do teste. Se cadastrar, a primeira
                 cobrança é no dia em que o teste termina (cláusula 8.3). É permitido um teste por pessoa; criar contas para obter novos testes é
-                abuso e pode levar ao encerramento. Ao fim do teste, a conta passa a só leitura (cláusula 8)
-                até a contratação de um plano.
+                abuso e pode levar ao encerramento. Sem cartão cadastrado, ao fim do teste a conta passa a só
+                leitura (cláusula 8) até a contratação de um plano.
               </p>
               <p id="reajuste">
                 <span className="text-text-primary font-medium">Preço e reajuste.</span> Os preços são em
@@ -399,8 +399,10 @@ export function TermsPage() {
                 <span className="text-text-primary font-medium">8.6 Cobrança recusada e atraso.</span> Se o banco recusar a cobrança no cartão,
                 avisamos por e-mail e o Asaas pode tentar de novo nos dias seguintes. Enquanto o emissor
                 tenta, a conta continua funcionando. Quando o cartão foi cadastrado durante o teste, damos
-                uma carência curta depois do fim do teste, para as tentativas de cobrança terminarem. Se o
-                atraso passar de 7 dias, a conta{" "}
+                uma carência curta depois do fim do teste, para as tentativas de cobrança terminarem. Se a
+                primeira cobrança no cartão, ao fim do teste, for recusada e a carência acabar, vale a regra
+                do teste vencido: a conta fica só leitura até o pagamento. A regra de atraso de 7 dias vale
+                para quem já pagou algum ciclo. Se o atraso passar de 7 dias, a conta{" "}
                 <span className="text-text-primary font-medium">poderá ser colocada em modo só leitura</span>
                 , por decisão nossa, caso a caso: a equipe continua vendo tudo e exportando os dados, mas a
                 IA e o envio de mensagens e campanhas ficam pausados. As mensagens que chegarem continuam
