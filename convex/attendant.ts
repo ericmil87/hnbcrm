@@ -63,6 +63,7 @@ import { synthesizeVoicePreview } from "./lib/voicePreviewOps";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { notePlatformLlmFailure } from "./lib/platformLlmFailure";
+import { stripPlatformLlmFailureTag } from "./lib/platformSentinel";
 import { createHandoffCore } from "./handoffs";
 import { coalesceKeys, createNotification } from "./lib/notify";
 import { attendantActive, isSticker, visionEnabledForOrg } from "./lib/mediaEnrichment";
@@ -3386,7 +3387,7 @@ export const internalRecordQueueFailure = internalMutation({
         status: "pending",
         attempts,
         nextAttemptAt: now + backoff,
-        error: sanitizeLlmError(args.error),
+        error: sanitizeLlmError(stripPlatformLlmFailureTag(args.error)),
         updatedAt: now,
       });
       return { retryInMs: backoff };
@@ -3396,7 +3397,7 @@ export const internalRecordQueueFailure = internalMutation({
     await ctx.db.patch(item._id, {
       status: "failed",
       attempts,
-      error: sanitizeLlmError(args.error),
+      error: sanitizeLlmError(stripPlatformLlmFailureTag(args.error)),
       updatedAt: now,
     });
     // Follow-up que falhou vira tarefa de gente — NUNCA repasse: um repasse

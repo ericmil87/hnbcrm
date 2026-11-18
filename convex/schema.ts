@@ -2799,6 +2799,8 @@ const applicationTables = {
     // seguidas, desde quando o problema está ATIVO (alertado) e a última
     // observação. Ausentes nos alertas pontuais (sem estado de "resolvido").
     failStreak: v.optional(v.number()),
+    // Observações boas seguidas com o problema ativo (histerese do "resolvido").
+    okStreak: v.optional(v.number()),
     activeSince: v.optional(v.number()),
     lastObservedAt: v.optional(v.number()),
     updatedAt: v.number(),

@@ -39,6 +39,7 @@ import {
   formatUsd,
   isStuckOutbound,
   isStuckTranscription,
+  STUCK_OUTBOUND_AFTER_MS,
   summarizeNames,
 } from "./lib/platformSentinel";
 
@@ -49,6 +50,8 @@ const WARNING_THROTTLE_MS = 12 * HOUR;
 const SCAN_MESSAGES = 300;
 /** Evento do Asaas `pending` há mais que isso: o processamento parou. */
 const ASAAS_PENDING_STUCK_MS = 2 * HOUR;
+/** Canal bridge caído há mais que isso sai do resumo (abandonado). */
+const LOST_CHANNEL_MAX_AGE_MS = 7 * 24 * HOUR;
 
 /** Sentinela ligada neste deployment? */
 export function platformAlertsEnabled(): boolean {
@@ -59,16 +62,24 @@ export function platformAlertsEnabled(): boolean {
 // ── Falha real de IA (gancho) ───────────────────────────────────────────────
 
 export const internalNoteLlmFailure = internalMutation({
-  args: { status: v.union(v.literal(401), v.literal(402), v.literal(403)) },
+  args: { status: v.union(v.literal(401), v.literal(402)) },
   returns: v.null(),
   handler: async (ctx, args) => {
+    // A sonda periódica já está alertando o mesmo incidente (com "resolvido"):
+    // não manda um 2º crítico pelo gancho.
+    const probeKind = args.status === 402 ? "openrouter_no_balance" : "openrouter_key_invalid";
+    const probeRow = await ctx.db
+      .query("platformAlerts")
+      .withIndex("by_kind", (q) => q.eq("kind", probeKind))
+      .unique();
+    if (probeRow?.activeSince !== undefined) return null;
     if (args.status === 402) {
       await platformAlert(ctx, {
         kind: "openrouter_no_credit",
         severity: "critical",
         title: "OpenRouter sem crédito: a IA da plataforma está falhando",
         detail:
-          "Uma chamada real de IA (atendente, copiloto, tradução ou visão) com a chave da plataforma recebeu HTTP 402 da OpenRouter (crédito insuficiente).",
+          "Uma chamada real de IA (atendente, copiloto, tradução, grupos ou onboarding) com a chave da plataforma recebeu HTTP 402 da OpenRouter (crédito insuficiente).",
         howToFix:
           "Recarregue o crédito em openrouter.ai/settings/credits (e confira o limite da chave em openrouter.ai/settings/keys).",
         fallback:
@@ -79,7 +90,7 @@ export const internalNoteLlmFailure = internalMutation({
         kind: "openrouter_auth",
         severity: "critical",
         title: "OpenRouter recusou a chave da plataforma",
-        detail: `Uma chamada real de IA com a chave da plataforma recebeu HTTP ${args.status} da OpenRouter (chave inválida, revogada ou sem permissão).`,
+        detail: "Uma chamada real de IA com a chave da plataforma recebeu HTTP 401 da OpenRouter (chave inválida ou revogada).",
         howToFix:
           "Gere uma chave nova em openrouter.ai/settings/keys e rode: npx convex env set --prod OPENROUTER_API_KEY <chave>.",
         fallback: "Enquanto isso o atendente IA falha e cria repasses para humanos; orgs BYO não são afetadas.",
@@ -140,12 +151,13 @@ export const internalProbeTick = internalAction({
     const whisperUrl = process.env.WHISPER_SERVICE_URL?.trim();
     if (whisperUrl) {
       const r = await probe(`${whisperUrl.replace(/\/$/, "")}/health`);
-      obs.whisperOk = r.status >= 200 && r.status < 300;
+      // Só rede/timeout/5xx contam como "fora" (404/401 seria config, não queda).
+      obs.whisperOk = !(r.status === 0 || r.status >= 500);
     }
     const libreUrl = process.env.LIBRETRANSLATE_URL?.trim();
     if (libreUrl) {
       const r = await probe(`${libreUrl.replace(/\/$/, "")}/languages`);
-      obs.libreOk = r.status >= 200 && r.status < 300 && Array.isArray(r.body);
+      obs.libreOk = !(r.status === 0 || r.status >= 500);
     }
     // Asaas: 1×/hora (1ª rodada da hora) — a chave raramente muda.
     if (isAsaasEnabled() && new Date().getUTCMinutes() < 15) {
@@ -289,7 +301,7 @@ export const internalRecordBridgeProbeRound = internalMutation({
       failing: bridgeProbeRoundFailing(args.checked, args.probeErrors),
       minStreak: 2,
       title: "Gateway do WhatsApp (bridge) inalcançável",
-      detail: `Na última rodada do monitor de canais, ${args.probeErrors} de ${args.checked + args.probeErrors} sondas ao gateway falharam (rede/HTTP), pela 2ª vez seguida.`,
+      detail: `Na última rodada completa do monitor de canais, ${args.probeErrors} de ${args.checked + args.probeErrors} sondas ao gateway falharam por rede, timeout ou erro 5xx, pela 2ª rodada seguida.`,
       howToFix: "Confira a VPS do wuzapi (container, rede, certificado do domínio do gateway) e os logs do Convex do cron \"channel health\".",
       fallback: "Mensagens de WhatsApp via bridge não entram nem saem enquanto isso; os clientes não são avisados automaticamente.",
       recoveredDetail: "As sondas ao gateway do bridge voltaram a responder.",
@@ -304,15 +316,19 @@ async function orgName(
   ctx: MutationCtx,
   cache: Map<Id<"organizations">, Doc<"organizations"> | null>,
   id: Id<"organizations">
-): Promise<{ name: string; demo: boolean }> {
+): Promise<{ name: string; demo: boolean; byo: boolean }> {
   let org = cache.get(id);
   if (org === undefined) {
     org = await ctx.db.get(id);
     cache.set(id, org);
   }
+  const settings = org?.settings as
+    | { demoMode?: boolean; aiConfig?: { providerConfig?: { mode?: string } } }
+    | undefined;
   return {
     name: org?.name ?? "org removida",
-    demo: (org?.settings as { demoMode?: boolean } | undefined)?.demoMode === true,
+    demo: settings?.demoMode === true,
+    byo: settings?.aiConfig?.providerConfig?.mode === "byo",
   };
 }
 
@@ -333,7 +349,13 @@ export const internalScanTick = internalMutation({
     const orgs = new Map<Id<"organizations">, Doc<"organizations"> | null>();
 
     // 1) Mensagens recentes: saída presa e transcrição presa.
-    const recent = await ctx.db.query("messages").order("desc").take(SCAN_MESSAGES);
+    // Começa já fora da janela de graça: num pico, as 300 mais novas cobririam
+    // menos de 15 min e um incidente em curso pareceria resolvido.
+    const recent = await ctx.db
+      .query("messages")
+      .withIndex("by_creation_time", (q) => q.lt("_creationTime", now - STUCK_OUTBOUND_AFTER_MS))
+      .order("desc")
+      .take(SCAN_MESSAGES);
     const stuckOrgs: string[] = [];
     let stuckOutbound = 0;
     let stuckTranscriptions = 0;
@@ -356,7 +378,7 @@ export const internalScanTick = internalMutation({
       detail: `${stuckOutbound} mensagem(ns) de saída sem envio há mais de 15 min (últimas 6 h). Orgs: ${summarizeNames(stuckOrgs) || "-"}.`,
       howToFix:
         "Veja os logs do Convex (whatsapp:internalDispatchMessage) e o estado do canal. Para reenviar: npx convex run --prod opsMigration:internalRedispatchStuckOutbound '{\"sinceMs\":21600000}' (dryRun primeiro).",
-      recoveredDetail: "Não há mais mensagens de saída presas.",
+      recoveredDetail: "Não aparecem mais mensagens de saída presas nas últimas 6 h (enviadas, falhadas de forma visível ou fora da janela).",
     });
     await platformCondition(ctx, {
       kind: "transcription_stuck",
@@ -366,7 +388,7 @@ export const internalScanTick = internalMutation({
       detail: `${stuckTranscriptions} nota(s) de voz com transcrição pendente há mais de 20 min.`,
       howToFix: "Confira o Whisper da VPS e os logs de transcription:autoTranscribe no Convex.",
       throttleMs: WARNING_THROTTLE_MS,
-      recoveredDetail: "As transcrições pendentes foram concluídas.",
+      recoveredDetail: "Não aparecem mais transcrições pendentes antigas nas últimas 6 h.",
     });
 
     // 2) Rajada de erros de IA na última hora (qualquer causa).
@@ -377,7 +399,11 @@ export const internalScanTick = internalMutation({
       .take(burst * 4);
     const byKind = new Map<string, number>();
     const errorOrgs = new Set<string>();
+    let platformErrors = 0;
     for (const r of errors) {
+      // Org com chave própria (BYO) paga e resolve a própria conta: fora da contagem.
+      if ((await orgName(ctx, orgs, r.organizationId)).byo) continue;
+      platformErrors++;
       byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1);
       errorOrgs.add(r.organizationId);
     }
@@ -385,11 +411,11 @@ export const internalScanTick = internalMutation({
     await platformCondition(ctx, {
       kind: "llm_error_burst",
       severity: "warning",
-      failing: errors.length >= burst,
+      failing: platformErrors >= burst,
       title: "Muitas falhas de IA na última hora",
-      detail: `${errors.length}${errors.length >= burst * 4 ? "+" : ""} execuções de IA com erro na última hora (${kinds || "-"}), em ${errorOrgs.size} org(s).`,
+      detail: `${platformErrors}${errors.length >= burst * 4 ? "+" : ""} execuções de IA com erro na última hora (${kinds || "-"}), em ${errorOrgs.size} org(s) sem chave própria.`,
       howToFix:
-        "Rode npx convex run --prod aiDiagnostics:pingChain para ver o erro de cada rota (429 sustentado, provedor fora, modelo removido). Orgs BYO também entram nesta contagem.",
+        "Rode npx convex run --prod aiDiagnostics:pingChain para ver o erro de cada rota (429 sustentado, provedor fora, modelo removido).",
       throttleMs: WARNING_THROTTLE_MS,
       recoveredDetail: "As falhas de IA voltaram ao normal.",
     });
@@ -421,6 +447,8 @@ export const internalScanTick = internalMutation({
     const lostOrgs: string[] = [];
     for (const c of configs) {
       if (c.status !== "active" || c.bridgeSessionAlertedAt === undefined) continue;
+      // Canal largado há mais de 7 dias: o cliente já sabe; não repetir para sempre.
+      if (now - c.bridgeSessionAlertedAt > LOST_CHANNEL_MAX_AGE_MS) continue;
       if (c.bridgeSessionState === "connected") continue;
       try {
         if (configTransport(c) !== "bridge") continue;
@@ -436,7 +464,7 @@ export const internalScanTick = internalMutation({
       severity: "warning",
       failing: lostOrgs.length > 0,
       title: "Canais de WhatsApp (bridge) desconectados",
-      detail: `${lostOrgs.length} canal(is) ativos sem sessão: ${summarizeNames(lostOrgs)}. Os admins dessas orgs já foram avisados pelo app.`,
+      detail: `${lostOrgs.length} canal(is) ativos sem sessão (caídos nos últimos 7 dias): ${summarizeNames(lostOrgs)}. Os admins dessas orgs já foram avisados pelo app.`,
       howToFix: "Combine com o cliente a reconexão (QR ou código em Configurações > Canais, ou pelo Telegram).",
       throttleMs: 24 * HOUR,
       recoveredDetail: "Todos os canais bridge ativos voltaram a ter sessão.",
@@ -446,7 +474,7 @@ export const internalScanTick = internalMutation({
       skipped: false,
       stuckOutbound,
       stuckTranscriptions,
-      llmErrors: errors.length,
+      llmErrors: platformErrors,
       asaasProblems,
       bridgeChannelsLost: lostOrgs.length,
     };

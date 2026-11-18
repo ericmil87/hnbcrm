@@ -18,6 +18,7 @@ import {
   isStuckTranscription,
   parsePlatformLlmFailure,
   platformLlmFailureTag,
+  stripPlatformLlmFailureTag,
   summarizeNames,
 } from "./lib/platformSentinel";
 import { chatWithFallback, resolveByoRoute, resolvePlatformChain } from "./lib/llm";
@@ -76,6 +77,9 @@ describe("vereditos puros", () => {
     expect(parsePlatformLlmFailure("LLM request failed (HTTP 402): x")).toBeNull();
     expect(parsePlatformLlmFailure(undefined)).toBeNull();
     expect(parsePlatformLlmFailure("[openrouter-plataforma HTTP 500] x")).toBeNull();
+    // 403 da OpenRouter = moderação/modelo restrito (texto do cliente): nunca alerta de chave.
+    expect(parsePlatformLlmFailure("[openrouter-plataforma HTTP 403] x")).toBeNull();
+    expect(stripPlatformLlmFailureTag(`${platformLlmFailureTag(402)}LLM falhou`)).toBe("LLM falhou");
   });
 
   test("saída presa: outbound sem envio entre 15 min e 6 h, fora de retry/self-heal/tradução", () => {
@@ -116,11 +120,19 @@ describe("vereditos puros", () => {
     expect(summarizeNames(["A", "B", "A", "C"], 2)).toBe("A, B e mais 1");
   });
 
-  test("decisão da condição", () => {
-    expect(decidePlatformCondition({ failing: false, previousStreak: 0, activeSince: undefined, minStreak: 2 })).toEqual({ streak: 0, action: "none" });
-    expect(decidePlatformCondition({ failing: true, previousStreak: 0, activeSince: undefined, minStreak: 2 })).toEqual({ streak: 1, action: "pending" });
-    expect(decidePlatformCondition({ failing: true, previousStreak: 1, activeSince: undefined, minStreak: 2 })).toEqual({ streak: 2, action: "alert" });
-    expect(decidePlatformCondition({ failing: false, previousStreak: 1, activeSince: undefined, minStreak: 2 })).toEqual({ streak: 0, action: "recover" });
+  test("decisão da condição (com histerese no resolvido)", () => {
+    const d = (failing: boolean, previousStreak: number, activeSince?: number, previousOkStreak = 0) =>
+      decidePlatformCondition({ failing, previousStreak, previousOkStreak, activeSince, minStreak: 2 });
+    expect(d(false, 0)).toEqual({ streak: 0, okStreak: 0, action: "none" });
+    expect(d(true, 0)).toEqual({ streak: 1, okStreak: 0, action: "pending" });
+    expect(d(true, 1)).toEqual({ streak: 2, okStreak: 0, action: "alert" });
+    // Sem alerta ativo, uma boa zera na hora (sem e-mail).
+    expect(d(false, 1)).toEqual({ streak: 0, okStreak: 0, action: "recover" });
+    // Alerta ativo: a 1ª boa só conta; a 2ª seguida resolve.
+    expect(d(false, 3, 100)).toEqual({ streak: 3, okStreak: 1, action: "recovering" });
+    expect(d(false, 3, 100, 1)).toEqual({ streak: 0, okStreak: 0, action: "recover" });
+    // Uma ruim no meio zera as boas.
+    expect(d(true, 3, 100, 1)).toEqual({ streak: 4, okStreak: 0, action: "alert" });
   });
 });
 
@@ -183,6 +195,8 @@ describe("platformCondition", () => {
     expect(sends(spy, "teste_cond")).toBe(1);
 
     vi.setSystemTime(Date.now() + 30 * MIN);
+    expect(await t.run((ctx) => platformCondition(ctx, { ...input, failing: false }))).toEqual({ state: "recovering", okStreak: 1 });
+    expect(resolvedSends(spy, "teste_cond")).toBe(0);
     expect(await t.run((ctx) => platformCondition(ctx, { ...input, failing: false }))).toEqual({ state: "recovered", notified: false });
     expect(resolvedSends(spy, "teste_cond")).toBe(1);
     const row = await alertRow(t, "teste_cond");
@@ -194,6 +208,22 @@ describe("platformCondition", () => {
     await t.run((ctx) => platformCondition(ctx, { ...input, failing: true }));
     await t.run((ctx) => platformCondition(ctx, { ...input, failing: true }));
     expect(sends(spy, "teste_cond")).toBe(2);
+  });
+
+  test("oscilação em volta do limite não vira par alerta + resolvido a cada rodada", async () => {
+    enableAlerts();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = convexTest(schema, modules);
+    const input = { kind: "teste_flap", severity: "warning" as const, title: "Y", detail: "Y", throttleMs: 12 * 60 * MIN };
+    for (const failing of [true, false, true, false, true, false, true]) {
+      await t.run((ctx) => platformCondition(ctx, { ...input, failing }));
+      vi.setSystemTime(Date.now() + 30 * MIN);
+    }
+    expect(sends(spy, "teste_flap")).toBe(1);
+    expect(resolvedSends(spy, "teste_flap")).toBe(0);
+    await t.run((ctx) => platformCondition(ctx, { ...input, failing: false }));
+    await t.run((ctx) => platformCondition(ctx, { ...input, failing: false }));
+    expect(resolvedSends(spy, "teste_flap")).toBe(1);
   });
 
   test("sem PLATFORM_ALERT_EMAIL: não envia nem alerta de resolvido", async () => {
@@ -261,6 +291,7 @@ describe("sondas", () => {
     await t.mutation(internal.platformSentinel.internalApplyProbes, { whisperOk: false });
     expect(sends(spy, "whisper_down")).toBe(1);
     await t.mutation(internal.platformSentinel.internalApplyProbes, { whisperOk: true });
+    await t.mutation(internal.platformSentinel.internalApplyProbes, { whisperOk: true });
     expect(resolvedSends(spy, "whisper_down")).toBe(1);
   });
 
@@ -272,11 +303,15 @@ describe("sondas", () => {
     await t.mutation(internal.platformSentinel.internalApplyProbes, { openrouterKey: "invalid", openrouterKeyStatus: 401 });
     expect(sends(spy, "openrouter_key_invalid")).toBe(1);
     await t.mutation(internal.platformSentinel.internalApplyProbes, { openrouterKey: "ok", openrouterKeyRemainingUsd: 4, credits: "ok", creditsBalanceUsd: 50 });
+    await t.mutation(internal.platformSentinel.internalApplyProbes, { openrouterKey: "ok", openrouterKeyRemainingUsd: 4, credits: "ok", creditsBalanceUsd: 50 });
     expect(resolvedSends(spy, "openrouter_key_invalid")).toBe(1);
     expect(sends(spy, "openrouter_low_balance")).toBe(1);
     expect(sends(spy, "openrouter_no_balance")).toBe(0);
     await t.mutation(internal.platformSentinel.internalApplyProbes, { openrouterKey: "ok", openrouterKeyRemainingUsd: null, credits: "ok", creditsBalanceUsd: 0 });
     expect(sends(spy, "openrouter_no_balance")).toBe(1);
+    // O gancho das chamadas reais não manda um 2º crítico do mesmo incidente.
+    await t.mutation(internal.platformSentinel.internalNoteLlmFailure, { status: 402 });
+    expect(sends(spy, "openrouter_no_credit")).toBe(0);
     // Desconhecido (429/rede) não muda estado.
     await t.mutation(internal.platformSentinel.internalApplyProbes, { openrouterKey: "unknown" });
     expect(resolvedSends(spy, "openrouter_no_balance")).toBe(0);
@@ -327,6 +362,7 @@ describe("sondas", () => {
     await t.mutation(internal.platformSentinel.internalRecordBridgeProbeRound, { checked: 0, probeErrors: 4 });
     expect(sends(spy, "bridge_gateway_unreachable")).toBe(1);
     await t.mutation(internal.platformSentinel.internalRecordBridgeProbeRound, { checked: 4, probeErrors: 0 });
+    await t.mutation(internal.platformSentinel.internalRecordBridgeProbeRound, { checked: 4, probeErrors: 0 });
     expect(resolvedSends(spy, "bridge_gateway_unreachable")).toBe(1);
   });
 });
@@ -338,6 +374,24 @@ describe("varredura", () => {
     const t = convexTest(schema, modules);
     const real = await seedOrg(t, "Org Alfa");
     const demo = await seedOrg(t, "Org Demo", true);
+    const insertOut = (n: number, seed: typeof real) => t.run(async (ctx) => {
+      for (let i = 0; i < n; i++) {
+        await ctx.db.insert("messages", {
+          organizationId: seed.organizationId,
+          conversationId: seed.conversationId,
+          direction: "outbound",
+          senderType: "human",
+          content: "segredo do cliente",
+          contentType: "text",
+          isInternal: false,
+          createdAt: Date.now(),
+        } as any);
+      }
+    });
+    await insertOut(3, real);
+    await insertOut(5, demo);
+    vi.setSystemTime(Date.now() + 30 * MIN);
+    await insertOut(1, real); // recente: ainda no pacing
     await t.run(async (ctx) => {
       const now = Date.now();
       const out = (seed: typeof real, createdAt: number) =>
@@ -351,15 +405,52 @@ describe("varredura", () => {
           isInternal: false,
           createdAt,
         } as any);
-      for (let i = 0; i < 3; i++) await out(real, now - 30 * MIN);
-      for (let i = 0; i < 5; i++) await out(demo, now - 30 * MIN);
-      await out(real, now - MIN);
+      void out;
+      void now;
     });
     const r = await t.mutation(internal.platformSentinel.internalScanTick, {});
     expect(r).toMatchObject({ skipped: false, stuckOutbound: 3 });
     expect(sends(spy, "outbound_stuck")).toBe(1);
     const log = JSON.stringify(spy.mock.calls);
     expect(log).not.toContain("segredo do cliente");
+  });
+
+  test("rajada de erros de IA ignora orgs BYO; canal caído há mais de 7 dias sai do resumo; Asaas falhado alerta", async () => {
+    enableAlerts();
+    vi.stubEnv("PLATFORM_ALERT_LLM_ERROR_BURST", "3");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = convexTest(schema, modules);
+    const byo = await seedOrg(t, "Org BYO");
+    const plat = await seedOrg(t, "Org Plataforma");
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      const org = await ctx.db.get(byo.organizationId);
+      await ctx.db.patch(byo.organizationId, {
+        settings: { ...(org!.settings as any), aiConfig: { enabled: true, autoAssign: false, handoffThreshold: 0.8, providerConfig: { mode: "byo", zdr: true, models: { copilot: "x", attendant: "x", classify: "x" } } } },
+      } as any);
+      for (let i = 0; i < 5; i++) {
+        await ctx.db.insert("agentRuns", { organizationId: byo.organizationId, kind: "attendant", status: "error", requestCount: 1, startedAt: now - MIN });
+      }
+      await ctx.db.insert("agentRuns", { organizationId: plat.organizationId, kind: "translation", status: "error", requestCount: 1, startedAt: now - MIN });
+      // Canal largado há 8 dias: fora do resumo.
+      await ctx.db.insert("channelConfigs", {
+        organizationId: plat.organizationId,
+        channel: "whatsapp",
+        provider: "bridge",
+        displayName: "Velho",
+        status: "active",
+        bridgeSessionState: "disconnected",
+        bridgeSessionAlertedAt: now - 8 * 24 * 60 * MIN,
+        createdAt: now,
+        updatedAt: now,
+      } as any);
+      await ctx.db.insert("billingWebhookEvents", { provider: "asaas", eventId: "evt_1", event: "PAYMENT_CONFIRMED", receivedAt: now - 60 * MIN, status: "failed", attempts: 5 } as any);
+    });
+    const r = await t.mutation(internal.platformSentinel.internalScanTick, {});
+    expect(r).toMatchObject({ llmErrors: 1, bridgeChannelsLost: 0, asaasProblems: 1 });
+    expect(sends(spy, "llm_error_burst")).toBe(0);
+    expect(sends(spy, "bridge_channels_lost")).toBe(0);
+    expect(sends(spy, "asaas_webhook_failing")).toBe(1);
   });
 
   test("sem a env a varredura não lê nada", async () => {

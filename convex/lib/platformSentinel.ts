@@ -73,7 +73,7 @@ export function formatUsd(n: number): string {
 
 /**
  * Marcador que `chatWithFallback`/copiloto prefixam no erro quando uma rota de
- * PLATAFORMA da OpenRouter recusou por chave (401/403) ou crédito (402). BYO
+ * PLATAFORMA da OpenRouter recusou por chave (401) ou crédito (402). BYO
  * nunca recebe o marcador (a org paga a própria conta). Sobrevive ao
  * `sanitizeLlmError` (vem no início, antes do corte de 500 caracteres).
  */
@@ -83,13 +83,18 @@ export function platformLlmFailureTag(status: number): string {
   return `${PLATFORM_LLM_FAILURE_TAG}${status}] `;
 }
 
-/** Status 401/402/403 do marcador, ou null. */
-export function parsePlatformLlmFailure(error: string | undefined | null): 401 | 402 | 403 | null {
+/** Status 401/402 do marcador, ou null. */
+export function parsePlatformLlmFailure(error: string | undefined | null): 401 | 402 | null {
   if (!error) return null;
   const i = error.indexOf(PLATFORM_LLM_FAILURE_TAG);
   if (i < 0) return null;
   const status = Number(error.slice(i + PLATFORM_LLM_FAILURE_TAG.length, i + PLATFORM_LLM_FAILURE_TAG.length + 3));
-  return status === 401 || status === 402 || status === 403 ? status : null;
+  return status === 401 || status === 402 ? status : null;
+}
+
+/** Tira o marcador do texto mostrado a pessoas (ele só serve ao agentRuns). */
+export function stripPlatformLlmFailureTag(error: string): string {
+  return error.replace(/^\[openrouter-plataforma HTTP \d{3}\] /, "");
 }
 
 // ── Varredura de mensagens recentes ─────────────────────────────────────────

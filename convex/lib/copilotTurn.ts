@@ -22,6 +22,7 @@ import { Id } from "../_generated/dataModel";
 import { ChatMessage, ChatToolCall, StreamToolCallDelta } from "./llm/types";
 import { streamChat, accumulateToolCallDeltas, isRetriable } from "./llm/openaiCompatible";
 import { ResolvedRoute, tagPlatformLlmFailure } from "./llm";
+import { stripPlatformLlmFailureTag } from "./platformSentinel";
 import {
   resolveOrgRoutes,
   resolveProductRoutes,
@@ -599,7 +600,8 @@ export async function runCopilotTurn(
       finalText,
       pendingActionIds,
       status: canceled ? "canceled" : "error",
-      error: message,
+      // O marcador do alerta de plataforma fica só no agentRuns (não vai à tela).
+      error: stripPlatformLlmFailureTag(message),
       toolCallNames,
       usedProvider,
       agentRunId: runId,

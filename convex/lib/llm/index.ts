@@ -85,10 +85,13 @@ export function resolvePlatformChain(
 
 /**
  * Alerta de plataforma (convex/platformSentinel.ts): se alguma rota da
- * OpenRouter com a chave da PLATAFORMA recusou por chave (401/403) ou crédito
+ * OpenRouter com a chave da PLATAFORMA recusou por chave (401) ou crédito
  * (402), prefixa o erro final com o marcador lido em `agentRuns.internalFinishRun`
  * (`parsePlatformLlmFailure`). Não muda tipo nem status do erro; BYO nunca entra.
- * O OpenCode Go fica de fora: ele usa 402/403 para cota esgotada do plano.
+ * O OpenCode Go fica de fora: ele usa 402/403 para cota esgotada do plano. O
+ * 403 da OpenRouter também fica de fora: ela o usa para entrada barrada pela
+ * moderação ou modelo restrito (o texto do cliente decide) — chave revogada é
+ * coberta pela sonda periódica de `/key`.
  */
 export function tagPlatformLlmFailure(err: unknown, failures: { route: ResolvedRoute; error: unknown }[]): unknown {
   const hit = failures.find(
@@ -96,7 +99,7 @@ export function tagPlatformLlmFailure(err: unknown, failures: { route: ResolvedR
       f.route.platform === true &&
       f.route.providerId === "openrouter" &&
       f.error instanceof LlmHttpError &&
-      (f.error.status === 401 || f.error.status === 402 || f.error.status === 403)
+      (f.error.status === 401 || f.error.status === 402)
   );
   if (!hit || !(err instanceof Error)) return err;
   const tag = platformLlmFailureTag((hit.error as LlmHttpError).status);
