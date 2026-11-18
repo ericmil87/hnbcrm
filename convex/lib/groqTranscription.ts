@@ -117,7 +117,7 @@ export function classifyGroqFailure(
   headers: { get(name: string): string | null }
 ): GroqFailure {
   if (status === 401 || status === 403) return { kind: "auth", status, cooldownMs: 30 * 60_000, message: `HTTP ${status}` };
-  if (status === 402 || (status !== 429 && QUOTA_RE.test(bodyText))) {
+  if (status === 402 || ((status === 400 || status === 403) && QUOTA_RE.test(bodyText))) {
     return { kind: "quota", status, cooldownMs: 60 * 60_000, message: `HTTP ${status}` };
   }
   if (status === 429) {
@@ -147,8 +147,12 @@ export function classifyGroqFailure(
 export function groqHeaderCooldownMs(headers: { get(name: string): string | null }, minRemainingFraction = 0.15): number | null {
   let cooldown = 0;
   for (const kind of ["audio-seconds", "requests"] as const) {
-    const limit = Number(headers.get(`x-ratelimit-limit-${kind}`));
-    const remaining = Number(headers.get(`x-ratelimit-remaining-${kind}`));
+    const limitRaw = headers.get(`x-ratelimit-limit-${kind}`);
+    const remainingRaw = headers.get(`x-ratelimit-remaining-${kind}`);
+    // Header ausente NÃO é "zero sobrando" (Number(null) === 0).
+    if (limitRaw === null || remainingRaw === null || remainingRaw.trim() === "") continue;
+    const limit = Number(limitRaw);
+    const remaining = Number(remainingRaw);
     if (!Number.isFinite(limit) || limit <= 0 || !Number.isFinite(remaining)) continue;
     if (remaining <= limit * minRemainingFraction) {
       cooldown = Math.max(cooldown, parseGroqDurationMs(headers.get(`x-ratelimit-reset-${kind}`)) ?? 60_000);

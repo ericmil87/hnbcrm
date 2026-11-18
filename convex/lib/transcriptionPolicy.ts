@@ -33,10 +33,10 @@ export function whisperTimeoutMsForSize(sizeBytes: number): number {
  * Até quando um `pending` é considerado em voo (não duplica a chamada). Antes
  * era 2 min fixos — com o teto proporcional, um clique em "Transcrever" no
  * meio de um áudio longo dispararia uma 2ª inferência no mesmo Whisper. A
- * folga de 90 s cobre uma tentativa na Groq (60 s) antes do local.
+ * folga de 135 s cobre duas tentativas na Groq (2 × 60 s + 15 s) antes do local.
  */
 export function transcriptionPendingStaleAfterMs(sizeBytes: number): number {
-  return whisperTimeoutMsForSize(sizeBytes) + 90_000;
+  return whisperTimeoutMsForSize(sizeBytes) + 135_000;
 }
 
 /** Atrasos das re-tentativas automáticas (1ª, 2ª). Só no caminho automático. */

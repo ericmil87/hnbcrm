@@ -2,7 +2,9 @@
  * Alerta de PLATAFORMA por e-mail (problema da infraestrutura do HNBCRM, não
  * de uma org: chave de provedor recusada, crédito acabou, limite atingido…).
  * Porta única e reutilizável: qualquer módulo chama `platformAlert(ctx, …)` de
- * dentro de uma mutation.
+ * dentro de uma mutation; de uma action (inclusive "use node"), use o wrapper
+ * `internal.platformAlerts.internalRaise`. Convenção de `kind`:
+ * `<provedor>_<tipo>` em snake_case ("groq_auth", "openrouter_no_credit").
  *
  * - Destinatário: env `PLATFORM_ALERT_EMAIL` (ausente = não envia e NÃO
  *   carimba, para o 1º alerta sair assim que a env for configurada). Nunca

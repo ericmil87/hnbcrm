@@ -25,6 +25,7 @@ describe("classifyGroqFailure", () => {
     expect(classifyGroqFailure(402, "", H({})).kind).toBe("quota");
     expect(classifyGroqFailure(400, "organization has insufficient credit", H({})).kind).toBe("quota");
     expect(classifyGroqFailure(503, "", H({})).kind).toBe("server");
+    expect(classifyGroqFailure(503, "quota service unavailable", H({})).kind).toBe("server");
     expect(classifyGroqFailure(400, "invalid file format", H({})).kind).toBe("bad_request");
   });
   test("429 respeita retry-after e o reset quando remaining=0", () => {
@@ -59,6 +60,7 @@ describe("groqHeaderCooldownMs (headers reais medidos em 18/11/2026)", () => {
     });
     expect(groqHeaderCooldownMs(low)).toBe(20 * 60_000);
     expect(groqHeaderCooldownMs(H({}))).toBeNull();
+    expect(groqHeaderCooldownMs(H({ "x-ratelimit-limit-audio-seconds": "7200" }))).toBeNull();
   });
   test("429 com segundos de áudio esgotados usa o reset de áudio", () => {
     expect(

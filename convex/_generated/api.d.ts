@@ -361,6 +361,7 @@ import type * as organizations from "../organizations.js";
 import type * as passwordReset from "../passwordReset.js";
 import type * as pdfRead from "../pdfRead.js";
 import type * as pdfReadState from "../pdfReadState.js";
+import type * as platformAlerts from "../platformAlerts.js";
 import type * as push from "../push.js";
 import type * as pushNode from "../pushNode.js";
 import type * as quickReplies from "../quickReplies.js";
@@ -757,6 +758,7 @@ declare const fullApi: ApiFromModules<{
   passwordReset: typeof passwordReset;
   pdfRead: typeof pdfRead;
   pdfReadState: typeof pdfReadState;
+  platformAlerts: typeof platformAlerts;
   push: typeof push;
   pushNode: typeof pushNode;
   quickReplies: typeof quickReplies;

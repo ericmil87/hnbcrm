@@ -19,6 +19,7 @@ import {
 import { estimateVoiceNoteSeconds } from "./lib/transcriptionPolicy";
 import { platformAlert } from "./lib/platformAlert";
 import { groqModelValidator } from "./transcriptionRouting";
+import { isStorageReferenced } from "./lib/fileRefs";
 
 /** URL de upload do storage para um arquivo de TESTE (o operador faz o POST). */
 export const internalCreateUploadUrl = internalMutation({
@@ -27,12 +28,16 @@ export const internalCreateUploadUrl = internalMutation({
   handler: async (ctx) => await ctx.storage.generateUploadUrl(),
 });
 
-/** Apaga o arquivo de teste depois do probe. */
+/**
+ * Apaga o arquivo de teste depois do probe. Recusa blob referenciado por
+ * `files` (anexo real de mensagem): só apaga blob solto, como o do upload de teste.
+ */
 export const internalDeleteTestFile = internalMutation({
   args: { storageId: v.id("_storage"), dryRun: v.optional(v.boolean()) },
-  returns: v.object({ deleted: v.boolean() }),
+  returns: v.object({ deleted: v.boolean(), reason: v.optional(v.string()) }),
   handler: async (ctx, args) => {
-    if (args.dryRun !== false) return { deleted: false };
+    if (await isStorageReferenced(ctx, args.storageId)) return { deleted: false, reason: "referenciado_por_files" };
+    if (args.dryRun !== false) return { deleted: false, reason: "dry_run" };
     await ctx.storage.delete(args.storageId);
     return { deleted: true };
   },

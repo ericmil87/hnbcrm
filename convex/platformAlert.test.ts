@@ -7,6 +7,7 @@
 import { expect, test, describe, beforeEach, afterEach, vi } from "vitest";
 import { convexTest } from "convex-test";
 import schema from "./schema";
+import { internal } from "./_generated/api";
 import { buildPlatformAlertEmail, platformAlert, platformAlertDue } from "./lib/platformAlert";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
@@ -89,6 +90,20 @@ describe("platformAlert", () => {
       vi.setSystemTime(Date.now() + 61_000);
       await t.run((ctx) => platformAlert(ctx, { ...INPUT, throttleMs: 60_000 }));
       expect(sendAttempts(spy, INPUT.kind)).toBe(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("wrapper internalRaise (para actions) usa a mesma porta e o mesmo dedupe", async () => {
+    vi.stubEnv("PLATFORM_ALERT_EMAIL", "alertas@acme.com.br");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const t = convexTest(schema, modules);
+      const args = { kind: "openrouter_no_credit", severity: "critical" as const, title: "OpenRouter sem crédito", detail: "Sem crédito." };
+      expect(await t.mutation(internal.platformAlerts.internalRaise, args)).toEqual({ sent: false, reason: "send_failed" });
+      expect(await t.mutation(internal.platformAlerts.internalRaise, args)).toEqual({ sent: false, reason: "throttled" });
+      expect(sendAttempts(spy, "openrouter_no_credit")).toBe(1);
     } finally {
       spy.mockRestore();
     }

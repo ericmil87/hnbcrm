@@ -24,8 +24,8 @@ describe("whisperTimeoutMsForSize", () => {
     expect(whisperTimeoutMsForSize(25 * 1024 * 1024)).toBe(WHISPER_MAX_TIMEOUT_MS);
     expect(WHISPER_MAX_TIMEOUT_MS).toBeLessThan(600_000);
   });
-  test("pending em voo vale até o teto + 90 s (cobre a Groq antes do local)", () => {
-    expect(transcriptionPendingStaleAfterMs(0)).toBe(210_000);
+  test("pending em voo vale até o teto + 135 s (cobre 2 tentativas na Groq antes do local)", () => {
+    expect(transcriptionPendingStaleAfterMs(0)).toBe(255_000);
   });
 });
 
