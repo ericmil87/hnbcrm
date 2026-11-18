@@ -25,7 +25,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { cronsDisabled } from "./lib/cronGuard";
 import { platformAlert, platformCondition } from "./lib/platformAlert";
-import { AsaasError, asaasConfig, getAccountName } from "./lib/asaasApi";
+import { AsaasError, getAccountName, isAsaasEnabled } from "./lib/asaasApi";
 import { configTransport } from "./lib/channelTransport";
 import {
   DEFAULT_LLM_ERROR_BURST,
@@ -148,7 +148,7 @@ export const internalProbeTick = internalAction({
       obs.libreOk = r.status >= 200 && r.status < 300 && Array.isArray(r.body);
     }
     // Asaas: 1×/hora (1ª rodada da hora) — a chave raramente muda.
-    if (asaasConfig() && new Date().getUTCMinutes() < 15) {
+    if (isAsaasEnabled() && new Date().getUTCMinutes() < 15) {
       try {
         await getAccountName();
         obs.asaas = "ok";
@@ -266,8 +266,8 @@ export const internalApplyProbes = internalMutation({
         severity: "critical",
         failing: a.asaas === "invalid",
         title: "Asaas recusou a chave da API: cobrança automática parada",
-        detail: "A verificação horária da ASAAS_API_KEY recebeu 401/403 do Asaas.",
-        howToFix: "Gere uma chave nova no painel do Asaas (Integrações) e rode: npx convex env set --prod ASAAS_API_KEY <chave>.",
+        detail: "A verificação horária da chave da API do Asaas recebeu 401/403.",
+        howToFix: "Gere uma chave nova no painel do Asaas (Integrações) e atualize a env da chave do Asaas no PROD (npx convex env set --prod).",
         fallback: "Assinaturas, upgrades e webhooks de pagamento não são processados até a chave voltar.",
         recoveredDetail: "A chave do Asaas voltou a ser aceita.",
       });
