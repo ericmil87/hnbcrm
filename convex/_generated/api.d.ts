@@ -301,6 +301,7 @@ import type * as lib_telegramPacing from "../lib/telegramPacing.js";
 import type * as lib_telegramQuota from "../lib/telegramQuota.js";
 import type * as lib_telegramRelay from "../lib/telegramRelay.js";
 import type * as lib_terms from "../lib/terms.js";
+import type * as lib_transcriptionPolicy from "../lib/transcriptionPolicy.js";
 import type * as lib_translationCore from "../lib/translationCore.js";
 import type * as lib_translationGate from "../lib/translationGate.js";
 import type * as lib_translationLang from "../lib/translationLang.js";
@@ -692,6 +693,7 @@ declare const fullApi: ApiFromModules<{
   "lib/telegramQuota": typeof lib_telegramQuota;
   "lib/telegramRelay": typeof lib_telegramRelay;
   "lib/terms": typeof lib_terms;
+  "lib/transcriptionPolicy": typeof lib_transcriptionPolicy;
   "lib/translationCore": typeof lib_translationCore;
   "lib/translationGate": typeof lib_translationGate;
   "lib/translationLang": typeof lib_translationLang;
