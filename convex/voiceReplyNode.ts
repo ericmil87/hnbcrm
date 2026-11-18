@@ -13,6 +13,9 @@
  * requisição (`requestSpeechPcm`) e guarda um WAV (sem o conversor da VPS); o
  * custo vai ao orçamento do onboarding pelo chamador.
  *
+ * Teste nas Configurações (amostra de voz e simulador com voz):
+ * `internalSynthesizePreviewAudio`, mesma requisição, WAV de vida curta.
+ *
  * Não lança por falha de rede/provedor/armazenamento: devolve `{ok:false, reason}`
  * e o atendente manda a resposta em TEXTO (o runtime ainda envolve a chamada em
  * try/catch para erro de plataforma). Org com `strictZdr` não chega aqui
@@ -334,5 +337,121 @@ export const internalSynthesizeWebAudio = internalAction({
       model,
       cost,
     };
+  },
+});
+
+// ── Teste da voz nas Configurações: amostra e simulador ─────────────────────
+
+const previewResultValidator = v.union(
+  v.object({
+    ok: v.literal(true),
+    storageId: v.id("_storage"),
+    durationSec: v.number(),
+    costUsd: v.number(),
+  }),
+  v.object({ ok: v.literal(false), reason: v.string() })
+);
+
+type PreviewSynthResult =
+  | { ok: true; storageId: Id<"_storage">; durationSec: number; costUsd: number }
+  | { ok: false; reason: VoiceTextReason };
+
+/**
+ * Áudio de TESTE (amostra de voz e simulador com voz, `lib/voicePreviewOps.ts`):
+ * MESMA requisição de fala (`requestSpeechPcm`), modelo do atendente
+ * (`getTtsConfig("attendant")`) e a voz pedida; o PCM vira WAV para o navegador
+ * (sem o conversor da VPS: nada vai ao WhatsApp). Custo como o do atendente:
+ * teto checado antes (`internalSpendGate`), run `kind:"tts"` do MEMBRO humano
+ * que testou, sem conversa nem lead. O WAV é uma linha de `files`
+ * `metadata.kind:"voice_preview"` que se apaga sozinha (`VOICE_PREVIEW_TTL_MS`).
+ * Nunca lança por rede/provedor/armazenamento.
+ */
+export const internalSynthesizePreviewAudio = internalAction({
+  args: {
+    organizationId: v.id("organizations"),
+    memberId: v.id("teamMembers"),
+    /** Texto falável (já passou pelas regras do aviso ou por `planAttendantVoice`). */
+    text: v.string(),
+    voice: v.string(),
+    strictZdr: v.boolean(),
+    routingAllowed: v.boolean(),
+    cacheKey: v.string(),
+  },
+  returns: previewResultValidator,
+  handler: async (ctx, args): Promise<PreviewSynthResult> => {
+    if (!args.routingAllowed) return { ok: false, reason: "rota_sem_openrouter" };
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) return { ok: false, reason: "sem_chave" };
+
+    const now = Date.now();
+    const gate = await ctx.runQuery(internal.aiSpend.internalSpendGate, {
+      organizationId: args.organizationId,
+      month: monthKeyUtc(now),
+      now,
+    });
+    if (gate.blocked) return { ok: false, reason: "teto_de_gastos" };
+
+    const { model } = getTtsConfig("attendant");
+    const runId = await ctx.runMutation(internal.agentRuns.internalStartRun, {
+      organizationId: args.organizationId,
+      memberId: args.memberId,
+      kind: "tts",
+      provider: "openrouter",
+      model,
+    });
+    const speech = await requestSpeechPcm({ apiKey, model, text: args.text, voice: args.voice, strictZdr: args.strictZdr });
+    if (!speech.ok) {
+      await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+        runId,
+        status: "error",
+        requestCount: 1,
+        error: speech.error,
+      });
+      return { ok: false, reason: speech.reason };
+    }
+    const { pcm, sampleRate } = speech;
+    const duration = pcmDurationSeconds(pcm.byteLength, sampleRate);
+    const cost = estimateTtsCost(model, { chars: args.text.length, seconds: duration });
+    const tooLong = duration > VOICE_REPLY_MAX_SECONDS;
+    await ctx.runMutation(internal.agentRuns.internalFinishRun, {
+      runId,
+      status: tooLong ? "error" : "done",
+      provider: "openrouter",
+      model,
+      requestCount: 1,
+      promptTokens: cost.promptTokens,
+      completionTokens: cost.completionTokens,
+      costUsdEstimate: cost.costUsd,
+      ...(cost.estimated ? { costEstimated: true } : {}),
+      ...(tooLong ? { error: "tts_audio_longo" } : {}),
+    });
+    if (tooLong || duration <= 0) return { ok: false, reason: tooLong ? "audio_longo" : "formato_tts" };
+
+    const wav = wrapPcmAsWav(pcm, sampleRate);
+    let storageId: Id<"_storage">;
+    try {
+      storageId = await ctx.storage.store(new Blob([wav as BlobPart], { type: WEB_AUDIO_MIME }));
+    } catch {
+      return { ok: false, reason: "falha_armazenamento" };
+    }
+    const durationSec = Math.round(duration * 10) / 10;
+    try {
+      await ctx.runMutation(internal.voiceReply.internalInsertVoicePreviewFile, {
+        organizationId: args.organizationId,
+        memberId: args.memberId,
+        storageId,
+        size: wav.byteLength,
+        cacheKey: args.cacheKey,
+        durationSec,
+      });
+    } catch {
+      try {
+        await ctx.storage.delete(storageId);
+      } catch {
+        // best-effort
+      }
+      return { ok: false, reason: "falha_armazenamento" };
+    }
+    return { ok: true, storageId, durationSec, costUsd: cost.costUsd };
   },
 });

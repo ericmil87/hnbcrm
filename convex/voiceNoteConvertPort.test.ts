@@ -43,7 +43,9 @@ describe("portas de voz", () => {
 
   test("o atendente decide a voz pela regra pura e sintetiza pela porta", () => {
     const attendant = sources.find((f) => f.rel === "attendant.ts")!.src;
-    expect(attendant).toMatch(/planVoiceReply\(/);
+    // `planAttendantVoice` (lib/tts.ts) = divulgação + `planVoiceReply`; runtime e simulador usam a mesma.
+    expect(attendant).toMatch(/planAttendantVoice\(/);
+    expect(sources.find((f) => f.rel === "lib/tts.ts")!.src).toMatch(/planAttendantVoice[\s\S]*planVoiceReply\(\{/);
     expect(attendant).toMatch(/internal\.voiceReplyNode\.internalSynthesizeVoiceNote/);
     // A decisão vem DEPOIS da trava final do guard e da formatação por canal.
     const guard = attendant.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
@@ -80,5 +82,27 @@ describe("portas de voz", () => {
     expect(reserveAt).toBeGreaterThan(0);
     expect(synthAt).toBeGreaterThan(reserveAt);
     expect(recordAt).toBeGreaterThan(synthAt);
+  });
+
+  test("teste da voz nas Configurações: mesma porta, mesma decisão, sem conversor e com a entrada única", () => {
+    const node = sources.find((f) => f.rel === "voiceReplyNode.ts")!.src;
+    const previewStart = node.indexOf("export const internalSynthesizePreviewAudio");
+    expect(previewStart).toBeGreaterThan(0);
+    const preview = node.slice(previewStart);
+    expect(preview).toMatch(/requestSpeechPcm\(/);
+    expect(preview).toMatch(/internalSpendGate/);
+    expect(preview).not.toMatch(/convertVoiceNoteToOggOpus/);
+    // Só `lib/voicePreviewOps.ts` chama a síntese de teste, sempre depois do begin (auth, teto, limite, cache).
+    const callers = sources.filter((f) => /internal\.voiceReplyNode\.internalSynthesizePreviewAudio/.test(f.src)).map((f) => f.rel);
+    expect(callers).toEqual(["lib/voicePreviewOps.ts"]);
+    const ops = sources.find((f) => f.rel === "lib/voicePreviewOps.ts")!.src;
+    expect(ops.indexOf("internal.voiceReply.internalBeginVoicePreview")).toBeLessThan(
+      ops.indexOf("internal.voiceReplyNode.internalSynthesizePreviewAudio"),
+    );
+    // O simulador decide pela mesma regra do runtime antes de sintetizar.
+    const attendant = sources.find((f) => f.rel === "attendant.ts")!.src;
+    const sim = attendant.slice(attendant.indexOf("async function simulateVoiceReply("));
+    expect(sim.indexOf("planAttendantVoice(")).toBeGreaterThan(0);
+    expect(sim.indexOf("planAttendantVoice(")).toBeLessThan(sim.indexOf("synthesizeVoicePreview("));
   });
 });

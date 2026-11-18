@@ -135,4 +135,38 @@ describe("VoiceReplyCardView", () => {
     );
     expect(screen.getByRole("alert")).toHaveTextContent("Não foi possível salvar");
   });
+
+  it("Ouvir amostra: manda a voz e o aviso digitado (antes de salvar) e mostra o player", async () => {
+    const onPreview = vi.fn().mockResolvedValue({ ok: true, url: "https://files.example/amostra.wav", durationSec: 3 });
+    setup({ enabled: true, voice: "onyx" }, { onPreview });
+    await userEvent.type(screen.getByLabelText("Aviso de voz sintética (opcional)"), "  Sou a   IA da loja ");
+    await userEvent.click(screen.getByRole("button", { name: "Ouvir amostra" }));
+    expect(onPreview).toHaveBeenCalledWith({ voice: "onyx", notice: "Sou a IA da loja" });
+    expect(await screen.findByTestId("voice-preview")).toHaveTextContent("o aviso de voz sintética e uma saudação");
+    expect(screen.getByRole("button", { name: "Reproduzir áudio" })).toBeInTheDocument();
+  });
+
+  it("Ouvir amostra: recusa do servidor aparece em alerta; sem IA ativa o botão fica travado", async () => {
+    const onPreview = vi.fn().mockResolvedValue({ ok: false, message: "Muitos testes de voz em pouco tempo. Tente de novo em 30 s." });
+    setup({}, { onPreview });
+    await userEvent.click(screen.getByRole("button", { name: "Ouvir amostra" }));
+    expect(onPreview).toHaveBeenCalledWith({ voice: "nova", notice: undefined });
+    expect(await screen.findByRole("alert")).toHaveTextContent("Muitos testes de voz");
+  });
+
+  it("sem IA ativa, amostra e teste de conversa ficam travados", () => {
+    setup({ aiActive: false }, { onPreview: vi.fn(), onTestConversation: vi.fn() });
+    expect(screen.getByRole("button", { name: "Ouvir amostra" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Testar conversa com voz" })).toBeDisabled();
+  });
+
+  it("Testar conversa com voz abre o simulador; quem só vê também pode testar", async () => {
+    const onTestConversation = vi.fn();
+    renderWithRouter(
+      <VoiceReplyCardView settings={base} canManage={false} onSave={vi.fn()} onPreview={vi.fn()} onTestConversation={onTestConversation} />,
+    );
+    expect(screen.getByRole("button", { name: "Ouvir amostra" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Testar conversa com voz" }));
+    expect(onTestConversation).toHaveBeenCalled();
+  });
 });

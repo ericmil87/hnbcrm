@@ -362,6 +362,47 @@ export function normalizeVoiceNotice(raw: unknown): string | null {
 }
 
 /**
+ * Erro (PT-BR) de um aviso de voz sintética já aparado, ou null quando serve.
+ * Fonte única: o core da configuração (`setFeatureTogglesCore`) recusa com esta
+ * mensagem e a amostra de voz ("Ouvir amostra") também, antes de pagar o TTS.
+ */
+export function voiceNoticeError(trimmed: string): string | null {
+  if (trimmed.length > VOICE_NOTICE_MAX_CHARS) {
+    return `O aviso de voz pode ter até ${VOICE_NOTICE_MAX_CHARS} caracteres.`;
+  }
+  // O aviso é FALADO: nada de número, link, e-mail, valor, endereço ou código
+  // (as mesmas regras que mandam esses dados para o texto na resposta).
+  if (trimmed.length > 0 && voiceDataKinds(trimmed).length > 0) {
+    return "O aviso de voz não pode ter números, links, e-mails, valores, endereços ou códigos: ele é falado no áudio.";
+  }
+  return null;
+}
+
+/**
+ * Decisão de voz do ATENDENTE com a divulgação de IA (runtime e simulador, uma
+ * implementação): a divulgação entra no texto falado do mesmo jeito que o commit
+ * a prependeria; `planVoiceReply` decide. `disclosureAdded` diz se ela foi
+ * acrescentada (aí também sai por escrito, ver `voiceTextAfter`).
+ */
+export function planAttendantVoice(
+  input: Omit<VoiceReplyInput, "enabled"> & { needsDisclosure: boolean; disclosure: string }
+): { plan: VoiceReplyPlan; disclosureAdded: boolean } {
+  const { needsDisclosure, disclosure, ...rest } = input;
+  const disclosureAdded = needsDisclosure && disclosure.length > 0 && !rest.text.includes(disclosure);
+  const text = disclosureAdded ? `${disclosure}\n\n${rest.text}` : rest.text;
+  return { plan: planVoiceReply({ ...rest, enabled: true, text }), disclosureAdded };
+}
+
+/** Texto que segue POR ESCRITO depois do áudio: divulgação (se acrescentada) + dados. */
+export function voiceTextAfter(textPart: string | null, disclosure: string, disclosureAdded: boolean): string | null {
+  const parts = [
+    ...(disclosureAdded && !(textPart ?? "").includes(disclosure) ? [disclosure] : []),
+    ...(textPart ? [textPart] : []),
+  ];
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+/**
  * Decide se a resposta do atendente sai em áudio. Regras fixas, nesta ordem:
  * desligado → canal sem voice note (só bridge) → grupo → cliente não mandou
  * áudio → rascunho → follow-up → imagem → idioma fora do português → texto
