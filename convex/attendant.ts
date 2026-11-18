@@ -867,6 +867,13 @@ export const internalEnqueueFromInbound = internalMutation({
           content: m.content,
           createdAt: m.createdAt,
           isInternal: m.isInternal,
+          // Mídia é julgada pelo texto real (transcrição/legenda), nunca pelo
+          // placeholder do parser — ver `botEvidenceText`. Este enqueue roda
+          // ANTES da transcrição do próprio áudio-gatilho: ele não pesa agora,
+          // e a transcrição entra nas avaliações seguintes (e a camada do
+          // modelo, no claim, já espera a transcrição antes de inferir).
+          contentType: m.contentType,
+          transcriptText: m.transcriptText,
         })),
         sinceAt: conversation.botSuspicion?.clearedAt ?? 0,
       });

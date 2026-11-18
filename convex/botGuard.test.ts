@@ -218,6 +218,27 @@ async function aiReply(t: TestConvex<typeof schema>, seed: Seed, content: string
   });
 }
 
+/** Nota de voz do contato como o bridge grava (placeholder + transcrição opcional). */
+async function voiceNote(t: TestConvex<typeof schema>, seed: Seed, advanceMs: number, transcriptText?: string) {
+  vi.setSystemTime(Date.now() + advanceMs);
+  return await t.run(async (ctx) => {
+    const now = Date.now();
+    await ctx.db.patch(seed.conversationId, { lastInboundAt: now });
+    return await ctx.db.insert("messages", {
+      organizationId: seed.organizationId,
+      conversationId: seed.conversationId,
+      leadId: seed.leadId,
+      direction: "inbound",
+      senderType: "contact",
+      content: "[mensagem de voz]",
+      contentType: "audio",
+      isInternal: false,
+      createdAt: now,
+      ...(transcriptText ? { transcriptText, metadata: { transcription: { status: "done", text: transcriptText, engine: "faster-whisper", at: now } } } : {}),
+    });
+  });
+}
+
 async function enqueue(t: TestConvex<typeof schema>, messageId: Id<"messages">) {
   await t.mutation(internal.attendant.internalEnqueueFromInbound, { messageId });
 }
@@ -257,6 +278,32 @@ async function state(t: TestConvex<typeof schema>, seed: Seed) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 describe("heurística no enqueue", () => {
+  test("PROD 17/11/2026: três notas de voz normais com a IA no meio NÃO viram robô", async () => {
+    const t = setup();
+    const seed = await seedOrg(t);
+    // Os dois primeiros já transcritos (como no caso real), o 3º ainda pendente
+    // no instante do enqueue (o ingest agenda o enqueue antes do Whisper).
+    await enqueue(t, await voiceNote(t, seed, 0));
+    await t.run(async (ctx) => {
+      const [first] = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", seed.conversationId))
+        .collect();
+      await ctx.db.patch(first._id, { transcriptText: "Oi, queria saber como funciona o atendimento" });
+    });
+    await aiReply(t, seed, "Oi! Que bom ter você aqui, a gente trabalha com massoterapia.", 21 * SEC);
+    await enqueue(t, await voiceNote(t, seed, 21 * SEC, "Estou com dor nas costas faz uma semana, dá para amanhã?"));
+    await aiReply(t, seed, "Eita, dor nas costas incomoda demais. Tenho horário amanhã.", 19 * SEC);
+    await enqueue(t, await voiceNote(t, seed, 29 * SEC));
+
+    const s = await state(t, seed);
+    expect(s.conversation.botSuspicion).toBeUndefined();
+    expect(s.handoffs).toHaveLength(0);
+    expect(s.lead.tags).not.toContain("bot-suspeito");
+    expect(s.queue.some((i) => i.error === "suspeita_de_bot")).toBe(false);
+    expect(s.queue.filter((i) => i.status === "pending")).toHaveLength(1);
+  });
+
   test("caso real WhatsApp Support: na 3ª rodada para, abre repasse, etiqueta e deixa rastro", async () => {
     const t = setup();
     const seed = await seedOrg(t);

@@ -5,6 +5,7 @@ import {
   BOT_SUSPICION_THRESHOLD,
   DEFAULT_BOT_TAG,
   BotGuardMessage,
+  botEvidenceText,
   describeBotSignals,
   evaluateBotSignals,
   normalizeForPhrases,
@@ -293,5 +294,116 @@ describe("describeBotSignals", () => {
   });
   test("vazio tem frase neutra", () => {
     expect(describeBotSignals([])).toMatch(/autom/);
+  });
+});
+
+// Falso positivo real (PROD, 17/11/2026): 3 notas de voz normais com a IA
+// respondendo no meio = "[mensagem de voz]" repetido 2× = limiar.
+describe("mídia nunca é evidência de robô por si só", () => {
+  const SEC = 1000;
+  const voice = (createdAt: number, transcriptText?: string): BotGuardMessage => ({
+    direction: "inbound",
+    senderType: "contact",
+    content: "[mensagem de voz]",
+    contentType: "audio",
+    createdAt,
+    ...(transcriptText !== undefined ? { transcriptText } : {}),
+  });
+  const file = (name: string, createdAt: number): BotGuardMessage => ({
+    direction: "inbound",
+    senderType: "contact",
+    content: name,
+    contentType: "file",
+    createdAt,
+  });
+
+  test("caso real: 3 notas de voz (transcrição pendente) com a IA no meio não disparam", () => {
+    const r = evaluateBotSignals({
+      messages: [
+        voice(T0),
+        ai("Oi! Que bom ter você aqui. A gente trabalha com massoterapia e acupuntura.", T0 + 21 * SEC),
+        voice(T0 + 42 * SEC),
+        ai("Eita, dor nas costas incomoda demais.", T0 + 62 * SEC),
+        voice(T0 + 91 * SEC),
+      ],
+      sinceAt: 0,
+    });
+    expect(r).toEqual({ score: 0, signals: [], triggered: false });
+  });
+
+  test("com transcrição, o áudio é julgado pelo que foi falado (textos diferentes = nada)", () => {
+    const r = evaluateBotSignals({
+      messages: [
+        voice(T0, "Oi, queria saber como funciona o atendimento de vocês"),
+        ai("Claro! Funciona assim...", T0 + 5 * SEC),
+        voice(T0 + 8 * SEC, "Tenho dor nas costas faz uma semana, vocês atendem amanhã?"),
+        ai("Atendemos sim.", T0 + 12 * SEC),
+        voice(T0 + 15 * SEC, "Pode ser às dez horas da manhã então"),
+      ],
+      sinceAt: 0,
+    });
+    expect(r.score).toBe(0);
+  });
+
+  test("áudio nunca soma tempo de resposta (instantânea / longa e rápida)", () => {
+    const long = "eu queria explicar direitinho o que está acontecendo comigo ".repeat(6);
+    const r = evaluateBotSignals({
+      messages: [ai("Como posso ajudar?", T0), voice(T0 + 3 * SEC, long)],
+      sinceAt: 0,
+    });
+    expect(r.signals).toEqual([]);
+  });
+
+  test("transcrição com auto-resposta declarada continua pesando (frase/repetição)", () => {
+    const auto = "Esta é uma mensagem automática, retornaremos em breve";
+    const r = evaluateBotSignals({
+      messages: [voice(T0, auto), ai("Oi!", T0 + 30 * SEC), voice(T0 + 90 * SEC, auto)],
+      sinceAt: 0,
+    });
+    expect(r.signals).toContain("texto_repetido");
+    expect(r.signals).toContain("frase_automatica");
+  });
+
+  test("nome de arquivo repetido (comprovante do mesmo banco) não é texto repetido", () => {
+    const r = evaluateBotSignals({
+      messages: [
+        file("SICOOB_2026_11_11_16_59_57_PIX.pdf", T0),
+        ai("Recebi o comprovante!", T0 + 10 * SEC),
+        file("SICOOB_2026_11_12_09_10_11_PIX.pdf", T0 + 5 * MIN),
+      ],
+      sinceAt: 0,
+    });
+    expect(r.score).toBe(0);
+  });
+
+  test("placeholders entre colchetes (imagem, chamada, localização) nunca contam", () => {
+    const msgs: BotGuardMessage[] = [];
+    let at = T0;
+    for (let i = 0; i < 3; i++) {
+      msgs.push({ ...inbound("[chamada de voz]", at), contentType: "text" });
+      msgs.push(ai("Vi que você ligou, posso ajudar por aqui?", at + 5 * SEC));
+      msgs.push({ ...inbound("[localização ao vivo]", at + 10 * SEC), contentType: "text" });
+      msgs.push(ai("Recebi sua localização.", at + 15 * SEC));
+      at += MIN;
+    }
+    expect(evaluateBotSignals({ messages: msgs, sinceAt: 0 }).score).toBe(0);
+  });
+
+  test("botEvidenceText", () => {
+    expect(botEvidenceText(voice(T0))).toBeNull();
+    expect(botEvidenceText(voice(T0, "  "))).toBeNull();
+    expect(botEvidenceText(voice(T0, " oi tudo bem "))).toBe("oi tudo bem");
+    expect(botEvidenceText(file("contrato.pdf", T0))).toBeNull();
+    expect(botEvidenceText({ ...inbound("[imagem]", T0), contentType: "image" })).toBeNull();
+    expect(botEvidenceText({ ...inbound("Pago reserva", T0), contentType: "image" })).toBe("Pago reserva");
+    expect(botEvidenceText(inbound("texto normal", T0))).toBe("texto normal");
+  });
+
+  test("texto digitado continua com o comportamento de antes (sem contentType = texto)", () => {
+    const r = evaluateBotSignals({
+      messages: [ai("Oi!", T0), inbound("x".repeat(60), T0 + 2 * SEC)],
+      sinceAt: 0,
+    });
+    expect(r.signals).toEqual(["resposta_instantanea"]);
   });
 });
