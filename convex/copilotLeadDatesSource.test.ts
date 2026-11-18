@@ -24,10 +24,12 @@ describe("v0.78.1 — fontes", () => {
     // definition + autoTranscribe (3 args) + internalTranscribeStoredAudio (prompt)
     const withPrompt = calls.filter((c) => c.includes("prompt") && !c.includes("serviceUrl: string"));
     expect(withPrompt).toHaveLength(1);
-    // The inbound/team path (runTranscription → callWhisper) keeps its 3 arguments: no prompt.
+    // The inbound/team path (runTranscription → callWhisper) never sends a prompt
+    // (it only passes the size-based timeout as the 4th argument).
     const inbound = transcription.slice(transcription.indexOf("async function runTranscription("));
-    const inboundCall = inbound.match(/callWhisper\(([^)]*)\)/)![1]!;
-    expect(inboundCall.split(",").map((a) => a.trim())).toEqual(["serviceUrl", "serviceToken", "audioUrl"]);
+    const inboundCall = inbound.slice(inbound.indexOf("callWhisper("), inbound.indexOf("});", inbound.indexOf("callWhisper(")));
+    expect(inboundCall).toMatch(/^callWhisper\(serviceUrl, serviceToken, audioUrl, \{\s*timeoutMs: whisperTimeoutMsForSize\(message\.size\),\s*$/);
+    expect(inboundCall).not.toContain("prompt");
     expect(src("telegramCopilot.ts")).toMatch(/internalTranscribeStoredAudio,\s*\{[^}]*prompt: voicePrompt\(/);
   });
 });
