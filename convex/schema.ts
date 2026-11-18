@@ -2795,6 +2795,12 @@ const applicationTables = {
     lastSentAt: v.optional(v.number()),
     suppressedCount: v.optional(v.number()),
     lastSeverity: v.optional(v.union(v.literal("critical"), v.literal("warning"))),
+    // Condições observadas pela sentinela (`platformCondition`): falhas
+    // seguidas, desde quando o problema está ATIVO (alertado) e a última
+    // observação. Ausentes nos alertas pontuais (sem estado de "resolvido").
+    failStreak: v.optional(v.number()),
+    activeSince: v.optional(v.number()),
+    lastObservedAt: v.optional(v.number()),
     updatedAt: v.number(),
   }).index("by_kind", ["kind"]),
 

@@ -21,7 +21,7 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { ChatMessage, ChatToolCall, StreamToolCallDelta } from "./llm/types";
 import { streamChat, accumulateToolCallDeltas, isRetriable } from "./llm/openaiCompatible";
-import { ResolvedRoute } from "./llm";
+import { ResolvedRoute, tagPlatformLlmFailure } from "./llm";
 import {
   resolveOrgRoutes,
   resolveProductRoutes,
@@ -388,6 +388,7 @@ export async function runCopilotTurn(
       // 1º delta; depois disso, recomeçar duplicaria conteúdo no cliente.
       let streamed = false;
       let lastRouteError: unknown;
+      const routeFailures: { route: ResolvedRoute; error: unknown }[] = [];
       routeLoop: for (const route of routes) {
         for (let attempt = 0; attempt < STREAM_ATTEMPTS_PER_ROUTE; attempt++) {
           try {
@@ -430,6 +431,7 @@ export async function runCopilotTurn(
           } catch (e) {
             if (e instanceof TurnCanceled) throw e;
             lastRouteError = e;
+            routeFailures.push({ route, error: e });
             // Já emitiu conteúdo? Não dá pra recomeçar sem duplicar.
             if (streamed) throw e;
             if (attempt < STREAM_ATTEMPTS_PER_ROUTE - 1 && isRetriable(e)) {
@@ -440,7 +442,7 @@ export async function runCopilotTurn(
           }
         }
       }
-      if (!streamed && lastRouteError) throw lastRouteError;
+      if (!streamed && lastRouteError) throw tagPlatformLlmFailure(lastRouteError, routeFailures);
 
       const toolCalls = accumulateToolCallDeltas(rawToolDeltas);
 

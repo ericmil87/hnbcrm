@@ -7,7 +7,7 @@
  */
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import {
@@ -244,6 +244,19 @@ export const internalApplyUnhealthyObservation = internalMutation({
 });
 
 /**
+ * Placar da rodada para a sentinela de plataforma (gateway do bridge fora do
+ * ar = quase todas as sondas falhando por rede/HTTP). Best effort.
+ */
+async function reportBridgeProbeRound(ctx: ActionCtx, checked: number, probeErrors: number): Promise<void> {
+  if (checked + probeErrors === 0) return;
+  try {
+    await ctx.runMutation(internal.platformSentinel.internalRecordBridgeProbeRound, { checked, probeErrors });
+  } catch (e) {
+    console.warn(`channel health: placar da sentinela falhou: ${e instanceof Error ? e.message : "erro"}`);
+  }
+}
+
+/**
  * Cron "channel health" (15 min): sonda `GET /session/status` de cada canal
  * bridge elegível (MESMO builder/parser da health check manual), grava o
  * resultado e notifica só na TRANSIÇÃO. Falha de rede/HTTP do gateway NÃO conta
@@ -276,6 +289,7 @@ export const internalChannelHealthTick = internalAction({
           cursor: pageCursor,
           skip: i,
         });
+        await reportBridgeProbeRound(ctx, checked, probeErrors);
         return { checked, probeErrors };
       }
       const target = page.targets[i];
@@ -345,6 +359,7 @@ export const internalChannelHealthTick = internalAction({
         cursor: page.nextCursor,
       });
     }
+    await reportBridgeProbeRound(ctx, checked, probeErrors);
     return { checked, probeErrors };
   },
 });
