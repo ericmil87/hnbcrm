@@ -360,7 +360,11 @@ export const internalChannelHealthTick = internalAction({
         checked++;
       } catch (e) {
         probeErrors++;
-        gatewayErrors++; // rede, timeout, DNS: o gateway não respondeu
+        // Só rede/DNS (TypeError do fetch) e timeout contam como gateway fora;
+        // falha de decrypt ou de mutation é outro problema.
+        if (e instanceof Error && (e.name === "TypeError" || e.name === "TimeoutError" || e.name === "AbortError")) {
+          gatewayErrors++;
+        }
         console.warn(
           `channel health: falha ao sondar ${configId}: ${e instanceof Error ? e.message : "erro"}`
         );

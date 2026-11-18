@@ -396,7 +396,8 @@ export const internalScanTick = internalMutation({
     const errors = await ctx.db
       .query("agentRuns")
       .withIndex("by_status_and_started", (q) => q.eq("status", "error").gte("startedAt", now - HOUR))
-      .take(burst * 4);
+      // Amostra larga: as runs de orgs BYO são descartadas DEPOIS da leitura.
+      .take(Math.min(500, burst * 10));
     const byKind = new Map<string, number>();
     const errorOrgs = new Set<string>();
     let platformErrors = 0;
@@ -413,7 +414,7 @@ export const internalScanTick = internalMutation({
       severity: "warning",
       failing: platformErrors >= burst,
       title: "Muitas falhas de IA na última hora",
-      detail: `${platformErrors}${errors.length >= burst * 4 ? "+" : ""} execuções de IA com erro na última hora (${kinds || "-"}), em ${errorOrgs.size} org(s) sem chave própria.`,
+      detail: `${platformErrors}${errors.length >= Math.min(500, burst * 10) ? "+" : ""} execuções de IA com erro na última hora (${kinds || "-"}), em ${errorOrgs.size} org(s) sem chave própria.`,
       howToFix:
         "Rode npx convex run --prod aiDiagnostics:pingChain para ver o erro de cada rota (429 sustentado, provedor fora, modelo removido).",
       throttleMs: WARNING_THROTTLE_MS,
