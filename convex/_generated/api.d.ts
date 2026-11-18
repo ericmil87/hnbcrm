@@ -313,6 +313,8 @@ import type * as lib_unreadFields from "../lib/unreadFields.js";
 import type * as lib_untrustedText from "../lib/untrustedText.js";
 import type * as lib_usageMeter from "../lib/usageMeter.js";
 import type * as lib_voiceNoteConvert from "../lib/voiceNoteConvert.js";
+import type * as lib_voicePreview from "../lib/voicePreview.js";
+import type * as lib_voicePreviewOps from "../lib/voicePreviewOps.js";
 import type * as lib_webPush from "../lib/webPush.js";
 import type * as lib_webhookDispatch from "../lib/webhookDispatch.js";
 import type * as lib_whatsappCheck from "../lib/whatsappCheck.js";
@@ -705,6 +707,8 @@ declare const fullApi: ApiFromModules<{
   "lib/untrustedText": typeof lib_untrustedText;
   "lib/usageMeter": typeof lib_usageMeter;
   "lib/voiceNoteConvert": typeof lib_voiceNoteConvert;
+  "lib/voicePreview": typeof lib_voicePreview;
+  "lib/voicePreviewOps": typeof lib_voicePreviewOps;
   "lib/webPush": typeof lib_webPush;
   "lib/webhookDispatch": typeof lib_webhookDispatch;
   "lib/whatsappCheck": typeof lib_whatsappCheck;
