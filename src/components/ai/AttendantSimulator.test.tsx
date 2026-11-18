@@ -73,4 +73,62 @@ describe("AttendantSimulatorView", () => {
     expect(screen.getByText("Simular dentro de um grupo")).toBeInTheDocument();
     expect(document.querySelectorAll("button[aria-pressed]")).toHaveLength(3);
   });
+
+  it("modo voz: checkbox no modal; bolha mostra o player e o que vai por escrito", async () => {
+    const onVoiceModeChange = vi.fn();
+    render(
+      <AttendantSimulatorView
+        {...props({
+          variant: "modal",
+          voiceMode: true,
+          onVoiceModeChange,
+          transcript: [
+            { role: "customer", content: "Quanto custa?", audio: true },
+            {
+              role: "agent",
+              content: "Claro! A consulta custa R$ 250,00.",
+              voice: {
+                mode: "audio",
+                url: "https://files.example/r.wav",
+                durationSec: 2.2,
+                spokenText: "Claro!",
+                textAfter: "A consulta custa R$ 250,00.",
+                voice: "Kore",
+                noticeIncluded: false,
+                enabledInOrg: false,
+                cached: false,
+              },
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "Ouvir as respostas em áudio" })).toBeChecked();
+    expect(screen.getByText("Resposta em áudio · voz Kore · 2 s")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reproduzir áudio" })).toBeInTheDocument();
+    expect(screen.getByText("Por escrito logo depois do áudio:")).toBeInTheDocument();
+    expect(screen.getByText(/em produção esta resposta iria em texto/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Ouvir as respostas em áudio" }));
+    expect(onVoiceModeChange).toHaveBeenCalledWith(false);
+  });
+
+  it("modo voz: quando a regra manda texto, a bolha diz por quê", () => {
+    render(
+      <AttendantSimulatorView
+        {...props({
+          transcript: [
+            { role: "customer", content: "Oi" },
+            {
+              role: "agent",
+              content: "Oi! Como posso ajudar?",
+              voice: { mode: "text", rule: true, reason: "cliente_mandou_texto", message: "O cliente escreveu.", enabledInOrg: true },
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("Esta resposta iria em texto")).toBeInTheDocument();
+    expect(screen.getByText("O cliente escreveu.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reproduzir áudio" })).not.toBeInTheDocument();
+  });
 });

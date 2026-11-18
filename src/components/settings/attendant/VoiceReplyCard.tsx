@@ -1,14 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import { toast } from "sonner";
-import { Volume2 } from "lucide-react";
+import { MessagesSquare, Play, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
+import { AttendantSimulator } from "@/components/ai/AttendantSimulator";
+import { AudioPlayer } from "@/components/inbox/AudioPlayer";
+import { useOrgModules } from "@/hooks/useOrgModules";
 import { mutationErrorMessage } from "@/lib/errors";
+import { previewNotice } from "@/lib/voiceTest";
 import { TAB_ROUTES } from "@/lib/routes";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
@@ -22,6 +26,9 @@ export interface VoiceReplyPatch {
   voiceReplyNotice?: string;
 }
 
+/** Resultado da amostra de voz (`voiceReply.previewVoiceSample`). */
+export type VoicePreviewOutcome = { ok: true; url: string; durationSec: number } | { ok: false; message: string };
+
 export interface VoiceReplyCardViewProps {
   settings: VoiceReplySettings;
   canManage: boolean;
@@ -33,7 +40,17 @@ export interface VoiceReplyCardViewProps {
   /** Aviso de voz com texto ainda não salvo (o painel avisa ao sair). */
   onDirtyChange?: (dirty: boolean) => void;
   activationHref?: string;
+  /** "Ouvir amostra": fala o aviso digitado (salvo ou não) + uma saudação com a voz escolhida. */
+  onPreview?: (input: { voice: string; notice?: string }) => Promise<VoicePreviewOutcome>;
+  /** "Testar conversa com voz": abre o simulador já no modo áudio. */
+  onTestConversation?: () => void;
 }
+
+type PreviewState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; url: string; durationSec: number }
+  | { status: "error"; message: string };
 
 const NOTICE_PLACEHOLDER = "Sou a assistente virtual da Loja Exemplo";
 
@@ -48,6 +65,8 @@ export function VoiceReplyCardView({
   onSave,
   onDirtyChange,
   activationHref = `${TAB_ROUTES.settings}?secao=ai`,
+  onPreview,
+  onTestConversation,
 }: VoiceReplyCardViewProps) {
   const [notice, setNotice] = useState(settings.notice ?? "");
   const [errorHidden, setErrorHidden] = useState(false);
@@ -56,6 +75,13 @@ export function VoiceReplyCardView({
   useEffect(() => setErrorHidden(false), [error]);
 
   const normalized = normalizeNotice(notice);
+  const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
+  // A amostra vale para a voz e o aviso de quando foi gerada: mudou, some (e
+  // uma resposta que chega depois da troca é descartada).
+  const previewKey = `${settings.voice}\u0000${normalized}`;
+  const previewKeyRef = useRef(previewKey);
+  previewKeyRef.current = previewKey;
+  useEffect(() => setPreview({ status: "idle" }), [previewKey]);
   const noticeDirty = normalized !== (settings.notice ?? "");
   useEffect(() => onDirtyChange?.(noticeDirty), [noticeDirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
@@ -68,6 +94,23 @@ export function VoiceReplyCardView({
     value: v,
     label: v === settings.defaultVoice ? `${v} (padrão)` : v,
   }));
+
+  const testReady = settings.aiActive && (settings.previewReady ?? settings.platformReady);
+  const runPreview = async () => {
+    if (!onPreview) return;
+    const requestedKey = previewKey;
+    setPreview({ status: "loading" });
+    let next: PreviewState;
+    try {
+      const result = await onPreview({ voice: settings.voice, notice: previewNotice(notice) });
+      next = result.ok
+        ? { status: "ready", url: result.url, durationSec: result.durationSec }
+        : { status: "error", message: result.message };
+    } catch (e) {
+      next = { status: "error", message: mutationErrorMessage(e, "Não foi possível gerar a amostra.") };
+    }
+    if (previewKeyRef.current === requestedKey) setPreview(next);
+  };
 
   const saveNotice = async () => {
     setNoticeFailed(true);
@@ -103,17 +146,46 @@ export function VoiceReplyCardView({
         <p className="text-xs text-text-muted">Só quem gerencia as configurações pode alterar a resposta em áudio.</p>
       )}
       <p className="text-xs text-text-muted">As mudanças deste bloco são salvas na hora.</p>
-      <Select
-        label="Voz"
-        value={settings.voice}
-        options={voiceOptions}
-        disabled={fieldsLocked}
-        onValueChange={(voiceReplyVoice) => {
-          setNoticeFailed(false);
-          setErrorHidden(true);
-          void onSave({ voiceReplyVoice });
-        }}
-      />
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+        <div className="min-w-0 flex-1">
+          <Select
+            label="Voz"
+            value={settings.voice}
+            options={voiceOptions}
+            disabled={fieldsLocked}
+            onValueChange={(voiceReplyVoice) => {
+              setNoticeFailed(false);
+              setErrorHidden(true);
+              void onSave({ voiceReplyVoice });
+            }}
+          />
+        </div>
+        {onPreview && (
+          <Button
+            variant="secondary"
+            className="min-h-11 shrink-0"
+            loading={preview.status === "loading"}
+            disabled={!testReady}
+            onClick={() => void runPreview()}
+          >
+            <Play size={15} aria-hidden="true" />
+            Ouvir amostra
+          </Button>
+        )}
+      </div>
+      {onPreview && preview.status === "ready" && (
+        <div className="space-y-1 rounded-field bg-surface-sunken p-2.5" data-testid="voice-preview">
+          <p className="text-caption text-text-muted">
+            Amostra com a voz {settings.voice}: {normalized ? "o aviso de voz sintética e uma saudação" : "uma saudação"}.
+          </p>
+          <AudioPlayer src={preview.url} isVoiceNote />
+        </div>
+      )}
+      {onPreview && preview.status === "error" && (
+        <p role="alert" className="text-xs text-semantic-error">
+          {preview.message}
+        </p>
+      )}
       <div className="space-y-2">
         <Input
           label="Aviso de voz sintética (opcional)"
@@ -132,7 +204,7 @@ export function VoiceReplyCardView({
         />
         <div className="flex items-start justify-between gap-3">
           <p id="voice-notice-hint" className="text-xs text-text-muted">
-            Frase dita no início do primeiro áudio de cada conversa, avisando que a voz é sintética. Sem números, links, e-mails, valores, endereços ou códigos.
+            Frase dita no início do primeiro áudio de cada conversa, avisando que a voz é sintética. Sem números, links, e-mails, valores, endereços ou códigos. Em Ouvir amostra, o aviso digitado é falado mesmo antes de salvar.
           </p>
           <span className="shrink-0 text-xs text-text-muted">
             {notice.length}/{settings.noticeMaxChars}
@@ -149,6 +221,18 @@ export function VoiceReplyCardView({
           </div>
         )}
       </div>
+      {onTestConversation && (
+        <div className="space-y-2 border-t border-border-subtle pt-3">
+          <Button variant="secondary" className="min-h-11" disabled={!settings.aiActive} onClick={onTestConversation}>
+            <MessagesSquare size={15} aria-hidden="true" />
+            Testar conversa com voz
+          </Button>
+          <p className="text-xs text-text-muted">
+            Abre o teste do atendente: escreva como se fosse o cliente (como nota de voz) e veja a resposta em texto e em
+            áudio, ou por que ela iria em texto. Nada chega a um cliente nem fica salvo no CRM.
+          </p>
+        </div>
+      )}
       {showError && !noticeFailed && (
         <p role="alert" className="text-xs text-semantic-error">
           {error}
@@ -158,20 +242,29 @@ export function VoiceReplyCardView({
   );
 }
 
-/** Container: lê `voiceReply.getVoiceReplySettings` e grava por `aiSettings.setFeatureToggles`. */
+/**
+ * Container: lê `voiceReply.getVoiceReplySettings`, grava por `aiSettings.setFeatureToggles`,
+ * toca a amostra por `voiceReply.previewVoiceSample` e abre o simulador em modo áudio.
+ */
 export function VoiceReplyCard({
   organizationId,
   canManage,
   onDirtyChange,
+  agentMemberId,
 }: {
   organizationId: Id<"organizations">;
   canManage: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  /** Atendente do painel: habilita "Testar conversa com voz" (simulador em modo áudio). */
+  agentMemberId?: Id<"teamMembers">;
 }) {
   const settings = useQuery(api.voiceReply.getVoiceReplySettings, { organizationId });
   const setFeatureToggles = useMutation(api.aiSettings.setFeatureToggles);
+  const previewVoiceSample = useAction(api.voiceReply.previewVoiceSample);
+  const { modules } = useOrgModules(organizationId);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
 
   if (settings === undefined) {
     return (
@@ -198,6 +291,27 @@ export function VoiceReplyCard({
   };
 
   return (
-    <VoiceReplyCardView settings={settings} canManage={canManage} saving={saving} error={error} onSave={save} onDirtyChange={onDirtyChange} />
+    <>
+      <VoiceReplyCardView
+        settings={settings}
+        canManage={canManage}
+        saving={saving}
+        error={error}
+        onSave={save}
+        onDirtyChange={onDirtyChange}
+        onPreview={(input) => previewVoiceSample({ organizationId, ...input })}
+        onTestConversation={agentMemberId ? () => setTesting(true) : undefined}
+      />
+      {testing && agentMemberId && (
+        <AttendantSimulator
+          variant="modal"
+          voiceMode
+          metaEnabled={modules.metaMessaging}
+          organizationId={organizationId}
+          agentMemberId={agentMemberId}
+          onClose={() => setTesting(false)}
+        />
+      )}
+    </>
   );
 }
