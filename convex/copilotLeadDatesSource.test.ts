@@ -28,7 +28,7 @@ describe("v0.78.1 — fontes", () => {
     // (it only passes the size-based timeout as the 4th argument).
     const inbound = transcription.slice(transcription.indexOf("async function runTranscription("));
     const inboundCall = inbound.slice(inbound.indexOf("callWhisper("), inbound.indexOf("});", inbound.indexOf("callWhisper(")));
-    expect(inboundCall).toMatch(/^callWhisper\(serviceUrl, serviceToken, audioUrl, \{\s*timeoutMs: whisperTimeoutMsForSize\(message\.size\),\s*$/);
+    expect(inboundCall).toMatch(/^callWhisper\(serviceUrl!?, serviceToken, audioUrl, \{ timeoutMs\s*$/);
     expect(inboundCall).not.toContain("prompt");
     expect(src("telegramCopilot.ts")).toMatch(/internalTranscribeStoredAudio,\s*\{[^}]*prompt: voicePrompt\(/);
   });

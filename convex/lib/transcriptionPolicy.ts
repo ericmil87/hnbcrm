@@ -32,10 +32,11 @@ export function whisperTimeoutMsForSize(sizeBytes: number): number {
 /**
  * Até quando um `pending` é considerado em voo (não duplica a chamada). Antes
  * era 2 min fixos — com o teto proporcional, um clique em "Transcrever" no
- * meio de um áudio longo dispararia uma 2ª inferência no mesmo Whisper.
+ * meio de um áudio longo dispararia uma 2ª inferência no mesmo Whisper. A
+ * folga de 135 s cobre duas tentativas na Groq (2 × 60 s + 15 s) antes do local.
  */
 export function transcriptionPendingStaleAfterMs(sizeBytes: number): number {
-  return whisperTimeoutMsForSize(sizeBytes) + 30_000;
+  return whisperTimeoutMsForSize(sizeBytes) + 135_000;
 }
 
 /** Atrasos das re-tentativas automáticas (1ª, 2ª). Só no caminho automático. */
@@ -80,6 +81,45 @@ export function longAudioWaitMs(sizeBytes: number): number | null {
   if (estimateVoiceNoteSeconds(sizeBytes) <= LONG_AUDIO_MIN_SECONDS) return null;
   const wanted = whisperTimeoutMsForSize(sizeBytes) + TRANSCRIPTION_RETRY_DELAYS_MS[0]! + 15_000;
   return Math.min(LONG_AUDIO_MAX_WAIT_MS, wanted);
+}
+
+/**
+ * RTF do Whisper local (tempo de processamento ÷ duração do áudio), medido na
+ * VPS em 17/11/2026 com `small` beam 5: 0,79. Usado só para estimar a fila
+ * local (env `WHISPER_LOCAL_RTF` sobrescreve se a VPS mudar de modelo/config).
+ */
+export const DEFAULT_WHISPER_LOCAL_RTF = 0.8;
+
+export function whisperLocalRtf(raw: string | undefined): number {
+  const n = raw === undefined || raw.trim() === "" ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 && n <= 5 ? n : DEFAULT_WHISPER_LOCAL_RTF;
+}
+
+/** Tempo estimado de processamento local deste áudio (ms). */
+export function localProcessingEstimateMs(sizeBytes: number, rtf: number): number {
+  return Math.round(estimateVoiceNoteSeconds(sizeBytes) * rtf * 1000) + 5_000;
+}
+
+export type TranscriptionEngine = "groq" | "local";
+
+/**
+ * Ordem dos motores para ESTE áudio (porta única da decisão):
+ * - Groq indisponível (sem chave, org sem IA/LGPD, orçamento/cooldown) → só local;
+ * - áudio estimado ≥ `longAudioSeconds` → Groq primeiro, local de reserva;
+ * - fila local estimada > `busyMaxWaitMs` → Groq primeiro;
+ * - senão → local primeiro, Groq de reserva (falha/timeout local).
+ */
+export function planTranscriptionRoute(input: {
+  estimatedSeconds: number;
+  groqAvailable: boolean;
+  localQueueWaitMs: number;
+  longAudioSeconds: number;
+  busyMaxWaitMs: number;
+}): TranscriptionEngine[] {
+  if (!input.groqAvailable) return ["local"];
+  if (input.estimatedSeconds >= input.longAudioSeconds) return ["groq", "local"];
+  if (input.localQueueWaitMs > input.busyMaxWaitMs) return ["groq", "local"];
+  return ["local", "groq"];
 }
 
 /** Próximo atraso de re-tentativa, ou `null` quando acabaram as tentativas. */

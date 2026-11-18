@@ -39,6 +39,15 @@ export async function isStorageShared(
   return rows.some((row) => row._id !== file._id);
 }
 
+/** Algum `files` aponta para este blob? (ops que apagam blob solto precisam recusar.) */
+export async function isStorageReferenced(ctx: MutationCtx, storageId: string): Promise<boolean> {
+  const row = await ctx.db
+    .query("files")
+    .withIndex("by_storage_id", (q) => q.eq("storageId", storageId))
+    .first();
+  return row !== null;
+}
+
 /**
  * Apaga o blob de um arquivo SE nenhuma outra linha de `files` o referenciar.
  * Não toca no doc de `files` — quem chama decide o que fazer com a linha.

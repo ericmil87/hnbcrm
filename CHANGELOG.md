@@ -6,6 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Novidades
 
+- **Áudios longos transcritos em segundos.** Mensagens de voz longas (a partir de uns 2 minutos) passam a ser transcritas por um serviço externo rápido, com retenção zero de dados, nas organizações que ativaram a IA. Áudios curtos continuam no nosso servidor, e se um dos dois falhar o outro assume. A Atendente IA responde ao que o cliente falou sem esperar minutos.
 - **Dá para ouvir a voz da IA antes de ligar a resposta em áudio.** Em Configurações › Comportamento na conversa › Responder em áudio, o botão "Ouvir amostra" fala o aviso de voz sintética (mesmo antes de salvar) e uma saudação curta com a voz escolhida. O aviso segue as mesmas regras de quando é salvo: sem números, links, valores, endereços ou códigos.
 - **Testar conversa com voz.** No mesmo bloco, o botão abre o teste da Atendente IA já no modo áudio: escreva como se fosse o cliente (como nota de voz) e veja a resposta em texto, ouça o áudio gerado com a voz configurada e veja o que iria por escrito logo depois (valores, links, Pix, endereços, telefones). Quando a regra manda a resposta em texto (o cliente escreveu, grupo, resposta longa, quase só dados), a conversa de teste diz o motivo. O teste do atendente em "Atendente IA" ganhou a opção "Ouvir as respostas em áudio". Nada chega a um cliente nem fica salvo no CRM; para não gastar à toa, cada pessoa pode gerar até 6 áudios de teste por minuto, e repetir a mesma frase com a mesma voz não gera um áudio novo.
 

@@ -26,6 +26,7 @@ Project-specific rules that change how code must be written. Official Convex rul
 | Lead stage change (any actor) | `moveLeadToStageCore` (`convex/lib/leadStageMove.ts`), emits `lead.won`/`lead.lost` once | `leadStageMovePort.test.ts` fails on `patch(…{stageId})` outside the core |
 | New lead insert | `leadCreationStagePatch` on every `insert("leads")` | — |
 | Handoff creation (human, keyword, tool, failure, bot, budget) | `createHandoffCore` (`convex/handoffs.ts`); `handoffs.origin` values `bot_suspect`/`ai_budget` are refused by the public validator | — |
+| Platform alert e-mail (provider key/credit/limit problems, not tied to an org) | `platformAlert(ctx, {kind, severity, title, detail, howToFix?, fallback?, throttleMs?})` (`convex/lib/platformAlert.ts`; from actions `internal.platformAlerts.internalRaise`; `kind` = `<provider>_<type>`): recipient only from env `PLATFORM_ALERT_EMAIL` (absent = no send, no stamp), dedupe per `kind` in `platformAlerts` (default 6 h), sends via `sendTransactionalEmail` | `platformAlert.test.ts` |
 | Outbound e-mail | `sendTransactionalEmail` (`convex/email.ts`): validates address, checks `emailSuppressions`, never throws, returns boolean | `emailConfig.test.ts` |
 | Phone normalization | `normalizeCampaignPhone(raw, defaultCountry)` + `phoneLookupCandidates` (`convex/lib/phone.ts`); org default via `resolveDefaultCountry` (`convex/lib/orgPhone.ts`) | `lib/phone.test.ts` |
 | Blob deletion | `convex/lib/fileRefs.ts` (delete storage only when no other `files` row shares the `storageId`) | — |
