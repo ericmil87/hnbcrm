@@ -178,9 +178,10 @@ async function insertVoiceNote(
   t: TestConvex<typeof schema>,
   seed: Seed,
   opts?: {
-    transcription?: { status: "pending" | "done" | "failed"; text?: string };
+    transcription?: { status: "pending" | "done" | "failed"; text?: string; retryAt?: number };
     transcriptText?: string;
     withAttachment?: boolean;
+    size?: number;
   }
 ): Promise<Id<"messages">> {
   return await t.run(async (ctx) => {
@@ -205,7 +206,7 @@ async function insertVoiceNote(
         storageId: "kg2storage-audio",
         name: "voice.ogg",
         mimeType: "audio/ogg; codecs=opus",
-        size: 18_000,
+        size: opts?.size ?? 18_000,
         fileType: "message_attachment",
         messageId,
         createdAt: now,
@@ -316,6 +317,98 @@ describe("espera pela transcrição no claim (D1)", () => {
     expect(claim.kind).toBe("run");
     if (claim.kind !== "run") throw new Error("unreachable");
     expect(claim.context.history.at(-1)!.texto).toBe("[áudio recebido — transcrição indisponível]");
+  });
+});
+
+// Áudio longo (clientes mandam notas de ~10 min): o teto de 60 s fazia a IA
+// responder "transcrição indisponível" antes de o Whisper terminar.
+describe("espera estendida por áudio longo", () => {
+  const TEN_MIN_OGG = 1_500_000; // ~10 min a ~2,5 KB/s
+
+  test("áudio de ~10 min pendente: passados 60 s o claim continua esperando, com prazo proporcional", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertVoiceNote(t, seed, { transcription: { status: "pending" }, size: TEN_MIN_OGG });
+    const item = await enqueueAndSettle(t, messageId);
+    vi.setSystemTime(item.createdAt + 5 * 60_000);
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-audio-longo",
+    });
+    expect(claim).toEqual({ kind: "requeued", reason: "aguardando_transcricao" });
+    const updated = await t.run(async (ctx) => ctx.db.get(item._id));
+    expect(updated!.mediaWaitUntil!).toBeGreaterThan(item.createdAt + 9 * 60_000);
+    expect(updated!.mediaWaitUntil!).toBeLessThanOrEqual(item.createdAt + 11 * 60_000 + 1_000);
+    // Espera estendida re-checa com intervalo maior.
+    expect(updated!.nextAttemptAt).toBe(Date.now() + 20_000);
+  });
+
+  test("áudio longo: quando a transcrição chega, o turno roda com o texto", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertVoiceNote(t, seed, { transcription: { status: "pending" }, size: TEN_MIN_OGG });
+    const item = await enqueueAndSettle(t, messageId);
+    vi.setSystemTime(item.createdAt + 7 * 60_000);
+    await t.run(async (ctx) => {
+      const m = await ctx.db.get(messageId);
+      await ctx.db.patch(messageId, {
+        transcriptText: "Oi, bom dia, queria explicar o que está acontecendo",
+        metadata: { ...(m!.metadata ?? {}), transcription: { status: "done", engine: "faster-whisper", at: Date.now() } },
+      });
+    });
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-audio-longo-pronto",
+    });
+    expect(claim.kind).toBe("run");
+    if (claim.kind !== "run") throw new Error("unreachable");
+    expect(claim.context.history.at(-1)!.texto).toMatch(/^\[áudio transcrito\]: Oi, bom dia/);
+  });
+
+  test("áudio longo além do prazo estendido: roda com o marcador de indisponível", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertVoiceNote(t, seed, { transcription: { status: "pending" }, size: TEN_MIN_OGG });
+    const item = await enqueueAndSettle(t, messageId);
+    vi.setSystemTime(item.createdAt + 12 * 60_000);
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-audio-longo-estourado",
+    });
+    expect(claim.kind).toBe("run");
+  });
+
+  test("áudio curto pendente continua com o teto de 60 s", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertVoiceNote(t, seed, { transcription: { status: "pending" } });
+    const item = await enqueueAndSettle(t, messageId);
+    vi.setSystemTime(item.createdAt + 61_000);
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-audio-curto-61s",
+    });
+    expect(claim.kind).toBe("run");
+  });
+
+  test("falha com re-tentativa agendada segura o turno dentro do prazo", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertVoiceNote(t, seed, {
+      transcription: { status: "failed", retryAt: Date.now() + 60_000 },
+      size: TEN_MIN_OGG,
+    });
+    const item = await enqueueAndSettle(t, messageId);
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-audio-retry",
+    });
+    expect(claim).toEqual({ kind: "requeued", reason: "aguardando_transcricao" });
   });
 });
 

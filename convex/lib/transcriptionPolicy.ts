@@ -57,6 +57,29 @@ export function isTransientTranscriptionError(error: string, httpStatus?: number
   );
 }
 
+/** Duração estimada (s) de uma nota de voz a partir do tamanho do arquivo. */
+export function estimateVoiceNoteSeconds(sizeBytes: number): number {
+  return Number.isFinite(sizeBytes) && sizeBytes > 0 ? sizeBytes / VOICE_NOTE_BYTES_PER_SEC : 0;
+}
+
+/** Abaixo disto (≈ 90 s de áudio) o teto padrão de 60 s do atendente basta. */
+export const LONG_AUDIO_MIN_SECONDS = 90;
+/** Teto absoluto da espera do atendente por um áudio longo, contado do áudio. */
+export const LONG_AUDIO_MAX_WAIT_MS = 11 * 60_000;
+
+/**
+ * Quanto o atendente pode esperar pela transcrição DESTE áudio, contado a
+ * partir da chegada dele — ou `null` para áudio curto (vale o teto padrão de
+ * 60 s do claim). Antes o teto era 60 s para tudo: num áudio de 3–10 min a IA
+ * respondia "transcrição indisponível" antes de o texto existir. Cobre o teto
+ * do POST + a 1ª re-tentativa (60 s) + folga, até `LONG_AUDIO_MAX_WAIT_MS`.
+ */
+export function longAudioWaitMs(sizeBytes: number): number | null {
+  if (estimateVoiceNoteSeconds(sizeBytes) <= LONG_AUDIO_MIN_SECONDS) return null;
+  const wanted = whisperTimeoutMsForSize(sizeBytes) + TRANSCRIPTION_RETRY_DELAYS_MS[0]! + 15_000;
+  return Math.min(LONG_AUDIO_MAX_WAIT_MS, wanted);
+}
+
 /** Próximo atraso de re-tentativa, ou `null` quando acabaram as tentativas. */
 export function nextTranscriptionRetryDelayMs(attempt: number, transient: boolean): number | null {
   if (!transient) return null;
