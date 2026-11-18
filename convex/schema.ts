@@ -2763,6 +2763,41 @@ const applicationTables = {
     alertedByOrgId: v.optional(v.id("organizations")),
   }).index("by_day", ["day"]),
 
+  // Estado de PLATAFORMA da transcrição de áudio (18/11/2026), sem org de
+  // propósito (o orçamento da Groq e a fila do Whisper local são um só para o
+  // deployment). Uma linha por `key`: "groq:<modelo>" (orçamento da janela,
+  // cooldown), "groq" (falhas seguidas + carimbo de alerta por tipo) e "local"
+  // (fila estimada do Whisper da VPS). Escrito só por convex/transcriptionRouting.ts.
+  transcriptionProviderState: defineTable({
+    key: v.string(),
+    minuteStart: v.optional(v.number()),
+    minuteRequests: v.optional(v.number()),
+    hourStart: v.optional(v.number()),
+    hourAudioSec: v.optional(v.number()),
+    dayStart: v.optional(v.number()),
+    dayAudioSec: v.optional(v.number()),
+    dayRequests: v.optional(v.number()),
+    cooldownUntil: v.optional(v.number()),
+    consecutiveFailures: v.optional(v.number()),
+    lastErrorKind: v.optional(v.string()),
+    lastErrorAt: v.optional(v.number()),
+    localInFlight: v.optional(
+      v.array(v.object({ messageId: v.id("messages"), startedAt: v.number(), estMs: v.number() }))
+    ),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
+  // Dedupe dos alertas de PLATAFORMA por e-mail (`lib/platformAlert.ts`): uma
+  // linha por `kind` ("groq_auth", "openrouter_no_credit"…), sem org de
+  // propósito. `suppressedCount` = ocorrências engolidas desde o último envio.
+  platformAlerts: defineTable({
+    kind: v.string(),
+    lastSentAt: v.optional(v.number()),
+    suppressedCount: v.optional(v.number()),
+    lastSeverity: v.optional(v.union(v.literal("critical"), v.literal("warning"))),
+    updatedAt: v.number(),
+  }).index("by_kind", ["kind"]),
+
   // Teto de e-mails de autenticação por endereço (janela fixa). O flow "reset"
   // é PÚBLICO e o Convex Auth só limita tentativas de código, não pedidos —
   // sem isto, qualquer um bombardeia uma caixa alheia usando o nosso domínio.

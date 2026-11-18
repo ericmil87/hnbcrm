@@ -4,6 +4,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Novidades
+
+- **Áudios longos transcritos em segundos.** Mensagens de voz longas (a partir de uns 2 minutos) passam a ser transcritas por um serviço externo rápido, com retenção zero de dados, nas organizações que ativaram a IA. Áudios curtos continuam no nosso servidor, e se um dos dois falhar o outro assume. A Atendente IA responde ao que o cliente falou sem esperar minutos.
+
 ### Correções
 
 - **Áudio não faz mais o cliente parecer robô.** Quem mandava várias mensagens de voz seguidas podia ser marcado como "possível robô" e a IA parava de responder. A proteção contra robôs agora julga o áudio pelo que foi falado (a transcrição) e ignora fotos, arquivos e chamadas que não têm texto.

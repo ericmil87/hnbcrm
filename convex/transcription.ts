@@ -31,15 +31,32 @@ import {
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
+import { orgAiActive } from "./lib/agentSecurity";
 import { IMPORTED_FROM_HISTORY_KEY, shouldTranscribeAudio } from "./lib/mediaEnrichment";
 import { scheduleMessageTranslation } from "./lib/translationOps";
 import {
   WHISPER_BASE_TIMEOUT_MS,
+  estimateVoiceNoteSeconds,
   isTransientTranscriptionError,
+  localProcessingEstimateMs,
   nextTranscriptionRetryDelayMs,
+  planTranscriptionRoute,
   transcriptionPendingStaleAfterMs,
+  whisperLocalRtf,
   whisperTimeoutMsForSize,
 } from "./lib/transcriptionPolicy";
+import {
+  GROQ_MODELS,
+  GROQ_TIMEOUT_MS,
+  GROQ_TRANSCRIPTIONS_URL,
+  GroqFailure,
+  LOCAL_BUSY_MAX_WAIT_MS,
+  buildGroqForm,
+  classifyGroqFailure,
+  groqHeaderCooldownMs,
+  groqLongAudioSeconds,
+  parseGroqTranscription,
+} from "./lib/groqTranscription";
 
 const ENGINE = "faster-whisper";
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // mirrors the Whisper service's own limit
@@ -72,6 +89,8 @@ type AudioMessageForTranscription = {
   storageId: string;
   mimeType: string;
   size: number;
+  /** Org com IA ativa + aceite LGPD: o áudio pode ir à Groq (ZDR). Ausente = só local. */
+  externalAllowed?: boolean;
 };
 
 const transcribeResultValidator = v.object({
@@ -169,7 +188,9 @@ async function runTranscription(
 
   const serviceUrl = process.env.WHISPER_SERVICE_URL;
   const serviceToken = process.env.WHISPER_SERVICE_TOKEN;
-  if (!serviceUrl) {
+  const groqKey = process.env.GROQ_API_KEY?.trim();
+  const groqAllowed = !!groqKey && message.externalAllowed === true;
+  if (!serviceUrl && !groqAllowed) {
     const error = "WHISPER_SERVICE_URL não configurado no Convex";
     await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
       messageId: message.messageId,
@@ -194,35 +215,174 @@ async function runTranscription(
     return { status: "failed", error };
   }
 
-  const result = await callWhisper(serviceUrl, serviceToken, audioUrl, {
-    timeoutMs: whisperTimeoutMsForSize(message.size),
-  });
-  if (result.status === "failed") {
-    const retryDelay = auto ? nextTranscriptionRetryDelayMs(auto.attempt, result.transient) : null;
-    const retryAt = retryDelay !== null ? Date.now() + retryDelay : undefined;
-    await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
-      messageId: message.messageId,
-      status: "failed",
-      error: result.error,
-      ...(retryAt !== undefined ? { retryAt } : {}),
-      ...(auto ? { attempt: auto.attempt } : {}),
-    });
-    if (retryDelay !== null && auto) {
-      await ctx.scheduler.runAfter(retryDelay, internal.transcription.autoTranscribe, {
-        messageId: message.messageId,
-        attempt: auto.attempt + 1,
-      });
+  const startedAt = Date.now();
+  const estimatedSeconds = estimateVoiceNoteSeconds(message.size);
+  const snapshot: { localQueueWaitMs: number } = serviceUrl
+    ? await ctx.runQuery(internal.transcriptionRouting.internalRoutingSnapshot, { now: startedAt })
+    : { localQueueWaitMs: Number.POSITIVE_INFINITY };
+  const route = serviceUrl
+    ? planTranscriptionRoute({
+        estimatedSeconds,
+        groqAvailable: groqAllowed,
+        localQueueWaitMs: snapshot.localQueueWaitMs,
+        longAudioSeconds: groqLongAudioSeconds(process.env.GROQ_LONG_AUDIO_SECONDS),
+        busyMaxWaitMs: LOCAL_BUSY_MAX_WAIT_MS,
+      })
+    : (["groq"] as const);
+
+  let lastFailure: { error: string; transient: boolean } | null = null;
+  for (const engine of route) {
+    if (engine === "groq") {
+      // Groq depois do local: só se ainda couber na action (2 modelos × 60 s + folga).
+      if (Date.now() - startedAt > ACTION_BUDGET_MS - 2 * GROQ_TIMEOUT_MS - 15_000) continue;
+      const groq = await transcribeWithGroq(ctx, message, estimatedSeconds, groqKey!);
+      if (groq.status === "done") {
+        await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
+          messageId: message.messageId,
+          status: "done",
+          text: groq.text,
+          language: groq.language,
+          durationSec: groq.durationSec,
+          engine: `groq:${groq.model}`,
+        });
+        return { status: "done", text: groq.text, language: groq.language, durationSec: groq.durationSec };
+      }
+      if (groq.status === "failed") lastFailure = { error: groq.error, transient: groq.transient };
+      continue; // "skipped" (orçamento/cooldown) ou falha → próximo motor
     }
-    return { status: "failed", error: result.error };
+
+    // Whisper local (serial na VPS): registra na fila estimada, com teto que
+    // cabe no que sobra dos 10 min da action.
+    const remainingMs = ACTION_BUDGET_MS - (Date.now() - startedAt);
+    const timeoutMs = Math.min(whisperTimeoutMsForSize(message.size), remainingMs);
+    if (timeoutMs < 30_000) break;
+    await ctx.runMutation(internal.transcriptionRouting.internalLocalStart, {
+      messageId: message.messageId,
+      estMs: localProcessingEstimateMs(message.size, whisperLocalRtf(process.env.WHISPER_LOCAL_RTF)),
+    });
+    let result: Awaited<ReturnType<typeof callWhisper>>;
+    try {
+      result = await callWhisper(serviceUrl!, serviceToken, audioUrl, { timeoutMs });
+    } finally {
+      await ctx.runMutation(internal.transcriptionRouting.internalLocalFinish, { messageId: message.messageId });
+    }
+    if (result.status === "done") {
+      await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
+        messageId: message.messageId,
+        status: "done",
+        text: result.text,
+        language: result.language,
+        durationSec: result.durationSec,
+      });
+      return result;
+    }
+    lastFailure = { error: result.error, transient: result.transient };
   }
+
+  const failure = lastFailure ?? { error: "Nenhum motor de transcrição disponível agora", transient: true };
+  const retryDelay = auto ? nextTranscriptionRetryDelayMs(auto.attempt, failure.transient) : null;
+  const retryAt = retryDelay !== null ? Date.now() + retryDelay : undefined;
   await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
     messageId: message.messageId,
-    status: "done",
-    text: result.text,
-    language: result.language,
-    durationSec: result.durationSec,
+    status: "failed",
+    error: failure.error,
+    ...(retryAt !== undefined ? { retryAt } : {}),
+    ...(auto ? { attempt: auto.attempt } : {}),
   });
-  return result;
+  if (retryDelay !== null && auto) {
+    await ctx.scheduler.runAfter(retryDelay, internal.transcription.autoTranscribe, {
+      messageId: message.messageId,
+      attempt: auto.attempt + 1,
+    });
+  }
+  return { status: "failed", error: failure.error };
+}
+
+/** Folga de 30 s abaixo do limite de 10 min de uma action do Convex. */
+const ACTION_BUDGET_MS = 570_000;
+
+/**
+ * Groq (OpenAI-compatível): tenta os modelos em ordem (turbo → v3), cada um
+ * só se o orçamento da janela couber (`internalReserveGroq`, 85% dos limites
+ * oficiais, respeita cooldown/retry-after). Chave recusada ou sem crédito
+ * param a cadeia (vale para a conta toda); 429 de um modelo passa ao próximo.
+ * Cada chamada registra o resultado (orçamento, falhas seguidas, alerta).
+ */
+async function transcribeWithGroq(
+  ctx: ActionCtx,
+  message: AudioMessageForTranscription,
+  estimatedSeconds: number,
+  apiKey: string
+): Promise<
+  | { status: "done"; text: string; language?: string; durationSec?: number; model: string }
+  | { status: "failed"; error: string; transient: boolean }
+  | { status: "skipped" }
+> {
+  let blob: Blob | null = null;
+  let lastError: { error: string; transient: boolean } | null = null;
+  for (const model of GROQ_MODELS) {
+    const reservation = await ctx.runMutation(internal.transcriptionRouting.internalReserveGroq, {
+      model,
+      audioSec: estimatedSeconds,
+    });
+    if (!reservation.ok) continue;
+    const reservedSec = reservation.billedSec ?? 0;
+    blob = blob ?? (await ctx.storage.get(message.storageId as Id<"_storage">));
+    if (!blob) {
+      await ctx.runMutation(internal.transcriptionRouting.internalRecordGroqResult, {
+        model,
+        reservedSec,
+        ok: false,
+      });
+      return { status: "failed", error: "Áudio não encontrado no storage", transient: false };
+    }
+    let failure: GroqFailure;
+    try {
+      const response = await fetch(GROQ_TRANSCRIPTIONS_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: buildGroqForm(blob, message.mimeType, model),
+        signal: AbortSignal.timeout(GROQ_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        const parsed = parseGroqTranscription(await response.json());
+        const headerCooldownMs = groqHeaderCooldownMs(response.headers);
+        await ctx.runMutation(internal.transcriptionRouting.internalRecordGroqResult, {
+          model,
+          reservedSec,
+          ok: true,
+          ...(parsed.durationSec !== undefined ? { actualSec: parsed.durationSec } : {}),
+          ...(headerCooldownMs !== null ? { cooldownMs: headerCooldownMs } : {}),
+        });
+        return { status: "done", text: parsed.text, language: parsed.language, durationSec: parsed.durationSec, model };
+      }
+      const bodyText = await response.text().catch(() => "");
+      failure = classifyGroqFailure(response.status, bodyText, response.headers);
+    } catch (e) {
+      failure = isAbortError(e)
+        ? { kind: "timeout", message: `Groq não respondeu em ${GROQ_TIMEOUT_MS / 1000}s` }
+        : { kind: "network", cooldownMs: 15_000, message: "Falha de rede ao chamar a Groq" };
+    }
+    await ctx.runMutation(internal.transcriptionRouting.internalRecordGroqResult, {
+      model,
+      reservedSec,
+      ok: false,
+      failure: {
+        kind: failure.kind,
+        message: failure.message.slice(0, 200),
+        ...(failure.status !== undefined ? { status: failure.status } : {}),
+        ...(failure.cooldownMs !== undefined ? { cooldownMs: failure.cooldownMs } : {}),
+      },
+    });
+    lastError = {
+      error: `Groq: ${failure.message}`.slice(0, 240),
+      transient: failure.kind !== "bad_request",
+    };
+    // Chave/cota valem para a conta toda; request inválido, timeout e rede não
+    // melhoram trocando de modelo. Só 429/5xx de um modelo passam ao próximo.
+    if (failure.kind !== "rate_limit" && failure.kind !== "server") break;
+  }
+  return lastError ? { status: "failed", ...lastError } : { status: "skipped" };
 }
 
 /**
@@ -316,6 +476,7 @@ const audioMessageResultValidator = v.object({
   storageId: v.string(),
   mimeType: v.string(),
   size: v.number(),
+  externalAllowed: v.optional(v.boolean()),
 });
 
 // Permission-checked lookup for the user-triggered `transcribe` action.
@@ -348,6 +509,7 @@ export const internalGetAudioMessageForMember = internalQuery({
       storageId: file.storageId,
       mimeType: file.mimeType,
       size: file.size,
+      externalAllowed: orgAiActive(await ctx.db.get(message.organizationId)),
     };
   },
 });
@@ -392,6 +554,9 @@ export const internalGetAudioMessageIfEligible = internalQuery({
       storageId: file.storageId,
       mimeType: file.mimeType,
       size: file.size,
+      // Groq (externa) só com IA ativa + aceite LGPD da org — o toggle de
+      // transcrição do canal sozinho continua 100% local.
+      externalAllowed: orgAiActive(org),
     };
   },
 });
@@ -422,6 +587,8 @@ export const internalSetTranscriptionResult = internalMutation({
     error: v.optional(v.string()),
     retryAt: v.optional(v.number()),
     attempt: v.optional(v.number()),
+    /** Motor que transcreveu ("groq:<modelo>"); ausente = Whisper local. */
+    engine: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -430,7 +597,7 @@ export const internalSetTranscriptionResult = internalMutation({
     if (!message || message.metadata?.deletedByCustomer === true) return null;
     const transcription: TranscriptionMeta = {
       status: args.status,
-      engine: ENGINE,
+      engine: args.engine ?? ENGINE,
       at: Date.now(),
       ...(args.text !== undefined ? { text: args.text } : {}),
       ...(args.language !== undefined ? { language: args.language } : {}),

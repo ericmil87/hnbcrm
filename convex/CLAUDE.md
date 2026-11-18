@@ -12,7 +12,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `http.ts` / `router.ts` | Route wiring / REST `/api/v1/*`, API-key auth, RBAC on every route via `ROUTE_PERMISSIONS` + `requireRoutePermission` (fail-closed) |
 | `leads.ts` / `contacts.ts` | Lead CRUD, stage moves (via `lib/leadStageMove.ts`), assignment, qualification / Contact CRUD |
 | `conversations.ts` | Multi-channel conversations + messages, search, archiving, labels, presence, ingest (`internalReceive*`) |
-| `transcription.ts` / `vision.ts` | Whisper voice-note transcription / image description pass (once per image: `messages.imageDescription` + `metadata.vision`) |
+| `transcription.ts` / `vision.ts` | Voice-note transcription (Whisper local + Groq for long audio when `GROQ_API_KEY` is set and the org has AI+LGPD; routing `planTranscriptionRoute`, budget/alerts in `transcriptionRouting.ts`) / image description pass (once per image: `messages.imageDescription` + `metadata.vision`) |
 | `lib/mediaEnrichment.ts` | Pure gates: `shouldTranscribeAudio`, `shouldScheduleAudioTranscription`, `visionEnabledForOrg`, `shouldDescribeImage`, `attendantActive`, `isSticker`; single scheduling port `scheduleAudioTranscription` (every audio message, inbound or team-sent) |
 | `quickReplies.ts` / `scheduledMessages.ts` | "/" shortcuts in the composer / scheduled sends via `ctx.scheduler.runAt` |
 | `channelConfigs.ts` | Per-org WhatsApp channels (meta\|bridge), encrypted creds, health checks, provisioning, number exclusivity (`claimBridgePhone`) |
