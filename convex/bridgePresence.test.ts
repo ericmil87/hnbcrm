@@ -450,7 +450,8 @@ describe("prazo do tick", () => {
       )
     );
     expect(jobs).toHaveLength(1);
-    expect(jobs[0].args[0]).toEqual({ cursor: null, skip: 2 });
+    // O placar da rodada (sentinela de plataforma) segue junto na continuação.
+    expect(jobs[0].args[0]).toEqual({ cursor: null, skip: 2, roundChecked: 2, roundGatewayErrors: 0 });
 
     // A retomada sonda só o canal que faltou.
     const resumed = await t.action(internal.channelHealth.internalChannelHealthTick, { cursor: null, skip: 2 });

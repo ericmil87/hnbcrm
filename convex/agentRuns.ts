@@ -7,6 +7,7 @@ import { v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { recordRunUsage } from "./aiSpend";
+import { notePlatformLlmFailure } from "./lib/platformLlmFailure";
 
 export const internalStartRun = internalMutation({
   args: {
@@ -86,6 +87,9 @@ export const internalFinishRun = internalMutation({
     );
     const before = await ctx.db.get(runId);
     const now = Date.now();
+    // Chave da plataforma recusada / sem crédito na OpenRouter → alerta de
+    // plataforma (agendado: não disputa a linha de dedupe com este commit).
+    await notePlatformLlmFailure(ctx, error);
     await ctx.db.patch(runId, {
       ...clean,
       // Cinto e suspensório: sanitiza de novo mesmo que o chamador já o faça.

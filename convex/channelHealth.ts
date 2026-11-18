@@ -7,7 +7,7 @@
  */
 import { v } from "convex/values";
 import { cronsDisabled } from "./lib/cronGuard";
-import { internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { internalAction, internalMutation, internalQuery, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import {
@@ -244,6 +244,21 @@ export const internalApplyUnhealthyObservation = internalMutation({
 });
 
 /**
+ * Placar da rodada COMPLETA (todas as páginas e retomadas) para a sentinela de
+ * plataforma: `gatewayErrors` conta só rede/timeout/5xx (gateway fora do ar);
+ * 401/404 de uma instância removida é problema do canal, não do gateway.
+ * Best effort.
+ */
+async function reportBridgeProbeRound(ctx: ActionCtx, checked: number, probeErrors: number): Promise<void> {
+  if (checked + probeErrors === 0) return;
+  try {
+    await ctx.runMutation(internal.platformSentinel.internalRecordBridgeProbeRound, { checked, probeErrors });
+  } catch (e) {
+    console.warn(`channel health: placar da sentinela falhou: ${e instanceof Error ? e.message : "erro"}`);
+  }
+}
+
+/**
  * Cron "channel health" (15 min): sonda `GET /session/status` de cada canal
  * bridge elegível (MESMO builder/parser da health check manual), grava o
  * resultado e notifica só na TRANSIÇÃO. Falha de rede/HTTP do gateway NÃO conta
@@ -255,6 +270,9 @@ export const internalChannelHealthTick = internalAction({
     cursor: v.optional(v.union(v.string(), v.null())),
     // Retomada depois do prazo: quantos alvos desta MESMA página já foram sondados.
     skip: v.optional(v.number()),
+    // Placar acumulado da rodada (continuações) para a sentinela de plataforma.
+    roundChecked: v.optional(v.number()),
+    roundGatewayErrors: v.optional(v.number()),
   },
   returns: v.object({ checked: v.number(), probeErrors: v.number() }),
   handler: async (ctx, args) => {
@@ -268,6 +286,11 @@ export const internalChannelHealthTick = internalAction({
     const skip = Math.max(0, Math.floor(args.skip ?? 0));
     let checked = 0;
     let probeErrors = 0;
+    let gatewayErrors = 0;
+    const round = () => ({
+      roundChecked: (args.roundChecked ?? 0) + checked + (probeErrors - gatewayErrors),
+      roundGatewayErrors: (args.roundGatewayErrors ?? 0) + gatewayErrors,
+    });
     for (let i = skip; i < page.targets.length; i++) {
       // Prazo: para antes do limite de 600 s da action e reagenda a mesma
       // página a partir deste alvo — nada é descartado nem re-sondado.
@@ -275,6 +298,7 @@ export const internalChannelHealthTick = internalAction({
         await ctx.scheduler.runAfter(0, internal.channelHealth.internalChannelHealthTick, {
           cursor: pageCursor,
           skip: i,
+          ...round(),
         });
         return { checked, probeErrors };
       }
@@ -298,6 +322,7 @@ export const internalChannelHealthTick = internalAction({
         const status = parseBridgeStatusResponse(probe.httpOk, probe.status, probe.body);
         if (!status.ok) {
           probeErrors++;
+          if (probe.status === 0 || probe.status >= 500) gatewayErrors++;
           continue;
         }
         const mapped = mapBridgeSessionState({
@@ -335,6 +360,11 @@ export const internalChannelHealthTick = internalAction({
         checked++;
       } catch (e) {
         probeErrors++;
+        // Só rede/DNS (TypeError do fetch) e timeout contam como gateway fora;
+        // falha de decrypt ou de mutation é outro problema.
+        if (e instanceof Error && (e.name === "TypeError" || e.name === "TimeoutError" || e.name === "AbortError")) {
+          gatewayErrors++;
+        }
         console.warn(
           `channel health: falha ao sondar ${configId}: ${e instanceof Error ? e.message : "erro"}`
         );
@@ -343,8 +373,12 @@ export const internalChannelHealthTick = internalAction({
     if (!page.isDone && page.nextCursor) {
       await ctx.scheduler.runAfter(0, internal.channelHealth.internalChannelHealthTick, {
         cursor: page.nextCursor,
+        ...round(),
       });
+      return { checked, probeErrors };
     }
+    const totals = round();
+    await reportBridgeProbeRound(ctx, totals.roundChecked, totals.roundGatewayErrors);
     return { checked, probeErrors };
   },
 });

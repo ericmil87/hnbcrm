@@ -100,4 +100,11 @@ crons.daily(
   {}
 );
 
+// Sentinela de plataforma (alertas por e-mail ao dono, env PLATFORM_ALERT_EMAIL):
+// sondas externas (OpenRouter, Whisper, LibreTranslate, Asaas) a cada 15 min e
+// varredura de filas (saída/transcrição presas, erros de IA, webhook do Asaas,
+// canais caídos) a cada 30 min. Sem a env ou com CRONS_DISABLED, saem sem I/O.
+crons.interval("platform sentinel probes", { minutes: 15 }, internal.platformSentinel.internalProbeTick, {});
+crons.interval("platform sentinel scan", { minutes: 30 }, internal.platformSentinel.internalScanTick, {});
+
 export default crons;

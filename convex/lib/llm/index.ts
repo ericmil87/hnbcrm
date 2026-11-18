@@ -24,6 +24,7 @@ import {
   routeInfo,
 } from "./registry";
 import { chatWithRetry, isUpstreamMislabeled400 } from "./openaiCompatible";
+import { platformLlmFailureTag } from "../platformSentinel";
 
 const BASE_URLS: Partial<Record<ProviderId, string>> = {
   "opencode-go": "https://opencode.ai/zen/go/v1",
@@ -38,6 +39,8 @@ export interface ResolvedRoute {
   canonicalModel: string;
   zdr: ReturnType<typeof routeInfo>;
   extraBody?: Record<string, unknown>;
+  /** Rota com a chave da PLATAFORMA (resolvePlatformChain); BYO nunca tem. */
+  platform?: true;
 }
 
 function makeRoute(
@@ -67,16 +70,41 @@ export function resolvePlatformChain(
 ): ResolvedRoute[] {
   const chain: ResolvedRoute[] = [];
   if (env.opencodeGoKey && !OPENROUTER_ONLY_MODELS.includes(canonicalModel)) {
-    chain.push(makeRoute("opencode-go", BASE_URLS["opencode-go"]!, env.opencodeGoKey, canonicalModel));
+    chain.push({ ...makeRoute("opencode-go", BASE_URLS["opencode-go"]!, env.opencodeGoKey, canonicalModel), platform: true });
   }
   if (env.openrouterKey) {
-    chain.push(
-      makeRoute("openrouter", BASE_URLS.openrouter!, env.openrouterKey, canonicalModel, {
+    chain.push({
+      ...makeRoute("openrouter", BASE_URLS.openrouter!, env.openrouterKey, canonicalModel, {
         extraBody: { ...OPENROUTER_ZDR_PROVIDER_BODY, ...OPENROUTER_USAGE_BODY },
-      })
-    );
+      }),
+      platform: true,
+    });
   }
   return chain;
+}
+
+/**
+ * Alerta de plataforma (convex/platformSentinel.ts): se alguma rota da
+ * OpenRouter com a chave da PLATAFORMA recusou por chave (401) ou crédito
+ * (402), prefixa o erro final com o marcador lido em `agentRuns.internalFinishRun`
+ * (`parsePlatformLlmFailure`). Não muda tipo nem status do erro; BYO nunca entra.
+ * O OpenCode Go fica de fora: ele usa 402/403 para cota esgotada do plano. O
+ * 403 da OpenRouter também fica de fora: ela o usa para entrada barrada pela
+ * moderação ou modelo restrito (o texto do cliente decide) — chave revogada é
+ * coberta pela sonda periódica de `/key`.
+ */
+export function tagPlatformLlmFailure(err: unknown, failures: { route: ResolvedRoute; error: unknown }[]): unknown {
+  const hit = failures.find(
+    (f) =>
+      f.route.platform === true &&
+      f.route.providerId === "openrouter" &&
+      f.error instanceof LlmHttpError &&
+      (f.error.status === 401 || f.error.status === 402)
+  );
+  if (!hit || !(err instanceof Error)) return err;
+  const tag = platformLlmFailureTag((hit.error as LlmHttpError).status);
+  if (!err.message.startsWith(tag)) err.message = tag + err.message;
+  return err;
 }
 
 /**
@@ -160,6 +188,7 @@ export async function chatWithFallback(
 ): Promise<NormalizedResponse & { usedRoute: ResolvedRoute }> {
   if (routes.length === 0) throw new Error("Nenhuma rota LLM disponível");
   let lastErr: unknown;
+  const failures: { route: ResolvedRoute; error: unknown }[] = [];
   for (let i = 0; i < routes.length; i++) {
     const route = routes[i];
     const fullReq: NormalizedRequest = {
@@ -175,8 +204,9 @@ export async function chatWithFallback(
       return { ...res, usedRoute: route };
     } catch (e) {
       lastErr = e;
+      failures.push({ route, error: e });
       const isLast = i === routes.length - 1;
-      if (isLast || !shouldFallover(e)) throw e;
+      if (isLast || !shouldFallover(e)) throw tagPlatformLlmFailure(e, failures);
       // else: try the next route in the chain
     }
   }
