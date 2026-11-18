@@ -1,4 +1,5 @@
 import { FileText, Image as ImageIcon, Mic } from "lucide-react";
+import type { SimulatedVoice } from "@/lib/voiceTest";
 
 // Tipos e constantes do simulador do Atendente IA (fonte única, usada por AttendantSimulator).
 
@@ -13,6 +14,8 @@ export type SimTurn = {
   /** Quem falou, no modo grupo. */
   senderName?: string;
   actions?: string[];
+  /** Teste da resposta em áudio: o que a voz faria com esta resposta. */
+  voice?: SimulatedVoice;
 };
 
 /** Sala fictícia do modo grupo do simulador. */

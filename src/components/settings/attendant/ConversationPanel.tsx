@@ -64,7 +64,12 @@ function Body({ ctx, organizationId }: { ctx: ReadyProfileCtx; organizationId: I
           options={{ boards: boards ?? [], stages: stages ?? [], leadFields }}
         />
       </SectionCard>
-      <VoiceReplyCard organizationId={organizationId} canManage={ctx.canManage} onDirtyChange={setVoiceDirty} />
+      <VoiceReplyCard
+        organizationId={organizationId}
+        canManage={ctx.canManage}
+        onDirtyChange={setVoiceDirty}
+        agentMemberId={ctx.attendant._id}
+      />
       {guardDialog}
       <SaveBar dirty={dirty} saving={saving} onSave={() => void onSave()} onDiscard={onDiscard} />
     </>

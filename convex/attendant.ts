@@ -51,7 +51,15 @@ import { buildSearchText } from "./lib/searchText";
 import { ChatMessage, flattenContent } from "./lib/llm/types";
 import { chatWithFallback, withReasoningEffort } from "./lib/llm";
 import { resolveOrgRoutes, OrgProviderConfig, platformTtsAllowed } from "./lib/agentRoutes";
-import { normalizeVoiceNotice, planVoiceReply, resolveAttendantVoice, type VoiceTextReason } from "./lib/tts";
+import {
+  normalizeVoiceNotice,
+  planAttendantVoice,
+  resolveAttendantVoice,
+  voiceTextAfter,
+  type VoiceTextReason,
+} from "./lib/tts";
+import { simulatedVoiceValidator, voiceTextReasonLabel, type SimulatedVoice } from "./lib/voicePreview";
+import { synthesizeVoicePreview } from "./lib/voicePreviewOps";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { createHandoffCore } from "./handoffs";
@@ -3593,19 +3601,19 @@ async function prepareVoiceReply(
   if (!voiceCtx) return null;
   // A divulgação entra no texto falado do mesmo jeito que o commit a prependeria
   // e, quando existe, TAMBÉM sai por escrito (mensagem de texto depois do áudio).
-  const disclosureAdded = context.needsDisclosure && !input.text.includes(context.disclosure);
-  const fullText = disclosureAdded ? `${context.disclosure}\n\n${input.text}` : input.text;
-  const plan = planVoiceReply({
-    enabled: true,
+  // Mesma decisão do simulador (`planAttendantVoice` → `planVoiceReply`).
+  const { plan, disclosureAdded } = planAttendantVoice({
     transport: context.transport ?? null,
     isGroup: voiceCtx.isGroup,
     lastInboundWasAudio: voiceCtx.lastInboundWasAudio,
     draft: input.draft,
     followUp: context.followUp !== null,
     hasImage: input.hasImage,
-    text: fullText,
+    text: input.text,
     notice: voiceCtx.notice,
     language: context.language === "auto" ? context.conversationLang ?? null : context.language,
+    needsDisclosure: context.needsDisclosure,
+    disclosure: context.disclosure,
   });
   if (plan.kind === "text") return plan;
   // A trava `provider` no endpoint de áudio não foi validada ao vivo: um campo
@@ -3636,10 +3644,6 @@ async function prepareVoiceReply(
     console.log(`[voiceReply] resposta em texto: ${synth.reason}`);
     return { kind: "text", reason: synth.reason as VoiceTextReason };
   }
-  const textParts = [
-    ...(disclosureAdded && !(plan.textPart ?? "").includes(context.disclosure) ? [context.disclosure] : []),
-    ...(plan.textPart ? [plan.textPart] : []),
-  ];
   return {
     kind: "audio",
     text: plan.spokenText,
@@ -3647,7 +3651,7 @@ async function prepareVoiceReply(
     seconds: synth.seconds,
     waveform: synth.waveform,
     noticeIncluded: plan.noticeIncluded,
-    textAfter: textParts.length > 0 ? textParts.join("\n\n") : null,
+    textAfter: voiceTextAfter(plan.textPart, context.disclosure, disclosureAdded),
   };
 }
 
@@ -5503,6 +5507,92 @@ export const internalQueueInstructedTurn = internalMutation({
   },
 });
 
+// ── Simulador: resposta em áudio (teste) ──
+
+type SimulatorVoiceSetup = { enabled: boolean; voice: string; notice: string | null };
+
+function lastCustomerTurn<T extends { role: string }>(transcript: T[]): T | undefined {
+  for (let i = transcript.length - 1; i >= 0; i--) if (transcript[i].role === "customer") return transcript[i];
+  return undefined;
+}
+
+/**
+ * O que a resposta em áudio faria com a resposta simulada: decisão por
+ * `planAttendantVoice` (as mesmas regras e a mesma divulgação do runtime; o
+ * simulador mostra o que a IA mandaria respondendo sozinha, por isso
+ * `draft:false`), síntese pela porta de teste (`synthesizeVoicePreview`:
+ * limite por usuário, cache curto, teto de gastos, run `tts`).
+ */
+async function simulateVoiceReply(
+  ctx: ActionCtx,
+  input: {
+    organizationId: Id<"organizations">;
+    voiceSetup: SimulatorVoiceSetup;
+    transport: ChannelTransport | null;
+    isGroup: boolean;
+    lastInboundWasAudio: boolean;
+    followUp: boolean;
+    hasImage: boolean;
+    text: string;
+    language: string | null;
+    needsDisclosure: boolean;
+    disclosure: string;
+    noticeAlreadySpoken: boolean;
+  }
+): Promise<SimulatedVoice> {
+  const enabledInOrg = input.voiceSetup.enabled;
+  const { plan, disclosureAdded } = planAttendantVoice({
+    transport: input.transport,
+    isGroup: input.isGroup,
+    lastInboundWasAudio: input.lastInboundWasAudio,
+    draft: false,
+    followUp: input.followUp,
+    hasImage: input.hasImage,
+    text: input.text,
+    notice: input.noticeAlreadySpoken ? null : input.voiceSetup.notice,
+    language: input.language,
+    needsDisclosure: input.needsDisclosure,
+    disclosure: input.disclosure,
+  });
+  if (plan.kind === "text") {
+    return { mode: "text", rule: true, reason: plan.reason, message: voiceTextReasonLabel(plan.reason), enabledInOrg };
+  }
+  let synth: Awaited<ReturnType<typeof synthesizeVoicePreview>>;
+  try {
+    synth = await synthesizeVoicePreview(ctx, {
+      organizationId: input.organizationId,
+      voice: input.voiceSetup.voice,
+      text: plan.speakable,
+    });
+  } catch (e) {
+    // O begin lança em auth (ex.: conta sem e-mail): a resposta em texto do
+    // teste não pode se perder por causa da voz.
+    return {
+      mode: "text",
+      rule: false,
+      reason: "falha_tts",
+      message: e instanceof ConvexError && typeof e.data === "string" ? e.data : "Não foi possível gerar o áudio de teste.",
+      enabledInOrg,
+    };
+  }
+  if (!synth.ok) {
+    // Org estrita / BYO: em produção também iria em texto (regra da porta).
+    const rule = synth.reason === "zdr_nao_validado" || synth.reason === "rota_sem_openrouter";
+    return { mode: "text", rule, reason: synth.reason ?? "falha_tts", message: synth.message, enabledInOrg };
+  }
+  return {
+    mode: "audio",
+    url: synth.url,
+    durationSec: synth.durationSec,
+    spokenText: plan.spokenText,
+    textAfter: voiceTextAfter(plan.textPart, input.disclosure, disclosureAdded),
+    voice: input.voiceSetup.voice,
+    noticeIncluded: plan.noticeIncluded,
+    enabledInOrg,
+    cached: synth.cached,
+  };
+}
+
 // ── Simulador (F4 usa; já nasce aqui por compartilhar o runtime) ──
 // Roda a persona SEM tocar o WhatsApp nem o banco: só inferência + relato.
 /** Maior instante que o `Date` representa (ECMA-262); além disso, Invalid Date. */
@@ -5552,6 +5642,14 @@ export const simulateAttendant = action({
     transport: v.optional(
       v.union(v.literal("meta"), v.literal("bridge"), v.literal("instagram"), v.literal("messenger"))
     ),
+    // Teste da resposta em áudio: a resposta simulada passa pela MESMA decisão
+    // do runtime (`planAttendantVoice`) com a voz e o aviso da org e, quando a
+    // regra manda áudio, é sintetizada pela porta de TTS (WAV de teste, nada
+    // vai ao WhatsApp nem ao CRM). Ausente = só texto, como sempre.
+    voice: v.optional(v.boolean()),
+    // Com `voice`: o aviso de voz sintética já foi falado num áudio anterior
+    // desta conversa de teste (produção: `conversations.aiVoiceNoticeAt`).
+    voiceNoticeSpoken: v.optional(v.boolean()),
     // Presente = simula o AGENTE DE GRUPO: outro prompt, outras tools, outras
     // regras. Ausente = atendimento 1:1 de sempre.
     group: v.optional(
@@ -5568,6 +5666,8 @@ export const simulateAttendant = action({
     error: v.union(v.string(), v.null()),
     // Flyer que a IA anexaria (v0.64) — só URL vinda da agenda consultada.
     imageUrl: v.optional(v.union(v.string(), v.null())),
+    // Só com `voice:true` e resposta: o que a resposta em áudio faria.
+    voice: v.optional(simulatedVoiceValidator),
   }),
   handler: async (ctx, args) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5903,11 +6003,37 @@ export const simulateAttendant = action({
         simFailed = true;
         return { reply: null, actions, error: "O modelo não produziu resposta nesta tentativa — tente de novo." };
       }
+      const finalReply = reply === null ? null : formatReplyForTransport(reply, simulatedTransport);
+      // Resposta em áudio (teste): mesma decisão do runtime, DEPOIS do guard e
+      // da formatação por canal, como em `prepareVoiceReply`.
+      const voice =
+        args.voice && finalReply !== null
+          ? await simulateVoiceReply(ctx, {
+              organizationId: args.organizationId,
+              voiceSetup: setup.voiceReply as SimulatorVoiceSetup,
+              // Grupo só existe no WhatsApp por QR code (o transporte simulado vale para o 1:1).
+              transport: args.group ? "bridge" : simulatedTransport,
+              isGroup: Boolean(args.group),
+              lastInboundWasAudio: lastCustomerTurn(args.transcript)?.audio === true,
+              followUp: context.followUp !== null && context.followUp !== undefined,
+              hasImage: replyImageUrl !== null,
+              text: finalReply,
+              // Limitação conhecida: com idioma "auto" o simulador não detecta o
+              // idioma da conversa (produção usa `conversationLang`) e trata como pt-BR.
+              language: context.language === "auto" ? null : context.language,
+              // Como em produção: divulgação de 1ª resposta só quando a IA ainda
+              // não falou nesta conversa; aviso de voz só no primeiro áudio.
+              needsDisclosure: context.needsDisclosure && !args.transcript.some((t) => t.role === "agent"),
+              disclosure: context.disclosure,
+              noticeAlreadySpoken: args.voiceNoticeSpoken === true,
+            })
+          : undefined;
       return {
-        reply: reply === null ? null : formatReplyForTransport(reply, simulatedTransport),
+        reply: finalReply,
         actions,
         error: null,
         imageUrl: reply === null ? null : replyImageUrl,
+        ...(voice ? { voice } : {}),
       };
     } catch (e) {
       simFailed = true;
@@ -6039,6 +6165,13 @@ export const internalGetSimulatorSetup = internalQuery({
       botGuardEnabled: resolveBotGuardSettings(profile).enabled,
       includeCurrentDateTime: shouldIncludeCurrentDateTime(profile),
       timezone: resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone),
+      // Teste da resposta em áudio: voz e aviso da org (simulação = conversa
+      // nova, então o aviso entra no primeiro áudio, como em produção).
+      voiceReply: {
+        enabled: org.settings.aiConfig?.voiceReplyEnabled === true,
+        voice: resolveAttendantVoice(org.settings.aiConfig?.voiceReplyVoice),
+        notice: normalizeVoiceNotice(org.settings.aiConfig?.voiceReplyNotice),
+      } satisfies SimulatorVoiceSetup,
     };
   },
 });

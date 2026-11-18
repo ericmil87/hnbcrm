@@ -24,7 +24,7 @@ import {
   MAX_DAILY_CAP,
 } from "./followUpSettings";
 import { buildAuditDescription } from "./auditDescription";
-import { VOICE_NOTICE_MAX_CHARS, isTtsVoice, voiceDataKinds } from "./tts";
+import { isTtsVoice, voiceNoticeError } from "./tts";
 
 // `onboarding` = aplicação do Rascunho de Operação pelo clique do usuário
 // (`onboardingSessions.applyOnboardingDraft`, ver `lib/onboardingApply.ts`).
@@ -488,16 +488,9 @@ export async function setFeatureTogglesCore(
   let notice: string | null | undefined;
   if (toggles.voiceReplyNotice !== undefined) {
     const trimmed = toggles.voiceReplyNotice.replace(/\s+/g, " ").trim();
-    if (trimmed.length > VOICE_NOTICE_MAX_CHARS) {
-      throw new ConvexError(`O aviso de voz pode ter até ${VOICE_NOTICE_MAX_CHARS} caracteres.`);
-    }
-    // O aviso é FALADO: nada de número, link, e-mail, valor, endereço ou código
-    // (as mesmas regras que mandam esses dados para o texto na resposta).
-    if (trimmed.length > 0 && voiceDataKinds(trimmed).length > 0) {
-      throw new ConvexError(
-        "O aviso de voz não pode ter números, links, e-mails, valores, endereços ou códigos: ele é falado no áudio."
-      );
-    }
+    // O aviso é FALADO: mesma regra da amostra de voz (`voiceNoticeError`).
+    const noticeError = voiceNoticeError(trimmed);
+    if (noticeError) throw new ConvexError(noticeError);
     notice = trimmed.length > 0 ? trimmed : null; // null = remover
   }
   // `""` remove o aviso: sai do objeto (patch de campo aninhado não aceita undefined).

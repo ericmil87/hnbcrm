@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useAction } from "convex/react";
 import { toast } from "sonner";
-import { Send, SlidersHorizontal } from "lucide-react";
+import { AlertTriangle, AudioLines, Send, SlidersHorizontal, Type } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
+import { AudioPlayer } from "@/components/inbox/AudioPlayer";
 import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { cn } from "@/lib/utils";
+import { simulatedVoiceView, simulatorTransportArg, type SimulatedVoice } from "@/lib/voiceTest";
 import { AttendantChatView } from "./AttendantChatView";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
@@ -41,6 +44,37 @@ export interface AttendantSimulatorViewProps {
   metaEnabled?: boolean;
   transport?: SimTransport;
   onTransportChange?: (value: SimTransport) => void;
+  /** Teste da resposta em áudio: as respostas também saem com a voz configurada. */
+  voiceMode?: boolean;
+  onVoiceModeChange?: (value: boolean) => void;
+}
+
+/** Bloco da voz dentro da bolha da IA (áudio gerado ou por que iria em texto). */
+export function SimulatedVoiceBlock({ voice }: { voice: SimulatedVoice }) {
+  const view = simulatedVoiceView(voice);
+  const Icon = view.tone === "audio" ? AudioLines : view.tone === "text" ? Type : AlertTriangle;
+  return (
+    <div className="mt-2 space-y-1.5 border-t border-ai-500/30 pt-2" data-testid="sim-voice">
+      <p
+        className={cn(
+          "flex items-center gap-1.5 text-caption font-medium",
+          view.tone === "error" ? "text-semantic-warning" : "text-text-secondary",
+        )}
+      >
+        <Icon size={13} aria-hidden="true" />
+        {view.title}
+      </p>
+      {voice.mode === "audio" && <AudioPlayer src={voice.url} isVoiceNote className="max-w-full" />}
+      {view.detail && <p className="text-caption text-text-muted">{view.detail}</p>}
+      {voice.mode === "audio" && voice.textAfter && (
+        <div className="rounded-field bg-surface-raised/60 px-2 py-1.5">
+          <p className="text-caption font-medium text-text-muted">Por escrito logo depois do áudio:</p>
+          <p className="whitespace-pre-wrap text-xs text-text-primary">{voice.textAfter}</p>
+        </div>
+      )}
+      {view.warning && <p className="text-caption text-semantic-warning">{view.warning}</p>}
+    </div>
+  );
 }
 
 /** Parte apresentacional do simulador (sem Convex). */
@@ -63,6 +97,8 @@ export function AttendantSimulatorView({
   metaEnabled = false,
   transport = "meta",
   onTransportChange,
+  voiceMode = false,
+  onVoiceModeChange,
 }: AttendantSimulatorViewProps) {
   const advanced = variant === "modal";
   const logRef = useRef<HTMLDivElement>(null);
@@ -105,6 +141,25 @@ export function AttendantSimulatorView({
                 individual vai para o privado.
               </span>
             </>
+          )}
+        </div>
+      )}
+
+      {advanced && onVoiceModeChange && (
+        <div className="space-y-1 rounded-lg bg-surface-sunken p-2.5">
+          <Checkbox
+            id="sim-voice-mode"
+            label="Ouvir as respostas em áudio"
+            checked={voiceMode}
+            onChange={(e) => onVoiceModeChange(e.target.checked)}
+            containerClassName="min-h-11 items-center text-xs text-text-primary"
+          />
+          {voiceMode && (
+            <p className="text-caption text-text-muted">
+              Usa a voz e o aviso de Responder em áudio, com as mesmas regras do atendimento: a IA só responde em
+              áudio quando o cliente manda áudio (use o botão do microfone), e valores, links, Pix, endereços e
+              telefones vão por escrito. Mostra o que ela mandaria respondendo sozinha, no WhatsApp por QR code.
+            </p>
           )}
         </div>
       )}
@@ -163,6 +218,7 @@ export function AttendantSimulatorView({
                 );
               })()}
               {m.content}
+              {m.voice && <SimulatedVoiceBlock voice={m.voice} />}
               {m.actions && m.actions.length > 0 && (
                 <div className="mt-2 border-t border-ai-500/30 pt-2">
                   <p className="mb-1 text-caption font-medium text-text-muted">A IA faria:</p>
@@ -262,6 +318,8 @@ interface AttendantSimulatorBaseProps {
   onFirstReply?: () => void;
   /** Org com Meta oficial: libera a troca de canal simulado (só `modal`). */
   metaEnabled?: boolean;
+  /** Abre já testando a resposta em áudio (nota de voz como padrão, WhatsApp por QR code). */
+  voiceMode?: boolean;
 }
 
 /**
@@ -287,15 +345,26 @@ export type AttendantSimulatorProps = AttendantSimulatorBaseProps &
   );
 
 export function AttendantSimulator(props: AttendantSimulatorProps) {
-  const { organizationId, agentMemberId, suggestions, variant, onAdjustPersona, onFirstReply, onClose, metaEnabled = false } = props;
+  const {
+    organizationId,
+    agentMemberId,
+    suggestions,
+    variant,
+    onAdjustPersona,
+    onFirstReply,
+    onClose,
+    metaEnabled = false,
+    voiceMode: initialVoiceMode = false,
+  } = props;
   const simulate = useAction(api.attendant.simulateAttendant);
   const [transcript, setTranscript] = useState<SimTurn[]>([]);
   const [input, setInput] = useState("");
-  const [kind, setKind] = useState<SimKind>("text");
+  const [voiceMode, setVoiceMode] = useState(initialVoiceMode);
+  const [kind, setKind] = useState<SimKind>(initialVoiceMode ? "audio" : "text");
   const [groupMode, setGroupMode] = useState(false);
   const [senderName, setSenderName] = useState("Eric");
   const [busy, setBusy] = useState(false);
-  const [transport, setTransport] = useState<SimTransport>("meta");
+  const [transport, setTransport] = useState<SimTransport>(initialVoiceMode ? "bridge" : "meta");
   const [chatError, setChatError] = useState<string | null>(null);
   const firstReplyFired = useRef(false);
   // `chat`: o erro fica na conversa; os demais seguem com o toast de sempre.
@@ -332,12 +401,25 @@ export function AttendantSimulator(props: AttendantSimulatorProps) {
           senderName: from,
         })),
         ...(groupMode ? { group: SIM_GROUP } : {}),
-        ...(metaEnabled && transport !== "meta" ? { transport } : {}),
+        ...(() => {
+          const transportArg = simulatorTransportArg({ voiceOn: voiceMode, metaEnabled, transport });
+          return transportArg ? { transport: transportArg } : {};
+        })(),
+        ...(voiceMode
+          ? {
+              voice: true,
+              // Produção fala o aviso só no primeiro áudio de cada conversa.
+              voiceNoticeSpoken: transcript.some((t) => t.voice?.mode === "audio" && t.voice.noticeIncluded),
+            }
+          : {}),
       });
       if (result.error) {
         showError(result.error);
       } else if (result.reply) {
-        setTranscript((prev) => [...prev, { role: "agent", content: result.reply!, actions: result.actions }]);
+        setTranscript((prev) => [
+          ...prev,
+          { role: "agent", content: result.reply!, actions: result.actions, ...(result.voice ? { voice: result.voice } : {}) },
+        ]);
         if (!firstReplyFired.current) {
           firstReplyFired.current = true;
           onFirstReply?.();
@@ -400,6 +482,15 @@ export function AttendantSimulator(props: AttendantSimulatorProps) {
         setTransport(v);
         setTranscript([]);
       }}
+      voiceMode={voiceMode}
+      onVoiceModeChange={(v) => {
+        setVoiceMode(v);
+        // Voz só sai quando o cliente manda áudio, no WhatsApp por QR code: já deixa assim.
+        if (v) {
+          setKind("audio");
+          setTransport("bridge");
+        }
+      }}
     />
   );
 
@@ -408,7 +499,13 @@ export function AttendantSimulator(props: AttendantSimulatorProps) {
       <Modal
         open
         onClose={onClose}
-        title={groupMode ? "Simulador — testar num grupo" : "Simulador — testar o Atendente IA"}
+        title={
+          groupMode
+            ? "Simulador — testar num grupo"
+            : voiceMode
+              ? "Simulador — testar conversa com voz"
+              : "Simulador — testar o Atendente IA"
+        }
       >
         {view}
       </Modal>
