@@ -8,7 +8,8 @@
  */
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import { checkInboundMediaQuota } from "./lib/fileQuotas";
 import schema from "./schema";
 import { VOICE_PREVIEW_TTL_MS, VOICE_SAMPLE_GREETING, type SimulatedVoice } from "./lib/voicePreview";
 
@@ -133,6 +134,15 @@ async function seed(t: T, opts: SeedOpts = {}) {
 }
 
 const asUser = (t: T, s: { userId: unknown }) => t.withIdentity({ subject: `${String(s.userId)}|s1` });
+
+async function cancelPending(t: T) {
+  await t.run(async (ctx) => {
+    for (const job of await ctx.db.system.query("_scheduled_functions").collect()) {
+      if (job.state.kind === "pending") await ctx.scheduler.cancel(job._id);
+    }
+  });
+  await t.finishInProgressScheduledFunctions();
+}
 
 async function crmCounts(t: T) {
   return await t.run(async (ctx) => ({
@@ -285,6 +295,30 @@ describe("Ouvir amostra (previewVoiceSample)", () => {
     });
   });
 
+  test("amostras não entram no teto diário de uploads (a mídia dos clientes continua chegando)", async () => {
+    stubNetwork();
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await asUser(t, s).action(api.voiceReply.previewVoiceSample, { organizationId: s.organizationId, voice: "Kore" });
+    const storageId = await t.run(async (ctx) => await ctx.storage.store(new Blob([new Uint8Array([1, 2])])));
+    for (let i = 0; i < 101; i++) {
+      await t.mutation(internal.voiceReply.internalInsertVoicePreviewFile, {
+        organizationId: s.organizationId,
+        memberId: s.memberId,
+        storageId,
+        size: 2,
+        cacheKey: `k${i}`,
+        durationSec: 1,
+      });
+    }
+    await t.run(async (ctx) => {
+      const files = await ctx.db.query("files").collect();
+      expect(files.every((f) => f.createdAt === 0 && f.sourceUrl?.startsWith("voice-preview:"))).toBe(true);
+      expect((await checkInboundMediaQuota(ctx, { organizationId: s.organizationId, fileSize: 10 })).ok).toBe(true);
+    });
+    await cancelPending(t);
+  });
+
   test("o WAV de teste se apaga sozinho depois do prazo", async () => {
     stubNetwork();
     const t = convexTest(schema, modules);
@@ -362,6 +396,36 @@ describe("Simulador com voz (simulateAttendant voice:true)", () => {
       if (result.voice?.mode === "text") expect(result.voice.message.length).toBeGreaterThan(10);
       expect(callsTo(fetchMock, "/audio/speech")).toHaveLength(0);
     }
+  });
+
+  test("2º áudio da conversa de teste: sem aviso de voz e sem divulgação de 1ª resposta (como em produção)", async () => {
+    const fetchMock = stubNetwork({ llmText: "Combinado, até amanhã." });
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { voiceOn: true, notice: "Sou a assistente da clínica" });
+    await t.run(async (ctx) => {
+      const agent = (await ctx.db.get(s.agentId))!;
+      await ctx.db.patch(s.agentId, {
+        agentProfile: { ...agent.agentProfile!, disclosureMode: "first_reply", disclosure: "Sou a IA da clínica." },
+      });
+    });
+    const first = await simulate(t, s, { content: "Oi", audio: true });
+    expect(first.voice).toMatchObject({ mode: "audio", noticeIncluded: true });
+    if (first.voice?.mode === "audio") expect(first.voice.spokenText).toContain("Sou a IA da clínica.");
+    const second = (await asUser(t, s).action(api.attendant.simulateAttendant, {
+      organizationId: s.organizationId,
+      agentMemberId: s.agentId,
+      transcript: [
+        { role: "customer" as const, content: "Oi", audio: true },
+        { role: "agent" as const, content: "Oi!" },
+        { role: "customer" as const, content: "Pode ser amanhã?", audio: true },
+      ],
+      transport: "bridge",
+      voice: true,
+      voiceNoticeSpoken: true,
+    })) as { voice?: SimulatedVoice };
+    expect(second.voice).toMatchObject({ mode: "audio", noticeIncluded: false, textAfter: null });
+    if (second.voice?.mode === "audio") expect(second.voice.spokenText).toBe("Combinado, até amanhã.");
+    expect(ttsBodies(fetchMock)[1].input).toBe("Combinado, até amanhã.");
   });
 
   test("voz desligada na org: o teste ainda fala, mas avisa que em produção iria texto", async () => {

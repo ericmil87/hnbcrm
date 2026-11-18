@@ -5537,6 +5537,7 @@ async function simulateVoiceReply(
     language: string | null;
     needsDisclosure: boolean;
     disclosure: string;
+    noticeAlreadySpoken: boolean;
   }
 ): Promise<SimulatedVoice> {
   const enabledInOrg = input.voiceSetup.enabled;
@@ -5548,7 +5549,7 @@ async function simulateVoiceReply(
     followUp: input.followUp,
     hasImage: input.hasImage,
     text: input.text,
-    notice: input.voiceSetup.notice,
+    notice: input.noticeAlreadySpoken ? null : input.voiceSetup.notice,
     language: input.language,
     needsDisclosure: input.needsDisclosure,
     disclosure: input.disclosure,
@@ -5556,11 +5557,24 @@ async function simulateVoiceReply(
   if (plan.kind === "text") {
     return { mode: "text", rule: true, reason: plan.reason, message: voiceTextReasonLabel(plan.reason), enabledInOrg };
   }
-  const synth = await synthesizeVoicePreview(ctx, {
-    organizationId: input.organizationId,
-    voice: input.voiceSetup.voice,
-    text: plan.speakable,
-  });
+  let synth: Awaited<ReturnType<typeof synthesizeVoicePreview>>;
+  try {
+    synth = await synthesizeVoicePreview(ctx, {
+      organizationId: input.organizationId,
+      voice: input.voiceSetup.voice,
+      text: plan.speakable,
+    });
+  } catch (e) {
+    // O begin lança em auth (ex.: conta sem e-mail): a resposta em texto do
+    // teste não pode se perder por causa da voz.
+    return {
+      mode: "text",
+      rule: false,
+      reason: "falha_tts",
+      message: e instanceof ConvexError && typeof e.data === "string" ? e.data : "Não foi possível gerar o áudio de teste.",
+      enabledInOrg,
+    };
+  }
   if (!synth.ok) {
     // Org estrita / BYO: em produção também iria em texto (regra da porta).
     const rule = synth.reason === "zdr_nao_validado" || synth.reason === "rota_sem_openrouter";
@@ -5633,6 +5647,9 @@ export const simulateAttendant = action({
     // regra manda áudio, é sintetizada pela porta de TTS (WAV de teste, nada
     // vai ao WhatsApp nem ao CRM). Ausente = só texto, como sempre.
     voice: v.optional(v.boolean()),
+    // Com `voice`: o aviso de voz sintética já foi falado num áudio anterior
+    // desta conversa de teste (produção: `conversations.aiVoiceNoticeAt`).
+    voiceNoticeSpoken: v.optional(v.boolean()),
     // Presente = simula o AGENTE DE GRUPO: outro prompt, outras tools, outras
     // regras. Ausente = atendimento 1:1 de sempre.
     group: v.optional(
@@ -6001,9 +6018,14 @@ export const simulateAttendant = action({
               followUp: context.followUp !== null && context.followUp !== undefined,
               hasImage: replyImageUrl !== null,
               text: finalReply,
+              // Limitação conhecida: com idioma "auto" o simulador não detecta o
+              // idioma da conversa (produção usa `conversationLang`) e trata como pt-BR.
               language: context.language === "auto" ? null : context.language,
-              needsDisclosure: context.needsDisclosure,
+              // Como em produção: divulgação de 1ª resposta só quando a IA ainda
+              // não falou nesta conversa; aviso de voz só no primeiro áudio.
+              needsDisclosure: context.needsDisclosure && !args.transcript.some((t) => t.role === "agent"),
               disclosure: context.disclosure,
+              noticeAlreadySpoken: args.voiceNoticeSpoken === true,
             })
           : undefined;
       return {

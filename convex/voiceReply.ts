@@ -81,6 +81,8 @@ export const getVoiceReplySettings = query({
       model: v.string(),
       /** A plataforma tem o necessário (chave do OpenRouter + conversor da VPS). */
       platformReady: v.boolean(),
+      /** Dá para gerar áudio de teste (só a chave do OpenRouter: o WAV de teste não usa o conversor). */
+      previewReady: v.optional(v.boolean()),
       /** IA da org ativa (mestre + aceite LGPD): sem ela o atendente não responde nada. */
       aiActive: v.boolean(),
     })
@@ -101,6 +103,7 @@ export const getVoiceReplySettings = query({
       noticeMaxChars: VOICE_NOTICE_MAX_CHARS,
       model: getTtsConfig("attendant").model,
       platformReady: Boolean(process.env.OPENROUTER_API_KEY) && voiceNoteConverterConfigured(),
+      previewReady: Boolean(process.env.OPENROUTER_API_KEY),
       aiActive: orgAiActive(org),
     };
   },
@@ -208,10 +211,14 @@ export const internalDiscardWebAudioByRequest = internalMutation({
 
 const PREVIEW_AI_OFF_MESSAGE = "Ative a IA da organização (e aceite os termos de IA) para testar a voz.";
 
+/** `files.sourceUrl` do WAV de teste: busca exata pelo índice (nunca colide com URL https). */
+function previewSourceKey(cacheKey: string): string {
+  return `voice-preview:${cacheKey}`;
+}
+
 /**
- * WAV de teste ainda reaproveitável (mesma voz + mesmo texto, nos últimos 10 min).
- * Lê no máximo 200 arquivos recentes da org: numa org que sobe muito anexo, o
- * pior caso é não achar o cache e sintetizar de novo (o limite por usuário vale).
+ * WAV de teste ainda reaproveitável (mesma voz + mesmo texto, nos últimos 10 min),
+ * por chave exata (`by_organization_and_source_url`): não lê range de `files`.
  */
 async function findCachedPreview(
   ctx: Pick<MutationCtx, "db">,
@@ -221,12 +228,19 @@ async function findCachedPreview(
 ): Promise<Doc<"files"> | null> {
   const rows = await ctx.db
     .query("files")
-    .withIndex("by_organization_and_created", (q) =>
-      q.eq("organizationId", organizationId).gte("createdAt", now - VOICE_PREVIEW_CACHE_MS)
+    .withIndex("by_organization_and_source_url", (q) =>
+      q.eq("organizationId", organizationId).eq("sourceUrl", previewSourceKey(cacheKey))
     )
     .order("desc")
-    .take(200);
-  return rows.find((f) => f.metadata?.kind === VOICE_PREVIEW_FILE_KIND && f.metadata?.cacheKey === cacheKey) ?? null;
+    .take(5);
+  return (
+    rows.find(
+      (f) =>
+        f.metadata?.kind === VOICE_PREVIEW_FILE_KIND &&
+        typeof f.metadata?.createdAtMs === "number" &&
+        f.metadata.createdAtMs >= now - VOICE_PREVIEW_CACHE_MS
+    ) ?? null
+  );
 }
 
 /**
@@ -338,7 +352,8 @@ export const internalBeginVoicePreview = internalMutation({
 
 /**
  * Linha de `files` do WAV de teste (nunca vinculada a mensagem, lead nem
- * contato) + faxina agendada para `VOICE_PREVIEW_TTL_MS` depois.
+ * contato) + faxina agendada para `VOICE_PREVIEW_TTL_MS` depois. A chave do
+ * cache vai em `sourceUrl` (busca exata) e a hora real em `metadata.createdAtMs`.
  */
 export const internalInsertVoicePreviewFile = internalMutation({
   args: {
@@ -361,8 +376,12 @@ export const internalInsertVoicePreviewFile = internalMutation({
       size: args.size,
       fileType: "other",
       uploadedBy: args.memberId,
-      metadata: { kind: VOICE_PREVIEW_FILE_KIND, cacheKey: args.cacheKey.slice(0, 80), durationSec: args.durationSec },
-      createdAt: Date.now(),
+      sourceUrl: previewSourceKey(args.cacheKey.slice(0, 80)),
+      metadata: { kind: VOICE_PREVIEW_FILE_KIND, durationSec: args.durationSec, createdAtMs: Date.now() },
+      // `createdAt: 0` de propósito (como a foto do contato): o teto diário de
+      // uploads (`countUploadsLast24h`) não conta amostras de teste, senão uns
+      // minutos testando a voz descartariam a mídia recebida dos clientes.
+      createdAt: 0,
     });
     await ctx.scheduler.runAfter(VOICE_PREVIEW_TTL_MS, internal.voiceReply.internalDiscardVoicePreview, {
       organizationId: args.organizationId,

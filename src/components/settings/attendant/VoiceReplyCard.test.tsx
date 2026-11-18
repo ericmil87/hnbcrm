@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { screen } from "@testing-library/react";
+import { act, screen } from "@testing-library/react";
+import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { renderWithRouter } from "@/test/render";
 import { VoiceReplyCardView, type VoiceReplyCardViewProps, type VoiceReplySettings } from "./VoiceReplyCard";
@@ -14,6 +15,7 @@ const base: VoiceReplySettings = {
   noticeMaxChars: 80,
   model: "tts-model",
   platformReady: true,
+  previewReady: true,
   aiActive: true,
 };
 
@@ -168,5 +170,32 @@ describe("VoiceReplyCardView", () => {
     expect(screen.getByRole("button", { name: "Ouvir amostra" })).toBeEnabled();
     await userEvent.click(screen.getByRole("button", { name: "Testar conversa com voz" }));
     expect(onTestConversation).toHaveBeenCalled();
+  });
+
+  it("amostra não depende do conversor: com a chave pronta e sem conversor, o botão funciona", () => {
+    setup({ platformReady: false, previewReady: true }, { onPreview: vi.fn() });
+    expect(screen.getByRole("button", { name: "Ouvir amostra" })).toBeEnabled();
+  });
+
+  it("troca de voz durante a geração descarta a amostra antiga", async () => {
+    let resolve: (v: { ok: true; url: string; durationSec: number }) => void = () => {};
+    const onPreview = vi.fn(() => new Promise<{ ok: true; url: string; durationSec: number }>((r) => (resolve = r)));
+    function Harness() {
+      const [voice, setVoice] = useState("nova");
+      return (
+        <>
+          <button type="button" onClick={() => setVoice("onyx")}>
+            trocar
+          </button>
+          <VoiceReplyCardView settings={{ ...base, enabled: true, voice }} canManage onSave={vi.fn()} onPreview={onPreview} />
+        </>
+      );
+    }
+    renderWithRouter(<Harness />);
+    await userEvent.click(screen.getByRole("button", { name: "Ouvir amostra" }));
+    await userEvent.click(screen.getByRole("button", { name: "trocar" }));
+    await act(async () => resolve({ ok: true, url: "https://files.example/velha.wav", durationSec: 2 }));
+    expect(screen.queryByTestId("voice-preview")).not.toBeInTheDocument();
+    expect(onPreview).toHaveBeenCalledTimes(1);
   });
 });

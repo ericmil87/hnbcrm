@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
 import { useAction, useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
@@ -76,8 +76,12 @@ export function VoiceReplyCardView({
 
   const normalized = normalizeNotice(notice);
   const [preview, setPreview] = useState<PreviewState>({ status: "idle" });
-  // A amostra vale para a voz e o aviso de quando foi gerada: mudou, some.
-  useEffect(() => setPreview({ status: "idle" }), [settings.voice, normalized]);
+  // A amostra vale para a voz e o aviso de quando foi gerada: mudou, some (e
+  // uma resposta que chega depois da troca é descartada).
+  const previewKey = `${settings.voice}\u0000${normalized}`;
+  const previewKeyRef = useRef(previewKey);
+  previewKeyRef.current = previewKey;
+  useEffect(() => setPreview({ status: "idle" }), [previewKey]);
   const noticeDirty = normalized !== (settings.notice ?? "");
   useEffect(() => onDirtyChange?.(noticeDirty), [noticeDirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
@@ -91,16 +95,21 @@ export function VoiceReplyCardView({
     label: v === settings.defaultVoice ? `${v} (padrão)` : v,
   }));
 
-  const testReady = settings.aiActive && settings.platformReady;
+  const testReady = settings.aiActive && (settings.previewReady ?? settings.platformReady);
   const runPreview = async () => {
     if (!onPreview) return;
+    const requestedKey = previewKey;
     setPreview({ status: "loading" });
+    let next: PreviewState;
     try {
       const result = await onPreview({ voice: settings.voice, notice: previewNotice(notice) });
-      setPreview(result.ok ? { status: "ready", url: result.url, durationSec: result.durationSec } : { status: "error", message: result.message });
+      next = result.ok
+        ? { status: "ready", url: result.url, durationSec: result.durationSec }
+        : { status: "error", message: result.message };
     } catch (e) {
-      setPreview({ status: "error", message: mutationErrorMessage(e, "Não foi possível gerar a amostra.") });
+      next = { status: "error", message: mutationErrorMessage(e, "Não foi possível gerar a amostra.") };
     }
+    if (previewKeyRef.current === requestedKey) setPreview(next);
   };
 
   const saveNotice = async () => {

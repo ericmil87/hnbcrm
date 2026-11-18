@@ -405,7 +405,13 @@ export function AttendantSimulator(props: AttendantSimulatorProps) {
           const transportArg = simulatorTransportArg({ voiceOn: voiceMode, metaEnabled, transport });
           return transportArg ? { transport: transportArg } : {};
         })(),
-        ...(voiceMode ? { voice: true } : {}),
+        ...(voiceMode
+          ? {
+              voice: true,
+              // Produção fala o aviso só no primeiro áudio de cada conversa.
+              voiceNoticeSpoken: transcript.some((t) => t.voice?.mode === "audio" && t.voice.noticeIncluded),
+            }
+          : {}),
       });
       if (result.error) {
         showError(result.error);

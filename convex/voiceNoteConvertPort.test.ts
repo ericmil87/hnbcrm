@@ -44,7 +44,10 @@ describe("portas de voz", () => {
   test("o atendente decide a voz pela regra pura e sintetiza pela porta", () => {
     const attendant = sources.find((f) => f.rel === "attendant.ts")!.src;
     // `planAttendantVoice` (lib/tts.ts) = divulgação + `planVoiceReply`; runtime e simulador usam a mesma.
-    expect(attendant).toMatch(/planAttendantVoice\(/);
+    const prepare = attendant.slice(attendant.indexOf("async function prepareVoiceReply("));
+    expect(prepare.slice(0, prepare.indexOf("internal.voiceReplyNode.internalSynthesizeVoiceNote"))).toMatch(
+      /planAttendantVoice\(/,
+    );
     expect(sources.find((f) => f.rel === "lib/tts.ts")!.src).toMatch(/planAttendantVoice[\s\S]*planVoiceReply\(\{/);
     expect(attendant).toMatch(/internal\.voiceReplyNode\.internalSynthesizeVoiceNote/);
     // A decisão vem DEPOIS da trava final do guard e da formatação por canal.
