@@ -209,10 +209,28 @@ export type BotGuardMessage = {
   transcriptText?: string;
 };
 
-/** Conteúdo inteiro entre colchetes = placeholder do parser ("[mensagem de voz]", "[imagem]", "[chamada de voz]"…). */
-function isParserPlaceholder(text: string): boolean {
+/**
+ * Placeholders que os PARSERS gravam em `content` (bridgeParse, whatsappParse,
+ * metaInbound): lista FECHADA de propósito — "[Esta é uma mensagem automática]"
+ * vindo de um robô continua sendo texto e continua pontuando.
+ */
+const PARSER_PLACEHOLDER_RE = new RegExp(
+  "^\\[(?:" +
+    [
+      "imagem", "v[íi]deo", "[áa]udio", "mensagem de voz", "figurinha", "sticker", "documento",
+      "arquivo", "anexo", "mensagem n[ãa]o suportada", "unsupported message type", "resposta interativa",
+      "resposta de bot[ãa]o", "reel", "post", "men[çc][ãa]o em story", "curtiu", "chamada de voz",
+      "chamada de v[íi]deo", "localiza[çc][ãa]o ao vivo", "localiza[çc][ãa]o", "[áa]lbum", "enquete",
+      "evento", "convite para o grupo", "contatos?", "…",
+    ].join("|") +
+    ")(?:[: ][^\\]]*)?\\]$",
+  "i"
+);
+
+/** Conteúdo vazio ou placeholder de mídia do parser ("[mensagem de voz]", "[imagem]", "[chamada de voz]"…). */
+export function isParserPlaceholder(text: string): boolean {
   const t = text.trim();
-  return t === "" || (t.startsWith("[") && t.endsWith("]"));
+  return t === "" || PARSER_PLACEHOLDER_RE.test(t);
 }
 
 /**
@@ -228,7 +246,7 @@ function isParserPlaceholder(text: string): boolean {
  *   - áudio: só a transcrição (ainda pendente no enqueue = nada);
  *   - arquivo: nada (o `content` é o NOME do arquivo, não texto do cliente);
  *   - imagem: só a legenda, nunca o placeholder;
- *   - qualquer conteúdo que seja placeholder entre colchetes: nada.
+ *   - placeholder do parser ("[imagem]", "[chamada de voz]", "[localização: …]"): nada.
  */
 export function botEvidenceText(m: BotGuardMessage): string | null {
   const type = m.contentType ?? "text";

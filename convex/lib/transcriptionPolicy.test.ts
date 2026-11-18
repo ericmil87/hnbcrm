@@ -31,7 +31,7 @@ describe("whisperTimeoutMsForSize", () => {
 
 describe("isTransientTranscriptionError", () => {
   test("transitórios", () => {
-    expect(isTransientTranscriptionError("Serviço Whisper não respondeu em 120s")).toBe(true);
+    expect(isTransientTranscriptionError("fetch failed: ECONNRESET")).toBe(true);
     expect(isTransientTranscriptionError("fetch failed")).toBe(true);
     expect(
       isTransientTranscriptionError(

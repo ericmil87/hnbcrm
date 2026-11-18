@@ -389,6 +389,18 @@ describe("mídia nunca é evidência de robô por si só", () => {
     expect(evaluateBotSignals({ messages: msgs, sinceAt: 0 }).score).toBe(0);
   });
 
+  test("lista FECHADA: texto de robô entre colchetes continua pontuando", () => {
+    const r = evaluateBotSignals({
+      messages: [inbound("[Esta é uma mensagem automática, não responda esta mensagem]", T0)],
+      sinceAt: 0,
+    });
+    expect(r.signals).toEqual(["frase_automatica"]);
+    expect(botEvidenceText(inbound("[localização: Rua A, 10]", T0))).toBeNull();
+    expect(botEvidenceText(inbound("[contatos: Ana e mais 2]", T0))).toBeNull();
+    expect(botEvidenceText(inbound("[enquete: qual horário?]", T0))).toBeNull();
+    expect(botEvidenceText(inbound("[unsupported message type: reaction]", T0))).toBeNull();
+  });
+
   test("botEvidenceText", () => {
     expect(botEvidenceText(voice(T0))).toBeNull();
     expect(botEvidenceText(voice(T0, "  "))).toBeNull();

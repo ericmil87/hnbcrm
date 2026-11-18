@@ -338,10 +338,43 @@ describe("espera estendida por áudio longo", () => {
     });
     expect(claim).toEqual({ kind: "requeued", reason: "aguardando_transcricao" });
     const updated = await t.run(async (ctx) => ctx.db.get(item._id));
-    expect(updated!.mediaWaitUntil!).toBeGreaterThan(item.createdAt + 9 * 60_000);
-    expect(updated!.mediaWaitUntil!).toBeLessThanOrEqual(item.createdAt + 11 * 60_000 + 1_000);
+    // O prazo estendido NUNCA é persistido: `mediaWaitUntil` segue o teto base.
+    expect(updated!.mediaWaitUntil).toBe(item.createdAt + 60_000);
     // Espera estendida re-checa com intervalo maior.
     expect(updated!.nextAttemptAt).toBe(Date.now() + 20_000);
+  });
+
+  test("áudio longo já transcrito + áudio curto preso em pending: passado o teto base, roda (sem carona)", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    await insertVoiceNote(t, seed, {
+      transcription: { status: "done" },
+      transcriptText: "fala longa já transcrita",
+      size: TEN_MIN_OGG,
+    });
+    const shortId = await insertVoiceNote(t, seed, { transcription: { status: "pending" } });
+    const item = await enqueueAndSettle(t, shortId);
+    vi.setSystemTime(item.createdAt + 3 * 60_000);
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-sem-carona",
+    });
+    expect(claim.kind).toBe("run");
+  });
+
+  test("áudio longo com falha definitiva (sem retryAt): não estende a espera", async () => {
+    const t = setup();
+    const seed = await seedAttendantOrg(t);
+    const messageId = await insertVoiceNote(t, seed, { transcription: { status: "failed" }, size: TEN_MIN_OGG });
+    const item = await enqueueAndSettle(t, messageId);
+    vi.setSystemTime(item.createdAt + 2 * 60_000);
+
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-longo-falhou",
+    });
+    expect(claim.kind).toBe("run");
   });
 
   test("áudio longo: quando a transcrição chega, o turno roda com o texto", async () => {

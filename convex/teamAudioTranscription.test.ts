@@ -814,7 +814,7 @@ describe("re-tentativa automática da transcrição", () => {
     expect(stored?.transcriptText).toBe("oi, tudo bem?");
   });
 
-  test("timeout re-tenta no máximo 2 vezes (attempt 2 não reagenda)", async () => {
+  test("o NOSSO timeout não re-tenta (o job segue no Whisper; re-enviar dobraria a fila)", async () => {
     vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -823,6 +823,25 @@ describe("re-tentativa automática da transcrição", () => {
       "fetch",
       vi.fn(async () => {
         throw new DOMException("The operation timed out.", "TimeoutError");
+      })
+    );
+
+    await t.action(internal.transcription.autoTranscribe, { messageId });
+    const stored = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(stored?.metadata?.transcription).toMatchObject({ status: "failed", attempt: 0 });
+    expect(stored?.metadata?.transcription?.retryAt).toBeUndefined();
+    expect(await retryJobs(t)).toHaveLength(0);
+  });
+
+  test("falha de rede re-tenta no máximo 2 vezes (attempt 2 não reagenda)", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
       })
     );
 

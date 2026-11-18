@@ -1262,8 +1262,12 @@ export async function longAudioWaitDeadline(
     if (m.direction === "outbound" && !m.isInternal) break;
     if (m.direction !== "inbound" || m.senderType !== "contact" || m.isInternal) continue;
     if (m.contentType !== "audio" || m.transcriptText || m.metadata?.mediaDeferred) continue;
-    const status = (m.metadata?.transcription as { status?: string } | undefined)?.status;
-    if (status === "done") continue;
+    const tr = m.metadata?.transcription as { status?: string; retryAt?: number } | undefined;
+    if (tr?.status === "done") continue;
+    // Falha definitiva (sem re-tentativa futura) não tem o que esperar.
+    if (tr?.status === "failed" && !(typeof tr.retryAt === "number" && tr.retryAt + 30_000 > Date.now())) {
+      continue;
+    }
     const fileId = m.attachments?.[0];
     if (!fileId) continue;
     const file = await ctx.db.get(fileId);
@@ -1467,32 +1471,32 @@ export const internalClaimForProcessing = internalMutation({
     if (process.env.WHISPER_SERVICE_URL || visionEnabled || attendantActive(org)) {
       // `mediaWaitUntil` é o campo novo; `transcriptWaitUntil` é o legado, lido
       // para as linhas que já estavam em voo continuarem válidas sem migração.
-      const baseWaitUntil =
+      const waitUntil =
         item.mediaWaitUntil ?? item.transcriptWaitUntil ?? item.createdAt + MEDIA_MAX_WAIT_MS;
-      // Áudio LONGO sem transcrição estende o prazo (proporcional ao tamanho,
-      // `longAudioWaitMs`); áudio curto segue com o teto de 60 s. Recalculado a
-      // cada claim: um áudio longo que entrou na rajada depois do 1º requeue
-      // também estende. Só com Whisper configurado (senão nada é transcrito).
-      const audioDeadline = process.env.WHISPER_SERVICE_URL
-        ? await longAudioWaitDeadline(ctx, conversation._id, item.createdAt - MEDIA_MAX_WAIT_MS)
-        : null;
-      const waitUntil = Math.max(baseWaitUntil, audioDeadline ?? 0);
-      if (
+      // Dentro do teto padrão: qualquer mídia pendente segura (como sempre).
+      // Depois dele, SÓ um áudio LONGO ainda sem transcrição segura, até o
+      // prazo dele (`longAudioWaitDeadline`, proporcional ao tamanho) — uma
+      // imagem/áudio curto pendente não pega carona na espera estendida, e o
+      // prazo estendido nunca é persistido em `mediaWaitUntil` (review de
+      // 17/11/2026). Só com Whisper configurado (senão nada é transcrito).
+      const withinBase =
         now < waitUntil &&
         (await hasMediaAwaitingEnrichment(
           ctx,
           conversation._id,
           item.createdAt - MEDIA_MAX_WAIT_MS,
           { visionEnabled, audio: !!process.env.WHISPER_SERVICE_URL || visionEnabled }
-        ))
-      ) {
-        // Passado o teto padrão (só áudio longo chega aqui), re-checa a cada
-        // 20 s em vez de 8 s — a espera pode durar minutos.
-        const recheckMs =
-          now >= item.createdAt + MEDIA_MAX_WAIT_MS ? MEDIA_LONG_RECHECK_MS : MEDIA_RECHECK_MS;
+        ));
+      const longAudioUntil =
+        !withinBase && now >= waitUntil && process.env.WHISPER_SERVICE_URL
+          ? await longAudioWaitDeadline(ctx, conversation._id, item.createdAt - MEDIA_MAX_WAIT_MS)
+          : null;
+      if (withinBase || (longAudioUntil !== null && now < longAudioUntil)) {
+        // Na espera estendida, re-checa a cada 20 s em vez de 8 s.
+        const recheckMs = withinBase ? MEDIA_RECHECK_MS : MEDIA_LONG_RECHECK_MS;
         await ctx.db.patch(item._id, {
           nextAttemptAt: now + recheckMs,
-          ...(item.mediaWaitUntil !== waitUntil ? { mediaWaitUntil: waitUntil } : {}),
+          ...(item.mediaWaitUntil === undefined ? { mediaWaitUntil: waitUntil } : {}),
           updatedAt: now,
         });
         await ctx.scheduler.runAfter(

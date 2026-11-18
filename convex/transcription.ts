@@ -277,8 +277,9 @@ async function callWhisper(
       : e instanceof Error
         ? e.message
         : "Falha ao chamar o serviço Whisper";
-    // Exceção do fetch = timeout ou rede: sempre transitória.
-    return { status: "failed", error, transient: true };
+    // Exceção de rede = transitória; o NOSSO timeout não (o job continua
+    // rodando no Whisper — re-enviar só dobraria a fila).
+    return { status: "failed", error, transient: !isAbortError(e) };
   }
 }
 

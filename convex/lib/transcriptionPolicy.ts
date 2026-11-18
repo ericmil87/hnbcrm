@@ -42,19 +42,21 @@ export function transcriptionPendingStaleAfterMs(sizeBytes: number): number {
 export const TRANSCRIPTION_RETRY_DELAYS_MS: readonly number[] = [60_000, 5 * 60_000];
 
 /**
- * Falha que vale tentar de novo: timeout, rede (nossa ou da VPS baixando o
- * áudio), HTTP 5xx/429. Formato inválido, áudio grande demais, serviço não
- * configurado e blob ausente NÃO são transitórios.
+ * Falha que vale tentar de novo: rede (nossa ou da VPS baixando o áudio),
+ * HTTP 5xx/429. NÃO re-tenta: o NOSSO timeout ("não respondeu em") — o abort
+ * do cliente não cancela o job no Whisper (serial), e mandar o mesmo áudio de
+ * novo só aumentaria a fila justamente quando ela está cheia (review de
+ * 17/11/2026) —, formato inválido, áudio grande demais, serviço não
+ * configurado e blob ausente.
  */
 export function isTransientTranscriptionError(error: string, httpStatus?: number): boolean {
+  if (/não respondeu em/i.test(error)) return false;
   if (httpStatus !== undefined && (httpStatus >= 500 || httpStatus === 429)) return true;
   if (httpStatus !== undefined && httpStatus >= 400) {
     // O serviço devolve 4xx também quando não conseguiu BAIXAR o áudio.
-    return /falha ao baixar|unreachable|connectionpool|timed out|temporarily/i.test(error);
+    return /falha ao baixar|unreachable|connectionpool|temporarily/i.test(error);
   }
-  return /não respondeu em|falha ao baixar|unreachable|connectionpool|timed out|timeout|fetch failed|network|econn|socket|temporarily/i.test(
-    error
-  );
+  return /falha ao baixar|unreachable|connectionpool|fetch failed|network|econn|socket|temporarily/i.test(error);
 }
 
 /** Duração estimada (s) de uma nota de voz a partir do tamanho do arquivo. */
