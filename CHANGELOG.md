@@ -2,6 +2,14 @@
 
 All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file.
 
+## [Unreleased]
+
+### Correções
+
+- **Áudio não faz mais o cliente parecer robô.** Quem mandava várias mensagens de voz seguidas podia ser marcado como "possível robô" e a IA parava de responder. A proteção contra robôs agora julga o áudio pelo que foi falado (a transcrição) e ignora fotos, arquivos e chamadas que não têm texto.
+- **Áudios longos voltam a ser transcritos.** Mensagens de voz com mais de uns 2 minutos falhavam na transcrição. O tempo de espera agora acompanha o tamanho do áudio, e uma falha passageira (serviço lento ou sem rede) é tentada de novo automaticamente.
+- **A Atendente IA espera a transcrição de áudios longos.** Antes ela esperava no máximo 1 minuto e, num áudio de vários minutos, respondia que não tinha conseguido ouvir. Agora a espera acompanha o tamanho do áudio (até 11 minutos) e ela responde ao que o cliente falou.
+
 ## [0.82.0] - 2026-11-13
 
 _Conversas no padrão do WhatsApp no celular e no computador, foto de perfil, a IA lendo PDF e a configuração por conversa mais fluida._

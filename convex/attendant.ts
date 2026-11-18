@@ -57,6 +57,7 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { createHandoffCore } from "./handoffs";
 import { coalesceKeys, createNotification } from "./lib/notify";
 import { attendantActive, isSticker, visionEnabledForOrg } from "./lib/mediaEnrichment";
+import { longAudioWaitMs } from "./lib/transcriptionPolicy";
 import { docReadOf, isDocReadStale, PDF_READ_STALE_CODE, pdfHistoryText } from "./lib/pdfRead";
 import { campaignContextForConversation } from "./lib/campaignContext";
 // Simulador de GRUPO (F4): o mesmo prompt que o runtime do agente de grupo usa.
@@ -160,6 +161,7 @@ const PACING_INTERVAL_MS = 1_000; // ≥1s entre inferências por org
 // Espera por ENRIQUECIMENTO DE MÍDIA (transcrição de áudio, passe de visão,
 // download em voo). Mesmos valores da espera só-de-áudio que existia antes.
 const MEDIA_RECHECK_MS = 8_000; // re-checagem enquanto o enriquecimento roda
+const MEDIA_LONG_RECHECK_MS = 20_000; // idem, na espera estendida de áudio longo
 const MEDIA_MAX_WAIT_MS = 60_000; // teto da espera, por item da fila
 const LEASE_MS = 3 * 60 * 1000; // lease do lock de conversa (rede de segurança)
 const MAX_ATTEMPTS = 4;
@@ -867,6 +869,13 @@ export const internalEnqueueFromInbound = internalMutation({
           content: m.content,
           createdAt: m.createdAt,
           isInternal: m.isInternal,
+          // Mídia é julgada pelo texto real (transcrição/legenda), nunca pelo
+          // placeholder do parser — ver `botEvidenceText`. Este enqueue roda
+          // ANTES da transcrição do próprio áudio-gatilho: ele não pesa agora,
+          // e a transcrição entra nas avaliações seguintes (e a camada do
+          // modelo, no claim, já espera a transcrição antes de inferir).
+          contentType: m.contentType,
+          transcriptText: m.transcriptText,
         })),
         sinceAt: conversation.botSuspicion?.clearedAt ?? 0,
       });
@@ -1189,8 +1198,16 @@ export async function hasMediaAwaitingEnrichment(
     if (m.contentType === "audio") {
       if (opts.audio === false) continue;
       if (m.transcriptText) continue; // já transcrito
-      const status = (m.metadata?.transcription as { status?: string } | undefined)?.status;
-      if (status === "done" || status === "failed") continue;
+      const tr = m.metadata?.transcription as { status?: string; retryAt?: number } | undefined;
+      const status = tr?.status;
+      if (status === "done") continue;
+      // Falha com re-tentativa automática agendada (lib/transcriptionPolicy):
+      // ainda há chance de o texto chegar — segura dentro do teto da espera.
+      // Folga de 30 s para a action da re-tentativa começar e gravar `pending`.
+      if (status === "failed") {
+        if (typeof tr?.retryAt === "number" && tr.retryAt + 30_000 > Date.now()) return true;
+        continue;
+      }
       return true;
     }
 
@@ -1220,6 +1237,45 @@ export async function hasMediaAwaitingEnrichment(
     }
   }
   return false;
+}
+
+/**
+ * Prazo estendido da espera do claim por ÁUDIO LONGO ainda sem transcrição
+ * (`longAudioWaitMs`): o maior `createdAt + espera` entre as notas de voz da
+ * rajada atual (mesma janela/fronteira de `hasMediaAwaitingEnrichment`), ou
+ * `null` quando não há áudio longo pendente — aí vale o teto padrão de 60 s.
+ */
+export async function longAudioWaitDeadline(
+  ctx: MutationCtx,
+  conversationId: Id<"conversations">,
+  windowStart: number
+): Promise<number | null> {
+  const recent = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) =>
+      q.eq("conversationId", conversationId).gte("createdAt", windowStart)
+    )
+    .order("desc")
+    .take(20);
+  let deadline: number | null = null;
+  for (const m of recent) {
+    if (m.direction === "outbound" && !m.isInternal) break;
+    if (m.direction !== "inbound" || m.senderType !== "contact" || m.isInternal) continue;
+    if (m.contentType !== "audio" || m.transcriptText || m.metadata?.mediaDeferred) continue;
+    const tr = m.metadata?.transcription as { status?: string; retryAt?: number } | undefined;
+    if (tr?.status === "done") continue;
+    // Falha definitiva (sem re-tentativa futura) não tem o que esperar.
+    if (tr?.status === "failed" && !(typeof tr.retryAt === "number" && tr.retryAt + 30_000 > Date.now())) {
+      continue;
+    }
+    const fileId = m.attachments?.[0];
+    if (!fileId) continue;
+    const file = await ctx.db.get(fileId);
+    const waitMs = file ? longAudioWaitMs(file.size) : null;
+    if (waitMs === null) continue;
+    deadline = Math.max(deadline ?? 0, m.createdAt + waitMs);
+  }
+  return deadline;
 }
 
 // ── Claim transacional: debounce + pacing + lock + snapshot de contexto ──
@@ -1417,22 +1473,34 @@ export const internalClaimForProcessing = internalMutation({
       // para as linhas que já estavam em voo continuarem válidas sem migração.
       const waitUntil =
         item.mediaWaitUntil ?? item.transcriptWaitUntil ?? item.createdAt + MEDIA_MAX_WAIT_MS;
-      if (
+      // Dentro do teto padrão: qualquer mídia pendente segura (como sempre).
+      // Depois dele, SÓ um áudio LONGO ainda sem transcrição segura, até o
+      // prazo dele (`longAudioWaitDeadline`, proporcional ao tamanho) — uma
+      // imagem/áudio curto pendente não pega carona na espera estendida, e o
+      // prazo estendido nunca é persistido em `mediaWaitUntil` (review de
+      // 17/11/2026). Só com Whisper configurado (senão nada é transcrito).
+      const withinBase =
         now < waitUntil &&
         (await hasMediaAwaitingEnrichment(
           ctx,
           conversation._id,
           item.createdAt - MEDIA_MAX_WAIT_MS,
           { visionEnabled, audio: !!process.env.WHISPER_SERVICE_URL || visionEnabled }
-        ))
-      ) {
+        ));
+      const longAudioUntil =
+        !withinBase && now >= waitUntil && process.env.WHISPER_SERVICE_URL
+          ? await longAudioWaitDeadline(ctx, conversation._id, item.createdAt - MEDIA_MAX_WAIT_MS)
+          : null;
+      if (withinBase || (longAudioUntil !== null && now < longAudioUntil)) {
+        // Na espera estendida, re-checa a cada 20 s em vez de 8 s.
+        const recheckMs = withinBase ? MEDIA_RECHECK_MS : MEDIA_LONG_RECHECK_MS;
         await ctx.db.patch(item._id, {
-          nextAttemptAt: now + MEDIA_RECHECK_MS,
+          nextAttemptAt: now + recheckMs,
           ...(item.mediaWaitUntil === undefined ? { mediaWaitUntil: waitUntil } : {}),
           updatedAt: now,
         });
         await ctx.scheduler.runAfter(
-          MEDIA_RECHECK_MS,
+          recheckMs,
           internal.attendant.internalProcessQueueItem,
           { queueItemId: item._id }
         );

@@ -203,7 +203,62 @@ export type BotGuardMessage = {
   content: string;
   createdAt: number;
   isInternal?: boolean;
+  /** Ausente = texto (compat com callers antigos). */
+  contentType?: "text" | "image" | "file" | "audio" | string;
+  /** Transcrição do Whisper (`messages.transcriptText`), quando já existe. */
+  transcriptText?: string;
 };
+
+/**
+ * Placeholders que os PARSERS gravam em `content` (bridgeParse, whatsappParse,
+ * metaInbound): lista FECHADA de propósito — "[Esta é uma mensagem automática]"
+ * vindo de um robô continua sendo texto e continua pontuando.
+ */
+const PARSER_PLACEHOLDER_RE = new RegExp(
+  "^\\[(?:" +
+    [
+      "imagem", "v[íi]deo", "[áa]udio", "mensagem de voz", "figurinha", "sticker", "documento",
+      "arquivo", "anexo", "mensagem n[ãa]o suportada", "unsupported message type", "resposta interativa",
+      "resposta de bot[ãa]o", "reel", "post", "men[çc][ãa]o em story", "curtiu", "chamada de voz",
+      "chamada de v[íi]deo", "localiza[çc][ãa]o ao vivo", "localiza[çc][ãa]o", "[áa]lbum", "enquete",
+      "evento", "convite para o grupo", "contatos?", "…",
+    ].join("|") +
+    ")(?:[: ][^\\]]*)?\\]$",
+  "i"
+);
+
+/** Conteúdo vazio ou placeholder de mídia do parser ("[mensagem de voz]", "[imagem]", "[chamada de voz]"…). */
+export function isParserPlaceholder(text: string): boolean {
+  const t = text.trim();
+  return t === "" || PARSER_PLACEHOLDER_RE.test(t);
+}
+
+/**
+ * Texto que o cliente REALMENTE escreveu/falou e que pode servir de evidência
+ * de robô — ou `null` quando a mensagem não tem texto próprio.
+ *
+ * Falso positivo real (PROD, 17/11/2026, e 6 de 7 disparos da heurística):
+ * três notas de voz seguidas gravam o MESMO placeholder "[mensagem de voz]"
+ * (15 chars normalizados, acima do mínimo de repetição) e, com a IA
+ * respondendo no meio, viravam `texto_repetido` 2× = limiar. O 7º caso foi um
+ * nome de PDF ("SICOOB_<data>_PIX.pdf", dígitos removidos = igual) mandado duas
+ * vezes. Regra: mídia nunca é evidência por si só.
+ *   - áudio: só a transcrição (ainda pendente no enqueue = nada);
+ *   - arquivo: nada (o `content` é o NOME do arquivo, não texto do cliente);
+ *   - imagem: só a legenda, nunca o placeholder;
+ *   - placeholder do parser ("[imagem]", "[chamada de voz]", "[localização: …]"): nada.
+ */
+export function botEvidenceText(m: BotGuardMessage): string | null {
+  const type = m.contentType ?? "text";
+  if (type === "audio") {
+    const transcript = m.transcriptText?.trim();
+    return transcript ? transcript : null;
+  }
+  if (type === "file") return null;
+  const content = m.content ?? "";
+  if (isParserPlaceholder(content)) return null;
+  return content;
+}
 
 export type BotSignal =
   | "frase_automatica"
@@ -286,7 +341,18 @@ export function evaluateBotSignals(input: {
       continue;
     }
 
-    const content = m.content ?? "";
+    const evidence = botEvidenceText(m);
+    if (evidence === null) {
+      // Mídia sem texto próprio: nenhum sinal, mas ainda é a resposta do
+      // cliente — o texto que vier depois não é mais "a primeira resposta".
+      awaitingFirstReply = false;
+      continue;
+    }
+    const content = evidence;
+    // Tempo de resposta só vale para TEXTO digitado: gravar um áudio de 10 s
+    // ou mandar uma foto com legenda logo depois da nossa mensagem é normal, e
+    // a transcrição de 40+ chars sai de 3 s de fala.
+    const isTyped = (m.contentType ?? "text") === "text";
     if (containsAutomatedPhrase(content)) add("frase_automatica");
     if (containsBotSelfIntro(content)) add("auto_apresentacao_de_bot");
 
@@ -300,7 +366,7 @@ export function evaluateBotSignals(input: {
       seen.set(norm, outboundCount);
     }
 
-    if (awaitingFirstReply && lastOutboundAt !== null) {
+    if (isTyped && awaitingFirstReply && lastOutboundAt !== null) {
       const delta = m.createdAt - lastOutboundAt;
       if (delta >= 0 && delta <= INSTANT_REPLY_MS && content.trim().length >= INSTANT_MIN_CHARS) {
         add("resposta_instantanea");

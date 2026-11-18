@@ -33,14 +33,23 @@ import { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { IMPORTED_FROM_HISTORY_KEY, shouldTranscribeAudio } from "./lib/mediaEnrichment";
 import { scheduleMessageTranslation } from "./lib/translationOps";
+import {
+  WHISPER_BASE_TIMEOUT_MS,
+  isTransientTranscriptionError,
+  nextTranscriptionRetryDelayMs,
+  transcriptionPendingStaleAfterMs,
+  whisperTimeoutMsForSize,
+} from "./lib/transcriptionPolicy";
 
 const ENGINE = "faster-whisper";
-const PENDING_RETRY_AFTER_MS = 2 * 60 * 1000; // don't duplicate an in-flight transcription
 const MAX_AUDIO_BYTES = 25 * 1024 * 1024; // mirrors the Whisper service's own limit
 // Teto do POST /transcribe (download + inferência + leitura do corpo). Sem ele,
 // um Whisper travado segura a action até o limite de 10 min do Convex — e com
-// os áudios do time e do celular também transcritos, isso empilha.
-export const WHISPER_TIMEOUT_MS = 120_000;
+// os áudios do time e do celular também transcritos, isso empilha. 120 s é o
+// MÍNIMO: o teto cresce com o tamanho do áudio (`whisperTimeoutMsForSize`,
+// lib/transcriptionPolicy — o Whisper da VPS roda perto do tempo real e áudio
+// de 2+ min estourava os 120 s fixos).
+export const WHISPER_TIMEOUT_MS = WHISPER_BASE_TIMEOUT_MS;
 
 type TranscriptionMeta = {
   status: "pending" | "done" | "failed";
@@ -50,6 +59,10 @@ type TranscriptionMeta = {
   engine: string;
   error?: string;
   at: number;
+  /** Falha transitória com nova tentativa automática agendada para este instante. */
+  retryAt?: number;
+  /** Nº da tentativa automática que gravou este estado (0 = a primeira). */
+  attempt?: number;
 };
 
 type AudioMessageForTranscription = {
@@ -95,15 +108,22 @@ export const transcribe = action({
 
 // ── Internal: auto-transcribe, meant to be scheduled right after ingest. Silently
 // skips (status "skipped") when the message isn't audio or the org hasn't opted in. ──
+//
+// Re-tentativa: falha TRANSITÓRIA (timeout, rede, 5xx, VPS sem conseguir baixar
+// o áudio) reagenda ESTA action com `attempt + 1` (60 s, depois 5 min —
+// `TRANSCRIPTION_RETRY_DELAYS_MS`). É continuação do mesmo job, não um
+// agendamento novo: a porta única `scheduleAudioTranscription` continua sendo
+// a única que INICIA a transcrição. Cada tentativa relê a elegibilidade.
 export const autoTranscribe = internalAction({
-  args: { messageId: v.id("messages") },
+  args: { messageId: v.id("messages"), attempt: v.optional(v.number()) },
   returns: transcribeResultValidator,
   handler: async (ctx, args): Promise<TranscribeResult> => {
     const message = await ctx.runQuery(internal.transcription.internalGetAudioMessageIfEligible, {
       messageId: args.messageId,
     });
     if (!message) return { status: "skipped" };
-    return await runTranscription(ctx, message);
+    const attempt = Number.isFinite(args.attempt) ? Math.max(0, Math.floor(args.attempt!)) : 0;
+    return await runTranscription(ctx, message, { attempt });
   },
 });
 
@@ -116,7 +136,10 @@ function isAbortError(e: unknown): boolean {
 // Shared idempotent transcription flow used by both entry points above.
 async function runTranscription(
   ctx: ActionCtx,
-  message: AudioMessageForTranscription
+  message: AudioMessageForTranscription,
+  // `auto` presente = caminho automático (re-tenta falha transitória);
+  // ausente = clique do usuário (sem re-tentativa: ele vê o erro e decide).
+  auto?: { attempt: number }
 ): Promise<TranscribeResult> {
   const existing = message.metadata?.transcription as TranscriptionMeta | undefined;
   if (existing?.status === "done") {
@@ -127,7 +150,10 @@ async function runTranscription(
       durationSec: existing.durationSec,
     };
   }
-  if (existing?.status === "pending" && Date.now() - existing.at < PENDING_RETRY_AFTER_MS) {
+  if (
+    existing?.status === "pending" &&
+    Date.now() - existing.at < transcriptionPendingStaleAfterMs(message.size)
+  ) {
     return { status: "pending" };
   }
 
@@ -168,14 +194,26 @@ async function runTranscription(
     return { status: "failed", error };
   }
 
-  const result = await callWhisper(serviceUrl, serviceToken, audioUrl);
+  const result = await callWhisper(serviceUrl, serviceToken, audioUrl, {
+    timeoutMs: whisperTimeoutMsForSize(message.size),
+  });
   if (result.status === "failed") {
+    const retryDelay = auto ? nextTranscriptionRetryDelayMs(auto.attempt, result.transient) : null;
+    const retryAt = retryDelay !== null ? Date.now() + retryDelay : undefined;
     await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
       messageId: message.messageId,
       status: "failed",
       error: result.error,
+      ...(retryAt !== undefined ? { retryAt } : {}),
+      ...(auto ? { attempt: auto.attempt } : {}),
     });
-    return result;
+    if (retryDelay !== null && auto) {
+      await ctx.scheduler.runAfter(retryDelay, internal.transcription.autoTranscribe, {
+        messageId: message.messageId,
+        attempt: auto.attempt + 1,
+      });
+    }
+    return { status: "failed", error: result.error };
   }
   await ctx.runMutation(internal.transcription.internalSetTranscriptionResult, {
     messageId: message.messageId,
@@ -199,8 +237,12 @@ async function callWhisper(
   serviceUrl: string,
   serviceToken: string | undefined,
   audioUrl: string,
-  opts: { prompt?: string } = {}
-): Promise<{ status: "done"; text: string; language?: string; durationSec?: number } | { status: "failed"; error: string }> {
+  opts: { prompt?: string; timeoutMs?: number } = {}
+): Promise<
+  | { status: "done"; text: string; language?: string; durationSec?: number }
+  | { status: "failed"; error: string; transient: boolean }
+> {
+  const timeoutMs = opts.timeoutMs ?? WHISPER_TIMEOUT_MS;
   try {
     const response = await fetch(`${serviceUrl.replace(/\/$/, "")}/transcribe`, {
       method: "POST",
@@ -212,7 +254,7 @@ async function callWhisper(
         url: audioUrl,
         ...(opts.prompt ? { prompt: opts.prompt.slice(0, WHISPER_PROMPT_MAX_CHARS) } : {}),
       }),
-      signal: AbortSignal.timeout(WHISPER_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
 
     // O timeout também cobre a leitura do corpo: esse abort NÃO pode virar
@@ -222,8 +264,8 @@ async function callWhisper(
       return {};
     });
     if (!response.ok) {
-      const error = body?.detail ?? body?.error ?? `Whisper service error (HTTP ${response.status})`;
-      return { status: "failed", error: String(error) };
+      const error = String(body?.detail ?? body?.error ?? `Whisper service error (HTTP ${response.status})`);
+      return { status: "failed", error, transient: isTransientTranscriptionError(error, response.status) };
     }
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const language = typeof body.language === "string" ? body.language : undefined;
@@ -231,11 +273,13 @@ async function callWhisper(
     return { status: "done", text, language, durationSec };
   } catch (e) {
     const error = isAbortError(e)
-      ? `Serviço Whisper não respondeu em ${WHISPER_TIMEOUT_MS / 1000}s`
+      ? `Serviço Whisper não respondeu em ${Math.round(timeoutMs / 1000)}s`
       : e instanceof Error
         ? e.message
         : "Falha ao chamar o serviço Whisper";
-    return { status: "failed", error };
+    // Exceção de rede = transitória; o NOSSO timeout não (o job continua
+    // rodando no Whisper — re-enviar só dobraria a fila).
+    return { status: "failed", error, transient: !isAbortError(e) };
   }
 }
 
@@ -376,6 +420,8 @@ export const internalSetTranscriptionResult = internalMutation({
     language: v.optional(v.string()),
     durationSec: v.optional(v.number()),
     error: v.optional(v.string()),
+    retryAt: v.optional(v.number()),
+    attempt: v.optional(v.number()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -390,6 +436,8 @@ export const internalSetTranscriptionResult = internalMutation({
       ...(args.language !== undefined ? { language: args.language } : {}),
       ...(args.durationSec !== undefined ? { durationSec: args.durationSec } : {}),
       ...(args.error !== undefined ? { error: args.error } : {}),
+      ...(args.retryAt !== undefined ? { retryAt: args.retryAt } : {}),
+      ...(args.attempt !== undefined ? { attempt: args.attempt } : {}),
     };
     await ctx.db.patch(
       args.messageId,

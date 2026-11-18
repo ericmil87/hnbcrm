@@ -749,3 +749,163 @@ describe("timeout do serviço Whisper", () => {
     expect(stored?.metadata?.transcription?.status).toBe("failed");
   });
 });
+
+// ─── Re-tentativa de falha transitória (PROD 10–13/11/2026: 3 timeouts de
+// áudio longo + 1 VPS sem rede para baixar o áudio, nenhum re-tentado) ────────
+
+describe("re-tentativa automática da transcrição", () => {
+  async function audioMessage(t: TestConvex<typeof schema>, s: Seed) {
+    const fileId = await storeAudio(t, s.organizationId);
+    return await t.run(async (ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId,
+        conversationId: s.conversationId,
+        leadId: s.leadId,
+        direction: "inbound",
+        senderType: "contact",
+        content: "[mensagem de voz]",
+        contentType: "audio",
+        attachments: [fileId],
+        isInternal: false,
+        createdAt: Date.now(),
+      })
+    );
+  }
+
+  async function retryJobs(t: TestConvex<typeof schema>) {
+    return await t.run(async (ctx) =>
+      (await ctx.db.system.query("_scheduled_functions").collect())
+        .filter((j) => j.name.includes("autoTranscribe") && j.state.kind === "pending")
+        .map((j) => ({ args: j.args[0] as { messageId: string; attempt?: number }, at: j.scheduledTime }))
+    );
+  }
+
+  test("falha de rede ao baixar (HTTP 500) reagenda com attempt+1 e grava retryAt; a re-tentativa conclui", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 500,
+        json: async () => ({ detail: "Falha ao baixar áudio da URL: [Errno 101] Network is unreachable" }),
+      }))
+    );
+
+    const first = await t.action(internal.transcription.autoTranscribe, { messageId });
+    expect(first.status).toBe("failed");
+    let stored = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(stored?.metadata?.transcription).toMatchObject({ status: "failed", attempt: 0 });
+    expect(typeof stored?.metadata?.transcription?.retryAt).toBe("number");
+    const jobs = await retryJobs(t);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].args).toEqual({ messageId, attempt: 1 });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ text: "oi, tudo bem?", language: "pt" }) }))
+    );
+    const second = await t.action(internal.transcription.autoTranscribe, { messageId, attempt: 1 });
+    expect(second.status).toBe("done");
+    stored = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(stored?.metadata?.transcription?.status).toBe("done");
+    expect(stored?.transcriptText).toBe("oi, tudo bem?");
+  });
+
+  test("o NOSSO timeout não re-tenta (o job segue no Whisper; re-enviar dobraria a fila)", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      })
+    );
+
+    await t.action(internal.transcription.autoTranscribe, { messageId });
+    const stored = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(stored?.metadata?.transcription).toMatchObject({ status: "failed", attempt: 0 });
+    expect(stored?.metadata?.transcription?.retryAt).toBeUndefined();
+    expect(await retryJobs(t)).toHaveLength(0);
+  });
+
+  test("falha de rede re-tenta no máximo 2 vezes (attempt 2 não reagenda)", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      })
+    );
+
+    await t.action(internal.transcription.autoTranscribe, { messageId, attempt: 2 });
+    const stored = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(stored?.metadata?.transcription).toMatchObject({ status: "failed", attempt: 2 });
+    expect(stored?.metadata?.transcription?.retryAt).toBeUndefined();
+    expect(await retryJobs(t)).toHaveLength(0);
+  });
+
+  test("erro permanente (HTTP 400 formato inválido) não reagenda", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ detail: "Formato de áudio inválido" }) }))
+    );
+
+    await t.action(internal.transcription.autoTranscribe, { messageId });
+    const stored = await t.run(async (ctx) => ctx.db.get(messageId));
+    expect(stored?.metadata?.transcription?.status).toBe("failed");
+    expect(await retryJobs(t)).toHaveLength(0);
+  });
+
+  test("clique em Transcrever (manual) nunca reagenda", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("fetch failed");
+      })
+    );
+
+    const result = await s.asAdmin.action(api.transcription.transcribe, {
+      organizationId: s.organizationId,
+      messageId,
+    });
+    expect(result.status).toBe("failed");
+    expect(await retryJobs(t)).toHaveLength(0);
+  });
+
+  test("teto do POST cresce com o tamanho do áudio (áudio de ~3 min não estoura em 120 s)", async () => {
+    vi.stubEnv("WHISPER_SERVICE_URL", "https://whisper.test.local");
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const messageId = await audioMessage(t, s);
+    // Tamanho real de um dos áudios que falharam por timeout em PROD.
+    await t.run(async (ctx) => {
+      const m = await ctx.db.get(messageId);
+      await ctx.db.patch(m!.attachments![0], { size: 418_206 });
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      })
+    );
+    const result = await t.action(internal.transcription.autoTranscribe, { messageId, attempt: 2 });
+    // 60 s + 167 s × 1,5 ≈ 311 s
+    expect(result.error).toMatch(/não respondeu em 311s/);
+  });
+});
