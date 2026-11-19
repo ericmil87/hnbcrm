@@ -1681,7 +1681,7 @@ const applicationTables = {
     // no inbox. Um range por (valor, kind ∈ {ausente, "direct"}) — grupo não tem
     // tipo e fica fora do range sem precisar de pós-filtro —, mesclados por
     // última mensagem em `getConversations` (lib/contactRelationFilter.ts).
-    .index("by_organization_and_contact_relation_and_kind_and_archived_and_last_message", ["organizationId", "contactRelation", "kind", "archivedAt", "lastMessageAt"]),
+    .index("by_org_and_contact_relation_and_kind_and_archived_and_last_msg", ["organizationId", "contactRelation", "kind", "archivedAt", "lastMessageAt"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa
