@@ -557,7 +557,7 @@ export const getConversations = query({
       const ranges = await Promise.all(relationValues!.flatMap((value) =>
         DIRECT_KINDS.map((kind) =>
           ctx.db.query("conversations")
-            .withIndex("by_organization_and_contact_relation_and_kind_and_archived_and_last_message", (q) => {
+            .withIndex("by_org_and_contact_relation_and_kind_and_archived_and_last_msg", (q) => {
               const base = q.eq("organizationId", args.organizationId).eq("contactRelation", value).eq("kind", kind);
               return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
             })
