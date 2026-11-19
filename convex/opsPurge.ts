@@ -88,6 +88,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "agentEvals", index: "by_organization" },
   { table: "leadDocuments", index: "by_organization" },
   { table: "exportJobs", index: "by_organization" },
+  { table: "importStagedRows", index: "by_organization" },
   { table: "importJobBatches", index: "by_organization" },
   { table: "importJobs", index: "by_organization" },
   { table: "leads", index: "by_organization" },

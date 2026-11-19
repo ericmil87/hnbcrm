@@ -113,12 +113,18 @@ export function rowLimitMessage(rows: number): string {
 // compartilhado com o frontend e as rotas REST (todos codificam igual).
 export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importKeys";
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
-import { leadCreationStagePatch } from "./lib/leadStageMove";
-import { autoLeadArchivePatch, isContactRelation, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
-import { setContactRelationCore } from "./lib/contactRelationOps";
+import { isContactRelation, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
+import { RELATION_LEADS_CAP, setContactRelationCore } from "./lib/contactRelationOps";
 import { deleteMetaIdentitiesForContact } from "./lib/metaIdentity";
 import { deleteContactAvatarArtifacts } from "./lib/contactAvatarOps";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
+import { hardDeleteLead, scheduleLeadCascade } from "./lib/leadCascade";
+import {
+  failStaleImport,
+  insertImportedLead,
+  isStaleRunningImport,
+  releaseStaleImports,
+} from "./lib/importJobOps";
 
 /** Cabeçalho legível a partir da chave (só para mensagens de erro). */
 function headerLabel(key: string): string {
@@ -147,13 +153,13 @@ async function applyImportedRelation(
   job: Doc<"importJobs">,
   contactId: Id<"contacts">,
   raw: unknown
-): Promise<boolean> {
+): Promise<false | Id<"leads">[]> {
   if (!isContactRelation(raw)) return false;
   const contact = await ctx.db.get(contactId);
   if (!contact || contact.relation === raw) return false;
   const actor = await ctx.db.get(job.requestedBy);
   if (!actor || actor.organizationId !== contact.organizationId || actor.type === "ai") return false;
-  await setContactRelationCore(ctx, {
+  const result = await setContactRelationCore(ctx, {
     contact,
     relation: raw,
     actor,
@@ -162,8 +168,15 @@ async function applyImportedRelation(
     // Planilha com "Lead" não ressuscita negócio arquivado à mão: só desfaz um "não-cliente".
     restoreLead: isOffBusiness(contact.relation),
   });
-  return true;
+  return result.archivedLeadIds;
 }
+
+/**
+ * Chave reservada do `importJobBatches.updated[].before`: leads que a marcação
+ * importada arquivou. O rollback devolve EXATAMENTE estes (`restoreLeadIds`),
+ * sem nunca criar lead ao voltar um contato para "sem tipo". Nunca vira campo.
+ */
+export const RELATION_RESTORE_KEY = "relationRestoreLeadIds";
 
 /** Campos de contato que a importação pode escrever (whitelist explícita). */
 const CONTACT_FIELDS = [
@@ -303,6 +316,8 @@ async function createImportJobCore(
     );
   }
 
+  // Job travado (sem batimento há 15 min) não segura a vaga da org.
+  await releaseStaleImports(ctx, args.organizationId, Date.now());
   for (const status of ACTIVE_STATUSES) {
     const running = await ctx.db
       .query("importJobs")
@@ -455,11 +470,26 @@ async function rollbackImportCore(
   jobId: Id<"importJobs">
 ): Promise<null> {
   const job = await requireJob(ctx, organizationId, jobId);
-  if (job.status !== "completed" && job.status !== "completed_with_errors") {
-    throw new Error("Só é possível desfazer importações concluídas");
+  if (job.status === "rolling_back") throw new Error("Esta importação já está sendo desfeita");
+  if (!canRollbackStatus(job)) {
+    throw new Error("Só é possível desfazer importações concluídas ou que falharam no meio");
   }
+  // `rolling_back` antes de agendar: um segundo clique não roda o rollback duas vezes.
+  await ctx.db.patch(jobId, { status: "rolling_back", error: undefined });
   await ctx.scheduler.runAfter(0, internal.importRun.internalRunRollback, { jobId });
   return null;
+}
+
+/**
+ * Pode desfazer: concluída, ou que falhou depois de começar a gravar (um job
+ * travado encerrado por `releaseStaleImports` deixa trilha em `importJobBatches`).
+ */
+export function canRollbackStatus(job: Pick<Doc<"importJobs">, "status" | "startedAt">): boolean {
+  return (
+    job.status === "completed" ||
+    job.status === "completed_with_errors" ||
+    (job.status === "failed" && job.startedAt !== undefined)
+  );
 }
 
 /** Erros de linha de um job (batches; cai no dry-run se ainda não rodou). */
@@ -467,7 +497,8 @@ async function collectFailedRows(
   ctx: QueryCtx | MutationCtx,
   job: Doc<"importJobs">
 ): Promise<{ storageId: string; errors: Array<{ row: number; message: string }> }> {
-  const file = await ctx.db.get(job.fileId);
+  // Importação do celular (PR6) não tem arquivo: o .vcf ficou no navegador.
+  const file = job.fileId ? await ctx.db.get(job.fileId) : null;
   if (!file || file.organizationId !== job.organizationId) {
     throw new Error("Arquivo original não encontrado");
   }
@@ -586,10 +617,19 @@ export const cancelImport = mutation({
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "manage");
     const job = await requireJob(ctx, args.organizationId, args.jobId);
-    if (job.status !== "mapping" && job.status !== "preview_ready") {
-      throw new Error("Só é possível cancelar uma importação que ainda não começou");
-    }
     const now = Date.now();
+    // Execução travada (CSV ou celular): encerra como `failed`, que pode ser desfeito.
+    if (isStaleRunningImport(job, now)) {
+      await failStaleImport(ctx, job, now, "Importação cancelada depois de parar de responder. O que já foi gravado pode ser desfeito.");
+      return null;
+    }
+    if (job.status !== "mapping" && job.status !== "preview_ready") {
+      throw new Error(
+        job.status === "running"
+          ? "A importação está em andamento. Se ela parar de avançar por 15 minutos, dá para cancelar."
+          : "Só é possível cancelar uma importação que ainda não começou"
+      );
+    }
     await ctx.db.patch(args.jobId, { status: "canceled", finishedAt: now });
     await logJobAudit(
       ctx,
@@ -781,7 +821,7 @@ export const internalGetJobContext = internalQuery({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job) return null;
-    const file = await ctx.db.get(job.fileId);
+    const file = job.fileId ? await ctx.db.get(job.fileId) : null;
     return {
       job,
       file:
@@ -892,7 +932,8 @@ export const internalClaimImport = internalMutation({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job || job.status !== "running" || job.startedAt !== undefined) return false;
-    await ctx.db.patch(args.jobId, { startedAt: Date.now() });
+    const now = Date.now();
+    await ctx.db.patch(args.jobId, { startedAt: now, heartbeatAt: now });
     return true;
   },
 });
@@ -903,7 +944,7 @@ export const internalFailJob = internalMutation({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job) return null;
-    const terminal = ["completed", "completed_with_errors", "failed", "rolled_back", "canceled"];
+    const terminal = ["completed", "completed_with_errors", "failed", "rolled_back", "canceled", "rolling_back"];
     if (terminal.includes(job.status)) return null;
 
     const now = Date.now();
@@ -1112,8 +1153,10 @@ export const internalProcessBatch = internalMutation({
             }
             // PR1: "Tipo de contato" passa pela porta única (arquiva/restaura
             // leads, espelho, follow-ups); o rollback volta pela mesma porta.
-            if (await applyImportedRelation(ctx, job, existing._id, value.relation)) {
+            const archivedByRelation = await applyImportedRelation(ctx, job, existing._id, value.relation);
+            if (archivedByRelation) {
               before.relation = existing.relation ?? null;
+              before[RELATION_RESTORE_KEY] = archivedByRelation;
             }
             if (Object.keys(before).length > 0) updated.push({ id: existing._id, before });
             updatedCount++;
@@ -1232,28 +1275,22 @@ export const internalProcessBatch = internalMutation({
 
         // PR1: lead importado para contato marcado fora do comercial nasce arquivado.
         const leadContact = contactId ? await ctx.db.get(contactId) : null;
-        const leadId = await ctx.db.insert("leads", {
-          ...autoLeadArchivePatch(leadContact?.relation, now),
+        const leadId = await insertImportedLead(ctx, {
           organizationId,
           title: String(value.title),
           contactId,
-          boardId: board._id,
-          stageId: stage._id,
+          contactRelation: leadContact?.relation,
+          board,
+          stage,
+          currency: (value.currency as string) || context.currency,
+          now,
           assignedTo: assignee?._id,
           value: typeof value.value === "number" ? value.value : 0,
-          currency: (value.currency as string) || context.currency,
-          priority: (value.priority as any) ?? "medium",
-          temperature: (value.temperature as any) ?? "cold",
+          priority: value.priority as Doc<"leads">["priority"] | undefined,
+          temperature: value.temperature as Doc<"leads">["temperature"] | undefined,
           sourceId: source?._id,
           tags: (value.tags as string[]) ?? [],
-          customFields: (value.customFields as Record<string, any>) ?? {},
-          conversationStatus: "new",
-          // Lead importado direto numa etapa fechada já nasce fechado
-          // (closedAt/closedType), sem stage_changed nem won/lost.
-          ...leadCreationStagePatch(stage, now),
-          lastActivityAt: now,
-          createdAt: now,
-          updatedAt: now,
+          customFields: (value.customFields as Record<string, unknown>) ?? {},
         });
         createdIds.push(leadId);
         created++;
@@ -1284,6 +1321,7 @@ export const internalProcessBatch = internalMutation({
           skipped: fresh.progress.skipped + skipped,
           failed: fresh.progress.failed + failed,
         },
+        heartbeatAt: now,
       });
     }
 
@@ -1322,10 +1360,23 @@ export const internalRollbackBatch = internalMutation({
     }
 
     // Leads primeiro: contato criado pela importação pode estar referenciado.
+    // Porta única de exclusão (audit com snapshot + `lead.deleted`); conversas,
+    // atividades e afins que nasceram depois saem pela cascata agendada.
+    const actor = await ctx.db.get(job.requestedBy);
+    const actorId = actor && actor.organizationId === job.organizationId ? actor._id : undefined;
+    const cascadeLeadIds: Id<"leads">[] = [];
+    const cascadeContactIds: Id<"contacts">[] = [];
     for (const leadId of leadIds) {
       const lead = await ctx.db.get(leadId);
       if (!lead || lead.organizationId !== job.organizationId) continue;
-      await ctx.db.delete(leadId);
+      await hardDeleteLead(ctx, {
+        lead,
+        actorId,
+        actorType: actorId ? "human" : "system",
+        description: `Excluiu o lead '${lead.title}' ao desfazer a importação (${job.fileName})`,
+        extraMetadata: { importJobId: job._id },
+      });
+      cascadeLeadIds.push(leadId);
       deleted++;
     }
     for (const contactId of contactIds) {
@@ -1340,8 +1391,14 @@ export const internalRollbackBatch = internalMutation({
       // Foto do WhatsApp (e manual) do contato removido saem junto (sem órfão).
       await deleteContactAvatarArtifacts(ctx, contact);
       await ctx.db.delete(contactId);
+      cascadeContactIds.push(contactId);
       deleted++;
     }
+    await scheduleLeadCascade(ctx, {
+      organizationId: job.organizationId,
+      leadIds: cascadeLeadIds,
+      contactIds: cascadeContactIds,
+    });
 
     for (const item of batch.updated) {
       const contactId = ctx.db.normalizeId("contacts", item.id);
@@ -1351,19 +1408,36 @@ export const internalRollbackBatch = internalMutation({
       const patch: Record<string, unknown> = {};
       for (const [field, before] of Object.entries(item.before)) {
         // PR1: o tipo de contato volta pela porta única (desfaz arquivamento etc.).
-        if (field === "relation") continue;
+        if (field === "relation" || field === RELATION_RESTORE_KEY) continue;
         patch[field] = before === null ? undefined : before;
       }
       if ("relation" in item.before) {
         const actor = await ctx.db.get(job.requestedBy);
         const previous = item.before.relation;
         if (actor && actor.type !== "ai" && (previous === null || isContactRelation(previous))) {
+          // Trilha nova: devolve só os leads que a importação arquivou (vivos e
+          // ainda deste contato). Trilha antiga (sem a chave): padrão da porta.
+          const recorded = item.before[RELATION_RESTORE_KEY];
+          let restoreLeadIds: Id<"leads">[] | undefined;
+          if (Array.isArray(recorded)) {
+            restoreLeadIds = [];
+            for (const raw of recorded.slice(0, RELATION_LEADS_CAP)) {
+              const leadId = typeof raw === "string" ? ctx.db.normalizeId("leads", raw) : null;
+              const lead = leadId ? await ctx.db.get(leadId) : null;
+              if (lead && lead.contactId === contactId && lead.organizationId === job.organizationId) {
+                restoreLeadIds.push(lead._id);
+              }
+            }
+          }
           await setContactRelationCore(ctx, {
             contact,
             relation: previous as ContactRelation | null,
             actor,
             source: "import",
             quiet: true,
+            // Importação do celular não emite `contact.updated` por contato (nem ao desfazer).
+            webhook: job.source !== "phone_vcf",
+            ...(restoreLeadIds ? { restoreLeadIds } : {}),
           });
           reverted++;
         }
@@ -1390,7 +1464,7 @@ export const internalFinishRollback = internalMutation({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job) return null;
-    if (job.status !== "completed" && job.status !== "completed_with_errors") return null;
+    if (job.status !== "rolling_back") return null;
 
     const now = Date.now();
     await ctx.db.patch(args.jobId, { status: "rolled_back", finishedAt: now });

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { Link } from "react-router";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
 import { toast } from "sonner";
@@ -11,6 +12,7 @@ import {
   Download,
   FileSpreadsheet,
   ShieldAlert,
+  Smartphone,
   Target,
   Undo2,
   Upload,
@@ -35,6 +37,8 @@ import {
   downloadFromUrl,
   downloadTextFile,
   importStatusMeta,
+  isStaleImportJob,
+  canRollbackImportJob,
   type ImportJobDoc,
 } from "@/components/settings/ImportWizard";
 import { formatCount } from "@/lib/format";
@@ -250,7 +254,7 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
   const handleRollback = (job: ImportJobDoc) => {
     toast.promise(rollbackImport({ organizationId, jobId: job._id }), {
       loading: "Desfazendo a importação…",
-      success: "Desfazendo — o histórico é atualizado ao terminar.",
+      success: "Desfazendo…",
       error: (error: unknown) => mutationErrorMessage(error, "Não foi possível desfazer a importação."),
     });
     setRollbackJob(null);
@@ -433,6 +437,13 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
                 Traga contatos e leads de outro sistema por CSV, com mapeamento de colunas e
                 pré-visualização antes de gravar.
               </p>
+              <Link
+                to="/app/contatos/importar-celular"
+                className="mt-1 inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-brand-500 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 md:min-h-0"
+              >
+                <Smartphone size={16} aria-hidden="true" />
+                Importar contatos do celular (.vcf)
+              </Link>
             </div>
           </div>
           <Button onClick={() => setWizardOpen(true)}>
@@ -461,9 +472,9 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
             {importJobs.map((job) => {
               const meta = importStatusMeta(job.status);
               const active = ACTIVE_IMPORT_STATUSES.includes(job.status);
-              const canCancel = job.status === "mapping" || job.status === "preview_ready";
-              const canRollback =
-                job.status === "completed" || job.status === "completed_with_errors";
+              const stale = isStaleImportJob(job, Date.now());
+              const canCancel = job.status === "mapping" || job.status === "preview_ready" || stale;
+              const canRollback = canRollbackImportJob(job);
               const finished =
                 job.status === "completed" ||
                 job.status === "completed_with_errors" ||
@@ -483,8 +494,14 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
                         <Badge variant={meta.variant}>{meta.label}</Badge>
                       </div>
                       <p className="mt-0.5 text-xs text-text-muted tabular-nums">
-                        {IMPORT_ENTITY_LABEL[job.entity]} ·{" "}
-                        {DUPLICATE_STRATEGY_LABEL[job.duplicateStrategy].toLowerCase()} ·{" "}
+                        {job.source === "phone_vcf" ? (
+                          "Contatos do celular · "
+                        ) : (
+                          <>
+                            {IMPORT_ENTITY_LABEL[job.entity]} ·{" "}
+                            {DUPLICATE_STRATEGY_LABEL[job.duplicateStrategy].toLowerCase()} ·{" "}
+                          </>
+                        )}
                         {formatDateTime(job.createdAt)}
                       </p>
                       {(job.status === "running" || finished) && (
@@ -525,7 +542,7 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
                           Cancelar
                         </Button>
                       )}
-                      {job.progress.failed > 0 && (
+                      {job.progress.failed > 0 && job.source !== "phone_vcf" && (
                         <Button
                           variant="secondary"
                           size="sm"

@@ -280,9 +280,8 @@ export const internalRunRollback = internalAction({
   handler: async (ctx, args) => {
     const context = await loadContext(ctx, args.jobId);
     if (!context) return null;
-    if (context.job.status !== "completed" && context.job.status !== "completed_with_errors") {
-      return null;
-    }
+    // `rollbackImportCore` marca `rolling_back` antes de agendar (sem rodada dupla).
+    if (context.job.status !== "rolling_back") return null;
 
     const batchIds: Id<"importJobBatches">[] = await ctx.runQuery(
       internal.imports.internalListBatchIds,

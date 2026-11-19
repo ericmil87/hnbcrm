@@ -2426,7 +2426,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Dados"],
         "summary": "Desfazer importação",
-        "description": "Apaga os registros criados e reverte os atualizados pela importação (status rolled_back). Só para jobs completed ou completed_with_errors. Efeitos colaterais já disparados (atividades, webhooks) não são revertidos. Requer settings: manage.",
+        "description": "Apaga os registros criados e reverte os atualizados pela importação (status rolling_back e depois rolled_back). Para jobs completed, completed_with_errors ou failed que já tinham começado a gravar; leads criados saem pela exclusão normal (audit + lead.deleted). Efeitos colaterais já disparados (atividades, webhooks) não são revertidos. Requer settings: manage.",
         "operationId": "rollbackImport",
         "requestBody": {
           "required": true,
@@ -2801,9 +2801,12 @@ export const OPENAPI_SPEC = `{
           "_creationTime": { "type": "number", "description": "Timestamp de criação" },
           "organizationId": { "type": "string", "description": "ID da organização" },
           "requestedBy": { "type": "string", "description": "Membro que solicitou" },
-          "status": { "type": "string", "enum": ["mapping", "previewing", "preview_ready", "running", "completed", "completed_with_errors", "failed", "rolled_back", "canceled"], "description": "Estado do wizard" },
+          "status": { "type": "string", "enum": ["mapping", "previewing", "preview_ready", "running", "completed", "completed_with_errors", "failed", "rolling_back", "rolled_back", "canceled"], "description": "Estado do wizard" },
           "entity": { "type": "string", "enum": ["contacts", "leads"], "description": "Entidade de destino" },
-          "fileId": { "type": "string", "description": "Arquivo CSV de origem (tabela files)" },
+          "fileId": { "type": "string", "description": "Arquivo CSV de origem (tabela files). Ausente na importação de contatos do celular (source phone_vcf)" },
+          "source": { "type": "string", "enum": ["phone_vcf"], "description": "phone_vcf = Importar contatos do celular (só pelo app); ausente = importação de CSV" },
+          "createLeads": { "type": "boolean", "description": "Importação do celular: opção Criar lead no funil estava ligada" },
+          "heartbeatAt": { "type": "number", "description": "Último lote gravado; job running sem batimento há 15 min é encerrado como failed" },
           "fileName": { "type": "string", "description": "Nome do arquivo" },
           "detectedHeaders": { "type": "array", "items": { "type": "string" }, "description": "Cabeçalhos detectados no arquivo, na ordem original" },
           "suggestedMapping": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Mapeamento sugerido — chaves são os cabeçalhos crus" },

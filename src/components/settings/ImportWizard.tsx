@@ -43,7 +43,8 @@ export type ImportStatus =
   | "completed_with_errors"
   | "failed"
   | "rolled_back"
-  | "canceled";
+  | "canceled"
+  | "rolling_back";
 
 export type DuplicateStrategy = "skip" | "update" | "create";
 
@@ -53,6 +54,8 @@ export interface ImportJobDoc {
   status: ImportStatus;
   entity: ImportEntity;
   fileName: string;
+  /** PR6: importação de contatos do celular (sem arquivo no servidor). */
+  source?: "phone_vcf";
   detectedHeaders?: string[];
   suggestedMapping?: Record<string, string>;
   mapping?: Record<string, string>;
@@ -79,6 +82,28 @@ export interface ImportJobDoc {
   createdAt: number;
   startedAt?: number;
   finishedAt?: number;
+  /** Último lote gravado (job `running` sem batimento há 15 min = travado). */
+  heartbeatAt?: number;
+}
+
+/** Janela do servidor (`STALE_IMPORT_MS`): execução sem batimento além disso pode ser cancelada. */
+export const STALE_IMPORT_MS = 15 * 60 * 1000;
+
+/** Job em execução que parou de dar sinal de vida. */
+export function isStaleImportJob(
+  job: Pick<ImportJobDoc, "status" | "heartbeatAt" | "startedAt" | "createdAt">,
+  now: number
+): boolean {
+  return job.status === "running" && now - (job.heartbeatAt ?? job.startedAt ?? job.createdAt) > STALE_IMPORT_MS;
+}
+
+/** Pode desfazer: concluída, ou falhou depois de começar a gravar (mesma regra do servidor). */
+export function canRollbackImportJob(job: Pick<ImportJobDoc, "status" | "startedAt">): boolean {
+  return (
+    job.status === "completed" ||
+    job.status === "completed_with_errors" ||
+    (job.status === "failed" && job.startedAt !== undefined)
+  );
 }
 
 export const IMPORT_ENTITY_LABEL: Record<ImportEntity, string> = {
@@ -121,6 +146,8 @@ export function importStatusMeta(status: ImportStatus): {
       return { label: "Falhou", variant: "error" };
     case "rolled_back":
       return { label: "Desfeita", variant: "default" };
+    case "rolling_back":
+      return { label: "Desfazendo…", variant: "brand" };
     case "canceled":
     default:
       return { label: "Cancelada", variant: "default" };

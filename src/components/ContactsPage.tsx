@@ -49,6 +49,7 @@ import { CreateContactModal } from "./CreateContactModal";
 import { SocialIcons } from "@/components/SocialIcons";
 import { cn } from "@/lib/utils";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
+import { PhoneImportLink } from "./contacts/phoneImport/PhoneImportLink";
 
 type ColumnKey = "contact" | "company" | "email" | "phone" | "tags" | "city" | "state" | "country" | "industry" | "social" | "companySize" | "acquisitionChannel" | string;
 
@@ -396,10 +397,13 @@ export function ContactsPage() {
             subtitle="Gerencie seus contatos e relacionamentos"
             actions={
               can("contacts", "edit") ? (
-                <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)} className="shrink-0">
-                  <Plus size={20} aria-hidden="true" />
-                  {VOCAB.contact.new}
-                </Button>
+                <div className="flex shrink-0 items-center gap-2">
+                  <PhoneImportLink />
+                  <Button variant="primary" size="md" onClick={() => setShowCreateModal(true)} className="shrink-0">
+                    <Plus size={20} aria-hidden="true" />
+                    {VOCAB.contact.new}
+                  </Button>
+                </div>
               ) : undefined
             }
           />

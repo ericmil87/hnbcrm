@@ -70,6 +70,7 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `authEmails.ts` / `authEmailTemplates.ts` / `passwordReset.ts` | Reset-code + welcome emails (outside `notificationPreferences`) / templates / OTP provider |
 | `emailTemplates.ts` / `lib/emailAddress.ts` / `lib/appUrl.ts` | PT-BR templates (`buildTemplate` fail-closed) / `isDeliverableEmail` / `appUrl()` single link source |
 | `exports.ts` / `imports.ts` / `importRun.ts` | Export jobs (CSV, `hnbcrm-backup` v1) / import wizard (`importJobBatches` rollback) / import actions |
+| `phoneContactsImport.ts` | Phone contacts (.vcf) import: triage match query, start (selected rows only → `importStagedRows`), chunked processing, undo via the import rollback (`docs/architecture/data-export-import.md`) |
 | `lib/csv.ts` / `importMapping.ts` / `importKeys.ts` / `exportColumns.ts` / `exportSanitize.ts` | RFC 4180 CSV / `suggestMapping`, `coerceAndValidateRow` / `encodeHeaderKey` / columns / denylist |
 | `lib/auth.ts` / `permissions.ts` / `batchGet.ts` / `fileRefs.ts` | `requireAuth()`, `requirePermission()` / defaults / batch get / `isStorageShared`, `deleteBlobIfUnreferenced` |
 | `authHelpers.ts` / `nodeActions.ts` / `forms.ts` / `formSubmissions.ts` | Auth-table ops / Node actions (API key hash, webhooks, invite) / form builder / submissions |
