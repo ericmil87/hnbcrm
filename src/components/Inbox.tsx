@@ -1,5 +1,5 @@
 import { usePageTitle } from "@/hooks/usePageTitle";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useOutletContext, useNavigate } from "react-router";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -20,7 +20,7 @@ import { useInboxFilters } from "@/hooks/useInboxFilters";
 import { useConversationList } from "@/hooks/useConversationList";
 import { useConversationSelection } from "@/hooks/useConversationSelection";
 import { useBulkConversationSelection } from "@/hooks/useBulkConversationSelection";
-import { filterConversations, mergeOpenConversation } from "@/lib/inboxState";
+import { filterConversations, mergeOpenConversation, showGroupsChip } from "@/lib/inboxState";
 import { jumpableMatches } from "@/lib/inboxSearch";
 import { SpotlightTooltip } from "@/components/onboarding/SpotlightTooltip";
 import { NewConversationModal } from "@/components/inbox/NewConversationModal";
@@ -80,6 +80,15 @@ export function Inbox() {
     isSearching,
   });
   const { validConversations } = list;
+  // A org tem grupo na lista? Lido só SEM filtro de tipo (com ele o servidor tira os grupos).
+  const [orgHasGroups, setOrgHasGroups] = useState(false);
+  const loadedHasGroups =
+    list.conversations !== undefined && !filters.relationFilter
+      ? validConversations.some((c) => c.kind === "group")
+      : null;
+  useEffect(() => {
+    if (loadedHasGroups !== null) setOrgHasGroups(loadedHasGroups);
+  }, [loadedHasGroups]);
   const selection = useConversationSelection({
     validConversations,
     listLoaded: list.conversations !== undefined,
@@ -128,8 +137,14 @@ export function Inbox() {
   // Os chips aparecem com grupo na lista OU filtro guardado diferente de "Todas":
   // sem a 2ª condição, um filtro "Grupos" persistido escondia os próprios chips
   // quando a org parava de acompanhar salas, e a caixa ficava vazia sem saída.
-  const hasGroupConversations =
-    validConversations.some((c) => c.kind === "group") || kindFilter !== "all";
+  // Com filtro de tipo (Leads, Pessoais…) o servidor não devolve grupos: vale o que
+  // se viu antes do filtro, senão o chip "Grupos" sumiria ao ligar um tipo.
+  const hasGroupConversations = showGroupsChip({
+    rows: validConversations,
+    kind: kindFilter,
+    relation: filters.relationFilter,
+    knownHasGroups: orgHasGroups,
+  });
   const filteredConversations = filterConversations(validConversations, {
     kind: kindFilter, labelId: filterLabelId, unreadOnly: filters.unreadOnly, keepId: selectedConversation,
   });

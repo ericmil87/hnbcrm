@@ -12,6 +12,7 @@ import {
   hasChipFilters,
   inboxFilterChips,
   inboxMoreFilters,
+  showGroupsChip,
   NO_CHIP_FILTERS,
   decideConversationParamAction,
   emptyListMessage,
@@ -525,5 +526,35 @@ describe("tipo de contato nos chips (PR2)", () => {
     });
     expect(emptyListMessage({ ...base2, relation: "leads" })).toEqual({ text: "Nenhuma conversa com lead", chooseGroups: false });
     expect(emptyListMessage({ ...base2, relation: "automated", showArchived: true }).text).toBe("Nenhum robô entre as arquivadas");
+  });
+
+  it("tipo e Grupos se excluem: ligar um desliga o outro", () => {
+    const groups = applyInboxChip("group", none);
+    expect(applyInboxChip("leads", groups)).toMatchObject({ relation: "leads", kind: "all" });
+    expect(applyInboxChip("personal", groups)).toMatchObject({ relation: "personal", kind: "all" });
+    expect(applyRelationFilter(groups, "none")).toMatchObject({ relation: "none", kind: "all" });
+    const personal = applyInboxChip("personal", none);
+    expect(applyInboxChip("group", personal)).toMatchObject({ kind: "group", relation: null });
+    // Desligar Grupos não mexe no tipo; Diretas combina com tipo.
+    expect(applyInboxChip("group", { ...none, kind: "group" })).toEqual(none);
+    expect(applyRelationFilter({ ...none, kind: "direct" }, "leads")).toMatchObject({ kind: "direct", relation: "leads" });
+    // Desligar o tipo não religa Grupos.
+    expect(applyInboxChip("personal", personal)).toEqual(none);
+  });
+
+  it("chip Grupos continua na fileira com um tipo ligado (lista sem grupos)", () => {
+    const rowsWithGroup = [{ kind: "direct" }, { kind: "group" }];
+    const rowsFiltered = [{ kind: "direct" }];
+    expect(showGroupsChip({ rows: rowsWithGroup, kind: "all", relation: null, knownHasGroups: false })).toBe(true);
+    expect(showGroupsChip({ rows: rowsFiltered, kind: "all", relation: "personal", knownHasGroups: true })).toBe(true);
+    expect(showGroupsChip({ rows: rowsFiltered, kind: "all", relation: "leads", knownHasGroups: false })).toBe(false);
+    expect(showGroupsChip({ rows: rowsFiltered, kind: "all", relation: null, knownHasGroups: true })).toBe(false);
+    expect(showGroupsChip({ rows: [], kind: "group", relation: null, knownHasGroups: false })).toBe(true);
+    const chips = inboxFilterChips(applyInboxChip("leads", none), {
+      ...base,
+      showGroups: showGroupsChip({ rows: rowsFiltered, kind: "all", relation: "leads", knownHasGroups: true }),
+    });
+    expect(chips.find((c) => c.id === "group")).toMatchObject({ pressed: false });
+    expect(chips.find((c) => c.id === "leads")).toMatchObject({ pressed: true });
   });
 });

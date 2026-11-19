@@ -252,32 +252,49 @@ export interface BulkUndoGroup<C extends string = string, L extends string = str
   restoreLeadIds: L[];
 }
 
+/** Teto de contatos por chamada de `contacts.bulkSetContactRelation` (paridade com o servidor). */
+export const BULK_RELATION_CHUNK = 50;
+
+/** Fatias de até `size` itens, na ordem (seleção grande vira várias chamadas seguidas). */
+export function chunk<T>(list: readonly T[], size: number = BULK_RELATION_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
 /**
  * "Desfazer" do lote: uma chamada por tipo anterior (só os itens `changed`),
- * com os leads que a marcação arquivou daqueles contatos. Vazio = nada a desfazer.
+ * fatiada em até `size` contatos; cada fatia leva SÓ os leads dos seus
+ * contatos (o servidor recusa lead de contato fora da chamada). Vazio = nada a desfazer.
  */
 export function bulkUndoGroups<C extends string, L extends string>(
-  items: readonly BulkRelationItem<C, L>[]
+  items: readonly BulkRelationItem<C, L>[],
+  size: number = BULK_RELATION_CHUNK
 ): BulkUndoGroup<C, L>[] {
-  const groups = new Map<string, BulkUndoGroup<C, L>>();
+  const byPrevious = new Map<string, BulkRelationItem<C, L>[]>();
   for (const item of items) {
     if (item.status !== "changed") continue;
     const key = item.previous ?? "";
-    const group = groups.get(key) ?? { relation: item.previous, contactIds: [], restoreLeadIds: [] };
-    group.contactIds.push(item.contactId);
-    group.restoreLeadIds.push(...item.archivedLeadIds);
-    groups.set(key, group);
+    byPrevious.set(key, [...(byPrevious.get(key) ?? []), item]);
   }
-  return [...groups.values()];
+  const groups: BulkUndoGroup<C, L>[] = [];
+  for (const list of byPrevious.values()) {
+    for (const part of chunk(list, size)) {
+      groups.push({
+        relation: part[0].previous,
+        contactIds: part.map((i) => i.contactId),
+        restoreLeadIds: part.flatMap((i) => [...i.archivedLeadIds]),
+      });
+    }
+  }
+  return groups;
 }
 
-/** Resumo do lote para o toast: quantos ficaram com o tipo e quantos não foram achados. */
-export function bulkOutcome(result: { changed: number; unchanged: number; notFound: number }): {
-  done: number;
-  notFound: number;
-} {
-  return { done: result.changed + result.unchanged, notFound: result.notFound };
+/** Progresso do lote fatiado: "Alterando 50 de 120 contatos…". */
+export function bulkProgressText(done: number, total: number): string {
+  return `Alterando ${done} de ${total} contatos…`;
 }
+
 
 // ---------------------------------------------------------------------------
 // Página Contatos

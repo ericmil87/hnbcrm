@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   RELATION_PARAM,
   RELATION_PARAM_VALUES,
-  bulkOutcome,
+  BULK_RELATION_CHUNK,
+  bulkProgressText,
+  chunk,
   bulkRelationChangedText,
   bulkRelationSheetTitle,
   bulkRelationTargets,
@@ -152,8 +154,31 @@ describe("ações em lote", () => {
     expect(bulkUndoGroups([{ contactId: "k1", status: "unchanged", previous: null, archivedLeadIds: [] }])).toEqual([]);
   });
 
+  it("seleção grande vira fatias de 50, na ordem", () => {
+    const ids = Array.from({ length: 120 }, (_, i) => `k${i}`);
+    const parts = chunk(ids);
+    expect(BULK_RELATION_CHUNK).toBe(50);
+    expect(parts.map((p) => p.length)).toEqual([50, 50, 20]);
+    expect(parts.flat()).toEqual(ids);
+    expect(chunk([])).toEqual([]);
+  });
+
+  it("Desfazer fatiado: cada fatia leva só os leads dos seus contatos", () => {
+    const items = Array.from({ length: 5 }, (_, i) => ({
+      contactId: `k${i}`,
+      status: "changed" as const,
+      previous: i === 4 ? ("team" as const) : null,
+      archivedLeadIds: [`l${i}`],
+    }));
+    expect(bulkUndoGroups(items, 2)).toEqual([
+      { relation: null, contactIds: ["k0", "k1"], restoreLeadIds: ["l0", "l1"] },
+      { relation: null, contactIds: ["k2", "k3"], restoreLeadIds: ["l2", "l3"] },
+      { relation: "team", contactIds: ["k4"], restoreLeadIds: ["l4"] },
+    ]);
+  });
+
   it("resumo e textos do lote", () => {
-    expect(bulkOutcome({ changed: 2, unchanged: 1, notFound: 1 })).toEqual({ done: 3, notFound: 1 });
+    expect(bulkProgressText(50, 120)).toBe("Alterando 50 de 120 contatos…");
     expect(bulkRelationChangedText(3, "personal")).toBe("3 contatos agora estão como Pessoal");
     expect(bulkRelationChangedText(2, "customer")).toBe("2 contatos agora são leads");
     expect(bulkRelationChangedText(1, "customer")).toBe("1 contato agora é lead");

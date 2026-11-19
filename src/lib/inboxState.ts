@@ -368,9 +368,29 @@ export function inboxMoreFilters(
   };
 }
 
-/** Escolher um tipo (chip ou "Mais filtros"): o mesmo de novo desliga. */
+/**
+ * Escolher um tipo (chip ou "Mais filtros"): o mesmo de novo desliga. Tipo e
+ * "Grupos" se excluem (grupo não tem contato: a combinação daria lista vazia),
+ * então ligar um tipo tira "Grupos".
+ */
 export function applyRelationFilter(state: InboxChipState, filter: RelationFilter | null): InboxChipState {
-  return { ...state, relation: filter && state.relation === filter ? null : filter };
+  const relation = filter && state.relation === filter ? null : filter;
+  return { ...state, relation, ...(relation && state.kind === "group" ? { kind: "all" as const } : {}) };
+}
+
+/**
+ * Mostrar "Grupos"? Com filtro de tipo o servidor não devolve grupo nenhum,
+ * então vale o que se sabia ANTES do filtro (`knownHasGroups`); sem filtro,
+ * o lote atual. Filtro Diretas/Grupos guardado mantém o chip para poder sair.
+ */
+export function showGroupsChip(input: {
+  rows: readonly { kind?: string }[];
+  kind: ConversationKindFilter;
+  relation: RelationFilter | null;
+  knownHasGroups: boolean;
+}): boolean {
+  if (input.kind !== "all") return true;
+  return input.relation ? input.knownHasGroups : input.rows.some((r) => r.kind === "group");
 }
 
 export const AI_FILTER_LABEL: Record<InboxAiFilter, string> = {
@@ -390,7 +410,10 @@ export function applyInboxChip(id: string, state: InboxChipState): InboxChipStat
   // "Etapa" e "IA" escolhem num menu; tocar aqui só desliga (quem liga é o menu).
   if (id === "stage") return { ...state, stageId: null };
   if (id === "ai") return { ...state, ai: null };
-  if (id === "group") return { ...state, kind: state.kind === "group" ? "all" : "group" };
+  // "Grupos" e tipo de contato se excluem (ver `applyRelationFilter`).
+  if (id === "group") {
+    return state.kind === "group" ? { ...state, kind: "all" } : { ...state, kind: "group", relation: null };
+  }
   if (id === "direct") return { ...state, kind: state.kind === "direct" ? "all" : "direct" };
   if (id.startsWith(LABEL_CHIP)) {
     const labelId = id.slice(LABEL_CHIP.length);
