@@ -44,10 +44,23 @@ import { maybeScheduleHandoffCardsUpdate } from "./telegramRelay";
 import { scheduleWebhookEvent } from "./webhookDispatch";
 import { ensureLeadForContact } from "./inboundRouting";
 
-/** Teto de leads do contato que a porta percorre (contato tem poucos leads). */
-export const RELATION_LEADS_CAP = 50;
-/** Mensagens recentes olhadas atrás de um rascunho pendente (mesma janela de `pendingDraftOf`). */
-const DRAFT_SCAN = 30;
+/**
+ * Teto de leads do contato que a porta percorre (o mais recente primeiro). Um
+ * contato tem 1–3 leads na prática; cada lead custa conversas + mensagens
+ * recentes + repasses, então o teto protege a transação de um contato atípico.
+ */
+export const RELATION_LEADS_CAP = 10;
+/** Mensagens recentes olhadas atrás de um rascunho pendente (o rascunho é sempre recente). */
+const DRAFT_SCAN = 15;
+/** Ações pendentes do Copiloto/Telegram lidas por execução (`by_organization_and_status`). */
+const PENDING_ACTIONS_SCAN = 200;
+/** Ferramentas de atendimento com ação pendente endereçada a uma conversa (`args.conversationId`). */
+const CONVERSATION_PENDING_TOOLS: ReadonlySet<string> = new Set([
+  "instructAttendant",
+  "sendCustomerReply",
+  "acceptHandoff",
+  "regenerateAiReply",
+]);
 
 export const NON_CUSTOMER_HANDOFF_REASON = "non_customer";
 
@@ -55,6 +68,9 @@ export type SetContactRelationResult = {
   previous: ContactRelation | null;
   relation: ContactRelation | null;
   archivedLeads: number;
+  /** Leads arquivados POR ESTA chamada (o Desfazer devolve exatamente estes em `restoreLeadIds`). */
+  archivedLeadIds: Id<"leads">[];
+  /** Primeiro lead restaurado/criado, ou null. */
   restoredLeadId: Id<"leads"> | null;
 };
 
@@ -124,19 +140,58 @@ async function cancelPendingHandoffsOfLead(
   return canceled;
 }
 
-/** Rascunho pendente da IA e suspeita de robô de cada conversa 1:1 do lead. */
+/**
+ * Ações pendentes do Copiloto/Telegram (cartões `pa:`) endereçadas às conversas
+ * do contato → `canceled`. Ninguém confirma depois uma instrução à IA ou uma
+ * resposta redigida pelo Copiloto para quem virou não-cliente. Patch direto:
+ * `cancelPendingActionCore` só aceita o próprio solicitante.
+ */
+async function cancelPendingActionsOfConversations(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  conversationIds: ReadonlySet<string>,
+): Promise<number> {
+  if (conversationIds.size === 0) return 0;
+  const pending = await ctx.db
+    .query("pendingActions")
+    .withIndex("by_organization_and_status", (q) => q.eq("organizationId", organizationId).eq("status", "pending"))
+    .take(PENDING_ACTIONS_SCAN);
+  let canceled = 0;
+  for (const action of pending) {
+    const target = action.args.conversationId;
+    if (!CONVERSATION_PENDING_TOOLS.has(action.tool) || typeof target !== "string" || !conversationIds.has(target)) continue;
+    await ctx.db.patch(action._id, { status: "canceled" });
+    canceled += 1;
+  }
+  return canceled;
+}
+
+/** Rascunho pendente da IA e suspeita de robô de cada conversa 1:1 do lead. Devolve os ids das conversas. */
 async function quietConversationsOfLead(
   ctx: MutationCtx,
   lead: Doc<"leads">,
   actor: Doc<"teamMembers">,
   now: number,
-): Promise<void> {
+): Promise<Id<"conversations">[]> {
   const conversations = await ctx.db
     .query("conversations")
     .withIndex("by_lead", (q) => q.eq("leadId", lead._id))
     .take(MIRROR_CONVERSATIONS_PER_LEAD);
+  const ids: Id<"conversations">[] = [];
   for (const conversation of conversations) {
     if (conversation.kind === "group" || conversation.organizationId !== lead.organizationId) continue;
+    ids.push(conversation._id);
+    // A suspeita de robô deixa de valer: o tipo do contato já diz quem é (e a
+    // condição 0b segura a IA). Sem a activity "volta a atender" do
+    // `clearBotSuspicion`, que aqui seria falsa.
+    if (hasActiveBotSuspicion(conversation)) {
+      await ctx.db.patch(conversation._id, {
+        botSuspicion: { ...conversation.botSuspicion!, clearedAt: now, clearedBy: actor._id },
+        updatedAt: now,
+      });
+    }
+    // Conversa sem nenhuma mensagem não tem rascunho: nem lê as mensagens.
+    if (conversation.lastMessageAt === undefined && conversation.messageCount === 0) continue;
     const recent = await ctx.db
       .query("messages")
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
@@ -147,16 +202,8 @@ async function quietConversationsOfLead(
         await discardAiDraftCore(ctx, { draft: message, member: actor, via: "contact_relation" });
       }
     }
-    // A suspeita de robô deixa de valer: o tipo do contato já diz quem é (e a
-    // condição 0b segura a IA). Sem a activity "volta a atender" do
-    // `clearBotSuspicion`, que aqui seria falsa.
-    if (hasActiveBotSuspicion(conversation)) {
-      await ctx.db.patch(conversation._id, {
-        botSuspicion: { ...conversation.botSuspicion!, clearedAt: now, clearedBy: actor._id },
-        updatedAt: now,
-      });
-    }
   }
+  return ids;
 }
 
 /** Pipeline do atendente para o lead criado no "Virar lead" (sem conversa para resolver o canal). */
@@ -180,8 +227,14 @@ export async function setContactRelationCore(
     /** Membro HUMANO da org do contato (o chamador autorizou `contacts:edit`). */
     actor: Doc<"teamMembers">;
     source: ContactRelationSource;
-    /** Padrão `defaultRestoreLead`: sempre para `customer`; para `null` só vindo de fora do comercial. */
+    /** Padrão `defaultRestoreLead`: só ao sair de um tipo fora do comercial. */
     restoreLead?: boolean;
+    /**
+     * Desfazer preciso: restaura EXATAMENTE estes leads (do contato e da org;
+     * outro id = erro) em vez do mais recente, e nunca cria lead. Ignorado ao
+     * marcar um tipo fora do comercial.
+     */
+    restoreLeadIds?: Id<"leads">[];
     /** Importação/ops: sem audit por contato (um audit por job/execução). */
     quiet?: boolean;
   },
@@ -193,7 +246,13 @@ export async function setContactRelationCore(
   assertHumanRelationActor(actor);
 
   const previous: ContactRelation | null = contact.relation ?? null;
-  const result: SetContactRelationResult = { previous, relation, archivedLeads: 0, restoredLeadId: null };
+  const result: SetContactRelationResult = {
+    previous,
+    relation,
+    archivedLeads: 0,
+    archivedLeadIds: [],
+    restoredLeadId: null,
+  };
   if (previous === relation) return result;
 
   const now = Date.now();
@@ -212,6 +271,7 @@ export async function setContactRelationCore(
   const actorRef = { id: actor._id, type: "human" as const };
 
   if (isOffBusiness(relation)) {
+    const conversationIds = new Set<string>();
     for (const lead of leads) {
       const archived = await setLeadArchivedCore(ctx, {
         lead,
@@ -222,12 +282,36 @@ export async function setContactRelationCore(
         followUpReason: "contato_nao_cliente",
         auditMetadata: { via: "contact_relation", contactRelation: relation },
       });
-      if (archived) result.archivedLeads += 1;
+      if (archived) {
+        result.archivedLeads += 1;
+        result.archivedLeadIds.push(lead._id);
+      }
       // Lead já arquivado também pode ter follow-up vivo (arquivado por fora antes do PR1).
       else await cancelFollowUpsOfLead(ctx, lead._id, "contato_nao_cliente");
       const fresh = (await ctx.db.get(lead._id)) ?? lead;
       await cancelPendingHandoffsOfLead(ctx, fresh, actor, now);
-      await quietConversationsOfLead(ctx, fresh, actor, now);
+      for (const id of await quietConversationsOfLead(ctx, fresh, actor, now)) conversationIds.add(id);
+    }
+    await cancelPendingActionsOfConversations(ctx, contact.organizationId, conversationIds);
+  } else if (args.restoreLeadIds !== undefined) {
+    // Desfazer preciso: só os leads que o front recebeu em `archivedLeadIds`.
+    if (args.restoreLeadIds.length > RELATION_LEADS_CAP) {
+      throw new ConvexError(`No máximo ${RELATION_LEADS_CAP} leads por vez`);
+    }
+    for (const leadId of args.restoreLeadIds) {
+      const lead = await ctx.db.get(leadId);
+      if (!lead || lead.organizationId !== contact.organizationId || lead.contactId !== contact._id) {
+        throw new ConvexError("Lead não pertence a este contato");
+      }
+      const restored = await setLeadArchivedCore(ctx, {
+        lead,
+        archived: false,
+        actor: actorRef,
+        now,
+        activityContent: `Restaurado: contato virou ${relation ? CONTACT_RELATION_LABEL[relation] : "sem tipo"}`,
+        auditMetadata: { via: "contact_relation", contactRelation: relation },
+      });
+      if (restored && result.restoredLeadId === null) result.restoredLeadId = lead._id;
     }
   } else if (args.restoreLead ?? defaultRestoreLead(previous, relation)) {
     const mostRecent = leads[0];

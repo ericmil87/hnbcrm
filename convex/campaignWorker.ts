@@ -146,11 +146,6 @@ async function hasOutstanding(ctx: MutationCtx, campaignId: Id<"campaigns">): Pr
   return queued !== null;
 }
 
-/**
- * Cron diario: retoma campanhas pausadas por `plan_quota` cuja pausa foi de um mes
- * anterior (no dia 1 UTC isso e todas; se o cron falhar, o dia seguinte recupera).
- * Lotes de 50 com continuacao.
- */
 /** PR1: o contato do destinatário (por id ou por telefone, 12/13 dígitos) está fora do comercial? */
 export async function recipientIsNonCustomer(
   ctx: MutationCtx,
@@ -166,6 +161,11 @@ export async function recipientIsNonCustomer(
   return contacts.some((c) => isOffBusiness(c.relation));
 }
 
+/**
+ * Cron diario: retoma campanhas pausadas por `plan_quota` cuja pausa foi de um mes
+ * anterior (no dia 1 UTC isso e todas; se o cron falhar, o dia seguinte recupera).
+ * Lotes de 50 com continuacao.
+ */
 export const internalResumePlanQuotaCampaigns = internalMutation({
   args: {},
   returns: v.object({ resumed: v.number() }),

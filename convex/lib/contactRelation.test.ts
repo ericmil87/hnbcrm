@@ -47,8 +47,8 @@ describe("contactRelation (puro)", () => {
   test("restoreLead padrão: só ao sair de fora do comercial para cliente/sem tipo", () => {
     expect(defaultRestoreLead("personal", "customer")).toBe(true);
     expect(defaultRestoreLead("personal", null)).toBe(true);
-    expect(defaultRestoreLead(null, "customer")).toBe(true);
-    expect(defaultRestoreLead(null, null)).toBe(false);
+    expect(defaultRestoreLead(null, "customer")).toBe(false);
+    expect(defaultRestoreLead("personal", "team")).toBe(false);
     expect(defaultRestoreLead("personal", "team")).toBe(false);
   });
 

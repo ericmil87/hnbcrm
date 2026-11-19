@@ -358,6 +358,63 @@ describe("IA bloqueada para contato fora do comercial", () => {
     expect(outbound).toHaveLength(0);
   });
 
+  test("item coach já na fila quando o contato é marcado é barrado no claim", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await insertInbound(t, s, "Quanto custa?");
+    await as(t, s.adminUserId).mutation(api.attendant.requestAiDraft, {
+      conversationId: s.conversationId,
+      instruction: "seja breve",
+    });
+    const item = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+    expect(item.origin).toBe("coach");
+    await markPersonal(t, s);
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-coach",
+    });
+    expect(claim).toMatchObject({ kind: "skip", reason: "contato_nao_cliente" });
+    await cancelPending(t);
+  });
+
+  test("turno return_to_ai em voo quando o contato é marcado aborta no commit", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t, { mode: "autopilot" });
+    await t.run(async (ctx) => ctx.db.patch(s.conversationId, { aiPausedUntil: Number.MAX_SAFE_INTEGER }));
+    await insertInbound(t, s, "Oi, ainda tem horário?");
+    await as(t, s.adminUserId).mutation(api.attendant.returnToAi, {
+      conversationId: s.conversationId,
+      instruction: "temos horário às 15h",
+    });
+    const item = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+    expect(item.origin).toBe("return_to_ai");
+    const claim = await t.mutation(internal.attendant.internalClaimForProcessing, {
+      queueItemId: item._id,
+      runId: "run-rta",
+    });
+    if (claim.kind !== "run") throw new Error(`claim falhou: ${JSON.stringify(claim)}`);
+    await markPersonal(t, s);
+    const commit = await t.mutation(internal.attendant.internalCommitAiReply, {
+      queueItemId: item._id,
+      conversationId: s.conversationId,
+      agentMemberId: s.agentId,
+      runId: "run-rta",
+      agentRunId: claim.context.agentRunId,
+      runStartedAt: claim.context.runStartedAt,
+      text: "Temos sim, às 15h!",
+      needsDisclosure: false,
+      disclosure: "",
+      allowPendingHandoff: false,
+      humanInitiated: true,
+    });
+    expect(commit).toEqual({ committed: false, reason: "contato_nao_cliente" });
+    const nonInbound = await t.run(async (ctx) =>
+      (await ctx.db.query("messages").collect()).filter((m) => m.senderType === "ai")
+    );
+    expect(nonInbound).toHaveLength(0);
+    await cancelPending(t);
+  });
+
   test("estado da IA na lista e no cabeçalho: off + motivo contato_nao_cliente", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -442,12 +499,20 @@ describe("porta única setContactRelationCore", () => {
       });
       await ctx.db.patch(s.conversationId, {
         botSuspicion: { at: now, source: "heuristic", reason: "rajada" },
+        lastMessageAt: now,
+        messageCount: 1,
       });
       return { followUpId, handoffId, draftId };
     });
 
     const result = await markPersonal(t, s);
-    expect(result).toEqual({ previous: null, relation: "personal", archivedLeads: 1, restoredLeadId: null });
+    expect(result).toEqual({
+      previous: null,
+      relation: "personal",
+      archivedLeads: 1,
+      archivedLeadIds: [s.leadId],
+      restoredLeadId: null,
+    });
 
     const after = await t.run(async (ctx) => ({
       contact: await ctx.db.get(s.contactId),
@@ -494,7 +559,13 @@ describe("porta única setContactRelationCore", () => {
     const s = await seed(t);
     await markPersonal(t, s);
     const again = await markPersonal(t, s);
-    expect(again).toEqual({ previous: "personal", relation: "personal", archivedLeads: 0, restoredLeadId: null });
+    expect(again).toEqual({
+      previous: "personal",
+      relation: "personal",
+      archivedLeads: 0,
+      archivedLeadIds: [],
+      restoredLeadId: null,
+    });
   });
 
   test("Virar lead: desarquiva o lead mais recente e volta ao funil; Desfazer (null) também restaura", async () => {
@@ -505,7 +576,13 @@ describe("porta única setContactRelationCore", () => {
       conversationId: s.conversationId,
       relation: "customer",
     });
-    expect(back).toEqual({ previous: "personal", relation: "customer", archivedLeads: 0, restoredLeadId: s.leadId });
+    expect(back).toEqual({
+      previous: "personal",
+      relation: "customer",
+      archivedLeads: 0,
+      archivedLeadIds: [],
+      restoredLeadId: s.leadId,
+    });
     const { lead, conversation } = await t.run(async (ctx) => ({
       lead: await ctx.db.get(s.leadId),
       conversation: await ctx.db.get(s.conversationId),
@@ -529,6 +606,168 @@ describe("porta única setContactRelationCore", () => {
       restoreLead: false,
     });
     expect(noRestore.restoredLeadId).toBeNull();
+  });
+
+  test("Desfazer preciso: restoreLeadIds devolve só os leads arquivados pela marcação", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    // Negócio perdido arquivado À MÃO antes, e mais recente que o lead aberto.
+    const lostId = await t.run(async (ctx) => {
+      vi.setSystemTime(Date.now() + 1_000);
+      const now = Date.now();
+      return await ctx.db.insert("leads", {
+        organizationId: s.organizationId,
+        title: "Mieko (perdido)",
+        contactId: s.contactId,
+        boardId: s.boardId,
+        stageId: s.stageId,
+        value: 0,
+        currency: "BRL",
+        priority: "medium",
+        temperature: "cold",
+        tags: [],
+        customFields: {},
+        conversationStatus: "closed",
+        closedType: "lost",
+        archivedAt: now,
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    const marked = await markPersonal(t, s);
+    expect(marked.archivedLeadIds).toEqual([s.leadId]);
+
+    const undo = await as(t, s.adminUserId).mutation(api.contacts.setContactRelation, {
+      contactId: s.contactId,
+      relation: null,
+      restoreLeadIds: marked.archivedLeadIds,
+    });
+    expect(undo.restoredLeadId).toBe(s.leadId);
+    const after = await t.run(async (ctx) => ({
+      open: await ctx.db.get(s.leadId),
+      lost: await ctx.db.get(lostId),
+      leads: await ctx.db.query("leads").collect(),
+    }));
+    expect(after.open!.archivedAt).toBeUndefined();
+    expect(after.lost!.archivedAt).toBeDefined(); // o perdido continua arquivado
+    expect(after.leads).toHaveLength(2); // nenhum lead criado
+  });
+
+  test("restoreLeadIds com lead de outro contato é recusado sem escrita", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await markPersonal(t, s);
+    const strangerLead = await t.run(async (ctx) => {
+      const now = Date.now();
+      const otherContact = await ctx.db.insert("contacts", {
+        organizationId: s.organizationId,
+        firstName: "Outro",
+        tags: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      return await ctx.db.insert("leads", {
+        organizationId: s.organizationId,
+        title: "Outro",
+        contactId: otherContact,
+        boardId: s.boardId,
+        stageId: s.stageId,
+        value: 0,
+        currency: "BRL",
+        priority: "medium",
+        temperature: "cold",
+        tags: [],
+        customFields: {},
+        conversationStatus: "new",
+        archivedAt: now,
+        lastActivityAt: now,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await expect(
+      as(t, s.adminUserId).mutation(api.contacts.setContactRelation, {
+        contactId: s.contactId,
+        relation: null,
+        restoreLeadIds: [strangerLead],
+      })
+    ).rejects.toThrow("Lead não pertence a este contato");
+    const after = await t.run(async (ctx) => ({
+      contact: await ctx.db.get(s.contactId),
+      stranger: await ctx.db.get(strangerLead),
+    }));
+    expect(after.contact!.relation).toBe("personal");
+    expect(after.stranger!.archivedAt).toBeDefined();
+  });
+
+  test("não classificado → customer não mexe em lead nenhum", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const archivedAt = Date.now();
+    await t.run(async (ctx) => ctx.db.patch(s.leadId, { archivedAt }));
+    const res = await as(t, s.adminUserId).mutation(api.contacts.setContactRelation, {
+      contactId: s.contactId,
+      relation: "customer",
+    });
+    expect(res).toMatchObject({ previous: null, relation: "customer", archivedLeadIds: [], restoredLeadId: null });
+    const leads = await t.run(async (ctx) => ctx.db.query("leads").collect());
+    expect(leads).toHaveLength(1);
+    expect(leads[0].archivedAt).toBe(archivedAt);
+    // Contato sem lead nenhum também não ganha lead.
+    const lonely = await t.run(async (ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId,
+        firstName: "Sem lead",
+        tags: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    );
+    const res2 = await as(t, s.adminUserId).mutation(api.contacts.setContactRelation, {
+      contactId: lonely,
+      relation: "customer",
+    });
+    expect(res2.restoredLeadId).toBeNull();
+    expect(await t.run(async (ctx) => ctx.db.query("leads").collect())).toHaveLength(1);
+  });
+
+  test("ações pendentes do Copiloto/Telegram da conversa são canceladas ao marcar", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ids = await t.run(async (ctx) => {
+      const now = Date.now();
+      const base = {
+        organizationId: s.organizationId,
+        requestedBy: s.adminId,
+        preview: "x",
+        status: "pending" as const,
+        expiresAt: now + 600_000,
+        createdAt: now,
+      };
+      return {
+        instruct: await ctx.db.insert("pendingActions", {
+          ...base,
+          tool: "instructAttendant",
+          args: { conversationId: s.conversationId, instruction: "ofereça desconto" },
+        }),
+        reply: await ctx.db.insert("pendingActions", {
+          ...base,
+          tool: "sendCustomerReply",
+          args: { conversationId: s.conversationId, text: "Olá!" },
+        }),
+        otherTool: await ctx.db.insert("pendingActions", { ...base, tool: "deleteLead", args: { leadId: s.leadId } }),
+      };
+    });
+    await markPersonal(t, s);
+    const after = await t.run(async (ctx) => ({
+      instruct: await ctx.db.get(ids.instruct),
+      reply: await ctx.db.get(ids.reply),
+      otherTool: await ctx.db.get(ids.otherTool),
+    }));
+    expect(after.instruct!.status).toBe("canceled");
+    expect(after.reply!.status).toBe("canceled");
+    expect(after.otherTool!.status).toBe("pending");
   });
 
   test("Virar lead sem lead nenhum: cria um aberto na etapa inicial pela porta de criação", async () => {
@@ -849,6 +1088,31 @@ describe("ações de IA checam antes de escrever", () => {
     expect(after.handoff!.status).toBe("pending");
     expect(after.lead!.assignedTo).toBe(s.agentId);
     expect(after.queue).toHaveLength(0);
+  });
+});
+
+describe("enrich não escreve o tipo", () => {
+  test("POST /contacts/enrich (enrichContact) ignora relation e afins", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await t.mutation(internal.contacts.enrichContact, {
+      contactId: s.contactId,
+      teamMemberId: s.adminId,
+      source: "web_research",
+      fields: {
+        relation: "personal",
+        relationMeta: { setAt: 1, source: "manual" },
+        relationSuggestion: { relation: "personal", signals: [], score: 1, at: 1 },
+        relationSuggestionDismissedAt: 1,
+        city: "Recife",
+      },
+    });
+    const contact = await t.run(async (ctx) => ctx.db.get(s.contactId));
+    expect(contact!.city).toBe("Recife");
+    expect(contact!.relation).toBeUndefined();
+    expect(contact!.relationMeta).toBeUndefined();
+    expect((contact as Record<string, unknown>).relationSuggestion).toBeUndefined();
+    expect((await t.run(async (ctx) => ctx.db.get(s.leadId)))!.archivedAt).toBeUndefined();
   });
 });
 

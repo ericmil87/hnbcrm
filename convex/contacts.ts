@@ -500,6 +500,7 @@ const setRelationResultValidator = v.object({
   previous: v.union(contactRelationValidator, v.null()),
   relation: v.union(contactRelationValidator, v.null()),
   archivedLeads: v.number(),
+  archivedLeadIds: v.array(v.id("leads")),
   restoredLeadId: v.union(v.id("leads"), v.null()),
 });
 
@@ -507,14 +508,17 @@ const setRelationResultValidator = v.object({
  * Marca o contato como não-cliente (Pessoal, Equipe, Fornecedor, Parceiro,
  * Robô), como cliente ("customer" = "Virar lead") ou limpa (`null`, usado pelo
  * Desfazer). Porta única `setContactRelationCore`; `contacts:edit`, só humanos.
- * `restoreLead` (padrão: sempre para "customer"; para null só vindo de fora do comercial) traz o lead
- * mais recente de volta ao funil ou cria um na etapa inicial do atendente.
+ * `restoreLead` (padrão: só ao sair de um tipo fora do comercial) traz o lead
+ * mais recente de volta ao funil ou cria um na etapa inicial do atendente;
+ * `restoreLeadIds` (Desfazer) restaura exatamente esses leads e nunca cria.
  */
 export const setContactRelation = mutation({
   args: {
     contactId: v.id("contacts"),
     relation: v.union(contactRelationValidator, v.null()),
     restoreLead: v.optional(v.boolean()),
+    // Desfazer preciso: os `archivedLeadIds` devolvidos pela marcação.
+    restoreLeadIds: v.optional(v.array(v.id("leads"))),
   },
   returns: setRelationResultValidator,
   handler: async (ctx, args) => {
@@ -528,6 +532,7 @@ export const setContactRelation = mutation({
       actor: member,
       source: "manual",
       restoreLead: args.restoreLead,
+      restoreLeadIds: args.restoreLeadIds,
     });
   },
 });
@@ -538,6 +543,8 @@ export const setContactRelationByConversation = mutation({
     conversationId: v.id("conversations"),
     relation: v.union(contactRelationValidator, v.null()),
     restoreLead: v.optional(v.boolean()),
+    // Desfazer preciso: os `archivedLeadIds` devolvidos pela marcação.
+    restoreLeadIds: v.optional(v.array(v.id("leads"))),
   },
   returns: setRelationResultValidator,
   handler: async (ctx, args) => {
@@ -559,6 +566,7 @@ export const setContactRelationByConversation = mutation({
       actor: member,
       source: "manual",
       restoreLead: args.restoreLead,
+      restoreLeadIds: args.restoreLeadIds,
     });
   },
 });

@@ -112,15 +112,13 @@ export function autoLeadArchivePatch(
 }
 
 /**
- * `restoreLead` padrão da porta única: "Virar lead" (`customer`) sempre traz o
- * lead mais recente para o funil (ou cria um); limpar (`null`, o Desfazer) só
- * quando vinha de um tipo fora do comercial. Importação e ops passam o valor
- * explícito (só a transição de fora do comercial), para uma planilha com "Lead"
- * não ressuscitar negócios arquivados à mão.
+ * `restoreLead` padrão da porta única: SÓ ao sair de um tipo fora do comercial
+ * para cliente ou sem tipo (traz o lead mais recente de volta ao funil, ou cria
+ * um). Não classificado → "customer" não mexe em lead nenhum (um negócio
+ * arquivado à mão continua arquivado).
  */
 export function defaultRestoreLead(previous: ContactRelation | null, next: ContactRelation | null): boolean {
-  if (next === "customer") return true;
-  return next === null && isOffBusiness(previous);
+  return isOffBusiness(previous) && !isOffBusiness(next);
 }
 
 /** Erro reconhecível pelo front quando uma ação de IA esbarra num contato fora do comercial. */
