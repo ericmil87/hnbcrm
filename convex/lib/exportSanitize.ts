@@ -81,6 +81,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "exportJobs",
   "importJobs",
   "importJobBatches",
+  // PR6: fila transitória das linhas escolhidas na importação do celular.
+  "importStagedRows",
   "users",
   "authAccounts",
   "authSessions",

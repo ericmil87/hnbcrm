@@ -115,7 +115,7 @@ export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importK
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
 import { leadCreationStagePatch } from "./lib/leadStageMove";
 import { autoLeadArchivePatch, isContactRelation, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
-import { setContactRelationCore } from "./lib/contactRelationOps";
+import { RELATION_LEADS_CAP, setContactRelationCore } from "./lib/contactRelationOps";
 import { deleteMetaIdentitiesForContact } from "./lib/metaIdentity";
 import { deleteContactAvatarArtifacts } from "./lib/contactAvatarOps";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
@@ -147,13 +147,13 @@ async function applyImportedRelation(
   job: Doc<"importJobs">,
   contactId: Id<"contacts">,
   raw: unknown
-): Promise<boolean> {
+): Promise<false | Id<"leads">[]> {
   if (!isContactRelation(raw)) return false;
   const contact = await ctx.db.get(contactId);
   if (!contact || contact.relation === raw) return false;
   const actor = await ctx.db.get(job.requestedBy);
   if (!actor || actor.organizationId !== contact.organizationId || actor.type === "ai") return false;
-  await setContactRelationCore(ctx, {
+  const result = await setContactRelationCore(ctx, {
     contact,
     relation: raw,
     actor,
@@ -162,8 +162,15 @@ async function applyImportedRelation(
     // Planilha com "Lead" não ressuscita negócio arquivado à mão: só desfaz um "não-cliente".
     restoreLead: isOffBusiness(contact.relation),
   });
-  return true;
+  return result.archivedLeadIds;
 }
+
+/**
+ * Chave reservada do `importJobBatches.updated[].before`: leads que a marcação
+ * importada arquivou. O rollback devolve EXATAMENTE estes (`restoreLeadIds`),
+ * sem nunca criar lead ao voltar um contato para "sem tipo". Nunca vira campo.
+ */
+export const RELATION_RESTORE_KEY = "relationRestoreLeadIds";
 
 /** Campos de contato que a importação pode escrever (whitelist explícita). */
 const CONTACT_FIELDS = [
@@ -467,7 +474,8 @@ async function collectFailedRows(
   ctx: QueryCtx | MutationCtx,
   job: Doc<"importJobs">
 ): Promise<{ storageId: string; errors: Array<{ row: number; message: string }> }> {
-  const file = await ctx.db.get(job.fileId);
+  // Importação do celular (PR6) não tem arquivo: o .vcf ficou no navegador.
+  const file = job.fileId ? await ctx.db.get(job.fileId) : null;
   if (!file || file.organizationId !== job.organizationId) {
     throw new Error("Arquivo original não encontrado");
   }
@@ -781,7 +789,7 @@ export const internalGetJobContext = internalQuery({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job) return null;
-    const file = await ctx.db.get(job.fileId);
+    const file = job.fileId ? await ctx.db.get(job.fileId) : null;
     return {
       job,
       file:
@@ -1112,8 +1120,10 @@ export const internalProcessBatch = internalMutation({
             }
             // PR1: "Tipo de contato" passa pela porta única (arquiva/restaura
             // leads, espelho, follow-ups); o rollback volta pela mesma porta.
-            if (await applyImportedRelation(ctx, job, existing._id, value.relation)) {
+            const archivedByRelation = await applyImportedRelation(ctx, job, existing._id, value.relation);
+            if (archivedByRelation) {
               before.relation = existing.relation ?? null;
+              before[RELATION_RESTORE_KEY] = archivedByRelation;
             }
             if (Object.keys(before).length > 0) updated.push({ id: existing._id, before });
             updatedCount++;
@@ -1351,19 +1361,36 @@ export const internalRollbackBatch = internalMutation({
       const patch: Record<string, unknown> = {};
       for (const [field, before] of Object.entries(item.before)) {
         // PR1: o tipo de contato volta pela porta única (desfaz arquivamento etc.).
-        if (field === "relation") continue;
+        if (field === "relation" || field === RELATION_RESTORE_KEY) continue;
         patch[field] = before === null ? undefined : before;
       }
       if ("relation" in item.before) {
         const actor = await ctx.db.get(job.requestedBy);
         const previous = item.before.relation;
         if (actor && actor.type !== "ai" && (previous === null || isContactRelation(previous))) {
+          // Trilha nova: devolve só os leads que a importação arquivou (vivos e
+          // ainda deste contato). Trilha antiga (sem a chave): padrão da porta.
+          const recorded = item.before[RELATION_RESTORE_KEY];
+          let restoreLeadIds: Id<"leads">[] | undefined;
+          if (Array.isArray(recorded)) {
+            restoreLeadIds = [];
+            for (const raw of recorded.slice(0, RELATION_LEADS_CAP)) {
+              const leadId = typeof raw === "string" ? ctx.db.normalizeId("leads", raw) : null;
+              const lead = leadId ? await ctx.db.get(leadId) : null;
+              if (lead && lead.contactId === contactId && lead.organizationId === job.organizationId) {
+                restoreLeadIds.push(lead._id);
+              }
+            }
+          }
           await setContactRelationCore(ctx, {
             contact,
             relation: previous as ContactRelation | null,
             actor,
             source: "import",
             quiet: true,
+            // Importação do celular não emite `contact.updated` por contato (nem ao desfazer).
+            webhook: job.source !== "phone_vcf",
+            ...(restoreLeadIds ? { restoreLeadIds } : {}),
           });
           reverted++;
         }

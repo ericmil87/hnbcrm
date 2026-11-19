@@ -53,6 +53,8 @@ export interface ImportJobDoc {
   status: ImportStatus;
   entity: ImportEntity;
   fileName: string;
+  /** PR6: importação de contatos do celular (sem arquivo no servidor). */
+  source?: "phone_vcf";
   detectedHeaders?: string[];
   suggestedMapping?: Record<string, string>;
   mapping?: Record<string, string>;

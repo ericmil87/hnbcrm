@@ -222,8 +222,12 @@ async function quietConversationsOfLead(
   return ids;
 }
 
-/** Pipeline do atendente para o lead criado no "Virar lead" (sem conversa para resolver o canal). */
-async function attendantPipeline(
+/**
+ * Pipeline do atendente para o lead criado no "Virar lead" (sem conversa para
+ * resolver o canal). Também usado pela importação do celular (PR6) com "criar
+ * lead no funil".
+ */
+export async function attendantPipeline(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
 ): Promise<{ boardId?: Id<"boards">; initialStageId?: Id<"stages"> } | undefined> {
@@ -258,6 +262,11 @@ export async function setContactRelationCore(
      * (`loadPendingActionsForRelation`); ausente = a porta lê.
      */
     pendingActions?: Doc<"pendingActions">[];
+    /**
+     * `false` = sem `contact.updated` por contato (importação do celular, PR6:
+     * um `import.completed` por job, sem rajada de webhooks). Padrão: emite.
+     */
+    webhook?: boolean;
   },
 ): Promise<SetContactRelationResult> {
   const { contact, relation, actor, source } = args;
@@ -396,7 +405,7 @@ export async function setContactRelationCore(
     });
   }
 
-  await scheduleWebhookEvent(ctx, {
+  if (args.webhook !== false) await scheduleWebhookEvent(ctx, {
     organizationId: contact.organizationId,
     event: "contact.updated",
     payload: {

@@ -99,6 +99,8 @@ export const ROUTES: RouteObject[] = [
           { path: "painel", ...appPage(() => import("./components/DashboardOverview").then(m => ({ default: m.DashboardOverview }))) },
           { path: "pipeline", ...appPage(() => import("./components/KanbanBoard").then(m => ({ default: m.KanbanBoard }))) },
           { path: "contatos", ...appPage(() => import("./components/ContactsPage").then(m => ({ default: m.ContactsPage }))) },
+          // PR6: importar contatos do celular (.vcf) — recurso avançado, fora do onboarding.
+          { path: "contatos/importar-celular", ...appPage(() => import("./components/contacts/phoneImport/PhoneContactsImportPage").then(m => ({ default: m.PhoneContactsImportPage }))) },
           { path: "entrada", ...appPage(() => import("./components/Inbox").then(m => ({ default: m.Inbox }))) },
           { path: "tarefas", ...appPage(() => import("./components/TasksPage").then(m => ({ default: m.TasksPage }))) },
           { path: "calendario", ...appPage(() => import("./components/calendar/CalendarPage").then(m => ({ default: m.CalendarPage }))) },

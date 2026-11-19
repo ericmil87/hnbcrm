@@ -4295,8 +4295,13 @@ const applicationTables = {
       v.literal("failed"), v.literal("rolled_back"), v.literal("canceled"),
     ),
     entity: v.union(v.literal("contacts"), v.literal("leads")),
-    fileId: v.id("files"),                            // fileType: "import_file"
+    // fileType: "import_file". Ausente na importação de contatos do celular
+    // (`source: "phone_vcf"`, PR6): o .vcf nunca sai do navegador, só as linhas escolhidas.
+    fileId: v.optional(v.id("files")),
     fileName: v.string(),
+    source: v.optional(v.literal("phone_vcf")),
+    // PR6: "criar lead no funil" marcado na triagem (padrão desligado).
+    createLeads: v.optional(v.boolean()),
     detectedHeaders: v.optional(v.array(v.string())),
     suggestedMapping: v.optional(v.record(v.string(), v.string())),
     mapping: v.optional(v.record(v.string(), v.string())), // header → campo | "cf:<key>" | "__ignore__"
@@ -4328,6 +4333,31 @@ const applicationTables = {
     createdAt: v.number(),
   })
     .index("by_job", ["jobId"])
+    .index("by_organization", ["organizationId"]),
+
+  // PR6: linhas escolhidas na triagem da importação de contatos do celular,
+  // esperando o lote (50 por doc). Cada lote apaga o seu doc ao processar; o
+  // .vcf inteiro nunca chega ao servidor.
+  importStagedRows: defineTable({
+    organizationId: v.id("organizations"),
+    jobId: v.id("importJobs"),
+    chunkIndex: v.number(),
+    rows: v.array(v.object({
+      row: v.number(),
+      firstName: v.optional(v.string()),
+      lastName: v.optional(v.string()),
+      phones: v.array(v.string()),
+      emails: v.array(v.string()),
+      company: v.optional(v.string()),
+      title: v.optional(v.string()),
+      choice: v.union(
+        v.literal("lead"), v.literal("personal"), v.literal("team"),
+        v.literal("supplier"), v.literal("partner"),
+      ),
+    })),
+    createdAt: v.number(),
+  })
+    .index("by_job_and_chunk", ["jobId", "chunkIndex"])
     .index("by_organization", ["organizationId"]),
 
   // ── Copiloto no Telegram (F0, v0.73) — docs/architecture/telegram.md ──
