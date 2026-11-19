@@ -91,6 +91,12 @@ import {
 import { maybeBufferInboundForRelay } from "./lib/telegramRelay";
 import { effectiveRelation } from "./lib/contactRelation";
 import { contactRelationMirrorFor } from "./lib/contactRelationGuard";
+import {
+  contactRelationFilterArgValidator,
+  filterIncludesUnclassified,
+  matchesContactRelationFilter,
+  relationValuesForFilter,
+} from "./lib/contactRelationFilter";
 import { withMessageSearch } from "./lib/messageSearch";
 import { listAiMode } from "./lib/conversationAiMode";
 
@@ -400,6 +406,9 @@ async function loadAiModeContext(ctx: QueryCtx, organizationId: Id<"organization
   return { org, aiMembers };
 }
 
+/** `kind` de conversa 1:1 no índice de tipo (ausente = legado, tratado como direta). */
+const DIRECT_KINDS = [undefined, "direct"] as const;
+
 // Get conversations for organization
 export const getConversations = query({
   args: {
@@ -448,6 +457,17 @@ export const getConversations = query({
     // IA por conversa (`aiAttending`/`aiMode` em cada linha): "on" = só onde a IA
     // responde ou sugere, "off" = só onde não. Pós-filtro, ignorado com `leadId`.
     ai: v.optional(v.union(v.literal("on"), v.literal("off"))),
+    // Tipo de contato (PR2, lib/contactRelationFilter.ts), pelo ESPELHO
+    // `conversations.contactRelation`: "leads" = cliente + sem tipo (sem grupos),
+    // "personal" = chip "Pessoais" (qualquer tipo fora do comercial), um tipo
+    // específico, ou "none" = sem tipo (sem grupos). Ignorado com `leadId`.
+    // Ramo padrão (e tipos específicos/"personal" em qualquer combinação): um
+    // range por (valor, kind ausente|"direct") no índice
+    // [org, contactRelation, kind, archivedAt, lastMessageAt] — grupo fica fora
+    // pelo índice —, mesclados por última mensagem: `limit` exato. Com conta/
+    // setor/unidade/não lidas por índice, "leads"/"none" ficam no ramo daquele
+    // índice e o tipo vira pós-filtro com o piso de leitura (como `mine`).
+    relation: v.optional(contactRelationFilterArgValidator),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -460,6 +480,18 @@ export const getConversations = query({
     // Ativas, sem conta/setor/unidade: o índice de não lidas já devolve só elas.
     const unreadByIndex =
       unreadOnly && !args.archived && !args.channelConfigId && !args.departmentId && !args.noDepartment && !args.unitId;
+    // Tipo de contato (PR2). Tipos específicos e "personal" são conjuntos
+    // pequenos: o índice de tipo vira o ramo principal mesmo combinado com
+    // conta/setor/unidade/não lidas (esses viram pós-filtro). "leads"/"none"
+    // cobrem quase a org inteira: com outro índice escolhido, o tipo é que vira
+    // pós-filtro. Grupo não tem contato: fora de "leads"/"none" (pós-filtro).
+    const relationFilter = args.leadId ? undefined : args.relation;
+    const relationValues = relationFilter ? relationValuesForFilter(relationFilter) : null;
+    // "leads"/"none" incluem o range de sem tipo, onde o resto da org cai.
+    const relationWide = relationFilter ? filterIncludesUnclassified(relationFilter) : false;
+    const otherIndexBranch =
+      !!args.channelConfigId || !!args.departmentId || !!args.noDepartment || !!args.unitId || unreadByIndex;
+    const relationByIndex = !!relationValues && (!relationWide || !otherIndexBranch);
 
     // Ramos da Central (setor/unidade): índices por [org, setor|unidade,
     // archivedAt, lastMessageAt] — ativas = eq(archivedAt, undefined),
@@ -474,7 +506,8 @@ export const getConversations = query({
       ((args.departmentId || args.noDepartment) && !!args.unitId) ||
       (!!args.channelConfigId && (!!args.departmentId || !!args.noDepartment || !!args.unitId)) ||
       !!args.assignedToMe || !!args.assignedTo || !!args.channel || mineOnly ||
-      (unreadOnly && !unreadByIndex) || stageOnly || !!aiFilter
+      (unreadOnly && !unreadByIndex) || stageOnly || !!aiFilter ||
+      (!!relationValues && !relationByIndex) || (relationByIndex && otherIndexBranch)
     );
     // "Não lidas" por índice: a ordem do índice é por CONTADOR, não por tempo.
     // Com o piso, as mais recentes entram mesmo com contador pequeno (a lista sai
@@ -513,9 +546,26 @@ export const getConversations = query({
       conversations.sort((a, b) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt));
       // Sem filtro que dependa de lead/contato: corta antes de ler os contatos.
       if (!mineOnly && !args.assignedTo && !aiFilter && !args.assignedToMe && !unreadOnly &&
-          !args.channel && !args.unitId && !args.departmentId && !args.noDepartment) {
+          !args.channel && !args.unitId && !args.departmentId && !args.noDepartment && !relationValues) {
         conversations = conversations.slice(0, limit);
       }
+    } else if (relationByIndex) {
+      // Tipo de contato: um range por (valor, kind) — ausente = sem tipo; kind
+      // ausente ou "direct" (grupo nunca entra: não tem contato) —, cada um com
+      // as `readLimit` mais recentes; a união das top-N de cada range contém a
+      // top-N da união, e o sort + slice finais devolvem exatamente ela.
+      const ranges = await Promise.all(relationValues!.flatMap((value) =>
+        DIRECT_KINDS.map((kind) =>
+          ctx.db.query("conversations")
+            .withIndex("by_organization_and_contact_relation_and_kind_and_archived_and_last_message", (q) => {
+              const base = q.eq("organizationId", args.organizationId).eq("contactRelation", value).eq("kind", kind);
+              return args.archived ? base.gt("archivedAt", undefined) : base.eq("archivedAt", undefined);
+            })
+            .order("desc")
+            .take(readLimit)
+        )
+      ));
+      conversations = ranges.flat();
     } else if (!args.leadId && args.channelConfigId) {
       // Conta: o índice já devolve só as conversas daquele config e da org.
       // Setor/unidade/responsável ficam como pós-filtros abaixo.
@@ -614,6 +664,23 @@ export const getConversations = query({
       }
       if (args.assignedToMe) conversations = conversations.filter(c => c.assignedTo === me._id);
       if (unreadOnly) conversations = conversations.filter(c => (c.unreadCount ?? 0) > 0);
+      // Conta como pós-filtro quando o ramo foi o do tipo de contato.
+      if (relationByIndex && args.channelConfigId) {
+        conversations = conversations.filter(c => c.channelConfigId === args.channelConfigId);
+      }
+      if (relationFilter) {
+        conversations = conversations.filter(c =>
+          matchesContactRelationFilter(c.contactRelation, relationFilter) && !(relationWide && c.kind === "group")
+        );
+      }
+    }
+
+    // Sem filtro no map (que depende de lead/contato/modo da IA): ordena e corta
+    // ANTES das leituras por linha (lead, contato, responsável, extras) — só as
+    // `limit` linhas devolvidas custam join, não o piso inteiro.
+    if (!mineOnly && !args.assignedTo && !stageOnly && !aiFilter) {
+      conversations.sort((a, b) => (b.lastMessageAt ?? b.createdAt) - (a.lastMessageAt ?? a.createdAt));
+      conversations = conversations.slice(0, limit);
     }
 
     // Batch fetch related data

@@ -12,6 +12,7 @@ import { QueryCtx, MutationCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { normalizeCampaignPhone } from "./phone";
 import { resolveDefaultCountry } from "./orgPhone";
+import { isOffBusiness } from "./contactRelation";
 
 export const MAX_SCAN = 5000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -40,6 +41,8 @@ export interface AudienceCandidate {
 
 export type ExclusionReason =
   | "no_contact"
+  // PR2: contato fora do comercial (lead aberto criado à mão para ele).
+  | "non_customer"
   | "no_phone"
   | "invalid_phone"
   | "duplicate_phone"
@@ -126,6 +129,7 @@ export async function resolveSegmentAudience(
   const defaultCountry = resolveDefaultCountry(org?.settings);
   const excluded: Record<ExclusionReason, number> = {
     no_contact: 0,
+    non_customer: 0,
     no_phone: 0,
     invalid_phone: 0,
     duplicate_phone: 0,
@@ -208,6 +212,10 @@ export async function resolveSegmentAudience(
     const contact = await ctx.db.get(lead.contactId);
     if (!contact) {
       excluded.no_contact++;
+      continue;
+    }
+    if (isOffBusiness(contact.relation)) {
+      excluded.non_customer++;
       continue;
     }
     const raw = contact.whatsappNumber ?? contact.phone;
@@ -329,6 +337,10 @@ export type MemberExclusionReason =
   | "invalid_phone"
   | "duplicate"
   | "opted_out"
+  // PR2: o telefone (ou o contato do participante) é de um contato fora do
+  // comercial (Pessoal, Equipe, Fornecedor, Parceiro, Robô). A UI mostra
+  // "N fora por não serem clientes".
+  | "non_customer"
   | "admin"
   | "existing_contact"
   | "campaigned_recently"
@@ -417,6 +429,7 @@ function emptyMemberExclusions(): Record<MemberExclusionReason, number> {
     invalid_phone: 0,
     duplicate: 0,
     opted_out: 0,
+    non_customer: 0,
     admin: 0,
     existing_contact: 0,
     campaigned_recently: 0,
@@ -500,6 +513,12 @@ export function buildGroupMembersAudience(args: {
   recentlyCampaigned?: Set<string>;
   /** Lista de supressão org-wide. */
   optOuts?: Set<string>;
+  /**
+   * PR2: telefones normalizados (com a variante do 9º dígito) de contatos fora
+   * do comercial e os ids desses contatos (participante já vinculado).
+   */
+  nonCustomerPhones?: Set<string>;
+  nonCustomerContactIds?: Set<string>;
   /** groupChatId → chaves ativas na janela. */
   activeKeys?: Map<string, Set<string>>;
   /** Telefones (normalizados) dos grupos em `excludeGroupChatIds`. */
@@ -605,6 +624,14 @@ export function buildGroupMembersAudience(args: {
         continue;
       }
       afterOptOut++;
+      if (
+        args.nonCustomerPhones?.has(phone) === true ||
+        (p.contactId !== undefined && args.nonCustomerContactIds?.has(p.contactId) === true)
+      ) {
+        excluded.non_customer++;
+        pushRow(group, p, key, phone, isContact, "non_customer");
+        continue;
+      }
       if (filters.excludeAdmins && (p.isAdmin || p.isSuperAdmin)) {
         excluded.admin++;
         pushRow(group, p, key, phone, isContact, "admin");

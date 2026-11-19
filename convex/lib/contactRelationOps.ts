@@ -146,21 +146,37 @@ async function cancelPendingHandoffsOfLead(
  * resposta redigida pelo Copiloto para quem virou não-cliente. Patch direto:
  * `cancelPendingActionCore` só aceita o próprio solicitante.
  */
+/**
+ * Ações pendentes da org (`by_organization_and_status`, até PENDING_ACTIONS_SCAN).
+ * A marcação em massa lê UMA vez e passa a lista para cada contato
+ * (`setContactRelationCore({pendingActions})`), em vez de 200 leituras por contato.
+ */
+export async function loadPendingActionsForRelation(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+): Promise<Doc<"pendingActions">[]> {
+  return await ctx.db
+    .query("pendingActions")
+    .withIndex("by_organization_and_status", (q) => q.eq("organizationId", organizationId).eq("status", "pending"))
+    .take(PENDING_ACTIONS_SCAN);
+}
+
 async function cancelPendingActionsOfConversations(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
   conversationIds: ReadonlySet<string>,
+  preloaded?: Doc<"pendingActions">[],
 ): Promise<number> {
   if (conversationIds.size === 0) return 0;
-  const pending = await ctx.db
-    .query("pendingActions")
-    .withIndex("by_organization_and_status", (q) => q.eq("organizationId", organizationId).eq("status", "pending"))
-    .take(PENDING_ACTIONS_SCAN);
+  const pending = preloaded ?? (await loadPendingActionsForRelation(ctx, organizationId));
   let canceled = 0;
   for (const action of pending) {
+    // Lista pré-carregada: pula o que outro contato da mesma chamada já cancelou.
+    if (action.status !== "pending" || action.organizationId !== organizationId) continue;
     const target = action.args.conversationId;
     if (!CONVERSATION_PENDING_TOOLS.has(action.tool) || typeof target !== "string" || !conversationIds.has(target)) continue;
     await ctx.db.patch(action._id, { status: "canceled" });
+    action.status = "canceled";
     canceled += 1;
   }
   return canceled;
@@ -237,6 +253,11 @@ export async function setContactRelationCore(
     restoreLeadIds?: Id<"leads">[];
     /** Importação/ops: sem audit por contato (um audit por job/execução). */
     quiet?: boolean;
+    /**
+     * Marcação em massa: ações pendentes da org já lidas uma vez
+     * (`loadPendingActionsForRelation`); ausente = a porta lê.
+     */
+    pendingActions?: Doc<"pendingActions">[];
   },
 ): Promise<SetContactRelationResult> {
   const { contact, relation, actor, source } = args;
@@ -292,7 +313,7 @@ export async function setContactRelationCore(
       await cancelPendingHandoffsOfLead(ctx, fresh, actor, now);
       for (const id of await quietConversationsOfLead(ctx, fresh, actor, now)) conversationIds.add(id);
     }
-    await cancelPendingActionsOfConversations(ctx, contact.organizationId, conversationIds);
+    await cancelPendingActionsOfConversations(ctx, contact.organizationId, conversationIds, args.pendingActions);
   } else if (args.restoreLeadIds !== undefined) {
     // Desfazer preciso: só os leads que o front recebeu em `archivedLeadIds`.
     if (args.restoreLeadIds.length > RELATION_LEADS_CAP) {

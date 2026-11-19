@@ -8,6 +8,10 @@
  *    `_creationTime`) — é o que deixa o histórico retroativo da simulação certo.
  *  - Só `contactKind` ausente/"lead" entra em leads, conversão, receita, ROAS e
  *    CAC. Hóspede, fornecedor e agência contam em conversas e `contactKinds`.
+ *  - Contato fora do comercial (tipo de contato PR1/PR2: Pessoal, Equipe,
+ *    Fornecedor, Parceiro, Robô) não conta em NADA: suas conversas (espelho
+ *    `contactRelation`) saem de conversas/resposta/IA/responsáveis e seus leads
+ *    (`nonCustomerContactIds`) saem de leads, funil, conversão e receita.
  *  - leads = leads CRIADOS no período; converted/lost/receita = leads FECHADOS
  *    (won/lost) no período. conversionRate = converted / leads (coortes
  *    diferentes: pode passar de 1 num período curto — é a conta que a Central
@@ -26,6 +30,7 @@
  *  - daily preenche todo dia do período com zero, no fuso da org.
  */
 import { Doc, Id } from "../_generated/dataModel";
+import { isOffBusiness } from "./contactRelation";
 
 export type DashboardInput = {
   from: string; // YYYY-MM-DD (fuso da org)
@@ -48,6 +53,8 @@ export type DashboardInput = {
   membersById: Map<string, Doc<"teamMembers">>;
   openNow: number;
   truncated: boolean;
+  /** Contatos fora do comercial da org (ids). Ausente = nenhum. */
+  nonCustomerContactIds?: Set<string>;
 };
 
 const formatters = new Map<string, Intl.DateTimeFormat>();
@@ -106,13 +113,14 @@ export function computeCentralDashboard(input: DashboardInput) {
   const convUnit = (c: Doc<"conversations">) => c.unitId ?? leadOf(c)?.unitId;
   const inUnit = (u: Id<"units"> | undefined) => !unitId || u === unitId;
 
-  const conversations = input.conversations.filter((c) => inUnit(convUnit(c)));
-  const leadsCreated = input.leadsCreated.filter(
-    (l) => inUnit(l.unitId) && isLeadKind(l.contactKind)
+  const nonCustomer = input.nonCustomerContactIds;
+  const isLead = (l: Doc<"leads">) =>
+    isLeadKind(l.contactKind) && !(l.contactId && nonCustomer?.has(l.contactId));
+  const conversations = input.conversations.filter(
+    (c) => inUnit(convUnit(c)) && !isOffBusiness(c.contactRelation)
   );
-  const leadsClosed = input.leadsClosed.filter(
-    (l) => inUnit(l.unitId) && isLeadKind(l.contactKind) && l.closedType
-  );
+  const leadsCreated = input.leadsCreated.filter((l) => inUnit(l.unitId) && isLead(l));
+  const leadsClosed = input.leadsClosed.filter((l) => inUnit(l.unitId) && isLead(l) && l.closedType);
   const won = leadsClosed.filter((l) => l.closedType === "won");
   const lost = leadsClosed.filter((l) => l.closedType === "lost");
   const spendRows = input.adSpend.filter((r) => inUnit(r.unitId));
@@ -312,7 +320,7 @@ export function computeCentralDashboard(input: DashboardInput) {
       responders.set(key, row);
     }
     row.conversations++;
-    if (lead?.closedType === "won" && isLeadKind(lead.contactKind)) row.converted++;
+    if (lead?.closedType === "won" && isLead(lead)) row.converted++;
   }
   const byResponder = [...responders.values()].sort((a, b) => b.conversations - a.conversations);
 
@@ -320,7 +328,7 @@ export function computeCentralDashboard(input: DashboardInput) {
   // agência/hóspede ficam fora — senão o board deles se mistura ao funil de venda.
   const stageCounts = new Map<string, number>();
   for (const l of leadsCreated) {
-    if (!isLeadKind(l.contactKind)) continue;
+    if (!isLead(l)) continue;
     stageCounts.set(l.stageId, (stageCounts.get(l.stageId) ?? 0) + 1);
   }
   const boardOrder = new Map(input.boards.map((b) => [b._id as string, b.order]));

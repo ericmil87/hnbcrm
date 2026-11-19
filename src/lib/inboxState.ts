@@ -2,6 +2,13 @@ import { VOCAB } from "./vocab";
 import { aiStateReasonLabel } from "./aiStateReasons";
 import { isAiPaused, type ConversationAiMode } from "../../convex/lib/conversationAiMode";
 import { CONTACT_RELATION_AI_REASON } from "../../convex/lib/contactRelation";
+import {
+  MAIN_RELATION_FILTERS,
+  MORE_RELATION_FILTERS,
+  RELATION_FILTER_LABEL,
+  relationEmptyMessage,
+  type RelationFilter,
+} from "./contactRelationList";
 
 // Lógica pura da tela de Conversas (sem React): suspeita de robô, repasse
 // pendente, chip de estado da IA, filtros da lista e a decisão "param da URL →
@@ -153,6 +160,8 @@ export interface InboxChipState {
   /** Canal/conta (preferência em localStorage, escolhida no ⋯ ou no desktop). */
   channel: string | null;
   configId: string | null;
+  /** Tipo de contato (`?tipo=`, filtro de servidor `relation`): Leads, Pessoais, Equipe… */
+  relation?: RelationFilter | null;
 }
 
 /** Nenhum filtro de tela: é quando "Todas" fica marcado. */
@@ -165,6 +174,7 @@ export const NO_CHIP_FILTERS: InboxChipState = {
   ai: null,
   channel: null,
   configId: null,
+  relation: null,
 };
 
 export interface InboxChip {
@@ -177,17 +187,43 @@ export interface InboxChip {
   color?: string;
   /** O contador é um mínimo ("12+"). */
   countMore?: boolean;
+  /** Filtro escolhido em "Mais filtros": chip marcado com ✕ (tocar desliga). */
+  removable?: boolean;
 }
 
 const LABEL_CHIP = "label:";
 
+/** Algum filtro de tela ligado? ("Todas" só fica marcado sem nenhum.) */
+export function hasChipFilters(state: InboxChipState): boolean {
+  return (
+    state.kind !== "all" ||
+    state.unreadOnly ||
+    state.mine ||
+    !!state.labelId ||
+    !!state.stageId ||
+    !!state.ai ||
+    !!state.channel ||
+    !!state.configId ||
+    !!state.relation
+  );
+}
+
+/** Tipo escolhido fora da fileira principal (Equipe, Fornecedores… em "Mais filtros"). */
+function moreRelation(state: InboxChipState): RelationFilter | null {
+  return state.relation && MORE_RELATION_FILTERS.includes(state.relation) ? state.relation : null;
+}
+
 /**
- * Chips da lista no celular (estilo WhatsApp): Todas · Não lidas · Grupos ·
- * uma por etiqueta. "Grupos" só com grupo na org (ou o filtro guardado em
- * "Grupos"). "Diretas", canal e conta (escolhidos no ⋯ ou no desktop e
- * guardados no aparelho) só aparecem quando ativos, sempre marcados: nunca há
+ * Chips da lista (estilo WhatsApp): Todas · Não lidas · Minhas · Leads ·
+ * Pessoais · Grupos. "Grupos" só com grupo na org (ou o filtro guardado em
+ * "Grupos"). Canal, conta, "Diretas" e o tipo escolhido em "Mais filtros"
+ * (Equipe, Fornecedores…) só aparecem quando ativos, sempre marcados: nunca há
  * filtro ativo sem chip que o desligue, e "Todas" só fica marcado sem nenhum.
  * `unreadMore` = pode haver mais não lidas além do lote ("12+").
+ *
+ * - `mobile` (padrão): fileira que desliza; também uma por etiqueta, "Etapa" e "IA".
+ * - `desktop`: SÓ a fileira principal (sem rolagem lateral); etiqueta, etapa, IA,
+ *   canal e tipo são escolhidos no "Mais filtros" (▾) e entram como chip com ✕.
  */
 export function inboxFilterChips(
   state: InboxChipState,
@@ -200,6 +236,7 @@ export function inboxFilterChips(
     accountLabel,
     stageLabel,
     showAi = false,
+    layout = "mobile",
   }: {
     labels: readonly { _id: string; name: string; color: string }[];
     showGroups: boolean;
@@ -212,19 +249,12 @@ export function inboxFilterChips(
     stageLabel?: string;
     /** A org usa IA (ver `listShowsAi`): mostra o chip "IA". */
     showAi?: boolean;
+    layout?: "mobile" | "desktop";
   }
 ): InboxChip[] {
-  const none =
-    state.kind === "all" &&
-    !state.unreadOnly &&
-    !state.mine &&
-    !state.labelId &&
-    !state.stageId &&
-    !state.ai &&
-    !state.channel &&
-    !state.configId;
+  const desktop = layout === "desktop";
   const chips: InboxChip[] = [
-    { id: "all", label: "Todas", pressed: none },
+    { id: "all", label: "Todas", pressed: !hasChipFilters(state) },
     {
       id: "unread",
       label: "Não lidas",
@@ -234,12 +264,28 @@ export function inboxFilterChips(
     },
     { id: "mine", label: "Minhas", pressed: state.mine },
   ];
-  if (state.channel) chips.push({ id: "channel", label: channelLabel || state.channel, pressed: true });
-  if (state.configId) chips.push({ id: "account", label: accountLabel || "Conta", pressed: true });
+  for (const filter of MAIN_RELATION_FILTERS) {
+    chips.push({ id: filter, label: RELATION_FILTER_LABEL[filter], pressed: state.relation === filter });
+  }
   if (showGroups || state.kind === "group") {
     chips.push({ id: "group", label: "Grupos", pressed: state.kind === "group" });
   }
-  if (state.kind === "direct") chips.push({ id: "direct", label: "Diretas", pressed: true });
+  // Ativos escolhidos fora da fileira: marcados, com ✕ (tocar desliga).
+  const removable = desktop ? { removable: true } : {};
+  const more = moreRelation(state);
+  if (more) chips.push({ id: "relation", label: RELATION_FILTER_LABEL[more], pressed: true, removable: true });
+  if (state.kind === "direct") chips.push({ id: "direct", label: "Diretas", pressed: true, ...removable });
+  if (state.channel) chips.push({ id: "channel", label: channelLabel || state.channel, pressed: true, ...removable });
+  if (state.configId) chips.push({ id: "account", label: accountLabel || "Conta", pressed: true, ...removable });
+  if (desktop) {
+    const label = state.labelId ? labels.find((l) => l._id === state.labelId) : undefined;
+    if (label) {
+      chips.push({ id: `${LABEL_CHIP}${label._id}`, label: label.name, color: label.color, pressed: true, removable: true });
+    }
+    if (state.stageId) chips.push({ id: "stage", label: stageLabel || "Etapa", pressed: true, removable: true });
+    if (state.ai) chips.push({ id: "ai", label: AI_FILTER_LABEL[state.ai], pressed: true, removable: true });
+    return chips;
+  }
   for (const l of labels) {
     chips.push({ id: `${LABEL_CHIP}${l._id}`, label: l.name, color: l.color, pressed: state.labelId === l._id });
   }
@@ -248,6 +294,103 @@ export function inboxFilterChips(
     chips.push({ id: "ai", label: state.ai ? AI_FILTER_LABEL[state.ai] : "IA", pressed: !!state.ai });
   }
   return chips;
+}
+
+export interface InboxMoreFiltersModel {
+  /** Chips da fileira que não couberam (desktop, uma linha só): seção "Filtros" no topo. */
+  filters: { id: string; label: string; count?: number; countMore?: boolean; pressed: boolean }[];
+  /** Tipo: Equipe, Fornecedores, Parceiros, Robôs, Sem tipo (escolha única; tocar no marcado desliga). */
+  types: { id: RelationFilter; label: string; selected: boolean }[];
+  /** Etapa (abre a escolha das etapas): rótulo com o nome escolhido. */
+  stage: { label: string; active: boolean };
+  /** IA (só em org que usa IA ou com o filtro ligado). */
+  ai: { label: string; active: boolean } | null;
+  /** Canal/Conta (só com algo para escolher ou ativo). */
+  channel: { label: string; active: boolean } | null;
+  labels: { id: string; name: string; color: string; selected: boolean }[];
+  archived: boolean;
+  /** Filtros ativos que moram aqui (marca o ▾). */
+  activeCount: number;
+}
+
+/**
+ * "Mais filtros" (▾ no fim da fileira): o que não cabe na fileira principal.
+ * Escolher aqui liga o filtro e ele aparece na fileira como chip com ✕.
+ */
+export function inboxMoreFilters(
+  state: InboxChipState,
+  {
+    labels,
+    showAi = false,
+    showChannel = false,
+    stageLabel,
+    channelLabel,
+    showArchived = false,
+    overflow = [],
+  }: {
+    labels: readonly { _id: string; name: string; color: string }[];
+    /** Chips que não couberam na fileira (`fitChips`), na ordem dela. */
+    overflow?: readonly Pick<InboxChip, "id" | "label" | "count" | "countMore" | "pressed">[];
+    showAi?: boolean;
+    /** Há canal/conta/tipo para escolher (`hasSheetFilters`). */
+    showChannel?: boolean;
+    stageLabel?: string;
+    /** Rótulo do canal/conta ativo. */
+    channelLabel?: string;
+    showArchived?: boolean;
+  }
+): InboxMoreFiltersModel {
+  const channelActive = !!state.channel || !!state.configId || state.kind === "direct";
+  const activeCount =
+    (moreRelation(state) ? 1 : 0) +
+    (state.stageId ? 1 : 0) +
+    (state.ai ? 1 : 0) +
+    (channelActive ? 1 : 0) +
+    (state.labelId ? 1 : 0);
+  return {
+    filters: overflow.map(({ id, label, count, countMore, pressed }) => ({
+      id,
+      label,
+      pressed,
+      ...(count !== undefined ? { count } : {}),
+      ...(countMore ? { countMore } : {}),
+    })),
+    types: MORE_RELATION_FILTERS.map((id) => ({ id, label: RELATION_FILTER_LABEL[id], selected: state.relation === id })),
+    stage: { label: state.stageId ? stageLabel || "Etapa" : "Todas as etapas", active: !!state.stageId },
+    ai: showAi || state.ai ? { label: state.ai ? AI_FILTER_LABEL[state.ai] : "Todas", active: !!state.ai } : null,
+    channel:
+      showChannel || channelActive
+        ? { label: channelActive ? channelLabel || (state.kind === "direct" ? "Diretas" : "Filtrado") : "Todos", active: channelActive }
+        : null,
+    labels: labels.map((l) => ({ id: l._id, name: l.name, color: l.color, selected: state.labelId === l._id })),
+    archived: showArchived,
+    activeCount,
+  };
+}
+
+/**
+ * Escolher um tipo (chip ou "Mais filtros"): o mesmo de novo desliga. Tipo e
+ * "Grupos" se excluem (grupo não tem contato: a combinação daria lista vazia),
+ * então ligar um tipo tira "Grupos".
+ */
+export function applyRelationFilter(state: InboxChipState, filter: RelationFilter | null): InboxChipState {
+  const relation = filter && state.relation === filter ? null : filter;
+  return { ...state, relation, ...(relation && state.kind === "group" ? { kind: "all" as const } : {}) };
+}
+
+/**
+ * Mostrar "Grupos"? Com filtro de tipo o servidor não devolve grupo nenhum,
+ * então vale o que se sabia ANTES do filtro (`knownHasGroups`); sem filtro,
+ * o lote atual. Filtro Diretas/Grupos guardado mantém o chip para poder sair.
+ */
+export function showGroupsChip(input: {
+  rows: readonly { kind?: string }[];
+  kind: ConversationKindFilter;
+  relation: RelationFilter | null;
+  knownHasGroups: boolean;
+}): boolean {
+  if (input.kind !== "all") return true;
+  return input.relation ? input.knownHasGroups : input.rows.some((r) => r.kind === "group");
 }
 
 export const AI_FILTER_LABEL: Record<InboxAiFilter, string> = {
@@ -262,10 +405,15 @@ export function applyInboxChip(id: string, state: InboxChipState): InboxChipStat
   if (id === "account") return { ...state, configId: null };
   if (id === "unread") return { ...state, unreadOnly: !state.unreadOnly };
   if (id === "mine") return { ...state, mine: !state.mine };
+  if (id === "leads" || id === "personal") return applyRelationFilter(state, id);
+  if (id === "relation") return { ...state, relation: null };
   // "Etapa" e "IA" escolhem num menu; tocar aqui só desliga (quem liga é o menu).
   if (id === "stage") return { ...state, stageId: null };
   if (id === "ai") return { ...state, ai: null };
-  if (id === "group") return { ...state, kind: state.kind === "group" ? "all" : "group" };
+  // "Grupos" e tipo de contato se excluem (ver `applyRelationFilter`).
+  if (id === "group") {
+    return state.kind === "group" ? { ...state, kind: "all" } : { ...state, kind: "group", relation: null };
+  }
   if (id === "direct") return { ...state, kind: state.kind === "direct" ? "all" : "direct" };
   if (id.startsWith(LABEL_CHIP)) {
     const labelId = id.slice(LABEL_CHIP.length);
@@ -354,8 +502,9 @@ export function emptyListMessage(input: {
   mine?: boolean;
   stageId?: string | null;
   ai?: InboxAiFilter | null;
-}): { text: string; chooseGroups: boolean } {
-  const { kind, showArchived, queueFilterActive, labelId, unreadOnly, mine, stageId, ai } = input;
+  relation?: RelationFilter | null;
+}): { text: string; chooseGroups: boolean; hint?: string } {
+  const { kind, showArchived, queueFilterActive, labelId, unreadOnly, mine, stageId, ai, relation } = input;
   if (kind === "group") {
     return showArchived
       ? { text: "Nenhum grupo arquivado — mude o filtro para ver as conversas diretas", chooseGroups: false }
@@ -378,6 +527,10 @@ export function emptyListMessage(input: {
       text: `Nenhuma conversa com a ${ai === "on" ? "IA atendendo" : "IA desligada"} entre as mais recentes`,
       chooseGroups: false,
     };
+  }
+  if (relation) {
+    const { text, hint } = relationEmptyMessage(relation);
+    return { text: showArchived ? `${text} entre as arquivadas` : text, chooseGroups: false, ...(hint ? { hint } : {}) };
   }
   if (unreadOnly) return { text: "Nenhuma conversa não lida", chooseGroups: false };
   if (showArchived) return { text: "Nenhuma conversa arquivada", chooseGroups: false };

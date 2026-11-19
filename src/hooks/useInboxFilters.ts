@@ -23,6 +23,13 @@ import {
 } from "@/lib/inboxState";
 import { booleanParam, enumParam, stringParam } from "@/lib/searchParamState";
 import {
+  RELATION_PARAM_VALUES,
+  relationArgs as toRelationArgs,
+  relationFilterFromParam,
+  relationParamFromFilter,
+  type RelationFilter,
+} from "@/lib/contactRelationList";
+import {
   EMPTY_QUEUE_FILTER,
   queueFilterArgs,
   type InboxQueueFilter,
@@ -32,7 +39,9 @@ import {
  * Filtros da lista de Conversas.
  * - Estado de tela, na URL (replace, não polui o histórico): `?archived=1`,
  *   `?label=<id>`, `?unread=1` (chip "Não lidas"), `?mine=1` ("Minhas", celular e desktop),
- *   `?stage=<stageId>` (etapa do funil) e `?ai=on|off` (IA atendendo / desligada); os três últimos são filtros de servidor.
+ *   `?stage=<stageId>` (etapa do funil), `?ai=on|off` (IA atendendo / desligada) e
+ *   `?tipo=leads|pessoais|equipe|fornecedores|parceiros|robos|semtipo` (tipo de contato);
+ *   os quatro últimos são filtros de servidor.
  * - Preferência pessoal, em `localStorage`: Diretas/Grupos e Canal/Conta.
  * - Fila (Central, opcional por org): estado local.
  */
@@ -55,13 +64,18 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
   const aiArgs = aiFilter ? { ai: aiFilter } : {};
   const setStageId = (next: string | null) => stageParam.set(next);
   const setAiFilter = (next: InboxAiFilter | null) => aiParam.set(next ?? "");
+  // Tipo de contato (`relation` no servidor): Leads, Pessoais e os de "Mais filtros".
+  const relationParam = useSearchParamState("tipo", enumParam<string>(RELATION_PARAM_VALUES, ""));
+  const relationFilter: RelationFilter | null = relationFilterFromParam(relationParam.value);
+  const relationArgs = toRelationArgs(relationFilter);
+  const setRelationFilter = (next: RelationFilter | null) => relationParam.set(relationParamFromFilter(next) ?? "");
   const showArchived = archivedParam.value;
   // "Não lidas" é chip nos dois layouts (celular e desktop).
   const unreadOnly = unreadParam.value;
   const unreadArgs = unreadOnly ? { unreadOnly: true as const } : {};
   const setShowArchived = archivedParam.set;
   /** Celular: abrir Arquivadas desliga "Não lidas" na mesma escrita da URL. */
-  const openArchived = () => archivedParam.set(true, { also: { unread: null, mine: null, stage: null, ai: null } });
+  const openArchived = () => archivedParam.set(true, { also: { unread: null, mine: null, stage: null, ai: null, tipo: null } });
 
   const conversationLabels = useQuery(api.conversations.listLabels, { organizationId });
   // Etiqueta apagada (ou colada de outra org) na URL não pode deixar a lista
@@ -147,10 +161,17 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
       next.labelId !== filterLabelId ||
       next.mine !== mine ||
       next.stageId !== stageId ||
-      next.ai !== aiFilter
+      next.ai !== aiFilter ||
+      (next.relation ?? null) !== relationFilter
     ) {
       unreadParam.set(next.unreadOnly, {
-        also: { label: next.labelId, mine: next.mine ? "1" : null, stage: next.stageId, ai: next.ai },
+        also: {
+          label: next.labelId,
+          mine: next.mine ? "1" : null,
+          stage: next.stageId,
+          ai: next.ai,
+          tipo: relationParamFromFilter(next.relation ?? null),
+        },
       });
     }
   };
@@ -169,6 +190,9 @@ export function useInboxFilters(organizationId: Id<"organizations">) {
     aiFilter,
     aiArgs,
     setAiFilter,
+    relationFilter,
+    relationArgs,
+    setRelationFilter,
     openArchived,
     applyChipState,
     setShowArchived,

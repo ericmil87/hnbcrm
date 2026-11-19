@@ -11,6 +11,8 @@ import {
   MoreVertical,
   SlidersHorizontal,
   FileText,
+  UserCheck,
+  UserX,
 } from "lucide-react";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Avatar } from "@/components/ui/Avatar";
@@ -40,6 +42,7 @@ import {
   type ConversationKindFilter,
   type InboxAiFilter,
 } from "@/lib/inboxState";
+import type { RelationFilter } from "@/lib/contactRelationList";
 import type { ListPreview } from "@/lib/listPreview";
 import { VOCAB } from "@/lib/vocab";
 import { cn } from "@/lib/utils";
@@ -105,6 +108,8 @@ export interface ConversationListFilters {
   };
   /** Atendente IA (filtro de servidor, `ai`). `show` = a org usa IA (ou o filtro está ativo). */
   ai?: { value: InboxAiFilter | null; onChange: (value: InboxAiFilter | null) => void; show: boolean };
+  /** Tipo de contato (`?tipo=`, filtro de servidor `relation`). */
+  relation?: RelationFilter | null;
 }
 
 export interface ConversationListSelection {
@@ -114,6 +119,18 @@ export interface ConversationListSelection {
   onToggle: (id: string) => void;
   onArchive: () => void;
   onLabel: (labelId: string) => void;
+  /** "Não é cliente" / "Virar lead" em lote (ausente = sem `contacts:edit`). */
+  relation?: ConversationListBulkRelation;
+}
+
+export interface ConversationListBulkRelation {
+  /** Contatos únicos das conversas 1:1 selecionadas (grupo não conta). */
+  targets: number;
+  /** Todos os selecionados não são clientes: mostra "Virar lead". */
+  allOffBusiness: boolean;
+  onNotCustomer: () => void;
+  onTurnLead: () => void;
+  busy?: boolean;
 }
 
 export interface ConversationListPaging {
@@ -173,6 +190,11 @@ export interface ConversationListQuick {
   onOpenArchived: () => void;
   /** Abre a folha "Tipo e canal" (ausente = nada para filtrar ali); item do menu ⋯ do desktop. */
   onOpenFilters?: () => void;
+  /**
+   * ▾ "Mais filtros" no fim da fileira de chips (`InboxMoreFiltersButton`).
+   * Desktop: recebe os chips que não couberam na linha (vão para o ▾).
+   */
+  moreFilters?: ReactNode | ((overflow: readonly FilterChip[]) => ReactNode);
 }
 
 function SearchResults({ search, now }: { search: ConversationListSearch; now: number }) {
@@ -327,16 +349,44 @@ function BulkBar({
           icon: <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: l.color }} />,
           onSelect: () => selection.onLabel(l._id),
         }));
+  const relation = selection.relation;
+  const noTargets = !relation || relation.targets === 0;
   return (
-    <div className="shrink-0 border-t border-border bg-surface-raised p-3 flex items-center gap-2">
+    <div className="shrink-0 border-t border-border bg-surface-raised p-3 flex flex-wrap items-center gap-2">
       {showCancel && (
         <Button type="button" variant="ghost" size="sm" onClick={selection.onToggleMode}>
           Cancelar
         </Button>
       )}
-      <span className="flex-1 text-xs text-text-secondary tabular-nums">
+      <span className="min-w-[6rem] flex-1 text-xs text-text-secondary tabular-nums">
         {count} selecionada{count === 1 ? "" : "s"}
       </span>
+      {relation && (
+        <>
+          {relation.allOffBusiness && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={noTargets || relation.busy}
+              onClick={relation.onTurnLead}
+            >
+              <UserCheck size={14} aria-hidden="true" />
+              Virar lead
+            </Button>
+          )}
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={noTargets || relation.busy}
+            onClick={relation.onNotCustomer}
+          >
+            <UserX size={14} aria-hidden="true" />
+            Não é cliente
+          </Button>
+        </>
+      )}
       <Menu
         ariaLabel="Etiquetar conversas selecionadas"
         align="end"
@@ -391,6 +441,7 @@ export function ConversationList({
     mine: filters.mine,
     stageId: filters.stage?.id,
     ai: filters.ai?.value,
+    relation: filters.relation,
   });
   // "IA desligada" só aparece em org que usa IA (ver `listShowsAi`).
   const showAi = listShowsAi(conversations, !!filters.ai?.value);
@@ -539,7 +590,10 @@ export function ConversationList({
             ariaLabel="Filtrar conversas"
             chips={quick.chips}
             onToggle={quick.onChip}
-            className="-mx-4 px-4"
+            // Desktop: uma linha só (estilo WhatsApp Web), o que não cabe vai para o ▾; celular desliza.
+            fit={!isMobile}
+            trailing={quick.moreFilters}
+            className={isMobile ? "-mx-4 px-4" : undefined}
           />
         )}
         {!search.active && queueBar}
@@ -572,7 +626,9 @@ export function ConversationList({
                 icon={MessageSquare}
                 size="sm"
                 title={empty.text}
-                description={empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined}
+                description={
+                  empty.hint ?? (empty.text === VOCAB.conversations.empty.title ? VOCAB.conversations.empty.hint : undefined)
+                }
                 action={empty.chooseGroups ? { label: "Escolher grupos", onClick: onChooseGroups } : undefined}
               />
             ) : (

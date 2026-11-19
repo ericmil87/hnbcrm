@@ -9,6 +9,9 @@
  * - `internalMirrorRelationToAiOptOut`: rede de segurança ANTES de qualquer
  *   revert do PR1 — copia "fora do comercial" para `aiOptOut:true` (o código
  *   antigo só conhece o opt-out), para a IA não voltar a falar com a família.
+ * - `internalBackfillContactRelationMirror` (PR2): confere/conserta o espelho
+ *   `conversations.contactRelation` (filtro por tipo no inbox) contra o tipo do
+ *   contato do lead, por org ou na tabela toda. Saída só com contagens e ids.
  *
  *   npx convex run --prod opsContactRelation:internalSetRelationByPhones \
  *     '{"organizationId":"…","items":[{"phone":"5511…","relation":"personal"}]}'
@@ -24,6 +27,8 @@ import { setContactRelationCore } from "./lib/contactRelationOps";
 import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
+import { getLeadRef } from "./lib/leadRef";
+import { relationOfLead } from "./lib/contactRelationGuard";
 
 /** Itens por execução real (cada um pode arquivar leads, cancelar follow-ups…). */
 const ITEMS_PER_RUN = 25;
@@ -274,6 +279,151 @@ export const internalMirrorRelationToAiOptOut = internalMutation({
       set,
       nextCursor: page.isDone ? null : page.continueCursor,
       isDone: page.isDone,
+    };
+  },
+});
+
+const BACKFILL_MIRROR_PAGE_DEFAULT = 150;
+const BACKFILL_MIRROR_PAGE_MAX = 150;
+const BACKFILL_MIRROR_SAMPLE = 20;
+
+const mirrorTotalsValidator = v.object({
+  scanned: v.number(),
+  mismatched: v.number(),
+  written: v.number(),
+  pages: v.number(),
+});
+
+/**
+ * Espelho `conversations.contactRelation` = tipo do contato do lead da conversa
+ * (grupo e conversa sem lead/contato = ausente). A porta única já grava o
+ * espelho; este op confere e conserta divergências (conversa criada por um
+ * caminho antigo, lead que trocou de contato antes do PR1…). Idempotente:
+ * a 2ª execução não escreve.
+ *
+ * `organizationId` ausente = tabela toda. `dryRun` padrão TRUE (uma página, só
+ * conta; `countAll:true` encadeia sem escrever). Real: ≤150 escritas por
+ * execução e se reagenda pelo cursor.
+ *
+ *   npx convex run --prod opsContactRelation:internalBackfillContactRelationMirror '{"organizationId":"…","countAll":true}'
+ *   npx convex run --prod opsContactRelation:internalBackfillContactRelationMirror '{"organizationId":"…","dryRun":false}'
+ */
+export const internalBackfillContactRelationMirror = internalMutation({
+  args: {
+    organizationId: v.optional(v.id("organizations")),
+    dryRun: v.optional(v.boolean()),
+    countAll: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+    totals: v.optional(mirrorTotalsValidator),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    mismatched: v.number(),
+    written: v.number(),
+    /** Conversas divergentes desta página (ids e tipos, sem PII). */
+    sample: v.array(
+      v.object({
+        conversationId: v.id("conversations"),
+        mirror: v.union(contactRelationValidator, v.null()),
+        expected: v.union(contactRelationValidator, v.null()),
+      }),
+    ),
+    isDone: v.boolean(),
+    continueCursor: v.union(v.string(), v.null()),
+    scheduledNext: v.boolean(),
+    totals: mirrorTotalsValidator,
+  }),
+  handler: async (ctx, args) => {
+    const dryRun = args.dryRun !== false;
+    const raw = Number.isFinite(args.pageSize) ? Math.floor(args.pageSize!) : BACKFILL_MIRROR_PAGE_DEFAULT;
+    const pageSize = Math.min(BACKFILL_MIRROR_PAGE_MAX, Math.max(1, raw));
+    const organizationId = args.organizationId;
+    const page = organizationId
+      ? await ctx.db
+          .query("conversations")
+          .withIndex("by_organization", (q) => q.eq("organizationId", organizationId))
+          .paginate({ numItems: pageSize, cursor: args.cursor ?? null })
+      : await ctx.db.query("conversations").paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+
+    let mismatched = 0;
+    let written = 0;
+    const sample: Array<{
+      conversationId: Id<"conversations">;
+      mirror: ContactRelation | null;
+      expected: ContactRelation | null;
+    }> = [];
+    for (const conversation of page.page) {
+      let expected: ContactRelation | undefined;
+      if (conversation.kind !== "group") {
+        const lead = await getLeadRef(ctx.db, conversation.leadId);
+        expected =
+          lead && lead.organizationId === conversation.organizationId
+            ? await relationOfLead(ctx.db, lead)
+            : undefined;
+      }
+      if (conversation.contactRelation === expected) continue;
+      mismatched += 1;
+      if (sample.length < BACKFILL_MIRROR_SAMPLE) {
+        sample.push({
+          conversationId: conversation._id,
+          mirror: conversation.contactRelation ?? null,
+          expected: expected ?? null,
+        });
+      }
+      if (!dryRun) {
+        // Só o espelho: sem `updatedAt` (não reordena nada, não é ação de ninguém).
+        await ctx.db.patch(conversation._id, { contactRelation: expected });
+        written += 1;
+      }
+    }
+
+    const prev = args.totals ?? { scanned: 0, mismatched: 0, written: 0, pages: 0 };
+    const totals = {
+      scanned: prev.scanned + page.page.length,
+      mismatched: prev.mismatched + mismatched,
+      written: prev.written + written,
+      pages: prev.pages + 1,
+    };
+    const chain = !page.isDone && (!dryRun || args.countAll === true);
+    if (chain) {
+      await ctx.scheduler.runAfter(0, internal.opsContactRelation.internalBackfillContactRelationMirror, {
+        ...(organizationId ? { organizationId } : {}),
+        dryRun,
+        ...(args.countAll ? { countAll: true } : {}),
+        cursor: page.continueCursor,
+        pageSize,
+        totals,
+      });
+    }
+    if (page.isDone && (!dryRun || args.countAll)) {
+      console.log(JSON.stringify({ op: "backfillContactRelationMirror", dryRun, ...totals }));
+      if (!dryRun && totals.written > 0 && organizationId) {
+        // Um audit por job (nunca por linha), só quando houve conserto numa org.
+        await ctx.db.insert("auditLogs", {
+          organizationId,
+          entityType: "organization",
+          entityId: organizationId,
+          action: "update",
+          actorType: "system",
+          metadata: { op: "opsContactRelation.internalBackfillContactRelationMirror", ...totals },
+          description: `Ops: espelho do tipo de contato corrigido em ${totals.written} conversa(s)`,
+          severity: "low",
+          createdAt: Date.now(),
+        });
+      }
+    }
+    return {
+      dryRun,
+      scanned: page.page.length,
+      mismatched,
+      written,
+      sample,
+      isDone: page.isDone,
+      continueCursor: page.isDone ? null : page.continueCursor,
+      scheduledNext: chain,
+      totals,
     };
   },
 });

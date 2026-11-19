@@ -1006,7 +1006,7 @@ describe("worker — público 'group_members'", () => {
     expect(rows[0].sourceGroupChatId).toBe(a.groupChatId);
   });
 
-  test("membro do grupo marcado como não-cliente fica de fora no envio (sem lead novo)", { timeout: 60_000 }, async () => {
+  test("membro do grupo marcado como não-cliente fica de fora já no snapshot (sem linha, sem lead novo)", { timeout: 60_000 }, async () => {
     const t = setup();
     const s = await seed(t);
     vi.stubGlobal("fetch", bridgeFetchMock().fn);
@@ -1029,6 +1029,12 @@ describe("worker — público 'group_members'", () => {
         { phone: "5511977776666", name: "Bia Cliente" },
       ],
     });
+    const preview = await asUser(t, s.adminUserId).query(api.campaigns.previewAudience, {
+      organizationId: s.organizationId, filters: {}, now: Date.now(),
+      source: "group_members", groupChatIds: [g.groupChatId],
+    });
+    expect(preview.count).toBe(1);
+    expect(preview.excluded.non_customer).toBe(1);
     const id = await createGroupCampaign(t, s, { source: "group_members", groupChatIds: [g.groupChatId] });
     await asUser(t, s.adminUserId).mutation(api.campaigns.launchCampaign, {
       campaignId: id, consentAck: true, bridgeRiskAck: true, groupMembersDmAck: true,
@@ -1036,10 +1042,11 @@ describe("worker — público 'group_members'", () => {
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const rows = await recipientsOf(t, id);
-    const mom = rows.find((r) => r.memberName === "Mãe")!;
+    // PR2: o público exclui o não-cliente no snapshot (motivo `non_customer`
+    // na prévia); o worker segue barrando quem for marcado depois do snapshot.
+    const mom = rows.find((r) => r.memberName === "Mãe");
     const bia = rows.find((r) => r.memberName === "Bia Cliente")!;
-    expect(mom).toMatchObject({ status: "skipped", skipReason: "non_customer" });
-    expect(mom.leadId).toBeUndefined();
+    expect(mom).toBeUndefined();
     expect(bia.status).not.toBe("skipped");
     const momLeads = await t.run((ctx) =>
       ctx.db.query("leads").withIndex("by_contact", (q) => q.eq("contactId", momId)).collect()

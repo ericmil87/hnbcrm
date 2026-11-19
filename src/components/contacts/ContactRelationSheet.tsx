@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Bot, Check, Handshake, Home, Truck, UserCheck, Users } from "lucide-react";
+import { Bot, Check, CircleDashed, Handshake, Home, Truck, UserCheck, Users } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -34,6 +34,12 @@ interface ContactRelationSheetProps {
   current: ContactRelation | null | undefined;
   /** Um toque aplica (sem confirmação extra); quem chama mostra o toast com "Desfazer". */
   onSelect: (relation: ContactRelation) => void;
+  /** Título no lugar de "Quem é <Nome>?" (ex.: lote "Definir tipo de 3 contatos"). */
+  title?: string;
+  /** Mostra "Sem tipo" (volta a não classificado); ausente = só os seis tipos. */
+  onClear?: () => void;
+  /** Esconde "Lead" (ex.: "Não é cliente…" só oferece os tipos fora do comercial). */
+  hideCustomer?: boolean;
 }
 
 /**
@@ -41,11 +47,21 @@ interface ContactRelationSheetProps {
  * Fornecedor, Parceiro, Robô), o atual marcado. Folha inferior no celular e
  * diálogo no computador (`Modal`).
  */
-export function ContactRelationSheet({ open, onClose, name, current, onSelect }: ContactRelationSheetProps) {
+export function ContactRelationSheet({
+  open,
+  onClose,
+  name,
+  current,
+  onSelect,
+  title,
+  onClear,
+  hideCustomer = false,
+}: ContactRelationSheetProps) {
+  const relations = hideCustomer ? CONTACT_RELATIONS.filter((r) => r !== "customer") : CONTACT_RELATIONS;
   return (
-    <Modal open={open} onClose={onClose} title={relationSheetTitle(name)}>
+    <Modal open={open} onClose={onClose} title={title ?? relationSheetTitle(name)}>
       <div className="grid grid-cols-2 gap-2" role="group" aria-label="Tipo de contato">
-        {CONTACT_RELATIONS.map((relation) => {
+        {relations.map((relation) => {
           const Icon = RELATION_ICON[relation];
           const selected = current === relation;
           return (
@@ -71,6 +87,22 @@ export function ContactRelationSheet({ open, onClose, name, current, onSelect }:
             </button>
           );
         })}
+        {onClear && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onClear();
+            }}
+            className={cn(
+              "relative flex min-h-14 items-center gap-2.5 rounded-card border border-border bg-surface-raised px-3 py-3 text-left text-sm font-medium text-text-primary transition-colors",
+              "hover:border-border-strong hover:bg-surface-sunken focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            )}
+          >
+            <CircleDashed size={20} aria-hidden className="text-text-secondary" />
+            <span className="min-w-0 flex-1 truncate">Sem tipo</span>
+          </button>
+        )}
       </div>
       <p className="mt-3 text-caption text-text-muted">{RELATION_SHEET_HINT}</p>
     </Modal>

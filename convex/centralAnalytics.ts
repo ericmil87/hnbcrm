@@ -15,6 +15,8 @@ import { localToEpoch } from "./lib/agentSchedule";
 import { safeTimezone } from "./lib/promptDateTime";
 import { addDays, computeCentralDashboard, daysBetween } from "./lib/centralDashboard";
 import { departmentConversationCounts } from "./departments";
+import { isOffBusiness } from "./lib/contactRelation";
+import { loadNonCustomerContacts } from "./lib/contactRelationGuard";
 
 // Teto de linhas por varredura (conversas, leads criados, leads fechados,
 // transferências, repasses, gasto, abertas agora). ~2000 cabe folgado no
@@ -259,7 +261,17 @@ export const getCentralDashboard = query({
     if (activeRows.length > CENTRAL_SCAN_CAP) truncated = true;
     const openNow = activeRows
       .slice(0, CENTRAL_SCAN_CAP)
-      .filter((c) => !c.archivedAt && c.kind !== "group" && (!args.unitId || c.unitId === args.unitId)).length;
+      .filter(
+        (c) =>
+          !c.archivedAt &&
+          c.kind !== "group" &&
+          !isOffBusiness(c.contactRelation) &&
+          (!args.unitId || c.unitId === args.unitId)
+      ).length;
+
+    // Tipo de contato (PR2): leads de contato fora do comercial não contam.
+    const nonCustomer = await loadNonCustomerContacts(ctx.db, orgId);
+    if (nonCustomer.truncated) truncated = true;
 
     return computeCentralDashboard({
       from: args.fromDate,
@@ -282,6 +294,7 @@ export const getCentralDashboard = query({
       membersById: new Map(members.map((m) => [m._id, m])),
       openNow,
       truncated,
+      nonCustomerContactIds: new Set<string>(nonCustomer.contacts.map((c) => c._id)),
     });
   },
 });

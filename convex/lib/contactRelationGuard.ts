@@ -19,6 +19,8 @@ import {
   needsRelationMessage,
   type ContactRelation,
 } from "./contactRelation";
+import { OFF_BUSINESS_RELATIONS } from "./contactRelationFilter";
+import { normalizeCampaignPhone, phoneLookupCandidates } from "./phone";
 
 type Db = QueryCtx["db"] | MutationCtx["db"];
 
@@ -92,4 +94,55 @@ export async function resyncLeadContactRelationMirror(ctx: MutationCtx, leadId: 
   const lead = await ctx.db.get(leadId);
   if (!lead) return 0;
   return await syncContactRelationMirrorForLead(ctx, leadId, await relationOfLead(ctx.db, lead));
+}
+
+/**
+ * Teto de contatos fora do comercial lidos por execução (campanhas, Central).
+ * Uma org tem dezenas na prática; acima do teto o chamador sinaliza parcial e
+ * a checagem por destinatário no envio (`campaignWorker.recipientIsNonCustomer`)
+ * continua sendo a rede.
+ */
+export const NON_CUSTOMER_CONTACTS_CAP = 2000;
+
+/**
+ * Contatos fora do comercial da org, por range do índice
+ * `by_organization_and_relation` (um por tipo; nunca varre a org).
+ */
+export async function loadNonCustomerContacts(
+  db: Db,
+  organizationId: Id<"organizations">,
+  cap: number = NON_CUSTOMER_CONTACTS_CAP,
+): Promise<{ contacts: Doc<"contacts">[]; truncated: boolean }> {
+  const contacts: Doc<"contacts">[] = [];
+  for (const relation of OFF_BUSINESS_RELATIONS) {
+    const remaining = cap - contacts.length;
+    if (remaining <= 0) return { contacts, truncated: true };
+    const rows = await db
+      .query("contacts")
+      .withIndex("by_organization_and_relation", (q) =>
+        q.eq("organizationId", organizationId).eq("relation", relation),
+      )
+      .take(remaining + 1);
+    if (rows.length > remaining) return { contacts: [...contacts, ...rows.slice(0, remaining)], truncated: true };
+    contacts.push(...rows);
+  }
+  return { contacts, truncated: false };
+}
+
+/**
+ * Telefones normalizados (com a variante do 9º dígito) dos contatos dados —
+ * `phone` e `whatsappNumber`. Casa com o telefone já normalizado de um
+ * destinatário de campanha.
+ */
+export function phoneKeysOfContacts(contacts: Doc<"contacts">[], defaultCountry: string | undefined): Set<string> {
+  const keys = new Set<string>();
+  for (const contact of contacts) {
+    for (const raw of [contact.phone, contact.whatsappNumber]) {
+      if (!raw) continue;
+      const normalized = normalizeCampaignPhone(raw, defaultCountry);
+      if (!normalized.ok) continue;
+      for (const candidate of phoneLookupCandidates(normalized.phone)) keys.add(candidate);
+    }
+  }
+  return keys;
 }

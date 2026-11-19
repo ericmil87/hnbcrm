@@ -73,6 +73,7 @@ import { normalizeCampaignPhone } from "./lib/phone";
 import { resolveDefaultCountry } from "./lib/orgPhone";
 import { isGroupMigrated, participantsOf } from "./lib/groupParticipantsStore";
 import { parseCsv } from "./lib/csv";
+import { loadNonCustomerContacts, phoneKeysOfContacts } from "./lib/contactRelationGuard";
 import { estimateCampaignCost, loadPricing } from "./lib/whatsappPricing";
 import {
   addTimeline,
@@ -468,6 +469,14 @@ async function resolveGroupMembersAudience(
     excludedGroupPhones = new Set(built.recipients.map((r) => r.phone));
   }
 
+  // PR2: contatos fora do comercial saem já aqui (motivo `non_customer`), por
+  // range do índice de tipo — sem leitura por telefone. O worker continua
+  // checando cada destinatário no envio (rede para o teto e para quem for
+  // marcado depois do snapshot).
+  const nonCustomer = await loadNonCustomerContacts(ctx.db, args.organizationId);
+  const nonCustomerPhones = phoneKeysOfContacts(nonCustomer.contacts, defaultCountry);
+  const nonCustomerContactIds = new Set<string>(nonCustomer.contacts.map((c) => c._id));
+
   // Candidatos brutos JÁ TRUNCADOS no teto: o loop abaixo custa até 3 faixas de
   // índice POR TELEFONE, e varrer o conjunto inteiro antes de aplicar o teto
   // estourava o limite de leituras da transação (era o bug: o teto só valia na
@@ -478,6 +487,8 @@ async function resolveGroupMembersAudience(
     filters,
     activeKeys,
     excludedGroupPhones,
+    nonCustomerPhones,
+    nonCustomerContactIds,
     limit,
   });
   const phones = raw.recipients.map((r) => r.phone);
@@ -526,6 +537,8 @@ async function resolveGroupMembersAudience(
     recentlyCampaigned,
     activeKeys,
     excludedGroupPhones,
+    nonCustomerPhones,
+    nonCustomerContactIds,
     limit,
     ...(args.memberList ? { memberList: args.memberList } : {}),
   });
@@ -1749,6 +1762,12 @@ export async function importRecipientsCsvHandler(ctx: ActionCtx, args: ImportRec
     // supressão + contatos existentes (lotes de 200)
     let suppressed = 0;
     let existingContacts = 0;
+    let nonCustomer = 0;
+    const nonCustomerPhones = new Set(
+      valid.length > 0
+        ? await ctx.runQuery(internal.campaigns.internalNonCustomerPhones, { organizationId: context.organizationId })
+        : []
+    );
     const cleared: typeof valid = [];
     for (let i = 0; i < valid.length; i += IMPORT_BATCH) {
       const chunk = valid.slice(i, i + IMPORT_BATCH);
@@ -1759,6 +1778,11 @@ export async function importRecipientsCsvHandler(ctx: ActionCtx, args: ImportRec
       for (const c of chunk) {
         if (check.suppressed.includes(c.phone)) {
           suppressed++;
+          continue;
+        }
+        // PR2: contato fora do comercial não entra (o worker também barraria no envio).
+        if (nonCustomerPhones.has(c.phone)) {
+          nonCustomer++;
           continue;
         }
         if (check.existing.includes(c.phone)) existingContacts++;
@@ -1774,6 +1798,7 @@ export async function importRecipientsCsvHandler(ctx: ActionCtx, args: ImportRec
       invalidCount: invalid.length,
       duplicates,
       suppressed,
+      nonCustomer,
       existingContacts,
       preview: cleared.slice(0, 10),
       suggestedMapping,
@@ -1842,6 +1867,21 @@ export const internalCheckPhones = internalQuery({
       if (contact) existing.push(phone);
     }
     return { suppressed, existing };
+  },
+});
+
+/**
+ * PR2: telefones (normalizados, com a variante do 9º dígito) dos contatos fora
+ * do comercial da org. Lido UMA vez por importação de CSV (até
+ * NON_CUSTOMER_CONTACTS_CAP contatos), não a cada lote de telefones.
+ */
+export const internalNonCustomerPhones = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    const offBusiness = await loadNonCustomerContacts(ctx.db, args.organizationId);
+    return [...phoneKeysOfContacts(offBusiness.contacts, resolveDefaultCountry(org?.settings))];
   },
 });
 
