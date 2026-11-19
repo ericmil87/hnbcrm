@@ -14,6 +14,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { InboxMessage } from "./types";
+import { useNeedsRelationGuard } from "@/components/contacts/useNeedsRelationGuard";
 import { teamLanguageLabel } from "@/lib/translationRules";
 
 // v4.2: proposedActions estruturadas (aprováveis, uma a uma). Rascunhos
@@ -554,25 +555,33 @@ function AiInstructionForm({
  */
 export function ReturnToAiButton({
   conversationId,
+  contactName,
   variant = "link",
   buttonVariant = "ghost",
 }: {
   conversationId: Id<"conversations">;
+  /** Nome no diálogo "<Nome> está como Pessoal…" (contato que não é cliente). */
+  contactName?: string;
   variant?: "link" | "button";
   /** Estilo do botão quando `variant="button"` (secundário no banner de pedido de ajuda). */
   buttonVariant?: "ghost" | "secondary";
 }) {
   const returnToAi = useMutation(api.attendant.returnToAi);
+  const guard = useNeedsRelationGuard();
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
 
   const submit = (instruction?: string) => {
     setOpen(false);
-    toast.promise(returnToAi({ conversationId, ...(instruction ? { instruction } : {}) }), {
-      loading: "Devolvendo…",
-      success: "Conversa devolvida à IA",
-      error: (e) => mutationErrorMessage(e, "Não foi possível devolver à IA. Tente de novo."),
-    });
+    void guard.run(
+      { conversationId, name: contactName },
+      () => returnToAi({ conversationId, ...(instruction ? { instruction } : {}) }),
+      {
+        loading: "Devolvendo…",
+        success: "Conversa devolvida à IA",
+        error: "Não foi possível devolver à IA. Tente de novo.",
+      }
+    );
   };
 
   return (
@@ -611,6 +620,7 @@ export function ReturnToAiButton({
         onSubmit={submit}
         onClose={() => setOpen(false)}
       />
+      {guard.dialog}
     </>
   );
 }

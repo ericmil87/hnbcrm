@@ -52,7 +52,12 @@ export type CardContext = {
     stageName?: string;
     boardName?: string;
   };
-  conversation?: { id: string; channel: string };
+  conversation?: {
+    id: string;
+    channel: string;
+    /** PR1: "mark" = oferecer "🏠 Pessoal"; "convert" = oferecer "Virar lead" (verbo `pe`). */
+    relationAction?: "mark" | "convert";
+  };
   handoff?: {
     id: string;
     status: string;
@@ -173,6 +178,8 @@ export const CALLBACK_VERBS = [
   "rc", // reconnect (pairing code)
   "rcq", // reconnect by QR instead
   "rcx", // cancel the reconnection
+  // PR1 ("Não é cliente / Virar lead"):
+  "pe", // pe:<conversationId>:p = mark as Pessoal · pe:<conversationId>:l = back to lead
 ] as const;
 export type CallbackVerb = (typeof CALLBACK_VERBS)[number];
 export const CALLBACK_DATA_MAX_BYTES = 64;
@@ -565,7 +572,7 @@ function handoffCard(n: NotificationInput, ctx: CardContext): CardOutput {
     buttons.push(cb("🤖 Instruir a IA", "ia", ctx.conversation.id));
     buttons.push(cb("🔁 Regenerar", "rg", ctx.conversation.id));
   }
-  return { text, keyboard: nonEmpty([buttons, viewAllRow(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
+  return { text, keyboard: nonEmpty([buttons, relationRow(ctx), viewAllRow(ctx), linkRow(ctx, n)]), focus: focusOf(ctx) };
 }
 
 function relayBody(ctx: CardContext, lines: HistoryLine[]): string {
@@ -588,6 +595,15 @@ function conversationActions(ctx: CardContext): CardButton[] {
   return [cb("💬 Responder", "rp", ctx.conversation.id), cb("🤖 Instruir a IA", "ia", ctx.conversation.id)];
 }
 
+/** PR1: "🏠 Pessoal" (marca não-cliente) ou "Virar lead" (volta ao funil), verbo `pe`. */
+export function relationRow(ctx: CardContext): CardButton[] {
+  const conv = ctx.conversation;
+  if (!conv?.relationAction) return [];
+  return conv.relationAction === "convert"
+    ? [{ text: "💼 Virar lead", callback_data: callbackData("pe", conv.id, "l") }]
+    : [{ text: "🏠 Pessoal", callback_data: callbackData("pe", conv.id, "p") }];
+}
+
 function newMessageCard(n: NotificationInput, ctx: CardContext): CardOutput {
   const lines = ctx.relayLines ?? [];
   const at = lines.length > 0 ? lines[lines.length - 1]!.at : n.createdAt;
@@ -596,7 +612,7 @@ function newMessageCard(n: NotificationInput, ctx: CardContext): CardOutput {
   const body = relayBody(ctx, lines) || safe(n.body ?? "", ctx.discreet, 1500);
   return {
     text: blocks([head, body]),
-    keyboard: nonEmpty([conversationActions(ctx), linkRow(ctx, n)]),
+    keyboard: nonEmpty([conversationActions(ctx), relationRow(ctx), linkRow(ctx, n)]),
     focus: focusOf(ctx),
   };
 }

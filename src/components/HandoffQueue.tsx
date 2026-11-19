@@ -32,6 +32,7 @@ import {
   type AttentionDensity,
 } from "@/lib/attentionPrefs";
 import { AiInstructionPopover } from "@/components/inbox/AiDraftCard";
+import { useNeedsRelationGuard } from "@/components/contacts/useNeedsRelationGuard";
 
 export function HandoffQueue() {
   usePageTitle(VOCAB.attention.title);
@@ -62,6 +63,8 @@ export function HandoffQueue() {
 
   const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
   const rejectHandoff = useMutation(api.handoffs.rejectHandoff);
+  // Contato que não é cliente (Pessoal, Equipe…): o servidor pede o tipo antes de devolver à IA.
+  const relationGuard = useNeedsRelationGuard();
 
   const [peekBusy, setPeekBusy] = useState(false);
 
@@ -123,11 +126,20 @@ export function HandoffQueue() {
     instruction?: string,
     isGroup?: boolean
   ): Promise<boolean> => {
+    const handoff = handoffs?.find((h) => h._id === handoffId);
+    const retry = () => handleReject(handoffId, instruction, isGroup);
+    const guardContext = handoff?.conversationId
+      ? {
+          conversationId: handoff.conversationId as Id<"conversations">,
+          name: [handoff.contact?.firstName, handoff.contact?.lastName].filter(Boolean).join(" "),
+        }
+      : null;
     try {
-      await rejectHandoff({
+      const result: unknown = await rejectHandoff({
         handoffId: handoffId as Id<"handoffs">,
         ...(instruction ? { instruction } : {}),
       });
+      if (guardContext && relationGuard.intercept(result, guardContext, retry)) return false;
       // Num GRUPO a IA não responde na hora: o gatilho dela é a menção. A
       // instrução vira nota da equipe e entra no próximo turno da sala. Dizer
       // "ela vai responder o cliente" ali seria mentira (review de correção
@@ -141,6 +153,7 @@ export function HandoffQueue() {
       );
       return true;
     } catch (error) {
+      if (guardContext && relationGuard.intercept(error, guardContext, retry)) return false;
       toast.error(errorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
       return false;
     }
@@ -303,6 +316,7 @@ export function HandoffQueue() {
         </div>
       )}
       {peek}
+      {relationGuard.dialog}
     </>
   );
 }

@@ -4,6 +4,14 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Contatos que não são clientes ("Não é cliente" / "Virar lead")
+
+- **Marque quem não é cliente e a IA deixa a pessoa em paz.** Família, equipe, fornecedor, parceiro ou robô que escreve no mesmo WhatsApp pode ser marcado como não-cliente. A partir daí a Atendente IA nunca responde nem lê essas conversas (sem transcrição de áudio, leitura de imagem ou PDF, tradução), não há follow-up, campanha, repasse nem aviso de "mensagem nova", e nada disso conta no limite mensal de atendimentos da IA. O lead dessa pessoa sai do funil (fica arquivado) e a conversa continua na lista, para você ler quando quiser.
+- **Virar lead em um toque.** Se marcou errado ou a pessoa virou cliente, "Virar lead" traz de volta o lead mais recente para o funil (ou cria um na etapa inicial do atendente). Também pelo Telegram, com os botões "Pessoal" e "Virar lead" nos cartões de mensagem nova e de repasse.
+- **Sem tipo continua como hoje.** Contato que ninguém marcou é tratado como cliente: nada muda para quem não usar o recurso.
+- **Importar e exportar o tipo.** A planilha de contatos ganhou a coluna "Tipo de contato" (Lead, Pessoal, Equipe, Fornecedor, Parceiro, Robô), e a importação aceita esses nomes.
+- **API e MCP.** `POST /api/v1/contacts/update` aceita `relation` e passa a exigir a permissão `contacts: edit` (antes bastava `contacts: view`; chaves só de leitura que atualizavam contatos precisam da permissão nova). `GET /api/v1/contacts?relation=` filtra pelo tipo; chaves de membros de IA não mudam o tipo. O evento de webhook `contact.updated` passa a ser emitido quando o tipo muda. Servidor MCP 0.5.0: `crm_update_contact` com `relation` e `crm_list_contacts` com filtro.
+
 ### Novidades
 
 - **Áudios longos transcritos em segundos.** Mensagens de voz longas (a partir de uns 2 minutos) passam a ser transcritas por um serviço externo rápido, com retenção zero de dados, nas organizações que ativaram a IA. Áudios curtos continuam no nosso servidor, e se um dos dois falhar o outro assume. A Atendente IA responde ao que o cliente falou sem esperar minutos.

@@ -35,15 +35,28 @@ const extendedContactFields = {
   customFields: z.record(z.any()).optional().describe("Custom field key-value pairs"),
 };
 
+const CONTACT_RELATIONS = ["customer", "personal", "team", "supplier", "partner", "automated"] as const;
+
 export function registerContactTools(server: McpServer, client: HnbCrmClient) {
   server.tool(
     "crm_list_contacts",
-    "List all contacts in the CRM. Returns an array of contact objects with name, email, phone, company, and enrichment data.",
-    {},
+    "List contacts in the CRM (newest first, paginated by cursor). Each contact has name, email, phone, company, enrichment data and `relation` (contact type: customer = confirmed lead; personal/team/supplier/partner/automated = not a customer — the AI never replies to them and their leads are out of the funnel; absent = not classified, treated as a customer). Filter with `relation`: a type, `none` (not classified) or `non_customer` (any non-customer type). With a filter a page can come back short with hasMore=true — keep following nextCursor.",
+    {
+      relation: z
+        .enum(["customer", "personal", "team", "supplier", "partner", "automated", "none", "non_customer"])
+        .optional()
+        .describe("Filter by contact type: customer, personal, team, supplier, partner, automated, none (not classified) or non_customer (any non-customer type)"),
+      limit: z.number().int().min(1).max(500).optional().describe("Page size (max 500)"),
+      cursor: z.string().optional().describe("nextCursor from the previous page"),
+    },
     { readOnlyHint: true, destructiveHint: false },
-    async () => {
+    async (args) => {
       try {
-        const result = await client.get("/api/v1/contacts");
+        const params: Record<string, string> = {};
+        if (args.relation) params.relation = args.relation;
+        if (args.limit) params.limit = String(args.limit);
+        if (args.cursor) params.cursor = args.cursor;
+        const result = await client.get("/api/v1/contacts", params);
         return successResult(result);
       } catch (error) {
         return errorResult(error);
@@ -85,10 +98,15 @@ export function registerContactTools(server: McpServer, client: HnbCrmClient) {
 
   server.tool(
     "crm_update_contact",
-    "Update an existing contact's information. Only provided fields are changed; omitted fields remain unchanged.",
+    "Update an existing contact's information. Only provided fields are changed; omitted fields remain unchanged. `relation` sets the contact type: personal/team/supplier/partner/automated mark the contact as NOT a customer (the AI attendant stops replying and processing, follow-ups/campaigns stop, open leads are archived); customer brings it back as a lead (restores the most recent lead or creates one); null clears it. Changing `relation` needs contacts:edit and a key of a HUMAN member (AI member keys get 403).",
     {
       contactId: z.string().describe("ID of the contact to update"),
       ...extendedContactFields,
+      relation: z
+        .enum(CONTACT_RELATIONS)
+        .nullable()
+        .optional()
+        .describe("Contact type: customer (lead), personal, team, supplier, partner, automated; null clears (not classified)"),
     },
     { destructiveHint: false, idempotentHint: true },
     async (args) => {

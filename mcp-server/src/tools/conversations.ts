@@ -8,7 +8,7 @@ export function registerConversationTools(
 ) {
   server.tool(
     "crm_list_conversations",
-    "List conversations, optionally filtered by lead ID or by channel account (channelConfigId). Each conversation includes its channel (whatsapp, instagram, messenger, ...), status, and associated lead. By default only 1:1 conversations are returned — WhatsApp group rooms have no lead or contact and only appear with kind=group or kind=all. To send into a group, use crm_send_group_message, not crm_send_message. A conversation with `botSuspicion` and no `clearedAt` (v0.65) is one where the built-in AI attendant stopped replying because the other side looks like a bot — check the pending bot_suspect handoff before messaging it.",
+    "List conversations, optionally filtered by lead ID or by channel account (channelConfigId). Each conversation includes its channel (whatsapp, instagram, messenger, ...), status, and associated lead. By default only 1:1 conversations are returned — WhatsApp group rooms have no lead or contact and only appear with kind=group or kind=all. To send into a group, use crm_send_group_message, not crm_send_message. A conversation with `botSuspicion` and no `clearedAt` (v0.65) is one where the built-in AI attendant stopped replying because the other side looks like a bot — check the pending bot_suspect handoff before messaging it. `contactRelation` mirrors the contact type (personal/team/supplier/partner/automated = not a customer: the AI attendant never replies there).",
     {
       leadId: z.string().optional().describe("Filter by lead ID"),
       channelConfigId: z

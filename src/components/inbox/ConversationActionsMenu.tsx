@@ -41,6 +41,11 @@ interface ConversationActionsMenuProps {
    * renderiza o item é quem sabe se a ação abre um diálogo antes de agir.
    */
   renderExtraItems?: (close: () => void) => React.ReactNode;
+  /**
+   * Seções no topo do menu, antes do Copiloto (conversa 1 a 1: "Atendimento
+   * por IA" e "Contato"). Recebe o fechador do menu, como `renderExtraItems`.
+   */
+  renderLeadingItems?: (close: () => void) => React.ReactNode;
   /** Lead da conversa (ausente em grupo). Habilita "Excluir lead permanentemente…" com `leads:full`. */
   leadId?: Id<"leads">;
   /** Conversa 1 a 1 SEM lead (não é grupo): habilita "Excluir conversa permanentemente…" com `leads:full`. */
@@ -60,6 +65,7 @@ export function ConversationActionsMenu({
   labelIds,
   onArchivedChange,
   renderExtraItems,
+  renderLeadingItems,
   leadId,
   noLead,
   onLeadDeleted,
@@ -161,9 +167,12 @@ export function ConversationActionsMenu({
         sheet={isMobile}
         role="dialog"
         aria-label="Ações da conversa"
-        className={cn("py-1", !isMobile && "w-60")}
+        className={cn("py-1", !isMobile && "w-64")}
       >
         <div>
+          {renderLeadingItems && (
+            <div className="border-b border-border pb-1 mb-1 empty:hidden">{renderLeadingItems(() => setOpen(false))}</div>
+          )}
           {openCopilot && (
             <div className="border-b border-border pb-1 mb-1">
               <button

@@ -27,7 +27,9 @@ describe("call sites da porta resolveEntityNotifications", () => {
     ["aceitar pedido de ajuda", "handoffs.ts", "acceptHandoffCore"],
     ["rejeitar pedido de ajuda", "handoffs.ts", "rejectHandoffCore"],
     ["aprovar rascunho", "attendant.ts", "acceptAiDraftCore"],
-    ["descartar rascunho", "attendant.ts", "discardAiDraftCore"],
+    // Mudou para lib/ (PR1): a porta do tipo de contato descarta sem importar attendant.ts.
+    ["descartar rascunho", "lib/aiDraftOps.ts", "discardAiDraftCore"],
+    ["tipo de contato (cancela repasse)", "lib/contactRelationOps.ts", "cancelPendingHandoffsOfLead"],
     ["regenerar rascunho", "attendant.ts", "requestAiDraftCore"],
     ["devolver à IA (cancela repasse)", "attendant.ts", "returnToAiCore"],
     ["concluir tarefa", "lib/taskOps.ts", "applyTaskCompletion"],

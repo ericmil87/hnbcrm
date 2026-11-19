@@ -367,7 +367,8 @@ export const OPENAPI_SPEC = `{
         "operationId": "listContacts",
         "parameters": [
           { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 500, "maximum": 500 }, "description": "Limite de resultados" },
-          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" }
+          { "name": "cursor", "in": "query", "schema": { "type": "string" }, "description": "Cursor para paginação" },
+          { "name": "relation", "in": "query", "schema": { "type": "string", "enum": ["customer", "personal", "team", "supplier", "partner", "automated", "none", "non_customer"] }, "description": "Filtra pelo tipo de contato: um tipo, none (sem tipo) ou non_customer (qualquer tipo fora do comercial). Com filtro, a página pode vir curta com hasMore=true: siga o nextCursor" }
         ],
         "responses": {
           "200": {
@@ -496,7 +497,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Contatos"],
         "summary": "Atualizar contato",
-        "description": "Atualiza os campos de um contato existente. Requer permissão contacts: view na chave de API.",
+        "description": "Atualiza os campos de um contato existente. Requer permissão contacts: edit na chave de API (era contacts: view). Mudar relation exige chave de membro humano (chave de membro IA recebe 403).",
         "operationId": "updateContact",
         "requestBody": {
           "required": true,
@@ -537,6 +538,7 @@ export const OPENAPI_SPEC = `{
                   "instagramFollowers": { "type": "number", "description": "Seguidores no Instagram" },
                   "linkedinConnections": { "type": "number", "description": "Conexões no LinkedIn" },
                   "socialInfluenceScore": { "type": "number", "minimum": 0, "maximum": 100, "description": "Score de influência social (0-100)" },
+                  "relation": { "type": "string", "nullable": true, "enum": ["customer", "personal", "team", "supplier", "partner", "automated", null], "description": "Tipo de contato. personal/team/supplier/partner/automated = não é cliente (a IA não responde nem processa, leads abertos são arquivados); customer = virar lead (restaura o lead mais recente ou cria um); null limpa" },
                   "customFields": { "type": "object", "additionalProperties": true, "description": "Campos personalizados" }
                 }
               }
@@ -2524,6 +2526,7 @@ export const OPENAPI_SPEC = `{
           "state": { "type": "string", "description": "Estado" },
           "country": { "type": "string", "description": "País" },
           "industry": { "type": "string", "description": "Indústria" },
+          "relation": { "type": "string", "enum": ["customer", "personal", "team", "supplier", "partner", "automated"], "description": "Tipo de contato (ausente = não classificado, tratado como cliente)" },
           "customFields": { "type": "object", "additionalProperties": true, "description": "Campos personalizados" }
         }
       },
@@ -2536,6 +2539,7 @@ export const OPENAPI_SPEC = `{
           "leadId": { "type": "string", "description": "ID do lead associado" },
           "channel": { "type": "string", "enum": ["whatsapp", "telegram", "email", "webchat", "internal", "instagram", "messenger"], "description": "Canal da conversa" },
           "status": { "type": "string", "enum": ["active", "closed"], "description": "Status da conversa" },
+          "contactRelation": { "type": "string", "enum": ["customer", "personal", "team", "supplier", "partner", "automated"], "description": "Espelho do tipo de contato (fora do comercial = a IA não atende)" },
           "messageCount": { "type": "integer", "description": "Total de mensagens" }
         }
       },

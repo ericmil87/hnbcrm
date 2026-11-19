@@ -15,6 +15,7 @@ import type { InboxMessage } from "@/components/inbox/types";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { useRetryDelivery } from "@/components/inbox/useRetryDelivery";
+import { useNeedsRelationGuard } from "@/components/contacts/useNeedsRelationGuard";
 import { usePermissions } from "@/hooks/usePermissions";
 import { VOCAB } from "@/lib/vocab";
 
@@ -122,6 +123,8 @@ export function HandoffPeekSlideOver({
   // Terceira saída além de aceitar/rejeitar: instruir a IA e revisar o
   // rascunho depois, sem tomar a conversa para si agora.
   const requestAiDraft = useMutation(api.attendant.requestAiDraft);
+  // Contato que não é cliente: o servidor pede o tipo antes de acionar a IA.
+  const relationGuard = useNeedsRelationGuard();
   const [instructOpen, setInstructOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [instructing, setInstructing] = useState(false);
@@ -133,15 +136,22 @@ export function HandoffPeekSlideOver({
     const text = instruction.trim();
     if (!conversationId || !text) return;
     setInstructing(true);
+    const guardContext = {
+      conversationId: conversationId as Id<"conversations">,
+      name: `${handoff.contact?.firstName ?? ""} ${handoff.contact?.lastName ?? ""}`.trim(),
+      confirmLabel: "Virar lead e pedir sugestão",
+    };
     try {
-      await requestAiDraft({
+      const result: unknown = await requestAiDraft({
         conversationId: conversationId as Id<"conversations">,
         instruction: text,
       });
+      if (relationGuard.intercept(result, guardContext, () => void handleInstruct())) return;
       setInstruction("");
       setInstructOpen(false);
       toast.success("Instrução enviada. A IA vai propor uma resposta para você revisar em Conversas");
     } catch (e) {
+      if (relationGuard.intercept(e, guardContext, () => void handleInstruct())) return;
       toast.error(mutationErrorMessage(e, "Não foi possível enviar a instrução. Tente de novo."));
     } finally {
       setInstructing(false);
@@ -500,6 +510,7 @@ export function HandoffPeekSlideOver({
       </div>
     </SlideOver>
     <ConfirmDialog {...retryAckDialogProps} />
+    {relationGuard.dialog}
     </>
   );
 }

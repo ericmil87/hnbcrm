@@ -70,6 +70,10 @@ describe("aiStateChipInfo", () => {
   it("item antigo (superado por mensagem mais nova): sem chip", () => {
     expect(aiStateChipInfo({ status: "skipped", reason: "ia_pausada", at, afterLastInbound: false })).toBeNull();
   });
+
+  it("contato que não é cliente não vira 'IA em espera' (vale o 'IA desligada · <Tipo>')", () => {
+    expect(aiStateChipInfo({ status: "skipped", reason: "contato_nao_cliente", at, afterLastInbound: true })).toBeNull();
+  });
 });
 
 describe("readKindFilter", () => {

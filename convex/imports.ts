@@ -114,6 +114,8 @@ export function rowLimitMessage(rows: number): string {
 export { encodeHeaderKey, invalidHeader, mappingForHeaders } from "./lib/importKeys";
 import { encodeHeaderKey, mappingForHeaders } from "./lib/importKeys";
 import { leadCreationStagePatch } from "./lib/leadStageMove";
+import { autoLeadArchivePatch, isContactRelation, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
+import { setContactRelationCore } from "./lib/contactRelationOps";
 import { deleteMetaIdentitiesForContact } from "./lib/metaIdentity";
 import { deleteContactAvatarArtifacts } from "./lib/contactAvatarOps";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
@@ -133,6 +135,34 @@ function sameValue(a: unknown, b: unknown): boolean {
     (a !== null && typeof a === "object") || (b !== null && typeof b === "object");
   if (complex) return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   return a === b;
+}
+
+/**
+ * PR1: aplica a coluna "Tipo de contato" de uma linha importada pela porta
+ * única (`quiet`: a importação audita uma vez por job). Ator = quem pediu a
+ * importação (humano). Devolve true quando o tipo mudou.
+ */
+async function applyImportedRelation(
+  ctx: MutationCtx,
+  job: Doc<"importJobs">,
+  contactId: Id<"contacts">,
+  raw: unknown
+): Promise<boolean> {
+  if (!isContactRelation(raw)) return false;
+  const contact = await ctx.db.get(contactId);
+  if (!contact || contact.relation === raw) return false;
+  const actor = await ctx.db.get(job.requestedBy);
+  if (!actor || actor.organizationId !== contact.organizationId || actor.type === "ai") return false;
+  await setContactRelationCore(ctx, {
+    contact,
+    relation: raw,
+    actor,
+    source: "import",
+    quiet: true,
+    // Planilha com "Lead" não ressuscita negócio arquivado à mão: só desfaz um "não-cliente".
+    restoreLead: isOffBusiness(contact.relation),
+  });
+  return true;
 }
 
 /** Campos de contato que a importação pode escrever (whitelist explícita). */
@@ -1079,8 +1109,13 @@ export const internalProcessBatch = internalMutation({
               patch.searchText = buildSearchText(merged as any) || undefined;
               patch.updatedAt = now;
               await ctx.db.patch(existing._id, patch as any);
-              updated.push({ id: existing._id, before });
             }
+            // PR1: "Tipo de contato" passa pela porta única (arquiva/restaura
+            // leads, espelho, follow-ups); o rollback volta pela mesma porta.
+            if (await applyImportedRelation(ctx, job, existing._id, value.relation)) {
+              before.relation = existing.relation ?? null;
+            }
+            if (Object.keys(before).length > 0) updated.push({ id: existing._id, before });
             updatedCount++;
             continue;
           }
@@ -1099,6 +1134,7 @@ export const internalProcessBatch = internalMutation({
           doc.searchText = buildSearchText(doc as any) || undefined;
           const contactId = await ctx.db.insert("contacts", doc as any);
           createdIds.push(contactId);
+          await applyImportedRelation(ctx, job, contactId, value.relation);
           created++;
           continue;
         }
@@ -1194,7 +1230,10 @@ export const internalProcessBatch = internalMutation({
           ? context.sources.find((s) => normalizeLabel(s.name) === normalizeLabel(sourceName))
           : undefined;
 
+        // PR1: lead importado para contato marcado fora do comercial nasce arquivado.
+        const leadContact = contactId ? await ctx.db.get(contactId) : null;
         const leadId = await ctx.db.insert("leads", {
+          ...autoLeadArchivePatch(leadContact?.relation, now),
           organizationId,
           title: String(value.title),
           contactId,
@@ -1311,7 +1350,23 @@ export const internalRollbackBatch = internalMutation({
       if (!contact || contact.organizationId !== job.organizationId) continue;
       const patch: Record<string, unknown> = {};
       for (const [field, before] of Object.entries(item.before)) {
+        // PR1: o tipo de contato volta pela porta única (desfaz arquivamento etc.).
+        if (field === "relation") continue;
         patch[field] = before === null ? undefined : before;
+      }
+      if ("relation" in item.before) {
+        const actor = await ctx.db.get(job.requestedBy);
+        const previous = item.before.relation;
+        if (actor && actor.type !== "ai" && (previous === null || isContactRelation(previous))) {
+          await setContactRelationCore(ctx, {
+            contact,
+            relation: previous as ContactRelation | null,
+            actor,
+            source: "import",
+            quiet: true,
+          });
+          reverted++;
+        }
       }
       if (Object.keys(patch).length === 0) continue;
       const merged: Record<string, unknown> = { ...contact };

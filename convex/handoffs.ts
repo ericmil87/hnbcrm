@@ -19,6 +19,7 @@ import { parseCursor, buildCursorFromCreationTime, paginateResults } from "./lib
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
 import { scheduleWebhookEvent } from "./lib/webhookDispatch";
 import { maybeScheduleHandoffCardsUpdate } from "./lib/telegramRelay";
+import { assertAiAllowedForLead } from "./lib/contactRelationGuard";
 
 const APP_URL = () => resolveAppUrl();
 
@@ -557,6 +558,9 @@ async function rejectHandoffCore(
   if (handoff.status !== "pending") {
     throw new Error("Este repasse já foi resolvido");
   }
+  // PR1 "Não é cliente": recusar = devolver à IA. Contato fora do comercial →
+  // ConvexError {code:"needs_relation"} ANTES de qualquer escrita.
+  await assertAiAllowedForLead(ctx.db, await getLeadRef(ctx.db, handoff.leadId));
 
   const now = Date.now();
 

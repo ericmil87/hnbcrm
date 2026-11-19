@@ -14,6 +14,7 @@
  * não bate com o da campanha é um zumbi (pause/resume no meio) e sai.
  */
 import { phoneLookupCandidates } from "./lib/phone";
+import { isOffBusiness } from "./lib/contactRelation";
 import { contactNumberWasChecked, isOptedOutAnySpelling, setWhatsappCheck } from "./lib/whatsappCheck";
 import { v } from "convex/values";
 import { internalMutation, internalAction, internalQuery, MutationCtx } from "./_generated/server";
@@ -150,6 +151,21 @@ async function hasOutstanding(ctx: MutationCtx, campaignId: Id<"campaigns">): Pr
  * anterior (no dia 1 UTC isso e todas; se o cron falhar, o dia seguinte recupera).
  * Lotes de 50 com continuacao.
  */
+/** PR1: o contato do destinatário (por id ou por telefone, 12/13 dígitos) está fora do comercial? */
+export async function recipientIsNonCustomer(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  recipient: Pick<Doc<"campaignRecipients">, "contactId" | "phone">
+): Promise<boolean> {
+  if (recipient.contactId) {
+    const contact = await ctx.db.get(recipient.contactId);
+    if (contact && contact.organizationId === organizationId && isOffBusiness(contact.relation)) return true;
+  }
+  if (!recipient.phone) return false;
+  const contacts = await findContactsByPhoneCandidates(ctx, organizationId, recipient.phone);
+  return contacts.some((c) => isOffBusiness(c.relation));
+}
+
 export const internalResumePlanQuotaCampaigns = internalMutation({
   args: {},
   returns: v.object({ resumed: v.number() }),
@@ -291,6 +307,23 @@ export const tick = internalMutation({
     // o "telefone" dela é o JID, e opt-out de grupo é parar de acompanhar (D13).
     if (!recipient.groupChatId && (await isOptedOutAnySpelling(ctx, campaign.organizationId, recipient.phone))) {
       await transitionRecipient(ctx, recipient, "opted_out", { skipReason: "suppressed" }, { now, force: true });
+      const fresh = (await ctx.db.get(campaign._id))!;
+      await scheduleCampaignTick(ctx, fresh, now, now);
+      return null;
+    }
+
+    // PR1 "Não é cliente": destinatário cujo contato está marcado fora do
+    // comercial (Pessoal, Equipe…) nunca recebe campanha — vale para CSV,
+    // membros de grupo e listas (o público por lead já exclui o lead arquivado).
+    // Antes da checagem do número no gateway (não gasta consulta).
+    if (!recipient.groupChatId && (await recipientIsNonCustomer(ctx, campaign.organizationId, recipient))) {
+      await transitionRecipient(
+        ctx,
+        recipient,
+        "skipped",
+        { skipReason: "non_customer", lastError: "Contato marcado como não-cliente" },
+        { now, force: true }
+      );
       const fresh = (await ctx.db.get(campaign._id))!;
       await scheduleCampaignTick(ctx, fresh, now, now);
       return null;

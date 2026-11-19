@@ -22,6 +22,7 @@ import {
 } from "./inboundRouting";
 import { channelConfigPatchFor } from "./conversationListFields";
 import { findParticipantByKey, patchParticipantByKey } from "./groupParticipantsStore";
+import { contactRelationMirrorFor } from "./contactRelationGuard";
 
 export interface GroupMemberLeadResult {
   contactId: Id<"contacts">;
@@ -85,6 +86,8 @@ export async function createLeadFromGroupMemberCore(
       leadId,
       channel: "whatsapp",
       ...(await channelConfigPatchFor(ctx, {}, group.channelConfigId)),
+      // Espelho do tipo de contato (PR1), como em `getOrCreateConversation`.
+      ...(await contactRelationMirrorFor(ctx.db, leadId)),
       status: "active",
       messageCount: 0,
       createdAt: now,

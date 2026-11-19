@@ -20,6 +20,7 @@
 //     history imports are never auto-transcribed.
 
 import { v } from "convex/values";
+import { isOffBusiness } from "./lib/contactRelation";
 import { withMessageSearchPatch } from "./lib/messageSearch";
 import {
   action,
@@ -546,6 +547,9 @@ export const internalGetAudioMessageIfEligible = internalQuery({
     // conveniência do inbox, senão ele responderia "não consigo ouvir áudio".
     const org = await ctx.db.get(message.organizationId);
     if (!shouldTranscribeAudio(org, config)) return null;
+    // PR1: contato fora do comercial nunca é transcrito automaticamente (a
+    // porta `scheduleAudioTranscription` já barra; isto cobre a re-tentativa).
+    if (isOffBusiness(conversation?.contactRelation)) return null;
 
     return {
       messageId: message._id,

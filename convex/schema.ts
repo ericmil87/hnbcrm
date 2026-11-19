@@ -4,6 +4,7 @@ import { authTables } from "@convex-dev/auth/server";
 import { uiThemeValidator } from "./lib/uiTheme";
 import { onboardingDraftValidator } from "./lib/onboardingDraft";
 import { onboardingBlockValidator } from "./lib/onboardingBlocks";
+import { contactRelationMetaValidator, contactRelationValidator } from "./lib/contactRelation";
 
 // Shared saved-view filters validator — single source of truth, reused by
 // convex/savedViews.ts arg validators (never duplicate this shape inline).
@@ -1147,6 +1148,14 @@ const applicationTables = {
     // contato com aiOptOut nunca recebe resposta automática (escala p/ humano).
     aiOptOut: v.optional(v.boolean()),
 
+    // Tipo de contato (PR1 "Não é cliente / Virar lead", lib/contactRelation.ts).
+    // Ausente = não classificado (comporta-se como cliente, como antes).
+    // Pessoal/Equipe/Fornecedor/Parceiro/Robô = fora do comercial: a IA nunca
+    // responde nem processa, leads fora do funil. Escrita SÓ pela porta única
+    // `setContactRelationCore` (lib/contactRelationOps.ts).
+    relation: v.optional(contactRelationValidator),
+    relationMeta: v.optional(contactRelationMetaValidator),
+
     // Tradução automática (F1): idioma preferido (BCP-47 curto, lib/languages.ts).
     preferredLanguage: v.optional(v.string()),
     languageSource: v.optional(v.union(v.literal("manual"), v.literal("auto"))),
@@ -1590,6 +1599,10 @@ const applicationTables = {
     // Responsável pela CONVERSA (setor/fila). Independe de `leads.assignedTo`.
     assignedTo: v.optional(v.id("teamMembers")),
     contactKind: v.optional(contactKindValidator), // ausente = "lead"
+    // Espelho de `contacts.relation` do contato do lead (selo/filtro da lista e
+    // portões que só têm a conversa). Gravado na criação da conversa, pela porta
+    // única `setContactRelationCore` e quando o lead troca de contato.
+    contactRelation: v.optional(contactRelationValidator),
     // Tempo de primeira resposta: carimbados uma vez, pelo ingest (inbound) e
     // pelos pontos comuns de saída (outbound). Aditivos para toda org.
     firstInboundAt: v.optional(v.number()),
@@ -2193,6 +2206,10 @@ const applicationTables = {
     acceptedBy: v.optional(v.id("teamMembers")),
     resolvedBy: v.optional(v.id("teamMembers")),
     notes: v.optional(v.string()),
+    // Por que o repasse foi encerrado quando o status sozinho não diz (aditivo).
+    // `reason:"non_customer"` = cancelado porque o contato foi marcado como
+    // não-cliente (lib/contactRelationOps.ts) — sem literal novo de status.
+    metadata: v.optional(v.object({ reason: v.optional(v.string()) })),
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()),
   })

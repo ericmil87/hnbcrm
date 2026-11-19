@@ -1,4 +1,6 @@
 import { httpRouter } from "convex/server";
+import { CONTACT_RELATIONS, isContactRelation, type ContactRelation } from "./lib/contactRelation";
+
 import { ConvexError } from "convex/values";
 import { httpAction } from "./_generated/server";
 import { Id } from "./_generated/dataModel";
@@ -38,6 +40,9 @@ import { telegramWebhook } from "./telegramHttp";
 import { asaasWebhook } from "./billingHttp";
 import { clientIpKey } from "./lib/onboardingBudget";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
+
+/** Valores aceitos em `GET /api/v1/contacts?relation=`. */
+const CONTACT_RELATION_FILTERS: readonly string[] = [...CONTACT_RELATIONS, "none", "non_customer"];
 
 const http = httpRouter();
 
@@ -172,7 +177,7 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   "GET /api/v1/contacts": { category: "contacts", level: "view" }, // contacts.getContacts (requireAuth)
   "POST /api/v1/contacts/create": { category: "contacts", level: "edit" }, // contacts.createContact
   "GET /api/v1/contacts/get": { category: "contacts", level: "view" }, // contacts.getContact (requireAuth)
-  "POST /api/v1/contacts/update": { category: "contacts", level: "view" }, // contacts.updateContact (requireAuth)
+  "POST /api/v1/contacts/update": { category: "contacts", level: "edit" }, // contacts.updateContact; PR1: subiu de view para edit (aceita `relation`, porta contacts.setContactRelation = contacts:edit)
   "POST /api/v1/contacts/enrich": { category: "contacts", level: "edit" }, // só internalMutation → nível de escrita
   "GET /api/v1/contacts/gaps": { category: "contacts", level: "view" }, // contacts.getContactEnrichmentGaps (requireAuth)
   "GET /api/v1/contacts/search": { category: "contacts", level: "view" }, // contacts.searchContacts (requireAuth)
@@ -753,11 +758,18 @@ http.route({
       const url = new URL(request.url);
       const limit = Math.min(parseInt(url.searchParams.get("limit") || "500"), 500);
       const cursor = url.searchParams.get("cursor") || undefined;
+      // PR1: `?relation=` = um tipo (customer|personal|team|supplier|partner|automated),
+      // `none` (sem tipo) ou `non_customer` (qualquer tipo fora do comercial).
+      const relationParam = url.searchParams.get("relation") || undefined;
+      if (relationParam !== undefined && !CONTACT_RELATION_FILTERS.includes(relationParam)) {
+        return errorResponse(`relation inválido: use ${CONTACT_RELATION_FILTERS.join(", ")}`, 400);
+      }
 
       const result = await ctx.runQuery(internal.contacts.internalGetContacts, {
         organizationId: apiKeyRecord.organizationId,
         limit,
         cursor,
+        ...(relationParam ? { relation: relationParam as ContactRelation | "none" | "non_customer" } : {}),
       });
 
       return jsonResponse(result as any);
@@ -867,6 +879,14 @@ http.route({
       const body = await request.json();
       if (!body.contactId) return errorResponse("contactId required", 400);
 
+      // PR1: tipo de contato. Valor do catálogo ou null (limpa); só chave de membro humano.
+      if (body.relation !== undefined && body.relation !== null && !isContactRelation(body.relation)) {
+        return errorResponse(`relation inválido: use ${CONTACT_RELATIONS.join(", ")} ou null`, 400);
+      }
+      if (body.relation !== undefined && apiKeyRecord.teamMember?.type === "ai") {
+        return errorResponse(PERMISSION_DENIED_MESSAGE, 403);
+      }
+
       // Tradução automática (F1): idioma preferido validado pelo catálogo.
       if (body.preferredLanguage !== undefined && !isValidPreferredLanguageBody(body.preferredLanguage)) {
         return errorResponse(
@@ -908,6 +928,7 @@ http.route({
         socialInfluenceScore: body.socialInfluenceScore,
         customFields: body.customFields,
         ...(typeof body.preferredLanguage === "string" ? { preferredLanguage: body.preferredLanguage } : {}),
+        ...(body.relation !== undefined ? { relation: body.relation as ContactRelation | null } : {}),
         teamMemberId: apiKeyRecord.teamMemberId,
       });
 
