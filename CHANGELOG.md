@@ -14,6 +14,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Correções
 
+- **Conversa sem lead não derruba mais a tela e pode ser excluída.** Conversas antigas cujo lead já não existia (por exemplo, testes de integração) quebravam a página ao abrir "Excluir". Agora o diálogo avisa que o lead não existe mais e a conversa pode ser excluída por quem tem permissão total em leads (as mensagens saem junto e a exclusão fica no log de auditoria).
 - **Áudio não faz mais o cliente parecer robô.** Quem mandava várias mensagens de voz seguidas podia ser marcado como "possível robô" e a IA parava de responder. A proteção contra robôs agora julga o áudio pelo que foi falado (a transcrição) e ignora fotos, arquivos e chamadas que não têm texto.
 - **Áudios longos voltam a ser transcritos.** Mensagens de voz com mais de uns 2 minutos falhavam na transcrição. O tempo de espera agora acompanha o tamanho do áudio, e uma falha passageira (serviço lento ou sem rede) é tentada de novo automaticamente.
 - **A Atendente IA espera a transcrição de áudios longos.** Antes ela esperava no máximo 1 minuto e, num áudio de vários minutos, respondia que não tinha conseguido ouvir. Agora a espera acompanha o tamanho do áudio (até 11 minutos) e ela responde ao que o cliente falou.

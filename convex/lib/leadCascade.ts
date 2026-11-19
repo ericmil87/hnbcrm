@@ -484,6 +484,45 @@ export async function hardDeleteLead(
   return { deletedContactId: contact._id };
 }
 
+/**
+ * Exclusão de conversa ÓRFÃ (sem lead: `leadId` ausente ou apontando para um
+ * lead que não existe mais). Não há lead para a cascata normal varrer, então
+ * a conversa sai por aqui: audit com snapshot + `deleteConversationCascade`.
+ * Devolve `false` quando o orçamento acabou; já deixa re-agendado
+ * `conversations.internalContinueOrphanDelete` (idempotente).
+ */
+export async function hardDeleteOrphanConversation(
+  ctx: MutationCtx,
+  args: { conversation: Doc<"conversations">; actorId?: Id<"teamMembers">; actorType: CascadeActorType }
+): Promise<boolean> {
+  const { conversation } = args;
+  await ctx.db.insert("auditLogs", {
+    organizationId: conversation.organizationId,
+    entityType: "conversation",
+    entityId: conversation._id,
+    action: "delete",
+    actorId: args.actorId,
+    actorType: args.actorType,
+    changes: { before: buildEntitySnapshot(conversation) },
+    metadata: { channel: conversation.channel, orphanLeadId: conversation.leadId },
+    description: "Excluiu uma conversa sem lead",
+    severity: "high",
+    createdAt: Date.now(),
+  });
+  return await continueOrphanConversationDelete(ctx, conversation._id);
+}
+
+export async function continueOrphanConversationDelete(
+  ctx: MutationCtx,
+  conversationId: Id<"conversations">
+): Promise<boolean> {
+  const done = await deleteConversationCascade(ctx, conversationId, newBudget(), "conversation_deleted");
+  if (!done) {
+    await ctx.scheduler.runAfter(0, internal.conversations.internalContinueOrphanDelete, { conversationId });
+  }
+  return done;
+}
+
 /** Agenda UM job sequencial para os filhos de todos os leads/contatos do lote. */
 export async function scheduleLeadCascade(
   ctx: MutationCtx,

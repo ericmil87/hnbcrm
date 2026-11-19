@@ -442,6 +442,8 @@ export const bulkDeleteLeads = mutation({
 export const getLeadDeletionImpact = query({
   args: { leadId: v.id("leads") },
   returns: v.object({
+    // false = lead inexistente (conversa órfã): o diálogo avisa em vez de quebrar a tela.
+    found: v.boolean(),
     conversationCount: v.number(),
     taskCount: v.number(),
     documentCount: v.number(),
@@ -450,7 +452,18 @@ export const getLeadDeletionImpact = query({
   }),
   handler: async (ctx, args) => {
     const lead = await ctx.db.get(args.leadId);
-    if (!lead) throw new Error("Lead not found");
+    if (!lead) {
+      // Sem lead não há org para checar permissão; só exige sessão e não revela nada.
+      if (!(await ctx.auth.getUserIdentity())) throw new Error("Not authenticated");
+      return {
+        found: false,
+        conversationCount: 0,
+        taskCount: 0,
+        documentCount: 0,
+        contactName: null,
+        contactHasOtherLeads: false,
+      };
+    }
 
     await requirePermission(ctx, lead.organizationId, "leads", "full");
 
@@ -479,6 +492,7 @@ export const getLeadDeletionImpact = query({
     }
 
     return {
+      found: true,
       conversationCount: conversations.length,
       taskCount: tasks.length,
       documentCount: documents.length,

@@ -319,6 +319,7 @@ export function ConversationHeader({
             : undefined
       }
       leadId={!isGroup && conversation.leadId ? (conversation.leadId as Id<"leads">) : undefined}
+      noLead={!isGroup && !conversation.leadId}
       onLeadDeleted={onLeadDeleted}
       onSearchInConversation={() => setSearching(true)}
       triggerRef={menuTriggerRef}

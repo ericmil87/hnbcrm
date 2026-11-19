@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 
 interface DeleteLeadDialogProps {
   leadId: Id<"leads">;
+  /** Conversa de onde o diálogo abriu: permite excluí-la quando o lead não existe mais (órfã). */
+  conversationId?: Id<"conversations">;
   onClose: () => void;
   onDeleted: () => void;
 }
@@ -19,12 +21,15 @@ interface DeleteLeadDialogProps {
 /* Diálogo próprio (e não o ConfirmDialog) porque a confirmação carrega o
    impacto da exclusão e a escolha de excluir o contato junto. Mostra o
    toast de sucesso — quem chama não deve duplicar. */
-export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialogProps) {
+export function DeleteLeadDialog({ leadId, conversationId, onClose, onDeleted }: DeleteLeadDialogProps) {
   const impact = useQuery(api.leads.getLeadDeletionImpact, { leadId });
   const deleteLead = useMutation(api.leads.deleteLead);
+  const deleteOrphan = useMutation(api.conversations.deleteOrphanConversation);
   const [deleteContact, setDeleteContact] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Lead já apagado (conversa órfã): não há o que contar nem contato a oferecer.
+  const orphan = impact?.found === false;
   const contactName = impact?.contactName ?? null;
   const contactIsExclusive = !!contactName && impact?.contactHasOtherLeads === false;
   const withContact = contactIsExclusive && deleteContact;
@@ -33,8 +38,14 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
     if (deleting) return;
     setDeleting(true);
     try {
-      await deleteLead({ leadId, deleteContact: withContact ? true : undefined });
-      toast.success("Lead excluído permanentemente");
+      if (orphan) {
+        if (!conversationId) throw new Error("Conversa não informada");
+        await deleteOrphan({ conversationId });
+        toast.success("Conversa excluída permanentemente");
+      } else {
+        await deleteLead({ leadId, deleteContact: withContact ? true : undefined });
+        toast.success("Lead excluído permanentemente");
+      }
       onClose();
       onDeleted();
     } catch (error) {
@@ -81,6 +92,11 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
               <div className="flex justify-center py-2">
                 <Spinner size="sm" />
               </div>
+            ) : orphan ? (
+              <p>
+                O lead desta conversa não existe mais. A conversa e todas as mensagens dela serão
+                excluídas.
+              </p>
             ) : (
               <ul className="list-disc pl-5 space-y-1">
                 <li>
@@ -156,7 +172,7 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
           <Button
             variant="danger"
             onClick={handleConfirm}
-            disabled={deleting || impact === undefined}
+            disabled={deleting || impact === undefined || (orphan && !conversationId)}
             className="flex-1"
           >
             {deleting ? "Excluindo…" : "Excluir permanentemente"}

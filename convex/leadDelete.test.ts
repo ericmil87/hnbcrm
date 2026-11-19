@@ -499,6 +499,7 @@ describe("getLeadDeletionImpact", () => {
 
     const impacto = await asAdmin.query(api.leads.getLeadDeletionImpact, { leadId });
     expect(impacto).toEqual({
+      found: true,
       conversationCount: 1,
       taskCount: 1,
       documentCount: 1,
@@ -537,5 +538,102 @@ describe("internalDeleteLead (REST)", () => {
       return logs[0];
     });
     expect(log.changes?.before?.title).toBe("Lead via API");
+  });
+});
+
+describe("conversa órfã (lead inexistente ou ausente)", () => {
+  // Lead real inserido e apagado direto: deixa um Id válido que não resolve mais.
+  async function orphanConversation(s: Seed, withLeadId: boolean, messageCount = 3) {
+    const leadId = await insertLead(t, s, "Fantasma");
+    await t.run(async (ctx) => {
+      await ctx.db.delete(leadId);
+    });
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const conversationId = await ctx.db.insert("conversations", {
+        organizationId: s.organizationId,
+        ...(withLeadId ? { leadId } : {}),
+        channel: "webchat",
+        status: "active",
+        messageCount,
+        createdAt: now,
+        updatedAt: now,
+      });
+      for (let i = 0; i < messageCount; i++) {
+        await ctx.db.insert("messages", {
+          organizationId: s.organizationId,
+          conversationId,
+          direction: "inbound",
+          senderType: "contact",
+          content: `m${i}`,
+          contentType: "text",
+          isInternal: false,
+          createdAt: now + i,
+        });
+      }
+      return { conversationId, leadId };
+    });
+  }
+
+  test("getLeadDeletionImpact de lead inexistente não lança", async () => {
+    const s = await seed(t);
+    const { leadId } = await orphanConversation(s, true);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const impacto = await asAdmin.query(api.leads.getLeadDeletionImpact, { leadId });
+    expect(impacto.found).toBe(false);
+    expect(impacto.conversationCount).toBe(0);
+  });
+
+  test("admin exclui a órfã (com leadId pendurado e sem leadId): mensagens saem e audita", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    for (const withLeadId of [true, false]) {
+      const { conversationId } = await orphanConversation(s, withLeadId);
+      await asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId });
+      await drainScheduler(t);
+      await t.run(async (ctx) => {
+        expect(await ctx.db.get(conversationId)).toBeNull();
+        const msgs = await ctx.db
+          .query("messages")
+          .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+          .collect();
+        expect(msgs).toHaveLength(0);
+        const audit = await ctx.db
+          .query("auditLogs")
+          .withIndex("by_entity", (q) => q.eq("entityType", "conversation").eq("entityId", conversationId))
+          .collect();
+        expect(audit).toHaveLength(1);
+      });
+    }
+  });
+
+  test("recusa conversa com lead existente e quem não tem leads:full", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s2` });
+    const leadId = await insertLead(t, s, "Vivo");
+    await insertLeadHistory(t, s, leadId);
+    const live = await t.run(async (ctx) =>
+      (await ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", leadId)).first())!._id
+    );
+    await expect(
+      asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId: live })
+    ).rejects.toThrow("tem lead");
+
+    const { conversationId } = await orphanConversation(s, false);
+    await expect(
+      asAgent.mutation(api.conversations.deleteOrphanConversation, { conversationId })
+    ).rejects.toThrow();
+  });
+
+  test("volume acima do orçamento: re-agenda e termina", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const { conversationId } = await orphanConversation(s, false, CASCADE_WRITE_BUDGET + 40);
+    await asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId });
+    await drainScheduler(t);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(conversationId)).toBeNull();
+    });
   });
 });
