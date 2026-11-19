@@ -506,10 +506,13 @@ A CSV import wizard run (contacts or leads), persisted server-side so the flow c
 | Field | Type | Description |
 |-------|------|-------------|
 | requestedBy | Id<teamMembers> | Who started the import |
-| status | enum | mapping, previewing, preview_ready, running, completed, completed_with_errors, failed, rolled_back, canceled |
+| status | enum | mapping, previewing, preview_ready, running, completed, completed_with_errors, failed, rolling_back, rolled_back, canceled |
 | entity | enum | contacts, leads |
-| fileId | Id<files> | Source CSV (fileType import_file) |
+| fileId | Id<files> (optional) | Source CSV (fileType import_file). Absent for phone contacts imports (\`source: "phone_vcf"\`: the .vcf never leaves the browser) |
 | fileName | string | Original file name |
+| source | "phone_vcf" (optional) | Set for "Importar contatos do celular" (app only); absent = CSV import |
+| createLeads | boolean (optional) | Phone import: "create a lead in the funnel" was on |
+| heartbeatAt | number (optional) | Last processed batch; a \`running\` job without a heartbeat for 15 min is closed as \`failed\` when the next import starts |
 | detectedHeaders | string[] | Headers found in the file, in order |
 | suggestedMapping | Record<string,string> | Auto-suggested header → field (PT-BR/EN aliases) |
 | mapping | Record<string,string> | Header → field, \`cf:<key>\` for a custom field, or \`__ignore__\` |
@@ -1289,7 +1292,7 @@ Poll a single import job.
 
 **Response:** \`{ job: { status, entity, fileName, detectedHeaders, suggestedMapping, mapping, duplicateStrategy, dryRun, progress, error, ... } }\`
 
-Statuses: \`mapping\` → \`previewing\` → \`preview_ready\` → \`running\` → \`completed\` | \`completed_with_errors\`, plus \`failed\`, \`rolled_back\` and \`canceled\`.
+Statuses: \`mapping\` → \`previewing\` → \`preview_ready\` → \`running\` → \`completed\` | \`completed_with_errors\`, plus \`failed\`, \`rolling_back\` → \`rolled_back\` and \`canceled\`. A \`running\` job with no progress for 15 minutes is closed as \`failed\` (it can then be undone or canceled).
 
 #### POST /api/v1/imports/mapping
 Set the column → field mapping. Keys are the **raw file headers** (the REST layer encodes them internally; \`detectedHeaders\`, \`suggestedMapping\` and \`mapping\` always come back with raw headers too).
@@ -1311,7 +1314,7 @@ Run the import for real, in batches of 50 rows. Only from \`preview_ready\` and 
 **Response:** \`{ success: true }\`
 
 #### POST /api/v1/imports/rollback
-Undo a finished import: deletes the created records and reverts the updated ones to their previous values (status becomes \`rolled_back\`). Only for \`completed\` / \`completed_with_errors\`. Side effects already fired (activities, webhooks) are NOT reverted. **Body:** \`{ jobId }\`
+Undo a finished import: deletes the created records and reverts the updated ones to their previous values (status \`rolling_back\`, then \`rolled_back\`). For \`completed\` / \`completed_with_errors\`, and \`failed\` jobs that had started writing. Leads created by the import are deleted through the regular lead deletion (audit + \`lead.deleted\`). Side effects already fired (activities, webhooks) are NOT reverted. **Body:** \`{ jobId }\`
 
 **Response:** \`{ success: true }\`
 
@@ -1952,7 +1955,7 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 \`entity\` | \`full_backup\`
 
 ### Import Job Status
-\`mapping\` | \`previewing\` | \`preview_ready\` | \`running\` | \`completed\` | \`completed_with_errors\` | \`failed\` | \`rolled_back\` | \`canceled\`
+\`mapping\` | \`previewing\` | \`preview_ready\` | \`running\` | \`completed\` | \`completed_with_errors\` | \`failed\` | \`rolling_back\` | \`rolled_back\` | \`canceled\`
 
 ### Import Duplicate Strategy
 \`skip\` | \`update\` | \`create\`

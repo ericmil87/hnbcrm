@@ -16,7 +16,8 @@
  * `importRun.internalRunRollback`), um audit por transição de job e um
  * `import.completed` por job — sem activity/audit/webhook por contato (mesma
  * exceção deliberada do import de CSV). As linhas esperam em `importStagedRows`
- * (50 por doc) e cada lote agenda o próximo (`internal.*`).
+ * (25 por doc) e cada lote agenda o próximo (`internal.*`), gravando
+ * `heartbeatAt`; job sem batimento há 15 min é encerrado (`lib/importJobOps.ts`).
  *
  * Regras de cada linha:
  * - dedupe por telefone com as variantes do 9º dígito
@@ -30,9 +31,12 @@
  *   contato não tiver lead nenhum;
  * - nunca envia mensagem.
  *
- * RBAC: `contacts:edit`, só humano (a porta única recusa IA). Não exige
- * `settings:manage` (o CSV exige porque importa qualquer coluna e leads): esta
- * porta só cria/completa contatos com campos básicos e é desfazível.
+ * RBAC: `contacts:edit`, só humano (a porta única recusa IA), para criar e
+ * completar contatos. Mexer em lead de outros exige `leads:edit_all` ou
+ * `contacts:full` (`canChangeLeads`): "Criar lead no funil" (barrado no início)
+ * e mudar o tipo de contato existente com lead aberto (linha completa o
+ * contato, mantém o tipo e registra o motivo). Não exige `settings:manage` (o
+ * CSV exige porque importa qualquer coluna e leads).
  */
 import { ConvexError, v } from "convex/values";
 import {
@@ -51,8 +55,9 @@ import { resolveDefaultCountry } from "./lib/orgPhone";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import { isOffBusiness, type ContactRelation } from "./lib/contactRelation";
 import { assertHumanRelationActor, attendantPipeline, setContactRelationCore } from "./lib/contactRelationOps";
-import { leadCreationStagePatch } from "./lib/leadStageMove";
-import { IMPORT_BATCH_SIZE, RELATION_RESTORE_KEY } from "./imports";
+import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { canRollbackStatus, RELATION_RESTORE_KEY } from "./imports";
+import { deleteStagedRows, insertImportedLead, releaseStaleImports } from "./lib/importJobOps";
 
 // ===== Limites =====
 
@@ -60,6 +65,11 @@ import { IMPORT_BATCH_SIZE, RELATION_RESTORE_KEY } from "./imports";
 export const MAX_PHONE_IMPORT_ROWS = 5000;
 /** Linhas por chamada de `matchPhoneContacts`. */
 export const MATCH_CHUNK_ROWS = 100;
+/**
+ * Linhas por lote. Menor que os 50 do CSV: uma linha que vira não-cliente passa
+ * pela porta única (arquiva leads, cancela follow-ups/repasses, varre conversas).
+ */
+export const PHONE_BATCH_SIZE = 25;
 const MAX_PHONES_PER_ROW = 5;
 const MAX_EMAILS_PER_ROW = 3;
 const MAX_TEXT = 120;
@@ -172,6 +182,29 @@ async function requireHumanEditor(ctx: QueryCtx | MutationCtx, organizationId: I
   return member;
 }
 
+/**
+ * Mexer em lead dos outros: criar leads ("Criar lead no funil") e mudar o tipo
+ * de contato que já tem lead aberto (Pessoal arquiva o lead de quem quer que
+ * seja). Exige `leads: edit_all` ou `contacts: full`; `contacts: edit` só cria e
+ * completa contatos.
+ */
+export function canChangeLeads(member: Pick<Doc<"teamMembers">, "role" | "permissions" | "type">): boolean {
+  if (member.type === "ai") return false;
+  const perms = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+  return hasPermission(perms, "leads", "edit_all") || hasPermission(perms, "contacts", "full");
+}
+
+export const NO_LEAD_POWER_ROW_ERROR =
+  "Tipo não alterado: o contato tem lead aberto e mudar isso precisa da permissão de editar todos os leads";
+
+async function hasOpenLead(ctx: QueryCtx | MutationCtx, contact: Doc<"contacts">): Promise<boolean> {
+  const leads = await ctx.db
+    .query("leads")
+    .withIndex("by_contact", (q) => q.eq("contactId", contact._id))
+    .take(10);
+  return leads.some((l) => l.organizationId === contact.organizationId && l.archivedAt === undefined);
+}
+
 async function orgDefaultCountry(ctx: QueryCtx | MutationCtx, organizationId: Id<"organizations">): Promise<string> {
   const org = await ctx.db.get(organizationId);
   return resolveDefaultCountry(org?.settings);
@@ -193,7 +226,7 @@ export const getPhoneImportContext = query({
   args: { organizationId: v.id("organizations") },
   returns: v.union(
     v.null(),
-    v.object({ defaultCountry: v.string(), surnames: v.array(v.string()) }),
+    v.object({ defaultCountry: v.string(), surnames: v.array(v.string()), canChangeLeads: v.boolean() }),
   ),
   handler: async (ctx, args) => {
     let member: Doc<"teamMembers">;
@@ -214,7 +247,11 @@ export const getPhoneImportContext = query({
       const last = lastNameOf(name);
       if (last && !surnames.includes(last)) surnames.push(last);
     }
-    return { defaultCountry: await orgDefaultCountry(ctx, args.organizationId), surnames };
+    return {
+      defaultCountry: await orgDefaultCountry(ctx, args.organizationId),
+      surnames,
+      canChangeLeads: canChangeLeads(member),
+    };
   },
 });
 
@@ -233,6 +270,7 @@ export const matchPhoneContacts = query({
       contactId: v.id("contacts"),
       name: v.union(v.string(), v.null()),
       relation: v.union(v.string(), v.null()),
+      hasOpenLead: v.boolean(),
     }),
   ),
   handler: async (ctx, args) => {
@@ -241,7 +279,13 @@ export const matchPhoneContacts = query({
       throw new ConvexError(`No máximo ${MATCH_CHUNK_ROWS} contatos por consulta`);
     }
     const defaultCountry = await orgDefaultCountry(ctx, args.organizationId);
-    const out: Array<{ key: string; contactId: Id<"contacts">; name: string | null; relation: string | null }> = [];
+    const out: Array<{
+      key: string;
+      contactId: Id<"contacts">;
+      name: string | null;
+      relation: string | null;
+      hasOpenLead: boolean;
+    }> = [];
     for (const row of args.rows) {
       // Teto de leituras por consulta: 3 telefones (× 2 grafias × 2 índices) + 3 e-mails por linha.
       const phones = normalizeRowPhones(row.phones, defaultCountry).slice(0, 3);
@@ -254,6 +298,7 @@ export const matchPhoneContacts = query({
         contactId: existing._id,
         name: contactDisplayName(existing),
         relation: existing.relation ?? null,
+        hasOpenLead: await hasOpenLead(ctx, existing),
       });
     }
     return out;
@@ -262,7 +307,7 @@ export const matchPhoneContacts = query({
 
 /**
  * Começa a importação com as linhas escolhidas. Cria o job (`running`), põe as
- * linhas na fila em docs de 50 e agenda o primeiro lote.
+ * linhas na fila em docs de 25 e agenda o primeiro lote.
  */
 export const startPhoneContactsImport = mutation({
   args: {
@@ -281,6 +326,11 @@ export const startPhoneContactsImport = mutation({
         `Escolha no máximo ${MAX_PHONE_IMPORT_ROWS.toLocaleString("pt-BR")} contatos por importação (recebidos ${args.rows.length.toLocaleString("pt-BR")}). Importe o resto em seguida.`,
       );
     }
+    if (args.createLeads && !canChangeLeads(member)) {
+      throw new ConvexError("Criar lead no funil precisa da permissão de editar todos os leads.");
+    }
+    // Job travado (sem batimento há 15 min) não segura a vaga da org.
+    await releaseStaleImports(ctx, args.organizationId, Date.now());
     for (const status of ACTIVE_STATUSES) {
       const running = await ctx.db
         .query("importJobs")
@@ -310,11 +360,12 @@ export const startPhoneContactsImport = mutation({
       progress: { processed: 0, total: args.rows.length, created: 0, updated: 0, skipped: 0, failed: 0 },
       createdAt: now,
       startedAt: now,
+      heartbeatAt: now,
     });
 
     let chunkIndex = 0;
-    for (let start = 0; start < args.rows.length; start += IMPORT_BATCH_SIZE) {
-      const rows: StagedRow[] = args.rows.slice(start, start + IMPORT_BATCH_SIZE).map((row, offset) => ({
+    for (let start = 0; start < args.rows.length; start += PHONE_BATCH_SIZE) {
+      const rows: StagedRow[] = args.rows.slice(start, start + PHONE_BATCH_SIZE).map((row, offset) => ({
         row: start + offset + 1,
         firstName: cleanText(row.firstName),
         lastName: cleanText(row.lastName),
@@ -386,6 +437,8 @@ export const getPhoneContactsImport = query({
       }),
       error: v.optional(v.string()),
       finishedAt: v.optional(v.number()),
+      /** Último batimento (o front avisa quando passa de 15 min). */
+      heartbeatAt: v.optional(v.number()),
     }),
   ),
   handler: async (ctx, args) => {
@@ -404,6 +457,7 @@ export const getPhoneContactsImport = query({
       progress: job.progress,
       error: job.error,
       finishedAt: job.finishedAt,
+      heartbeatAt: job.heartbeatAt ?? job.startedAt,
     };
   },
 });
@@ -418,9 +472,12 @@ export const undoPhoneContactsImport = mutation({
     if (!job || job.organizationId !== args.organizationId || job.source !== "phone_vcf") {
       throw new ConvexError("Importação não encontrada");
     }
-    if (job.status !== "completed" && job.status !== "completed_with_errors") {
-      throw new ConvexError("Só é possível desfazer uma importação concluída");
+    if (job.status === "rolling_back") throw new ConvexError("Esta importação já está sendo desfeita");
+    if (!canRollbackStatus(job)) {
+      throw new ConvexError("Só é possível desfazer uma importação concluída ou que parou no meio");
     }
+    // `rolling_back` antes de agendar: um segundo toque não roda o rollback duas vezes.
+    await ctx.db.patch(job._id, { status: "rolling_back", error: undefined });
     await ctx.db.insert("auditLogs", {
       organizationId: args.organizationId,
       entityType: "importJob",
@@ -478,26 +535,24 @@ async function resolveLeadPipeline(
  * Processa um doc da fila: cria/completa contatos, aplica o tipo pela porta
  * única, cria lead só com `createLeads`, grava a trilha do rollback e agenda
  * o próximo lote (ou o fim pelo `imports.internalFinishImport`).
+ *
+ * A trilha (`before`/`createdIds`) é registrada ANTES de cada escrita: se uma
+ * linha falhar no meio, o que ela já gravou continua desfazível.
  */
 export const internalProcessPhoneChunk = internalMutation({
   args: { jobId: v.id("importJobs"), chunkIndex: v.number(), useAgendaNames: v.optional(v.boolean()) },
   returns: v.null(),
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
+    if (!job || job.status !== "running" || job.source !== "phone_vcf") {
+      // Job encerrado por fora (travado, falhou): a fila restante não serve mais.
+      await deleteStagedRows(ctx, args.jobId);
+      return null;
+    }
     const staged = await ctx.db
       .query("importStagedRows")
       .withIndex("by_job_and_chunk", (q) => q.eq("jobId", args.jobId).eq("chunkIndex", args.chunkIndex))
       .first();
-
-    if (!job || job.status !== "running" || job.source !== "phone_vcf") {
-      // Job encerrado por fora: a fila restante não serve mais para nada.
-      const leftovers = await ctx.db
-        .query("importStagedRows")
-        .withIndex("by_job_and_chunk", (q) => q.eq("jobId", args.jobId))
-        .take(200);
-      for (const doc of leftovers) await ctx.db.delete(doc._id);
-      return null;
-    }
     if (!staged) {
       await ctx.scheduler.runAfter(0, internal.imports.internalFinishImport, { jobId: args.jobId });
       return null;
@@ -506,6 +561,9 @@ export const internalProcessPhoneChunk = internalMutation({
     const organizationId = job.organizationId;
     const actor = await ctx.db.get(job.requestedBy);
     const actorOk = Boolean(actor && actor.organizationId === organizationId && actor.type !== "ai" && !actor.removedAt);
+    // Permissão lida AGORA (pode ter mudado desde o início da importação).
+    const leadPower = actorOk && actor ? canChangeLeads(actor) : false;
+    const createLeads = job.createLeads === true && leadPower;
     const defaultCountry = await orgDefaultCountry(ctx, organizationId);
     const now = Date.now();
 
@@ -519,6 +577,9 @@ export const internalProcessPhoneChunk = internalMutation({
     let pipeline: LeadPipelineCache | undefined;
 
     for (const item of staged.rows) {
+      // Trilha da linha: preenchida antes de cada escrita, salva mesmo se a linha falhar.
+      let trail: { id: Id<"contacts">; before: Record<string, unknown> } | null = null;
+      let isNew = false;
       try {
         if (!actorOk || !actor) throw new Error("Quem pediu a importação não pode mais editar contatos");
         const phones = normalizeRowPhones(item.phones, defaultCountry);
@@ -530,37 +591,36 @@ export const internalProcessPhoneChunk = internalMutation({
         }
         const relation = relationForChoice(item.choice);
         let contact = await findExistingContact(ctx, organizationId, phones, emails);
-        const before: Record<string, unknown> = {};
-        let isNew = false;
 
         if (contact) {
+          const current = contact;
+          trail = { id: current._id, before: {} };
+          const before = trail.before;
           const patch: Record<string, unknown> = {};
           const setField = (field: keyof Doc<"contacts">, next: unknown) => {
-            const current = (contact as Record<string, unknown>)[field];
-            if (next === undefined || current === next) return;
-            before[field] = current === undefined ? null : current;
+            const value = (current as Record<string, unknown>)[field];
+            if (next === undefined || value === next) return;
+            before[field] = value === undefined ? null : value;
             patch[field] = next;
           };
-          const hasName = Boolean(contact.firstName || contact.lastName);
-          if (item.firstName || item.lastName) {
-            if (!hasName || args.useAgendaNames) {
-              setField("firstName", item.firstName);
-              setField("lastName", item.lastName);
-            }
+          const hasName = Boolean(current.firstName || current.lastName);
+          if ((item.firstName || item.lastName) && (!hasName || args.useAgendaNames)) {
+            setField("firstName", item.firstName);
+            setField("lastName", item.lastName);
           }
-          if (!contact.email && emails[0]) setField("email", emails[0]);
-          if (!contact.phone && phones[0]) setField("phone", phones[0]);
-          if (!contact.company && item.company) setField("company", item.company);
-          if (!contact.title && item.title) setField("title", item.title);
-          if (!contact.tags.includes(PHONE_IMPORT_TAG)) {
-            before.tags = contact.tags;
-            patch.tags = [...contact.tags, PHONE_IMPORT_TAG];
+          if (!current.email && emails[0]) setField("email", emails[0]);
+          if (!current.phone && phones[0]) setField("phone", phones[0]);
+          if (!current.company && item.company) setField("company", item.company);
+          if (!current.title && item.title) setField("title", item.title);
+          if (!current.tags.includes(PHONE_IMPORT_TAG)) {
+            before.tags = current.tags;
+            patch.tags = [...current.tags, PHONE_IMPORT_TAG];
           }
           if (Object.keys(patch).length > 0) {
-            const merged = { ...contact, ...patch } as Record<string, unknown>;
+            const merged = { ...current, ...patch } as Record<string, unknown>;
             patch.searchText = buildSearchText(merged as Parameters<typeof buildSearchText>[0]) || undefined;
             patch.updatedAt = now;
-            await ctx.db.patch(contact._id, patch as Partial<Doc<"contacts">>);
+            await ctx.db.patch(current._id, patch as Partial<Doc<"contacts">>);
           }
         } else {
           const doc = {
@@ -587,23 +647,29 @@ export const internalProcessPhoneChunk = internalMutation({
         // Tipo pela porta única (arquiva leads se virou não-cliente; espelho nas conversas).
         const previous = contact.relation ?? null;
         if (previous !== relation) {
-          const result = await setContactRelationCore(ctx, {
-            contact,
-            relation,
-            actor,
-            source: "import",
-            quiet: true,
-            webhook: false,
-            // "Lead" com "criar lead no funil" desfaz um não-cliente (traz o lead de volta).
-            restoreLead: job.createLeads === true && relation === "customer" && isOffBusiness(previous),
-          });
-          if (!isNew) {
-            before.relation = previous;
-            before[RELATION_RESTORE_KEY] = result.archivedLeadIds;
+          if (!isNew && !leadPower && (await hasOpenLead(ctx, contact))) {
+            // Sem `leads: edit_all`: completa o contato, mas não mexe no lead de ninguém.
+            errors.push({ row: item.row, message: NO_LEAD_POWER_ROW_ERROR });
+          } else {
+            if (trail) {
+              trail.before.relation = previous;
+              trail.before[RELATION_RESTORE_KEY] = [];
+            }
+            const result = await setContactRelationCore(ctx, {
+              contact,
+              relation,
+              actor,
+              source: "import",
+              quiet: true,
+              webhook: false,
+              // "Lead" com "criar lead no funil" desfaz um não-cliente (traz o lead de volta).
+              restoreLead: createLeads && relation === "customer" && isOffBusiness(previous),
+            });
+            if (trail) trail.before[RELATION_RESTORE_KEY] = result.archivedLeadIds;
           }
         }
 
-        if (job.createLeads === true && relation === "customer") {
+        if (createLeads && relation === "customer") {
           const existingLead = await ctx.db
             .query("leads")
             .withIndex("by_contact", (q) => q.eq("contactId", contact!._id))
@@ -612,25 +678,16 @@ export const internalProcessPhoneChunk = internalMutation({
             if (pipeline === undefined) pipeline = await resolveLeadPipeline(ctx, organizationId);
             if (pipeline) {
               const fresh = (await ctx.db.get(contact._id)) ?? contact;
-              const title =
-                contactDisplayName(fresh) ?? fresh.company ?? fresh.phone ?? fresh.email ?? "Contato do celular";
-              const leadId = await ctx.db.insert("leads", {
+              const leadId = await insertImportedLead(ctx, {
                 organizationId,
-                title,
+                title: contactDisplayName(fresh) ?? fresh.company ?? fresh.phone ?? fresh.email ?? "Contato do celular",
                 contactId: contact._id,
-                boardId: pipeline.board._id,
-                stageId: pipeline.stage._id,
-                value: 0,
+                contactRelation: fresh.relation,
+                board: pipeline.board,
+                stage: pipeline.stage,
                 currency: pipeline.currency,
-                priority: "medium",
-                temperature: "cold",
+                now,
                 tags: [PHONE_IMPORT_TAG],
-                customFields: {},
-                conversationStatus: "new",
-                ...leadCreationStagePatch(pipeline.stage, now),
-                lastActivityAt: now,
-                createdAt: now,
-                updatedAt: now,
               });
               createdIds.push(leadId);
             } else {
@@ -640,14 +697,13 @@ export const internalProcessPhoneChunk = internalMutation({
         }
 
         if (isNew) created++;
-        else {
-          if (Object.keys(before).length > 0) updated.push({ id: contact._id, before });
-          else skipped++;
-          updatedCount += Object.keys(before).length > 0 ? 1 : 0;
-        }
+        else if (trail && Object.keys(trail.before).length > 0) updatedCount++;
+        else skipped++;
       } catch (e: unknown) {
         failed++;
         errors.push({ row: item.row, message: e instanceof Error ? e.message : String(e) });
+      } finally {
+        if (trail && Object.keys(trail.before).length > 0) updated.push(trail);
       }
     }
 
@@ -672,6 +728,7 @@ export const internalProcessPhoneChunk = internalMutation({
         skipped: fresh.progress.skipped + skipped,
         failed: fresh.progress.failed + failed,
       },
+      heartbeatAt: now,
     });
 
     await ctx.scheduler.runAfter(0, internal.phoneContactsImport.internalProcessPhoneChunk, {

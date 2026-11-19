@@ -10,7 +10,8 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { normalizeRowEmails, normalizeRowPhones, relationForChoice } from "./phoneContactsImport";
+import { NO_LEAD_POWER_ROW_ERROR, normalizeRowEmails, normalizeRowPhones, relationForChoice } from "./phoneContactsImport";
+import { STALE_IMPORT_MS } from "./lib/importJobOps";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -62,6 +63,18 @@ async function seed(t: TestConvex<typeof schema>, opts?: { webhook?: boolean }) 
         apiKeys: "none",
         campaigns: "view",
       },
+      createdAt: now,
+      updatedAt: now,
+    });
+    // Papel padrão de agente: contacts:edit, leads:edit_own.
+    const agentUserId = await ctx.db.insert("users", {});
+    await ctx.db.insert("teamMembers", {
+      organizationId,
+      userId: agentUserId,
+      name: "Ana Agente",
+      role: "agent",
+      type: "human",
+      status: "active",
       createdAt: now,
       updatedAt: now,
     });
@@ -181,6 +194,7 @@ async function seed(t: TestConvex<typeof schema>, opts?: { webhook?: boolean }) 
       adminUserId,
       adminId,
       viewerUserId,
+      agentUserId,
       aiUserId,
       boardId,
       stageId,
@@ -424,8 +438,8 @@ describe("triagem: quem já está no CRM", () => {
       ],
     });
     expect(out).toEqual([
-      { key: "a", contactId: s.oldPhoneContactId, name: "~ Ju", relation: null },
-      { key: "b", contactId: s.emailContactId, name: null, relation: "supplier" },
+      { key: "a", contactId: s.oldPhoneContactId, name: "~ Ju", relation: null, hasOpenLead: true },
+      { key: "b", contactId: s.emailContactId, name: null, relation: "supplier", hasOpenLead: false },
     ]);
   });
 
@@ -435,7 +449,7 @@ describe("triagem: quem já está no CRM", () => {
     const ctx = await as(t, s.adminUserId).query(api.phoneContactsImport.getPhoneImportContext, {
       organizationId: s.organizationId,
     });
-    expect(ctx).toEqual({ defaultCountry: "55", surnames: ["Moreira"] });
+    expect(ctx).toEqual({ defaultCountry: "55", surnames: ["Moreira"], canChangeLeads: true });
   });
 });
 
@@ -497,5 +511,312 @@ describe("RBAC", () => {
         jobId: csvJobId,
       }),
     ).rejects.toThrow(/não encontrada/);
+  });
+});
+
+describe("RBAC de lead (papel padrão de agente)", () => {
+  test("agente não liga Criar lead no funil", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await expect(
+      as(t, s.agentUserId).mutation(api.phoneContactsImport.startPhoneContactsImport, {
+        organizationId: s.organizationId,
+        fileName: "contatos.vcf",
+        createLeads: true,
+        rows: [ROWS[0]],
+      }),
+    ).rejects.toThrow(/editar todos os leads/);
+  });
+
+  test("agente completa o contato com lead aberto, mas não muda o tipo; contato sem lead muda", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const ctxOut = await as(t, s.agentUserId).query(api.phoneContactsImport.getPhoneImportContext, {
+      organizationId: s.organizationId,
+    });
+    expect(ctxOut?.canChangeLeads).toBe(false);
+    const jobId = await as(t, s.agentUserId).mutation(api.phoneContactsImport.startPhoneContactsImport, {
+      organizationId: s.organizationId,
+      fileName: "contatos.vcf",
+      createLeads: false,
+      rows: [ROWS[1], ROWS[2]],
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      ju: await ctx.db.get(s.oldPhoneContactId),
+      supplier: await ctx.db.get(s.emailContactId),
+      lead: await ctx.db.get(s.oldLeadId),
+      batch: (await ctx.db.query("importJobBatches").collect())[0],
+    }));
+    expect(state.ju?.relation).toBeUndefined();
+    expect(state.ju?.tags).toContain("importado-celular");
+    expect(state.lead?.archivedAt).toBeUndefined();
+    expect(state.supplier?.relation).toBe("supplier");
+    expect(state.batch.errors).toEqual([{ row: 1, message: NO_LEAD_POWER_ROW_ERROR }]);
+    expect(state.job?.status).toBe("completed");
+  });
+
+  test("contexto e match dizem quem tem lead aberto", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const out = await as(t, s.adminUserId).query(api.phoneContactsImport.matchPhoneContacts, {
+      organizationId: s.organizationId,
+      rows: [{ key: "a", phones: ["81999887766"], emails: [] }],
+    });
+    expect(out[0].hasOpenLead).toBe(true);
+  });
+});
+
+describe("lotes, travas e desfazer", () => {
+  test("mais de um lote: 60 linhas em 3 lotes de 25", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const rows: Row[] = Array.from({ length: 60 }, (_, i) => ({
+      firstName: `Contato ${i}`,
+      phones: [`8198${String(i).padStart(7, "0")}`],
+      emails: [],
+      choice: i % 2 ? "lead" : "personal",
+    }));
+    const jobId = await startAndRun(t, s, { rows });
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      batches: await ctx.db.query("importJobBatches").collect(),
+      staged: await ctx.db.query("importStagedRows").collect(),
+    }));
+    expect(state.job?.status).toBe("completed");
+    expect(state.job?.progress).toMatchObject({ processed: 60, created: 60, failed: 0 });
+    expect(state.job?.heartbeatAt).toBeDefined();
+    expect(state.batches.map((b) => b.batchIndex).sort()).toEqual([0, 1, 2]);
+    expect(state.staged).toHaveLength(0);
+  });
+
+  test("job travado é encerrado no próximo início (fila apagada) e pode ser desfeito", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const stuckId = await t.run(async (ctx) => {
+      const old = Date.now() - STALE_IMPORT_MS - 60_000;
+      const id = await ctx.db.insert("importJobs", {
+        organizationId: s.organizationId,
+        requestedBy: s.adminId,
+        status: "running",
+        entity: "contacts",
+        source: "phone_vcf",
+        fileName: "velho.vcf",
+        duplicateStrategy: "update",
+        progress: { processed: 25, total: 50, created: 0, updated: 0, skipped: 0, failed: 0 },
+        createdAt: old,
+        startedAt: old,
+        heartbeatAt: old,
+      });
+      await ctx.db.insert("importStagedRows", {
+        organizationId: s.organizationId,
+        jobId: id,
+        chunkIndex: 1,
+        rows: [{ row: 26, phones: ["81988880000"], emails: [], choice: "lead" }],
+        createdAt: old,
+      });
+      return id;
+    });
+    await startAndRun(t, s, { rows: [ROWS[0]] });
+    const stuck = await t.run(async (ctx) => ({
+      job: await ctx.db.get(stuckId),
+      staged: await ctx.db.query("importStagedRows").collect(),
+    }));
+    expect(stuck.job?.status).toBe("failed");
+    expect(stuck.job?.error).toMatch(/parou de responder/);
+    expect(stuck.staged).toHaveLength(0);
+    // `failed` depois de começar pode ser desfeito.
+    await as(t, s.adminUserId).mutation(api.phoneContactsImport.undoPhoneContactsImport, {
+      organizationId: s.organizationId,
+      jobId: stuckId,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run(async (ctx) => ctx.db.get(stuckId)))?.status).toBe("rolled_back");
+  });
+
+  test("admin cancela job travado; job em andamento recente não", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const make = (beat: number) =>
+      t.run(async (ctx) =>
+        ctx.db.insert("importJobs", {
+          organizationId: s.organizationId,
+          requestedBy: s.adminId,
+          status: "running",
+          entity: "contacts",
+          source: "phone_vcf",
+          fileName: "x.vcf",
+          duplicateStrategy: "update",
+          progress: { processed: 0, total: 1, created: 0, updated: 0, skipped: 0, failed: 0 },
+          createdAt: beat,
+          startedAt: beat,
+          heartbeatAt: beat,
+        }),
+      );
+    const fresh = await make(Date.now());
+    await expect(
+      as(t, s.adminUserId).mutation(api.imports.cancelImport, { organizationId: s.organizationId, jobId: fresh }),
+    ).rejects.toThrow(/15 minutos/);
+    await t.run(async (ctx) => ctx.db.patch(fresh, { status: "completed" }));
+    const stuck = await make(Date.now() - STALE_IMPORT_MS - 1);
+    await as(t, s.adminUserId).mutation(api.imports.cancelImport, { organizationId: s.organizationId, jobId: stuck });
+    expect((await t.run(async (ctx) => ctx.db.get(stuck)))?.status).toBe("failed");
+  });
+
+  test("lote de job encerrado apaga a fila restante", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const jobId = await as(t, s.adminUserId).mutation(api.phoneContactsImport.startPhoneContactsImport, {
+      organizationId: s.organizationId,
+      fileName: "contatos.vcf",
+      createLeads: false,
+      rows: Array.from({ length: 30 }, (_, i): Row => ({ phones: [`8197${String(i).padStart(7, "0")}`], emails: [], choice: "lead" })),
+    });
+    await t.run(async (ctx) => ctx.db.patch(jobId, { status: "failed" }));
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const left = await t.run(async (ctx) => ({
+      staged: await ctx.db.query("importStagedRows").collect(),
+      contacts: (await ctx.db.query("contacts").collect()).length,
+    }));
+    expect(left.staged).toHaveLength(0);
+    expect(left.contacts).toBe(2); // só os do seed
+  });
+
+  test("Desfazer não roda duas vezes", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const jobId = await startAndRun(t, s, { rows: [ROWS[0]] });
+    const admin = as(t, s.adminUserId);
+    await admin.mutation(api.phoneContactsImport.undoPhoneContactsImport, { organizationId: s.organizationId, jobId });
+    expect((await t.run(async (ctx) => ctx.db.get(jobId)))?.status).toBe("rolling_back");
+    await expect(
+      admin.mutation(api.phoneContactsImport.undoPhoneContactsImport, { organizationId: s.organizationId, jobId }),
+    ).rejects.toThrow(/já está sendo desfeita/);
+    await expect(
+      admin.mutation(api.imports.rollbackImport, { organizationId: s.organizationId, jobId }),
+    ).rejects.toThrow(/já está sendo desfeita/);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await t.run(async (ctx) => ctx.db.get(jobId)))?.status).toBe("rolled_back");
+  });
+
+  test("Desfazer apaga o lead criado pela porta de exclusão, com conversa e mensagens", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const jobId = await startAndRun(t, s, { createLeads: true, rows: [ROWS[0]] });
+    const conversationId = await t.run(async (ctx) => {
+      const lead = (await ctx.db.query("leads").collect()).find((l) => l._id !== s.oldLeadId)!;
+      const id = await ctx.db.insert("conversations", {
+        organizationId: s.organizationId,
+        leadId: lead._id,
+        channel: "whatsapp",
+        status: "active",
+        messageCount: 1,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+      await ctx.db.insert("messages", {
+        organizationId: s.organizationId,
+        conversationId: id,
+        direction: "inbound",
+        senderType: "contact",
+        content: "Oi",
+        contentType: "text",
+        isInternal: false,
+        createdAt: Date.now(),
+      } as never);
+      return id;
+    });
+    await as(t, s.adminUserId).mutation(api.phoneContactsImport.undoPhoneContactsImport, {
+      organizationId: s.organizationId,
+      jobId,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const state = await t.run(async (ctx) => ({
+      leads: await ctx.db.query("leads").collect(),
+      conversation: await ctx.db.get(conversationId),
+      messages: await ctx.db.query("messages").collect(),
+      audits: (await ctx.db.query("auditLogs").collect()).filter((a) => a.entityType === "lead" && a.action === "delete"),
+    }));
+    expect(state.leads.map((l) => l._id)).toEqual([s.oldLeadId]);
+    expect(state.conversation).toBeNull();
+    expect(state.messages).toHaveLength(0);
+    expect(state.audits).toHaveLength(1);
+    expect(state.audits[0].description).toMatch(/ao desfazer a importação/);
+  });
+});
+
+describe("CSV: desfazer com Tipo de contato", () => {
+  async function csvJob(t: TestConvex<typeof schema>, s: Awaited<ReturnType<typeof seed>>, entity: "contacts" | "leads", mapping: Record<string, string>) {
+    return await t.run(async (ctx) => {
+      const storageId = await ctx.storage.store(new Blob(["x"]));
+      const fileId = await ctx.db.insert("files", {
+        organizationId: s.organizationId,
+        name: "planilha.csv",
+        mimeType: "text/csv",
+        size: 10,
+        storageId,
+        fileType: "import_file",
+        uploadedBy: s.adminId,
+        createdAt: Date.now(),
+      } as never);
+      return await ctx.db.insert("importJobs", {
+        fileId,
+        organizationId: s.organizationId,
+        entity,
+        status: "running",
+        fileName: "planilha.csv",
+        mapping,
+        duplicateStrategy: "update",
+        requestedBy: s.adminId,
+        progress: { processed: 0, created: 0, updated: 0, skipped: 0, failed: 0, total: 1 },
+        createdAt: Date.now(),
+      } as never);
+    });
+  }
+
+  test("voltar contato sem lead para sem tipo não cria lead", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const jobId = await csvJob(t, s, "contacts", { email: "email", tipo: "relation" });
+    await t.mutation(internal.imports.internalProcessBatch, {
+      jobId,
+      batchIndex: 0,
+      headers: ["email", "tipo"],
+      rows: [{ row: 1, cells: ["fornecedor@exemplo.com", "Fornecedor"] }],
+    });
+    const batch = await t.run(async (ctx) => (await ctx.db.query("importJobBatches").collect())[0]);
+    expect(batch.updated[0].before).toMatchObject({ relation: null, relationRestoreLeadIds: [] });
+    await t.mutation(internal.imports.internalRollbackBatch, { jobId, batchId: batch._id });
+    const after = await t.run(async (ctx) => ({
+      contact: await ctx.db.get(s.emailContactId),
+      leads: await ctx.db.query("leads").withIndex("by_contact", (q) => q.eq("contactId", s.emailContactId)).collect(),
+    }));
+    expect(after.contact?.relation).toBeUndefined();
+    expect(after.contact).not.toHaveProperty("relationRestoreLeadIds");
+    expect(after.leads).toHaveLength(0);
+  });
+
+  test("lead importado por CSV sai pela porta de exclusão no desfazer", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const jobId = await csvJob(t, s, "leads", { titulo: "title", telefone: "contactPhone" });
+    await t.mutation(internal.imports.internalProcessBatch, {
+      jobId,
+      batchIndex: 0,
+      headers: ["titulo", "telefone"],
+      rows: [{ row: 1, cells: ["Negócio novo", "5581911112222"] }],
+    });
+    await t.run(async (ctx) => ctx.db.patch(jobId, { status: "rolling_back" }));
+    await t.action(internal.importRun.internalRunRollback, { jobId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      leads: (await ctx.db.query("leads").collect()).map((l) => l.title),
+      audits: (await ctx.db.query("auditLogs").collect()).filter((a) => a.entityType === "lead" && a.action === "delete"),
+    }));
+    expect(state.job?.status).toBe("rolled_back");
+    expect(state.leads).toEqual(["Ju"]);
+    expect(state.audits).toHaveLength(1);
   });
 });

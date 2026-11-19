@@ -4293,6 +4293,7 @@ const applicationTables = {
       v.literal("running"),
       v.literal("completed"), v.literal("completed_with_errors"),
       v.literal("failed"), v.literal("rolled_back"), v.literal("canceled"),
+      v.literal("rolling_back"),    // "Desfazer" pedido; o rollback está rodando
     ),
     entity: v.union(v.literal("contacts"), v.literal("leads")),
     // fileType: "import_file". Ausente na importação de contatos do celular
@@ -4319,6 +4320,9 @@ const applicationTables = {
     }),
     error: v.optional(v.string()),
     createdAt: v.number(), startedAt: v.optional(v.number()), finishedAt: v.optional(v.number()),
+    // Batimento gravado a cada lote; `running` sem batimento há 15 min = travado
+    // (lib/importJobOps.ts `releaseStaleImports`).
+    heartbeatAt: v.optional(v.number()),
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_status", ["organizationId", "status"]),

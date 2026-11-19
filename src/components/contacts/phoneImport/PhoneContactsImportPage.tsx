@@ -34,6 +34,8 @@ const MATCH_CHUNK = 100;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 
 const ROUTE_CONTACTS = "/app/contatos";
+/** Mesma janela do servidor (`STALE_IMPORT_MS`). */
+const STALE_MS = 15 * 60 * 1000;
 
 /**
  * "Importar contatos do celular" (PR6, recurso avançado, fora do onboarding).
@@ -107,7 +109,9 @@ export function PhoneContactsImportPage() {
         done += piece.length;
         setExisting((current) => {
           const next = new Map(current);
-          for (const m of matches) next.set(m.key, { contactId: m.contactId, name: m.name, relation: m.relation });
+          for (const m of matches) {
+            next.set(m.key, { contactId: m.contactId, name: m.name, relation: m.relation, hasOpenLead: m.hasOpenLead });
+          }
           return next;
         });
         setMatching({ done, total: result.rows.length });
@@ -138,7 +142,7 @@ export function PhoneContactsImportPage() {
       const id = await startImport({
         organizationId,
         fileName: file?.name ?? "contatos.vcf",
-        createLeads,
+        createLeads: createLeads && context?.canChangeLeads === true,
         useAgendaNames,
         rows,
       });
@@ -203,6 +207,7 @@ export function PhoneContactsImportPage() {
             matching={matching}
             createLeads={createLeads}
             onCreateLeadsChange={setCreateLeads}
+            canChangeLeads={context.canChangeLeads}
             useAgendaNames={useAgendaNames}
             onUseAgendaNamesChange={setUseAgendaNames}
             maxRows={MAX_ROWS}
@@ -298,12 +303,15 @@ function PhoneImportResult({ organizationId, jobId, onRestart }: PhoneImportResu
   const p = job.progress;
   const running = job.status === "running";
   const done = job.status === "completed" || job.status === "completed_with_errors";
+  const failedMidway = job.status === "failed" && job.heartbeatAt !== undefined;
+  // Sem batimento há 15 min: a execução morreu; a próxima importação a encerra.
+  const stale = running && job.heartbeatAt !== undefined && Date.now() - job.heartbeatAt > STALE_MS;
   const percent = p.total > 0 ? Math.min(100, Math.round((p.processed / p.total) * 100)) : 0;
 
   const handleUndo = () => {
     toast.promise(undo({ organizationId, jobId }), {
-      loading: "Desfazendo a importação…",
-      success: "Importação desfeita",
+      loading: "Desfazendo…",
+      success: "Desfazendo…",
       error: (error) => mutationErrorMessage(error, "Não foi possível desfazer a importação."),
     });
   };
@@ -326,7 +334,18 @@ function PhoneImportResult({ organizationId, jobId, onRestart }: PhoneImportResu
           <p className="text-caption text-text-muted tabular-nums">
             {formatCount(p.processed)} de {formatCount(p.total)} contatos
           </p>
+          {stale && (
+            <p className="text-sm text-semantic-warning" role="alert">
+              A importação parou de avançar. Ela será encerrada na próxima importação, e o que já foi gravado pode ser
+              desfeito.
+            </p>
+          )}
         </>
+      )}
+      {job.status === "rolling_back" && (
+        <p className="flex items-center gap-2 text-sm text-text-secondary" role="status">
+          <Spinner size="sm" /> Desfazendo a importação…
+        </p>
       )}
       {done && (
         <>
@@ -359,13 +378,13 @@ function PhoneImportResult({ organizationId, jobId, onRestart }: PhoneImportResu
         >
           Ver contatos
         </Link>
-        {done && (
+        {(done || failedMidway) && (
           <Button variant="secondary" size="lg" onClick={() => setConfirmUndo(true)}>
             <Undo2 size={18} aria-hidden="true" />
             Desfazer importação
           </Button>
         )}
-        {!running && (
+        {!running && job.status !== "rolling_back" && (
           <Button variant="ghost" size="lg" onClick={onRestart}>
             Importar outro arquivo
           </Button>

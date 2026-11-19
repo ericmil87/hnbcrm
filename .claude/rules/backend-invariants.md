@@ -18,7 +18,7 @@ Project-specific rules that change how code must be written. Official Convex rul
 ## Side effects, events, audit
 - Mutations that change business state write `activities` + `auditLogs` (severity `high` for security-relevant acts: acks, purges, exports, autopilot) and emit webhooks ONLY via `scheduleWebhookEvent(ctx, {organizationId, event, payload})`. The gate only schedules when the org has an active webhook for the event or `"*"`; tests asserting a schedule must seed one.
 - Ops functions never write activity/audit per row — one audit per job transition (import/export pattern).
-- `importJobs.fileId` is optional (phone .vcf import, `source:"phone_vcf"`, has no file): code reading it handles `undefined`. In `importJobBatches.updated[].before`, `relationRestoreLeadIds` is a reserved key (leads archived by an imported relation, restored exactly on rollback), never a contact field.
+- `importJobs.fileId` is optional (phone .vcf import, `source:"phone_vcf"`, has no file): code reading it handles `undefined`. In `importJobBatches.updated[].before`, `relationRestoreLeadIds` is a reserved key (leads archived by an imported relation, restored exactly on rollback), never a contact field. Import batches write `heartbeatAt`; a new import start calls `releaseStaleImports` (`lib/importJobOps.ts`); rollback sets `rolling_back` first and deletes leads only via `hardDeleteLead` + `scheduleLeadCascade`; imported leads are inserted via `insertImportedLead`.
 - Audit snapshots flatten `_id` to `id` (Convex rejects underscore field names). Long texts in audit go through `convex/lib/auditText.ts` (50k cap + sha marker).
 
 ## Single ports — extend them, never bypass

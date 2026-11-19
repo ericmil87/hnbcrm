@@ -23,6 +23,8 @@ export interface ExistingMatch {
   contactId: string;
   name: string | null;
   relation: string | null;
+  /** O contato tem lead aberto (mudar o tipo exige editar todos os leads). */
+  hasOpenLead: boolean;
 }
 
 export type TriageFilter = "all" | "pending" | "family" | "existing" | "chosen" | "skip";
@@ -79,6 +81,8 @@ export interface PhoneImportTriageViewProps {
   matching: { done: number; total: number } | null;
   createLeads: boolean;
   onCreateLeadsChange: (value: boolean) => void;
+  /** `leads: edit_all` ou `contacts: full`: cria leads e muda o tipo de quem tem lead aberto. */
+  canChangeLeads: boolean;
   useAgendaNames: boolean;
   onUseAgendaNamesChange: (value: boolean) => void;
   maxRows: number;
@@ -100,6 +104,7 @@ export function PhoneImportTriageView({
   matching,
   createLeads,
   onCreateLeadsChange,
+  canChangeLeads,
   useAgendaNames,
   onUseAgendaNamesChange,
   maxRows,
@@ -240,11 +245,22 @@ export function PhoneImportTriageView({
       {/* Opções e envio */}
       <div className="flex flex-col gap-3 rounded-card border border-border bg-surface-raised p-4">
         <Switch
-          checked={createLeads}
+          checked={createLeads && canChangeLeads}
           onCheckedChange={onCreateLeadsChange}
+          disabled={!canChangeLeads}
           label="Criar lead no funil para quem for Lead"
-          description="Desligado: quem for Lead entra só como contato, sem negócio no funil."
+          description={
+            canChangeLeads
+              ? "Desligado: quem for Lead entra só como contato, sem negócio no funil."
+              : "Precisa da permissão de editar todos os leads. Quem for Lead entra só como contato."
+          }
         />
+        {!canChangeLeads && (
+          <p className="text-caption text-text-muted">
+            Contatos que já têm lead aberto ganham os dados que faltam, mas mantêm o tipo atual: mudar isso precisa da
+            permissão de editar todos os leads.
+          </p>
+        )}
         <Switch
           checked={useAgendaNames}
           onCheckedChange={onUseAgendaNamesChange}
@@ -335,6 +351,7 @@ function TriageRowItem({ row, choice, match, selected, onToggle }: TriageRowItem
                   Já no CRM · {relationLabel(matchRelation)}
                 </Badge>
               )}
+              {match?.hasOpenLead && <Badge variant="default">Tem lead aberto</Badge>}
               {row.familyHint && choice === "personal" && <Badge variant="default">Sugestão</Badge>}
             </span>
           )}

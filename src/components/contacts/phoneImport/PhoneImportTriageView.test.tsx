@@ -18,10 +18,11 @@ function renderView(overrides: Partial<Parameters<typeof PhoneImportTriageView>[
     rows,
     choices: initialChoices(rows) as Record<string, TriageChoice | undefined>,
     onChoose: vi.fn(),
-    existing: new Map<string, ExistingMatch>([[rows[2].key, { contactId: "c1", name: null, relation: "supplier" }]]),
+    existing: new Map<string, ExistingMatch>([[rows[2].key, { contactId: "c1", name: null, relation: "supplier", hasOpenLead: true }]]),
     matching: null,
     createLeads: false,
     onCreateLeadsChange: vi.fn(),
+    canChangeLeads: true,
     useAgendaNames: false,
     onUseAgendaNamesChange: vi.fn(),
     maxRows: 5000,
@@ -61,6 +62,13 @@ describe("PhoneImportTriageView", () => {
     expect(props.onChoose).toHaveBeenCalledWith([rows[1].key], "skip");
   });
 
+  it("sem permissão de editar todos os leads: criar lead desligado e aviso", () => {
+    renderView({ canChangeLeads: false, createLeads: true });
+    expect(screen.getByRole("switch", { name: "Criar lead no funil para quem for Lead" })).toBeDisabled();
+    expect(screen.getByText(/mantêm o tipo atual/)).toBeInTheDocument();
+    expect(screen.getByText("Tem lead aberto")).toBeInTheDocument();
+  });
+
   it("nada escolhido: botão de importar desligado", () => {
     renderView({ choices: {} });
     expect(screen.getByRole("button", { name: /Importar 0 contato/ })).toBeDisabled();
@@ -70,7 +78,7 @@ describe("PhoneImportTriageView", () => {
 describe("rowsForFilter", () => {
   it("filtra por estado", () => {
     const choices: Record<string, TriageChoice> = { [rows[0].key]: "personal", [rows[1].key]: "skip" };
-    const existing = new Map<string, ExistingMatch>([[rows[2].key, { contactId: "c", name: null, relation: null }]]);
+    const existing = new Map<string, ExistingMatch>([[rows[2].key, { contactId: "c", name: null, relation: null, hasOpenLead: false }]]);
     expect(rowsForFilter(rows, "pending", choices, existing).map((r) => r.key)).toEqual([rows[2].key]);
     expect(rowsForFilter(rows, "family", choices, existing).map((r) => r.key)).toEqual([rows[0].key]);
     expect(rowsForFilter(rows, "existing", choices, existing).map((r) => r.key)).toEqual([rows[2].key]);

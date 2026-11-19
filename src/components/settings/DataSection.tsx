@@ -37,6 +37,8 @@ import {
   downloadFromUrl,
   downloadTextFile,
   importStatusMeta,
+  isStaleImportJob,
+  canRollbackImportJob,
   type ImportJobDoc,
 } from "@/components/settings/ImportWizard";
 import { formatCount } from "@/lib/format";
@@ -252,7 +254,7 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
   const handleRollback = (job: ImportJobDoc) => {
     toast.promise(rollbackImport({ organizationId, jobId: job._id }), {
       loading: "Desfazendo a importação…",
-      success: "Desfazendo — o histórico é atualizado ao terminar.",
+      success: "Desfazendo…",
       error: (error: unknown) => mutationErrorMessage(error, "Não foi possível desfazer a importação."),
     });
     setRollbackJob(null);
@@ -470,9 +472,9 @@ export function DataSection({ organizationId }: { organizationId: Id<"organizati
             {importJobs.map((job) => {
               const meta = importStatusMeta(job.status);
               const active = ACTIVE_IMPORT_STATUSES.includes(job.status);
-              const canCancel = job.status === "mapping" || job.status === "preview_ready";
-              const canRollback =
-                job.status === "completed" || job.status === "completed_with_errors";
+              const stale = isStaleImportJob(job, Date.now());
+              const canCancel = job.status === "mapping" || job.status === "preview_ready" || stale;
+              const canRollback = canRollbackImportJob(job);
               const finished =
                 job.status === "completed" ||
                 job.status === "completed_with_errors" ||
