@@ -32,6 +32,8 @@ import { conversationCrmUrl, mediaForMessages, type MediaOut } from "./telegramM
 import { COPY } from "./telegramCore";
 import { confirmPendingActionCore, cancelPendingActionCore } from "./copilotPendingActions";
 import { moveLeadToStageCore } from "./leadStageMove";
+import { setContactRelationCore } from "./contactRelationOps";
+import { getLeadRef } from "./leadRef";
 import {
   MODE_COPY,
   STEP_LABELS,
@@ -61,6 +63,7 @@ import {
   parseCallbackData,
   permissionDeniedText,
   quoteSnippet,
+  relationRow,
   tomorrowAt,
   type CardContext,
   type CardKeyboard,
@@ -201,13 +204,20 @@ type Tap = {
   appBaseUrl: string;
   delivery: Doc<"telegramDeliveries"> | null;
   orgId?: Id<"organizations">;
+  /** Third segment of the callback (`pe:<id>:p|l`). */
+  extra?: string;
 };
 
 function errorText(e: unknown): string {
   const raw = e instanceof Error ? e.message : "";
   // ConvexError carries data; plain Error carries a PT-BR message from the port.
+  // Object data with `message` (e.g. `needs_relation` of a non-customer contact) reads that.
   const data = (e as { data?: unknown })?.data;
-  const msg = typeof data === "string" ? data : raw.replace(/^Uncaught (Convex)?Error:\s*/, "");
+  const dataMessage =
+    data && typeof data === "object" && typeof (data as { message?: unknown }).message === "string"
+      ? (data as { message: string }).message
+      : undefined;
+  const msg = typeof data === "string" ? data : dataMessage ?? raw.replace(/^Uncaught (Convex)?Error:\s*/, "");
   // Número marcado "sem WhatsApp": o aceite só existe no app; no Telegram a mensagem
   // não sai e o texto não carrega o prefixo técnico `NOT_ON_WHATSAPP:`.
   if (msg.includes(NOT_ON_WHATSAPP_SEND_PREFIX)) {
@@ -324,6 +334,7 @@ function edit(tap: Pick<Tap, "chatId" | "messageId">, card: { text: string; keyb
 }
 
 const INBOX_REPLY: [PermissionCategory, string] = ["inbox", "reply"];
+const CONTACTS_EDIT: [PermissionCategory, string] = ["contacts", "edit"];
 const INBOX_VIEW: [PermissionCategory, string] = ["inbox", "view_own"];
 
 // ---------------------------------------------------------------------------
@@ -345,6 +356,7 @@ export async function handleTelegramCallback(
     chatId: args.chatId,
     messageId: args.messageId,
     id: parsed.id,
+    ...(parsed.extra ? { extra: parsed.extra } : {}),
     now: args.now,
     appBaseUrl: args.appBaseUrl,
     delivery,
@@ -377,6 +389,8 @@ export async function handleTelegramCallback(
     rc: (c, t) => onReconnect(c, t, "code"),
     rcq: (c, t) => onReconnect(c, t, "qr"),
     rcx: onReconnectCancel,
+    // PR1: "🏠 Pessoal" / "Virar lead"
+    pe: onSetContactRelation,
   };
   return await handlers[parsed.verb](ctx, tap);
 }
@@ -384,6 +398,39 @@ export async function handleTelegramCallback(
 // ---------------------------------------------------------------------------
 // Handlers (authorization first in every one)
 // ---------------------------------------------------------------------------
+
+/**
+ * PR1 (`pe:<conversationId>:p|l`): "🏠 Pessoal" marks the contact as non-customer;
+ * "Virar lead" brings it back to the funnel. `contacts:edit` like the public
+ * mutation, human actor only, through the single port `setContactRelationCore`.
+ * The card becomes the record with the opposite button (undo).
+ */
+async function onSetContactRelation(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
+  const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: CONTACTS_EDIT, now: tap.now });
+  if (!auth.ok) return auth.result;
+  const { actor } = auth;
+  const relation = tap.extra === "p" ? ("personal" as const) : tap.extra === "l" ? ("customer" as const) : null;
+  if (!relation) return empty();
+  const conversation = await conversationOf(ctx, actor, tap.id);
+  if (!conversation || conversation.kind === "group") return notFound(tap.chatId);
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
+  if (!contact || contact.organizationId !== actor.org._id) return notFound(tap.chatId);
+  try {
+    await setContactRelationCore(ctx, { contact, relation, actor: actor.member, source: "telegram" });
+  } catch (e) {
+    failWith(say(tap.chatId, errorText(e)));
+  }
+  const card = await contextFor(ctx, actor, tap, { conversationId: conversation._id });
+  const at = formatTime(tap.now, card.timezone);
+  const status =
+    relation === "personal"
+      ? `🏠 Marcado como Pessoal por você · ${at}\nA IA não responde mais este contato e o lead saiu do funil.`
+      : `💼 Virou lead por você · ${at}\nO lead voltou ao funil.`;
+  const record = buildRecordCard(card, status, ["crm"]);
+  const keyboard = [relationRow(card), ...record.keyboard].filter((row) => row.length > 0);
+  return { replies: [], edits: [edit(tap, { text: record.text, keyboard })] };
+}
 
 async function onAcceptHandoff(ctx: MutationCtx, tap: Tap): Promise<ActionResult> {
   const auth = await authorizeTelegramActor(ctx, { chatId: tap.chatId, organizationId: tap.orgId, permission: INBOX_REPLY, now: tap.now });

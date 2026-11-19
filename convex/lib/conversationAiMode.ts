@@ -14,6 +14,7 @@
  */
 import type { Doc } from "../_generated/dataModel";
 import { modulesOf } from "./orgModules";
+import { effectiveRelation, isOffBusiness, type ContactRelation } from "./contactRelation";
 
 export type ConversationAiMode = "auto" | "suggest" | "off";
 
@@ -67,9 +68,9 @@ export function conversationAiMode(input: {
   conversation: Pick<
     Doc<"conversations">,
     "kind" | "channel" | "channelConfigId" | "channelProvider" | "aiPausedUntil" | "botSuspicion"
-  >;
+  > & { contactRelation?: ContactRelation };
   lead: Pick<Doc<"leads">, "boardId" | "assignedTo" | "handoffState"> | null;
-  contact: { aiOptOut?: boolean } | null;
+  contact: { aiOptOut?: boolean; relation?: ContactRelation } | null;
   now?: number;
 }): ConversationAiMode {
   const { org, conversation, lead, contact } = input;
@@ -86,6 +87,8 @@ export function conversationAiMode(input: {
   if (conversation.kind === "group") return cfg.groupAgentEnabled === true ? "auto" : "off";
 
   if (cfg.attendantEnabled === false) return "off";
+  // PR1: contato fora do comercial (mesma condição 0b de `evaluateEligibility`).
+  if (isOffBusiness(effectiveRelation(contact, conversation))) return "off";
   if (
     conversation.channel !== "whatsapp" &&
     conversation.channel !== "instagram" &&

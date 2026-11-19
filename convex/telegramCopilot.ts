@@ -16,6 +16,7 @@
  * Domain writes happen only inside the Copilot executors / lib/telegramActions.
  */
 import { activePausedUntil } from "./lib/notificationPolicy";
+import { isOffBusiness } from "./lib/contactRelation";
 import { loadMemberPrefs } from "./lib/notificationPrefs";
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
@@ -800,6 +801,9 @@ export const internalAssistantDecision = internalQuery({
     if (!member || !isLinkMemberAlive(link, member)) return card;
     const org = await ctx.db.get(n.organizationId);
     if (!org || !modulesOf(org).telegram || !orgAiActive(org) || org.settings.aiConfig?.copilotEnabled === false) return card;
+    // PR1: conversa de contato fora do comercial nunca chega ao LLM do assistente.
+    const conversation = await ctx.db.get(n.conversationId);
+    if (!conversation || isOffBusiness(conversation.contactRelation)) return card;
     const mode = effectiveAssistantMode(link, org);
     // D22 amended (incident 03/11 in PROD): the automatic turn ONLY for a customer message in the
     // conversation in focus (D17). Handoffs and stuck follow-ups behave as in suggest mode, in

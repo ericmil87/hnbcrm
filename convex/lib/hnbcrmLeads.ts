@@ -10,6 +10,7 @@
  * Texto de formulário é dado, nunca instrução: entra só como nota/campo, saneado.
  */
 import type { Doc, Id } from "../_generated/dataModel";
+import { autoLeadArchivePatch } from "./contactRelation";
 import type { MutationCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { buildAuditDescription } from "./auditDescription";
@@ -155,6 +156,9 @@ export async function insertInternalLead(
   const { org, actor, board, stage } = target;
   const now = Date.now();
   const sourceId = await ensureSource(ctx, org._id, args.sourceName, now);
+  // PR1: contato marcado fora do comercial ganha o lead já arquivado.
+  const contact = await ctx.db.get(args.contactId);
+  const archivePatch = contact && contact.organizationId === org._id ? autoLeadArchivePatch(contact.relation, now) : {};
   const leadId = await ctx.db.insert("leads", {
     organizationId: org._id,
     title: args.title,
@@ -169,6 +173,7 @@ export async function insertInternalLead(
     tags: args.tags,
     customFields: args.customFields,
     conversationStatus: "new",
+    ...archivePatch,
     ...leadCreationStagePatch(stage, now),
     lastActivityAt: now,
     createdAt: now,

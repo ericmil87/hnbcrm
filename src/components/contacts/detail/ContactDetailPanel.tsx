@@ -22,6 +22,10 @@ import { ContactInfoTab } from "./ContactInfoTab";
 import { ContactLeadsTab } from "./ContactLeadsTab";
 import { ContactGroupsTab } from "./ContactGroupsTab";
 import { ContactOptOutControl } from "./ContactOptOutControl";
+import { ContactRelationField } from "./ContactRelationField";
+import { ContactRelationSheet } from "@/components/contacts/ContactRelationSheet";
+import { useContactRelationChange } from "@/components/contacts/useContactRelationChange";
+import { asContactRelation, relationMetaLine, type ContactRelation, type RelationMeta } from "@/lib/contactRelationUi";
 
 const TABS_ID_PREFIX = "contact-detail";
 
@@ -55,6 +59,9 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
   // "Conversar no WhatsApp": abre o mesmo modal de Conversas já com este contato.
   const [showNewConversation, setShowNewConversation] = useState(false);
   const [now] = useState(() => Date.now());
+  // "Tipo de contato" (Lead, Pessoal…): folha "Quem é <Nome>?".
+  const [relationSheetOpen, setRelationSheetOpen] = useState(false);
+  const relationChange = useContactRelationChange();
 
   const contactData = useQuery(api.contacts.getContactWithLeads, { contactId });
   const { can } = usePermissions(contactData?.organizationId as Id<"organizations">);
@@ -75,6 +82,17 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
     api.groupChats.listGroupsForContact,
     contactData ? { organizationId: contactData.organizationId, contactId } : "skip"
   );
+
+  const relationMeta = (contactData?.relationMeta ?? null) as RelationMeta | null;
+  const canEditContact = !!contactData && can("contacts", "edit");
+  // Quem marcou: nome do membro (só busca a equipe quando há `setBy`).
+  const teamMembers = useQuery(
+    api.teamMembers.getTeamMembers,
+    contactData && relationMeta?.setBy ? { organizationId: contactData.organizationId } : "skip"
+  ) as { _id: string; name?: string }[] | undefined;
+  const relationSetByName = relationMeta?.setBy
+    ? teamMembers?.find((m) => m._id === relationMeta.setBy)?.name
+    : undefined;
 
   const updateContact = useMutation(api.contacts.updateContact);
   const updateContactPhoto = useMutation(api.contacts.updateContactPhoto);
@@ -155,6 +173,9 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
   const fullName = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
   const displayName = fullName || contact.email || contact.phone || "Sem nome";
   const initials = [contact.firstName?.[0], contact.lastName?.[0]].filter(Boolean).join("").toUpperCase() || "?";
+  const relation = asContactRelation(contact.relation);
+  const selectRelation = (next: ContactRelation) =>
+    void relationChange.apply({ contactId }, next, displayName, relation);
 
   return (
     <>
@@ -195,6 +216,13 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
               )}
               {activeTab === "info" && (
                 <>
+                  <ContactRelationField
+                    relation={relation}
+                    metaLine={relation ? relationMetaLine(relationMeta, relationSetByName) : null}
+                    canEdit={canEditContact}
+                    onChangeType={() => setRelationSheetOpen(true)}
+                    onTurnLead={() => void relationChange.turnLead({ contactId }, displayName, relation)}
+                  />
                   {!editing ? (
                     <div className="mb-4 flex flex-col sm:flex-row gap-2">
                       <Button variant="primary" size="md" onClick={() => setEditing(true)} className="w-full sm:flex-1">
@@ -261,6 +289,14 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
           variant="danger"
         />
       </SlideOver>
+
+      <ContactRelationSheet
+        open={relationSheetOpen}
+        onClose={() => setRelationSheetOpen(false)}
+        name={displayName}
+        current={relation}
+        onSelect={selectRelation}
+      />
 
       {showStartConversation && (
         <NewConversationModal

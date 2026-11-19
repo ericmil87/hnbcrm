@@ -4,6 +4,7 @@
  * action mutations (records, "Ver tudo"/"Resumir").
  */
 import { QueryCtx } from "../_generated/server";
+import { isOffBusiness } from "./contactRelation";
 import { Doc, Id } from "../_generated/dataModel";
 import { getLeadRef } from "./leadRef";
 import { safeTimezone } from "./promptDateTime";
@@ -171,7 +172,16 @@ export async function loadCardContext(
   const conversationId = args.conversationId ?? n?.conversationId ?? validHandoff?.conversationId;
   const conversation = conversationId ? await db.get(conversationId) : null;
   const validConversation = conversation && conversation.organizationId === orgId ? conversation : null;
-  if (validConversation) ctx.conversation = { id: validConversation._id, channel: validConversation.channel };
+  if (validConversation) {
+    ctx.conversation = {
+      id: validConversation._id,
+      channel: validConversation.channel,
+      // PR1: botão "🏠 Pessoal" / "Virar lead" (verbo `pe`) só em conversa 1:1 com lead.
+      ...(validConversation.kind !== "group" && validConversation.leadId
+        ? { relationAction: isOffBusiness(validConversation.contactRelation) ? ("convert" as const) : ("mark" as const) }
+        : {}),
+    };
+  }
 
   const lead = await getLeadRef(db, validConversation?.leadId ?? validHandoff?.leadId ?? validTask?.leadId);
   if (lead && lead.organizationId === orgId) {
@@ -336,6 +346,8 @@ export async function loadFocusContextInput(
   const org = await db.get(args.organizationId);
   const conversation = await db.get(args.conversationId);
   if (!org || !conversation || conversation.organizationId !== org._id || conversation.kind === "group") return null;
+  // PR1: conversa de contato fora do comercial não entra no contexto do Copiloto (LLM).
+  if (isOffBusiness(conversation.contactRelation)) return null;
   const lead = await getLeadRef(db, conversation.leadId);
   let leadInfo: FocusContextInput["lead"];
   let attendantMode: FocusContextInput["attendantMode"] = null;

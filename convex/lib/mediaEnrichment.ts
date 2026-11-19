@@ -27,6 +27,18 @@ import { internal } from "../_generated/api";
 import { orgAiActive } from "./agentSecurity";
 import { resolveEntitlements } from "./entitlements";
 import { isPdfCandidate, PDF_READ_MAX_BYTES, pdfLabelName } from "./pdfRead";
+import { isOffBusiness } from "./contactRelation";
+
+/**
+ * PR1: a mensagem é de uma conversa de contato fora do comercial (espelho
+ * `conversations.contactRelation`)? Só lida quando o resto do gate já passou.
+ */
+async function messageIsOffBusiness(ctx: MutationCtx, messageId: Id<"messages">): Promise<boolean> {
+  const message = await ctx.db.get(messageId);
+  if (!message) return false;
+  const conversation = await ctx.db.get(message.conversationId);
+  return isOffBusiness(conversation?.contactRelation);
+}
 
 type OrgDoc = Doc<"organizations"> | null;
 type ChannelConfigDoc = Doc<"channelConfigs"> | null;
@@ -121,6 +133,9 @@ export async function scheduleAudioTranscription(
   }
 ): Promise<boolean> {
   if (!shouldScheduleAudioTranscription(args)) return false;
+  // PR1: conversa de contato fora do comercial nunca vai ao Whisper/Groq,
+  // inclusive o áudio que o dono mandou pelo celular.
+  if (await messageIsOffBusiness(ctx, args.messageId)) return false;
   await ctx.scheduler.runAfter(0, internal.transcription.autoTranscribe, {
     messageId: args.messageId,
   });
@@ -161,6 +176,8 @@ export async function schedulePdfRead(
   const message = await ctx.db.get(args.messageId);
   if (!message || message.organizationId !== file.organizationId) return false;
   if (message.metadata?.docRead) return false;
+  // PR1: conversa de contato fora do comercial não tem o PDF lido.
+  if (isOffBusiness((await ctx.db.get(message.conversationId))?.contactRelation)) return false;
   const now = Date.now();
   const fileName = pdfLabelName(file.name);
   if (file.size > PDF_READ_MAX_BYTES) {

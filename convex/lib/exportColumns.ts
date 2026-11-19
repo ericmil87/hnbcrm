@@ -38,6 +38,20 @@ export interface ExportLookups {
 
 export const CUSTOM_COLUMN_PREFIX = "cf_";
 
+/**
+ * Rótulos da coluna "Tipo de contato" (espelho de `CONTACT_RELATION_LABEL` em
+ * `lib/contactRelation.ts`; este módulo não importa Convex — paridade em
+ * `contactRelation.test.ts`).
+ */
+export const CONTACT_RELATION_EXPORT_LABELS: Record<string, string> = {
+  customer: "Lead",
+  personal: "Pessoal",
+  team: "Equipe",
+  supplier: "Fornecedor",
+  partner: "Parceiro",
+  automated: "Robô",
+};
+
 const CONTACT_COLUMNS: string[] = [
   "id",
   "firstName",
@@ -69,6 +83,9 @@ const CONTACT_COLUMNS: string[] = [
   "linkedinConnections",
   "socialInfluenceScore",
   "aiOptOut",
+  // PR1: "Tipo de contato" — rótulo PT-BR (Lead, Pessoal…); vazio = sem tipo.
+  // O import aceita os mesmos rótulos (`CONTACT_RELATION_IMPORT_VALUES`).
+  "relation",
   "createdAt",
   "updatedAt",
 ];
@@ -228,6 +245,7 @@ function buildContactRow(doc: any): Record<string, unknown> {
     linkedinConnections: doc.linkedinConnections ?? "",
     socialInfluenceScore: doc.socialInfluenceScore ?? "",
     aiOptOut: doc.aiOptOut === true ? "true" : "false",
+    relation: typeof doc.relation === "string" ? (CONTACT_RELATION_EXPORT_LABELS[doc.relation] ?? "") : "",
     createdAt: toIsoDate(doc.createdAt),
     updatedAt: toIsoDate(doc.updatedAt),
   };

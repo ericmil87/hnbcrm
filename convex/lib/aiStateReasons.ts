@@ -11,6 +11,8 @@
 export const AI_STATE_REASON_CODES = [
   // elegibilidade do atendente 1 a 1 (evaluateEligibility)
   "conversa_de_grupo",
+  // PR1: contato marcado fora do comercial (lib/contactRelation.ts)
+  "contato_nao_cliente",
   "ia_desativada",
   "atendente_desativado",
   "sem_atendente",

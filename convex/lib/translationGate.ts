@@ -15,6 +15,7 @@ import { Doc } from "../_generated/dataModel";
 import { orgAiActive } from "./agentSecurity";
 import { DEFAULT_TEAM_LANGUAGE, normalizeLanguageCode, sameLanguage } from "./languages";
 import { detectLanguage } from "./languageDetect";
+import { isOffBusiness, type ContactRelation } from "./contactRelation";
 
 export type TranslationEngine = "libretranslate" | "llm";
 export type TranslationRole = "inbound" | "outbound" | "display";
@@ -66,7 +67,10 @@ export const MAX_GLOSSARY_TERM_LENGTH = 80;
 export const MAX_TRANSLATION_CHARS = 4000;
 
 type OrgLike = Pick<Doc<"organizations">, "settings"> | null | undefined;
-type ConversationLike = Pick<Doc<"conversations">, "kind" | "channel" | "translation"> | null | undefined;
+type ConversationLike =
+  | (Pick<Doc<"conversations">, "kind" | "channel" | "translation"> & { contactRelation?: ContactRelation })
+  | null
+  | undefined;
 type MessageLike = Pick<
   Doc<"messages">,
   "direction" | "senderType" | "isInternal" | "contentType" | "content" | "metadata"
@@ -154,6 +158,8 @@ function commonRefusal(
   if (!translationEnabledForOrg(org)) return "modulo_desligado";
   if (!conversation) return "sem_conversa";
   if (conversation.kind === "group") return "grupo";
+  // PR1: conversa de contato fora do comercial nunca é traduzida (nem LLM nem LibreTranslate).
+  if (isOffBusiness(conversation.contactRelation)) return "contato_nao_cliente";
   if (message.isInternal || message.direction === "internal") return "nota_interna";
   if (conversation.translation?.mode === "off") return "conversa_sem_traducao";
   if (message.metadata?.deletedByCustomer === true) return "apagada";

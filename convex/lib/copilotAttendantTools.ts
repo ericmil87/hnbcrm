@@ -14,6 +14,7 @@
  * customer, P8). Everything else runs the domain core directly, `via:"copilot"`.
  */
 import { NOT_ON_WHATSAPP_SEND_PREFIX } from "./whatsappCheck";
+import { effectiveRelation, isOffBusiness } from "./contactRelation";
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 import { acceptHandoffCore, rejectHandoffWithInstructionCore } from "../handoffs";
@@ -246,6 +247,13 @@ export async function runAttendantCopilotReadTool(
   const found = await resolveToolConversation(db, scope, args.leadId);
   if (!found) return { status: "sem_conversa", message: NO_CONVERSATION };
   const { conversation, lead } = found;
+  // PR1: conversa de contato fora do comercial (Pessoal, Equipe…) nunca chega ao LLM.
+  if (isOffBusiness(effectiveRelation(lead?.contactId ? await db.get(lead.contactId) : null, conversation))) {
+    return {
+      status: "contato_nao_cliente",
+      message: "Esta conversa é de um contato marcado como não-cliente (Pessoal, Equipe, Fornecedor, Parceiro ou Robô). O Copiloto não lê conversas assim; a pessoa pode tocar em \"Virar lead\" no app se for um cliente.",
+    };
+  }
   const recent = await db
     .query("messages")
     .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))

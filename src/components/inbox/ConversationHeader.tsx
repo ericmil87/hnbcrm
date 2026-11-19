@@ -1,11 +1,23 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
+import { useSearchParamState } from "@/hooks/useSearchParamState";
+import { booleanParam } from "@/lib/searchParamState";
 import { useMutation, useQuery } from "convex/react";
-import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Languages, PhoneOff } from "lucide-react";
+import { ArrowLeft, ArrowLeftRight, Bot, ChevronDown, Clock, ExternalLink, Home, Languages, PhoneOff } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
-import { AiControlMenu } from "@/components/inbox/AiControlMenu";
+import { AiControlMenu, aiMenuItemMeta } from "@/components/inbox/AiControlMenu";
+import { useConversationAiControls } from "@/components/inbox/useConversationAiControls";
+import { ContactRelationBadge } from "@/components/contacts/ContactRelationSheet";
+import { usePermissions } from "@/hooks/usePermissions";
+import {
+  actionsMenuAiItems,
+  conversationContactRelation,
+  relationLabel,
+  MARK_PARAM,
+  type AiMenuItem,
+} from "@/lib/contactRelationUi";
 import { ReturnToAiButton } from "@/components/inbox/AiDraftCard";
 import { ChannelAvatar } from "@/components/inbox/ChannelAvatar";
 import { GroupAvatar } from "@/components/inbox/GroupAvatar";
@@ -43,6 +55,11 @@ import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
 
 type ConversationDoc = Record<string, any>;
+
+/** Título e item das seções do menu ⋮ ("Atendimento por IA", "Contato"). */
+const menuSectionClass = "px-3 pt-2 pb-1 text-caption font-semibold uppercase tracking-wide text-text-muted";
+const menuItemClass =
+  "w-full coarse:min-h-11 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-text-primary hover:bg-surface-raised transition-colors";
 
 /** Chip fino da faixa de detalhes (uma linha, sem quebra). */
 const chipClass =
@@ -141,6 +158,30 @@ export function ConversationHeader({
   const convTransport: string | undefined = conversation.channelProvider;
   const contactName = `${conversation.contact?.firstName ?? ""} ${conversation.contact?.lastName ?? ""}`.trim();
   const openContactId = conversation.contact?._id as Id<"contacts"> | undefined;
+
+  // Tipo do contato (Lead, Pessoal, Equipe…): selo, botão da IA e menus.
+  const { can } = usePermissions(organizationId);
+  const contactRelation = isGroup ? undefined : conversationContactRelation(conversation);
+  const canEditContact = !isGroup && !!openContactId && can("contacts", "edit");
+  const aiControls = useConversationAiControls({
+    conversationId,
+    contactName,
+    relation: contactRelation,
+    canEditContact,
+  });
+  const { openRelationSheet } = aiControls;
+
+  // Deep link `?conversation=…&marcar=1` (push no iPhone): abre a folha de tipos uma vez e limpa o parâmetro
+  // (replace, preservando o `location.state` da entrada).
+  const markParam = useSearchParamState(MARK_PARAM, booleanParam);
+  const markRequested = markParam.value;
+  const clearMark = markParam.set;
+  const markInFlight = markParam.isInFlight;
+  useEffect(() => {
+    if (markInFlight() || !markRequested || !openContactId) return;
+    if (canEditContact) openRelationSheet();
+    clearMark(false, { history: "replace" });
+  }, [markRequested, markInFlight, openContactId, canEditContact, openRelationSheet, clearMark]);
 
   // Tradução automática: pílula de leitura quando o lead fala outro idioma e
   // "Idioma da conversa…" no menu ⋮ (o seletor completo mora no composer).
@@ -260,7 +301,6 @@ export function ConversationHeader({
   const handoffReason = isGroup ? pendingGroupHandoff?.reason : openHandoffState?.reason;
 
   const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
-  const returnToAi = useMutation(api.attendant.returnToAi);
 
   const handleAcceptHandoff = () => {
     if (!pendingHandoff) return;
@@ -279,14 +319,79 @@ export function ConversationHeader({
   const handleNotABot = async () => {
     setReturningFromBot(true);
     try {
-      await returnToAi({ conversationId });
-      toast.success("Conversa devolvida à IA");
-    } catch (error) {
-      toast.error(mutationErrorMessage(error, "Não foi possível devolver à IA. Tente de novo."));
+      await aiControls.returnNow();
     } finally {
       setReturningFromBot(false);
     }
   };
+
+  // Menu ⋮ (1 a 1): "Atendimento por IA" com as mesmas ações do botão da IA e "Contato › Tipo de contato…".
+  const aiPausedNow = typeof conversation.aiPausedUntil === "number" && conversation.aiPausedUntil > Date.now();
+  const menuAiItems = isGroup
+    ? []
+    : actionsMenuAiItems({
+        paused: aiPausedNow,
+        off: false,
+        relation: contactRelation,
+        hasPendingDraft,
+        canReply,
+        canEditContact,
+        showAiControls,
+      });
+  const selectMenuAiItem = (item: AiMenuItem) => {
+    if (item === "assume") aiControls.assume();
+    else if (item === "return") aiControls.openReturn(menuTriggerRef);
+    else if (item === "ask") aiControls.openAsk(menuTriggerRef);
+    else if (item === "turnLead") aiControls.turnLead();
+    else openRelationSheet();
+  };
+  const leadingItems =
+    !isGroup && (menuAiItems.length > 0 || canEditContact)
+      ? (close: () => void) => (
+          <>
+            {menuAiItems.length > 0 && (
+              <>
+                <p className={menuSectionClass}>Atendimento por IA</p>
+                {menuAiItems.map((item) => {
+                  const { label, Icon } = aiMenuItemMeta(item);
+                  return (
+                    <button
+                      key={item}
+                      type="button"
+                      onClick={() => {
+                        close();
+                        selectMenuAiItem(item);
+                      }}
+                      className={menuItemClass}
+                    >
+                      <Icon size={15} aria-hidden />
+                      {label}
+                    </button>
+                  );
+                })}
+              </>
+            )}
+            {canEditContact && (
+              <>
+                <p className={menuSectionClass}>Contato</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    close();
+                    openRelationSheet();
+                  }}
+                  className={menuItemClass}
+                >
+                  <Home size={15} aria-hidden />
+                  <span className="min-w-0 flex-1 truncate">
+                    Tipo de contato… <span className="text-text-muted">({relationLabel(contactRelation)})</span>
+                  </span>
+                </button>
+              </>
+            )}
+          </>
+        )
+      : undefined;
 
   const groupAiPaused =
     isGroup && typeof conversation.aiPausedUntil === "number" && conversation.aiPausedUntil > Date.now();
@@ -297,6 +402,7 @@ export function ConversationHeader({
       archivedAt={conversation.archivedAt}
       labelIds={(conversation.labelIds ?? []) as string[]}
       onArchivedChange={onArchivedChange}
+      renderLeadingItems={leadingItems}
       renderExtraItems={
         isGroup && groupMenu
           ? (close) => (
@@ -325,7 +431,7 @@ export function ConversationHeader({
       triggerRef={menuTriggerRef}
     />
   );
-  const aiPaused = typeof conversation.aiPausedUntil === "number" && conversation.aiPausedUntil > Date.now();
+  const aiPaused = aiPausedNow;
   const aiProcessing = aiConvState?.status === "pending" || aiConvState?.status === "processing";
   const subtitle = headerSubtitle({
     typing: contactTyping,
@@ -366,6 +472,8 @@ export function ConversationHeader({
       {subtitle.text}
     </span>
   ) : null;
+  // Selo do tipo (só não-cliente): no celular na linha do subtítulo (o nome já é curto), no computador ao lado do nome.
+  const relationBadge = <ContactRelationBadge relation={contactRelation} />;
 
   const windowClosed = windowInfo?.closed === true;
   const hasStripItems = !!(funnelChip || originLine || languagePill || showAiControls || windowInfo);
@@ -403,7 +511,14 @@ export function ConversationHeader({
                 {avatar}
                 <span className="min-w-0 flex-1">
                   <h2 className="truncate text-base font-semibold leading-tight text-text-primary">{displayName}</h2>
-                  {subtitleLine}
+                  {contactRelation && !isGroup ? (
+                    <span className="flex min-w-0 items-center gap-1.5">
+                      {relationBadge}
+                      <span className="min-w-0 flex-1">{subtitleLine}</span>
+                    </span>
+                  ) : (
+                    subtitleLine
+                  )}
                 </span>
               </>
             );
@@ -428,15 +543,18 @@ export function ConversationHeader({
               {isGroup ? (
                 <h2 className="truncate text-base font-semibold text-text-primary">{groupSubject}</h2>
               ) : openContactId && conversation.contact ? (
-                <h2 className="text-base font-semibold text-text-primary truncate">
-                  {/* Clicar no nome abre o contato; o lápis (ou o próprio "Sem nome") renomeia. */}
-                  <InlineNameEditor
-                    contact={conversation.contact as InlineNameContact}
-                    lead={conversation.lead as InlineNameLead}
-                    onOpen={onOpenContact}
-                    openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
-                  />
-                </h2>
+                <div className="flex min-w-0 items-center gap-2">
+                  <h2 className="min-w-0 text-base font-semibold text-text-primary truncate">
+                    {/* Clicar no nome abre o contato; o lápis (ou o próprio "Sem nome") renomeia. */}
+                    <InlineNameEditor
+                      contact={conversation.contact as InlineNameContact}
+                      lead={conversation.lead as InlineNameLead}
+                      onOpen={onOpenContact}
+                      openLabel={`Ver detalhes do contato${contactName ? ` ${contactName}` : ""}`}
+                    />
+                  </h2>
+                  {relationBadge}
+                </div>
               ) : (
                 <h2 className="truncate text-base font-semibold text-text-primary">{displayName}</h2>
               )}
@@ -466,6 +584,9 @@ export function ConversationHeader({
                 hasPendingDraft={hasPendingDraft}
                 aiState={aiConvState as AiConvState}
                 canReply={canReply}
+                canEditContact={canEditContact}
+                relation={contactRelation}
+                controls={aiControls}
               />
             )}
             {(hasStripItems || !!children) && (
@@ -515,6 +636,8 @@ export function ConversationHeader({
         </div>
       </div>
 
+      {!isGroup && aiControls.overlays}
+
       <ConversationLanguageDialog
         open={languageDialogOpen}
         onClose={() => setLanguageDialogOpen(false)}
@@ -539,7 +662,13 @@ export function ConversationHeader({
                 <Button type="button" size="sm" disabled={!pendingHandoff} onClick={handleAcceptHandoff}>
                   {VOCAB.attention.accept}
                 </Button>
-                <ReturnToAiButton conversationId={conversationId} variant="button" buttonVariant="secondary" />
+                <ReturnToAiButton
+                  conversationId={conversationId}
+                  contactName={contactName}
+                  canEditContact={canEditContact}
+                  variant="button"
+                  buttonVariant="secondary"
+                />
                 {pendingHandoff && (
                   <Button
                     type="button"

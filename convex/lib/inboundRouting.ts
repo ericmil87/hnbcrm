@@ -7,6 +7,7 @@
 import { MutationCtx, QueryCtx } from "../_generated/server";
 import { phoneLookupCandidates } from "./phone";
 import { Doc, Id } from "../_generated/dataModel";
+import { autoLeadArchivePatch } from "./contactRelation";
 import { buildSearchText } from "./searchText";
 import { leadCreationStagePatch } from "./leadStageMove";
 import { orgAiActive } from "./agentSecurity";
@@ -295,6 +296,9 @@ export async function ensureLeadForContact(
   const title = args.title || contactName;
 
   const now = Date.now();
+  // PR1: contato fora do comercial (Pessoal, Equipe…) ganha o lead só como
+  // âncora técnica da conversa — nasce ARQUIVADO, fora do funil.
+  const archivePatch = autoLeadArchivePatch(contact?.relation, now);
   const leadId = await ctx.db.insert("leads", {
     organizationId: args.organizationId,
     title,
@@ -309,6 +313,7 @@ export async function ensureLeadForContact(
     tags: [],
     customFields: {},
     conversationStatus: "new",
+    ...archivePatch,
     ...leadCreationStagePatch(firstStage, now),
     lastActivityAt: now,
     createdAt: now,
@@ -324,6 +329,18 @@ export async function ensureLeadForContact(
     metadata: { contactId: args.contactId },
     createdAt: now,
   });
+
+  if (archivePatch.archivedAt !== undefined) {
+    await ctx.db.insert("activities", {
+      organizationId: args.organizationId,
+      leadId,
+      type: "note",
+      actorType: "system",
+      content: "Lead criado já arquivado: o contato está marcado como não-cliente",
+      metadata: { contactId: args.contactId, contactRelation: contact?.relation },
+      createdAt: now,
+    });
+  }
 
   if (pipelineFallback) {
     await ctx.db.insert("activities", {

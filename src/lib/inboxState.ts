@@ -1,6 +1,7 @@
 import { VOCAB } from "./vocab";
 import { aiStateReasonLabel } from "./aiStateReasons";
 import { isAiPaused, type ConversationAiMode } from "../../convex/lib/conversationAiMode";
+import { CONTACT_RELATION_AI_REASON } from "../../convex/lib/contactRelation";
 
 // Lógica pura da tela de Conversas (sem React): suspeita de robô, repasse
 // pendente, chip de estado da IA, filtros da lista e a decisão "param da URL →
@@ -50,6 +51,8 @@ export function aiStateChipInfo(state: AiConvState): AiChipInfo | null {
     return { label: "IA preparando resposta…", tone: "processing" };
   }
   if ((state.status === "skipped" || state.status === "failed") && state.afterLastInbound) {
+    // Contato que não é cliente: o estado é "IA desligada · <Tipo>" (botão da IA e selo), não uma espera.
+    if (state.reason === CONTACT_RELATION_AI_REASON) return null;
     const reasonLabel = state.reason ? aiStateReasonLabel(state.reason) : "motivo desconhecido";
     return { label: `IA em espera: ${reasonLabel}`, tone: "waiting" };
   }

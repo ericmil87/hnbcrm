@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
-import { MoreVertical, Archive, ArchiveRestore, Trash2 } from "lucide-react";
+import { MoreVertical, Archive, ArchiveRestore, Home, Trash2 } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -9,6 +9,9 @@ import { Menu } from "@/components/ui/Menu";
 import { DeleteLeadDialog } from "@/components/leads/DeleteLeadDialog";
 import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
+import { ContactRelationSheet } from "@/components/contacts/ContactRelationSheet";
+import { useContactRelationChange } from "@/components/contacts/useContactRelationChange";
+import { asContactRelation, type ContactRelation } from "@/lib/contactRelationUi";
 
 /* ------------------------------------------------------------------ */
 /*  Header actions ("⋮")                                               */
@@ -29,10 +32,23 @@ export function LeadActionsMenu({
 
   const [archiving, setArchiving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [relationSheetOpen, setRelationSheetOpen] = useState(false);
+  const relationChange = useContactRelationChange();
 
   const canArchive = can("leads", "edit_own");
   const canDelete = can("leads", "full");
-  if (!canArchive && !canDelete) return null;
+  const contactId = lead?.contactId as Id<"contacts"> | undefined;
+  // "Não é cliente…": muda o tipo do contato do lead (exige `contacts:edit`).
+  const canMarkContact = !!contactId && can("contacts", "edit");
+  if (!canArchive && !canDelete && !canMarkContact) return null;
+
+  const contact = lead?.contact as { firstName?: string; lastName?: string; relation?: unknown } | null | undefined;
+  const contactName = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ");
+  const relation = asContactRelation(contact?.relation);
+  const selectRelation = (next: ContactRelation) => {
+    if (!contactId) return;
+    void relationChange.apply({ contactId }, next, contactName, relation);
+  };
 
   const archived = lead?.archivedAt != null;
 
@@ -69,10 +85,20 @@ export function LeadActionsMenu({
           </button>
         )}
         items={[
+          ...(canMarkContact
+            ? [
+                {
+                  label: "Não é cliente…",
+                  icon: <Home size={15} aria-hidden="true" />,
+                  onSelect: () => setRelationSheetOpen(true),
+                },
+              ]
+            : []),
           ...(canArchive
             ? [
                 {
                   label: archived ? "Restaurar lead" : "Arquivar lead",
+                  separatorBefore: canMarkContact,
                   icon: archived ? <ArchiveRestore size={15} aria-hidden="true" /> : <Archive size={15} aria-hidden="true" />,
                   onSelect: handleArchive,
                   disabled: !lead || archiving,
@@ -86,12 +112,22 @@ export function LeadActionsMenu({
                   icon: <Trash2 size={15} aria-hidden="true" />,
                   onSelect: () => setConfirmDelete(true),
                   danger: true,
-                  separatorBefore: canArchive,
+                  separatorBefore: canArchive || canMarkContact,
                 },
               ]
             : []),
         ]}
       />
+
+      {canMarkContact && (
+        <ContactRelationSheet
+          open={relationSheetOpen}
+          onClose={() => setRelationSheetOpen(false)}
+          name={contactName}
+          current={relation}
+          onSelect={selectRelation}
+        />
+      )}
 
       {confirmDelete && (
         <DeleteLeadDialog

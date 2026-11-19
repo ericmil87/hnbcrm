@@ -58,6 +58,37 @@ interface TargetDef {
   nonNegative?: boolean;
 }
 
+/**
+ * Valores aceitos na coluna "Tipo de contato" (já normalizados por
+ * `normalizeLabel`) → valor canônico de `contacts.relation`. Inclui os rótulos
+ * que o export grava ("Lead", "Pessoal", "Equipe", "Fornecedor", "Parceiro", "Robô").
+ */
+export const CONTACT_RELATION_IMPORT_VALUES: Record<string, string> = {
+  lead: "customer",
+  cliente: "customer",
+  customer: "customer",
+  comercial: "customer",
+  pessoal: "personal",
+  personal: "personal",
+  familia: "personal",
+  amigo: "personal",
+  amiga: "personal",
+  equipe: "team",
+  team: "team",
+  funcionario: "team",
+  funcionaria: "team",
+  colaborador: "team",
+  fornecedor: "supplier",
+  supplier: "supplier",
+  parceiro: "partner",
+  parceira: "partner",
+  partner: "partner",
+  robo: "automated",
+  bot: "automated",
+  automated: "automated",
+  automatico: "automated",
+};
+
 // ===== Normalização =====
 
 /** minúsculas, sem acentos, sem pontuação, espaços colapsados. */
@@ -399,6 +430,16 @@ const CONTACT_TARGETS: TargetDef[] = [
     label: "Opt-out de IA",
     type: "boolean",
     aliases: ["opt out de ia", "opt out ia", "sem ia", "ai opt out", "nao responder com ia"],
+  },
+  {
+    // PR1: tipo de contato (lib/contactRelation.ts — este módulo não importa
+    // Convex, então os valores ficam aqui; paridade em contactRelation.test.ts).
+    // A importação aplica pela porta única `setContactRelationCore`.
+    field: "relation",
+    label: "Tipo de contato",
+    type: "enum",
+    aliases: ["tipo de contato", "tipo do contato", "relacao com o contato", "relation", "contact type", "contact relation"],
+    enumValues: CONTACT_RELATION_IMPORT_VALUES,
   },
 ];
 

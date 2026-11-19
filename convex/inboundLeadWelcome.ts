@@ -16,6 +16,7 @@
  * Núcleo puro (template, escolha da mensagem, regra) em `lib/inboundLeadWelcome.ts`.
  */
 import { v, type Infer } from "convex/values";
+import { isOffBusiness } from "./lib/contactRelation";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -309,7 +310,7 @@ type WelcomeGuardSkip = { ok: false; reason: string; note?: string };
  * mutation usam a mesma): o mesmo motivo de skip em qualquer dos dois lados, e
  * a action não gasta rede com quem a mutation vai pular de qualquer jeito.
  */
-async function welcomeGuards(
+export async function welcomeGuards(
   ctx: QueryCtx | MutationCtx,
   args: {
     organizationId: Id<"organizations">;
@@ -338,6 +339,8 @@ async function welcomeGuards(
   ) {
     return skip("referencia_invalida");
   }
+  // PR1: contato marcado fora do comercial nunca recebe boas-vindas automáticas.
+  if (isOffBusiness(contact.relation)) return skip("contato_nao_cliente");
 
   // Canal: da org, WhatsApp, ativo.
   const config = await ctx.db.get(welcome.channelConfigId);

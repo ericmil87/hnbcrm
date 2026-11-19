@@ -160,6 +160,9 @@ import { scheduleMessageTranslation } from "./lib/translationOps";
 import { editedDraftNeedsTranslation } from "./lib/translationGate";
 import { languageName, normalizeLanguageCode } from "./lib/languages";
 import { withMessageSearch } from "./lib/messageSearch";
+import { discardAiDraftCore } from "./lib/aiDraftOps";
+import { CONTACT_RELATION_AI_REASON, aiBlockReason, effectiveRelation } from "./lib/contactRelation";
+import { assertAiAllowedForLead } from "./lib/contactRelationGuard";
 
 export { isWithinSchedule };
 
@@ -225,6 +228,15 @@ export function evaluateEligibility(input: EligibilityInput): { ok: true } | { o
   // atravessariam em silêncio uma conversa sem lead — recusar explicitamente é
   // o que impede um caller futuro de responder num grupo pelo caminho errado.
   if (conversation.kind === "group") return { ok: false, reason: "conversa_de_grupo" };
+  // 0b (PR1 "Não é cliente"). Contato marcado fora do comercial (Pessoal,
+  // Equipe, Fornecedor, Parceiro, Robô): a IA nunca responde nem gasta. Logo
+  // depois do grupo, antes de qualquer condição que gere repasse ou custo; o
+  // CONTATO manda quando foi lido, senão o espelho da conversa. Fora de
+  // HUMAN_HOLD_REASONS: nem coach nem "Devolver à IA" atravessam (o humano
+  // precisa "Virar lead" antes). Re-checada no claim e no commit: marcar no
+  // meio de uma rodada aborta o envio.
+  const blockedByRelation = aiBlockReason(effectiveRelation(contact, conversation));
+  if (blockedByRelation) return { ok: false, reason: blockedByRelation };
   // 1. IA da org ativa (enabled + aceite LGPD)
   if (!orgAiActive(org)) return { ok: false, reason: "ia_desativada" };
   // 2. toggle específico do atendente (P3; undefined = ligado)
@@ -802,6 +814,11 @@ export const internalEnqueueFromInbound = internalMutation({
     const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
     const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
     if (!agent || !lead) return null;
+
+    // PR1 "Não é cliente": contato fora do comercial sai ANTES da palavra-chave
+    // de repasse (o "humano" da mãe não abre repasse) e sem rastro na fila
+    // (nenhuma escrita por mensagem da família; o estado vem do espelho).
+    if (aiBlockReason(effectiveRelation(contact, conversation))) return null;
 
     const now = Date.now();
 
@@ -4614,6 +4631,16 @@ export const getConversationAiState = query({
     if (!conversation) return null;
     await requireAuth(ctx, conversation.organizationId);
 
+    // PR1: contato fora do comercial — a IA nunca atende aqui e o enqueue não
+    // deixa rastro na fila; o estado sai do espelho (sem escrita por mensagem).
+    if (aiBlockReason(conversation.contactRelation) && conversation.kind !== "group") {
+      return {
+        status: "skipped",
+        reason: CONTACT_RELATION_AI_REASON,
+        at: conversation.lastInboundAt ?? conversation.updatedAt,
+        afterLastInbound: true,
+      };
+    }
     const latest = await latestReactiveQueueItem(ctx.db, args.conversationId);
     if (!latest) return null;
     // Item pulado/falho anterior a uma devolução à IA (aiResumedAt) não
@@ -4888,53 +4915,8 @@ export const discardAiDraft = mutation({
   },
 });
 
-/** Núcleo de "descartar o rascunho da IA" (sem sessão; o chamador autorizou). Sem rascunho pendente = no-op. */
-export async function discardAiDraftCore(
-  ctx: MutationCtx,
-  args: { draft: Doc<"messages">; member: Doc<"teamMembers">; via?: "telegram" | "telegram_auto" | "copilot" }
-): Promise<boolean> {
-  const { draft, member } = args;
-  const aiDraft = draft.metadata?.aiDraft as
-    | { status: string; followUpId?: Id<"aiFollowUps"> }
-    | undefined;
-  if (!aiDraft || aiDraft.status !== "pending") return false;
-
-  await ctx.db.patch(draft._id, {
-    metadata: {
-      ...(draft.metadata ?? {}),
-      aiDraft: {
-        ...aiDraft,
-        status: "discarded",
-        reviewedBy: member._id,
-        reviewedAt: Date.now(),
-        ...(args.via ? { reviewedVia: args.via } : {}),
-      },
-    },
-  });
-
-  const draftConversation = await ctx.db.get(draft.conversationId);
-  if (draftConversation) {
-    await resolveEntityNotifications(ctx, {
-      organizationId: draftConversation.organizationId,
-      target: { conversationId: draftConversation._id },
-      resolvedByMemberId: member._id,
-      reason: "draft_discarded",
-      types: ["ai_draft_pending"],
-    });
-  }
-
-  // D7: descartar o rascunho do follow-up é dizer "não é para mandar". A
-  // tarefa continua PENDENTE, mas passa a ser de quem descartou — a IA não
-  // tenta de novo sozinha.
-  if (aiDraft.followUpId) {
-    await resolveFollowUpOutcome(ctx, aiDraft.followUpId, {
-      kind: "canceled",
-      reason: `rascunho descartado por ${member.name}`,
-      reassignTo: member._id,
-    });
-  }
-  return true;
-}
+/** Núcleo de "descartar o rascunho da IA": mora em `lib/aiDraftOps.ts` (usado pela porta do tipo de contato sem ciclo). */
+export { discardAiDraftCore };
 
 // ── Loop de coaching (P2): humano instrui, IA propõe, humano aprova/reinstrui ──
 
@@ -5002,6 +4984,8 @@ export async function requestAiDraftCore(
   }
   const lead = await getLeadRef(ctx.db, conversation.leadId);
   if (!lead) throw new Error("Lead da conversa não encontrado");
+  // PR1: contato fora do comercial → ConvexError {code:"needs_relation"} antes de qualquer escrita.
+  await assertAiAllowedForLead(ctx.db, lead);
   const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
   const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
   if (!agent) throw new Error("Nenhum atendente IA configurado para este canal");
@@ -5310,6 +5294,9 @@ export async function returnToAiCore(
   const org = await ctx.db.get(conversation.organizationId);
   const lead = await getLeadRef(ctx.db, conversation.leadId);
   if (!lead) throw new ConvexError("Lead da conversa não encontrado");
+  // PR1: contato fora do comercial → ConvexError {code:"needs_relation"} antes
+  // de qualquer escrita (despausar/reatribuir pela metade deixaria estado torto).
+  await assertAiAllowedForLead(ctx.db, lead);
   const channelConfig = await resolveConversationChannelConfig(ctx, conversation);
   const agent = await findAttendantForConversation(ctx, org, conversation, lead, channelConfig);
 

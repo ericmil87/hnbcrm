@@ -89,6 +89,8 @@ import {
   rankContacts,
 } from "./lib/contactSearchRank";
 import { maybeBufferInboundForRelay } from "./lib/telegramRelay";
+import { effectiveRelation } from "./lib/contactRelation";
+import { contactRelationMirrorFor } from "./lib/contactRelationGuard";
 import { withMessageSearch } from "./lib/messageSearch";
 import { listAiMode } from "./lib/conversationAiMode";
 
@@ -376,6 +378,8 @@ export async function getOrCreateConversation(
     leadId: args.leadId,
     channel: args.channel,
     ...(await channelConfigPatchFor(ctx, {}, args.channelConfigId)),
+    // Espelho do tipo de contato (PR1): a conversa nasce com o tipo do contato do lead.
+    ...(await contactRelationMirrorFor(ctx.db, args.leadId)),
     status: "active",
     messageCount: 0,
     createdAt: now,
@@ -641,6 +645,8 @@ export const getConversations = query({
       return {
         ...conversation,
         kind: conversation.kind ?? "direct",
+        // Tipo de contato (PR1): o contato manda; sem contato, o espelho da conversa.
+        contactRelation: effectiveRelation(contact, conversation),
         lead,
         contact,
         assignee,
@@ -739,6 +745,8 @@ export const getConversationById = query({
     return {
       ...conversation,
       kind: conversation.kind ?? "direct",
+      // Tipo de contato (PR1): o contato manda; sem contato, o espelho da conversa.
+      contactRelation: effectiveRelation(contact, conversation),
       lead,
       contact,
       assignee,

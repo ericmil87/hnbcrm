@@ -48,6 +48,7 @@
  */
 
 import { v } from "convex/values";
+import { isOffBusiness } from "./lib/contactRelation";
 import { withMessageSearchPatch } from "./lib/messageSearch";
 import {
   action,
@@ -927,6 +928,9 @@ export const internalGetImageMessageIfEligible = internalQuery({
     const org = await ctx.db.get(message.organizationId);
     // Um interruptor só: aiConfig.visionEnabled (opt-in, default false).
     if (!shouldDescribeImage(org)) return null;
+    // PR1: imagem de conversa de contato fora do comercial não vai à visão.
+    const conversation = await ctx.db.get(message.conversationId);
+    if (isOffBusiness(conversation?.contactRelation)) return null;
 
     const aiConfig = org!.settings.aiConfig;
     return {

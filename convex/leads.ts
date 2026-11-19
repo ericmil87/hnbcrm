@@ -18,7 +18,9 @@ import {
   scheduleLeadCascade,
 } from "./lib/leadCascade";
 import { appUrl as resolveAppUrl } from "./lib/appUrl";
-import { cancelFollowUpsOfLead } from "./lib/followUpOps";
+import { setLeadArchivedCore } from "./lib/leadArchive";
+import { autoLeadArchivePatch } from "./lib/contactRelation";
+import { resyncLeadContactRelationMirror } from "./lib/contactRelationGuard";
 import {
   moveLeadToStageCore,
   actorFromMember,
@@ -283,6 +285,8 @@ export const updateLead = mutation({
       lastActivityAt: now,
       updatedAt: now,
     });
+    // Lead trocou de contato: o espelho do tipo de contato nas conversas segue o novo.
+    if ("contactId" in changes) await resyncLeadContactRelationMirror(ctx, args.leadId);
 
     // Log audit entry
     await ctx.db.insert("auditLogs", {
@@ -331,6 +335,8 @@ export const linkContact = mutation({
       lastActivityAt: now,
       updatedAt: now,
     });
+    // O espelho do tipo de contato nas conversas segue o contato novo (ou some).
+    if (oldContactId !== args.contactId) await resyncLeadContactRelationMirror(ctx, args.leadId);
 
     // Log audit entry
     await ctx.db.insert("auditLogs", {
@@ -1088,6 +1094,13 @@ export const internalCreateLead = internalMutation({
 
     const now = Date.now();
     const org = await ctx.db.get(args.organizationId);
+    // PR1: criação por integração (formulário, captura universal) para contato
+    // marcado fora do comercial nasce arquivada (âncora, fora do funil).
+    const contactForLead = args.contactId ? await ctx.db.get(args.contactId) : null;
+    const archivePatch =
+      contactForLead && contactForLead.organizationId === args.organizationId
+        ? autoLeadArchivePatch(contactForLead.relation, now)
+        : {};
 
     const leadId = await ctx.db.insert("leads", {
       organizationId: args.organizationId,
@@ -1104,6 +1117,7 @@ export const internalCreateLead = internalMutation({
       tags: args.tags || [],
       customFields: args.customFields || {},
       conversationStatus: "new",
+      ...archivePatch,
       ...leadCreationStagePatch(initialStage, now),
       lastActivityAt: now,
       createdAt: now,
@@ -1211,6 +1225,8 @@ export const internalUpdateLead = internalMutation({
       lastActivityAt: now,
       updatedAt: now,
     });
+    // Lead trocou de contato: o espelho do tipo de contato nas conversas segue o novo.
+    if ("contactId" in changes) await resyncLeadContactRelationMirror(ctx, args.leadId);
 
     // Log audit entry
     await ctx.db.insert("auditLogs", {
@@ -1680,59 +1696,15 @@ export const bulkArchiveLeads = mutation({
       const lead = await ctx.db.get(leadId);
       if (!lead || lead.organizationId !== args.organizationId) continue;
 
-      const alreadyArchived = lead.archivedAt !== undefined;
-      // Skip no-op transitions
-      if (args.archived === alreadyArchived) continue;
-
-      await ctx.db.patch(leadId, {
-        archivedAt: args.archived ? now : undefined,
-        updatedAt: now,
+      // Núcleo compartilhado com a porta do tipo de contato (lib/leadArchive.ts):
+      // patch, follow-ups cancelados, audit, activity e webhook.
+      const changed = await setLeadArchivedCore(ctx, {
+        lead,
+        archived: args.archived,
+        actor: { id: userMember._id, type: userMember.type === "ai" ? "ai" : "human" },
+        now,
       });
-
-      // Arquivar o lead NÃO arquiva a conversa dele — e sem isto o atendente IA
-      // seguiria executando os follow-ups que agendou, cobrando um cliente de um
-      // negócio que a equipe acabou de tirar do funil. Cap por lead para o bulk
-      // não estourar a transação.
-      if (args.archived) {
-        await cancelFollowUpsOfLead(ctx, leadId, "lead_arquivado");
-      }
-
-      // Audit log. Note: auditLogs.action is a constrained union (no archive verb),
-      // so we record it as "update" with a custom PT-BR description + metadata flag.
-      await ctx.db.insert("auditLogs", {
-        organizationId: lead.organizationId,
-        entityType: "lead",
-        entityId: leadId,
-        action: "update",
-        actorId: userMember._id,
-        actorType: userMember.type === "ai" ? "ai" : "human",
-        changes: {
-          before: { archivedAt: lead.archivedAt },
-          after: { archivedAt: args.archived ? now : undefined },
-        },
-        metadata: { title: lead.title, archived: args.archived },
-        description: `${args.archived ? "Arquivou" : "Restaurou"} o lead${lead.title ? ` '${lead.title}'` : ""}`,
-        severity: "medium",
-        createdAt: now,
-      });
-
-      // Activity log
-      await ctx.db.insert("activities", {
-        organizationId: lead.organizationId,
-        leadId,
-        type: "note",
-        actorId: userMember._id,
-        actorType: userMember.type === "ai" ? "ai" : "human",
-        content: args.archived ? "Lead arquivado" : "Lead restaurado",
-        createdAt: now,
-      });
-
-      // Trigger webhooks
-      await scheduleWebhookEvent(ctx, {
-        organizationId: lead.organizationId,
-        event: args.archived ? "lead.archived" : "lead.unarchived",
-        payload: { leadId, title: lead.title },
-      });
+      if (!changed) continue;
 
       updated += 1;
     }

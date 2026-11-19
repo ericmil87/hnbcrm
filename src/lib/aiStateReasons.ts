@@ -3,6 +3,7 @@ import type { AiStateReasonCode } from "../../convex/lib/aiStateReasons";
 // Motivo (aiReplyQueue.error) → texto PT-BR amigável para o chip "IA em espera".
 export const AI_STATE_REASON_LABELS: Record<AiStateReasonCode, string> = {
   conversa_de_grupo: "conversa de grupo (tratada pelo agente de grupo)",
+  contato_nao_cliente: "contato não é cliente",
   ia_desativada: "IA desativada",
   atendente_desativado: "atendente desativado",
   sem_atendente: "sem atendente configurado",

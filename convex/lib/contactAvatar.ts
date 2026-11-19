@@ -205,7 +205,8 @@ export function whatsappAvatarContactPatch(args: {
  * sistema (`_id`, `organizationId`, datas), derivadas (`searchText`,
  * `enrichmentMeta`, `avatarUrl`), estado de WhatsApp (`whatsappCheck`,
  * `whatsappFails`, `whatsappLookup`) e a foto manual (`photoFileId`, que tem
- * porta própria). Qualquer chave começando por `_` ou `$` também sai.
+ * porta própria) e o tipo de contato (`relation*`, só pela porta única
+ * `setContactRelationCore`). Qualquer chave começando por `_` ou `$` também sai.
  */
 export const ENRICH_BLOCKED_FIELDS: readonly string[] = [
   "_id",
@@ -220,6 +221,10 @@ export const ENRICH_BLOCKED_FIELDS: readonly string[] = [
   "searchNorm",
   "enrichmentMeta",
   "languageSource",
+  "relation",
+  "relationMeta",
+  "relationSuggestion",
+  "relationSuggestionDismissedAt",
   "createdAt",
   "updatedAt",
 ];

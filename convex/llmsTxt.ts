@@ -113,8 +113,8 @@ Paths below omit the \`/api/v1\` prefix:
 | \`campaigns: view\` | GET /campaigns, GET /campaigns/get, GET /campaigns/report, GET /campaigns/recipients, GET /campaigns/safe-defaults, GET /opt-outs, GET /whatsapp/templates, GET /whatsapp/tier, GET /group-posts, GET /group-posts/get |
 | \`campaigns: manage\` | POST /campaigns/create, POST /campaigns/update, POST /campaigns/recipients, POST /campaigns/preview-audience, POST /campaigns/pause, POST /campaigns/resume, POST /campaigns/retry-failed, POST /opt-outs, POST /whatsapp/templates/sync, POST /group-posts/create, POST /group-posts/update, POST /group-posts/pause, POST /group-posts/approve, POST /group-posts/reject |
 | \`campaigns: full\` | POST /campaigns/launch, POST /campaigns/cancel, POST /campaigns/delete, DELETE /opt-outs, POST /group-posts/activate |
-| \`contacts: edit\` | POST /contacts/create, POST /contacts/enrich |
-| \`contacts: view\` | GET /contacts, GET /contacts/get, POST /contacts/update, GET /contacts/gaps, GET /contacts/search |
+| \`contacts: edit\` | POST /contacts/create, POST /contacts/update (was \`contacts: view\` before the contact type), POST /contacts/enrich |
+| \`contacts: view\` | GET /contacts, GET /contacts/get, GET /contacts/gaps, GET /contacts/search |
 | \`inbox: reply\` | POST /conversations/start (+ \`contacts: edit\` when it creates a contact, \`leads: edit_own\` when it creates a lead), POST /conversations/send-template, POST /conversations/receive, POST /handoffs/accept, POST /handoffs/reject |
 | \`inbox: view_own\` | POST /leads/handoff, GET /conversations, GET /conversations/channels, GET /conversations/messages, POST /conversations/send, GET /handoffs, GET /handoffs/pending, GET /groups, GET /groups/get, GET /groups/messages, POST /groups/send |
 | \`leads: edit_own\` | POST /inbound/lead, POST /files/upload-url, POST /files, DELETE /files/:id |
@@ -683,9 +683,9 @@ Request a handoff for a lead.
 #### GET /api/v1/contacts
 List contacts for the organization with cursor-based pagination.
 
-**Query params:** limit, cursor (all optional)
+**Query params:** limit, cursor, relation (all optional). \`relation\` = \`customer\`, \`personal\`, \`team\`, \`supplier\`, \`partner\`, \`automated\`, \`none\` (not classified) or \`non_customer\` (any non-customer type); with a filter a page can come back short with \`hasMore: true\` — keep following \`nextCursor\`.
 
-**Response:** \`{ contacts: [...], nextCursor, hasMore }\`
+**Response:** \`{ contacts: [...], nextCursor, hasMore }\`. Each contact may carry \`relation\` (contact type; absent = not classified, treated as a customer).
 
 #### POST /api/v1/contacts/create
 Create a new contact.
@@ -704,7 +704,7 @@ Get a single contact.
 #### POST /api/v1/contacts/update
 Update contact fields.
 
-**Body:** contactId (required), plus any contact fields to update. \`preferredLanguage\` (v0.80): language code, \`""\` clears it, invalid → 400
+**Body:** contactId (required), plus any contact fields to update. \`preferredLanguage\` (v0.80): language code, \`""\` clears it, invalid → 400. \`relation\`: contact type — \`personal\`, \`team\`, \`supplier\`, \`partner\`, \`automated\` mark the contact as NOT a customer (the AI attendant never replies or processes it, follow-ups and campaigns skip it, open leads are archived); \`customer\` brings it back as a lead (restores the most recent lead or creates one in the attendant's initial stage); \`null\` clears it. Changing \`relation\` needs \`contacts: edit\` and a HUMAN member key (AI member keys → 403); invalid value → 400. Emits \`contact.updated\`.
 
 **Response:** \`{ success: true }\`
 
@@ -1726,7 +1726,7 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | lead.lost | Lead closed as lost — same rules and payload as lead.won (reason is the loss reason) |
 | lead.assigned | Lead assigned or unassigned |
 | contact.created | New contact created |
-| contact.updated | Contact fields updated |
+| contact.updated | Contact type changed (\`relation\`; payload \`{ contactId, changes: { relation }, previous: { relation }, source }\`) |
 | conversation.created | New conversation started |
 | message.sent | Message sent to a 1:1 conversation (payload includes leadId, channel [whatsapp|instagram|messenger|...], senderType + senderId). Group rooms fire group.message.sent instead |
 | message.received | Inbound message received from a contact (payload includes channel, including instagram and messenger) |

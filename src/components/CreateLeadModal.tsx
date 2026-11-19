@@ -7,6 +7,10 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 import { assignableMembers } from "@/lib/teamMembers";
+import { usePermissions } from "@/hooks/usePermissions";
+import { OffBusinessLeadWarning } from "@/components/contacts/ContactRelationSheet";
+import { useContactRelationChange } from "@/components/contacts/useContactRelationChange";
+import { asContactRelation } from "@/lib/contactRelationUi";
 
 interface CreateLeadModalProps {
   organizationId: Id<"organizations">;
@@ -41,6 +45,26 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, {
     organizationId,
   });
+
+  // Contato escolhido que não é cliente: avisa (não bloqueia) e oferece "Virar lead".
+  const { can } = usePermissions(organizationId);
+  const relationChange = useContactRelationChange();
+  const [turningLead, setTurningLead] = useState(false);
+  const selectedContact =
+    contactMode === "select" ? contacts?.find((c) => c._id === selectedContactId) : undefined;
+  const selectedRelation = asContactRelation(selectedContact?.relation);
+  const selectedContactName = selectedContact
+    ? [selectedContact.firstName, selectedContact.lastName].filter(Boolean).join(" ")
+    : "";
+  const handleTurnLead = async () => {
+    if (!selectedContact) return;
+    setTurningLead(true);
+    try {
+      await relationChange.turnLead({ contactId: selectedContact._id }, selectedContactName, selectedRelation);
+    } finally {
+      setTurningLead(false);
+    }
+  };
 
   // Mutations
   const createContact = useMutation(api.contacts.createContact);
@@ -200,6 +224,13 @@ export function CreateLeadModal({ organizationId, boardId, onClose }: CreateLead
                   Mostrando os primeiros 500 contatos.
                 </p>
               )}
+              <OffBusinessLeadWarning
+                relation={selectedRelation}
+                canEdit={can("contacts", "edit")}
+                onTurnLead={() => void handleTurnLead()}
+                busy={turningLead}
+                className="mt-2"
+              />
             </>
           )}
 

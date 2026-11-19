@@ -30,6 +30,7 @@ import { orgAiActive } from "./agentSecurity";
 import { isMembershipRevoked } from "./auth";
 import { appUrl } from "./appUrl";
 import { escapeHtml } from "./telegramFormat";
+import { isOffBusiness } from "./contactRelation";
 
 export const RELAY_BUFFER_MS = 20_000;
 export const RELAY_BUFFER_MAX_MESSAGES = 50;
@@ -61,6 +62,9 @@ export async function resolveRelayRecipient(
   now: number,
 ): Promise<Doc<"teamMembers"> | null> {
   if (conversation.kind === "group") return null;
+  // PR1: contato fora do comercial (Pessoal, Equipe…) não gera aviso de
+  // mensagem nova (sino/Telegram/push): o dono lê no próprio celular.
+  if (isOffBusiness(conversation.contactRelation)) return null;
   const orgId = conversation.organizationId;
   const convOwner = await liveHuman(ctx, conversation.assignedTo, orgId);
   const leadOwner =

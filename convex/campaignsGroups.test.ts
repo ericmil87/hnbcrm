@@ -1006,6 +1006,47 @@ describe("worker — público 'group_members'", () => {
     expect(rows[0].sourceGroupChatId).toBe(a.groupChatId);
   });
 
+  test("membro do grupo marcado como não-cliente fica de fora no envio (sem lead novo)", { timeout: 60_000 }, async () => {
+    const t = setup();
+    const s = await seed(t);
+    vi.stubGlobal("fetch", bridgeFetchMock().fn);
+    // A mãe já é contato (12 dígitos, sem o 9º) e está marcada como Pessoal.
+    const momId = await t.run((ctx) =>
+      ctx.db.insert("contacts", {
+        organizationId: s.organizationId,
+        firstName: "Mãe",
+        phone: "551188887777",
+        tags: [],
+        relation: "personal",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+    );
+    const g = await makeGroup(t, s, {
+      subject: "Família e clientes", jid: "120009@g.us",
+      members: [
+        { phone: "5511988887777", name: "Mãe" },
+        { phone: "5511977776666", name: "Bia Cliente" },
+      ],
+    });
+    const id = await createGroupCampaign(t, s, { source: "group_members", groupChatIds: [g.groupChatId] });
+    await asUser(t, s.adminUserId).mutation(api.campaigns.launchCampaign, {
+      campaignId: id, consentAck: true, bridgeRiskAck: true, groupMembersDmAck: true,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const rows = await recipientsOf(t, id);
+    const mom = rows.find((r) => r.memberName === "Mãe")!;
+    const bia = rows.find((r) => r.memberName === "Bia Cliente")!;
+    expect(mom).toMatchObject({ status: "skipped", skipReason: "non_customer" });
+    expect(mom.leadId).toBeUndefined();
+    expect(bia.status).not.toBe("skipped");
+    const momLeads = await t.run((ctx) =>
+      ctx.db.query("leads").withIndex("by_contact", (q) => q.eq("contactId", momId)).collect()
+    );
+    expect(momLeads).toHaveLength(0);
+  });
+
   test("gateway self-hosted sem identidade própria RECUSA o público de membros", async () => {
     const t = setup();
     const s = await seed(t);

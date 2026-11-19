@@ -17,6 +17,9 @@ import { resolveDefaultCountry } from "./lib/orgPhone";
 import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeLanguageCode } from "./lib/languages";
+import { contactRelationValidator, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
+import { assertHumanRelationActor, setContactRelationCore } from "./lib/contactRelationOps";
+import { getLeadRef } from "./lib/leadRef";
 
 // Shared optional-field arg validators for enrichment fields
 const enrichmentArgFields = {
@@ -491,18 +494,147 @@ export const deleteContact = mutation({
   },
 });
 
+// ===== Tipo de contato (PR1 "Não é cliente / Virar lead") =====
+
+const setRelationResultValidator = v.object({
+  previous: v.union(contactRelationValidator, v.null()),
+  relation: v.union(contactRelationValidator, v.null()),
+  archivedLeads: v.number(),
+  archivedLeadIds: v.array(v.id("leads")),
+  restoredLeadId: v.union(v.id("leads"), v.null()),
+});
+
+/**
+ * Marca o contato como não-cliente (Pessoal, Equipe, Fornecedor, Parceiro,
+ * Robô), como cliente ("customer" = "Virar lead") ou limpa (`null`, usado pelo
+ * Desfazer). Porta única `setContactRelationCore`; `contacts:edit`, só humanos.
+ * `restoreLead` (padrão: só ao sair de um tipo fora do comercial) traz o lead
+ * mais recente de volta ao funil ou cria um na etapa inicial do atendente;
+ * `restoreLeadIds` (Desfazer) restaura exatamente esses leads e nunca cria.
+ */
+export const setContactRelation = mutation({
+  args: {
+    contactId: v.id("contacts"),
+    relation: v.union(contactRelationValidator, v.null()),
+    restoreLead: v.optional(v.boolean()),
+    // Desfazer preciso: os `archivedLeadIds` devolvidos pela marcação.
+    restoreLeadIds: v.optional(v.array(v.id("leads"))),
+  },
+  returns: setRelationResultValidator,
+  handler: async (ctx, args) => {
+    const contact = await ctx.db.get(args.contactId);
+    if (!contact) throw new ConvexError("Contato não encontrado");
+    const member = await requirePermission(ctx, contact.organizationId, "contacts", "edit");
+    assertHumanRelationActor(member);
+    return await setContactRelationCore(ctx, {
+      contact,
+      relation: args.relation,
+      actor: member,
+      source: "manual",
+      restoreLead: args.restoreLead,
+      restoreLeadIds: args.restoreLeadIds,
+    });
+  },
+});
+
+/** Mesma ação a partir da conversa (o contato vem do lead da conversa 1:1). */
+export const setContactRelationByConversation = mutation({
+  args: {
+    conversationId: v.id("conversations"),
+    relation: v.union(contactRelationValidator, v.null()),
+    restoreLead: v.optional(v.boolean()),
+    // Desfazer preciso: os `archivedLeadIds` devolvidos pela marcação.
+    restoreLeadIds: v.optional(v.array(v.id("leads"))),
+  },
+  returns: setRelationResultValidator,
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversationId);
+    if (!conversation) throw new ConvexError("Conversa não encontrada");
+    const member = await requirePermission(ctx, conversation.organizationId, "contacts", "edit");
+    assertHumanRelationActor(member);
+    if (conversation.kind === "group") {
+      throw new ConvexError("Conversa de grupo não tem tipo de contato");
+    }
+    const lead = await getLeadRef(ctx.db, conversation.leadId);
+    const contact = lead?.contactId ? await ctx.db.get(lead.contactId) : null;
+    if (!contact || contact.organizationId !== conversation.organizationId) {
+      throw new ConvexError("Esta conversa não tem um contato vinculado");
+    }
+    return await setContactRelationCore(ctx, {
+      contact,
+      relation: args.relation,
+      actor: member,
+      source: "manual",
+      restoreLead: args.restoreLead,
+      restoreLeadIds: args.restoreLeadIds,
+    });
+  },
+});
+
 // ===== Internal functions (for HTTP API / httpAction context) =====
+
+/** Filtro `?relation=` do REST: um tipo, `none` (sem tipo) ou `non_customer` (qualquer fora do comercial). */
+export const contactRelationFilterValidator = v.union(
+  contactRelationValidator,
+  v.literal("none"),
+  v.literal("non_customer"),
+);
+type ContactRelationFilter = ContactRelation | "none" | "non_customer";
+/** Teto de contatos lidos por página quando há filtro de tipo (sem índice no PR1). */
+export const RELATION_FILTER_SCAN_CAP = 2000;
+
+function matchesRelationFilter(relation: ContactRelation | undefined, filter: ContactRelationFilter): boolean {
+  if (filter === "none") return relation === undefined;
+  if (filter === "non_customer") return isOffBusiness(relation);
+  return relation === filter;
+}
 
 export const internalGetContacts = internalQuery({
   args: {
     organizationId: v.id("organizations"),
     limit: v.optional(v.number()),
     cursor: v.optional(v.string()),
+    relation: v.optional(contactRelationFilterValidator),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
     const limit = Math.min(args.limit ?? 500, 500);
     const cursor = parseCursor(args.cursor);
+
+    // Filtro por tipo SEM índice (PR1): percorre a org por criação (desc) a
+    // partir do cursor até encher a página ou ler RELATION_FILTER_SCAN_CAP
+    // contatos — nunca `take(n)` + filtro (perderia linhas). Página curta com
+    // `hasMore` = continue pelo `nextCursor`.
+    if (args.relation) {
+      const filter = args.relation;
+      const items: Doc<"contacts">[] = [];
+      let scanned = 0;
+      let last: Doc<"contacts"> | null = null;
+      let exhausted = true;
+      const stream = ctx.db
+        .query("contacts")
+        .withIndex("by_organization", (q) =>
+          cursor && Number.isFinite(cursor.ts)
+            ? q.eq("organizationId", args.organizationId).lt("_creationTime", cursor.ts)
+            : q.eq("organizationId", args.organizationId)
+        )
+        .order("desc");
+      for await (const contact of stream) {
+        if (items.length >= limit || scanned >= RELATION_FILTER_SCAN_CAP) {
+          exhausted = false;
+          break;
+        }
+        scanned += 1;
+        last = contact;
+        if (matchesRelationFilter(contact.relation, filter)) items.push(contact);
+      }
+      const hasMore = !exhausted && last !== null;
+      return {
+        contacts: items,
+        nextCursor: hasMore ? buildCursorFromCreationTime(last!) : null,
+        hasMore,
+      };
+    }
 
     const rawContacts = await ctx.db
       .query("contacts")
@@ -741,6 +873,9 @@ export const internalUpdateContact = internalMutation({
     teamMemberId: v.id("teamMembers"),
     // Tradução automática (F1): idioma preferido (código do catálogo); "" limpa.
     preferredLanguage: v.optional(v.string()),
+    // PR1: tipo de contato (REST/MCP). `null` limpa. Só ator humano; passa pela
+    // porta única `setContactRelationCore` (source "api").
+    relation: v.optional(v.union(contactRelationValidator, v.null())),
     ...enrichmentArgFields,
   },
   returns: v.null(),
@@ -754,11 +889,16 @@ export const internalUpdateContact = internalMutation({
     if (teamMember.organizationId !== contact.organizationId) {
       throw new Error("Membro não pertence à organização do contato");
     }
+    // Tipo de contato ANTES de qualquer escrita: chave de membro IA é recusada inteira.
+    if (args.relation !== undefined) assertHumanRelationActor(teamMember);
 
     const now = Date.now();
-    const { preferredLanguage, ...rest } = args;
+    const { preferredLanguage, relation, ...rest } = args;
     const { changes, before } = diffChanges(rest, contact);
     applyPreferredLanguageChange(changes, before, contact, preferredLanguage);
+    if (relation !== undefined && relation !== (contact.relation ?? null)) {
+      await setContactRelationCore(ctx, { contact, relation, actor: teamMember, source: "api" });
+    }
     if (Object.keys(changes).length === 0) return null;
 
     const merged = { ...contact, ...changes };

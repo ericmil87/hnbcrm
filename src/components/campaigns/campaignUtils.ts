@@ -75,6 +75,7 @@ export const SKIP_REASON_LABELS: Record<string, string> = {
   no_phone: "Sem telefone",
   invalid_phone: "Telefone inválido",
   suppressed: "Descadastrado",
+  non_customer: "Não é cliente",
   outro: "Outro",
 };
 
