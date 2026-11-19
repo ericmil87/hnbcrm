@@ -12,6 +12,7 @@ import { Popover } from "@/components/ui/Popover";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { mutationErrorMessage } from "@/lib/errors";
 
 // Menu "..." do header da conversa: arquivar/desarquivar + etiquetas (toggle,
 // criar, excluir). Paleta fixa — a cor vive no doc da etiqueta.
@@ -42,6 +43,8 @@ interface ConversationActionsMenuProps {
   renderExtraItems?: (close: () => void) => React.ReactNode;
   /** Lead da conversa (ausente em grupo). Habilita "Excluir lead permanentemente…" com `leads:full`. */
   leadId?: Id<"leads">;
+  /** Conversa 1 a 1 SEM lead (não é grupo): habilita "Excluir conversa permanentemente…" com `leads:full`. */
+  noLead?: boolean;
   /** Chamado após o lead ser excluído (ex.: fechar a conversa). */
   onLeadDeleted?: () => void;
   /** "Pesquisar na conversa": abre a barra de pesquisa no lugar do cabeçalho. */
@@ -58,6 +61,7 @@ export function ConversationActionsMenu({
   onArchivedChange,
   renderExtraItems,
   leadId,
+  noLead,
   onLeadDeleted,
   onSearchInConversation,
   triggerRef,
@@ -65,7 +69,10 @@ export function ConversationActionsMenu({
   const [open, setOpen] = useState(false);
   const [confirmDeleteLead, setConfirmDeleteLead] = useState(false);
   const { can } = usePermissions(organizationId);
-  const canDeleteLead = !!leadId && can("leads", "full");
+  // Com leadId o diálogo sabe se o lead ainda existe; sem leadId (noLead) cai no diálogo simples.
+  const canDeleteLead = (!!leadId || !!noLead) && can("leads", "full");
+  const [confirmDeleteOrphan, setConfirmDeleteOrphan] = useState(false);
+  const deleteOrphan = useMutation(api.conversations.deleteOrphanConversation);
   const [creating, setCreating] = useState(false);
   const [saving, setSaving] = useState(false);
   // Excluir tira a etiqueta de TODAS as conversas da organização: sempre confirma.
@@ -313,12 +320,13 @@ export function ConversationActionsMenu({
                 type="button"
                 onClick={() => {
                   setOpen(false);
-                  setConfirmDeleteLead(true);
+                  if (leadId) setConfirmDeleteLead(true);
+                  else setConfirmDeleteOrphan(true);
                 }}
                 className="w-full min-h-[44px] md:min-h-0 flex items-center gap-2.5 px-3 py-2 text-left text-sm text-semantic-error hover:bg-semantic-error/10 transition-colors"
               >
                 <Trash2 size={15} />
-                Excluir lead permanentemente…
+                {leadId ? "Excluir lead permanentemente…" : "Excluir conversa permanentemente…"}
               </button>
             </div>
           )}
@@ -338,9 +346,29 @@ export function ConversationActionsMenu({
         variant="danger"
       />
 
+      <ConfirmDialog
+        open={confirmDeleteOrphan}
+        onClose={() => setConfirmDeleteOrphan(false)}
+        onConfirm={async () => {
+          setConfirmDeleteOrphan(false);
+          try {
+            await deleteOrphan({ conversationId });
+            toast.success("Conversa excluída permanentemente");
+            onLeadDeleted?.();
+          } catch (error) {
+            toast.error(mutationErrorMessage(error, "Não foi possível excluir a conversa."));
+          }
+        }}
+        title="Excluir conversa permanentemente?"
+        description="Esta conversa não tem lead. Ela e todas as mensagens serão excluídas. Não dá para desfazer."
+        confirmLabel="Excluir"
+        variant="danger"
+      />
+
       {confirmDeleteLead && leadId && (
         <DeleteLeadDialog
           leadId={leadId}
+          conversationId={conversationId}
           onClose={() => setConfirmDeleteLead(false)}
           onDeleted={() => onLeadDeleted?.()}
         />

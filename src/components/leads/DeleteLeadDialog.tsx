@@ -12,6 +12,8 @@ import { cn } from "@/lib/utils";
 
 interface DeleteLeadDialogProps {
   leadId: Id<"leads">;
+  /** Conversa de onde o diálogo abriu: permite excluí-la quando o lead não existe mais (órfã). */
+  conversationId?: Id<"conversations">;
   onClose: () => void;
   onDeleted: () => void;
 }
@@ -19,12 +21,16 @@ interface DeleteLeadDialogProps {
 /* Diálogo próprio (e não o ConfirmDialog) porque a confirmação carrega o
    impacto da exclusão e a escolha de excluir o contato junto. Mostra o
    toast de sucesso — quem chama não deve duplicar. */
-export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialogProps) {
+export function DeleteLeadDialog({ leadId, conversationId, onClose, onDeleted }: DeleteLeadDialogProps) {
   const impact = useQuery(api.leads.getLeadDeletionImpact, { leadId });
   const deleteLead = useMutation(api.leads.deleteLead);
+  const deleteOrphan = useMutation(api.conversations.deleteOrphanConversation);
   const [deleteContact, setDeleteContact] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Lead já apagado (conversa órfã): não há o que contar nem contato a oferecer.
+  const orphan = impact?.found === false;
+  const gone = orphan && !conversationId; // lead sumiu e não há conversa para excluir: só informa
   const contactName = impact?.contactName ?? null;
   const contactIsExclusive = !!contactName && impact?.contactHasOtherLeads === false;
   const withContact = contactIsExclusive && deleteContact;
@@ -33,8 +39,14 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
     if (deleting) return;
     setDeleting(true);
     try {
-      await deleteLead({ leadId, deleteContact: withContact ? true : undefined });
-      toast.success("Lead excluído permanentemente");
+      if (orphan) {
+        if (!conversationId) throw new Error("Conversa não informada");
+        await deleteOrphan({ conversationId });
+        toast.success("Conversa excluída permanentemente");
+      } else {
+        await deleteLead({ leadId, deleteContact: withContact ? true : undefined });
+        toast.success("Lead excluído permanentemente");
+      }
       onClose();
       onDeleted();
     } catch (error) {
@@ -76,11 +88,18 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
             <AlertTriangle size={20} className="text-semantic-error" />
           </div>
           <div className="flex-1 min-w-0 space-y-2 text-sm text-text-secondary leading-relaxed">
-            <p className="text-text-primary font-medium">Esta ação não pode ser desfeita.</p>
+            {!gone && <p className="text-text-primary font-medium">Esta ação não pode ser desfeita.</p>}
             {impact === undefined ? (
               <div className="flex justify-center py-2">
                 <Spinner size="sm" />
               </div>
+            ) : gone ? (
+              <p>Este lead não existe mais.</p>
+            ) : orphan ? (
+              <p>
+                O lead desta conversa não existe mais. A conversa e todas as mensagens dela serão
+                excluídas.
+              </p>
             ) : (
               <ul className="list-disc pl-5 space-y-1">
                 <li>
@@ -103,7 +122,7 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
                 </li>
               </ul>
             )}
-            <p>Os dados excluídos permanecem no log de auditoria.</p>
+            {!gone && <p>Os dados excluídos permanecem no log de auditoria.</p>}
           </div>
         </div>
 
@@ -151,16 +170,18 @@ export function DeleteLeadDialog({ leadId, onClose, onDeleted }: DeleteLeadDialo
 
         <div className="flex gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} disabled={deleting} className="flex-1">
-            Cancelar
+            {gone ? "Fechar" : "Cancelar"}
           </Button>
-          <Button
-            variant="danger"
-            onClick={handleConfirm}
-            disabled={deleting || impact === undefined}
-            className="flex-1"
-          >
-            {deleting ? "Excluindo…" : "Excluir permanentemente"}
-          </Button>
+          {!gone && (
+            <Button
+              variant="danger"
+              onClick={handleConfirm}
+              disabled={deleting || impact === undefined}
+              className="flex-1"
+            >
+              {deleting ? "Excluindo…" : "Excluir permanentemente"}
+            </Button>
+          )}
         </div>
       </div>
     </Modal>

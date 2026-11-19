@@ -499,6 +499,7 @@ describe("getLeadDeletionImpact", () => {
 
     const impacto = await asAdmin.query(api.leads.getLeadDeletionImpact, { leadId });
     expect(impacto).toEqual({
+      found: true,
       conversationCount: 1,
       taskCount: 1,
       documentCount: 1,
@@ -537,5 +538,234 @@ describe("internalDeleteLead (REST)", () => {
       return logs[0];
     });
     expect(log.changes?.before?.title).toBe("Lead via API");
+  });
+});
+
+describe("conversa órfã (lead inexistente ou ausente)", () => {
+  // Lead real inserido e apagado direto: deixa um Id válido que não resolve mais.
+  async function orphanConversation(s: Seed, withLeadId: boolean, messageCount = 3) {
+    const leadId = await insertLead(t, s, "Fantasma");
+    await t.run(async (ctx) => {
+      await ctx.db.delete(leadId);
+    });
+    return await t.run(async (ctx) => {
+      const now = Date.now();
+      const conversationId = await ctx.db.insert("conversations", {
+        organizationId: s.organizationId,
+        ...(withLeadId ? { leadId } : {}),
+        channel: "webchat",
+        status: "active",
+        messageCount,
+        createdAt: now,
+        updatedAt: now,
+      });
+      for (let i = 0; i < messageCount; i++) {
+        await ctx.db.insert("messages", {
+          organizationId: s.organizationId,
+          conversationId,
+          direction: "inbound",
+          senderType: "contact",
+          content: `m${i}`,
+          contentType: "text",
+          isInternal: false,
+          createdAt: now + i,
+        });
+      }
+      return { conversationId, leadId };
+    });
+  }
+
+  test("getLeadDeletionImpact de lead inexistente não lança", async () => {
+    const s = await seed(t);
+    const { leadId } = await orphanConversation(s, true);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const impacto = await asAdmin.query(api.leads.getLeadDeletionImpact, { leadId });
+    expect(impacto.found).toBe(false);
+    expect(impacto.conversationCount).toBe(0);
+  });
+
+  test("admin exclui a órfã (com leadId pendurado e sem leadId): mensagens saem e audita", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    for (const withLeadId of [true, false]) {
+      const { conversationId } = await orphanConversation(s, withLeadId);
+      await asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId });
+      await drainScheduler(t);
+      await t.run(async (ctx) => {
+        expect(await ctx.db.get(conversationId)).toBeNull();
+        const msgs = await ctx.db
+          .query("messages")
+          .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+          .collect();
+        expect(msgs).toHaveLength(0);
+        const audit = await ctx.db
+          .query("auditLogs")
+          .withIndex("by_entity", (q) => q.eq("entityType", "conversation").eq("entityId", conversationId))
+          .collect();
+        expect(audit).toHaveLength(1);
+      });
+    }
+  });
+
+  test("recusa conversa com lead existente e quem não tem leads:full", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const asAgent = t.withIdentity({ subject: `${s.agent.userId}|s2` });
+    const leadId = await insertLead(t, s, "Vivo");
+    await insertLeadHistory(t, s, leadId);
+    const live = await t.run(async (ctx) =>
+      (await ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", leadId)).first())!._id
+    );
+    await expect(
+      asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId: live })
+    ).rejects.toThrow("tem lead");
+
+    const { conversationId } = await orphanConversation(s, false);
+    await expect(
+      asAgent.mutation(api.conversations.deleteOrphanConversation, { conversationId })
+    ).rejects.toThrow();
+  });
+
+  test("volume acima do orçamento: re-agenda e termina", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const { conversationId } = await orphanConversation(s, false, CASCADE_WRITE_BUDGET + 40);
+    await asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId });
+    await drainScheduler(t);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(conversationId)).toBeNull();
+      const msgs = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+        .collect();
+      expect(msgs).toHaveLength(0);
+    });
+  });
+
+  test("limpa repasse pendente amarrado ao leadId pendurado", async () => {
+    const s = await seed(t);
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const { conversationId, leadId } = await orphanConversation(s, true);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("handoffs", {
+        organizationId: s.organizationId,
+        leadId,
+        conversationId,
+        fromMemberId: s.admin.memberId,
+        reason: "humano",
+        suggestedActions: [],
+        status: "pending",
+        createdAt: Date.now(),
+      });
+      await ctx.db.insert("activities", {
+        organizationId: s.organizationId,
+        leadId,
+        type: "created",
+        actorType: "system",
+        createdAt: Date.now(),
+      });
+    });
+    await asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId });
+    await drainScheduler(t);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.query("handoffs").withIndex("by_lead", (q) => q.eq("leadId", leadId)).collect()).toHaveLength(0);
+      expect(await ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", leadId)).collect()).toHaveLength(0);
+    });
+  });
+
+  test("membro de outra org e grupo são recusados; impacto exige sessão", async () => {
+    const s = await seed(t);
+    const other = await t.run(async (ctx) => {
+      const now = Date.now();
+      const organizationId = await ctx.db.insert("organizations", {
+        name: "Outra",
+        slug: "outra",
+        settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
+        createdAt: now,
+        updatedAt: now,
+      });
+      const userId = await ctx.db.insert("users", {});
+      await ctx.db.insert("teamMembers", {
+        organizationId,
+        userId,
+        name: "Intruso",
+        role: "admin",
+        type: "human",
+        status: "active",
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { userId };
+    });
+    const asOther = t.withIdentity({ subject: `${other.userId}|s9` });
+    const { conversationId, leadId } = await orphanConversation(s, true);
+    await expect(
+      asOther.mutation(api.conversations.deleteOrphanConversation, { conversationId })
+    ).rejects.toThrow();
+    await expect(t.query(api.leads.getLeadDeletionImpact, { leadId })).rejects.toThrow();
+
+    const asAdmin = t.withIdentity({ subject: `${s.admin.userId}|s1` });
+    const groupId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("conversations", {
+        organizationId: s.organizationId,
+        kind: "group",
+        channel: "whatsapp",
+        status: "active",
+        messageCount: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+    });
+    await expect(
+      asAdmin.mutation(api.conversations.deleteOrphanConversation, { conversationId: groupId })
+    ).rejects.toThrow("grupo");
+  });
+
+  test("ops: dryRun não escreve, recusa outra org/lead vivo, real apaga sem duplicar audit", async () => {
+    const s = await seed(t);
+    const { conversationId } = await orphanConversation(s, true);
+    const liveLead = await insertLead(t, s, "Vivo");
+    await insertLeadHistory(t, s, liveLead);
+    const liveConv = await t.run(async (ctx) =>
+      (await ctx.db.query("conversations").withIndex("by_lead", (q) => q.eq("leadId", liveLead)).first())!._id
+    );
+    const otherOrg = await t.run(async (ctx) =>
+      ctx.db.insert("organizations", {
+        name: "X", slug: "x",
+        settings: { timezone: "America/Sao_Paulo", currency: "BRL" },
+        createdAt: Date.now(), updatedAt: Date.now(),
+      })
+    );
+    const ids = [conversationId, liveConv];
+    const dry = await t.mutation(internal.conversations.internalDeleteOrphanConversations, {
+      organizationId: s.organizationId, conversationIds: ids,
+    });
+    expect(dry.dryRun).toBe(true);
+    expect(dry.deleted).toEqual([conversationId]);
+    expect(dry.skipped.map((x) => x.reason)).toEqual(["lead existe"]);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(conversationId)).not.toBeNull();
+    });
+
+    const wrongOrg = await t.mutation(internal.conversations.internalDeleteOrphanConversations, {
+      organizationId: otherOrg, conversationIds: [conversationId], dryRun: false,
+    });
+    expect(wrongOrg.deleted).toEqual([]);
+    expect(wrongOrg.skipped[0].reason).toBe("outra organização");
+
+    await t.mutation(internal.conversations.internalDeleteOrphanConversations, {
+      organizationId: s.organizationId, conversationIds: ids, dryRun: false,
+    });
+    await drainScheduler(t);
+    await t.run(async (ctx) => {
+      expect(await ctx.db.get(conversationId)).toBeNull();
+      expect(await ctx.db.get(liveConv)).not.toBeNull();
+      const audit = await ctx.db
+        .query("auditLogs")
+        .withIndex("by_entity", (q) => q.eq("entityType", "conversation").eq("entityId", conversationId))
+        .collect();
+      expect(audit).toHaveLength(1);
+    });
   });
 });
