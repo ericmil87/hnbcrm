@@ -18,7 +18,12 @@ import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeLanguageCode } from "./lib/languages";
 import { contactRelationValidator, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
-import { assertHumanRelationActor, setContactRelationCore, RELATION_LEADS_CAP } from "./lib/contactRelationOps";
+import {
+  assertHumanRelationActor,
+  loadPendingActionsForRelation,
+  setContactRelationCore,
+  RELATION_LEADS_CAP,
+} from "./lib/contactRelationOps";
 import { contactRelationFilterArgValidator, relationValuesForFilter } from "./lib/contactRelationFilter";
 import { getLeadRef } from "./lib/leadRef";
 
@@ -599,7 +604,7 @@ export const setContactRelationByConversation = mutation({
 });
 
 /** Teto de contatos por chamada da marcação em massa (cada um passa pela porta única). */
-export const BULK_RELATION_MAX = 100;
+export const BULK_RELATION_MAX = 50;
 
 const bulkRelationItemValidator = v.object({
   contactId: v.id("contacts"),
@@ -611,7 +616,7 @@ const bulkRelationItemValidator = v.object({
 
 /**
  * Marcação em massa (Contatos e seleção no inbox): o MESMO efeito de
- * `setContactRelation` para até 100 contatos, numa transação, pela porta única
+ * `setContactRelation` para até 50 contatos, numa transação, pela porta única
  * `setContactRelationCore` (sem caminho paralelo). `contacts:edit`, só humano.
  *
  * Todos os contatos precisam ser da `organizationId` (outro id = "not_found",
@@ -684,6 +689,8 @@ export const bulkSetContactRelation = mutation({
         restoredLeadId: Id<"leads"> | null;
       }>,
     };
+    // Ações pendentes da org: uma leitura por chamada (não uma por contato).
+    let pendingActions: Doc<"pendingActions">[] | undefined;
     for (const contactId of contactIds) {
       const contact = await ctx.db.get(contactId);
       if (!contact || contact.organizationId !== args.organizationId) {
@@ -697,12 +704,16 @@ export const bulkSetContactRelation = mutation({
         out.items.push({ contactId, status: "unchanged", previous, archivedLeadIds: [], restoredLeadId: null });
         continue;
       }
+      if (isOffBusiness(args.relation) && pendingActions === undefined) {
+        pendingActions = await loadPendingActionsForRelation(ctx, args.organizationId);
+      }
       const result = await setContactRelationCore(ctx, {
         contact,
         relation: args.relation,
         actor: member,
         source: "manual",
         restoreLead: args.restoreLead,
+        ...(pendingActions ? { pendingActions } : {}),
         ...(args.restoreLeadIds !== undefined
           ? { restoreLeadIds: restoreByContact.get(contactId) ?? [] }
           : {}),

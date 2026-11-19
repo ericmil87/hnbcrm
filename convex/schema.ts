@@ -1678,9 +1678,10 @@ const applicationTables = {
     // D1: badge do inbox de quem só vê as próprias (responsável da conversa).
     .index("by_organization_and_assigned_and_archived_and_unread", ["organizationId", "assignedTo", "archivedAt", "unreadCount"])
     // PR2 "Ver e filtrar": chips por tipo de contato (espelho `contactRelation`)
-    // no inbox. Um range por valor (ausente = sem tipo), mesclado por última
-    // mensagem em `getConversations` (lib/contactRelationFilter.ts).
-    .index("by_organization_and_contact_relation_and_archived_and_last_message", ["organizationId", "contactRelation", "archivedAt", "lastMessageAt"]),
+    // no inbox. Um range por (valor, kind ∈ {ausente, "direct"}) — grupo não tem
+    // tipo e fica fora do range sem precisar de pós-filtro —, mesclados por
+    // última mensagem em `getConversations` (lib/contactRelationFilter.ts).
+    .index("by_organization_and_contact_relation_and_kind_and_archived_and_last_message", ["organizationId", "contactRelation", "kind", "archivedAt", "lastMessageAt"]),
 
   // Estado EFÊMERO e quente da conversa, fora do doc `conversations` (perf
   // Convex I/O, fase 4b): cada patch na conversa reexecuta toda query reativa

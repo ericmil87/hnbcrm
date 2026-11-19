@@ -1763,6 +1763,11 @@ export async function importRecipientsCsvHandler(ctx: ActionCtx, args: ImportRec
     let suppressed = 0;
     let existingContacts = 0;
     let nonCustomer = 0;
+    const nonCustomerPhones = new Set(
+      valid.length > 0
+        ? await ctx.runQuery(internal.campaigns.internalNonCustomerPhones, { organizationId: context.organizationId })
+        : []
+    );
     const cleared: typeof valid = [];
     for (let i = 0; i < valid.length; i += IMPORT_BATCH) {
       const chunk = valid.slice(i, i + IMPORT_BATCH);
@@ -1776,7 +1781,7 @@ export async function importRecipientsCsvHandler(ctx: ActionCtx, args: ImportRec
           continue;
         }
         // PR2: contato fora do comercial não entra (o worker também barraria no envio).
-        if (check.nonCustomer.includes(c.phone)) {
+        if (nonCustomerPhones.has(c.phone)) {
           nonCustomer++;
           continue;
         }
@@ -1849,29 +1854,34 @@ export const internalImportContext = internalQuery({
 
 export const internalCheckPhones = internalQuery({
   args: { organizationId: v.id("organizations"), phones: v.array(v.string()) },
-  returns: v.object({
-    suppressed: v.array(v.string()),
-    existing: v.array(v.string()),
-    // PR2: telefones de contatos fora do comercial (saem do público CSV).
-    nonCustomer: v.array(v.string()),
-  }),
+  returns: v.object({ suppressed: v.array(v.string()), existing: v.array(v.string()) }),
   handler: async (ctx, args) => {
     const suppressed: string[] = [];
     const existing: string[] = [];
-    const nonCustomer: string[] = [];
-    const org = await ctx.db.get(args.organizationId);
-    const offBusiness = await loadNonCustomerContacts(ctx.db, args.organizationId);
-    const nonCustomerPhones = phoneKeysOfContacts(offBusiness.contacts, resolveDefaultCountry(org?.settings));
     for (const phone of args.phones) {
       if (await isPhoneSuppressed(ctx, args.organizationId, phone)) suppressed.push(phone);
-      if (nonCustomerPhones.has(phone)) nonCustomer.push(phone);
       const contact = await ctx.db
         .query("contacts")
         .withIndex("by_organization_and_phone", (q) => q.eq("organizationId", args.organizationId).eq("phone", phone))
         .first();
       if (contact) existing.push(phone);
     }
-    return { suppressed, existing, nonCustomer };
+    return { suppressed, existing };
+  },
+});
+
+/**
+ * PR2: telefones (normalizados, com a variante do 9º dígito) dos contatos fora
+ * do comercial da org. Lido UMA vez por importação de CSV (até
+ * NON_CUSTOMER_CONTACTS_CAP contatos), não a cada lote de telefones.
+ */
+export const internalNonCustomerPhones = internalQuery({
+  args: { organizationId: v.id("organizations") },
+  returns: v.array(v.string()),
+  handler: async (ctx, args) => {
+    const org = await ctx.db.get(args.organizationId);
+    const offBusiness = await loadNonCustomerContacts(ctx.db, args.organizationId);
+    return [...phoneKeysOfContacts(offBusiness.contacts, resolveDefaultCountry(org?.settings))];
   },
 });
 

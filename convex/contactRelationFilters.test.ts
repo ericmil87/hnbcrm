@@ -325,6 +325,46 @@ describe("getConversations({relation})", () => {
     ]);
   });
 
+  test("Leads e Sem tipo com muitos grupos recentes: limite exato e Carregar mais", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    // 6 sem tipo (2 com kind "direct"), 4 clientes, todos ANTES de 260 grupos.
+    for (let i = 0; i < 10; i++) {
+      const p = await addPerson(t, s, {
+        name: `D${i}`,
+        relation: i >= 6 ? "customer" : undefined,
+        lastMessageAt: 100 + i,
+      });
+      if (i < 2) await t.run(async (ctx) => ctx.db.patch(p.conversationId, { kind: "direct" }));
+    }
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 260; i++) {
+        await ctx.db.insert("conversations", {
+          organizationId: s.organizationId,
+          channel: "whatsapp",
+          channelConfigId: s.configA,
+          kind: "group",
+          groupSubject: `G${i}`,
+          status: "active",
+          messageCount: 1,
+          lastMessageAt: 10_000 + i,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    const leadsDesc = Array.from({ length: 10 }, (_, i) => `D${9 - i}`);
+    // Lote cheio (= há mais) e o seguinte, sem perder linha para os grupos.
+    expect(await listNames(t, s, { relation: "leads", limit: 4 })).toEqual(leadsDesc.slice(0, 4));
+    expect(await listNames(t, s, { relation: "leads", limit: 8 })).toEqual(leadsDesc.slice(0, 8));
+    expect(await listNames(t, s, { relation: "leads", limit: 10 })).toEqual(leadsDesc);
+    expect(await listNames(t, s, { relation: "leads", limit: 50 })).toEqual(leadsDesc);
+    const noneDesc = Array.from({ length: 6 }, (_, i) => `D${5 - i}`);
+    expect(await listNames(t, s, { relation: "none", limit: 3 })).toEqual(noneDesc.slice(0, 3));
+    expect(await listNames(t, s, { relation: "none", limit: 6 })).toEqual(noneDesc);
+    expect(await listNames(t, s, { relation: "none" })).toEqual(noneDesc);
+  });
+
   test("combinações: conta, não lidas e Minhas com tipo", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
@@ -418,7 +458,38 @@ describe("contacts.bulkSetContactRelation", () => {
     expect(final.convB?.contactRelation).toBeUndefined();
   });
 
-  test("RBAC: IA e quem não tem contacts:edit são recusados; teto de 100; contato de outra org = not_found", async () => {
+  test("ações pendentes lidas uma vez por chamada: cada conversa marcada tem a sua cancelada", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const a = await addPerson(t, s, { name: "A", lastMessageAt: 1 });
+    const b = await addPerson(t, s, { name: "B", lastMessageAt: 2 });
+    const keep = await addPerson(t, s, { name: "Fica", lastMessageAt: 3 });
+    const ids = await t.run(async (ctx) => {
+      const base = {
+        organizationId: s.organizationId,
+        requestedBy: s.adminId,
+        preview: "Instruir",
+        status: "pending" as const,
+        expiresAt: Date.now() + 60_000,
+        createdAt: Date.now(),
+        tool: "instructAttendant",
+      };
+      return await Promise.all(
+        [a, b, keep].map((p) =>
+          ctx.db.insert("pendingActions", { ...base, args: { conversationId: p.conversationId, instruction: "x" } }),
+        ),
+      );
+    });
+    await as(t, s.adminUserId).mutation(api.contacts.bulkSetContactRelation, {
+      organizationId: s.organizationId,
+      contactIds: [a.contactId, b.contactId],
+      relation: "personal",
+    });
+    const statuses = await t.run(async (ctx) => Promise.all(ids.map(async (id) => (await ctx.db.get(id))?.status)));
+    expect(statuses).toEqual(["canceled", "canceled", "pending"]);
+  });
+
+  test("RBAC: IA e quem não tem contacts:edit são recusados; teto de 50; contato de outra org = not_found", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
     const a = await addPerson(t, s, { name: "A", lastMessageAt: 1 });
@@ -429,12 +500,12 @@ describe("contacts.bulkSetContactRelation", () => {
     await expect(as(t, s.viewerUserId).mutation(api.contacts.bulkSetContactRelation, args)).rejects.toThrow();
     expect((await t.run(async (ctx) => ctx.db.get(a.contactId)))?.relation).toBeUndefined();
 
-    const many = Array.from({ length: 101 }, () => a.contactId);
-    // Duplicados contam uma vez: 101 cópias do mesmo id passam.
+    const many = Array.from({ length: 51 }, () => a.contactId);
+    // Duplicados contam uma vez: 51 cópias do mesmo id passam.
     await as(t, s.adminUserId).mutation(api.contacts.bulkSetContactRelation, { ...args, contactIds: many });
     const ids = await t.run(async (ctx) => {
       const out: Id<"contacts">[] = [];
-      for (let i = 0; i < 101; i++) {
+      for (let i = 0; i < 51; i++) {
         out.push(
           await ctx.db.insert("contacts", {
             organizationId: s.organizationId,
@@ -448,7 +519,7 @@ describe("contacts.bulkSetContactRelation", () => {
     });
     await expect(
       as(t, s.adminUserId).mutation(api.contacts.bulkSetContactRelation, { ...args, contactIds: ids }),
-    ).rejects.toThrow("No máximo 100");
+    ).rejects.toThrow("No máximo 50");
 
     const other = await t.run(async (ctx) => {
       const orgId = await ctx.db.insert("organizations", {
@@ -514,11 +585,11 @@ describe("campanhas: motivo non_customer", () => {
     expect(seg.excluded.non_customer).toBe(1);
     expect(seg.candidates).toHaveLength(1);
 
-    const check = await t.query(internal.campaigns.internalCheckPhones, {
+    const phones = await t.query(internal.campaigns.internalNonCustomerPhones, {
       organizationId: s.organizationId,
-      phones: ["5511988887001", "5511988887002"],
     });
-    expect(check.nonCustomer).toEqual(["5511988887002"]);
+    expect(phones).toContain("5511988887002");
+    expect(phones).not.toContain("5511988887001");
   });
 });
 
