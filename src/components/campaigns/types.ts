@@ -118,7 +118,9 @@ export type MemberExclusionReason =
   | "campaigned_recently"
   | "inactive_in_group"
   | "in_excluded_group"
-  | "not_selected";
+  | "not_selected"
+  /** PR2: contato marcado como não-cliente (Pessoal, Equipe…). */
+  | "non_customer";
 
 /** Uma linha da lista "quem vai receber" (prévia do público `group_members`). */
 export interface PreviewMemberRow {

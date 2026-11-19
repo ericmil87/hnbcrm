@@ -41,6 +41,7 @@ const MEMBER_EXCLUSION_LABELS: Record<string, string> = {
   inactive_in_group: "sem falar no grupo na janela",
   in_excluded_group: "estão no grupo excluído",
   not_selected: "não selecionados",
+  non_customer: "fora por não serem clientes",
 };
 
 /** O mesmo motivo, curto, para caber ao lado do nome na lista de membros. */
@@ -57,6 +58,7 @@ const MEMBER_REASON_SHORT: Record<string, string> = {
   inactive_in_group: "não falou no grupo",
   in_excluded_group: "está no grupo excluído",
   not_selected: "não selecionado",
+  non_customer: "não é cliente",
 };
 
 /** Elegível = entra, ou entraria se fosse marcado. */

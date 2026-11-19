@@ -76,6 +76,7 @@ export function Inbox() {
     mineArgs: filters.mineArgs,
     stageArgs: filters.stageArgs,
     aiArgs: filters.aiArgs,
+    relationArgs: filters.relationArgs,
     isSearching,
   });
   const { validConversations } = list;

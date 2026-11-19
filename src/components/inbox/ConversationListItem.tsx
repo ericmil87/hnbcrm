@@ -18,6 +18,7 @@ import {
   Video,
 } from "lucide-react";
 import { Avatar } from "@/components/ui/Avatar";
+import { RelationTag } from "@/components/contacts/RelationTag";
 import { GroupAvatar } from "@/components/inbox/GroupAvatar";
 import { ColorChip, AttributionIcon } from "@/components/inbox/central/CentralChips";
 import type { LeadAttribution } from "@/components/inbox/central/centralMeta";
@@ -25,6 +26,7 @@ import { useLongPress } from "@/components/inbox/useLongPress";
 import { conversationPreviewText } from "@/lib/bridgeSpecialMessage";
 import { accountBadgeLabel, channelIcon, channelLabel, type InboxChannelAccount } from "@/lib/channelAccounts";
 import { formatListTime } from "@/lib/format";
+import { relationBadge } from "@/lib/contactRelationList";
 import {
   activeBotSuspicion,
   isHandoffPending,
@@ -47,7 +49,15 @@ export interface ConversationListEntry {
   /** Foto do grupo (URL do storage); ausente = ícone de grupo. Só em conversa de grupo. */
   groupAvatarUrl?: string | null;
   /** `avatarUrl`: foto do contato (manual ou do WhatsApp), URL do storage; ausente = iniciais. */
-  contact?: { firstName?: string | null; lastName?: string | null; avatarUrl?: string | null } | null;
+  contact?: {
+    _id?: string;
+    firstName?: string | null;
+    lastName?: string | null;
+    avatarUrl?: string | null;
+    relation?: string | null;
+  } | null;
+  /** Tipo de contato (PR1: o contato manda, senão o espelho da conversa). Ausente = sem tipo. */
+  contactRelation?: string | null;
   lead?: {
     title?: string | null;
     handoffState?: LeadHandoffState;
@@ -276,10 +286,13 @@ function ConversationRow({
   const handoffPending = isHandoffPending(conversation.lead?.handoffState);
   const membersCount = conversation.groupChat?.participantsCount ?? 0;
   const assignee = desktop ? conversation.assignee : null;
+  // Selo do tipo ("● Pessoal") para quem não é cliente; lead segue com a linha de hoje.
+  const relation = isGroup ? null : relationBadge(conversation.contact?.relation ?? conversation.contactRelation);
   // Informações de CRM numa 3ª linha só, discreta: a 2ª é toda da mensagem.
   // No desktop ela também leva o "Pediu ajuda" por extenso, os membros do
   // grupo e o responsável; no celular, o pedido de ajuda é o ícone da 2ª linha.
   const hasCrmLine = Boolean(
+    relation ||
     accountLabel || leadTitle || hasCentral || (desktop && (handoffPending || assignee || (isGroup && membersCount > 0)))
   );
   const highlighted = (!selectionMode && selected) || (selectionMode && checked);
@@ -411,6 +424,7 @@ function ConversationRow({
 
         {hasCrmLine && (
           <div className="mt-0.5 flex min-w-0 items-center gap-1 text-caption text-text-muted">
+            {relation && <RelationTag relation={relation.relation} className="mr-1" />}
             {desktop && handoffPending && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-semantic-warning/10 px-1.5 py-0.5 text-micro font-medium text-semantic-warning">
                 <ArrowLeftRight size={11} aria-hidden="true" />

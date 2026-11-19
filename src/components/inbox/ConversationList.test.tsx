@@ -16,7 +16,17 @@ const conv: ConversationListEntry = {
   lastMessageAt: NOW - 1000,
 };
 
-function setup(over: { layout?: "default" | "mobile"; selectionMode?: boolean; showArchived?: boolean; onOpenFilters?: () => void } = {}) {
+function setup(
+  over: {
+    layout?: "default" | "mobile";
+    selectionMode?: boolean;
+    showArchived?: boolean;
+    onOpenFilters?: () => void;
+    relation?: import("./ConversationList").ConversationListBulkRelation;
+    conversations?: ConversationListEntry[];
+    filterRelation?: import("@/lib/contactRelationList").RelationFilter | null;
+  } = {}
+) {
   const fns = {
     onChip: vi.fn(),
     onToggleMode: vi.fn(),
@@ -27,7 +37,7 @@ function setup(over: { layout?: "default" | "mobile"; selectionMode?: boolean; s
   renderWithRouter(
     <ConversationList
       layout={over.layout}
-      conversations={[conv]}
+      conversations={over.conversations ?? [conv]}
       selectedId={null}
       labelById={new Map()}
       accountFor={() => null}
@@ -52,6 +62,7 @@ function setup(over: { layout?: "default" | "mobile"; selectionMode?: boolean; s
         mine: false,
         onMineChange: () => {},
         queueFilterActive: false,
+        relation: over.filterRelation ?? null,
       }}
       selection={{
         mode: over.selectionMode ?? false,
@@ -60,6 +71,7 @@ function setup(over: { layout?: "default" | "mobile"; selectionMode?: boolean; s
         onToggle: () => {},
         onArchive: () => {},
         onLabel: () => {},
+        relation: over.relation,
       }}
       paging={{
         canLoadMore: false,
@@ -134,5 +146,39 @@ describe("ConversationList (desktop)", () => {
     setup({ layout: "mobile" });
     expect(screen.queryByRole("heading", { name: "Conversas" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Mais ações" })).toBeNull();
+  });
+});
+
+describe("ConversationList — tipo de contato (PR2)", () => {
+  it("barra de seleção: 'Não é cliente' sempre; 'Virar lead' só quando todos não são clientes", async () => {
+    const onNotCustomer = vi.fn();
+    const onTurnLead = vi.fn();
+    setup({ selectionMode: true, relation: { targets: 2, allOffBusiness: false, onNotCustomer, onTurnLead } });
+    expect(screen.queryByRole("button", { name: "Virar lead" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Não é cliente" }));
+    expect(onNotCustomer).toHaveBeenCalled();
+  });
+
+  it("'Virar lead' aparece quando todos os selecionados não são clientes", async () => {
+    const onTurnLead = vi.fn();
+    setup({ selectionMode: true, relation: { targets: 1, allOffBusiness: true, onNotCustomer: () => {}, onTurnLead } });
+    await userEvent.click(screen.getByRole("button", { name: "Virar lead" }));
+    expect(onTurnLead).toHaveBeenCalled();
+  });
+
+  it("sem contatos-alvo, as ações de tipo ficam desligadas; sem permissão, não aparecem", () => {
+    setup({ selectionMode: true, relation: { targets: 0, allOffBusiness: false, onNotCustomer: () => {}, onTurnLead: () => {} } });
+    expect(screen.getByRole("button", { name: "Não é cliente" })).toBeDisabled();
+  });
+
+  it("sem permissão (sem `relation`), a barra não mostra as ações de tipo", () => {
+    setup({ selectionMode: true });
+    expect(screen.queryByRole("button", { name: "Não é cliente" })).not.toBeInTheDocument();
+  });
+
+  it("lista vazia com 'Pessoais' explica como marcar", () => {
+    setup({ conversations: [], filterRelation: "personal" });
+    expect(screen.getByText("Nenhum contato pessoal")).toBeInTheDocument();
+    expect(screen.getByText(/Não é cliente…/)).toBeInTheDocument();
   });
 });

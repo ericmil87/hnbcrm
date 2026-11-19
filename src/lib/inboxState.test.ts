@@ -7,8 +7,11 @@ import {
   activeBotSuspicion,
   aiStateChipInfo,
   applyInboxChip,
+  applyRelationFilter,
   countUnreadConversations,
+  hasChipFilters,
   inboxFilterChips,
+  inboxMoreFilters,
   NO_CHIP_FILTERS,
   decideConversationParamAction,
   emptyListMessage,
@@ -257,11 +260,11 @@ describe("chips da lista (celular)", () => {
 
   it("Todas pressionado sem filtro; Grupos só com grupo; uma por etiqueta", () => {
     const chips = inboxFilterChips(none, { labels, showGroups: false, unreadCount: 0 });
-    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "mine", "label:l1", "stage"]);
+    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "mine", "leads", "personal", "label:l1", "stage"]);
     expect(chips[0].pressed).toBe(true);
     expect(chips[1].count).toBeUndefined();
     const withGroups = inboxFilterChips(none, { labels: [], showGroups: true, unreadCount: 12 });
-    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "mine", "group", "stage"]);
+    expect(withGroups.map((c) => c.id)).toEqual(["all", "unread", "mine", "leads", "personal", "group", "stage"]);
     expect(withGroups[1].count).toBe(12);
   });
 
@@ -270,6 +273,8 @@ describe("chips da lista (celular)", () => {
       { id: "all", label: "Todas", pressed: false },
       { id: "unread", label: "Não lidas", pressed: false, count: undefined },
       { id: "mine", label: "Minhas", pressed: false },
+      { id: "leads", label: "Leads", pressed: false },
+      { id: "personal", label: "Pessoais", pressed: false },
       { id: "direct", label: "Diretas", pressed: true },
       { id: "stage", label: "Etapa", pressed: false },
     ]);
@@ -322,6 +327,8 @@ describe("chips da lista (celular)", () => {
       ["all", "Todas", false],
       ["unread", "Não lidas", false],
       ["mine", "Minhas", false],
+      ["leads", "Leads", false],
+      ["personal", "Pessoais", false],
       ["channel", "Instagram", true],
       ["account", "@casalumiar", true],
       ["stage", "Etapa", false],
@@ -346,10 +353,10 @@ describe("filtros Etapa e IA (chips)", () => {
   it("Etapa vem depois de Grupos e das etiquetas; IA depois de Etapa, só com IA na org", () => {
     const labels = [{ _id: "l1", name: "VIP", color: "#10b981" }];
     expect(inboxFilterChips(none, { ...base, labels, showGroups: true }).map((c) => c.id)).toEqual([
-      "all", "unread", "mine", "group", "label:l1", "stage",
+      "all", "unread", "mine", "leads", "personal", "group", "label:l1", "stage",
     ]);
     expect(inboxFilterChips(none, { ...base, labels, showGroups: true, showAi: true }).map((c) => c.id)).toEqual([
-      "all", "unread", "mine", "group", "label:l1", "stage", "ai",
+      "all", "unread", "mine", "leads", "personal", "group", "label:l1", "stage", "ai",
     ]);
   });
 
@@ -427,5 +434,96 @@ describe("mergeOpenConversation", () => {
   it("sem hora vai ao topo; lista vazia", () => {
     expect(mergeOpenConversation(list, { _id: "x" }).map((c) => c._id)[0]).toBe("x");
     expect(mergeOpenConversation([], { _id: "x", lastMessageAt: 1 }).map((c) => c._id)).toEqual(["x"]);
+  });
+});
+
+describe("tipo de contato nos chips (PR2)", () => {
+  const none = NO_CHIP_FILTERS;
+  const base = { labels: [], showGroups: true, unreadCount: 0 };
+  const labels = [{ _id: "l1", name: "VIP", color: "#10b981" }];
+
+  it("Leads e Pessoais na fileira principal, antes de Grupos; ligam, desligam e Todas limpa", () => {
+    const chips = inboxFilterChips(none, base);
+    expect(chips.slice(0, 6).map((c) => c.label)).toEqual(["Todas", "Não lidas", "Minhas", "Leads", "Pessoais", "Grupos"]);
+    const leads = applyInboxChip("leads", none);
+    expect(leads.relation).toBe("leads");
+    expect(inboxFilterChips(leads, base).find((c) => c.id === "leads")?.pressed).toBe(true);
+    expect(inboxFilterChips(leads, base)[0].pressed).toBe(false);
+    expect(applyInboxChip("personal", leads).relation).toBe("personal");
+    expect(applyInboxChip("leads", leads).relation).toBeNull();
+    expect(applyInboxChip("all", leads)).toEqual(none);
+    expect(hasChipFilters({ ...none, relation: "none" })).toBe(true);
+  });
+
+  it("tipo de 'Mais filtros' vira chip marcado com ✕ (celular e desktop); tocar desliga", () => {
+    const team = applyRelationFilter(none, "team");
+    for (const layout of ["mobile", "desktop"] as const) {
+      const chip = inboxFilterChips(team, { ...base, layout }).find((c) => c.id === "relation");
+      expect(chip).toMatchObject({ label: "Equipe", pressed: true, removable: true });
+    }
+    expect(applyInboxChip("relation", team).relation).toBeNull();
+    expect(applyRelationFilter(team, "team").relation).toBeNull();
+    // Leads/Pessoais não duplicam como chip extra.
+    expect(inboxFilterChips({ ...none, relation: "personal" }, base).some((c) => c.id === "relation")).toBe(false);
+  });
+
+  it("desktop: só a fileira principal (sem etiquetas, Etapa nem IA) quando nada está ativo", () => {
+    const chips = inboxFilterChips(none, { ...base, labels, showAi: true, layout: "desktop" });
+    expect(chips.map((c) => c.id)).toEqual(["all", "unread", "mine", "leads", "personal", "group"]);
+  });
+
+  it("desktop: etiqueta, etapa, IA, canal e Diretas ativos entram com ✕", () => {
+    const state = { ...none, labelId: "l1", stageId: "s1", ai: "on" as const, channel: "instagram", kind: "direct" as const };
+    const chips = inboxFilterChips(state, { ...base, labels, stageLabel: "Proposta", channelLabel: "Instagram", layout: "desktop" });
+    const extra = chips.slice(6).map((c) => [c.id, c.label, c.removable]);
+    expect(extra).toEqual([
+      ["direct", "Diretas", true],
+      ["channel", "Instagram", true],
+      ["label:l1", "VIP", true],
+      ["stage", "Proposta", true],
+      ["ai", "IA atendendo", true],
+    ]);
+    expect(chips.every((c) => c.id === "all" || !c.removable || c.pressed)).toBe(true);
+    // Tocar no chip com ✕ desliga.
+    expect(applyInboxChip("stage", state).stageId).toBeNull();
+    expect(applyInboxChip("label:l1", state).labelId).toBeNull();
+  });
+
+  it("'Mais filtros': tipos, etapa, IA/canal só quando fazem sentido, etiquetas e contagem de ativos", () => {
+    const empty = inboxMoreFilters(none, { labels });
+    expect(empty.types.map((t) => t.label)).toEqual(["Equipe", "Fornecedores", "Parceiros", "Robôs", "Sem tipo"]);
+    expect(empty.types.every((t) => !t.selected)).toBe(true);
+    expect(empty.stage).toEqual({ label: "Todas as etapas", active: false });
+    expect(empty.ai).toBeNull();
+    expect(empty.channel).toBeNull();
+    expect(empty.labels).toEqual([{ id: "l1", name: "VIP", color: "#10b981", selected: false }]);
+    expect(empty.archived).toBe(false);
+    expect(empty.activeCount).toBe(0);
+
+    const busy = inboxMoreFilters(
+      { ...none, relation: "supplier", stageId: "s1", ai: "off", labelId: "l1", configId: "c1" },
+      { labels, stageLabel: "Proposta", channelLabel: "WhatsApp ····1234", showArchived: true }
+    );
+    expect(busy.types.find((t) => t.id === "supplier")?.selected).toBe(true);
+    expect(busy.stage).toEqual({ label: "Proposta", active: true });
+    expect(busy.ai).toEqual({ label: "IA desligada", active: true });
+    expect(busy.channel).toEqual({ label: "WhatsApp ····1234", active: true });
+    expect(busy.archived).toBe(true);
+    expect(busy.activeCount).toBe(5);
+
+    // Leads/Pessoais moram na fileira: não contam no ▾.
+    expect(inboxMoreFilters({ ...none, relation: "leads" }, { labels: [] }).activeCount).toBe(0);
+    expect(inboxMoreFilters(none, { labels: [], showAi: true, showChannel: true }).ai).toEqual({ label: "Todas", active: false });
+  });
+
+  it("estado vazio por tipo, com a dica de como marcar", () => {
+    const base2 = { kind: "all" as const, showArchived: false, queueFilterActive: false, labelId: null };
+    expect(emptyListMessage({ ...base2, relation: "personal" })).toEqual({
+      text: "Nenhum contato pessoal",
+      chooseGroups: false,
+      hint: "Use ⋮ › Não é cliente… numa conversa para marcar o contato.",
+    });
+    expect(emptyListMessage({ ...base2, relation: "leads" })).toEqual({ text: "Nenhuma conversa com lead", chooseGroups: false });
+    expect(emptyListMessage({ ...base2, relation: "automated", showArchived: true }).text).toBe("Nenhum robô entre as arquivadas");
   });
 });

@@ -459,4 +459,27 @@ describe("ConversationListItem default (desktop): mesma linha do celular, sem pe
     );
     expect(container.querySelector("img")).toHaveAttribute("src", "https://x.test/g.jpg");
   });
+
+  it("selo do tipo na 3ª linha para quem não é cliente (bolinha + nome)", () => {
+    renderItem({ contactRelation: "personal", lead: null });
+    const tag = screen.getByText("Pessoal").closest("[data-relation]");
+    expect(tag).toHaveAttribute("data-relation", "personal");
+    expect(tag?.querySelector(".bg-semantic-info")).not.toBeNull();
+  });
+
+  it("o tipo do contato manda sobre o espelho da conversa", () => {
+    renderItem({ contactRelation: "personal", contact: { firstName: "Gráfica", relation: "supplier" } });
+    expect(screen.getByText("Fornecedor")).toBeInTheDocument();
+    expect(screen.queryByText("Pessoal")).not.toBeInTheDocument();
+  });
+
+  it("lead, sem tipo e grupo não mostram selo", () => {
+    renderItem({ contactRelation: "customer" });
+    expect(document.querySelector("[data-relation]")).toBeNull();
+  });
+
+  it("grupo nunca mostra selo de tipo", () => {
+    renderItem({ kind: "group", groupChat: { subject: "Família" }, contactRelation: "personal" });
+    expect(document.querySelector("[data-relation]")).toBeNull();
+  });
 });

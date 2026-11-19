@@ -8,7 +8,7 @@ import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
 import { usePermissions } from "@/hooks/usePermissions";
-import { Contact2, Plus, Settings2 } from "lucide-react";
+import { CheckSquare, Contact2, Plus, Settings2, Tags } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
@@ -20,7 +20,30 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useSearchParamState } from "@/hooks/useSearchParamState";
 import { useContactSelection } from "@/hooks/useContactSelection";
-import { numberParam, stringParam } from "@/lib/searchParamState";
+import { enumParam, numberParam, stringParam } from "@/lib/searchParamState";
+import { FilterChips } from "@/components/ui/FilterChips";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { RelationTag } from "@/components/contacts/RelationTag";
+import { ContactRelationSheet } from "@/components/contacts/ContactRelationSheet";
+import { useBulkContactRelation } from "@/components/contacts/useBulkContactRelation";
+import {
+  RELATION_PARAM_VALUES,
+  bulkRelationSheetTitle,
+  commonCurrentRelation,
+  contactsRelationChips,
+  contactsRelationEmptyMessage,
+  matchesRelationFilter,
+  nextContactsRelation,
+  relationArgs,
+  relationFilterFromParam,
+  relationParamFromFilter,
+} from "@/lib/contactRelationList";
+import {
+  CONTACT_RELATION_LABEL,
+  asContactRelation,
+  offBusinessRelation,
+  type ContactRelation,
+} from "@/lib/contactRelationUi";
 import { ContactDetailPanel } from "./contacts/detail/ContactDetailPanel";
 import { CreateContactModal } from "./CreateContactModal";
 import { SocialIcons } from "@/components/SocialIcons";
@@ -55,6 +78,10 @@ const DEFAULT_COLUMNS: ColumnKey[] = ["contact", "company", "email", "tags"];
 const CONTACTS_PAGE_SIZE = 50;
 /** `?page=` é 1-based na URL (a primeira página sai da URL). Codec constante do módulo. */
 const PAGE_PARAM = numberParam({ min: 1 });
+/** `?tipo=leads|pessoais|semtipo|…` (mesmo contrato da lista de Conversas). */
+const TIPO_PARAM = enumParam<string>(RELATION_PARAM_VALUES, "");
+/** Acima disso, marcar como não-cliente em lote pede confirmação (arquiva leads). */
+const CONFIRM_RELATION_ABOVE = 5;
 
 /** Fallback do boundary: o `?contact=` aponta para algo que não carrega; tira o param da URL. */
 function ClearInvalidContact({ onClear }: { onClear: () => void }) {
@@ -72,6 +99,15 @@ export function ContactsPage() {
   const contactSelection = useContactSelection();
   const searchParam = useSearchParamState("q", stringParam);
   const pageParam = useSearchParamState("page", PAGE_PARAM);
+  const tipoParam = useSearchParamState("tipo", TIPO_PARAM);
+  const relationFilter = relationFilterFromParam(tipoParam.value);
+  const canEdit = can("contacts", "edit");
+  // Seleção em massa ("Definir tipo…"): estado local (não é deep link).
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [relationSheetOpen, setRelationSheetOpen] = useState(false);
+  const [confirmRelation, setConfirmRelation] = useState<ContactRelation | null>(null);
+  const bulkRelation = useBulkContactRelation(organizationId);
   const selectedContactId = contactSelection.contactId as Id<"contacts"> | null;
   const debouncedSearch = searchParam.value ?? "";
   const requestedPage = (pageParam.value ?? 1) - 1;
@@ -151,10 +187,14 @@ export function ContactsPage() {
 
   const allContacts = useQuery(
     api.contacts.getContacts,
-    debouncedSearch.length < 2 ? { organizationId } : "skip"
+    debouncedSearch.length < 2 ? { organizationId, ...relationArgs(relationFilter) } : "skip"
   );
 
-  const contacts = debouncedSearch.length >= 2 ? searchResults : allContacts;
+  // A busca não tem o arg de tipo: o mesmo critério do servidor no resultado.
+  const contacts =
+    debouncedSearch.length >= 2
+      ? searchResults?.filter((c: { relation?: unknown }) => matchesRelationFilter(c.relation, relationFilter))
+      : allContacts;
 
   const totalContacts = contacts?.length ?? 0;
   // Página pedida além do fim (a lista encolheu): mostra a última.
@@ -168,11 +208,52 @@ export function ContactsPage() {
     searchParam.set(value, { also: { page: null } });
   };
 
+  const handleRelationChip = (id: string) => {
+    const next = nextContactsRelation(id, relationFilter);
+    tipoParam.set(relationParamFromFilter(next) ?? "", { also: { page: null } });
+    // Selecionados de outro filtro ficariam escondidos na ação em massa.
+    setSelectedIds(new Set());
+  };
+
+  const exitSelection = () => {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  };
+  const toggleSelected = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const pageIds = (paginatedContacts ?? []).map((c) => c._id as string);
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
+  const togglePage = () =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allPageSelected) pageIds.forEach((id) => next.delete(id));
+      else pageIds.forEach((id) => next.add(id));
+      return next;
+    });
+  // Tipo atual dos selecionados (marca o comum na folha).
+  const selectedRelations = (contacts ?? [])
+    .filter((c) => selectedIds.has(c._id as string))
+    .map((c: { relation?: unknown }) => asContactRelation(c.relation) ?? null);
+  const runBulkRelation = async (relation: ContactRelation | null) => {
+    const ok = await bulkRelation.apply([...selectedIds], relation);
+    if (ok) exitSelection();
+  };
+  const chooseBulkRelation = (relation: ContactRelation | null) => {
+    if (offBusinessRelation(relation) && selectedIds.size > CONFIRM_RELATION_ABOVE) setConfirmRelation(relation);
+    else void runBulkRelation(relation);
+  };
+
   const handlePageChange = (page: number) => {
     pageParam.set(page === 0 ? null : page + 1);
   };
 
-  const handleRowClick = (contactId: Id<"contacts">) => contactSelection.open(contactId);
+  const handleRowClick = (contactId: Id<"contacts">) =>
+    selectMode ? toggleSelected(contactId) : contactSelection.open(contactId);
   const handleClosePanel = contactSelection.close;
 
   const handleCloseCreateModal = () => {
@@ -200,9 +281,10 @@ export function ContactsPage() {
         return (
           <div className="flex items-center gap-3">
             <Avatar name={displayName} size="sm" />
-            <div>
-              <div className="text-sm font-medium text-text-primary">
-                {displayName}
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-x-2 text-sm font-medium text-text-primary">
+                <span>{displayName}</span>
+                <RelationTag relation={contact.relation} />
               </div>
               {contact.title && (
                 <div className="text-xs text-text-muted">{contact.title}</div>
@@ -332,6 +414,21 @@ export function ContactsPage() {
               ariaLabel="Buscar contatos"
             />
 
+            {canEdit && (
+              <Button
+                type="button"
+                variant={selectMode ? "secondary" : "ghost"}
+                size="md"
+                onClick={() => (selectMode ? exitSelection() : setSelectMode(true))}
+                aria-pressed={selectMode}
+                className="shrink-0"
+              >
+                <CheckSquare size={18} aria-hidden="true" />
+                <span className="hidden sm:inline">{selectMode ? "Cancelar seleção" : "Selecionar"}</span>
+                <span className="sr-only sm:hidden">{selectMode ? "Cancelar seleção" : "Selecionar contatos"}</span>
+              </Button>
+            )}
+
             {/* Seletor de colunas (só no desktop) */}
             <div className="relative hidden md:block" ref={columnSelectorRef}>
               <button
@@ -384,6 +481,38 @@ export function ContactsPage() {
           </div>
         </div>
 
+        <FilterChips
+          ariaLabel="Filtrar contatos por tipo"
+          chips={contactsRelationChips(relationFilter)}
+          onToggle={handleRelationChip}
+          className="-mx-4 mb-4 px-4 md:mx-0 md:px-0"
+        />
+
+        {selectMode && (
+          <div
+            role="region"
+            aria-label="Ações em massa"
+            className="mb-4 flex flex-wrap items-center gap-2 rounded-card border border-border bg-surface-raised p-3"
+          >
+            <span className="min-w-[8rem] flex-1 text-sm text-text-secondary tabular-nums">
+              {selectedIds.size} selecionado{selectedIds.size === 1 ? "" : "s"}
+            </span>
+            <Button
+              type="button"
+              size="sm"
+              disabled={selectedIds.size === 0 || bulkRelation.busy}
+              loading={bulkRelation.busy}
+              onClick={() => setRelationSheetOpen(true)}
+            >
+              <Tags size={14} aria-hidden="true" />
+              Definir tipo…
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={exitSelection}>
+              Cancelar
+            </Button>
+          </div>
+        )}
+
         {/* Content */}
         {contacts === undefined ? (
           <div className="flex justify-center items-center py-12">
@@ -392,10 +521,22 @@ export function ContactsPage() {
         ) : contacts.length === 0 ? (
           <EmptyState
             icon={Contact2}
-            title={debouncedSearch ? "Nenhum contato encontrado" : VOCAB.contact.empty.title}
-            description={debouncedSearch ? "Tente ajustar a busca ou adicione um novo contato." : VOCAB.contact.empty.hint}
+            title={
+              debouncedSearch
+                ? "Nenhum contato encontrado"
+                : relationFilter
+                  ? contactsRelationEmptyMessage(relationFilter).title
+                  : VOCAB.contact.empty.title
+            }
+            description={
+              debouncedSearch
+                ? "Tente ajustar a busca ou adicione um novo contato."
+                : relationFilter
+                  ? contactsRelationEmptyMessage(relationFilter).hint
+                  : VOCAB.contact.empty.hint
+            }
             action={
-              !debouncedSearch && can("contacts", "edit")
+              !debouncedSearch && !relationFilter && can("contacts", "edit")
                 ? { label: "Criar contato", onClick: () => setShowCreateModal(true) }
                 : undefined
             }
@@ -408,6 +549,15 @@ export function ContactsPage() {
               <table className="w-full">
                 <thead>
                   <tr className="border-b border-border">
+                    {selectMode && (
+                      <th className="w-12 px-4 py-3">
+                        <Checkbox
+                          checked={allPageSelected}
+                          onChange={togglePage}
+                          aria-label="Selecionar todos desta página"
+                        />
+                      </th>
+                    )}
                     {activeColumns.map((columnKey) => {
                       const column = allAvailableColumns.find((c) => c.key === columnKey);
                       return (
@@ -427,8 +577,21 @@ export function ContactsPage() {
                       <tr
                         key={contact._id}
                         onClick={() => handleRowClick(contact._id)}
-                        className="hover:bg-surface-overlay cursor-pointer transition-colors"
+                        aria-selected={selectMode ? selectedIds.has(contact._id) : undefined}
+                        className={cn(
+                          "hover:bg-surface-overlay cursor-pointer transition-colors",
+                          selectMode && selectedIds.has(contact._id) && "bg-brand-500/10"
+                        )}
                       >
+                        {selectMode && (
+                          <td className="w-12 px-4 py-4" onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={selectedIds.has(contact._id)}
+                              onChange={() => toggleSelected(contact._id)}
+                              aria-label={`Selecionar ${[contact.firstName, contact.lastName].filter(Boolean).join(" ") || contact.email || contact.phone || "contato"}`}
+                            />
+                          </td>
+                        )}
                         {activeColumns.map((columnKey) => (
                           <td key={columnKey} className="px-6 py-4">
                             {renderCellContent(contact, columnKey)}
@@ -452,13 +615,27 @@ export function ContactsPage() {
                   <div
                     key={contact._id}
                     onClick={() => handleRowClick(contact._id)}
-                    className="p-4 hover:bg-surface-overlay active:bg-surface-overlay transition-colors cursor-pointer"
+                    aria-selected={selectMode ? selectedIds.has(contact._id) : undefined}
+                    className={cn(
+                      "p-4 hover:bg-surface-overlay active:bg-surface-overlay transition-colors cursor-pointer",
+                      selectMode && selectedIds.has(contact._id) && "bg-brand-500/10"
+                    )}
                   >
                     <div className="flex items-start gap-3">
+                      {selectMode && (
+                        <span className="flex min-h-10 items-center" onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            checked={selectedIds.has(contact._id)}
+                            onChange={() => toggleSelected(contact._id)}
+                            aria-label={`Selecionar ${displayName}`}
+                          />
+                        </span>
+                      )}
                       <Avatar name={displayName} size="md" />
                       <div className="flex-1 min-w-0">
-                        <div className="font-medium text-text-primary mb-0.5">
-                          {displayName}
+                        <div className="mb-0.5 flex flex-wrap items-center gap-x-2 font-medium text-text-primary">
+                          <span>{displayName}</span>
+                          <RelationTag relation={contact.relation} />
                         </div>
                         {contact.company && (
                           <div className="text-sm text-text-secondary mb-1">
@@ -515,6 +692,34 @@ export function ContactsPage() {
             onNavigateAway={() => {}}
           />
         </ErrorBoundary>
+      )}
+
+      {canEdit && (
+        <>
+          <ContactRelationSheet
+            open={relationSheetOpen}
+            onClose={() => setRelationSheetOpen(false)}
+            name={null}
+            title={bulkRelationSheetTitle(selectedIds.size)}
+            current={commonCurrentRelation(selectedRelations)}
+            onSelect={chooseBulkRelation}
+            onClear={() => chooseBulkRelation(null)}
+          />
+          <ConfirmDialog
+            open={confirmRelation !== null}
+            onClose={() => setConfirmRelation(null)}
+            onConfirm={() => {
+              const relation = confirmRelation;
+              setConfirmRelation(null);
+              if (relation) void runBulkRelation(relation);
+            }}
+            title={
+              confirmRelation ? `Marcar ${selectedIds.size} contatos como ${CONTACT_RELATION_LABEL[confirmRelation]}?` : ""
+            }
+            description="A IA para de responder esses contatos e os leads deles saem do funil (ficam arquivados). Dá para desfazer."
+            confirmLabel="Confirmar"
+          />
+        </>
       )}
 
       {/* Create Contact Modal */}

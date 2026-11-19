@@ -50,6 +50,7 @@ const GROUP_SOURCE_TABS: { id: AudienceSource; label: string; icon: React.Elemen
 
 const EXCLUSION_LABELS: Record<string, string> = {
   no_contact: "sem contato",
+  non_customer: "fora por não serem clientes",
   no_phone: "sem telefone",
   invalid_phone: "telefone inválido",
   duplicate_phone: "telefone repetido",
