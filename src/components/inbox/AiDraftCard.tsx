@@ -556,18 +556,21 @@ function AiInstructionForm({
 export function ReturnToAiButton({
   conversationId,
   contactName,
+  canEditContact = false,
   variant = "link",
   buttonVariant = "ghost",
 }: {
   conversationId: Id<"conversations">;
   /** Nome no diálogo "<Nome> está como Pessoal…" (contato que não é cliente). */
   contactName?: string;
+  /** `contacts:edit`: o diálogo `needs_relation` oferece "Virar lead". */
+  canEditContact?: boolean;
   variant?: "link" | "button";
   /** Estilo do botão quando `variant="button"` (secundário no banner de pedido de ajuda). */
   buttonVariant?: "ghost" | "secondary";
 }) {
   const returnToAi = useMutation(api.attendant.returnToAi);
-  const guard = useNeedsRelationGuard();
+  const guard = useNeedsRelationGuard(canEditContact);
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLButtonElement>(null);
 

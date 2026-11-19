@@ -167,16 +167,29 @@ export const RELATION_SHEET_HINT =
   "Quem não é cliente: a IA não responde e o lead sai do funil. Dá para desfazer.";
 
 /**
- * Desfazer: volta ao tipo anterior. Voltando para Lead (ou sem tipo) depois de
- * marcar como não-cliente, pede para restaurar o lead arquivado pela marcação.
+ * `restoreLead` só ao SAIR de um tipo fora do comercial para Lead (ou sem
+ * tipo): traz de volta ao funil o lead que a marcação arquivou. Escolher
+ * "Lead" num contato sem tipo nunca ressuscita lead arquivado nem cria um.
  */
-export function undoArgs(
+export function restoreLeadFor(
+  current: ContactRelation | null | undefined,
+  next: ContactRelation | null
+): boolean {
+  return !!offBusinessRelation(current) && !offBusinessRelation(next);
+}
+
+/**
+ * Desfazer: volta ao tipo anterior e desarquiva exatamente os leads que a
+ * chamada arquivou (`archivedLeadIds` do retorno). Nunca manda `restoreLead`.
+ */
+export function undoArgs<LeadId extends string>(
   previous: ContactRelation | null | undefined,
-  applied: ContactRelation | null
-): { relation: ContactRelation | null; restoreLead?: boolean } {
-  const prev = previous ?? null;
-  const backToBusiness = !offBusinessRelation(prev) && !!offBusinessRelation(applied);
-  return backToBusiness ? { relation: prev, restoreLead: true } : { relation: prev };
+  archivedLeadIds?: readonly LeadId[] | null
+): { relation: ContactRelation | null; restoreLeadIds?: LeadId[] } {
+  const relation = previous ?? null;
+  return archivedLeadIds && archivedLeadIds.length > 0
+    ? { relation, restoreLeadIds: [...archivedLeadIds] }
+    : { relation };
 }
 
 // ---------------------------------------------------------------------------
@@ -231,6 +244,21 @@ export function needsRelationFrom(value: unknown): ContactRelation | null {
 export function needsRelationText(name: string | null | undefined, relation: ContactRelation): string {
   const n = (name ?? "").trim() || "Este contato";
   return `${n} está como ${CONTACT_RELATION_LABEL[relation]}. A IA não responde contatos que não são clientes.`;
+}
+
+/** Sem `contacts:edit`: só explica e pede a quem pode mudar o tipo. */
+export function needsRelationNoPermissionText(name: string | null | undefined, relation: ContactRelation): string {
+  const n = (name ?? "").trim() || "Este contato";
+  return `${n} está como ${CONTACT_RELATION_LABEL[relation]}. Peça a um admin para mudar o tipo.`;
+}
+
+/**
+ * Aviso ao criar lead à mão para um contato fora do comercial (avisa, não
+ * bloqueia). Sem `contacts:edit` não pergunta "Virar lead?".
+ */
+export function offBusinessLeadWarning(relation: ContactRelation, canEdit: boolean): string {
+  const base = `Este contato está como ${CONTACT_RELATION_LABEL[relation]}. Ao criar o lead ele continua sem IA.`;
+  return canEdit ? `${base} Virar lead?` : base;
 }
 
 /** Parâmetro do deep link que abre a folha de tipos (`?conversation=…&marcar=1`). */

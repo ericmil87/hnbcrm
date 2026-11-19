@@ -64,7 +64,7 @@ export function HandoffQueue() {
   const acceptHandoff = useMutation(api.handoffs.acceptHandoff);
   const rejectHandoff = useMutation(api.handoffs.rejectHandoff);
   // Contato que não é cliente (Pessoal, Equipe…): o servidor pede o tipo antes de devolver à IA.
-  const relationGuard = useNeedsRelationGuard();
+  const relationGuard = useNeedsRelationGuard(can("contacts", "edit"));
 
   const [peekBusy, setPeekBusy] = useState(false);
 

@@ -16,6 +16,9 @@ import {
   relationSheetTitle,
   shortName,
   undoArgs,
+  restoreLeadFor,
+  offBusinessLeadWarning,
+  needsRelationNoPermissionText,
 } from "./contactRelationUi";
 import { formatDate } from "./format";
 
@@ -110,11 +113,19 @@ describe("toasts e Desfazer", () => {
     expect(relationChangedText("Mieko", null)).toBe("Mieko agora está sem tipo");
   });
 
-  it("desfazer volta ao tipo anterior e restaura o lead ao sair de não-cliente", () => {
-    expect(undoArgs(undefined, "personal")).toEqual({ relation: null, restoreLead: true });
-    expect(undoArgs("customer", "supplier")).toEqual({ relation: "customer", restoreLead: true });
-    expect(undoArgs("personal", "customer")).toEqual({ relation: "personal" });
-    expect(undoArgs("personal", "team")).toEqual({ relation: "personal" });
+  it("desfazer volta ao tipo anterior e desarquiva só os leads arquivados pela chamada", () => {
+    expect(undoArgs(undefined, ["l1", "l2"])).toEqual({ relation: null, restoreLeadIds: ["l1", "l2"] });
+    expect(undoArgs("customer", [])).toEqual({ relation: "customer" });
+    expect(undoArgs("personal", undefined)).toEqual({ relation: "personal" });
+    expect(undoArgs("personal", ["l1"])).not.toHaveProperty("restoreLead");
+  });
+
+  it("restoreLead só ao sair de não-cliente", () => {
+    expect(restoreLeadFor("personal", "customer")).toBe(true);
+    expect(restoreLeadFor("team", null)).toBe(true);
+    expect(restoreLeadFor(undefined, "customer")).toBe(false);
+    expect(restoreLeadFor("customer", "personal")).toBe(false);
+    expect(restoreLeadFor("personal", "supplier")).toBe(false);
   });
 });
 
@@ -153,5 +164,22 @@ describe("needsRelationFrom", () => {
       "Mieko Kawano está como Pessoal. A IA não responde contatos que não são clientes."
     );
     expect(needsRelationText("", "automated")).toMatch(/^Este contato está como Robô\./);
+  });
+});
+
+describe("avisos sem permissão e na criação de lead", () => {
+  it("diálogo needs_relation sem contacts:edit", () => {
+    expect(needsRelationNoPermissionText("", "team")).toBe(
+      "Este contato está como Equipe. Peça a um admin para mudar o tipo."
+    );
+  });
+
+  it("aviso de lead manual para não-cliente", () => {
+    expect(offBusinessLeadWarning("personal", true)).toBe(
+      "Este contato está como Pessoal. Ao criar o lead ele continua sem IA. Virar lead?"
+    );
+    expect(offBusinessLeadWarning("supplier", false)).toBe(
+      "Este contato está como Fornecedor. Ao criar o lead ele continua sem IA."
+    );
   });
 });

@@ -8,6 +8,8 @@ import {
   CONTACT_RELATION_LABEL,
   RELATION_SHEET_HINT,
   RELATION_TONE,
+  needsRelationNoPermissionText,
+  offBusinessLeadWarning,
   needsRelationText,
   offBusinessRelation,
   relationSheetTitle,
@@ -84,21 +86,39 @@ interface NeedsRelationDialogProps {
   confirmLabel: string;
   onConfirm: () => void;
   busy?: boolean;
+  /** `contacts:edit`: sem ele só explica e mostra "Cancelar" (sem "Virar lead"). */
+  canEdit: boolean;
 }
 
-/** "<Nome> está como Pessoal. A IA não responde…" · [Virar lead e devolver à IA] [Cancelar]. */
-export function NeedsRelationDialog({ open, onClose, name, relation, confirmLabel, onConfirm, busy }: NeedsRelationDialogProps) {
+/**
+ * "<Nome> está como Pessoal. A IA não responde…" · [Virar lead e devolver à IA] [Cancelar].
+ * Sem `contacts:edit`: "<Nome> está como Pessoal. Peça a um admin para mudar o tipo." · [Cancelar].
+ */
+export function NeedsRelationDialog({
+  open,
+  onClose,
+  name,
+  relation,
+  confirmLabel,
+  onConfirm,
+  busy,
+  canEdit,
+}: NeedsRelationDialogProps) {
   return (
     <Modal open={open} onClose={onClose} title="Contato não é cliente">
-      <p className="text-sm leading-relaxed text-text-secondary">{needsRelationText(name, relation)}</p>
+      <p className="text-sm leading-relaxed text-text-secondary">
+        {canEdit ? needsRelationText(name, relation) : needsRelationNoPermissionText(name, relation)}
+      </p>
       <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button type="button" variant="secondary" onClick={onClose} className="w-full sm:w-auto">
           Cancelar
         </Button>
-        <Button type="button" onClick={onConfirm} loading={busy} className="w-full sm:w-auto">
-          <UserCheck size={16} aria-hidden />
-          {confirmLabel}
-        </Button>
+        {canEdit && (
+          <Button type="button" onClick={onConfirm} loading={busy} className="w-full sm:w-auto">
+            <UserCheck size={16} aria-hidden />
+            {confirmLabel}
+          </Button>
+        )}
       </div>
     </Modal>
   );
@@ -124,5 +144,49 @@ export function ContactRelationBadge({
       <Icon size={11} aria-hidden />
       {CONTACT_RELATION_LABEL[off]}
     </Badge>
+  );
+}
+
+/**
+ * Aviso inline ao criar lead à mão para um contato que não é cliente
+ * ("Este contato está como Pessoal. Ao criar o lead ele continua sem IA.
+ * Virar lead?"). Avisa, não bloqueia: a criação segue normalmente.
+ */
+export function OffBusinessLeadWarning({
+  relation,
+  canEdit,
+  onTurnLead,
+  busy,
+  className,
+}: {
+  relation: ContactRelation | null | undefined;
+  /** `contacts:edit`: mostra o botão "Virar lead". */
+  canEdit: boolean;
+  onTurnLead: () => void;
+  busy?: boolean;
+  className?: string;
+}) {
+  const off = offBusinessRelation(relation);
+  if (!off) return null;
+  const Icon = RELATION_ICON[off];
+  return (
+    <div
+      role="status"
+      className={cn(
+        "flex flex-col gap-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 sm:flex-row sm:items-center",
+        className
+      )}
+    >
+      <p className="flex min-w-0 flex-1 items-start gap-2 text-sm text-text-secondary">
+        <Icon size={16} aria-hidden className="mt-0.5 shrink-0 text-semantic-warning" />
+        <span>{offBusinessLeadWarning(off, canEdit)}</span>
+      </p>
+      {canEdit && (
+        <Button type="button" size="sm" variant="secondary" onClick={onTurnLead} loading={busy} className="shrink-0">
+          <UserCheck size={14} aria-hidden />
+          Virar lead
+        </Button>
+      )}
+    </div>
   );
 }

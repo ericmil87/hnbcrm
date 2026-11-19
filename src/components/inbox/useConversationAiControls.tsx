@@ -14,6 +14,8 @@ interface UseConversationAiControlsArgs {
   conversationId: Id<"conversations">;
   contactName: string;
   relation: ContactRelation | undefined;
+  /** `contacts:edit`: o diálogo `needs_relation` oferece "Virar lead". */
+  canEditContact: boolean;
 }
 
 export type ConversationAiControls = ReturnType<typeof useConversationAiControls>;
@@ -25,12 +27,17 @@ export type ConversationAiControls = ReturnType<typeof useConversationAiControls
  * folha "Quem é <Nome>?". `overlays` deve ser renderizado uma vez por quem
  * chama (popovers de instrução, folha de tipos e o diálogo `needs_relation`).
  */
-export function useConversationAiControls({ conversationId, contactName, relation }: UseConversationAiControlsArgs) {
+export function useConversationAiControls({
+  conversationId,
+  contactName,
+  relation,
+  canEditContact,
+}: UseConversationAiControlsArgs) {
   const assume = useMutation(api.conversations.assumeConversation);
   const requestDraft = useMutation(api.attendant.requestAiDraft);
   const returnToAi = useMutation(api.attendant.returnToAi);
   const relationChange = useContactRelationChange();
-  const guard = useNeedsRelationGuard();
+  const guard = useNeedsRelationGuard(canEditContact);
 
   const fallbackAnchor = useRef<HTMLElement | null>(null);
   const [instruction, setInstruction] = useState<{ kind: "return" | "ask"; anchor: RefObject<HTMLElement | null> } | null>(
@@ -72,9 +79,8 @@ export function useConversationAiControls({ conversationId, contactName, relatio
     );
   };
 
-  const turnLead = () => void relationChange.turnLead({ conversationId }, contactName);
-  const selectRelation = (next: ContactRelation) =>
-    void relationChange.apply({ conversationId }, next, contactName, next === "customer" ? { restoreLead: true } : undefined);
+  const turnLead = () => void relationChange.turnLead({ conversationId }, contactName, relation);
+  const selectRelation = (next: ContactRelation) => void relationChange.apply({ conversationId }, next, contactName, relation);
 
   const openRelationSheet = useCallback(() => setSheetOpen(true), []);
 

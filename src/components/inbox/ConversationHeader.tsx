@@ -163,7 +163,12 @@ export function ConversationHeader({
   const { can } = usePermissions(organizationId);
   const contactRelation = isGroup ? undefined : conversationContactRelation(conversation);
   const canEditContact = !isGroup && !!openContactId && can("contacts", "edit");
-  const aiControls = useConversationAiControls({ conversationId, contactName, relation: contactRelation });
+  const aiControls = useConversationAiControls({
+    conversationId,
+    contactName,
+    relation: contactRelation,
+    canEditContact,
+  });
   const { openRelationSheet } = aiControls;
 
   // Deep link `?conversation=…&marcar=1` (push no iPhone): abre a folha de tipos uma vez e limpa o parâmetro
@@ -660,6 +665,7 @@ export function ConversationHeader({
                 <ReturnToAiButton
                   conversationId={conversationId}
                   contactName={contactName}
+                  canEditContact={canEditContact}
                   variant="button"
                   buttonVariant="secondary"
                 />

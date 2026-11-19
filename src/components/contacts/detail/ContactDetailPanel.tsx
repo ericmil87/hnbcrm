@@ -175,7 +175,7 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
   const initials = [contact.firstName?.[0], contact.lastName?.[0]].filter(Boolean).join("").toUpperCase() || "?";
   const relation = asContactRelation(contact.relation);
   const selectRelation = (next: ContactRelation) =>
-    void relationChange.apply({ contactId }, next, displayName, next === "customer" ? { restoreLead: true } : undefined);
+    void relationChange.apply({ contactId }, next, displayName, relation);
 
   return (
     <>
@@ -218,10 +218,10 @@ export function ContactDetailPanel({ contactId, onClose, onNavigateAway }: Conta
                 <>
                   <ContactRelationField
                     relation={relation}
-                    metaLine={relationMetaLine(relationMeta, relationSetByName)}
+                    metaLine={relation ? relationMetaLine(relationMeta, relationSetByName) : null}
                     canEdit={canEditContact}
                     onChangeType={() => setRelationSheetOpen(true)}
-                    onTurnLead={() => void relationChange.turnLead({ contactId }, displayName)}
+                    onTurnLead={() => void relationChange.turnLead({ contactId }, displayName, relation)}
                   />
                   {!editing ? (
                     <div className="mb-4 flex flex-col sm:flex-row gap-2">

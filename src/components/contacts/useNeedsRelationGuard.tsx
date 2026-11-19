@@ -31,8 +31,9 @@ const DEFAULT_CONFIRM = "Virar lead e devolver à IA";
  * é cliente: o servidor responde `needs_relation` (retorno ou `ConvexError`).
  * O guarda abre "<Nome> está como Pessoal… [Virar lead e devolver à IA]
  * [Cancelar]"; confirmar vira lead pela conversa e repete a ação original.
+ * Sem `contacts:edit` (`canEditContact`) o diálogo só explica, sem "Virar lead".
  */
-export function useNeedsRelationGuard() {
+export function useNeedsRelationGuard(canEditContact: boolean) {
   const { turnLead } = useContactRelationChange();
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
@@ -77,10 +78,11 @@ export function useNeedsRelationGuard() {
   );
 
   const confirm = async () => {
-    if (!pending || busy) return;
+    if (!pending || busy || !canEditContact) return;
     setBusy(true);
     try {
-      const result = await turnLead({ conversationId: pending.conversationId }, pending.name);
+      // Vem de um tipo fora do comercial: `turnLead` restaura o lead arquivado pela marcação.
+      const result = await turnLead({ conversationId: pending.conversationId }, pending.name, pending.relation);
       if (!result) return;
       const retry = pending.retry;
       setPending(null);
@@ -104,6 +106,7 @@ export function useNeedsRelationGuard() {
       confirmLabel={pending.confirmLabel ?? DEFAULT_CONFIRM}
       onConfirm={() => void confirm()}
       busy={busy}
+      canEdit={canEditContact}
     />
   ) : null;
 

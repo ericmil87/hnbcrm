@@ -23,6 +23,10 @@ import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
 import { Avatar } from "@/components/ui/Avatar";
+import { OffBusinessLeadWarning } from "@/components/contacts/ContactRelationSheet";
+import { useContactRelationChange } from "@/components/contacts/useContactRelationChange";
+import { usePermissions } from "@/hooks/usePermissions";
+import { asContactRelation } from "@/lib/contactRelationUi";
 import { Select } from "@/components/ui/Select";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
 import { languageDisplayName, languageSelectOptions } from "@/lib/translationRules";
@@ -208,6 +212,26 @@ export function NewConversationModal({
 
   const needsPipeline = !!preview && preview.phoneValid && !preview.lead;
   const boards = useQuery(api.boards.getBoards, open && needsPipeline ? { organizationId } : "skip");
+  // Contato existente que não é cliente e o envio vai criar um lead: avisa (não bloqueia) e oferece "Virar lead".
+  // `previewStartConversation` não traz o tipo; lê do contato.
+  const previewContactId = (preview?.contact?.id ?? null) as Id<"contacts"> | null;
+  const previewContactDoc = useQuery(
+    api.contacts.getContactWithLeads,
+    open && needsPipeline && previewContactId ? { contactId: previewContactId } : "skip"
+  );
+  const previewRelation = asContactRelation(previewContactDoc?.relation);
+  const { can } = usePermissions(organizationId);
+  const relationChange = useContactRelationChange();
+  const [turningLead, setTurningLead] = useState(false);
+  const handleTurnLead = async () => {
+    if (!previewContactId) return;
+    setTurningLead(true);
+    try {
+      await relationChange.turnLead({ contactId: previewContactId }, preview?.contact?.name, previewRelation);
+    } finally {
+      setTurningLead(false);
+    }
+  };
   const effectiveBoardId = boardId ?? preview?.defaultBoard?.id ?? null;
   const stages = useQuery(
     api.boards.getStages,
@@ -511,6 +535,15 @@ export function NewConversationModal({
                 </div>
               )}
             </>
+          )}
+          {needsPipeline && previewContactId && (
+            <OffBusinessLeadWarning
+              relation={previewRelation}
+              canEdit={can("contacts", "edit")}
+              onTurnLead={() => void handleTurnLead()}
+              busy={turningLead}
+              className="mt-2"
+            />
           )}
           {checkKey && previewPhoneValid && (
             <NumberCheckLine

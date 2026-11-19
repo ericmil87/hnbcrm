@@ -47,7 +47,7 @@ export function LeadActionsMenu({
   const relation = asContactRelation(contact?.relation);
   const selectRelation = (next: ContactRelation) => {
     if (!contactId) return;
-    void relationChange.apply({ contactId }, next, contactName, next === "customer" ? { restoreLead: true } : undefined);
+    void relationChange.apply({ contactId }, next, contactName, relation);
   };
 
   const archived = lead?.archivedAt != null;

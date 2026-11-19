@@ -123,8 +123,6 @@ export function HandoffPeekSlideOver({
   // Terceira saída além de aceitar/rejeitar: instruir a IA e revisar o
   // rascunho depois, sem tomar a conversa para si agora.
   const requestAiDraft = useMutation(api.attendant.requestAiDraft);
-  // Contato que não é cliente: o servidor pede o tipo antes de acionar a IA.
-  const relationGuard = useNeedsRelationGuard();
   const [instructOpen, setInstructOpen] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [instructing, setInstructing] = useState(false);
@@ -163,6 +161,8 @@ export function HandoffPeekSlideOver({
   const transcribe = useAction(api.transcription.transcribe);
   // Tentar novamente uma entrega que falhou não exige assumir a conversa: só `inbox:reply`.
   const { can } = usePermissions(organizationId);
+  // Contato que não é cliente: o servidor pede o tipo antes de acionar a IA (Virar lead exige `contacts:edit`).
+  const relationGuard = useNeedsRelationGuard(can("contacts", "edit"));
   const canRetryDelivery = can("inbox", "reply");
   const { retryDelivery, retryingIds, ackDialogProps: retryAckDialogProps } = useRetryDelivery();
   const [transcribingIds, setTranscribingIds] = useState<Set<string>>(() => new Set());

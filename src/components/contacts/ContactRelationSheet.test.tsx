@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ContactRelationBadge, ContactRelationSheet, NeedsRelationDialog } from "./ContactRelationSheet";
+import { ContactRelationBadge, ContactRelationSheet, NeedsRelationDialog, OffBusinessLeadWarning } from "./ContactRelationSheet";
 import { ContactRelationField } from "./detail/ContactRelationField";
 
 describe("ContactRelationSheet", () => {
@@ -46,6 +46,7 @@ describe("NeedsRelationDialog", () => {
         relation="personal"
         confirmLabel="Virar lead e devolver à IA"
         onConfirm={onConfirm}
+        canEdit
       />
     );
     expect(screen.getByText("Mieko está como Pessoal. A IA não responde contatos que não são clientes.")).toBeInTheDocument();
@@ -53,6 +54,25 @@ describe("NeedsRelationDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
     expect(onClose).toHaveBeenCalled();
+  });
+});
+
+describe("NeedsRelationDialog sem contacts:edit", () => {
+  it("só explica e mostra Cancelar, sem Virar lead", () => {
+    render(
+      <NeedsRelationDialog
+        open
+        onClose={() => {}}
+        name=""
+        relation="team"
+        confirmLabel="Virar lead e devolver à IA"
+        onConfirm={() => {}}
+        canEdit={false}
+      />
+    );
+    expect(screen.getByText("Este contato está como Equipe. Peça a um admin para mudar o tipo.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Virar lead/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancelar" })).toBeInTheDocument();
   });
 });
 
@@ -97,5 +117,26 @@ describe("ContactRelationField", () => {
     );
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.getByText("Pessoal")).toBeInTheDocument();
+  });
+});
+
+describe("OffBusinessLeadWarning", () => {
+  it("avisa sem bloquear e oferece Virar lead", async () => {
+    const onTurnLead = vi.fn();
+    render(<OffBusinessLeadWarning relation="personal" canEdit onTurnLead={onTurnLead} />);
+    expect(
+      screen.getByText("Este contato está como Pessoal. Ao criar o lead ele continua sem IA. Virar lead?")
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Virar lead" }));
+    expect(onTurnLead).toHaveBeenCalledTimes(1);
+  });
+
+  it("some para Lead e sem tipo; sem contacts:edit não tem botão", () => {
+    const { container, rerender } = render(<OffBusinessLeadWarning relation="customer" canEdit onTurnLead={() => {}} />);
+    expect(container).toBeEmptyDOMElement();
+    rerender(<OffBusinessLeadWarning relation={undefined} canEdit onTurnLead={() => {}} />);
+    expect(container).toBeEmptyDOMElement();
+    rerender(<OffBusinessLeadWarning relation="team" canEdit={false} onTurnLead={() => {}} />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 });
