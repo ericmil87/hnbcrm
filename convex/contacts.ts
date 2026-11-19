@@ -18,7 +18,8 @@ import { findContactsByPhoneCandidates } from "./lib/inboundRouting";
 import type { Doc, Id } from "./_generated/dataModel";
 import { normalizeLanguageCode } from "./lib/languages";
 import { contactRelationValidator, isOffBusiness, type ContactRelation } from "./lib/contactRelation";
-import { assertHumanRelationActor, setContactRelationCore } from "./lib/contactRelationOps";
+import { assertHumanRelationActor, setContactRelationCore, RELATION_LEADS_CAP } from "./lib/contactRelationOps";
+import { contactRelationFilterArgValidator, relationValuesForFilter } from "./lib/contactRelationFilter";
 import { getLeadRef } from "./lib/leadRef";
 
 // Shared optional-field arg validators for enrichment fields
@@ -110,15 +111,41 @@ function applyPreferredLanguageChange(
 
 // ===== Public queries =====
 
+export const GET_CONTACTS_LIMIT = 500;
+
 export const getContacts = query({
-  args: { organizationId: v.id("organizations") },
+  args: {
+    organizationId: v.id("organizations"),
+    // Tipo de contato (PR2, mesmo contrato de `getConversations`): "leads" =
+    // cliente + sem tipo, "personal" = qualquer tipo fora do comercial, um tipo
+    // específico ou "none" = sem tipo. Um range por valor no índice
+    // [org, relation] (ordem de criação, como sem filtro), mesclados: os mesmos
+    // 500 primeiros que a lista sem filtro mostraria, só que daquele tipo.
+    relation: v.optional(contactRelationFilterArgValidator),
+  },
   returns: v.any(),
   handler: async (ctx, args) => {
     await requireAuth(ctx, args.organizationId);
-    return await ctx.db
-      .query("contacts")
-      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
-      .take(500);
+    if (!args.relation) {
+      return await ctx.db
+        .query("contacts")
+        .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+        .take(GET_CONTACTS_LIMIT);
+    }
+    const ranges = await Promise.all(
+      relationValuesForFilter(args.relation).map((relation) =>
+        ctx.db
+          .query("contacts")
+          .withIndex("by_organization_and_relation", (q) =>
+            q.eq("organizationId", args.organizationId).eq("relation", relation)
+          )
+          .take(GET_CONTACTS_LIMIT)
+      )
+    );
+    return ranges
+      .flat()
+      .sort((a, b) => a._creationTime - b._creationTime)
+      .slice(0, GET_CONTACTS_LIMIT);
   },
 });
 
@@ -568,6 +595,131 @@ export const setContactRelationByConversation = mutation({
       restoreLead: args.restoreLead,
       restoreLeadIds: args.restoreLeadIds,
     });
+  },
+});
+
+/** Teto de contatos por chamada da marcação em massa (cada um passa pela porta única). */
+export const BULK_RELATION_MAX = 100;
+
+const bulkRelationItemValidator = v.object({
+  contactId: v.id("contacts"),
+  status: v.union(v.literal("changed"), v.literal("unchanged"), v.literal("not_found")),
+  previous: v.union(contactRelationValidator, v.null()),
+  archivedLeadIds: v.array(v.id("leads")),
+  restoredLeadId: v.union(v.id("leads"), v.null()),
+});
+
+/**
+ * Marcação em massa (Contatos e seleção no inbox): o MESMO efeito de
+ * `setContactRelation` para até 100 contatos, numa transação, pela porta única
+ * `setContactRelationCore` (sem caminho paralelo). `contacts:edit`, só humano.
+ *
+ * Todos os contatos precisam ser da `organizationId` (outro id = "not_found",
+ * sem escrita naquele item). Desfazer: para cada item `changed`, chamar
+ * `setContactRelation({contactId, relation: previous, restoreLeadIds:
+ * archivedLeadIds})` — ou esta mesma mutation por grupo de `previous`
+ * com `restoreLeadIds` = `archivedLeadIds` agregados (cada lead só é aceito
+ * pelo contato dono).
+ */
+export const bulkSetContactRelation = mutation({
+  args: {
+    organizationId: v.id("organizations"),
+    contactIds: v.array(v.id("contacts")),
+    relation: v.union(contactRelationValidator, v.null()),
+    restoreLead: v.optional(v.boolean()),
+    // Desfazer em massa: os `archivedLeadIds` devolvidos pela marcação. Cada
+    // contato restaura só os SEUS (filtrados por `lead.contactId`).
+    restoreLeadIds: v.optional(v.array(v.id("leads"))),
+  },
+  returns: v.object({
+    relation: v.union(contactRelationValidator, v.null()),
+    changed: v.number(),
+    unchanged: v.number(),
+    notFound: v.number(),
+    archivedLeads: v.number(),
+    archivedLeadIds: v.array(v.id("leads")),
+    restoredLeadIds: v.array(v.id("leads")),
+    items: v.array(bulkRelationItemValidator),
+  }),
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "contacts", "edit");
+    assertHumanRelationActor(member);
+    const contactIds = [...new Set(args.contactIds)];
+    if (contactIds.length === 0) throw new ConvexError("Selecione ao menos um contato");
+    if (contactIds.length > BULK_RELATION_MAX) {
+      throw new ConvexError(`No máximo ${BULK_RELATION_MAX} contatos por vez`);
+    }
+    if (args.restoreLeadIds && args.restoreLeadIds.length > BULK_RELATION_MAX * RELATION_LEADS_CAP) {
+      throw new ConvexError("Leads demais para restaurar de uma vez");
+    }
+    // Desfazer: agrupa os leads pedidos pelo contato dono (lead de outra org ou
+    // de contato fora da seleção = recusado antes de qualquer escrita).
+    const restoreByContact = new Map<string, Id<"leads">[]>();
+    if (args.restoreLeadIds !== undefined) {
+      const selected = new Set<string>(contactIds);
+      for (const leadId of new Set(args.restoreLeadIds)) {
+        const lead = await ctx.db.get(leadId);
+        if (!lead || lead.organizationId !== args.organizationId || !lead.contactId || !selected.has(lead.contactId)) {
+          throw new ConvexError("Lead não pertence aos contatos selecionados");
+        }
+        const list = restoreByContact.get(lead.contactId) ?? [];
+        list.push(lead._id);
+        restoreByContact.set(lead.contactId, list);
+      }
+    }
+
+    const out = {
+      relation: args.relation,
+      changed: 0,
+      unchanged: 0,
+      notFound: 0,
+      archivedLeads: 0,
+      archivedLeadIds: [] as Id<"leads">[],
+      restoredLeadIds: [] as Id<"leads">[],
+      items: [] as Array<{
+        contactId: Id<"contacts">;
+        status: "changed" | "unchanged" | "not_found";
+        previous: ContactRelation | null;
+        archivedLeadIds: Id<"leads">[];
+        restoredLeadId: Id<"leads"> | null;
+      }>,
+    };
+    for (const contactId of contactIds) {
+      const contact = await ctx.db.get(contactId);
+      if (!contact || contact.organizationId !== args.organizationId) {
+        out.notFound += 1;
+        out.items.push({ contactId, status: "not_found", previous: null, archivedLeadIds: [], restoredLeadId: null });
+        continue;
+      }
+      const previous = contact.relation ?? null;
+      if (previous === args.relation) {
+        out.unchanged += 1;
+        out.items.push({ contactId, status: "unchanged", previous, archivedLeadIds: [], restoredLeadId: null });
+        continue;
+      }
+      const result = await setContactRelationCore(ctx, {
+        contact,
+        relation: args.relation,
+        actor: member,
+        source: "manual",
+        restoreLead: args.restoreLead,
+        ...(args.restoreLeadIds !== undefined
+          ? { restoreLeadIds: restoreByContact.get(contactId) ?? [] }
+          : {}),
+      });
+      out.changed += 1;
+      out.archivedLeads += result.archivedLeads;
+      out.archivedLeadIds.push(...result.archivedLeadIds);
+      if (result.restoredLeadId) out.restoredLeadIds.push(result.restoredLeadId);
+      out.items.push({
+        contactId,
+        status: "changed",
+        previous,
+        archivedLeadIds: result.archivedLeadIds,
+        restoredLeadId: result.restoredLeadId,
+      });
+    }
+    return out;
   },
 });
 
