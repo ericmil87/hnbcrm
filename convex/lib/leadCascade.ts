@@ -487,8 +487,10 @@ export async function hardDeleteLead(
 /**
  * Exclusão de conversa ÓRFÃ (sem lead: `leadId` ausente ou apontando para um
  * lead que não existe mais). Não há lead para a cascata normal varrer, então
- * a conversa sai por aqui: audit com snapshot + `deleteConversationCascade`.
- * Devolve `false` quando o orçamento acabou; já deixa re-agendado
+ * a conversa sai por aqui: audit com snapshot + `deleteConversationCascade`,
+ * e, se havia `leadId` pendurado, `cascadeLeadChildren` limpa o que ficou
+ * amarrado a ele (repasses, atividades, mensagens soltas). Devolve `false`
+ * quando o orçamento acabou; já deixa re-agendado
  * `conversations.internalContinueOrphanDelete` (idempotente).
  */
 export async function hardDeleteOrphanConversation(
@@ -496,29 +498,48 @@ export async function hardDeleteOrphanConversation(
   args: { conversation: Doc<"conversations">; actorId?: Id<"teamMembers">; actorType: CascadeActorType }
 ): Promise<boolean> {
   const { conversation } = args;
-  await ctx.db.insert("auditLogs", {
-    organizationId: conversation.organizationId,
-    entityType: "conversation",
-    entityId: conversation._id,
-    action: "delete",
-    actorId: args.actorId,
-    actorType: args.actorType,
-    changes: { before: buildEntitySnapshot(conversation) },
-    metadata: { channel: conversation.channel, orphanLeadId: conversation.leadId },
-    description: "Excluiu uma conversa sem lead",
-    severity: "high",
-    createdAt: Date.now(),
-  });
-  return await continueOrphanConversationDelete(ctx, conversation._id);
+  // Re-execução (ex.: ops repetida): não duplica o audit de exclusão.
+  const already = await ctx.db
+    .query("auditLogs")
+    .withIndex("by_entity", (q) => q.eq("entityType", "conversation").eq("entityId", conversation._id))
+    .first();
+  if (!already || already.action !== "delete") {
+    await ctx.db.insert("auditLogs", {
+      organizationId: conversation.organizationId,
+      entityType: "conversation",
+      entityId: conversation._id,
+      action: "delete",
+      actorId: args.actorId,
+      actorType: args.actorType,
+      changes: { before: buildEntitySnapshot(conversation) },
+      metadata: { channel: conversation.channel, orphanLeadId: conversation.leadId },
+      description: "Excluiu uma conversa sem lead",
+      severity: "high",
+      createdAt: Date.now(),
+    });
+  }
+  return await continueOrphanConversationDelete(ctx, conversation._id, conversation.leadId);
 }
 
 export async function continueOrphanConversationDelete(
   ctx: MutationCtx,
-  conversationId: Id<"conversations">
+  conversationId: Id<"conversations">,
+  leadId?: Id<"leads">
 ): Promise<boolean> {
-  const done = await deleteConversationCascade(ctx, conversationId, newBudget(), "conversation_deleted");
+  const budget = newBudget();
+  let done = true;
+  if (await ctx.db.get(conversationId)) {
+    done = await deleteConversationCascade(ctx, conversationId, budget, "conversation_deleted");
+  }
+  // Só varre por `leadId` se o lead de fato não existe (nunca toca lead vivo).
+  if (done && leadId && !(await ctx.db.get(leadId))) {
+    done = await cascadeLeadChildren(ctx, leadId, budget);
+  }
   if (!done) {
-    await ctx.scheduler.runAfter(0, internal.conversations.internalContinueOrphanDelete, { conversationId });
+    await ctx.scheduler.runAfter(0, internal.conversations.internalContinueOrphanDelete, {
+      conversationId,
+      ...(leadId ? { leadId } : {}),
+    });
   }
   return done;
 }

@@ -1260,12 +1260,56 @@ export const deleteOrphanConversation = mutation({
 });
 
 export const internalContinueOrphanDelete = internalMutation({
-  args: { conversationId: v.id("conversations") },
+  args: { conversationId: v.id("conversations"), leadId: v.optional(v.id("leads")) },
   returns: v.null(),
   handler: async (ctx, args) => {
-    if (!(await ctx.db.get(args.conversationId))) return null;
-    await continueOrphanConversationDelete(ctx, args.conversationId);
+    await continueOrphanConversationDelete(ctx, args.conversationId, args.leadId);
     return null;
+  },
+});
+
+/**
+ * Ops: limpa conversas órfãs de UMA org (lead inexistente/ausente). `dryRun`
+ * (default TRUE) só relata. Recusa id de outra org, grupo e conversa cujo lead
+ * existe; usa o mesmo núcleo de `deleteOrphanConversation`. Sem PII na saída.
+ *
+ *   npx convex run conversations:internalDeleteOrphanConversations '{"organizationId":"<org>","conversationIds":["<id>"]}'
+ *   npx convex run conversations:internalDeleteOrphanConversations '{"organizationId":"<org>","conversationIds":["<id>"],"dryRun":false}'
+ */
+export const internalDeleteOrphanConversations = internalMutation({
+  args: {
+    organizationId: v.id("organizations"),
+    conversationIds: v.array(v.id("conversations")),
+    dryRun: v.optional(v.boolean()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    deleted: v.array(v.id("conversations")),
+    skipped: v.array(v.object({ conversationId: v.id("conversations"), reason: v.string() })),
+  }),
+  handler: async (ctx, args) => {
+    if (args.conversationIds.length > 50) throw new Error("Máximo de 50 conversas por chamada");
+    const dryRun = args.dryRun !== false;
+    const deleted: Id<"conversations">[] = [];
+    const skipped: { conversationId: Id<"conversations">; reason: string }[] = [];
+    for (const conversationId of args.conversationIds) {
+      const conversation = await ctx.db.get(conversationId);
+      if (!conversation) {
+        skipped.push({ conversationId, reason: "não encontrada" });
+      } else if (conversation.organizationId !== args.organizationId) {
+        skipped.push({ conversationId, reason: "outra organização" });
+      } else if (conversation.kind === "group") {
+        skipped.push({ conversationId, reason: "grupo" });
+      } else if (conversation.leadId && (await ctx.db.get(conversation.leadId))) {
+        skipped.push({ conversationId, reason: "lead existe" });
+      } else {
+        deleted.push(conversationId);
+        if (!dryRun) {
+          await hardDeleteOrphanConversation(ctx, { conversation, actorType: "system" });
+        }
+      }
+    }
+    return { dryRun, deleted, skipped };
   },
 });
 

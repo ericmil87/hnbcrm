@@ -30,6 +30,7 @@ export function DeleteLeadDialog({ leadId, conversationId, onClose, onDeleted }:
 
   // Lead já apagado (conversa órfã): não há o que contar nem contato a oferecer.
   const orphan = impact?.found === false;
+  const gone = orphan && !conversationId; // lead sumiu e não há conversa para excluir: só informa
   const contactName = impact?.contactName ?? null;
   const contactIsExclusive = !!contactName && impact?.contactHasOtherLeads === false;
   const withContact = contactIsExclusive && deleteContact;
@@ -87,11 +88,13 @@ export function DeleteLeadDialog({ leadId, conversationId, onClose, onDeleted }:
             <AlertTriangle size={20} className="text-semantic-error" />
           </div>
           <div className="flex-1 min-w-0 space-y-2 text-sm text-text-secondary leading-relaxed">
-            <p className="text-text-primary font-medium">Esta ação não pode ser desfeita.</p>
+            {!gone && <p className="text-text-primary font-medium">Esta ação não pode ser desfeita.</p>}
             {impact === undefined ? (
               <div className="flex justify-center py-2">
                 <Spinner size="sm" />
               </div>
+            ) : gone ? (
+              <p>Este lead não existe mais.</p>
             ) : orphan ? (
               <p>
                 O lead desta conversa não existe mais. A conversa e todas as mensagens dela serão
@@ -119,7 +122,7 @@ export function DeleteLeadDialog({ leadId, conversationId, onClose, onDeleted }:
                 </li>
               </ul>
             )}
-            <p>Os dados excluídos permanecem no log de auditoria.</p>
+            {!gone && <p>Os dados excluídos permanecem no log de auditoria.</p>}
           </div>
         </div>
 
@@ -167,16 +170,18 @@ export function DeleteLeadDialog({ leadId, conversationId, onClose, onDeleted }:
 
         <div className="flex gap-2 pt-2">
           <Button variant="secondary" onClick={onClose} disabled={deleting} className="flex-1">
-            Cancelar
+            {gone ? "Fechar" : "Cancelar"}
           </Button>
-          <Button
-            variant="danger"
-            onClick={handleConfirm}
-            disabled={deleting || impact === undefined || (orphan && !conversationId)}
-            className="flex-1"
-          >
-            {deleting ? "Excluindo…" : "Excluir permanentemente"}
-          </Button>
+          {!gone && (
+            <Button
+              variant="danger"
+              onClick={handleConfirm}
+              disabled={deleting || impact === undefined}
+              className="flex-1"
+            >
+              {deleting ? "Excluindo…" : "Excluir permanentemente"}
+            </Button>
+          )}
         </div>
       </div>
     </Modal>
