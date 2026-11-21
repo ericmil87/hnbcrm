@@ -11,6 +11,7 @@ import {
   bookingReducer,
   buildBookArgs,
   nearestSlotStart,
+  supportsGroup,
   timeInputValue,
   buildFindSlotsArgs,
   buildRescheduleArgs,
@@ -656,12 +657,34 @@ describe("prévia de 'Outro horário'", () => {
 
 describe("busca com acompanhantes (partySize)", () => {
   const argsFor = (companions: string[]) => buildFindSlotsArgs({ organizationId: "org", state: { ...base({ serviceId: "svc1" }), companions }, tz: "America/Sao_Paulo", now: Date.UTC(2026, 10, 26, 15) });
-  it("sem acompanhante não manda partySize; com nomes manda 1 + nomes (máx. 4)", () => {
+  it("sem acompanhante não manda partySize; cada linha de acompanhante conta (nome ou não), no máximo 4", () => {
     expect(argsFor([])).not.toHaveProperty("partySize");
-    expect(argsFor(["", "  "])).not.toHaveProperty("partySize");
-    expect(argsFor(["Maria"])?.partySize).toBe(2);
-    expect(argsFor(["Maria", "", "Bia", "Cris"])?.partySize).toBe(4);
+    expect(argsFor([""])?.partySize).toBe(2);
+    expect(argsFor(["Maria", "", "Bia"])?.partySize).toBe(4);
     expect(argsFor(["a", "b", "c", "d", "e"])?.partySize).toBe(4);
+  });
+  it("'Quantas pessoas?' antes do horário: ajusta os acompanhantes, mantém nomes e descarta o horário escolhido", () => {
+    const s0 = { ...base({ serviceId: "svc1" }), companions: ["Maria", "Bia"], slot: picked() };
+    const s1 = bookingReducer(s0, { type: "setPartySize", size: 2 });
+    expect(s1.companions).toEqual(["Maria"]);
+    expect(s1.slot).toBeNull();
+    expect(bookingReducer(s1, { type: "setPartySize", size: 4 }).companions).toEqual(["Maria", "", ""]);
+    expect(bookingReducer(s1, { type: "setPartySize", size: 1 }).companions).toEqual([]);
+    expect(bookingReducer(s1, { type: "setPartySize", size: 9 }).companions).toHaveLength(3);
+    expect(bookingReducer(s1, { type: "setPartySize", size: 0 }).companions).toHaveLength(0);
+  });
+  it("só mostra grupo quando o serviço usa sala/equipamento com capacidade acima de 1 (da lista do requisito)", () => {
+    const dual = { _id: "dual", name: "Dupla", kind: "room", capacity: 2 };
+    const simples = { _id: "s1", name: "Sala", kind: "room", capacity: 1 };
+    const pro = { _id: "p", name: "Ana", kind: "person", capacity: 3 };
+    const svc = (reqs: ServiceLike["requirements"]): ServiceLike => ({ _id: "x", name: "S", durationMin: 60, requirements: reqs });
+    expect(supportsGroup(svc([{ kind: "room" }]), [dual, simples])).toBe(true);
+    expect(supportsGroup(svc([{ kind: "room" }]), [simples])).toBe(false);
+    expect(supportsGroup(svc([{ kind: "person" }]), [pro])).toBe(false);
+    expect(supportsGroup(svc([{ kind: "room", resourceIds: ["s1"] }]), [dual, simples])).toBe(false);
+    expect(supportsGroup(svc([{ kind: "room", resourceIds: ["dual"] }]), [dual, simples])).toBe(true);
+    expect(supportsGroup(svc([{ kind: "room" }]), [{ ...dual, active: false }])).toBe(false);
+    expect(supportsGroup(undefined, [dual])).toBe(false);
   });
 });
 

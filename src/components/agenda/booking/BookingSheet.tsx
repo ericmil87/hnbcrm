@@ -124,7 +124,7 @@ function BookingSheetLoader(props: LoaderProps) {
 interface FlowProps extends LoaderProps {
   tz: string;
   services: ServiceLike[];
-  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string }>;
+  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string; capacity?: number; active?: boolean }>;
   preferredServiceId: string | null;
 }
 
@@ -228,7 +228,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
   const whoOk = Boolean(reschedule) || hasWho(who);
   const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin });
   const [failure, setFailure] = useState<FailureView | null>(null);
-  const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind })), [resources]);
+  const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind, capacity: r.capacity, active: r.active })), [resources]);
 
   /** Toast "Desfazer": tudo ou nada; recusa mostra o motivo e abre o painel do horário. */
   const runUndo = async (ids: readonly string[]) => {

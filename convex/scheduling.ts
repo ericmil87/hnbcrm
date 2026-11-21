@@ -43,6 +43,8 @@ import schema from "./schema";
 
 const MAX_RANGE_DAYS = 35;
 const DAY_APPOINTMENTS_CAP = 200;
+/** Documentos lidos da faixa que antecede o dia (agendamentos que podem cruzar a meia-noite). */
+const CROSSING_READ_CAP = 100;
 const RANGE_STATUS_CAP = 800;
 const RANGE_EXCEPTIONS_CAP = 1000;
 const PENDING_CAP = 50;
@@ -171,14 +173,15 @@ export const listAgendaDay = query({
       )
       .take(DAY_APPOINTMENTS_CAP + 1);
     // Quem começou ANTES do dia e cruza a meia-noite: o bloco tem teto `MAX_BLOCK_MIN`, então só pode ter começado
-    // nessa faixa (mesmo índice, sem `.filter()`); entra quem ainda não terminou à meia-noite.
+    // nessa faixa (mesmo índice, sem `.filter()`). Lê do mais perto da meia-noite para trás (quem cruza é quem
+    // começou mais tarde), com teto próprio; entra quem ainda não terminou à meia-noite.
+    const windowStart = bounds.start - MAX_BLOCK_MIN * MINUTE_MS;
     const before = await ctx.db
       .query("schedAppointments")
-      .withIndex("by_organization_and_start", (q) =>
-        q.eq("organizationId", args.organizationId).gte("startTime", bounds.start - MAX_BLOCK_MIN * MINUTE_MS).lt("startTime", bounds.start)
-      )
-      .take(DAY_APPOINTMENTS_CAP + 1);
-    const crossing = before.filter((a) => a.endTime > bounds.start);
+      .withIndex("by_organization_and_start", (q) => q.eq("organizationId", args.organizationId).gte("startTime", windowStart).lt("startTime", bounds.start))
+      .order("desc")
+      .take(CROSSING_READ_CAP);
+    const crossing = before.filter((a) => a.endTime > bounds.start).reverse();
     const all = [...crossing, ...rows];
     const own = await ownResourceIds(ctx, reader);
     const page = all.slice(0, DAY_APPOINTMENTS_CAP);
@@ -222,7 +225,7 @@ export const listAgendaDay = query({
       appointments,
       busy,
       exceptions: exceptions as Doc<"schedExceptions">[],
-      capped: all.length > DAY_APPOINTMENTS_CAP || before.length > DAY_APPOINTMENTS_CAP,
+      capped: all.length > DAY_APPOINTMENTS_CAP,
     };
   },
 });

@@ -22,8 +22,10 @@ import {
   longRangePhrase,
   longWhenPhrase,
   nearestSlotStart,
+  partySizeOf,
   pinnableKinds,
   splitSuggestions,
+  supportsGroup,
   timeInputValue,
   violationText,
   type BookingAction,
@@ -53,6 +55,8 @@ export interface ViewResource {
   _id: string;
   name: string;
   kind: string;
+  capacity?: number;
+  active?: boolean;
 }
 
 export interface FailureView {
@@ -256,6 +260,13 @@ function SlotStep({
           onChange={(e) => isValidLocalDate(e.target.value) && dispatch({ type: "setDay", preset: "other", date: e.target.value })}
         />
       )}
+      {supportsGroup(service, resources) && (
+        <FilterChips
+          ariaLabel={t.slot.partyLabel}
+          chips={[1, 2, 3, 4].map((n) => ({ id: String(n), label: n === 1 ? t.slot.partyOne : fillVocab(t.slot.partyOption, { n: String(n) }), pressed: partySizeOf(state) === n }))}
+          onToggle={(id) => dispatch({ type: "setPartySize", size: Number(id) })}
+        />
+      )}
       <FilterChips
         ariaLabel={t.slot.periodLabel}
         chips={SLOT_PERIODS.map((p) => ({ id: p, label: t.slot.periods[p], pressed: state.period === p }))}
@@ -318,7 +329,13 @@ function SlotStep({
             icon={CalendarX}
             size="sm"
             title={VOCAB.scheduling.empty.slots.title}
-            description={slots.reason === "unverifiable" ? t.slot.unverifiable : VOCAB.scheduling.empty.slots.hint}
+            description={
+              slots.reason === "unverifiable"
+                ? t.slot.unverifiable
+                : partySizeOf(state) > 1 && state.pinned.person
+                  ? t.slot.partyPinned
+                  : VOCAB.scheduling.empty.slots.hint
+            }
           />
           {slots.firstPossible && (
             <Button

@@ -1434,6 +1434,57 @@ export async function bookAppointmentCore(ctx: MutationCtx, args: BookArgs): Pro
   return resultOfPlaced(placed);
 }
 
+/**
+ * Plano do acompanhante a partir dos CANDIDATOS válidos do horário (mesmo gerador da busca, que já tirou o
+ * recurso fechado, bloqueado, ocupado ou fora do expediente), com a sala/equipamento da pessoa principal como
+ * preferidos e os profissionais já usados no grupo excluídos (regra de `schedParty.ts`: um por pessoa). Devolve os
+ * recursos na ordem dos requisitos do serviço, ou `null` (quem chama cai no plano posicional de sempre).
+ */
+async function planCompanion(
+  ctx: MutationCtx,
+  bc: BookingContext,
+  p: { origin: SchedOrigin; startTime: number; variantKey?: string; shared: Id<"schedResources">[]; usedPersons: Set<string> }
+): Promise<Id<"schedResources">[] | null> {
+  let durationMin: number;
+  try {
+    durationMin = durationFor(bc.service, p.variantKey);
+  } catch {
+    return null;
+  }
+  const blockStart = p.startTime - bc.service.bufferBeforeMin * MINUTE_MS;
+  const blockEnd = p.startTime + (durationMin + bc.service.bufferAfterMin) * MINUTE_MS;
+  const orgId = bc.org._id;
+  const rb = newResourceBook(orgId);
+  const reads: WindowReads = {
+    ...(await readExceptions(ctx, orgId, localDateOf(p.startTime, bc.tz))),
+    contactOverlaps: [],
+    contactActiveSameService: 0,
+    aiBookingsToday: 0,
+    internalEvents: internalEventsReader(ctx, orgId, blockStart, blockEnd),
+  };
+  const view = await loadDayView(ctx, rb, bc, reads, { startTime: p.startTime, preferred: p.shared });
+  const kindOf = new Map(view.pool.map((r) => [r._id as string, r.kind]));
+  const cands = candidatesOf(bc, view, {
+    startTime: p.startTime,
+    earliest: Number.NEGATIVE_INFINITY,
+    latest: Number.POSITIVE_INFINITY,
+    basis: originClass(p.origin) === "staff" ? "core" : "block",
+    maxPerStart: 40,
+    variantKey: p.variantKey,
+    preferred: p.shared,
+  }).filter((c) => c.startTime === p.startTime && c.plan.every((x) => kindOf.get(x.resourceId) !== "person" || !p.usedPersons.has(x.resourceId)));
+  let best: Candidate | null = null;
+  let bestScore = -1;
+  for (const c of cands) {
+    const score = c.plan.filter((x) => p.shared.includes(x.resourceId as Id<"schedResources">)).length;
+    if (score > bestScore) {
+      best = c;
+      bestScore = score;
+    }
+  }
+  return best ? best.plan.map((x) => x.resourceId as Id<"schedResources">) : null;
+}
+
 /** Duas ou mais pessoas ao mesmo tempo (casal na sala dupla): TUDO OU NADA. */
 export async function bookPartyCore(
   ctx: MutationCtx,
@@ -1465,10 +1516,18 @@ export async function bookPartyCore(
   const allIds: Id<"schedAppointments">[] = [];
   let anyExisting = false;
   let shared: Id<"schedResources">[] = [];
+  const usedPersons = new Set<string>();
+  let groupBc: BookingContext | null = null;
   for (const [index, member] of members.entries()) {
-    // Regra de grupo (`schedParty.ts`): sala e equipamento são UM recurso para todas as pessoas, então o acompanhante
-    // tenta primeiro o MESMO recurso da pessoa principal; o profissional é um por pessoa (o dele, pela checagem de capacidade).
-    const attempt = index > 0 && member.resourceIds === undefined && shared.length > 0 ? { ...member, resourceIds: shared } : member;
+    // Regra de grupo (`schedParty.ts`): sala e equipamento são UM recurso para todas as pessoas (o acompanhante tenta
+    // primeiro o da pessoa principal) e o profissional é um por pessoa. Sem recursos explícitos, o plano do
+    // acompanhante sai dos candidatos válidos do horário (como na busca), não do primeiro recurso por `sortOrder`.
+    let attempt = member;
+    if (index > 0 && member.resourceIds === undefined && groupBc) {
+      const plan = await planCompanion(ctx, groupBc, { origin: args.origin, startTime: args.startTime, variantKey: args.variantKey, shared, usedPersons });
+      if (plan) attempt = { ...member, resourceIds: plan };
+      else if (shared.length > 0) attempt = { ...member, resourceIds: shared };
+    }
     const placed = await placeAppointment(ctx, attempt, {}, now);
     if (index === 0 && placed.kind === "existing" && placed.duplicate) {
       // A pessoa principal já tem esse horário: é o mesmo pedido de grupo repetido, sem acompanhantes duplicados.
@@ -1477,15 +1536,14 @@ export async function bookPartyCore(
     if (placed.kind === "placed") {
       placedList.push(placed);
       allIds.push(placed.appointment._id);
-      if (index === 0) {
-        const reqs = placed.bc.service.requirements;
-        shared = sharedResourceIds(
-          placed.appointment.resources.flatMap((r) => {
-            const req = reqs.find((x) => x.role === r.role);
-            return req ? [{ req, resourceId: r.resourceId }] : [];
-          })
-        ) as Id<"schedResources">[];
-      }
+      groupBc = placed.bc;
+      const reqs = placed.bc.service.requirements;
+      const parts = placed.appointment.resources.flatMap((r) => {
+        const req = reqs.find((x) => x.role === r.role);
+        return req ? [{ req, resourceId: r.resourceId }] : [];
+      });
+      for (const part of parts) if (!sharedResourceIds([part]).length) usedPersons.add(part.resourceId);
+      if (index === 0) shared = sharedResourceIds(parts) as Id<"schedResources">[];
     } else if (placed.kind === "existing") {
       anyExisting = true;
       allIds.push(placed.appointment._id);
@@ -1608,7 +1666,12 @@ export async function rescheduleAppointmentCore(
     description: `Remarcou o horário ${appointmentLabel(old, placed.bc.tz)}`,
     before: { status: old.status },
     after: { status: "rescheduled" },
-    metadata: { statusChange: true, rescheduledToId: placed.appointment._id },
+    metadata: {
+      statusChange: true,
+      rescheduledToId: placed.appointment._id,
+      // O desfazer da remarcação devolve a marca de "sem desfecho" que o antigo tinha.
+      ...(old.outcomePendingSince !== undefined ? { outcomePendingSince: old.outcomePendingSince } : {}),
+    },
     now,
   });
   const created = (await ctx.db.get(placed.appointment._id))!;
@@ -1740,8 +1803,15 @@ function isFreshUndoable(a: Doc<"schedAppointments">, now: number): string | nul
   return null;
 }
 
-/** Status que o agendamento antigo tinha antes de a remarcação o encerrar (lido da auditoria; padrão `scheduled`). */
-async function statusBeforeReschedule(ctx: MutationCtx, old: Doc<"schedAppointments">, newId: Id<"schedAppointments">): Promise<"pending_approval" | "scheduled" | "confirmed"> {
+/**
+ * Status (e marca "sem desfecho") que o agendamento antigo tinha antes de a remarcação o encerrar, lidos da
+ * auditoria. Sem a linha: `null` (FAIL-CLOSED: o desfazer recusa, em vez de adivinhar e aprovar sem aprovação).
+ */
+async function stateBeforeReschedule(
+  ctx: MutationCtx,
+  old: Doc<"schedAppointments">,
+  newId: Id<"schedAppointments">
+): Promise<{ status: "pending_approval" | "scheduled" | "confirmed"; outcomePendingSince?: number } | null> {
   const logs = await ctx.db
     .query("auditLogs")
     .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", old._id))
@@ -1750,9 +1820,11 @@ async function statusBeforeReschedule(ctx: MutationCtx, old: Doc<"schedAppointme
   for (const log of logs) {
     if (log.organizationId !== old.organizationId || log.metadata?.statusChange !== true || log.metadata?.rescheduledToId !== newId) continue;
     const before = log.changes?.before?.status;
-    if (before === "pending_approval" || before === "scheduled" || before === "confirmed") return before;
+    if (before !== "pending_approval" && before !== "scheduled" && before !== "confirmed") return null;
+    const pending = log.metadata?.outcomePendingSince;
+    return { status: before, ...(typeof pending === "number" ? { outcomePendingSince: pending } : {}) };
   }
-  return "scheduled";
+  return null;
 }
 
 /**
@@ -1783,7 +1855,11 @@ export async function undoBookingCore(
   for (const id of ids) {
     const a = await ctx.db.get(id);
     if (!a || a.organizationId !== args.organizationId) fail("Agendamento não encontrado");
-    if (!canEdit && a.createdBy !== actor.member._id) fail("Agendamento não encontrado");
+    const mine = a.createdBy !== undefined && a.createdBy === actor.member._id;
+    if (!mine && !canEdit) fail("Agendamento não encontrado");
+    // Pedido do cliente (IA, link, mensagem do humano) não some em silêncio: a ação certa é Recusar/Cancelar.
+    // Marcação de OUTRO membro só se desfaz quando foi da equipe (app ou API).
+    if (!mine && a.origin !== "staff" && a.origin !== "api") fail("Esse horário veio de um pedido do cliente ou da IA: use Recusar ou Cancelar.");
     docs.push(a);
   }
   const refusal = (reason: string): never => fail(reason);
@@ -1806,14 +1882,16 @@ export async function undoBookingCore(
     refusal("Estes horários não são do mesmo grupo.");
   }
   // Remarcação: o antigo precisa continuar como ficou (encerrado por ESTA remarcação).
-  const olds = new Map<Id<"schedAppointments">, Doc<"schedAppointments">>();
+  const olds = new Map<Id<"schedAppointments">, { doc: Doc<"schedAppointments">; before: NonNullable<Awaited<ReturnType<typeof stateBeforeReschedule>>> }>();
   for (const a of docs) {
     if (!a.rescheduledFromId) continue;
     const old = await ctx.db.get(a.rescheduledFromId);
     if (!old || old.organizationId !== a.organizationId || old.status !== "rescheduled" || old.rescheduledToId !== a._id) {
       refusal("O horário anterior já não pode ser restaurado.");
     }
-    olds.set(a._id, old!);
+    const before = await stateBeforeReschedule(ctx, old!, a._id);
+    if (!before) refusal("Não há registro do estado anterior do horário: recuse ou cancele pelo painel.");
+    olds.set(a._id, { doc: old!, before: before! });
   }
 
   // 1) Cancela as marcações novas e libera a vaga (antes de restaurar: o lugar antigo pode encostar no novo).
@@ -1847,34 +1925,46 @@ export async function undoBookingCore(
     await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz, previousAppointmentId: a.rescheduledFromId });
   }
 
-  // 2) Restaura os antigos pela MESMA checagem de capacidade; vaga tomada = recusa e a transação inteira desfaz.
+  // 2) Restaura os antigos pela MESMA avaliação da troca de recurso (ativo, exceções, capacidade); impedimento =
+  //    recusa e a transação inteira desfaz.
   const restoredIds: Id<"schedAppointments">[] = [];
-  for (const [, old] of olds) {
-    const failure = await recreateAllocations(ctx, old, actor, now, undefined);
-    if (failure) refusal("O horário anterior foi ocupado por outro agendamento ou o recurso dele não está mais disponível.");
-    const previous = await statusBeforeReschedule(ctx, old, old.rescheduledToId!);
+  for (const [newId, { doc: old, before }] of olds) {
+    const restored = await recreateAllocations(ctx, old, actor, now, undefined, "refuse");
+    if (!restored.ok) {
+      const code = restored.violations[0]?.code;
+      refusal(
+        code === "CAPACITY_EXCEEDED"
+          ? "O horário anterior foi ocupado por outro agendamento."
+          : code === "WRONG_ORG_OR_INACTIVE"
+            ? "O horário anterior usa um recurso que não está mais disponível."
+            : "O horário anterior não está mais livre (recurso fechado ou fora do expediente)."
+      );
+    }
     await ctx.db.patch(old._id, {
-      status: previous,
+      status: before.status,
       rescheduledToId: undefined,
       resources: old.resources.map((r) => ({ ...r, allocated: true })),
       needsAttention: undefined,
+      outcomePendingSince: before.outcomePendingSince,
       statusChangedAt: now,
       updatedAt: now,
     });
-    const restored = (await ctx.db.get(old._id))!;
-    const label = appointmentLabel(restored, tz);
+    const after = (await ctx.db.get(old._id))!;
+    const label = appointmentLabel(after, tz);
     await recordAppointmentAudit(ctx, {
-      appointment: restored,
+      appointment: after,
       action: "update",
       actor,
       severity: "medium",
       description: `Restaurou o horário ${label}`,
       before: { status: "rescheduled" },
-      after: { status: previous },
-      metadata: { statusChange: true, outcome: "undone", undo: true },
+      after: { status: before.status },
+      metadata: { statusChange: true, outcome: "undone", undo: true, restoredFromId: newId },
       now,
     });
-    await recordAppointmentActivity(ctx, { appointment: restored, type: "appointment_changed", content: `Horário restaurado: ${label}`, actor, now });
+    await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Horário restaurado: ${label}`, actor, now });
+    // O integrador recebe `appointment.undone` (o novo) e `appointment.restored` (o antigo voltou; `previousAppointmentId` = o desfeito).
+    await emitAppointmentWebhook(ctx, { event: "appointment.restored", appointment: after, tz, previousAppointmentId: newId });
     restoredIds.push(old._id);
   }
   return { undoneIds: docs.map((a) => a._id), restoredIds };
@@ -2093,9 +2183,11 @@ export async function undoAppointmentStatusCore(
   if (!previous || !target || !canUndo(a.status, target, actorClassOf(args.actor))) fail("Não há o que desfazer neste agendamento.");
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
+  let skipped: RestoreSkip[] = [];
   if (allocationEffect(a.status, target) === "recreate") {
-    const failure = await recreateAllocations(ctx, a, args.actor, now, previous.allocations);
-    if (failure) return failure;
+    const restored = await recreateAllocations(ctx, a, args.actor, now, previous.allocations, "conflict");
+    if (!restored.ok) return restored;
+    skipped = restored.skipped;
   }
   const clear: Record<string, undefined> = {};
   for (const f of CLEAR_ON_UNDO[a.status] ?? []) clear[f] = undefined;
@@ -2116,8 +2208,11 @@ export async function undoAppointmentStatusCore(
     statusChangedAt: now,
     updatedAt: now,
   });
+  // Recurso que não pôde voltar (fechado, bloqueado, fora do expediente): fica sem alocação e COM conflito aberto.
+  await markRestoreSkipped(ctx, a._id, skipped, now);
   if (recreated) await closeConflictsIfResolved(ctx, a._id, now, { actor: args.actor, resolution: "restored" });
   const after = (await ctx.db.get(a._id))!;
+  if (skipped.length > 0) await emitAppointmentWebhook(ctx, { event: "appointment.needs_attention", appointment: after, tz });
   const label = appointmentLabel(after, tz);
   await recordAppointmentAudit(ctx, {
     appointment: after,
@@ -2134,16 +2229,33 @@ export async function undoAppointmentStatusCore(
   return { ok: true, restoredTo: target };
 }
 
-/** Desfazer cancelamento/falta: a vaga volta pela MESMA checagem de capacidade; tomada = erro com alternativas. */
+/** Códigos de exceção/horário do recurso que impedem de devolver a vaga (capacidade é tratada à parte). */
+const RESTORE_EXCEPTION_CODES: readonly RuleCode[] = ["RESOURCE_CLOSED", "OUTSIDE_HOURS", "RESOURCE_BLOCKED"];
+
+type RestoreSkip = { resourceId: Id<"schedResources">; role: string };
+type RestoreResult = { ok: true; skipped: RestoreSkip[] } | BookFailure;
+
+/**
+ * Devolve a vaga de um agendamento (desfazer falta/cancelamento, restaurar o antigo de uma remarcação desfeita) pela
+ * MESMA avaliação de `changeResourceCore`: recurso ativo, exceções do dia (fechado, bloqueio, fora do expediente) e
+ * capacidade. Aviso já aceito na marcação (`forcedRules`) continua valendo.
+ *  - `policy: "refuse"` (ação imediata do operador, `undoBooking`): qualquer impedimento recusa e nada é alocado.
+ *  - `policy: "conflict"` (desfazer status): recurso fechado/bloqueado/fora do expediente NÃO é alocado e vai em
+ *    `skipped` (quem chama marca `allocated:false` e abre o conflito); recurso inativo e capacidade tomada recusam
+ *    com alternativas (contrato do §2.4).
+ * Unidades e exclusividade vêm do RETRATO gravado ao liberar a vaga; sem retrato, o requisito atual do serviço.
+ */
 async function recreateAllocations(
   ctx: MutationCtx,
   a: Doc<"schedAppointments">,
   actor: SchedActor,
   now: number,
-  snapshot?: AllocationSnapshot[]
-): Promise<BookFailure | null> {
+  snapshot: AllocationSnapshot[] | undefined,
+  policy: "refuse" | "conflict"
+): Promise<RestoreResult> {
   const rb = newResourceBook(a.organizationId);
   const service = await ctx.db.get(a.serviceId);
+  const origin = originForActor(actor);
   const items: PlanItem[] = [];
   let invalid = false;
   for (const r of a.resources) {
@@ -2152,13 +2264,11 @@ async function recreateAllocations(
       invalid = true;
       continue;
     }
-    // Unidades e exclusividade do RETRATO gravado ao liberar a vaga; sem retrato, o requisito atual do serviço.
     const snap = snapshot?.find((x) => x.resourceId === r.resourceId && x.role === r.role);
     const base = service?.requirements.find((x) => x.role === r.role) ?? { role: r.role, kind: resource.kind };
     const req: ServiceRequirementLite = snap ? { ...base, units: snap.units, exclusive: snap.exclusive } : base;
     items.push(toPlanItem(req, resource));
   }
-  const origin = originForActor(actor);
   if (invalid) {
     return {
       ok: false,
@@ -2166,33 +2276,98 @@ async function recreateAllocations(
       alternatives: [],
     };
   }
+  const org = assertOrgModule(await ctx.db.get(a.organizationId));
+  const bc: BookingContext | null = service ? { org, tz: orgTimezone(org), settings: await loadSettings(ctx, a.organizationId), service, contact: null } : null;
+  const reads: WindowReads | null = bc
+    ? { ...(await readExceptions(ctx, a.organizationId, a.localDate)), contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0, internalEvents: async () => NO_EVENTS }
+    : null;
+
+  const forced = new Set(a.forcedRules ?? []);
   const taken = (): BookFailure => ({
     ok: false,
     violations: [blockOrAlways("CAPACITY_EXCEEDED", origin, "Esse horário já foi ocupado por outro agendamento; não dá para desfazer.")],
     alternatives: [],
   });
+  const withAlternatives = async (failure: BookFailure): Promise<BookFailure> => {
+    if (!bc || !reads) return failure;
+    const view = await loadDayView(ctx, rb, bc, reads, { startTime: a.startTime, preferred: items.map((i) => i.resource._id), ignoreAppointmentId: a._id });
+    failure.alternatives = computeAlternatives(bc, view, { origin, now, startTime: a.startTime, variantKey: a.variantKey, current: items.map((i) => i.resource._id) });
+    return failure;
+  };
+
+  // Avalia o plano como a troca de recurso: fechamento, bloqueio, fora do expediente e capacidade.
+  const skipIds = new Set<string>();
+  if (bc && reads) {
+    const timing: Timing = { startTime: a.startTime, endTime: a.endTime, blockStart: a.blockStart, blockEnd: a.blockEnd };
+    const violations = (await evaluatePlan(ctx, { bc, reads, rowsCache: new Map(), origin, action: "book", now, timing, items, ignoreAppointmentId: a._id }))
+      .filter((v) => (RESTORE_EXCEPTION_CODES.includes(v.code) || v.code === "CAPACITY_EXCEEDED") && !forced.has(v.code));
+    if (violations.some((v) => v.code === "CAPACITY_EXCEEDED")) return await withAlternatives(taken());
+    if (violations.length > 0) {
+      if (policy === "refuse") {
+        return await withAlternatives({
+          ok: false,
+          violations: violations.map((v) => ({ ...v, severity: "block" as const, message: `${v.message} Não dá para desfazer.` })),
+          alternatives: [],
+        });
+      }
+      for (const v of violations) {
+        const rid = v.detail?.resourceId;
+        if (typeof rid === "string") skipIds.add(rid);
+        else for (const i of items) skipIds.add(i.resource._id);
+      }
+    }
+  } else if (policy === "refuse") {
+    return { ok: false, violations: [blockOrAlways("WRONG_ORG_OR_INACTIVE", origin, "O serviço deste agendamento não existe mais; não dá para desfazer.", { entity: "service" })], alternatives: [] };
+  }
+  const toAllocate = items.filter((i) => !skipIds.has(i.resource._id));
   const result =
-    items.length === 0
+    toAllocate.length === 0
       ? null
       : await assertCapacityAndAllocate(ctx, {
           appointmentId: a._id,
           organizationId: a.organizationId,
-          plan: items.map((i) => ({ role: i.role, resource: i.resource, units: i.units, exclusive: i.exclusive })),
+          plan: toAllocate.map((i) => ({ role: i.role, resource: i.resource, units: i.units, exclusive: i.exclusive })),
           blockStart: a.blockStart,
           blockEnd: a.blockEnd,
           coreStart: a.startTime,
           coreEnd: a.endTime,
           replaceExisting: true,
         });
-  if (result?.ok) return null;
-  const failure = taken();
-  if (!service) return failure;
-  const org = assertOrgModule(await ctx.db.get(a.organizationId));
-  const bc: BookingContext = { org, tz: orgTimezone(org), settings: await loadSettings(ctx, a.organizationId), service, contact: null };
-  const reads: WindowReads = { ...(await readExceptions(ctx, a.organizationId, a.localDate)), contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0, internalEvents: async () => NO_EVENTS };
-  const view = await loadDayView(ctx, rb, bc, reads, { startTime: a.startTime, preferred: items.map((i) => i.resource._id), ignoreAppointmentId: a._id });
-  failure.alternatives = computeAlternatives(bc, view, { origin, now, startTime: a.startTime, variantKey: a.variantKey, current: items.map((i) => i.resource._id) });
-  return failure;
+  if (result && !result.ok) return await withAlternatives(taken());
+  return { ok: true, skipped: items.filter((i) => skipIds.has(i.resource._id)).map((i) => ({ resourceId: i.resource._id, role: i.role })) };
+}
+
+/**
+ * Depois de devolver a vaga com recursos que não puderam ser alocados: marca-os `allocated:false`, reabre a linha de
+ * `schedConflicts` (uma linha aberta por tipo) e sinaliza o agendamento. NUNCA fica ativo sem alocação e sem conflito.
+ */
+async function markRestoreSkipped(
+  ctx: MutationCtx,
+  appointmentId: Id<"schedAppointments">,
+  skipped: RestoreSkip[],
+  now: number
+): Promise<void> {
+  if (skipped.length === 0) return;
+  const a = (await ctx.db.get(appointmentId))!;
+  const ids = new Set<string>(skipped.map((x) => x.resourceId));
+  await ctx.db.patch(a._id, {
+    resources: a.resources.map((r) => ({ ...r, allocated: !ids.has(r.resourceId) })),
+    needsAttention: { code: "resource_closed", at: now },
+    updatedAt: now,
+  });
+  const open = await ctx.db.query("schedConflicts").withIndex("by_appointment", (q) => q.eq("appointmentId", a._id)).take(10);
+  if (!open.some((r) => r.status === "open" && r.kind === "resource_closed")) {
+    await ctx.db.insert("schedConflicts", {
+      organizationId: a.organizationId,
+      appointmentId: a._id,
+      kind: "resource_closed",
+      status: "open",
+      resourceId: skipped[0].resourceId,
+      resourceIds: skipped.map((x) => x.resourceId),
+      localDate: a.localDate,
+      createdAt: now,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

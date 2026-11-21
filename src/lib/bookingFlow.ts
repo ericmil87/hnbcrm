@@ -64,7 +64,7 @@ export interface ServiceLike {
   durationMin: number;
   active?: boolean;
   variants?: ReadonlyArray<{ key: string; name: string; durationMin: number }>;
-  requirements?: ReadonlyArray<{ kind: string }>;
+  requirements?: ReadonlyArray<{ kind: string; resourceIds?: ReadonlyArray<string> }>;
 }
 
 export interface ResourceLike {
@@ -165,6 +165,7 @@ export type BookingAction =
   | { type: "pickSlot"; slot: PickedSlot }
   | { type: "goto"; step: BookingStep }
   | { type: "back" }
+  | { type: "setPartySize"; size: number }
   | { type: "addCompanion" }
   | { type: "setCompanion"; index: number; name: string }
   | { type: "removeCompanion"; index: number }
@@ -212,6 +213,11 @@ export function bookingReducer(state: BookingState, action: BookingAction): Book
       return { ...state, step: action.step };
     case "back":
       return { ...state, step: state.step === "review" ? "slot" : "service" };
+    case "setPartySize": {
+      // Quantas pessoas (1–4) ANTES de escolher o horário: a busca já considera o grupo. Os nomes digitados ficam.
+      const size = Math.max(1, Math.min(MAX_COMPANIONS + 1, Math.trunc(action.size)));
+      return { ...resetSearch(state), companions: Array.from({ length: size - 1 }, (_, i) => state.companions[i] ?? "") };
+    }
     case "addCompanion":
       return state.companions.length >= MAX_COMPANIONS ? state : { ...state, companions: [...state.companions, ""] };
     case "setCompanion":
@@ -282,10 +288,24 @@ export interface FindSlotsArgs {
   now: number;
 }
 
-/** Pessoas do grupo (a principal + acompanhantes com nome), de 1 a 4. */
+/** Pessoas do grupo (a principal + cada linha de acompanhante, com ou sem nome ainda), de 1 a 4. */
 export function partySizeOf(state: Pick<BookingState, "companions">): number {
-  const named = state.companions.filter((n) => n.trim().length > 0).length;
-  return Math.min(1 + named, MAX_COMPANIONS + 1);
+  return Math.min(1 + state.companions.length, MAX_COMPANIONS + 1);
+}
+
+/**
+ * O serviço comporta grupo? Usa sala ou equipamento com capacidade acima de 1 (da lista permitida do requisito, se
+ * houver). Profissional não conta: cada pessoa pede um profissional. Só então a tela mostra "Quantas pessoas?".
+ */
+export function supportsGroup(service: ServiceLike | undefined, resources: ReadonlyArray<ResourceLike>): boolean {
+  if (!service?.requirements) return false;
+  return service.requirements.some(
+    (req) =>
+      req.kind !== "person" &&
+      resources.some(
+        (r) => r.kind === req.kind && r.active !== false && (r.capacity ?? 1) > 1 && (!req.resourceIds || req.resourceIds.length === 0 || req.resourceIds.includes(r._id))
+      )
+  );
 }
 
 /** Argumentos de `findSlots` (chamada avulsa). `null` enquanto não há serviço escolhido. */
