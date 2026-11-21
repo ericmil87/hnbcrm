@@ -4,9 +4,21 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Agendamento com salas e profissionais (módulo opcional)
+
+- **Marque horário com cliente direto da conversa.** Em três toques: serviço, horário e confirmar. O sistema sugere os horários livres e destaca os que ficam encostados em outros atendimentos, para o dia não ficar cheio de buracos. Ligue em Configurações › Agendamento; quem não ligar não vê nada de novo.
+- **Salas, profissionais e equipamentos, cada um com seu horário.** Uma sala pode atender mais de uma pessoa ao mesmo tempo (ex.: sala dupla), e o sistema nunca deixa passar da capacidade. Serviços têm duração, folga entre atendimentos e o que exigem (por exemplo, um profissional e uma sala).
+- **Assistente em 3 passos.** Escolha o tipo de negócio (clínica com salas, profissional solo, barbearia ou salão, consultoria), ajuste nomes e horários e pronto.
+- **Agenda por sala ou por profissional.** Grade do dia com as vagas de cada sala, lista do dia no celular, mês de ocupação e a visão Semana de sempre para compromissos e tarefas da equipe.
+- **Fechar uma sala ou a agenda de alguém no dia.** Antes de fechar, você vê quem é afetado. Quem cabe em outra sala no mesmo horário é movido; quem não cabe vai para a fila "sem lugar" para você resolver. Profissional nunca é trocado sozinho. Nada é cancelado e nada é enviado ao cliente.
+- **Fila de pendências.** Propostas aguardando aprovação, atendimentos sem lugar e atendimentos que terminaram sem registro (atendido ou faltou), com aviso diário para a equipe. Falta nunca é marcada sozinha.
+- **Sugestão inteligente de horários.** Três modos: desligada, destacar os melhores ou oferecer só os melhores. A equipe sempre pode marcar fora da sugestão; avisos podem ser aceitos, capacidade não.
+- **Desfazer.** Marcou errado? Dá para desfazer na hora (até 10 minutos) sem contar como cancelamento. Mudanças de status também têm desfazer.
+- **Permissão própria "Agenda".** Níveis: nenhum, ver a minha, ver todas, marcar e editar, configurar. Quem tinha permissões personalizadas herda o acesso a partir do que já tinha em Tarefas.
+
 ### Agenda: segurança, permissões e recorrência
 
-- **A agenda respeita as permissões de Tarefas.** Quem só pode "ver próprios" enxerga apenas os eventos em que é criador, responsável ou participante; "ver todos" enxerga todos. Criar evento exige "editar próprios"; editar, reagendar, concluir, cancelar ou excluir evento de outra pessoa exige "editar todos". Nos papéis padrão, administrador e gerente continuam podendo tudo; atendente e IA continuam vendo todos os eventos, mas agora só mexem nos que criaram ou que são deles. Na API, as rotas de escrita da agenda passam a exigir `tasks: edit_own` (antes bastava `tasks: view_own`).
+- **A agenda tem permissão própria.** Quem tem "ver a minha" enxerga só os compromissos em que é criador, responsável ou participante; "ver todas" enxerga todos sem alterar; "marcar e editar" cria e altera qualquer compromisso da organização. Administrador nasce com "configurar"; gerente, atendente e IA com "marcar e editar". Tarefas mostradas na agenda continuam seguindo a permissão de Tarefas. Na API, as rotas de `calendar/events` passam a exigir `agenda` (leitura: ver a minha; escrita: marcar e editar); chaves antigas herdam o acesso a partir do que tinham em Tarefas.
 - **Evento não aponta mais para dados de outra organização.** Lead, contato, tarefa e participantes precisam ser da mesma organização (e participante removido é recusado), no app e na API. Mesmo que um vínculo cruzado já exista gravado, a leitura não devolve nada dele, e lead, contato e responsável saem só com o essencial (nome/título).
 - **Validações com mensagem clara.** Título obrigatório, término não anterior ao início, duração de até 31 dias, e evento só pode ser concluído, cancelado ou reagendado uma vez (concluir duas vezes não duplica mais a próxima ocorrência).
 - **Eventos recorrentes mais certos.** A próxima ocorrência respeita o fuso da organização (sem deslocar a hora no horário de verão), mensal em dia 29–31 cai no último dia do mês (31/01 vira 28/02) e concluir pela API gera a próxima igual ao app. Excluir um evento recorrente apaga a cadeia inteira.
