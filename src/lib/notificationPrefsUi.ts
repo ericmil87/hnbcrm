@@ -73,7 +73,8 @@ export const FLAG_COPY: Record<
   aiSpendAlert: { label: "Gasto de IA do mês", desc: "Para administradores: perto do teto mensal ou ao atingi-lo" },
   agendaConflict: { label: "Conflito na agenda", desc: "Quando um agendamento fica sem sala ou profissional (fechamento ou remoção)" },
   planAlert: { label: "Avisos do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
-  agendaActivity: { label: "Agenda: atendimentos sem desfecho", desc: "Resumo diário, para quem gerencia a agenda, dos atendimentos do dia anterior que ainda não foram concluídos, cancelados ou marcados como falta" },
+  agendaActivity: { label: "Agenda: atendimentos sem desfecho", desc: "Resumo diário, para quem gerencia a agenda, dos atendimentos do dia anterior que ainda não foram concluídos, cancelados ou marcados como falta; e o aviso de horário marcado sozinho a partir da sua confirmação (com Desfazer)" },
+  agendaApproval: { label: "Agenda: confirmação de horário", desc: "Quando o sistema percebe uma confirmação de horário na conversa e pede um toque para marcar" },
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 

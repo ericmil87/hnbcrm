@@ -114,7 +114,7 @@ export function resolveSchedSettings(
         ai?.maxAiBookingsPerContactPerDay ?? DEFAULT_MAX_AI_BOOKINGS_PER_CONTACT_PER_DAY,
       autoAck: ai?.autoAck,
     },
-    humanConfirm: { mode: hc?.mode ?? "auto", defaultServiceId: hc?.defaultServiceId },
+    humanConfirm: { mode: hc?.mode ?? "suggest", defaultServiceId: hc?.defaultServiceId },
     funnel: {
       onScheduledStageId: fn?.onScheduledStageId,
       onCompletedStageId: fn?.onCompletedStageId,

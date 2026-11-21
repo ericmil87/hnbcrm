@@ -17,6 +17,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { phoneLookupCandidates } from "./phone";
 import { refreshLastMessagePreviewIfLast } from "./conversationListFields";
 import { findParticipant } from "./groupParticipantsStore";
+import { dismissOpenInterpretationOfMessage } from "./schedInterpretOps";
 
 export const EDIT_PREVIOUS_CONTENT_MAX = 2000;
 export const EDIT_CONTENT_MAX = 65536;
@@ -136,6 +137,8 @@ export async function applyBridgeRevoke(
   if (message.metadata?.revoked === true) return message._id;
   const metadata = { ...(message.metadata ?? {}), revoked: true, revokedAt: args.at };
   await ctx.db.patch(message._id, { metadata });
+  // Agenda v2 (C1): mensagem apagada no aparelho só descarta a proposta aberta dela.
+  await dismissOpenInterpretationOfMessage(ctx, message);
   // Era a última mensagem: a lista do inbox passa a dizer "Mensagem apagada".
   await refreshLastMessagePreviewIfLast(ctx, { ...message, metadata });
   return message._id;
@@ -162,6 +165,8 @@ export async function applyBridgeEdit(
     typeof prior === "string" ? prior : message.content.slice(0, EDIT_PREVIOUS_CONTENT_MAX);
   const metadata = { ...(message.metadata ?? {}), edited: true, editedAt: args.at, previousContent };
   await ctx.db.patch(message._id, withMessageSearchPatch(message, { content: newContent, metadata }));
+  // Agenda v2 (C1): mensagem editada no aparelho só descarta a proposta aberta dela.
+  await dismissOpenInterpretationOfMessage(ctx, message, { edited: true });
   await refreshLastMessagePreviewIfLast(ctx, { ...message, content: newContent, metadata });
   return message._id;
 }

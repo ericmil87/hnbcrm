@@ -228,7 +228,7 @@ export function defaultAutomationForm(): AutomationForm {
     cancel: "handoff",
     firstVisitNeedsApproval: true,
     maxAiBookingsPerContactPerDay: "2",
-    humanConfirmMode: "auto",
+    humanConfirmMode: "suggest",
     hasAck: false,
     ackAcceptedNow: false,
   };

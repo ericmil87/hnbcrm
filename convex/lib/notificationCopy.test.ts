@@ -240,6 +240,49 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     { title: "Mais de 200 atendimentos de ontem ainda sem desfecho", body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." },
   ],
   [
+    { type: "appointment_created", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00" },
+    { title: "Marquei Ana Souza para qui, 27/11 às 10:00 a partir de uma confirmação no WhatsApp", body: "Se não era isso, abra o horário na Agenda e toque em Desfazer." },
+  ],
+  [
+    { type: "appointment_created", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00", inConflict: true },
+    {
+      title: "Marquei Ana Souza para qui, 27/11 às 10:00 a partir de uma confirmação no WhatsApp",
+      body: "O horário já estava ocupado: foi para a fila de conflitos da Agenda. Se não era isso, abra o horário na Agenda e toque em Desfazer.",
+    },
+  ],
+  [
+    { type: "appointment_created", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00", approved: true },
+    { title: "Aprovei o pedido de Ana Souza para qui, 27/11 às 10:00 a partir de uma confirmação no WhatsApp", body: "Se não era isso, abra o horário na Agenda e toque em Desfazer." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "confirmou", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00" },
+    { title: "Parece uma confirmação de horário", body: "Marcar Ana Souza qui, 27/11 às 10:00? Abra Pendências para marcar." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "confirmou", contactName: "+55 11 91234-5678" },
+    { title: "Parece uma confirmação de horário", body: "Marcar Contato? Abra Pendências para escolher dia e hora." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "remarcou", contactName: "Ana Souza", whenLabel: "sex, 28/11 às 14:30" },
+    { title: "Parece que você remarcou Ana Souza", body: "Novo horário: sex, 28/11 às 14:30. Abra Pendências para aplicar na Agenda." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "cancelou", contactName: "Ana Souza" },
+    { title: "Parece que você cancelou Ana Souza", body: "Abra Pendências para cancelar também na Agenda." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "aprovar", contactName: "Ana Souza", whenLabel: "seg, 15/06 às 10:00" },
+    { title: "Parece que você confirmou o pedido de Ana Souza", body: "Pedido de seg, 15/06 às 10:00. Abra Pendências para aprovar." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "substituir", contactName: "Ana Souza", whenLabel: "seg, 15/06 às 10:00", fromLabel: "ter, 16/06 às 14:00" },
+    { title: "Ana Souza já tem um pedido: substituir?", body: "Pedido de ter, 16/06 às 14:00; você confirmou seg, 15/06 às 10:00. Abra Pendências para trocar." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "correcao", contactName: "Ana Souza", whenLabel: "ter, 16/06 às 10:00" },
+    { title: "Parece que você corrigiu o horário de Ana Souza", body: "Novo horário: ter, 16/06 às 10:00. Abra Pendências para aplicar." },
+  ],
+  [
     { type: "plan_refunded", amountBrl: "R$ 497,00" },
     {
       title: "Reembolso solicitado",

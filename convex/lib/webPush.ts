@@ -49,6 +49,8 @@ export const PUSH_TEMPLATES: Partial<Record<NotificationType, PushTemplate>> = {
   ai_followup_needs_human: TASKS,
   channel_session_lost: CHANNEL,
   appointment_conflict: TASKS, // Agenda v2 (A3c): precisa de gente resolver (normal, 24 h)
+  // Agenda v2 (C1): proposta de 1 toque (Marcar); acionável.
+  appointment_suggestion: TASKS,
 };
 
 /** Informativos (sino/e-mail/Telegram conforme preferência) e o lead atribuído (tabela do PLANO, seção 4). */
@@ -78,6 +80,8 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "plan_refunded",
   // Resumo diário da agenda: sino e Telegram, nunca vibra o aparelho (plano §3.7).
   "appointment_no_outcome",
+  // Agenda v2 (C1): "Marquei … a partir da sua confirmação" é informativo (quem confirmou já sabe): sino e Telegram.
+  "appointment_created",
 ]);
 
 export function pushTemplateOf(type: NotificationType): PushTemplate | null {
