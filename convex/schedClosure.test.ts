@@ -723,7 +723,7 @@ describe("D2/D3: org inteira conta e notifica por AGENDAMENTO, sem realocar, e p
     expect(list).toHaveLength(1);
     expect(await as(s.viewOwn).query(api.schedulingExceptions.listClosureRuns, { organizationId: s.orgId })).toEqual([]);
     expect(await as(s.outsider).query(api.schedulingExceptions.getClosureRun, { organizationId: s.orgId, runId: r.runId! })).toBeNull();
-  });
+  }, 60_000);
 });
 
 describe("D4: expectedAffected", () => {

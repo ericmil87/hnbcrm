@@ -45,6 +45,7 @@ const ALLOC_NAME_ALLOWED: Record<string, string> = {
  */
 const ALLOC_NAME_READ_ONLY: Record<string, string> = {
   "lib/schedRead.ts": "A3a: leitura de disponibilidade por faixa (só leitura; nunca escreve)",
+  "lib/schedInvariants.test-helper.ts": "A3c: helper de TESTE que lê alocações para conferir invariantes (só leitura; nunca escreve)",
 };
 
 /** Regra 3: quem pode citar `"schedAppointments"` com patch/replace/delete no mesmo arquivo. */
