@@ -77,4 +77,13 @@ describe("PendingQueueView", () => {
     setup(data({ approvals: [a] }), { busyId: a._id });
     expect(screen.getByRole("button", { name: "Recusar" })).toBeDisabled();
   });
+  it("conflito mostra o motivo; aprovar com recurso sem lugar pede resolver antes", () => {
+    const conflicted = appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval" }, ["sala2"]);
+    const manual = appt([], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval", needsAttention: { code: "no_resource", at: NOW } }, ["sala2"]);
+    const lost = appt([], at(9), at(10), {}, ["sala1"]);
+    setup(data({ approvals: [conflicted, manual], conflicts: [{ _id: "c1", kind: "resource_closed", appointment: lost }] }));
+    expect(screen.getByText("A sala ou o profissional fechou")).toBeInTheDocument();
+    expect(screen.getAllByText("Resolva o conflito antes de aprovar.")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: "Aprovar" })).toHaveLength(1);
+  });
 });

@@ -30,6 +30,7 @@ import {
 } from "@/lib/agendaGrid";
 import { buildMonthCells } from "@/lib/agendaMonth";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
+import { fillVocab } from "@/lib/agendaCopy";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import {
   dateKeyParam,
@@ -52,7 +53,9 @@ import { VOCAB } from "@/lib/vocab";
 import { AgendaHeader } from "./AgendaHeader";
 import { AgendaDayList } from "./AgendaDayList";
 import type { ColumnAction } from "./ResourceDayGrid";
-import type { PendingData } from "./PendingQueueView";
+import type { PendingConflict, PendingData } from "./PendingQueueView";
+import type { ClosureTarget } from "./ResourceDaySheet";
+import { isManualNoPlace } from "@/lib/agendaConflict";
 import type { PickedClient } from "./ClientPickerSheet";
 
 const t = VIEWS_COPY;
@@ -62,6 +65,8 @@ const ResourceDayGrid = lazy(() => import("./ResourceDayGrid").then((m) => ({ de
 const AgendaMonthView = lazy(() => import("./AgendaMonthView").then((m) => ({ default: m.AgendaMonthView })));
 const PendingQueuePanel = lazy(() => import("./PendingQueuePanel").then((m) => ({ default: m.PendingQueuePanel })));
 const ClientPickerSheet = lazy(() => import("./ClientPickerSheet").then((m) => ({ default: m.ClientPickerSheet })));
+const ResourceDaySheet = lazy(() => import("./ResourceDaySheet").then((m) => ({ default: m.ResourceDaySheet })));
+const ConflictResolverSheet = lazy(() => import("./ConflictResolverSheet").then((m) => ({ default: m.ConflictResolverSheet })));
 const AgendaSetupWizard = lazy(() =>
   import("@/components/agenda/onboarding/AgendaSetupWizard").then((m) => ({ default: m.AgendaSetupWizard }))
 );
@@ -138,6 +143,9 @@ export function AgendaPageView() {
   const [eventModal, setEventModal] = useState<{ eventId?: string; date: Date } | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [mobileColumn, setMobileColumn] = useState<string | null>(null);
+  const [closure, setClosure] = useState<ClosureTarget | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [rescheduling, setRescheduling] = useState<PendingConflict | null>(null);
 
   // --- dados ---
   const config = useQuery(api.schedulingConfig.getConfig, access.canView ? { organizationId, closuresFrom: today } : "skip");
@@ -215,8 +223,9 @@ export function AgendaPageView() {
     setBooking({ stage: "pick", date: bookingDate, ...opts });
   const onColumnAction = (resource: DayResource, action: ColumnAction) => {
     if (action === "book") startBooking({ resource });
-    // "closeToday", "closePeriod" e "reopen" ganham a folha de fechar na sequência deste PR.
+    else setClosure({ resourceId: resource._id, name: resource.name, kind: resource.kind, mode: action === "reopen" ? "reopen" : "close", period: action === "closePeriod" });
   };
+  const resolving = pendingData?.conflicts.find((c) => c._id === resolvingId);
   const onInternalClick = (item: InternalItem) => {
     if (item.source === "task") setTaskId(item.id);
     else eventState.set(item.id, { history: "push" });
@@ -309,7 +318,7 @@ export function AgendaPageView() {
               {grid.noPlace.map((a) => (
                 <li key={`noplace:${a._id}`}>
                   <Button size="sm" variant="secondary" onClick={() => openAppointment(a._id)}>
-                    {t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
+                    {isManualNoPlace(a) ? fillVocab(VIEWS_COPY.conflict.undefinedPlace, { recurso: group === "sala" ? "sala" : "profissional" }) : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
                   </Button>
                 </li>
               ))}
@@ -461,8 +470,55 @@ export function AgendaPageView() {
             now={hourNow}
             canEdit={access.canEdit}
             onOpenAppointment={openAppointment}
-            onResolveConflict={(_conflictId, appointmentId) => appointmentId && openAppointment(appointmentId)}
+            onResolveConflict={(conflictId, appointmentId) => { if (appointmentId) setResolvingId(conflictId); }}
             onOpenConversation={openConversation}
+          />
+        </Suspense>
+      )}
+
+      {closure && (
+        <Suspense fallback={null}>
+          <ResourceDaySheet
+            organizationId={organizationId}
+            target={closure}
+            tz={tz}
+            date={date}
+            today={today}
+            onClose={() => setClosure(null)}
+            onOpenPending={() => pendingState.set(true, { history: "push", preventScrollReset: true })}
+          />
+        </Suspense>
+      )}
+
+      {resolving?.appointment && (
+        <Suspense fallback={null}>
+          <ConflictResolverSheet
+            organizationId={organizationId}
+            conflict={{ ...resolving, appointment: resolving.appointment }}
+            resources={config?.resources ?? []}
+            tz={tz}
+            onClose={() => setResolvingId(null)}
+            onReschedule={(c) => {
+              setResolvingId(null);
+              setRescheduling(c);
+            }}
+          />
+        </Suspense>
+      )}
+      {rescheduling?.appointment?.serviceId && (
+        <Suspense fallback={null}>
+          <BookingSheet
+            organizationId={organizationId}
+            open
+            onClose={() => setRescheduling(null)}
+            onDone={() => setRescheduling(null)}
+            who={{}}
+            reschedule={{
+              appointmentId: rescheduling.appointment._id,
+              serviceId: rescheduling.appointment.serviceId,
+              variantKey: rescheduling.appointment.variantKey,
+              startTime: rescheduling.appointment.startTime,
+            }}
           />
         </Suspense>
       )}

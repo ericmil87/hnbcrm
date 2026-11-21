@@ -15,16 +15,21 @@ import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import { zonedWhenPhrase } from "@/lib/agendaZone";
 import { VOCAB } from "@/lib/vocab";
 import type { GridAppointment } from "@/lib/agendaGrid";
+import type { SchedAppointmentView } from "@/lib/agendaTypes";
+import { conflictKindText, mustResolveBeforeApprove } from "@/lib/agendaConflict";
 
 const t = VIEWS_COPY.pendingQueue;
 
-export type PendingAppointment = GridAppointment;
+export type PendingAppointment = GridAppointment & Partial<Pick<SchedAppointmentView, "serviceId" | "variantKey">>;
 
 export interface PendingConflict {
   _id: string;
   appointment: PendingAppointment | null;
-  /** Texto do conflito, quando o servidor manda. */
-  reason?: string;
+  kind?: string;
+  /** Recurso que saiu (fechado, removido ou sem vaga). */
+  resourceId?: string;
+  /** Horários alternativos do servidor (até 3). */
+  suggestions?: ReadonlyArray<{ startTime: number; resourceIds: readonly string[] }>;
 }
 
 export interface PendingSuggestion {
@@ -60,7 +65,7 @@ export interface PendingQueueViewProps {
   onOpenConversation: (conversationId: string) => void;
 }
 
-function Row({ appointment, tz, children, onOpen }: { appointment: PendingAppointment; tz: string; children?: React.ReactNode; onOpen: () => void }) {
+function Row({ appointment, tz, children, onOpen, note }: { appointment: PendingAppointment; tz: string; children?: React.ReactNode; onOpen: () => void; note?: string }) {
   const info = pendingRowInfo(appointment, tz);
   return (
     <li className="rounded-card border border-border-subtle bg-surface-raised p-3">
@@ -79,6 +84,7 @@ function Row({ appointment, tz, children, onOpen }: { appointment: PendingAppoin
           {info.service}
           {info.place ? ` · ${info.place}` : ""}
         </span>
+        {note && <span className="text-caption font-medium text-semantic-warning">{note}</span>}
       </button>
       {children && <div className="mt-2 flex flex-wrap gap-2">{children}</div>}
     </li>
@@ -117,11 +123,12 @@ export function PendingQueueView(p: PendingQueueViewProps) {
             <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} onOpen={() => p.onOpen(a._id)}>
               {p.canEdit && (
                 <>
-                  {!expired && (
+                  {!expired && !mustResolveBeforeApprove(a) && (
                     <Button size="sm" loading={busy} onClick={() => p.onApprove(a._id)}>
                       {t.approve}
                     </Button>
                   )}
+                  {!expired && mustResolveBeforeApprove(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
                   <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onDecline(a._id)}>
                     {t.decline}
                   </Button>
@@ -133,7 +140,7 @@ export function PendingQueueView(p: PendingQueueViewProps) {
       case "conflicts":
         return data.conflicts.map((c) =>
           c.appointment ? (
-            <Row key={`conflict:${c._id}`} appointment={c.appointment} tz={p.tz} onOpen={() => p.onOpen(c.appointment!._id)}>
+            <Row key={`conflict:${c._id}`} appointment={c.appointment} tz={p.tz} onOpen={() => p.onOpen(c.appointment!._id)} note={conflictKindText(c.kind)}>
               {p.canEdit && (
                 <Button size="sm" onClick={() => p.onResolve(c._id, c.appointment!._id)}>
                   {t.resolve}
