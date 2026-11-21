@@ -120,3 +120,93 @@ describe("1. encaixe forçado fora do expediente x fechamento", () => {
     expect(p.affected).toBe(0);
   });
 });
+
+describe("2. reduzir a capacidade com aceite solta o excedente", () => {
+  const upsert = (id: Id<"schedResources">, extra: Record<string, unknown>) =>
+    as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, ...extra } as any);
+  const tick = () => vi.advanceTimersByTime(1000);
+
+  test("sala dupla com casal e dois avulsos: prévia diz quantos ficam sem lugar; o casal sai junto; o mais antigo mantém a vaga", async () => {
+    const dupla = await mkRes("Sala dupla", { capacity: 2 });
+    const svc = await mkSvc();
+    const couple = (await book(svc, at(MON, 10), [dupla], { companions: [{ guestName: "Acompanhante", resourceIds: [dupla] }] })).appointmentIds as Id<"schedAppointments">[];
+    tick();
+    const x = await bookId(svc, at(MON, 14), [dupla]);
+    tick();
+    const y = await bookId(svc, at(MON, 14), [dupla]);
+
+    const warn = await upsert(dupla, { capacity: 1 });
+    assertMatchesReturns(warn, C.upsertResource);
+    expect(warn).toMatchObject({ saved: false, overCapacityBy: 1, futureWithoutSpot: 3 }); // casal (2) + o avulso mais novo (1)
+    expect((await t.run((ctx) => ctx.db.get(dupla)))!.capacity).toBe(2);
+
+    const done = await upsert(dupla, { capacity: 1, acceptFuture: true });
+    assertMatchesReturns(done, C.upsertResource);
+    expect(done).toMatchObject({ saved: true, futureWithoutSpot: 3 });
+    await drain();
+    for (const id of couple) {
+      expect(await allocOf(id)).toHaveLength(0);
+      expect((await apptOf(id))!.status).toBe("scheduled");
+      expect((await apptOf(id))!.needsAttention?.code).toBe("capacity_conflict");
+    }
+    expect((await allocOf(x)).length).toBe(1);
+    expect(await allocOf(y)).toHaveLength(0);
+    const open = (await conflicts()).filter((c) => c.status === "open");
+    expect(open.map((c) => c.kind)).toEqual(["capacity", "capacity", "capacity"]);
+    expect(open.map((c) => c.appointmentId).sort()).toEqual([...couple, y].sort());
+    // webhook de atenção e notificação para a equipe saíram pela porta
+    const run = await t.run((ctx) => ctx.db.query("schedClosureRuns").collect());
+    expect(run).toHaveLength(1);
+    expect(run[0]).toMatchObject({ kind: "capacity", status: "done", conflicts: 3 });
+    const notes = await t.run((ctx) => ctx.db.query("notifications").collect());
+    expect(notes.some((n) => n.type === "appointment_conflict")).toBe(true);
+  });
+
+  test("volume acima da transação: os lotes soltam TODO o excedente e preservam os mais antigos", async () => {
+    const dupla = await mkRes("Sala dupla", { capacity: 2, weekly: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 480, endMin: 1200 })) });
+    const svc = await mkSvc();
+    const days = [MON, TUE, "2026-06-17", "2026-06-18"];
+    const olds: Id<"schedAppointments">[] = [];
+    const news: Id<"schedAppointments">[] = [];
+    for (const d of days) for (let h = 8; h < 14; h++) olds.push(await bookId(svc, at(d, h), [dupla]));
+    tick();
+    for (const d of days) for (let h = 8; h < 14; h++) news.push(await bookId(svc, at(d, h), [dupla]));
+    expect(news.length).toBe(24);
+    const done = await upsert(dupla, { capacity: 1, acceptFuture: true });
+    expect(done).toMatchObject({ saved: true, futureWithoutSpot: 24 });
+    await drain();
+    for (const id of olds) expect(await allocOf(id)).toHaveLength(1);
+    for (const id of news) expect(await allocOf(id)).toHaveLength(0);
+    expect((await conflicts()).filter((c) => c.kind === "capacity" && c.status === "open")).toHaveLength(24);
+    const runs = await t.run((ctx) => ctx.db.query("schedClosureRuns").collect());
+    expect(runs[0]).toMatchObject({ kind: "capacity", status: "done", conflicts: 24 });
+  });
+
+  test("o conflito de capacidade se resolve pela fila (escolher outra sala)", async () => {
+    const dupla = await mkRes("Sala dupla", { capacity: 2 });
+    const outra = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    await bookId(svc, at(MON, 10), [dupla]);
+    tick();
+    const y = await bookId(svc, at(MON, 10), [dupla]);
+    await upsert(dupla, { capacity: 1, acceptFuture: true });
+    await drain();
+    const c = (await conflicts()).find((x) => x.appointmentId === y)!;
+    expect(c.kind).toBe("capacity");
+    await as(s.agent).mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.orgId, conflictId: c._id, action: { type: "resource", resourceIds: [outra] } });
+    expect((await allocOf(y)).map((r) => r.resourceId)).toEqual([outra]);
+  });
+
+  test("mudança de HORÁRIO semanal com aceite: o futuro fora do expediente segue marcado e o verificador não acusa", async () => {
+    const sala = await mkRes("Sala 1", { weekly: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 })) });
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 15), [sala]);
+    const warn = await upsert(sala, { weekly: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 720 })) });
+    expect(warn).toMatchObject({ saved: false, futureOutsideHours: 1, futureWithoutSpot: 0 });
+    const done = await upsert(sala, { weekly: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 720 })), acceptFuture: true });
+    expect(done).toMatchObject({ saved: true, futureOutsideHours: 1 });
+    expect(await allocOf(a)).toHaveLength(1);
+    expect((await apptOf(a))!.status).toBe("scheduled");
+    expect(await conflicts()).toHaveLength(0);
+  });
+});

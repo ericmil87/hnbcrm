@@ -33,7 +33,7 @@ import {
   MAX_SERVICES_PER_ORG,
 } from "./schedConstants";
 import { modulesOf } from "./orgModules";
-import { openRemovedResourceConflictsCore } from "./schedExceptionOps";
+import { openCapacityExcessConflictsCore, openRemovedResourceConflictsCore, previewCapacityExcessCore } from "./schedExceptionOps";
 import { countFutureAppointmentsOfService, effectiveAllocationUnits, hasFutureActiveAppointment, listFutureAllocations } from "./schedRead";
 import { assertValidTimezone, localDateOf } from "./schedTime";
 import { type SchedTemplateDraft, isSchedTemplateKey } from "./schedTemplates";
@@ -527,6 +527,8 @@ export type UpsertResourceResult = {
   futureOutsideHours: number;
   /** Unidades acima da NOVA capacidade no pior momento já marcado. */
   overCapacityBy: number;
+  /** Agendamentos futuros que ficam (ou ficaram, com aceite) SEM LUGAR por causa da capacidade nova: o excedente vai para a fila "sem lugar" (mais antigos mantêm a vaga). "Pelo menos" se `capped`. */
+  futureWithoutSpot: number;
   /** A leitura dos futuros estourou o teto: os números são "pelo menos". */
   capped: boolean;
 };
@@ -579,6 +581,7 @@ export async function upsertResourceCore(
   // Mudar horário semanal ou reduzir a capacidade com agendamento futuro: aviso + aceite (nada é cancelado).
   let futureOutsideHours = 0;
   let overCapacityBy = 0;
+  let futureWithoutSpot = 0;
   let capped = false;
   if (existing) {
     const weeklyKey = (w: Array<{ weekday: number; startMin: number; endMin: number }>) =>
@@ -604,10 +607,13 @@ export async function upsertResourceCore(
           const rows = future.rows.map((r) => ({ ...r, units: effectiveAllocationUnits(r, existing.capacity) }));
           const peak = peakUnits(rows, now, Math.max(...rows.map((r) => r.coreEnd)), "core");
           overCapacityBy = Math.max(0, peak - f.capacity);
+          const excess = await previewCapacityExcessCore(ctx, { organizationId, resource: { ...existing, capacity: f.capacity }, now });
+          futureWithoutSpot = excess.appointments;
+          if (excess.capped) capped = true;
         }
       }
-      if ((futureOutsideHours > 0 || overCapacityBy > 0) && args.acceptFuture !== true) {
-        return { saved: false, resourceId: existing._id, futureOutsideHours, overCapacityBy, capped };
+      if ((futureOutsideHours > 0 || overCapacityBy > 0 || futureWithoutSpot > 0) && args.acceptFuture !== true) {
+        return { saved: false, resourceId: existing._id, futureOutsideHours, overCapacityBy, futureWithoutSpot, capped };
       }
     }
   }
@@ -640,11 +646,15 @@ export async function upsertResourceCore(
       before: existing ? auditSnapshot(existing) : undefined,
       after: auditSnapshot(await ctx.db.get(id)),
       description: `${existing ? "Editou" : "Criou"} ${f.name} na Agenda`,
-      metadata: existing ? { futureOutsideHours, overCapacityBy, acceptFuture: args.acceptFuture === true } : undefined,
+      metadata: existing ? { futureOutsideHours, overCapacityBy, futureWithoutSpot, acceptFuture: args.acceptFuture === true } : undefined,
       now,
     });
   }
-  return { saved: true, resourceId: id, futureOutsideHours, overCapacityBy, capped };
+  // A3e: capacidade reduzida com aceite: o excedente perde a vaga e vira conflito `capacity` (pela porta; nada é cancelado).
+  if (existing && futureWithoutSpot > 0) {
+    await openCapacityExcessConflictsCore(ctx, { organizationId, resourceId: id, actor: { type: "human", member, via: "app" }, now });
+  }
+  return { saved: true, resourceId: id, futureOutsideHours, overCapacityBy, futureWithoutSpot, capped };
 }
 
 export async function setResourceActiveCore(

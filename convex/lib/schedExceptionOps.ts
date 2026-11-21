@@ -57,7 +57,7 @@ import {
 } from "./schedBookingOps";
 import { actorMemberId, actorVia, recordActorTypeOf, type SchedActor } from "./schedBookingEffects";
 import { notifyClosureConflicts } from "./schedConflictNotify";
-import { computeDayAvailability, type AllocationLite, type ExceptionLite, overlaps, validateIntervals } from "./schedAvailability";
+import { computeDayAvailability, type AllocationLite, type ExceptionLite, overlaps, peakUnits, validateIntervals } from "./schedAvailability";
 import { MAX_BLOCK_MIN } from "./schedConstants";
 import { readAppointmentsStartingBetween, readExceptionsRange, readResourceAllocations } from "./schedRead";
 import { searchSlots } from "./schedSearch";
@@ -235,7 +235,7 @@ export type StateAdjust = {
 };
 
 type ScanScope = {
-  mode: "closure" | "removal";
+  mode: "closure" | "removal" | "capacity";
   resourceId?: Id<"schedResources">;
   resourceKind?: ResourceKindLite;
   fromLocalDate: LocalDate;
@@ -282,6 +282,47 @@ async function scanUnits(
       units.set(a._id, { appointments: [a], resourceIds: [resource._id], cursorKey: a.blockStart });
     }
     return { units: sortUnits([...units.values()]), nextCursor: read.coverage ? read.coverage.to : null };
+  }
+
+  // --- capacidade reduzida: mantém a vaga quem foi marcado primeiro (por criação); o excedente (grupo junto) sai
+  if (scope.mode === "capacity") {
+    const resource = p.targets[0];
+    if (!resource) return { units: [], nextCursor: null };
+    const start = Math.max(p.cursor ?? p.now, p.now);
+    const read = await readResourceAllocations(ctx, resource, { start, end: start + REMOVAL_LOOKAHEAD_MS });
+    const horizon = read.coverage?.to ?? Infinity;
+    // `admitted` = quem já ocupa a vaga (linhas que começaram antes da página, em atendimento ou sem agendamento legível).
+    const admitted: AllocationLite[] = [];
+    const groups = new Map<string, { rows: AllocationLite[]; appointments: AppointmentDoc[]; created: number; blockStart: number }>();
+    for (const row of read.allocations) {
+      if (row.blockStart >= horizon || row.coreEnd <= p.now) continue;
+      const a = await getAppt(row.appointmentId);
+      if (!a || a.organizationId !== p.organizationId || !a.resources.some((r) => r.resourceId === resource._id && r.allocated) || row.blockStart < start || !movable(a)) {
+        admitted.push(row);
+        continue;
+      }
+      const key = a.partyKey ? `${a.partyKey}|${a.startTime}|${a.endTime}` : a._id;
+      const g = groups.get(key);
+      if (g) {
+        g.rows.push(row);
+        g.appointments.push(a);
+        g.created = Math.min(g.created, a._creationTime);
+        g.blockStart = Math.min(g.blockStart, row.blockStart);
+      } else groups.set(key, { rows: [row], appointments: [a], created: a._creationTime, blockStart: row.blockStart });
+    }
+    const out: Unit[] = [];
+    const byAge = [...groups.values()].sort((x, y) => x.created - y.created || (x.appointments[0]._id < y.appointments[0]._id ? -1 : 1));
+    for (const g of byAge) {
+      const lo = Math.min(...g.rows.map((r) => r.coreStart));
+      const hi = Math.max(...g.rows.map((r) => r.coreEnd));
+      if (peakUnits([...admitted, ...g.rows], lo, hi, "core") <= resource.capacity) {
+        admitted.push(...g.rows);
+        continue;
+      }
+      g.appointments.sort((x, y) => (x._id < y._id ? -1 : 1));
+      out.push({ appointments: g.appointments, resourceIds: [resource._id], cursorKey: g.blockStart });
+    }
+    return { units: sortUnits(out), nextCursor: read.coverage ? read.coverage.to : null };
   }
 
   const dates = datesBetween(scope.fromLocalDate, scope.toLocalDate);
@@ -691,6 +732,7 @@ async function scheduleBatch(ctx: MutationCtx, args: ContinuationArgs): Promise<
 
 function unitModeFor(scope: ScanScope & { changeKind?: ExceptionKind }, targets: Doc<"schedResources">[]): UnitMode {
   if (scope.mode === "removal") return { relocate: false, wantSuggestions: false, closureKind: "resource_removed" };
+  if (scope.mode === "capacity") return { relocate: false, wantSuggestions: false, closureKind: "capacity" };
   const single = scope.resourceId !== undefined && targets.length === 1;
   const isPerson = single && targets[0].kind === "person";
   return {
@@ -1072,6 +1114,65 @@ export async function openRemovedResourceConflictsCore(
   const affected = appointmentsIn(found.units);
   const runId = await startRun(ctx, {
     organizationId: args.organizationId, kind: "resource_removed", scope: { resourceId: args.resourceId }, from: today, to: today,
+    total: affected, partial: found.nextCursor !== null, actor: args.actor, now: args.now,
+  });
+  const inline = found.units.slice(0, CLOSURE_INLINE_AFFECTED);
+  const nextKey = found.units.length > CLOSURE_INLINE_AFFECTED ? found.units[CLOSURE_INLINE_AFFECTED].cursorKey : found.nextCursor;
+  if (nextKey !== null) {
+    await scheduleBatch(ctx, { organizationId: args.organizationId, runId, scope, adjust: {}, cursor: nextKey, attempt: 1, actorMemberId: actorMemberId(args.actor) });
+  }
+  const done = await processUnits(ctx, {
+    organizationId: args.organizationId, tz, units: inline, mode: "commit", unitMode: unitModeFor(scope, [resource]), actor: args.actor, runKey: String(runId), now: args.now,
+  });
+  await bumpRun(ctx, runId, done, args.now);
+  if (nextKey === null) await finishRun(ctx, runId, args.now);
+  return { conflicts: done.conflicts, pending: Math.max(0, affected - appointmentsIn(inline)), runId };
+}
+
+// ---------------------------------------------------------------------------
+// Capacidade reduzida (com aceite): o excedente perde a vaga e vira conflito `capacity`
+// ---------------------------------------------------------------------------
+
+/**
+ * Quantos agendamentos futuros ficariam sem lugar se `resource` tivesse a capacidade que ele traz (a prévia passa o
+ * recurso com a capacidade NOVA). Mesma decisão do commit (`scanUnits`, modo `capacity`); só leitura.
+ * `capped` = a primeira página não esgotou os futuros: o número é "pelo menos".
+ */
+export async function previewCapacityExcessCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; resource: Doc<"schedResources">; now: number }
+): Promise<{ appointments: number; capped: boolean }> {
+  const org = await ctx.db.get(args.organizationId);
+  if (!org) return { appointments: 0, capped: false };
+  const tz = assertValidTimezone(org.settings.timezone);
+  const today = localDateOf(args.now, tz);
+  const scope: ScanScope = { mode: "capacity", resourceId: args.resource._id, fromLocalDate: today, toLocalDate: today };
+  const found = await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets: [args.resource], adjust: {}, now: args.now });
+  return { appointments: appointmentsIn(found.units), capped: found.nextCursor !== null };
+}
+
+/**
+ * O recurso já tem a capacidade NOVA gravada: quem passa do limite em algum instante perde a vaga e vira conflito
+ * `capacity` (nada é cancelado, status e mensagens não mudam). Mantêm a vaga os agendamentos mais antigos (por
+ * criação); casal/grupo (`partyKey`) sai junto. Os primeiros na transação; o resto em lotes que RELEEM a faixa por
+ * cursor (mesma máquina do arquivamento). Tudo passa pela porta (`releaseAllocationForConflictCore`).
+ */
+export async function openCapacityExcessConflictsCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; resourceId: Id<"schedResources">; actor: SchedActor; now: number }
+): Promise<{ conflicts: number; pending: number; runId?: Id<"schedClosureRuns"> }> {
+  const resource = await ctx.db.get(args.resourceId);
+  if (!resource || resource.organizationId !== args.organizationId) return { conflicts: 0, pending: 0 };
+  const org = await ctx.db.get(args.organizationId);
+  if (!org) return { conflicts: 0, pending: 0 };
+  const tz = assertValidTimezone(org.settings.timezone);
+  const today = localDateOf(args.now, tz);
+  const scope: ScanScope = { mode: "capacity", resourceId: args.resourceId, fromLocalDate: today, toLocalDate: today };
+  const found = await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets: [resource], adjust: {}, now: args.now });
+  if (found.units.length === 0 && found.nextCursor === null) return { conflicts: 0, pending: 0 };
+  const affected = appointmentsIn(found.units);
+  const runId = await startRun(ctx, {
+    organizationId: args.organizationId, kind: "capacity", scope: { resourceId: args.resourceId }, from: today, to: today,
     total: affected, partial: found.nextCursor !== null, actor: args.actor, now: args.now,
   });
   const inline = found.units.slice(0, CLOSURE_INLINE_AFFECTED);

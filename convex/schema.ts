@@ -4976,7 +4976,7 @@ const applicationTables = {
   // fechamento; derivado/efêmero: fora do backup, apagado na purga.
   schedClosureRuns: defineTable({
     organizationId: v.id("organizations"),
-    kind: v.union(v.literal("resource_closed"), v.literal("resource_removed")),
+    kind: v.union(v.literal("resource_closed"), v.literal("resource_removed"), v.literal("capacity")), // A3e: `capacity` = excedente solto ao reduzir a capacidade
     resourceId: v.optional(v.id("schedResources")),
     resourceKind: v.optional(v.union(v.literal("person"), v.literal("room"), v.literal("equipment"))),
     fromLocalDate: v.string(),

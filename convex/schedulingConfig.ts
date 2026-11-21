@@ -268,6 +268,7 @@ export const upsertResource = mutation({
     resourceId: v.id("schedResources"),
     futureOutsideHours: v.number(),
     overCapacityBy: v.number(),
+    futureWithoutSpot: v.number(),
     capped: v.boolean(),
   }),
   handler: async (ctx, args) => {

@@ -11,6 +11,7 @@ import schema from "./schema";
 import * as config from "./schedulingConfig";
 import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
 import { type AgendaSeed, identityOf, seedAgenda, type Person } from "./lib/schedTestSeed.test-helper";
+import { schedInvariantProblems } from "./lib/schedInvariants.test-helper";
 import { MAX_RESOURCES_PER_ORG, MAX_SERVICES_PER_ORG } from "./lib/schedConstants";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
@@ -311,7 +312,7 @@ describe("recursos", () => {
         const appointmentId = await ctx.db.insert("schedAppointments", {
           organizationId: s.orgId, serviceId: svc, serviceName: "X", kind: "normal", startTime: start, endTime: start + 3_600_000,
           blockStart: start, blockEnd: start + 3_600_000, localDate: "2026-06-12", status: "scheduled", origin: "staff",
-          resources: [], statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+          resources: [{ resourceId: id, role: "Sala", name: "Sala dupla", allocated: true }], statusChangedAt: 1, createdAt: 1, updatedAt: 1,
         });
         apptIds.push(appointmentId);
         await ctx.db.insert("schedAllocations", {
@@ -324,20 +325,24 @@ describe("recursos", () => {
       as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, ...extra } as any);
     const warn = await up({ capacity: 1 });
     assertMatchesReturns(warn, config.upsertResource);
-    expect(warn).toMatchObject({ saved: false, overCapacityBy: 1, futureOutsideHours: 0 });
+    expect(warn).toMatchObject({ saved: false, overCapacityBy: 1, futureOutsideHours: 0, futureWithoutSpot: 1 });
     expect((await t.run((ctx) => ctx.db.get(id)))!.capacity).toBe(2);
     // horário semanal sem sexta (2026-06-12): os 2 futuros ficam fora do novo horário
     const week = await up({ weekly: weekdays([1, 2, 3, 4], [540, 720]) });
     expect(week).toMatchObject({ saved: false, futureOutsideHours: 2 });
     const done = await up({ capacity: 1, weekly: weekdays([1, 2, 3, 4], [540, 720]), acceptFuture: true });
-    expect(done).toMatchObject({ saved: true, futureOutsideHours: 2, overCapacityBy: 1 });
+    assertMatchesReturns(done, config.upsertResource);
+    expect(done).toMatchObject({ saved: true, futureOutsideHours: 2, overCapacityBy: 1, futureWithoutSpot: 1 });
     expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ capacity: 1 });
-    // nada foi cancelado
+    // nada foi cancelado; o excedente (o mais novo) perdeu a vaga e está na fila "sem lugar" (A3e)
     for (const a of apptIds) expect((await t.run((ctx) => ctx.db.get(a)))!.status).toBe("scheduled");
+    const confl = await t.run((ctx) => ctx.db.query("schedConflicts").collect());
+    expect(confl.map((c) => [c.appointmentId, c.kind, c.status])).toEqual([[apptIds[1], "capacity", "open"]]);
+    expect(await schedInvariantProblems(t, s.orgId, Date.now())).toEqual([]);
     // mudar só o nome não avisa nada
     expect(await up({ name: "Renomeada" })).toMatchObject({ saved: true });
     const archWarn = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: id });
-    expect(archWarn).toMatchObject({ changed: false, futureAppointments: 2 });
+    expect(archWarn).toMatchObject({ changed: false, futureAppointments: 1 }); // só o que manteve a vaga (o excedente já está na fila)
     assertMatchesReturns(archWarn, config.archiveResource);
     const arch = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: id, acceptFuture: true });
     expect(arch.changed).toBe(true);

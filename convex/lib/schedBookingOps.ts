@@ -2474,7 +2474,7 @@ export const reassignAppointmentResourcesCore = changeResourceCore;
 
 export type AppointmentDoc = Doc<"schedAppointments">;
 export type AppointmentId = Id<"schedAppointments">;
-export type ClosureKind = "resource_closed" | "resource_removed";
+export type ClosureKind = "resource_closed" | "resource_removed" | "capacity";
 /** Só estes estados seguram vaga e ainda podem ser movidos (em andamento/concluído/terminal ficam como estão). */
 export const MOVABLE_STATUSES: readonly SchedStatus[] = ["pending_approval", "scheduled", "confirmed"];
 
@@ -2647,7 +2647,7 @@ export async function releaseAllocationForConflictCore(
   await deleteAllocationRowsOfResources(ctx, a._id, args.resourceIds);
   await ctx.db.patch(a._id, {
     resources: a.resources.map((r) => (closed.has(r.resourceId) ? { ...r, allocated: false } : r)),
-    needsAttention: { code: args.kind, at: args.now },
+    needsAttention: { code: args.kind === "capacity" ? "capacity_conflict" : args.kind, at: args.now },
     updatedAt: args.now,
   });
   const after = (await ctx.db.get(a._id))!;
@@ -2659,7 +2659,7 @@ export async function releaseAllocationForConflictCore(
     action: "update",
     actor: args.actor,
     severity: "medium",
-    description: `Agendamento ${label} ficou sem recurso (${args.kind === "resource_closed" ? "recurso fechado" : "recurso removido"}): na fila de conflitos`,
+    description: `Agendamento ${label} ficou sem recurso (${args.kind === "resource_closed" ? "recurso fechado" : args.kind === "capacity" ? "capacidade reduzida" : "recurso removido"}): na fila de conflitos`,
     before: appointmentSnapshot(a),
     after: appointmentSnapshot(after),
     metadata: { statusChange: false, closure: true, conflict: args.kind, resourceIds: args.resourceIds, ...(args.error ? { error: args.error.slice(0, 200) } : {}) },
