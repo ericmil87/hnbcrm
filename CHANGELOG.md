@@ -4,6 +4,13 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Agendamento: Copiloto, API e MCP
+
+- **Peça ao Copiloto.** "O que tenho hoje?", "tem buraco na quinta?", "marca a Maria quinta às 10 na sala 2", "fecha a sala 2 amanhã": o Copiloto consulta a agenda e prepara a ação, mostra exatamente o que vai acontecer e só executa quando você confirma no botão (no sistema ou no Telegram). Ele respeita a sua permissão de Agenda e nunca envia nada ao cliente.
+- **Resumo da manhã com a agenda do dia.** Quem recebe o resumo diário passa a ver quantos atendimentos há hoje e o que está pendente.
+- **API e MCP da agenda.** Novas rotas em `/api/v1/scheduling/…` para consultar serviços, salas, horários livres e agendamentos, marcar (com chave de idempotência), remarcar, cancelar, mudar status, fechar e reabrir sala e resolver conflitos, com as mesmas regras das telas; conflito de regra responde 409 com alternativas. O servidor MCP (0.6.0) ganhou as ferramentas correspondentes. Webhooks `appointment.*` e `calendar_event.*` documentados.
+- **Vagas do dia consideram os compromissos do profissional.** O resumo de vagas da Agenda desconta reuniões e folgas de quem atende.
+
 ### Agendamento: a IA consulta horários e a confirmação pelo WhatsApp vira sugestão
 
 - **O Atendente IA consulta a agenda e registra o pedido de horário.** Com o agendamento ligado e a IA ativa, ela oferece até três horários livres calculados pelo sistema e, quando o cliente escolhe, registra o pedido para a equipe aprovar com um toque. Ela nunca vê nome de sala, de profissional ou de outro cliente, e não pode dizer "marcado" sem um agendamento de verdade. Para marcar sozinha é preciso ligar a opção em Configurações › Sugestões e IA (com aviso); a primeira visita de cada cliente continua pedindo aprovação.
