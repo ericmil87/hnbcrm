@@ -354,6 +354,7 @@ import type * as opsAttendant from "../opsAttendant.js";
 import type * as opsBilling from "../opsBilling.js";
 import type * as opsBridgeNumbers from "../opsBridgeNumbers.js";
 import type * as opsBridgeReparse from "../opsBridgeReparse.js";
+import type * as opsCalendar from "../opsCalendar.js";
 import type * as opsContactAvatar from "../opsContactAvatar.js";
 import type * as opsContactRelation from "../opsContactRelation.js";
 import type * as opsMeta from "../opsMeta.js";
@@ -763,6 +764,7 @@ declare const fullApi: ApiFromModules<{
   opsBilling: typeof opsBilling;
   opsBridgeNumbers: typeof opsBridgeNumbers;
   opsBridgeReparse: typeof opsBridgeReparse;
+  opsCalendar: typeof opsCalendar;
   opsContactAvatar: typeof opsContactAvatar;
   opsContactRelation: typeof opsContactRelation;
   opsMeta: typeof opsMeta;

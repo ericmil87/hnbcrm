@@ -247,14 +247,17 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   "GET /api/v1/tasks/comments": { category: "tasks", level: "view_own" }, // taskComments.getComments
   "POST /api/v1/tasks/comments/add": { category: "tasks", level: "view_own" }, // taskComments.addComment
 
-  // Agenda — convex/calendar.ts (requireAuth; a navegação do app usa `tasks`)
+  // Agenda — convex/calendar.ts (`requirePermission` na categoria `tasks`, provisório até a
+  // Agenda v2): ler = view_own (view_all enxerga os de todos); escrever = edit_own (editar
+  // evento de OUTRO membro exige edit_all, checado no núcleo `lib/calendarCore.ts`).
   "GET /api/v1/calendar/events": { category: "tasks", level: "view_own" }, // calendar.getEvents
   "GET /api/v1/calendar/events/get": { category: "tasks", level: "view_own" }, // calendar.getEvent
-  "POST /api/v1/calendar/events/create": { category: "tasks", level: "view_own" }, // calendar.createEvent
-  "POST /api/v1/calendar/events/update": { category: "tasks", level: "view_own" }, // calendar.updateEvent
-  "POST /api/v1/calendar/events/delete": { category: "tasks", level: "view_own" }, // calendar.deleteEvent
-  "POST /api/v1/calendar/events/reschedule": { category: "tasks", level: "view_own" }, // calendar.rescheduleEvent
-  "POST /api/v1/calendar/events/complete": { category: "tasks", level: "view_own" }, // calendar.completeEvent
+  "POST /api/v1/calendar/events/create": { category: "tasks", level: "edit_own" }, // calendar.createEvent
+  "POST /api/v1/calendar/events/update": { category: "tasks", level: "edit_own" }, // calendar.updateEvent
+  "POST /api/v1/calendar/events/delete": { category: "tasks", level: "edit_own" }, // calendar.deleteEvent
+  "POST /api/v1/calendar/events/reschedule": { category: "tasks", level: "edit_own" }, // calendar.rescheduleEvent
+  "POST /api/v1/calendar/events/complete": { category: "tasks", level: "edit_own" }, // calendar.completeEvent
+  "POST /api/v1/calendar/events/cancel": { category: "tasks", level: "edit_own" }, // calendar.cancelEvent
 
   // Preferências de notificação — convex/notificationPreferences.ts
   "GET /api/v1/notifications/preferences": "authenticated", // rota self-scoped (preferências do PRÓPRIO membro da key) — espelha requireAuth de notificationPreferences.getMyPreferences; team:view no app é só p/ ver preferências de OUTRO membro
@@ -3261,6 +3264,22 @@ http.route({
 });
 
 // ---- Calendar Event Endpoints ----
+// Todas chamam `internal.calendar.*` (núcleo único `lib/calendarCore.ts`, o mesmo do app).
+// Erros de regra (ConvexError PT-BR) = 400; evento inexistente = 404; sem permissão = 403.
+
+function calendarError(error: unknown): Response {
+  const raw = plainErrorMessage(error);
+  if (raw.includes("Evento não encontrado")) return errorResponse(raw, 404);
+  return startConversationError(error);
+}
+
+function numParam(value: string | null): number | undefined {
+  if (value === null || value === "") return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : NaN;
+}
+
+const isFiniteNumber = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
 
 // Get calendar events (startDate, endDate required)
 http.route({
@@ -3273,22 +3292,26 @@ http.route({
       if (denied) return denied;
       const url = new URL(request.url);
 
-      const startDate = url.searchParams.get("startDate");
-      const endDate = url.searchParams.get("endDate");
-      if (!startDate || !endDate) return errorResponse("startDate and endDate required", 400);
+      const startDate = numParam(url.searchParams.get("startDate"));
+      const endDate = numParam(url.searchParams.get("endDate"));
+      if (startDate === undefined || endDate === undefined) return errorResponse("startDate and endDate required", 400);
+      if (Number.isNaN(startDate) || Number.isNaN(endDate)) return errorResponse("startDate and endDate must be numbers (epoch ms)", 400);
 
       const assignedTo = url.searchParams.get("assignedTo");
       const eventType = url.searchParams.get("eventType") as any || undefined;
       const status = url.searchParams.get("status") as any || undefined;
       const leadId = url.searchParams.get("leadId");
       const contactId = url.searchParams.get("contactId");
-      const limit = url.searchParams.get("limit") ? Math.min(Number(url.searchParams.get("limit")), 500) : undefined;
+      const limit = numParam(url.searchParams.get("limit"));
+      if (limit !== undefined && Number.isNaN(limit)) return errorResponse("limit must be a number", 400);
       const cursor = url.searchParams.get("cursor") || undefined;
 
       const result = await ctx.runQuery(internal.calendar.internalGetEvents, {
         organizationId: apiKeyRecord.organizationId,
-        startDate: Number(startDate),
-        endDate: Number(endDate),
+        teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
+        startDate,
+        endDate,
         assignedTo: assignedTo ? (assignedTo as Id<"teamMembers">) : undefined,
         eventType,
         status,
@@ -3300,7 +3323,7 @@ http.route({
 
       return jsonResponse(result as any);
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return calendarError(error);
     }
   }),
 });
@@ -3314,20 +3337,21 @@ http.route({
       const auth = await authenticateApiKey(ctx, request);
       const denied = requireRoutePermission(auth, "GET", "/api/v1/calendar/events/get");
       if (denied) return denied;
-      const organizationId = auth.organizationId;
       const url = new URL(request.url);
       const eventId = url.searchParams.get("id");
       if (!eventId) return errorResponse("Event ID required", 400);
 
       const event = await ctx.runQuery(internal.calendar.internalGetEvent, {
         eventId: eventId as Id<"calendarEvents">,
-        organizationId,
+        organizationId: auth.organizationId,
+        teamMemberId: auth.teamMemberId,
+        permissions: auth.permissions,
       });
 
       if (!event) return errorResponse("Event not found", 404);
       return jsonResponse({ event });
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return calendarError(error);
     }
   }),
 });
@@ -3343,7 +3367,7 @@ http.route({
       if (denied) return denied;
       const body = await request.json();
       if (!body.title) return errorResponse("title required", 400);
-      if (!body.startTime || !body.endTime) return errorResponse("startTime and endTime required", 400);
+      if (!isFiniteNumber(body.startTime) || !isFiniteNumber(body.endTime)) return errorResponse("startTime and endTime required (epoch ms)", 400);
 
       const eventId = await ctx.runMutation(internal.calendar.internalCreateEvent, {
         organizationId: apiKeyRecord.organizationId,
@@ -3355,6 +3379,7 @@ http.route({
         allDay: body.allDay,
         leadId: body.leadId ? (body.leadId as Id<"leads">) : undefined,
         contactId: body.contactId ? (body.contactId as Id<"contacts">) : undefined,
+        taskId: body.taskId ? (body.taskId as Id<"tasks">) : undefined,
         attendees: body.attendees,
         assignedTo: body.assignedTo ? (body.assignedTo as Id<"teamMembers">) : undefined,
         location: body.location,
@@ -3363,11 +3388,12 @@ http.route({
         recurrence: body.recurrence,
         notes: body.notes,
         teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
       });
 
       return jsonResponse({ success: true, eventId }, 201);
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return calendarError(error);
     }
   }),
 });
@@ -3386,21 +3412,29 @@ http.route({
 
       await ctx.runMutation(internal.calendar.internalUpdateEvent, {
         eventId: body.eventId as Id<"calendarEvents">,
+        organizationId: apiKeyRecord.organizationId,
         title: body.title,
         description: body.description,
         eventType: body.eventType,
         startTime: body.startTime,
         endTime: body.endTime,
         allDay: body.allDay,
+        leadId: body.leadId ? (body.leadId as Id<"leads">) : undefined,
+        contactId: body.contactId ? (body.contactId as Id<"contacts">) : undefined,
+        attendees: body.attendees,
+        assignedTo: body.assignedTo ? (body.assignedTo as Id<"teamMembers">) : undefined,
         location: body.location,
         meetingUrl: body.meetingUrl,
+        color: body.color,
+        recurrence: body.recurrence,
         notes: body.notes,
         teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
       });
 
       return jsonResponse({ success: true });
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return calendarError(error);
     }
   }),
 });
@@ -3419,38 +3453,14 @@ http.route({
 
       await ctx.runMutation(internal.calendar.internalDeleteEvent, {
         eventId: body.eventId as Id<"calendarEvents">,
+        organizationId: apiKeyRecord.organizationId,
         teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
       });
 
       return jsonResponse({ success: true });
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
-    }
-  }),
-});
-
-// Reschedule calendar event
-http.route({
-  path: "/api/v1/calendar/events/reschedule",
-  method: "POST",
-  handler: httpAction(async (ctx, request) => {
-    try {
-      const apiKeyRecord = await authenticateApiKey(ctx, request);
-      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/reschedule");
-      if (denied) return denied;
-      const body = await request.json();
-      if (!body.eventId || !body.newStartTime) return errorResponse("eventId and newStartTime required", 400);
-
-      await ctx.runMutation(internal.calendar.internalRescheduleEvent, {
-        eventId: body.eventId as Id<"calendarEvents">,
-        newStartTime: body.newStartTime,
-        newEndTime: body.newEndTime,
-        teamMemberId: apiKeyRecord.teamMemberId,
-      });
-
-      return jsonResponse({ success: true });
-    } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return calendarError(error);
     }
   }),
 });
@@ -3469,12 +3479,68 @@ http.route({
 
       await ctx.runMutation(internal.calendar.internalCompleteEvent, {
         eventId: body.eventId as Id<"calendarEvents">,
+        organizationId: apiKeyRecord.organizationId,
         teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
       });
 
       return jsonResponse({ success: true });
     } catch (error) {
-      return errorResponse(error instanceof Error ? error.message : "Internal server error");
+      return calendarError(error);
+    }
+  }),
+});
+
+// Cancel calendar event
+http.route({
+  path: "/api/v1/calendar/events/cancel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/cancel");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.eventId) return errorResponse("eventId required", 400);
+
+      await ctx.runMutation(internal.calendar.internalCancelEvent, {
+        eventId: body.eventId as Id<"calendarEvents">,
+        organizationId: apiKeyRecord.organizationId,
+        teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return calendarError(error);
+    }
+  }),
+});
+
+// Reschedule calendar event
+http.route({
+  path: "/api/v1/calendar/events/reschedule",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const apiKeyRecord = await authenticateApiKey(ctx, request);
+      const denied = requireRoutePermission(apiKeyRecord, "POST", "/api/v1/calendar/events/reschedule");
+      if (denied) return denied;
+      const body = await request.json();
+      if (!body.eventId || !isFiniteNumber(body.newStartTime)) return errorResponse("eventId and newStartTime required (epoch ms)", 400);
+
+      await ctx.runMutation(internal.calendar.internalRescheduleEvent, {
+        eventId: body.eventId as Id<"calendarEvents">,
+        organizationId: apiKeyRecord.organizationId,
+        newStartTime: body.newStartTime,
+        newEndTime: body.newEndTime,
+        teamMemberId: apiKeyRecord.teamMemberId,
+        permissions: apiKeyRecord.permissions,
+      });
+
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return calendarError(error);
     }
   }),
 });
@@ -4565,6 +4631,7 @@ http.route({ path: "/api/v1/calendar/events/update", method: "OPTIONS", handler:
 http.route({ path: "/api/v1/calendar/events/delete", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/calendar/events/reschedule", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/calendar/events/complete", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/calendar/events/cancel", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/upload-url", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id/url", method: "OPTIONS", handler: optionsHandler });

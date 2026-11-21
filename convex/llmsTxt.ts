@@ -122,7 +122,8 @@ Paths below omit the \`/api/v1\` prefix:
 | \`leads: view_own\` | GET /leads, GET /leads/get, POST /leads/update, POST /leads/move-stage, POST /leads/assign, GET /files/:id/url, GET /boards, GET /field-definitions, GET /lead-sources, GET /activities, POST /activities |
 | \`reports: view\` | GET /dashboard |
 | \`settings: manage\` | POST /exports, GET /exports, GET /exports/get, GET /exports/download, POST /imports, GET /imports, GET /imports/get, POST /imports/mapping, POST /imports/preview, POST /imports/confirm, POST /imports/rollback, GET /imports/failed-rows, POST /groups/monitor, POST /groups/sync |
-| \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add, GET /calendar/events, GET /calendar/events/get, POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete |
+| \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add, GET /calendar/events, GET /calendar/events/get (view_all sees everyone's events) |
+| \`tasks: edit_own\` | POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete, POST /calendar/events/cancel (editing another member's event needs tasks: edit_all) |
 | valid API key only | GET /team-members, GET /notifications/preferences, PUT /notifications/preferences (self-scoped — mirrors the app, which requires only membership for these) |
 
 Public \`/api/v1\` routes (no API key, no permission): GET /forms/public, POST /forms/public/submit, POST /forms/public/partial, POST /forms/experiment/view, GET /embed.js, GET /openapi.json, POST /webhooks/resend (Resend signature).
@@ -1144,7 +1145,14 @@ Reschedule a calendar event.
 **Response:** \`{ success: true }\`
 
 #### POST /api/v1/calendar/events/complete
-Mark a calendar event as completed. If recurring, auto-generates next instance.
+Mark a calendar event as completed. If recurring, auto-generates next instance (in the organization timezone). Only a scheduled event can be completed.
+
+**Body:** eventId (required)
+
+**Response:** \`{ success: true }\`
+
+#### POST /api/v1/calendar/events/cancel
+Mark a scheduled calendar event as cancelled.
 
 **Body:** eventId (required)
 
