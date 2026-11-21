@@ -11,6 +11,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Validações com mensagem clara.** Título obrigatório, término não anterior ao início, duração de até 31 dias, e evento só pode ser concluído, cancelado ou reagendado uma vez (concluir duas vezes não duplica mais a próxima ocorrência).
 - **Eventos recorrentes mais certos.** A próxima ocorrência respeita o fuso da organização (sem deslocar a hora no horário de verão), mensal em dia 29–31 cai no último dia do mês (31/01 vira 28/02) e concluir pela API gera a próxima igual ao app. Excluir um evento recorrente apaga a cadeia inteira.
 - **Agenda mais leve e completa.** O calendário mostra também eventos que começaram antes do período e terminam dentro dele, tem teto de leitura (com aviso de truncamento) e a paginação da API segue a ordem por horário de início, sem pular nem repetir eventos. A API ganhou `POST /api/v1/calendar/events/cancel`, e o `update` aceita responsável, lead, contato, participantes, cor e recorrência.
+- **Reagendar ou arrastar evento concluído ou cancelado agora é recusado** (antes passava em silêncio).
+- **Calendário do dia lê menos.** Eventos curtos são buscados só 1 dia para trás e eventos de vários dias têm índice próprio (`longStart`); os longos gravados antes desta versão só aparecem na janela certa depois do backfill `opsCalendar:internalBackfillCalendarLongStart` (rodar em DEV e PROD, com `dryRun` antes).
+- **Excluir um evento recorrente preserva o histórico.** Só o evento e as ocorrências seguintes ainda agendadas são apagados; as já concluídas ou canceladas ficam. Cadeias muito grandes (mais de 400 ocorrências) não são apagadas de uma vez.
+- **Recorrência mensal fiel ao dia original.** Série no dia 31 vai 31/01, 28/02, 31/03 (séries antigas seguem como antes).
+- **Quem não tem acesso a Tarefas recebe a agenda vazia** em vez de erro, e o servidor informa `canEdit` em cada evento para a tela esconder botões.
 - **Contrato da API.** `calendar/events` e `calendar/events/get` devolvem lead, contato e responsável em formato reduzido, e `calendar/events` passa a incluir `truncated`. O cursor tem formato novo; cursores antigos retornam erro 400.
 
 ### Contatos que não são clientes ("Não é cliente" / "Virar lead")

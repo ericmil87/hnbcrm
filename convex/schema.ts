@@ -2649,7 +2649,12 @@ const applicationTables = {
       pattern: v.union(v.literal("daily"), v.literal("weekly"), v.literal("biweekly"), v.literal("monthly")),
       endDate: v.optional(v.number()),
       lastGeneratedAt: v.optional(v.number()),
+      // Dia do mês da série mensal (31 → fev/28, mar/31). Só o servidor grava.
+      anchorDay: v.optional(v.number()),
     })),
+    // = startTime, só quando a duração passa de 1 dia (lib/calendarRules.longStartFor).
+    // Alimenta by_organization_and_long_start; legado sem o campo: opsCalendar.
+    longStart: v.optional(v.number()),
     parentEventId: v.optional(v.id("calendarEvents")),
     notes: v.optional(v.string()),
     searchText: v.optional(v.string()),
@@ -2658,6 +2663,7 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_start", ["organizationId", "startTime"])
+    .index("by_organization_and_long_start", ["organizationId", "longStart"])
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
     .index("by_organization_and_type", ["organizationId", "eventType"])
     .index("by_organization_and_status", ["organizationId", "status"])
