@@ -15,6 +15,7 @@ import {
   type HistoryInput,
 } from "@/lib/appointmentActions";
 import { joinNames, longRangePhrase } from "@/lib/bookingFlow";
+import { HUMAN_UNDO_COPY } from "@/lib/agendaHumanConfirm";
 
 const t = DETAIL_COPY;
 
@@ -45,6 +46,9 @@ export interface AppointmentDetailViewProps {
   onAction: (action: DetailAction) => void;
   /** "Abrir conversa" (ausente = sem o atalho). */
   onOpenConversation?: () => void;
+  /** C1: o sistema marcou/aprovou a partir de uma confirmação no WhatsApp e a janela de 24 h ainda vale (`humanConfirmUndoKind`). */
+  humanUndo?: "created" | "approved" | null;
+  onUndoHumanConfirm?: () => void;
 }
 
 /** Conteúdo do painel do agendamento, só por props: dados, status, origem, avisos, ações e histórico. */
@@ -59,6 +63,8 @@ export function AppointmentDetailView({
   undoUnavailable,
   onAction,
   onOpenConversation,
+  humanUndo = null,
+  onUndoHumanConfirm,
 }: AppointmentDetailViewProps) {
   const expired = isProposalExpired(appt.status, appt.startTime, now);
   const actions = availableActions({
@@ -142,6 +148,15 @@ export function AppointmentDetailView({
               )}
             />
           )}
+        </div>
+      )}
+
+      {humanUndo && canEdit && onUndoHumanConfirm && (
+        <div className="space-y-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3">
+          <p className="text-sm text-text-primary">{HUMAN_UNDO_COPY[humanUndo].hint}</p>
+          <Button type="button" variant="secondary" disabled={busy} onClick={onUndoHumanConfirm}>
+            {HUMAN_UNDO_COPY[humanUndo].button}
+          </Button>
         </div>
       )}
 

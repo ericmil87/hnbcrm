@@ -61,6 +61,42 @@ describe("PendingQueueView", () => {
     fireEvent.click(screen.getByRole("button", { name: "Abrir conversa" }));
     expect(h.onOpenConversation).toHaveBeenCalledWith("cv1");
   });
+  it("sugestão (C1): título, quando, motivo, 'Marcar' e 'Dispensar' chamam o aceite e o descarte", () => {
+    const s = { _id: "s1", conversationId: "cv1", act: "confirmou", reason: "modo_sugerir", parsed: { localDate: "2026-06-15", timeMin: 600 }, createdAt: NOW };
+    const onAcceptSuggestion = vi.fn();
+    const onDismissSuggestion = vi.fn();
+    setup(data({ suggestions: [s] }), { onAcceptSuggestion, onDismissSuggestion });
+    const section = screen.getByRole("region", { name: /Sugestões/ });
+    expect(within(section).getByText("Parece uma confirmação de horário")).toBeInTheDocument();
+    expect(within(section).getByText("seg, 15/06 às 10:00")).toBeInTheDocument();
+    expect(within(section).getByText(/O sistema só sugere/)).toBeInTheDocument();
+    fireEvent.click(within(section).getByRole("button", { name: "Marcar" }));
+    expect(onAcceptSuggestion).toHaveBeenCalledWith("s1");
+    fireEvent.click(within(section).getByRole("button", { name: "Dispensar" }));
+    expect(onDismissSuggestion).toHaveBeenCalledWith("s1");
+  });
+  it("sugestão sem dia ou hora não oferece 'Marcar' (só dispensar e abrir a conversa)", () => {
+    setup(data({ suggestions: [{ _id: "s2", conversationId: "cv1", act: "confirmou", parsed: { localDate: "2026-06-15" }, createdAt: NOW }] }), { onAcceptSuggestion: vi.fn(), onDismissSuggestion: vi.fn() });
+    expect(screen.queryByRole("button", { name: "Marcar" })).toBeNull();
+    expect(screen.getByText(/Faltam dia ou hora/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Dispensar" })).toBeInTheDocument();
+  });
+  it("sugestões por tipo: aprovar, substituir, remarcar e cancelar têm o rótulo certo; sem permissão não há ação", () => {
+    const base = { conversationId: "cv1", parsed: { localDate: "2026-06-15", timeMin: 600 }, createdAt: NOW };
+    setup(data({ suggestions: [
+      { ...base, _id: "a", act: "confirmou", reason: "aprovar_pendente" },
+      { ...base, _id: "b", act: "remarcou", reason: "substituir_pendente" },
+      { ...base, _id: "c", act: "remarcou", reason: "ato_nao_automatico" },
+      { ...base, _id: "d", act: "cancelou", reason: "ato_nao_automatico", parsed: {} },
+    ] }), { onAcceptSuggestion: vi.fn(), onDismissSuggestion: vi.fn() });
+    for (const label of ["Aprovar", "Substituir", "Remarcar", "Cancelar horário"]) expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+  });
+  it("sugestão sem permissão de editar: só abre a conversa", () => {
+    setup(data({ suggestions: [{ _id: "s3", conversationId: "cv1", act: "confirmou", parsed: { localDate: "2026-06-15", timeMin: 600 }, createdAt: NOW }] }), { canEdit: false, onAcceptSuggestion: vi.fn(), onDismissSuggestion: vi.fn() });
+    expect(screen.queryByRole("button", { name: "Marcar" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Dispensar" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Abrir conversa" })).toBeInTheDocument();
+  });
   it("seção cortada avisa e mostra '+'", () => {
     const a = appt(["sala1"], at(8), at(9));
     setup(data({ noOutcome: [a], capped: { ...noCap, noOutcome: true } }));
