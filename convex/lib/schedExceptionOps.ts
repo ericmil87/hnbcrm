@@ -58,6 +58,7 @@ import {
 import { actorMemberId, actorVia, recordActorTypeOf, type SchedActor } from "./schedBookingEffects";
 import { notifyClosureConflicts } from "./schedConflictNotify";
 import { computeDayAvailability, type AllocationLite, type ExceptionLite, overlaps, validateIntervals } from "./schedAvailability";
+import { MAX_BLOCK_MIN } from "./schedConstants";
 import { readAppointmentsStartingBetween, readExceptionsRange, readResourceAllocations } from "./schedRead";
 import { searchSlots } from "./schedSearch";
 import { type Slot, toSlot } from "./schedViews";
@@ -206,6 +207,8 @@ type Unit = {
   resourceIds: Id<"schedResources">[];
   /** Chave de ordem e de cursor (`blockStart` na varredura por recurso; `startTime` na de org/tipo). */
   cursorKey: number;
+  /** Membro do grupo (`partyKey`) que NÃO é movível ficou no recurso fechado: o resto do grupo NÃO realoca, vai a conflito com sugestões. */
+  noRelocate?: boolean;
 };
 
 export type StateAdjust = {
@@ -217,6 +220,8 @@ export type StateAdjust = {
   excludeIds?: Id<"schedExceptions">[];
   /** Lote depois de REMOVER: linhas já apagadas (voltam ao estado "antes"). */
   includeBefore?: ExceptionLite[];
+  /** Lote de um fechamento: só exceções criadas ANTES do início do run contam no estado "antes" (as criadas depois, por outro fechamento, entram como afetadas). */
+  beforeCutoff?: number;
 };
 
 type ScanScope = {
@@ -278,15 +283,26 @@ async function scanUnits(
   const states = (date: LocalDate) => {
     const db = dbEx.rows.filter((e) => e.localDate === date);
     return {
-      before: [...db.filter((e) => !exclSet.has(e._id)), ...(p.adjust.includeBefore ?? []).filter((e) => e.localDate === date)] as ExceptionLite[],
+      before: [...db.filter((e) => !exclSet.has(e._id) && (p.adjust.beforeCutoff === undefined || e.createdAt < p.adjust.beforeCutoff)), ...(p.adjust.includeBefore ?? []).filter((e) => e.localDate === date)] as ExceptionLite[],
       after: [...db.filter((e) => !removeSet.has(e._id)), ...(p.adjust.addHypothetical ?? []).filter((e) => e.localDate === date)] as ExceptionLite[],
     };
   };
-  const affects = (resource: Doc<"schedResources">, a: AppointmentDoc): boolean => {
-    const { before, after } = states(a.localDate);
-    const core = { start: a.startTime, end: a.endTime };
-    return violatesDay(resource, after, a.localDate, p.tz, core) && !violatesDay(resource, before, a.localDate, p.tz, core);
+  /** Datas locais que o NÚCLEO do agendamento toca (começa num dia e pode terminar no seguinte: cruza a meia-noite). */
+  const touchedDates = (a: AppointmentDoc): LocalDate[] => {
+    const first = localDateOf(a.startTime, p.tz);
+    const last = localDateOf(Math.max(a.startTime, a.endTime - 1), p.tz);
+    return first === last ? [first] : [first, last];
   };
+  const affects = (resource: Doc<"schedResources">, a: AppointmentDoc): boolean =>
+    touchedDates(a).some((date) => {
+      if (!dateSet.has(date)) return false;
+      const b = dayBounds(date, p.tz);
+      const core = { start: Math.max(a.startTime, b.start), end: Math.min(a.endTime, b.end) };
+      if (core.end <= core.start) return false;
+      const { before, after } = states(date);
+      return violatesDay(resource, after, date, p.tz, core) && !violatesDay(resource, before, date, p.tz, core);
+    });
+  const touchesPeriod = (a: AppointmentDoc) => touchedDates(a).some((d) => dateSet.has(d));
   const firstStart = dayBounds(scope.fromLocalDate, p.tz).start;
   const lastEnd = dayBounds(scope.toLocalDate, p.tz).end;
 
@@ -299,23 +315,34 @@ async function scanUnits(
     if (read.coverage && read.coverage.from !== -Infinity) fail("Há agendamentos demais desse recurso nesse período para conferir com segurança. Feche por períodos menores.");
     const horizon = read.coverage?.to ?? Infinity;
     const groups = new Map<string, Unit>();
+    const blockedParties = new Set<string>();
     for (const row of read.allocations) {
-      if (row.blockStart >= horizon || row.blockStart < start || row.coreEnd <= p.now) continue;
+      // Na 1ª página (sem cursor) entram também as linhas da margem que cruzam para dentro do período (meia-noite).
+      if (row.blockStart >= horizon || (p.cursor !== undefined && row.blockStart < p.cursor) || row.coreEnd <= p.now) continue;
       const a = await getAppt(row.appointmentId);
-      if (!movable(a) || !dateSet.has(a.localDate) || !a.resources.some((r) => r.resourceId === resource._id && r.allocated)) continue;
+      if (a === null || a.organizationId !== p.organizationId || !touchesPeriod(a) || !a.resources.some((r) => r.resourceId === resource._id && r.allocated)) continue;
       if (!affects(resource, a)) continue;
       const key = a.partyKey ? `${a.partyKey}|${a.startTime}|${a.endTime}` : a._id;
+      if (!MOVABLE_STATUSES.includes(a.status)) {
+        // Casal com um membro já em atendimento (ou fora dos status movíveis) que fica no recurso fechado: o resto NÃO realoca.
+        if (a.partyKey) blockedParties.add(key);
+        continue;
+      }
       const g = groups.get(key);
       if (g) g.appointments.push(a);
       else groups.set(key, { appointments: [a], resourceIds: [resource._id], cursorKey: a.blockStart });
     }
-    for (const g of groups.values()) g.appointments.sort((x, y) => (x._id < y._id ? -1 : 1));
+    for (const [key, g] of groups) {
+      g.appointments.sort((x, y) => (x._id < y._id ? -1 : 1));
+      if (blockedParties.has(key)) g.noRelocate = true;
+    }
     return { units: sortUnits([...groups.values()]), nextCursor: read.coverage ? read.coverage.to : null };
   }
 
   // --- org inteira / tipo: varre os AGENDAMENTOS por início (1 documento cada, sem ler alocações)
   const targetById = new Map(p.targets.map((r) => [r._id as string, r]));
-  const from = Math.max(p.cursor ?? firstStart, firstStart);
+  // 1ª página: recua o teto de bloco para pegar quem começou antes do período e cruza a meia-noite para dentro dele.
+  const from = p.cursor ?? firstStart - MAX_BLOCK_MIN * 60_000;
   const page = await readAppointmentsStartingBetween(ctx, p.organizationId, from, lastEnd, CLOSURE_PAGE_APPOINTMENTS);
   let rows = page.rows;
   let nextCursor: number | null = null;
@@ -332,7 +359,7 @@ async function scanUnits(
   }
   const units: Unit[] = [];
   for (const a of rows) {
-    if (a.endTime <= p.now || !movable(a) || !dateSet.has(a.localDate)) continue;
+    if (a.endTime <= p.now || !movable(a) || !touchesPeriod(a)) continue;
     const hit: Id<"schedResources">[] = [];
     for (const r of a.resources) {
       const resource = targetById.get(r.resourceId);
@@ -495,8 +522,8 @@ async function processUnits(
         appointmentIds: ids,
         organizationId: p.organizationId,
         closedResourceId: closedId,
-        relocate: p.unitMode.relocate && single,
-        wantEquivalents: p.unitMode.wantSuggestions && single,
+        relocate: p.unitMode.relocate && single && !unit.noRelocate,
+        wantEquivalents: (p.unitMode.wantSuggestions || unit.noRelocate === true) && single,
         hypothetical: p.hypothetical,
         overlay,
         rb,
@@ -532,7 +559,7 @@ async function processUnits(
       }
       // conflito
       let suggestions: EquivalentSlot[] = plan.equivalents;
-      if (p.unitMode.wantSuggestions && unit.resourceIds.length === 1 && suggestions.length < MAX_SUGGESTIONS) {
+      if ((p.unitMode.wantSuggestions || unit.noRelocate === true) && unit.resourceIds.length === 1 && suggestions.length < MAX_SUGGESTIONS) {
         const free = await nextFree(plan.appointments[0], closedId);
         if (free) suggestions = [...suggestions, free];
       }
@@ -595,11 +622,16 @@ async function applyConflict(
 // Execuções (`schedClosureRuns`): progresso dos lotes e resultado final
 // ---------------------------------------------------------------------------
 
-async function finishRun(ctx: MutationCtx, runId: Id<"schedClosureRuns">, now: number): Promise<void> {
+async function finishRun(ctx: MutationCtx, runId: Id<"schedClosureRuns">, now: number, problem?: { failure: string; truncated?: boolean }): Promise<void> {
   const run = await ctx.db.get(runId);
-  if (!run || run.status === "done") return;
-  await ctx.db.patch(runId, { status: "done", total: run.processed, totalIsPartial: false, completedAt: now, updatedAt: now });
-  if (run.conflicts > 0) {
+  if (!run || run.status !== "running") return;
+  await ctx.db.patch(
+    runId,
+    problem
+      ? { status: "failed", failure: problem.failure.slice(0, 300), ...(problem.truncated ? { truncated: true } : {}), totalIsPartial: true, completedAt: now, updatedAt: now }
+      : { status: "done", total: run.processed, totalIsPartial: false, completedAt: now, updatedAt: now }
+  );
+  if (run.conflicts > 0 || problem) {
     const resource = run.resourceId ? await ctx.db.get(run.resourceId) : null;
     await notifyClosureConflicts(ctx, {
       organizationId: run.organizationId,
@@ -607,6 +639,7 @@ async function finishRun(ctx: MutationCtx, runId: Id<"schedClosureRuns">, now: n
       runId,
       kind: run.kind,
       count: run.conflicts,
+      ...(problem ? { problem: problem.truncated ? ("truncated" as const) : ("failed" as const) } : {}),
       resourceName: resource?.name,
       firstDate: run.fromLocalDate,
       lastDate: run.toLocalDate,
@@ -673,12 +706,21 @@ export async function processClosureBatchCore(ctx: MutationCtx, args: Continuati
   }
   const scope = args.scope;
   const targets = await resolveTargets(ctx, args.organizationId, { resourceId: scope.resourceId, resourceKind: scope.resourceKind }, scope.mode === "removal").catch(() => []);
-  const { units, nextCursor } = targets.length
-    ? await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets, adjust: args.adjust, cursor: args.cursor, now: args.now })
-    : { units: [] as Unit[], nextCursor: null };
+  let scanned: { units: Unit[]; nextCursor: number | null };
+  try {
+    scanned = targets.length
+      ? await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets, adjust: { ...args.adjust, beforeCutoff: run.createdAt }, cursor: args.cursor, now: args.now })
+      : { units: [], nextCursor: null };
+  } catch (e) {
+    // A varredura lançou (teto de leitura, dado inesperado): o run NÃO fica `running` para sempre; sinaliza erro e avisa a equipe.
+    await finishRun(ctx, args.runId, args.now, { failure: `Não foi possível continuar: ${e instanceof Error ? e.message : String(e)}` });
+    return empty;
+  }
+  const { units, nextCursor } = scanned;
   const batch = units.slice(0, CLOSURE_BATCH_SIZE);
   const nextCursorKey = units.length > CLOSURE_BATCH_SIZE ? units[CLOSURE_BATCH_SIZE].cursorKey : nextCursor;
-  const hasNext = nextCursorKey !== null && args.attempt < CLOSURE_MAX_PASSES;
+  const capped = nextCursorKey !== null && args.attempt >= CLOSURE_MAX_PASSES;
+  const hasNext = nextCursorKey !== null && !capped;
   // O PRÓXIMO lote entra na fila ANTES de processar este: o que acontecer aqui não perde o resto.
   if (hasNext) {
     const { now: _now, ...carry } = args;
@@ -690,7 +732,8 @@ export async function processClosureBatchCore(ctx: MutationCtx, args: Continuati
     runKey: String(args.runId), now: args.now,
   });
   await bumpRun(ctx, args.runId, done, args.now);
-  if (!hasNext) await finishRun(ctx, args.runId, args.now);
+  if (capped) await finishRun(ctx, args.runId, args.now, { failure: "Limite de lotes atingido: parte dos agendamentos pode não ter sido tratada.", truncated: true });
+  else if (!hasNext) await finishRun(ctx, args.runId, args.now);
   return { processed: done.processedAppointments, conflicts: done.conflicts, reallocated: done.reallocated, next: hasNext };
 }
 
@@ -800,8 +843,14 @@ async function runChange(ctx: MutationCtx, args: ChangeArgs): Promise<ClosureRes
           ...(change.intervals ? { intervals: change.intervals } : {}),
         }))
       : [];
+  // Fechamentos ainda em andamento: as exceções deles NÃO contam no estado "antes" (o que ainda está na sala fechada por eles
+  // continua pendente e é contado/tratado por este também; o lote que chegar primeiro trata, o outro pula: idempotente).
+  const runningIds = await runningExceptionIds(ctx, args.organizationId);
   const removeRows = change.type === "remove" ? dbEx.rows.filter((e) => e.source === "manual" && e.mode === change.kind && scopeMatches(e, scope)) : [];
-  const adjust: StateAdjust = change.type === "add" ? { addHypothetical: hypothetical } : { removeIds: removeRows.map((e) => e._id) };
+  const adjust: StateAdjust =
+    change.type === "add"
+      ? { addHypothetical: hypothetical, excludeIds: runningIds }
+      : { removeIds: removeRows.map((e) => e._id), excludeIds: runningIds };
 
   // Só muda a ocupação possível quem fecha/bloqueia/estreita (add != extra) ou remove horário `extra`/`custom`.
   const scansForAffected = change.type === "add" ? change.kind !== "extra" : change.kind === "extra" || change.kind === "custom";
@@ -906,7 +955,8 @@ async function runChange(ctx: MutationCtx, args: ChangeArgs): Promise<ClosureRes
     });
     const leftover = found.units.length > CLOSURE_INLINE_AFFECTED;
     const nextCursorKey = leftover ? found.units[CLOSURE_INLINE_AFFECTED].cursorKey : found.nextCursor;
-    const adjustForBatches = change.type === "add" ? { excludeIds: newIds } : { includeBefore: removeRows.map(toLite) };
+    const adjustForBatches =
+      change.type === "add" ? { excludeIds: [...newIds, ...runningIds] } : { includeBefore: removeRows.map(toLite), excludeIds: runningIds };
     if (nextCursorKey !== null) {
       // Agenda o próximo lote ANTES de processar este.
       await scheduleBatch(ctx, {
@@ -954,6 +1004,15 @@ async function runChange(ctx: MutationCtx, args: ChangeArgs): Promise<ClosureRes
     mode: "commit", ...base, removed, restorable, reallocated: done.reallocated, conflicts: done.conflicts, pending, simulated: 0,
     exceptionIds: change.type === "add" ? exceptionIds : [], ...(runId ? { runId } : {}), ...(reasonOut ? { reason: reasonOut } : {}), items,
   };
+}
+
+async function runningExceptionIds(ctx: MutationCtx, organizationId: Id<"organizations">): Promise<Id<"schedExceptions">[]> {
+  const recent = await ctx.db
+    .query("schedClosureRuns")
+    .withIndex("by_organization_and_created", (q) => q.eq("organizationId", organizationId))
+    .order("desc")
+    .take(20);
+  return recent.filter((r) => r.status === "running").flatMap((r) => r.exceptionIds ?? []);
 }
 
 /** Reabrir: conflito aberto cujo lugar original voltou a caber ganha esse lugar como 1ª sugestão (a tela oferece resolver). */

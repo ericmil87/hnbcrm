@@ -273,6 +273,13 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     },
   ],
   [
+    { type: "appointment_conflict", kind: "resource_closed", count: 4, resourceName: "Sala 1", dateLabel: "15/06", problem: "failed" },
+    {
+      title: "O fechamento não terminou por inteiro",
+      body: "Sala 1 fechou em 15/06, mas o tratamento dos agendamentos parou antes do fim (4 já foram para a fila de pendências). Confira a Agenda e, se preciso, repita o fechamento.",
+    },
+  ],
+  [
     { type: "appointment_conflict", kind: "resource_removed", count: 1 },
     {
       title: "1 agendamento precisa de novo lugar",

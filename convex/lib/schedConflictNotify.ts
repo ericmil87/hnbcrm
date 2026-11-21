@@ -24,6 +24,8 @@ export async function notifyClosureConflicts(
     runId?: Id<"schedClosureRuns">;
     kind: "resource_closed" | "resource_removed";
     count: number;
+    /** `failed`/`truncated`: o fechamento NÃO terminou por inteiro; o aviso diz para conferir a agenda. */
+    problem?: "failed" | "truncated";
     resourceName?: string;
     firstDate?: string;
     lastDate?: string;
@@ -45,12 +47,12 @@ export async function notifyClosureConflicts(
       organizationId: args.organizationId,
       memberId: m._id,
       type: "appointment_conflict",
-      ...notificationCopy({ type: "appointment_conflict", kind: args.kind, count: args.count, resourceName: args.resourceName, dateLabel }),
+      ...notificationCopy({ type: "appointment_conflict", kind: args.kind, count: args.count, resourceName: args.resourceName, dateLabel, problem: args.problem }),
       data: { closureKey: args.closureKey, kind: args.kind, ...(args.runId ? { runId: args.runId } : {}), ...(args.firstDate ? { fromLocalDate: args.firstDate } : {}), ...(args.lastDate ? { toLocalDate: args.lastDate } : {}) },
       coalesce: {
         key: `appointment_conflict:${args.closureKey}`,
         increment: args.count,
-        render: (count) => notificationCopy({ type: "appointment_conflict", kind: args.kind, count, resourceName: args.resourceName, dateLabel }),
+        render: (count) => notificationCopy({ type: "appointment_conflict", kind: args.kind, count, resourceName: args.resourceName, dateLabel, problem: args.problem }),
       },
     });
   }

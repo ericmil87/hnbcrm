@@ -1772,7 +1772,8 @@ export async function setAppointmentStatusCore(
   const memberId = actorMemberId(args.actor);
   // Invariante "ativo sem alocação => conflito aberto": quem está sem sala/profissional (fila de conflitos) não é aprovado
   // por cima do conflito; a equipe resolve primeiro (trocar recurso, remarcar, cancelar ou marcar como resolvido).
-  if (args.to === "scheduled" && a.resources.some((r) => !r.allocated)) {
+  // Exceção: o operador já resolveu "por fora" (marca `no_resource`): aprova e segue "sem sala/profissional definido".
+  if (args.to === "scheduled" && a.resources.some((r) => !r.allocated) && a.needsAttention?.code !== "no_resource") {
     fail("Resolva o conflito de sala/profissional antes de aprovar este agendamento.");
   }
   const superseded = args.to === "scheduled" && a.rescheduleOfId ? await assertProposalApprovable(ctx, a, now) : null;

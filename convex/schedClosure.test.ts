@@ -13,9 +13,10 @@ import * as X from "./schedulingExceptions";
 import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
 import { type AgendaSeed, identityOf, type Person, seedAgenda } from "./lib/schedTestSeed.test-helper";
 import { peakUnits } from "./lib/schedAvailability";
+import { schedInvariantProblems } from "./lib/schedInvariants.test-helper";
 import { atLocalMinutes } from "./lib/schedTime";
 import { MAX_INTERNAL_EVENTS_PER_MEMBER } from "./lib/schedRead";
-import { CLOSURE_BATCH_SIZE, CLOSURE_INLINE_AFFECTED } from "./lib/schedExceptionOps";
+import { CLOSURE_BATCH_SIZE, CLOSURE_INLINE_AFFECTED, CLOSURE_MAX_PASSES } from "./lib/schedExceptionOps";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const TZ = "America/Sao_Paulo";
@@ -38,6 +39,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await assertNoOvercapacity(s.orgId);
+  expect(await schedInvariantProblems(t, s.orgId, Date.now())).toEqual([]); // invariantes globais no fim de TODO teste
   vi.useRealTimers();
 });
 
@@ -761,6 +763,133 @@ describe("membro removido passa por setResourceActiveCore", () => {
     await as(s.admin).mutation(api.teamMembers.removeTeamMember, { teamMemberId: s.agent.memberId });
     const log = (await t.run((ctx) => ctx.db.query("auditLogs").collect())).find((x) => x.entityType === "schedResource" && x.entityId === pro);
     expect(log?.metadata).toMatchObject({ futureAppointments: 1, acceptFuture: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Segunda rodada da revisão do #183 (R1–R7)
+// ---------------------------------------------------------------------------
+describe("R1: fechamentos sobrepostos enquanto os lotes rodam", () => {
+  const seed40 = async () => {
+    const s1 = await mkRes("Sala 1", { capacity: 50 });
+    const svc = await mkSvc();
+    for (let i = 0; i < 20; i++) await rawAppt([s1], svc, at(MON, 9) + i * MIN, 30);
+    for (let i = 0; i < 20; i++) await rawAppt([s1], svc, at(MON, 14) + i * MIN, 30);
+    return s1;
+  };
+  const later = () => vi.setSystemTime(new Date(NOW + 5 * 60_000));
+
+  test("V2b: fechar a ORG antes de os lotes da sala terminarem não deixa ninguém na sala fechada sem conflito", async () => {
+    const s1 = await seed40();
+    const r1 = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect(r1.pending).toBeGreaterThan(0);
+    later();
+    const r2 = await close(s.admin, closeArgs(undefined, { acceptAffected: true }));
+    expect(r2.affected).toBeGreaterThan(0); // os pendentes do 1º run contam também aqui (não "já violavam")
+    await drain();
+    expect(await allocRowsOf(s1)).toBe(0);
+    const cs = await conflicts();
+    expect(new Set(cs.map((c) => c.appointmentId)).size).toBe(40);
+  });
+
+  test("V2c: bloquear um horário da MESMA sala enquanto os lotes rodam também não deixa ninguém para trás", async () => {
+    const s1 = await seed40();
+    await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    later();
+    const r3 = await close(s.admin, closeArgs(s1, { kind: "block", intervals: [{ startMin: 14 * 60, endMin: 15 * 60 }], acceptAffected: true }));
+    expect(r3.affected).toBeGreaterThan(0);
+    await drain();
+    expect(await allocRowsOf(s1)).toBe(0);
+    expect(new Set((await conflicts()).map((c) => c.appointmentId)).size).toBe(40);
+    const runs = await t.run((ctx) => ctx.db.query("schedClosureRuns").collect());
+    expect(runs.every((r) => r.status === "done")).toBe(true);
+  });
+});
+
+describe("R2: aprovar depois da resolução manual", () => {
+  test("com a marca no_resource a aprovação é aceita e o agendamento segue 'sem sala definida'", async () => {
+    const s1 = await mkRes("Sala 1");
+    const svc = await mkSvc();
+    const a = await rawAppt([s1], svc, at(MON, 10), 60, { status: "pending_approval", origin: "public" });
+    await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    await expect(as(s.admin).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.orgId, appointmentId: a, to: "scheduled" })).rejects.toThrow(/Resolva o conflito/);
+    await as(s.admin).mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.orgId, conflictId: (await conflicts())[0]._id, action: { type: "manual", note: "ok" } });
+    await as(s.admin).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.orgId, appointmentId: a, to: "scheduled" });
+    const doc = (await apptOf(a))!;
+    expect(doc.status).toBe("scheduled");
+    expect(doc.needsAttention?.code).toBe("no_resource");
+  });
+});
+
+describe("R3: casal com um membro que não é movível", () => {
+  test("o outro NÃO é realocado sozinho: vai a conflito com sugestões (prévia = commit)", async () => {
+    const dupla = await mkRes("Dupla", { capacity: 2 });
+    await mkRes("Sala 1", {}, 1);
+    const svc = await mkSvc();
+    const ids = (await book(svc, at(MON, 10), [dupla], { companions: [{ guestName: "Acomp", resourceIds: [dupla] }] })).appointmentIds as Id<"schedAppointments">[];
+    await t.run((ctx) => ctx.db.patch(ids[0], { status: "checked_in" }));
+    const p = await preview(s.admin, closeArgs(dupla));
+    expect(p).toMatchObject({ affected: 1, reallocated: 0, conflicts: 1 });
+    const r = await close(s.admin, closeArgs(dupla, { acceptAffected: true, expectedAffected: 1 }));
+    expect(shape(r.items)).toEqual(shape(p.items));
+    expect(r).toMatchObject({ reallocated: 0, conflicts: 1 });
+    expect(await allocOf(ids[1])).toHaveLength(0);
+    expect((await apptOf(ids[0]))!.status).toBe("checked_in"); // quem está em atendimento não é mexido
+    expect((await conflicts())[0].appointmentId).toBe(ids[1]);
+  });
+});
+
+describe("R4: agendamento que cruza a meia-noite para o dia fechado", () => {
+  const SUN = "2026-06-14";
+  test("org inteira: conta e vira conflito", async () => {
+    const s1 = await mkRes("Sala 1", { weekly: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, startMin: 0, endMin: 1440 })) });
+    const svc = await mkSvc();
+    const cross = await rawAppt([s1], svc, at(SUN, 23, 30), 120, {}, SUN);
+    const r = await close(s.admin, closeArgs(undefined, { acceptAffected: true }));
+    expect(r).toMatchObject({ affected: 1, conflicts: 1 });
+    expect(await allocOf(cross)).toHaveLength(0);
+  });
+  test("um recurso: a linha da margem que entra no período também conta", async () => {
+    const s1 = await mkRes("Sala 1", { weekly: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, startMin: 0, endMin: 1440 })) });
+    const svc = await mkSvc();
+    const cross = await rawAppt([s1], svc, at(SUN, 23, 30), 120, {}, SUN);
+    const r = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect(r.affected).toBe(1);
+    expect((await conflicts())[0].appointmentId).toBe(cross);
+  });
+});
+
+describe("R6/R7: varredura que falha ou limite de lotes", () => {
+  test("scanUnits lança dentro de um lote: o run vira `failed` com motivo e a equipe é avisada (não fica running)", async () => {
+    const s1 = await mkRes("Sala 1", { capacity: 50 });
+    const svc = await mkSvc();
+    for (let i = 0; i < 30; i++) await rawAppt([s1], svc, at(MON, 9) + i * MIN, 30);
+    const r = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect(r.pending).toBeGreaterThan(0);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 501; i++) await ctx.db.insert("schedExceptions", { organizationId: s.orgId, localDate: MON, mode: "block", intervals: [{ startMin: 0, endMin: 1 }], source: "manual", createdAt: 1 });
+    });
+    await drain();
+    const run = (await t.run((ctx) => ctx.db.get(r.runId!)))!;
+    expect(run.status).toBe("failed");
+    expect(run.failure).toMatch(/Não foi possível continuar/);
+    const note = (await t.run((ctx) => ctx.db.query("notifications").collect())).find((n) => n.type === "appointment_conflict" && n.memberId === s.admin.memberId);
+    expect(note?.title).toBe("O fechamento não terminou por inteiro");
+  });
+
+  test("limite de lotes: o run encerra como `failed` + `truncated` e o aviso diz que não terminou", async () => {
+    const s1 = await mkRes("Sala 1", { capacity: 50 });
+    const svc = await mkSvc();
+    for (let i = 0; i < 40; i++) await rawAppt([s1], svc, at(MON, 9) + i * MIN, 30);
+    const r = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    await t.mutation(internal.schedulingExceptions.internalProcessClosureBatch, {
+      organizationId: s.orgId, runId: r.runId!, scope: { mode: "closure", resourceId: s1, fromLocalDate: MON, toLocalDate: MON }, adjust: {}, cursor: 0, attempt: CLOSURE_MAX_PASSES,
+    });
+    const run = (await t.run((ctx) => ctx.db.get(r.runId!)))!;
+    expect(run).toMatchObject({ status: "failed", truncated: true });
+    expect(run.failure).toMatch(/Limite de lotes/);
+    const note = (await t.run((ctx) => ctx.db.query("notifications").collect())).find((n) => n.type === "appointment_conflict" && n.memberId === s.admin.memberId);
+    expect(note?.title).toBe("O fechamento não terminou por inteiro");
   });
 });
 

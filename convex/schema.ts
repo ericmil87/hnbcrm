@@ -4979,7 +4979,10 @@ const applicationTables = {
     resourceKind: v.optional(v.union(v.literal("person"), v.literal("room"), v.literal("equipment"))),
     fromLocalDate: v.string(),
     toLocalDate: v.string(),
-    status: v.union(v.literal("running"), v.literal("done")),
+    status: v.union(v.literal("running"), v.literal("done"), v.literal("failed")),
+    // `failed`: a varredura lançou ou o limite de lotes estourou: parte dos agendamentos pode NÃO ter sido tratada (`failure` diz por quê).
+    failure: v.optional(v.string()),
+    truncated: v.optional(v.boolean()),
     total: v.number(),                 // agendamentos conhecidos (ao concluir = processed)
     totalIsPartial: v.boolean(),       // true = ainda há mais por achar (total é "pelo menos")
     processed: v.number(),
