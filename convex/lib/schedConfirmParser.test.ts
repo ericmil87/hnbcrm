@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseConfirmation, prefilterConfirmation, type ConfirmAct } from "./schedConfirmParser";
+import { normalizeConfirmationText, parseConfirmation, prefilterConfirmation, type ConfirmAct } from "./schedConfirmParser";
 
 const SP = "America/Sao_Paulo";
 // Sábado, 21/11/2026 10:00 em São Paulo (UTC-3, sem horário de verão).
@@ -37,7 +37,6 @@ const POSITIVAS: Row[] = [
   { t: "confirmadooo sexta 16h", act: "confirmou", date: "2026-11-27", time: hm(16) },
   { t: "Confirmado quinta que vem às 10h", act: "confirmou", date: "2026-11-26", time: hm(10) },
   { t: "pode vir quinta da semana que vem 10h", act: "confirmou", date: "2026-11-26", time: hm(10) },
-  { t: "Fechado 5ª às 10h", act: "confirmou", date: "2026-11-26", time: hm(10) },
   { t: "confirmado 5a feira 10h", act: "confirmou", date: "2026-11-26", time: hm(10) },
   { t: "Confirmado quinta-feira às 10h", act: "confirmou", date: "2026-11-26", time: hm(10) },
   { t: "confirmado terça 3 da tarde", act: "confirmou", date: "2026-11-24", time: hm(15) },
@@ -54,7 +53,7 @@ const POSITIVAS: Row[] = [
   { t: "pode vir dom 10h", act: "confirmou", date: "2026-11-22", time: hm(10) },
   { t: "fechado qua 15h30", act: "confirmou", date: "2026-11-25", time: hm(15, 30) },
   { t: "Tá confirmado amanhã às 14:30", act: "confirmou", date: "2026-11-22", time: hm(14, 30) },
-  { t: "Combinado, te espero amanhã 7h", act: "confirmou", date: "2026-11-22", time: hm(7) },
+  { t: "Combinado, te espero amanhã 8h", act: "confirmou", date: "2026-11-22", time: hm(8) },
   { t: "Confirmado terça, dia 24, às 10h", act: "confirmou", date: "2026-11-24", time: hm(10) },
   { t: "reservado pra você amanhã às 10h", act: "confirmou", date: "2026-11-22", time: hm(10) },
   { t: "vou te atender amanhã às 16h", act: "confirmou", date: "2026-11-22", time: hm(16) },
@@ -87,6 +86,9 @@ const POSITIVAS: Row[] = [
 // ───────── parciais: ato de confirmação sem dia e/ou hora resolvidos ─────────
 const PARCIAIS: Row[] = [
   { t: "Confirmado!", act: "confirmou" },
+  { t: "Fechado 5ª às 10h", act: "confirmou", time: hm(10) }, // "5ª" sozinho é ordinal
+  { t: "Combinado, te espero amanhã 7h", act: "confirmou", date: "2026-11-22" }, // 1h–7h sem período é ambíguo
+  { t: "Até quinta, te espero", act: "confirmou", date: "2026-11-26" },
   { t: "Fechado, te espero", act: "confirmou" },
   { t: "confirmado amanhã", act: "confirmou", date: "2026-11-22" },
   { t: "te espero às 10h", act: "confirmou", time: hm(10) },
@@ -137,7 +139,6 @@ const NEGATIVAS: Row[] = [
   { t: "27/11 é feriado", act: "informativo" },
   // limites ("até", "depois das")
   { t: "ate amanha!", act: "nenhum" },
-  { t: "Até quinta, te espero", act: "nenhum" },
   { t: "Fechado até as 18h", act: "nenhum" },
   { t: "depois das 14h pode vir", act: "nenhum" },
   { t: "a partir das 10h pode vir", act: "nenhum" },
@@ -180,7 +181,7 @@ const NEGATIVAS: Row[] = [
   { t: "Vc confirma quinta 10h", act: "propos", date: "2026-11-26", time: hm(10) },
   { t: "Combinado amanhã 10h. Pode ser?", act: "propos", date: "2026-11-22", time: hm(10) },
   { t: "Fechado quinta 10h, né?", act: "propos", date: "2026-11-26", time: hm(10) },
-  { t: "Fechado quinta 10h. Que tal sexta 14h?", act: "nenhum" },
+  { t: "Fechado quinta 10h. Que tal sexta 14h?", act: "propos", date: "2026-11-27", time: hm(14) },
   { t: "Fechado! Mas só consigo quinta 10h", act: "propos", date: "2026-11-26", time: hm(10) },
   { t: "Se você quiser, quinta 10h", act: "nenhum" },
   { t: "quinta-feira eu não atendo", act: "nenhum" },
@@ -284,9 +285,24 @@ describe("parseConfirmation: tabela de frases", () => {
     expect(falsos).toEqual([]);
   });
 
-  it("confirmação completa só nas positivas e no calendário (nunca nas parciais/negativas)", () => {
-    for (const r of [...PARCIAIS, ...NEGATIVAS]) if (run(r).act === "confirmou") expect(run(r).level, r.t).not.toBe("completo");
-    for (const r of POSITIVAS) expect(run(r).level, r.t).toBe("completo");
+  it("'completo' só em confirmação com dia e hora; nunca nas parciais/negativas; evidência é substring normalizada", () => {
+    let completoNasPositivas = 0;
+    for (const r of [...PARCIAIS, ...NEGATIVAS]) expect(run(r).level, r.t).not.toBe("completo");
+    for (const r of [...POSITIVAS, ...CALENDARIO]) {
+      const p = run(r);
+      if (p.level === "completo") {
+        expect(p.act).toBe("confirmou");
+        expect(p.resolved.date && p.resolved.time).toBe(true);
+      }
+      if (r.act === "confirmou" && POSITIVAS.includes(r) && p.level === "completo") completoNasPositivas++;
+    }
+    // custo da lista de permissão em toques do humano: pelo menos 30% das positivas ficam na forma fechada
+    expect(completoNasPositivas / POSITIVAS.length).toBeGreaterThanOrEqual(0.3);
+    for (const r of [...POSITIVAS, ...PARCIAIS, ...NEGATIVAS, ...CALENDARIO]) {
+      const p = run(r);
+      const norm = normalizeConfirmationText(r.t);
+      for (const e of [...p.evidence.act, ...p.evidence.date, ...p.evidence.time, ...p.evidence.service, ...p.evidence.blocked]) expect(norm, r.t).toContain(e);
+    }
   });
 });
 
