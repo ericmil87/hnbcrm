@@ -40,7 +40,7 @@ describe("lista por horário", () => {
     const d = day([appt(["sala1"], at(14), at(15)), appt(["sala2"], at(9), at(10)), appt(["sala1"], at(11), at(12), { status: "cancelled" })], {
       busy: [{ resourceIds: ["sala1"], start: at(10, 30), end: at(11) }],
     });
-    const internal = [{ id: "e1", title: "Reunião", startTime: at(12), endTime: at(13), eventType: "meeting", source: "event" as const, allDay: false }];
+    const internal = [{ id: "e1", title: "Reunião", startTime: at(12), endTime: at(13), eventType: "meeting", source: "event" as const, allDay: false, memberIds: [] }];
     const [g] = buildDayList({ day: d, internal, groupBy: "room", mode: "hora", now: NOW, withFree: true });
     expect(g.entries.map((e) => e.kind)).toEqual(["appointment", "busy", "internal", "appointment"]);
     expect(g.entries.some((e) => e.kind === "free")).toBe(false);
@@ -88,7 +88,7 @@ describe("lista por recurso", () => {
   });
   it("agendamento com 2 salas aparece nas duas; compromissos no fim", () => {
     const d = day([appt(["sala1", "sala2"], at(10), at(11))]);
-    const internal = [{ id: "t", title: "Ligar", startTime: at(10), endTime: at(10), eventType: "task", source: "task" as const, allDay: false }];
+    const internal = [{ id: "t", title: "Ligar", startTime: at(10), endTime: at(10), eventType: "task", source: "task" as const, allDay: false, memberIds: [] }];
     const groups = buildDayList(input(d, { internal }));
     expect(groups[0].entries.filter((e) => e.kind === "appointment")).toHaveLength(1);
     expect(groups[1].entries.filter((e) => e.kind === "appointment")).toHaveLength(1);
@@ -124,5 +124,18 @@ describe("resumo por recurso", () => {
     const s = summarizeResources(buildDayGridModel({ day: day(two), internal: [], groupBy: "room", now: at(9) + 5 * 86_400_000 }));
     expect(s[0].state).toBe("open");
     expect(s[0].load.basis).toBe("peak");
+  });
+});
+
+describe("agenda sem recursos (módulo recém-ligado)", () => {
+  it("compromissos e tarefas continuam na lista por horário", () => {
+    const d = day([], { resources: [] });
+    const internal = [{ id: "e1", title: "Reunião", startTime: at(10), endTime: at(11), eventType: "meeting", source: "event" as const, allDay: false, memberIds: [] }];
+    const groups = buildDayList({ day: d, internal, groupBy: "room", mode: "hora", now: NOW, withFree: true });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].entries.map((e) => e.kind)).toEqual(["internal"]);
+    const grid = buildDayGridModel({ day: d, internal, groupBy: "room", now: NOW });
+    expect(grid.columns.some((c) => c.kind === "resource")).toBe(false);
+    expect(grid.columns.map((c) => c.kind)).toEqual(["internal"]);
   });
 });

@@ -14,7 +14,7 @@ const line = (over: Partial<ClosureLine> = {}): ClosureLine => ({
 function setup(over: Partial<ResourceDaySheetViewProps> = {}) {
   const handlers = { onDatesChange: vi.fn(), onReasonChange: vi.fn(), onNoteChange: vi.fn(), onConfirm: vi.fn(), onRetry: vi.fn(), onClose: vi.fn(), onOpenPending: vi.fn() };
   const props: ResourceDaySheetViewProps = {
-    mode: "close", period: false, resourceName: "Sala 3", kind: "room", tz: "America/Sao_Paulo", from: "2026-11-23", to: "2026-11-23", dateError: null,
+    mode: "close", period: false, resourceName: "Sala 3", kind: "room", org: false, tz: "America/Sao_Paulo", today: "2026-11-23", from: "2026-11-23", to: "2026-11-23", dateError: null,
     reasonCode: "no_staff", note: "", preview: { status: "ready", result: result() }, stale: false, submitting: false, submitError: null, committed: null, run: undefined,
     ...handlers, ...over,
   };
@@ -35,12 +35,12 @@ describe("ResourceDaySheetView: prévia do impacto", () => {
     expect(screen.getByText("2 ficam sem lugar e vão para a fila de pendências")).toBeInTheDocument();
     expect(screen.getByText("Muda para Sala 2")).toBeInTheDocument();
     expect(screen.getByText("Fica sem lugar")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Fechar mesmo assim" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Fechar mesmo assim em seg, 23\/11 \(hoje\)$/ }));
     expect(h.onConfirm).toHaveBeenCalled();
   });
   it("só movidos: 'Fechar e mover N'", () => {
     setup({ preview: { status: "ready", result: result({ affected: 2, reallocated: 2, simulated: 2, items: [line()] }) } });
-    expect(screen.getByRole("button", { name: "Fechar e mover 2" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Fechar e mover 2 em seg, 23/11 (hoje)" })).toBeEnabled();
   });
   it("profissional: ninguém passa a outro, vira conflito com sugestões", () => {
     const items = [line({ outcome: "conflict", toResourceName: undefined, suggestions: [{}, {}, {}] })];
@@ -52,7 +52,7 @@ describe("ResourceDaySheetView: prévia do impacto", () => {
   it("sem afetados: mensagem curta e botão 'Fechar'", () => {
     setup();
     expect(screen.getByText("Nenhum horário marcado neste dia. Pode fechar sem afetar ninguém.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Fechar" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /^Fechar em / })).toBeEnabled();
   });
   it("prévia limitada: o resto é 'a definir quando fechar'", () => {
     setup({ preview: { status: "ready", result: result({ affected: 60, reallocated: 40, simulated: 40, items: [line()] }) } });
@@ -60,13 +60,13 @@ describe("ResourceDaySheetView: prévia do impacto", () => {
   });
   it("sem prévia pronta não dá para confirmar (carregando e erro)", () => {
     setup({ preview: { status: "loading" } });
-    expect(screen.getByRole("button", { name: "Fechar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Fechar em / })).toBeDisabled();
   });
   it("erro da prévia: tentar de novo", () => {
     const h = setup({ preview: { status: "error", message: "Sem acesso" } });
     fireEvent.click(screen.getByRole("button", { name: "Tentar de novo" }));
     expect(h.onRetry).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Fechar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Fechar em / })).toBeDisabled();
   });
 });
 
@@ -74,7 +74,7 @@ describe("ResourceDaySheetView: situação mudou", () => {
   it("avisa para conferir de novo e continua exigindo novo aceite", () => {
     setup({ stale: true, preview: { status: "ready", result: result({ affected: 3, reallocated: 3, simulated: 3, items: [line()] }) } });
     expect(screen.getByRole("status")).toHaveTextContent("A situação mudou, confira de novo.");
-    expect(screen.getByRole("button", { name: "Fechar e mover 3" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Fechar e mover 3 em seg, 23/11 (hoje)" })).toBeEnabled();
   });
   it("erro de envio aparece sem fechar a folha", () => {
     setup({ submitError: "Sem permissão" });
@@ -87,7 +87,7 @@ describe("ResourceDaySheetView: período e motivo", () => {
     const h = setup({ period: true, dateError: "A data final precisa ser igual ou depois da inicial." });
     expect(screen.getByLabelText("De")).toHaveValue("2026-11-23");
     expect(screen.getByRole("alert")).toHaveTextContent("A data final precisa");
-    expect(screen.getByRole("button", { name: "Fechar" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Fechar em / })).toBeDisabled();
     fireEvent.change(screen.getByLabelText("Até"), { target: { value: "2026-11-25" } });
     expect(h.onDatesChange).toHaveBeenCalledWith("2026-11-23", "2026-11-25");
   });
@@ -139,16 +139,46 @@ describe("ResourceDaySheetView: reabrir", () => {
   it("confirma com 'Reabrir', sem motivo nem datas", () => {
     const h = setup({ mode: "reopen" });
     expect(screen.queryByText("Motivo")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Reabrir" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Reabrir em / }));
     expect(h.onConfirm).toHaveBeenCalled();
   });
   it("coberto por fechamento da agenda inteira: explica e não deixa reabrir", () => {
     setup({ mode: "reopen", preview: { status: "ready", result: result({ reason: "covered_by_org_closure" }) } });
-    expect(screen.getByText("A agenda inteira está fechada neste dia. Reabra por lá.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Reabrir" })).toBeDisabled();
+    expect(screen.getByText("A agenda inteira está fechada neste dia. Para abrir, use a opção de reabrir a agenda, no menu do cabeçalho.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Reabrir em / })).toBeDisabled();
   });
   it("nada para reabrir", () => {
     setup({ mode: "reopen", preview: { status: "ready", result: result({ reason: "nothing_to_reopen" }) } });
     expect(screen.getByText("Não há fechamento para reabrir neste dia.")).toBeInTheDocument();
+  });
+});
+
+describe("ResourceDaySheetView: data e escopo", () => {
+  it("mostra o período por extenso, com 'hoje' só quando é hoje", () => {
+    setup({ from: "2026-11-26", to: "2026-11-26" });
+    expect(screen.getByText("Período: qui, 26/11")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Fechar em qui, 26/11" })).toBeEnabled();
+  });
+  it("período com duas datas", () => {
+    setup({ period: true, from: "2026-11-26", to: "2026-11-27" });
+    expect(screen.getByText("Período: qui, 26/11 a sex, 27/11")).toBeInTheDocument();
+  });
+  it("agenda inteira: tudo vira 'sem lugar', com a contagem, e diz que nada é cancelado", () => {
+    setup({
+      org: true, kind: null, resourceName: "Toda a agenda", period: true,
+      preview: { status: "ready", result: result({ affected: 12, conflicts: 12, simulated: 12, items: [line({ outcome: "conflict", toResourceName: undefined })] }) },
+    });
+    expect(screen.getByText("Todos os 12 horários deste período ficam sem lugar e vão para a fila de pendências.")).toBeInTheDocument();
+    expect(screen.getByText("Nada é cancelado e nenhuma mensagem é enviada ao cliente.")).toBeInTheDocument();
+  });
+  it("prévia cortada pelo servidor: 'pelo menos N'", () => {
+    setup({ preview: { status: "ready", result: result({ affected: 200, reallocated: 40, simulated: 40, capped: true, items: [line()] }) } });
+    expect(screen.getByText("Pelo menos 200 horários marcados em Sala 3 neste período")).toBeInTheDocument();
+  });
+  it("reaberto por gênero", () => {
+    const { unmount } = render(<div />);
+    unmount();
+    setup({ mode: "reopen", kind: "person", committed: result({ mode: "commit" }) });
+    expect(screen.getByText("Reaberto")).toBeInTheDocument();
   });
 });

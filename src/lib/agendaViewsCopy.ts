@@ -1,3 +1,5 @@
+import { VOCAB } from "./vocab";
+
 /**
  * Textos da página da Agenda v2 (B3). Ficam FORA de `VOCAB` de propósito: só são usados no chunk
  * `views/AgendaPage` (carregado sob demanda) e `VOCAB` entra no pacote de todas as telas. Mesmas regras de
@@ -6,7 +8,16 @@
  */
 export const VIEWS_COPY = {
   title: "Agenda",
-  views: { dia: "Dia", lista: "Lista", mes: "Mês" },
+  views: { dia: "Dia", semana: "Semana", lista: "Lista", mes: "Mês" },
+  week: {
+    title: "Compromissos e tarefas da equipe",
+    hint: "Esta visão mostra só compromissos e tarefas, não os agendamentos com cliente.",
+    back: "Ver o dia por recurso",
+  },
+  noAccess: { title: "Sem acesso à agenda", hint: "Peça a quem administra a conta para liberar a agenda para você." },
+  capped: "Mostrando só parte dos horários do dia: há mais do que cabe na tela.",
+  closeAll: "Fechar a agenda inteira",
+  reopenAll: "Reabrir a agenda",
   viewsLabel: "Visão da agenda",
   groupLabel: "Agrupar por",
   groups: { sala: "Sala", profissional: "Profissional" },
@@ -17,6 +28,7 @@ export const VIEWS_COPY = {
   nextDay: "Próximo dia",
   prevMonth: "Mês anterior",
   nextMonth: "Próximo mês",
+  menu: "Mais opções",
   newEvent: "Novo compromisso",
   newEventHint: "Compromisso da equipe, sem sala",
   pending: { button: "Pendências", aria: "Pendências da agenda: {n}", none: "Sem pendências" },
@@ -38,6 +50,7 @@ export const VIEWS_COPY = {
     ariaLabel: "Dia por {por}",
     noPlace: "Sem lugar",
     noPlaceHint: "Sem sala ou profissional para este horário. Resolva na fila de pendências.",
+    noPlaceExpired: "Proposta vencida: o horário já passou, então só dá para recusar.",
     resolve: "Resolver",
     closed: "Fechada hoje",
     closedGeneric: "Fechado hoje",
@@ -53,6 +66,14 @@ export const VIEWS_COPY = {
     columnMenu: "Opções de {nome}",
     bookHere: "Marcar horário aqui",
     closePeriod: "Fechar um período",
+    reopenPeriod: "Reabrir um período",
+    bookInColumn: "Marcar horário em {nome}",
+    closeDay: "Fechar neste dia",
+    reopenDay: "Reabrir neste dia",
+    closedDay: "Fechada neste dia",
+    closedDayGeneric: "Fechado neste dia",
+    overCapacity: "acima da capacidade",
+    peakOver: "Pico {label}: acima da capacidade",
     loadNow: "{label} ocupadas agora",
     loadPeak: "{label} no pico do dia",
     atLabel: "às {hora}",
@@ -92,7 +113,9 @@ export const VIEWS_COPY = {
     partialUnknown: "A contagem deste mês é parcial: há muitos horários no período.",
     dayAria: "{data}: {resumo}",
     emptyDay: "Nada marcado",
-    legend: "Toque em um dia para abrir.",
+    legend: "Toque em um dia para abrir. O número de agendamentos e a ocupação contam só agendamentos; o ícone de calendário mostra compromissos e tarefas da equipe.",
+    internalOne: "1 compromisso ou tarefa",
+    internal: "{n} compromissos ou tarefas",
     loading: "Carregando o mês…",
   },
   pendingQueue: {
@@ -121,7 +144,8 @@ export const VIEWS_COPY = {
     loading: "Carregando pendências…",
     suggestionRow: "Confirmação a revisar na conversa",
     openConversation: "Abrir conversa",
-    noConflictAppt: "Horário removido",
+    noConflictAppt: "Agendamento removido",
+    expired: "Proposta vencida: o horário já passou, então só dá para recusar.",
     toast: {
       approved: "Horário aprovado",
       declined: "Proposta recusada",
@@ -132,9 +156,18 @@ export const VIEWS_COPY = {
     },
   },
   closure: {
-    titleToday: "Fechar {nome} hoje",
+    orgName: "Toda a agenda",
+    titleDay: "Fechar {nome} em {quando}",
     titlePeriod: "Fechar {nome} por um período",
-    titleReopen: "Reabrir {nome}",
+    titleReopen: "Reabrir {nome} em {quando}",
+    titleReopenPeriod: "Reabrir {nome} por um período",
+    titleOrg: "Fechar a agenda inteira",
+    titleOrgReopen: "Reabrir a agenda",
+    periodLine: "Período: {periodo}",
+    todayMark: "{data} (hoje)",
+    orgAll: { one: "O horário deste período fica sem lugar e vai para a fila de pendências.", many: "Todos os {n} horários deste período ficam sem lugar e vão para a fila de pendências." },
+    orgNone: "Todos os recursos ficam fechados. Nada é passado para outro lugar sozinho.",
+    headlineAtLeast: "Pelo menos {n} horários marcados em {nome} neste período",
     assurance: "Nada é cancelado e nenhuma mensagem é enviada ao cliente.",
     from: "De",
     to: "Até",
@@ -171,9 +204,11 @@ export const VIEWS_COPY = {
     },
     reopen: {
       assurance: "Os horários que já mudaram de lugar continuam onde estão.",
-      covered: "A agenda inteira está fechada neste dia. Reabra por lá.",
+      covered: "A agenda inteira está fechada neste dia. Para abrir, use a opção de reabrir a agenda, no menu do cabeçalho.",
       nothing: "Não há fechamento para reabrir neste dia.",
-      done: "Reaberta",
+      doneFem: "Reaberta",
+      doneMasc: "Reaberto",
+      doneOrg: "Agenda reaberta",
     },
     toast: { closed: "Fechamento registrado", failed: "Não foi possível fechar.", reopenFailed: "Não foi possível reabrir." },
     run: {
@@ -209,13 +244,16 @@ export const VIEWS_COPY = {
     back: "Voltar",
     toast: { resolved: "Conflito resolvido", failed: "Não foi possível resolver." },
     needsFirst: "Resolva o conflito antes de aprovar.",
-    undefinedPlace: "Sem {recurso} definido",
+    undefinedPlace: { sala: "Sem sala definida", profissional: "Sem profissional definido" },
+    replaceFor: "Trocar {nome}",
+    applyChoices: "Usar estas escolhas",
   },
   clientPicker: {
     title: "Marcar horário",
-    forSlot: "{quando} em {onde}",
+    forSlot: "{quando} · {onde}",
     forDay: "{quando}",
     search: "Buscar cliente por nome ou telefone",
+    newContact: "Novo contato",
     searchLabel: "Buscar cliente",
     hint: "Escolha quem será atendido.",
     typeMore: "Digite o nome ou o telefone do cliente.",
@@ -225,3 +263,12 @@ export const VIEWS_COPY = {
     noName: "Sem nome",
   },
 } as const;
+
+/** Rótulos das ações de fechar e abrir: "hoje" só quando o dia aberto é hoje, senão "neste dia". */
+export function dayLabels(isToday: boolean) {
+  return {
+    close: isToday ? VOCAB.scheduling.closeToday : VIEWS_COPY.grid.closeDay,
+    reopen: isToday ? VOCAB.scheduling.openToday : VIEWS_COPY.grid.reopenDay,
+    closed: { fem: isToday ? VIEWS_COPY.grid.closed : VIEWS_COPY.grid.closedDay, masc: isToday ? VIEWS_COPY.grid.closedGeneric : VIEWS_COPY.grid.closedDayGeneric },
+  };
+}

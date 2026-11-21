@@ -69,7 +69,7 @@ export function PendingQueuePanel({ organizationId, open, onClose, data, tz, now
         onOpen={onOpenAppointment}
         onResolve={onResolveConflict}
         onOpenConversation={onOpenConversation}
-        onApprove={(a) => void run(a, () => setStatus({ organizationId, appointmentId: id(a), to: "scheduled" }), t.toast.approved, true)}
+        onApprove={(a) => void run(a, () => setStatus({ organizationId, appointmentId: id(a), to: "scheduled" }), t.toast.approved, false)}
         onDecline={(a) => void run(a, () => cancel({ organizationId, appointmentId: id(a) }), t.toast.declined, true)}
         onOutcome={(a, outcome) =>
           void run(

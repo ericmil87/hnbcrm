@@ -87,3 +87,22 @@ describe("PendingQueueView", () => {
     expect(screen.getAllByRole("button", { name: "Aprovar" })).toHaveLength(1);
   });
 });
+
+describe("PendingQueueView: casos sem saída", () => {
+  it("conflito sem agendamento: texto 'Agendamento removido' e nenhum botão morto", () => {
+    setup(data({ conflicts: [{ _id: "c9", appointment: null }] }));
+    expect(screen.getByText("Agendamento removido")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resolver" })).toBeNull();
+  });
+  it("proposta vencida explica por que só há Recusar", () => {
+    const a = appt(["sala1"], NOW - 3_600_000, NOW, { status: "pending_approval" });
+    setup(data({ approvals: [a] }));
+    expect(screen.getByText("Proposta vencida: o horário já passou, então só dá para recusar.")).toBeInTheDocument();
+  });
+  it("vencida pelo relógio por minuto: 10 minutos depois do início já não oferece Aprovar", () => {
+    const start = NOW;
+    const a = appt(["sala1"], start, start + 3_600_000, { status: "pending_approval" });
+    setup(data({ approvals: [a] }), { now: start + 10 * 60_000 });
+    expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull();
+  });
+});

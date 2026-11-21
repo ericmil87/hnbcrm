@@ -18,6 +18,7 @@ import {
 import { CLOSURE_REASON_TEXT } from "@/lib/agendaGrid";
 import type { ResourceKind } from "@/lib/agendaTypes";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
+import { periodText } from "@/lib/agendaClosure";
 import { zonedTimeLabel } from "@/lib/agendaZone";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
@@ -32,7 +33,10 @@ export interface ResourceDaySheetViewProps {
   period: boolean;
   resourceName: string;
   kind: ResourceKind | null;
+  /** Escopo da agenda inteira (sem recurso). */
+  org: boolean;
   tz: string;
+  today: string;
   from: string;
   to: string;
   onDatesChange: (from: string, to: string) => void;
@@ -66,10 +70,11 @@ export function ResourceDaySheetView(p: ResourceDaySheetViewProps) {
   if (p.committed) return <Done {...p} committed={p.committed} />;
   const reopen = p.mode === "reopen";
   const ready = p.preview.status === "ready" ? p.preview.result : null;
-  const summary = ready ? summarizePreview(ready, { resourceName: p.resourceName, kind: p.kind }) : null;
+  const summary = ready ? summarizePreview(ready, { resourceName: p.resourceName, kind: p.kind, org: p.org }) : null;
   const notice = reopen && ready ? reopenNotice(ready.reason) : null;
   const canConfirm = !!ready && !p.dateError && !p.submitting && !notice;
-  const label = reopen ? t.confirm.reopen : summary ? confirmLabel(summary) : t.confirm.plain;
+  const when = periodText(p.from, p.to, p.today);
+  const label = reopen ? `${t.confirm.reopen} em ${when}` : summary ? confirmLabel(summary, when) : `${t.confirm.plain} em ${when}`;
 
   return (
     <div className="space-y-4">
@@ -77,6 +82,8 @@ export function ResourceDaySheetView(p: ResourceDaySheetViewProps) {
         <Lock size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
         {reopen ? t.reopen.assurance : t.assurance}
       </p>
+
+      <p className="text-sm font-medium text-text-primary">{fillVocab(t.periodLine, { periodo: when })}</p>
 
       {p.period && (
         <div className="grid grid-cols-2 gap-3">
@@ -202,7 +209,7 @@ function Done(p: ResourceDaySheetViewProps & { committed: ClosureResult }) {
     <div className="space-y-4">
       <div role="status" aria-live="polite" className="space-y-2">
         {reopen ? (
-          <p className="text-sm text-text-primary">{t.reopen.done}</p>
+          <p className="text-sm text-text-primary">{p.org ? t.reopen.doneOrg : p.kind === "room" ? t.reopen.doneFem : t.reopen.doneMasc}</p>
         ) : (
           <>
             <p className={cn("flex items-start gap-2 text-sm", incomplete ? "text-semantic-warning" : "text-text-primary")}>

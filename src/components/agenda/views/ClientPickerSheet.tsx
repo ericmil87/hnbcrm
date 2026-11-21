@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
-import { Search, UserRound } from "lucide-react";
+import { Search, UserPlus, UserRound } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Modal } from "@/components/ui/Modal";
 import { SearchInput } from "@/components/ui/SearchInput";
@@ -33,15 +34,23 @@ export interface ClientPickerViewProps {
   /** `undefined` = buscando; `[]` = nada achado. Sem termo, a lista nem é pedida. */
   results: readonly ClientCandidate[] | undefined;
   onPick: (client: PickedClient) => void;
+  /** "Novo contato": abre o formulário de criar contato que já existe; ausente = sem o atalho. */
+  onNewContact?: () => void;
 }
 
 /** Escolha de quem será atendido (a grade e o botão da agenda não têm cliente). Apresentacional. */
-export function ClientPickerView({ context, term, onTermChange, results, onPick }: ClientPickerViewProps) {
+export function ClientPickerView({ context, term, onTermChange, results, onPick, onNewContact }: ClientPickerViewProps) {
   const hasTerm = term.trim().length >= 2;
   return (
     <div className="space-y-3">
       <p className="text-sm text-text-secondary">{context}</p>
       <SearchInput value={term} onValueChange={onTermChange} placeholder={t.search} ariaLabel={t.searchLabel} />
+      {onNewContact && (
+        <Button variant="secondary" size="sm" onClick={onNewContact}>
+          <UserPlus size={16} aria-hidden="true" />
+          {t.newContact}
+        </Button>
+      )}
       {!hasTerm ? (
         <div className="flex items-center gap-2 py-6 text-sm text-text-muted">
           <Search size={16} aria-hidden="true" />
@@ -98,8 +107,10 @@ export function ClientPickerSheet({ organizationId, open, context, onClose, onPi
     | ClientCandidate[]
     | undefined;
   return (
-    <Modal open={open} onClose={onClose} title={t.title}>
-      <ClientPickerView context={context} term={term} onTermChange={setTerm} results={active ? results : []} onPick={onPick} />
-    </Modal>
+    <>
+      <Modal open={open} onClose={onClose} title={t.title}>
+        <ClientPickerView context={context} term={term} onTermChange={setTerm} results={active ? results : []} onPick={onPick} />
+      </Modal>
+    </>
   );
 }

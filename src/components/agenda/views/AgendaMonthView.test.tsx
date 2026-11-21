@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { buildMonthCells } from "@/lib/agendaMonth";
 import { AgendaMonthView, cellSummary } from "./AgendaMonthView";
 
@@ -46,5 +46,19 @@ describe("AgendaMonthView", () => {
   it("carregando: esqueleto em vez de dias zerados", () => {
     render(<AgendaMonthView cells={buildMonthCells("2026-11-01", "2026-11-30", undefined)} today="2026-11-23" loading partialFrom={null} onPickDay={() => {}} />);
     expect(screen.getByRole("status", { name: "Carregando o mês…" })).toBeInTheDocument();
+  });
+});
+
+describe("AgendaMonthView: estrutura e compromissos", () => {
+  it("cada semana é uma linha (role row) com 7 células", () => {
+    setup();
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(1 + 6); // cabeçalho + 6 semanas de novembro de 2026
+    expect(within(rows[1]).getAllByRole("gridcell", { hidden: true })).toHaveLength(7);
+  });
+  it("indicador próprio de compromissos e tarefas no dia", () => {
+    const cells = buildMonthCells("2026-11-01", "2026-11-30", range, 3);
+    render(<AgendaMonthView cells={cells} today="2026-11-23" loading={false} partialFrom={null} internalCounts={{ "2026-11-12": 2 }} onPickDay={() => {}} />);
+    expect(screen.getByRole("button", { name: /^qui, 12\/11: Nada marcado, 2 compromissos ou tarefas/ })).toBeInTheDocument();
   });
 });

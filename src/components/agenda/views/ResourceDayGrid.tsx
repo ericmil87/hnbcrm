@@ -1,6 +1,6 @@
 import { AlertTriangle, CalendarDays, CheckSquare, DoorOpen, Lock, MoreVertical, Plus, UserRound } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
-import { AppointmentOriginBadge } from "@/components/agenda/AppointmentOriginBadge";
+import { OriginMark as AppointmentOriginBadge } from "./OriginMark";
 import { APPOINTMENT_STATUS_ICON } from "@/components/agenda/AppointmentStatusChip";
 import { VacancyIndicator } from "@/components/agenda/VacancyIndicator";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
@@ -22,7 +22,7 @@ import {
 } from "@/lib/agendaGrid";
 import { statusMeta, vacancyOf } from "@/lib/agendaStatus";
 import type { AppointmentStatus } from "@/lib/agendaTypes";
-import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
+import { dayLabels, VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import { minutesLabel, zonedRangeLabel, zonedTimeLabel } from "@/lib/agendaZone";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
@@ -30,7 +30,7 @@ import { VOCAB } from "@/lib/vocab";
 const t = VIEWS_COPY.grid;
 
 /** Ação do menu da coluna; o contêiner decide o que cada uma abre. */
-export type ColumnAction = "book" | "closeToday" | "closePeriod" | "reopen";
+export type ColumnAction = "book" | "closeToday" | "closePeriod" | "reopen" | "reopenPeriod";
 
 export interface ResourceDayGridProps {
   model: DayGridModel;
@@ -40,6 +40,8 @@ export interface ResourceDayGridProps {
   canBook: boolean;
   /** `agenda:edit`: fechar e abrir recurso no dia. */
   canClose: boolean;
+  /** O dia aberto é hoje: rótulos "hoje"; senão "neste dia" (a ação vale para o dia aberto, não para hoje). */
+  isToday: boolean;
   /** Mostra só estas colunas (celular: uma por vez). */
   visibleKeys?: readonly string[];
   onSlotClick: (resource: DayResource | null, minute: number) => void;
@@ -55,7 +57,7 @@ const HATCH = {
 
 const KIND_ICON = { room: DoorOpen, person: UserRound, equipment: DoorOpen } as const;
 
-function apptAria(item: Extract<GridItem, { kind: "appointment" }>, tz: string): string {
+function apptAria(item: Extract<GridItem, { kind: "appointment" }>, tz: string, over: boolean): string {
   const a = item.appointment;
   const place = a.resources.filter((r) => r.allocated).map((r) => r.name).join(", ");
   return [
@@ -65,6 +67,7 @@ function apptAria(item: Extract<GridItem, { kind: "appointment" }>, tz: string):
     statusMeta(a.status).label,
     place,
     item.conflict ? t.conflictMark : "",
+    over ? t.overCapacity : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -74,9 +77,11 @@ function ColumnHeader({
   col,
   canBook,
   canClose,
+  isToday,
   onColumnAction,
 }: {
   col: GridColumn;
+  isToday: boolean;
   canBook: boolean;
   canClose: boolean;
   onColumnAction: ResourceDayGridProps["onColumnAction"];
@@ -85,18 +90,22 @@ function ColumnHeader({
   const Icon = col.kind === "internal" ? CalendarDays : r ? KIND_ICON[r.kind] : DoorOpen;
   const v = vacancyOf(col.load.used, col.capacity);
   const showVacancy = col.kind === "resource" && (col.capacity > 1 || v.over);
+  const labels = dayLabels(isToday);
   const items: MenuItem[] = [];
   if (r && canBook && !col.closed) {
     items.push({ id: "book", label: t.bookHere, icon: <Plus size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "book") });
   }
   if (r && canClose) {
     if (col.closed) {
-      items.push({ id: "reopen", label: VOCAB.scheduling.openToday, icon: <DoorOpen size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "reopen") });
+      items.push({ id: "reopen", label: labels.reopen, icon: <DoorOpen size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "reopen") });
+      items.push({ id: "reopen-period", label: t.reopenPeriod, icon: <DoorOpen size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "reopenPeriod") });
     } else {
-      items.push({ id: "close-today", label: VOCAB.scheduling.closeToday, icon: <Lock size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "closeToday") });
+      items.push({ id: "close-today", label: labels.close, icon: <Lock size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "closeToday") });
     }
     items.push({ id: "close-period", label: t.closePeriod, icon: <Lock size={16} aria-hidden="true" />, onSelect: () => onColumnAction(r, "closePeriod") });
   }
+  const overPeak = col.kind === "resource" && col.peak > col.capacity;
+  const closedText = col.kind === "resource" && r?.kind === "room" ? labels.closed.fem : labels.closed.masc;
   return (
     <div className="flex min-h-[3.25rem] items-start gap-1.5 border-l border-border-subtle px-2 py-1.5">
       <Icon size={16} className="mt-0.5 shrink-0 text-text-muted" aria-hidden="true" />
@@ -112,12 +121,28 @@ function ColumnHeader({
           {col.closed && (
             <span className="inline-flex items-center gap-1 rounded-full bg-semantic-error/10 px-2 py-0.5 text-xs font-medium text-semantic-error">
               <Lock size={12} aria-hidden="true" />
-              {col.kind === "resource" && r?.kind === "room" ? t.closed : t.closedGeneric}
+              {closedText}
+            </span>
+          )}
+          {overPeak && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-semantic-error/10 px-2 py-0.5 text-xs font-medium text-semantic-error">
+              <AlertTriangle size={12} aria-hidden="true" />
+              {fillVocab(t.peakOver, { label: `${col.peak}/${col.capacity}` })}
             </span>
           )}
         </div>
         {col.closed && col.closedReason && <p className="truncate text-caption text-text-muted">{col.closedReason}</p>}
       </div>
+      {r && canBook && !col.closed && (
+        <button
+          type="button"
+          onClick={() => onColumnAction(r, "book")}
+          aria-label={fillVocab(t.bookInColumn, { nome: col.label })}
+          className="flex h-8 w-8 coarse:h-11 coarse:w-11 shrink-0 items-center justify-center rounded-full text-brand-500 hover:bg-brand-500/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+        >
+          <Plus size={16} aria-hidden="true" />
+        </button>
+      )}
       {items.length > 0 && (
         <Menu
           ariaLabel={fillVocab(t.columnMenu, { nome: col.label })}
@@ -239,8 +264,8 @@ function PlacedBlock({
       placed={placed}
       windowStartHour={windowStartHour}
       onClick={() => onAppointmentClick(a._id)}
-      ariaLabel={apptAria(item, tz)}
-      className={cn(meta.blockClassName, "text-text-primary")}
+      ariaLabel={apptAria(item, tz, placed.over)}
+      className={cn(meta.blockClassName, "text-text-primary", placed.over && "ring-2 ring-inset ring-semantic-error")}
     >
       <span className="flex items-center gap-1">
         <Icon size={12} className="shrink-0" aria-hidden="true" />
@@ -268,6 +293,7 @@ export function ResourceDayGrid({
   groupLabel,
   canBook,
   canClose,
+  isToday,
   visibleKeys,
   onSlotClick,
   onAppointmentClick,
@@ -291,14 +317,14 @@ export function ResourceDayGrid({
     <div className={cn("overflow-x-auto rounded-card border border-border bg-surface-raised", className)}>
       <div role="group" aria-label={fillVocab(t.ariaLabel, { por: groupLabel })} className="min-w-fit">
         <div className="grid border-b border-border bg-surface-raised" style={template}>
-          <div aria-hidden="true" />
+          <div aria-hidden="true" className="sticky left-0 z-20 bg-surface-raised" />
           {columns.map((col) => (
-            <ColumnHeader key={`head:${col.key}`} col={col} canBook={canBook} canClose={canClose} onColumnAction={onColumnAction} />
+            <ColumnHeader key={`head:${col.key}`} col={col} canBook={canBook} canClose={canClose} isToday={isToday} onColumnAction={onColumnAction} />
           ))}
         </div>
 
         <div className="relative grid" style={template}>
-          <div className="relative" style={{ height }} aria-hidden="true">
+          <div className="sticky left-0 z-20 bg-surface-raised" style={{ height }} aria-hidden="true">
             {hours.map((h, i) => (
               <span
                 key={`hour:${h}`}
@@ -345,7 +371,7 @@ export function ResourceDayGrid({
                 <div className="pointer-events-none absolute inset-x-1 top-2 flex flex-col items-center rounded-field bg-surface-raised px-2 py-1 text-center shadow-card">
                   <span className="flex items-center gap-1 text-xs font-semibold text-text-primary">
                     <Lock size={12} aria-hidden="true" />
-                    {col.resource?.kind === "room" ? t.closed : t.closedGeneric}
+                    {col.resource?.kind === "room" ? dayLabels(isToday).closed.fem : dayLabels(isToday).closed.masc}
                   </span>
                   {col.closedReason && <span className="text-caption text-text-secondary">{col.closedReason}</span>}
                 </div>

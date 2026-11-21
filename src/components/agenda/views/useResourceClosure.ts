@@ -10,7 +10,8 @@ import type { ConflictAction } from "@/lib/agendaConflict";
  * fechamento em lotes e resolver conflito). As telas recebem funções e dados prontos.
  */
 export interface ClosureScope {
-  resourceId: string;
+  /** Ausente = a agenda inteira (exige `agenda:manage`; nada é realocado, tudo vira conflito). */
+  resourceId?: string;
   fromLocalDate: string;
   toLocalDate?: string;
 }
@@ -38,7 +39,7 @@ export function useClosureApi(organizationId: Id<"organizations">): ClosureApi {
   return useMemo(() => {
     const base = (s: ClosureScope) => ({
       organizationId,
-      resourceId: rid(s.resourceId),
+      ...(s.resourceId ? { resourceId: rid(s.resourceId) } : {}),
       fromLocalDate: s.fromLocalDate,
       ...(s.toLocalDate && s.toLocalDate !== s.fromLocalDate ? { toLocalDate: s.toLocalDate } : {}),
     });

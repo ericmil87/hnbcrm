@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, CalendarPlus, ListChecks, MoreHorizontal, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, CalendarPlus, DoorOpen, Lock, ListChecks, MoreHorizontal, Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Menu } from "@/components/ui/Menu";
 import { PageHeader } from "@/components/ui/PageHeader";
@@ -28,6 +28,10 @@ export interface AgendaHeaderProps {
   onBook: () => void;
   canCreateEvent: boolean;
   onNewEvent: () => void;
+  /** `agenda:manage`: fechar e reabrir a agenda inteira (feriado, recesso). */
+  canManage: boolean;
+  onCloseAll: () => void;
+  onReopenAll: () => void;
   /** Rótulo do contador ("3", "50+"); `null` = ainda carregando ou módulo sem leitura. */
   pendingLabel: string | null;
   pendingTotal: number;
@@ -39,9 +43,16 @@ export function AgendaHeader(p: AgendaHeaderProps) {
   const month = p.view === "mes";
   const prevLabel = month ? t.prevMonth : t.prevDay;
   const nextLabel = month ? t.nextMonth : t.nextDay;
-  const menuItems = p.canCreateEvent
-    ? [{ id: "new-event", label: t.newEvent, icon: <CalendarPlus size={16} aria-hidden="true" />, onSelect: p.onNewEvent }]
-    : [];
+  const week = p.view === "semana";
+  const menuItems = [
+    ...(p.canCreateEvent && !week ? [{ id: "new-event", label: t.newEvent, icon: <CalendarPlus size={16} aria-hidden="true" />, onSelect: p.onNewEvent }] : []),
+    ...(p.canManage
+      ? [
+          { id: "close-all", label: t.closeAll, icon: <Lock size={16} aria-hidden="true" />, onSelect: p.onCloseAll, separatorBefore: p.canCreateEvent && !week },
+          { id: "reopen-all", label: t.reopenAll, icon: <DoorOpen size={16} aria-hidden="true" />, onSelect: p.onReopenAll },
+        ]
+      : []),
+  ];
 
   return (
     <div className="space-y-3">
@@ -67,16 +78,16 @@ export function AgendaHeader(p: AgendaHeaderProps) {
             )}
             {menuItems.length > 0 && (
               <Menu
-                ariaLabel={t.newEvent}
+                ariaLabel={t.menu}
                 items={menuItems}
                 trigger={(props) => (
-                  <Button variant="secondary" iconOnly aria-label={t.newEvent} {...props}>
+                  <Button variant="secondary" iconOnly aria-label={t.menu} {...props}>
                     <MoreHorizontal size={18} aria-hidden="true" />
                   </Button>
                 )}
               />
             )}
-            {p.canBook && (
+            {p.canBook && !week && (
               <Button onClick={p.onBook} className="hidden md:inline-flex">
                 <Plus size={18} aria-hidden="true" />
                 {VOCAB.scheduling.book}
@@ -86,6 +97,7 @@ export function AgendaHeader(p: AgendaHeaderProps) {
         }
       />
 
+      {!week && (
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1">
           <Button variant="secondary" iconOnly aria-label={prevLabel} onClick={p.onPrev}>
@@ -102,6 +114,7 @@ export function AgendaHeader(p: AgendaHeaderProps) {
           {t.today}
         </Button>
       </div>
+      )}
 
       <div className={cn("flex flex-wrap items-center gap-2")}>
         <SegmentedControl
@@ -110,11 +123,12 @@ export function AgendaHeader(p: AgendaHeaderProps) {
           onValueChange={(v) => p.onViewChange(v as AgendaView)}
           options={[
             { value: "dia", label: t.views.dia },
+            { value: "semana", label: t.views.semana },
             { value: "lista", label: t.views.lista },
             { value: "mes", label: t.views.mes },
           ]}
         />
-        {!month && (
+        {!month && !week && (
           <SegmentedControl
             ariaLabel={t.groupLabel}
             value={p.group}

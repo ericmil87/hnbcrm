@@ -1,5 +1,5 @@
 import { Bot, CalendarCheck, CheckCheck, MessageSquare, TriangleAlert, UserX } from "lucide-react";
-import { AppointmentOriginBadge } from "@/components/agenda/AppointmentOriginBadge";
+import { OriginMark as AppointmentOriginBadge } from "./OriginMark";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
@@ -28,6 +28,8 @@ export interface PendingConflict {
   kind?: string;
   /** Recurso que saiu (fechado, removido ou sem vaga). */
   resourceId?: string;
+  /** Sala e profissional que saíram, quando são mais de um. */
+  resourceIds?: readonly string[];
   /** Horários alternativos do servidor (até 3). */
   suggestions?: ReadonlyArray<{ startTime: number; resourceIds: readonly string[] }>;
 }
@@ -128,6 +130,7 @@ export function PendingQueueView(p: PendingQueueViewProps) {
                       {t.approve}
                     </Button>
                   )}
+                  {expired && <p className="basis-full text-caption text-text-secondary">{t.expired}</p>}
                   {!expired && mustResolveBeforeApprove(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
                   <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onDecline(a._id)}>
                     {t.decline}
@@ -150,11 +153,6 @@ export function PendingQueueView(p: PendingQueueViewProps) {
           ) : (
             <li key={`conflict:${c._id}`} className="flex items-center justify-between gap-2 rounded-card border border-border-subtle bg-surface-raised p-3">
               <span className="text-sm text-text-secondary">{t.noConflictAppt}</span>
-              {p.canEdit && (
-                <Button size="sm" variant="secondary" onClick={() => p.onResolve(c._id, null)}>
-                  {t.resolve}
-                </Button>
-              )}
             </li>
           )
         );

@@ -1,4 +1,4 @@
-import { Ban, CalendarCheck, Flame, Hourglass, Lock, TriangleAlert } from "lucide-react";
+import { Ban, CalendarCheck, CalendarDays, Flame, Hourglass, Lock, TriangleAlert } from "lucide-react";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { fillVocab } from "@/lib/agendaCopy";
 import type { MonthCell } from "@/lib/agendaMonth";
@@ -15,6 +15,8 @@ export interface AgendaMonthViewProps {
   /** Dia aberto antes (destaque leve). */
   selected?: string;
   loading: boolean;
+  /** Compromissos e tarefas da equipe por dia (indicador próprio; o resto do mês conta só agendamentos). */
+  internalCounts?: Readonly<Record<string, number>>;
   /** Último dia com contagem completa quando o servidor cortou; `undefined` = completo. */
   partialFrom?: { through: string | null } | null;
   onPickDay: (localDate: string) => void;
@@ -24,7 +26,7 @@ export interface AgendaMonthViewProps {
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 /** Resumo falado/escrito de um dia: "5 marcados, quase cheio, 1 fechado". */
-export function cellSummary(c: MonthCell): string {
+export function cellSummary(c: MonthCell, internal = 0): string {
   const parts: string[] = [];
   parts.push(c.active === 0 ? t.emptyDay : c.active === 1 ? t.markedOne : fillVocab(t.marked, { n: c.active }));
   if (c.pending > 0) parts.push(fillVocab(t.pendingMark, { n: c.pending }));
@@ -32,6 +34,7 @@ export function cellSummary(c: MonthCell): string {
   else if (c.level === "high") parts.push(lowerFirst(t.high));
   if (c.allClosed) parts.push(lowerFirst(t.allClosed));
   else if (c.closedResources > 0) parts.push(fillVocab(t.someClosed, { n: c.closedResources }));
+  if (internal > 0) parts.push(lowerFirst(internal === 1 ? t.internalOne : fillVocab(t.internal, { n: internal })));
   if (c.incomplete) parts.push(lowerFirst(t.incomplete));
   return parts.join(", ");
 }
@@ -44,7 +47,19 @@ const LEVEL_CLASS = {
 } as const;
 
 /** Mês de ocupação: um botão por dia (44 px), com contagem, "cheio" por ícone e rótulo, dias fechados e aviso de corte. */
-export function AgendaMonthView({ cells, today, selected, loading, partialFrom, onPickDay, className }: AgendaMonthViewProps) {
+/** Agrupa as células em semanas de 7 (completa a última com vazios). */
+export function weeksOf(cells: ReadonlyArray<MonthCell | null>): Array<Array<MonthCell | null>> {
+  const out: Array<Array<MonthCell | null>> = [];
+  for (let i = 0; i < cells.length; i += 7) {
+    const row = cells.slice(i, i + 7);
+    while (row.length < 7) row.push(null);
+    out.push(row);
+  }
+  return out;
+}
+
+export function AgendaMonthView({ cells, today, selected, loading, internalCounts, partialFrom, onPickDay, className }: AgendaMonthViewProps) {
+  const weeks = weeksOf(cells);
   return (
     <div className={cn("space-y-3", className)}>
       {partialFrom && (
@@ -70,16 +85,18 @@ export function AgendaMonthView({ cells, today, selected, loading, partialFrom, 
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-7 gap-1">
-            {cells.map((c, i) =>
+          <div className="space-y-1">
+            {weeks.map((week, w) => (
+              <div key={`week:${w}`} role="row" className="grid grid-cols-7 gap-1">
+            {week.map((c, i) =>
               c === null ? (
-                <div key={`blank:${i}`} role="gridcell" aria-hidden="true" />
+                <div key={`blank:${w}:${i}`} role="gridcell" aria-hidden="true" />
               ) : (
                 <div key={`day:${c.localDate}`} role="gridcell">
                   <button
                     type="button"
                     onClick={() => onPickDay(c.localDate)}
-                    aria-label={fillVocab(t.dayAria, { data: shortDateLabel(c.localDate), resumo: cellSummary(c) })}
+                    aria-label={fillVocab(t.dayAria, { data: shortDateLabel(c.localDate), resumo: cellSummary(c, internalCounts?.[c.localDate] ?? 0) })}
                     aria-current={c.localDate === today ? "date" : undefined}
                     className={cn(
                       "flex h-14 w-full flex-col items-stretch justify-between rounded-field border p-1 text-left transition-colors md:h-20 md:p-2",
@@ -113,6 +130,12 @@ export function AgendaMonthView({ cells, today, selected, loading, partialFrom, 
                           {c.incomplete ? "+" : ""}
                         </span>
                       )}
+                      {(internalCounts?.[c.localDate] ?? 0) > 0 && (
+                        <span className="inline-flex items-center gap-0.5 text-ai-400">
+                          <CalendarDays size={12} />
+                          {internalCounts?.[c.localDate]}
+                        </span>
+                      )}
                       {c.pending > 0 && (
                         <span className="inline-flex items-center gap-0.5 text-semantic-warning">
                           <Hourglass size={12} />
@@ -125,6 +148,8 @@ export function AgendaMonthView({ cells, today, selected, loading, partialFrom, 
                 </div>
               )
             )}
+              </div>
+            ))}
           </div>
         )}
       </div>

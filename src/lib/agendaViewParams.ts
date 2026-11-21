@@ -2,7 +2,7 @@
  * Agenda v2 (B3): estado da página na URL. Codecs de `searchParamState` (constantes de módulo, como o hook
  * exige) e as regras puras de navegação por data. Datas são "YYYY-MM-DD" NO FUSO DA ORG (nunca `Date` local).
  *
- *   ?visao=dia|lista|mes   (replace; ausente = lista no celular, dia no computador)
+ *   ?visao=dia|semana|lista|mes (replace; "semana" = a página de compromissos e tarefas da equipe; ausente = lista no celular, dia no computador)
  *   ?data=YYYY-MM-DD       (replace; ausente = hoje na org)
  *   ?por=sala|profissional (replace; agrupamento da grade e da lista)
  *   ?lista=hora|recurso    (replace; agrupamento da lista do dia)
@@ -15,7 +15,7 @@ import { WEEK_STARTS_ON } from "./agendaDates";
 import { enumParam, stringParam, type ParamCodec } from "./searchParamState";
 import type { GroupBy } from "./agendaGrid";
 
-export const AGENDA_VIEWS = ["dia", "lista", "mes"] as const;
+export const AGENDA_VIEWS = ["dia", "semana", "lista", "mes"] as const;
 export type AgendaView = (typeof AGENDA_VIEWS)[number];
 
 export const LIST_MODES = ["hora", "recurso"] as const;
@@ -96,4 +96,29 @@ const MONTH_NAMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
 export function periodLabel(date: LocalDate, view: AgendaView): string {
   if (view === "mes") return `${MONTH_NAMES[Number(date.slice(5, 7)) - 1]} de ${date.slice(0, 4)}`;
   return shortDateLabel(date);
+}
+
+/**
+ * Parâmetros ANTIGOS da página de compromissos como sinônimos (o Painel e favoritos antigos ainda os usam):
+ * `?date=` vira `?data=` e `?view=` vira `?visao=` (week -> semana, day -> dia, month -> mes). Devolve as escritas
+ * (`null` remove) ou `null` quando não há o que migrar. Com `?visao=` já presente nada muda; na visão Semana os
+ * parâmetros `view` e `date` são os da própria `CalendarPage` e ficam como estão.
+ */
+export function migrateLegacyParams(params: URLSearchParams): Record<string, string | null> | null {
+  if (viewParam.parse(params.get("visao")) !== null) return null;
+  const view = params.get("view");
+  const dateRaw = params.get("date");
+  const date = dateRaw !== null && isValidLocalDate(dateRaw) ? dateRaw : null;
+  const hasData = params.get("data") !== null;
+  if (view === "week") return { visao: "semana" };
+  const writes: Record<string, string | null> = {};
+  if (view === "day" || view === "month") {
+    writes.visao = view === "day" ? "dia" : "mes";
+    writes.view = null;
+  } else if (view !== null) writes.view = null;
+  if (dateRaw !== null) {
+    writes.date = null;
+    if (date && !hasData) writes.data = date;
+  }
+  return Object.keys(writes).length > 0 ? writes : null;
 }

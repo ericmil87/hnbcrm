@@ -6,7 +6,7 @@ import { appt, at, dayInput, NOW, res } from "./agendaViews.fixtures";
 
 function setup(model: ReturnType<typeof buildDayGridModel>, over: Partial<ResourceDayGridProps> = {}) {
   const handlers = { onSlotClick: vi.fn(), onAppointmentClick: vi.fn(), onInternalClick: vi.fn(), onColumnAction: vi.fn() };
-  render(<ResourceDayGrid model={model} tz="America/Sao_Paulo" groupLabel="sala" canBook canClose {...handlers} {...over} />);
+  render(<ResourceDayGrid model={model} tz="America/Sao_Paulo" groupLabel="sala" canBook canClose isToday {...handlers} {...over} />);
   return handlers;
 }
 const build = (d = dayInput(), groupBy: "room" | "person" = "room") => buildDayGridModel({ day: d, internal: [], groupBy, now: NOW });
@@ -115,7 +115,7 @@ describe("ResourceDayGrid: estados dos blocos", () => {
       day: dayInput(),
       groupBy: "room",
       now: NOW,
-      internal: [{ id: "e1", title: "Reunião de equipe", startTime: at(14), endTime: at(15), eventType: "meeting", source: "event", allDay: false }],
+      internal: [{ id: "e1", title: "Reunião de equipe", startTime: at(14), endTime: at(15), eventType: "meeting", source: "event", allDay: false, memberIds: [] }],
     });
     const h = setup(model);
     const col = screen.getByRole("group", { name: "Compromissos e tarefas" });
@@ -127,5 +127,62 @@ describe("ResourceDayGrid: estados dos blocos", () => {
     setup(build(), { visibleKeys: ["res:sala2"] });
     expect(screen.queryByRole("group", { name: "Sala1" })).toBeNull();
     expect(screen.getByRole("group", { name: "Sala2" })).toBeInTheDocument();
+  });
+});
+
+describe("ResourceDayGrid: dia aberto que não é hoje", () => {
+  it("rótulos 'neste dia', nunca 'hoje'", () => {
+    const closed = dayInput({ resources: [res("sala1", "room", { closed: true, open: [] }), res("sala2", "room")], exceptions: [{ resourceId: "sala1", mode: "closed", reasonCode: "holiday" }] });
+    setup(build(closed), { isToday: false });
+    expect(screen.getAllByText("Fechada neste dia").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Fechada hoje")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Opções de Sala1" }));
+    expect(screen.getByRole("menuitem", { name: "Reabrir neste dia" })).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: "Reabrir um período" })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Abrir hoje" })).toBeNull();
+  });
+  it("coluna aberta: 'Fechar neste dia' e a ação continua sendo closeToday para o contêiner", () => {
+    const h = setup(build(), { isToday: false });
+    fireEvent.click(screen.getByRole("button", { name: "Opções de Sala1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Fechar neste dia" }));
+    expect(h.onColumnAction).toHaveBeenCalledWith(expect.objectContaining({ _id: "sala1" }), "closeToday");
+  });
+});
+
+describe("ResourceDayGrid: acima da capacidade", () => {
+  it("o grupo que passa da capacidade fica com anel de erro e rótulo acessível; o cabeçalho avisa o pico", () => {
+    const d = dayInput({ appointments: [1, 2, 3].map(() => appt(["sala2"], at(9), at(10))).concat([appt(["sala2"], at(15), at(16))]) });
+    setup(build(d));
+    const blocks = screen.getAllByRole("button", { name: /Cliente/ });
+    const over = blocks.filter((b) => /acima da capacidade/.test(b.getAttribute("aria-label") ?? ""));
+    expect(over).toHaveLength(3);
+    expect(over.every((b) => b.className.includes("ring-semantic-error"))).toBe(true);
+    const lone = blocks.find((b) => b.style.top === "420px")!;
+    expect(lone.getAttribute("aria-label")).not.toMatch(/acima da capacidade/);
+    expect(screen.getByText("Pico 3/2: acima da capacidade")).toBeInTheDocument();
+  });
+});
+
+describe("ResourceDayGrid: marcar pelo teclado e coluna do profissional", () => {
+  it("cada coluna tem um botão 'Marcar horário em ...'", () => {
+    const h = setup(build());
+    fireEvent.click(screen.getByRole("button", { name: "Marcar horário em Sala2" }));
+    expect(h.onColumnAction).toHaveBeenCalledWith(expect.objectContaining({ _id: "sala2" }), "book");
+  });
+  it("sem permissão de marcar (ou dia passado) o botão some", () => {
+    setup(build(), { canBook: false });
+    expect(screen.queryByRole("button", { name: /Marcar horário em/ })).toBeNull();
+  });
+  it("compromisso do profissional aparece na coluna dele, tracejado", () => {
+    const model = buildDayGridModel({
+      day: dayInput({ resources: [res("ana", "person", { teamMemberId: "m1" })] }),
+      groupBy: "person",
+      now: NOW,
+      internal: [{ id: "e1", title: "Reunião de equipe", startTime: at(14), endTime: at(15), eventType: "meeting", source: "event", allDay: false, memberIds: ["m1"] }],
+    });
+    setup(model, { groupLabel: "profissional" });
+    const col = screen.getByRole("group", { name: "Ana" });
+    expect(within(col).getByRole("button", { name: /Reunião de equipe/ }).className).toContain("border-dashed");
+    expect(screen.queryByRole("group", { name: "Compromissos e tarefas" })).toBeNull();
   });
 });

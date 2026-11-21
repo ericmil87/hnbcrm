@@ -5,6 +5,9 @@ import {
   CLOSURE_REASON_TEXT,
   buildDayGridModel,
   closedReasonOf,
+  filterInternalForDay,
+  internalCountsByDay,
+  nextHalfHour,
   columnLoad,
   complementSpans,
   daySpan,
@@ -337,4 +340,109 @@ describe("motivos do fechamento", () => {
   it("espelham os das Configurações (cópia só para não criar chunk compartilhado)", () => {
     expect(CLOSURE_REASON_TEXT).toEqual(CLOSURE_REASON_LABELS);
   });
+});
+
+describe("recorte dos itens internos pelo dia da org", () => {
+  const item = (id: string, start: number, end: number, over: Record<string, unknown> = {}) =>
+    toInternalItems([{ _id: id, title: id, startTime: start, endTime: end, eventType: "meeting", ...over }])[0];
+  const d = (...items: ReturnType<typeof item>[]) => filterInternalForDay(items, DATE, TZ).map((i) => i.id);
+
+  it("o de ontem (a busca recua um dia de propósito) não aparece hoje", () => {
+    expect(d(item("ontem", at(-8), at(-7)))).toEqual([]);
+    expect(d(item("hoje", at(9), at(10)))).toEqual(["hoje"]);
+  });
+  it("o que termina exatamente à meia-noite de hoje é de ontem; o que cruza a meia-noite entra nos dois dias", () => {
+    expect(d(item("termina-0h", at(-2), at(0)))).toEqual([]);
+    expect(d(item("cruza", at(-1), at(1)))).toEqual(["cruza"]);
+    expect(filterInternalForDay([item("cruza", at(-1), at(1))], "2026-11-22", TZ)).toHaveLength(1);
+    expect(d(item("amanha", at(24), at(25)))).toEqual([]);
+  });
+  it("dia inteiro de ontem fica fora; o de hoje e o de vários dias que passa por hoje ficam", () => {
+    expect(d(item("ontem-todo", at(-24), at(0), { allDay: true }))).toEqual([]);
+    expect(d(item("hoje-todo", at(0), at(24) - 1, { allDay: true }))).toEqual(["hoje-todo"]);
+    expect(d(item("varios", at(-48), at(30), { allDay: true }))).toEqual(["varios"]);
+  });
+  it("tarefa sem duração conta só no dia em que começa", () => {
+    expect(d(item("t", at(9), at(9), { _source: "task" }))).toEqual(["t"]);
+    expect(d(item("t-ontem", at(-1), at(-1), { _source: "task" }))).toEqual([]);
+    expect(d(item("t-0h", at(0), at(0), { _source: "task" }))).toEqual(["t-0h"]);
+  });
+  it("o modelo recebe a lista já recortada: nada de ontem na grade nem nos chips 'Dia inteiro'", () => {
+    const all = [item("ontem", at(-8), at(-7)), item("ontem-todo", at(-24), at(0), { allDay: true }), item("hoje", at(14), at(15)), item("hoje-todo", at(0), at(24) - 1, { allDay: true })];
+    const m = buildDayGridModel({ day: day(), internal: filterInternalForDay(all, DATE, TZ), groupBy: "room", now: NOW });
+    expect(m.allDay.map((e) => e.id)).toEqual(["hoje-todo"]);
+    expect(m.columns.at(-1)?.placed.map((p) => p.item.id)).toEqual(["event:hoje"]);
+  });
+  it("contagem por dia para o mês", () => {
+    const all = [item("a", at(9), at(10)), item("b", at(-1), at(1)), item("c", at(48), at(49))];
+    expect(internalCountsByDay(all, "2026-11-22", "2026-11-25", TZ)).toEqual({ "2026-11-22": 1, "2026-11-23": 2, "2026-11-25": 1 });
+  });
+  it("novo compromisso: próxima meia hora no fuso da org, no máximo 23:30", () => {
+    expect(nextHalfHour(at(9, 10), TZ)).toEqual({ hour: 9, minute: 30 });
+    expect(nextHalfHour(at(9, 30), TZ)).toEqual({ hour: 10, minute: 0 });
+    expect(nextHalfHour(at(23, 50), TZ)).toEqual({ hour: 23, minute: 30 });
+  });
+});
+
+describe("compromissos na coluna do profissional", () => {
+  const people = [res("ana", "person", { teamMemberId: "m-ana" }), res("beto", "person", { teamMemberId: "m-beto" }), res("sala1", "room")];
+  const ev = (id: string, memberIds: string[]) => toInternalItems([{ _id: id, title: id, startTime: at(14), endTime: at(15), eventType: "meeting", assignedTo: memberIds[0], attendees: memberIds.slice(1) }]);
+  const build = (internal: ReturnType<typeof toInternalItems>, groupBy: "room" | "person") =>
+    buildDayGridModel({ day: day({ resources: people }), internal, groupBy, now: NOW });
+
+  it("por profissional: o compromisso do responsável aparece na coluna dele", () => {
+    const m = build(ev("reuniao", ["m-ana"]), "person");
+    expect(m.columns.map((c) => [c.label, c.placed.length])).toEqual([["ana", 1], ["beto", 0]]);
+    expect(m.columns.some((c) => c.kind === "internal")).toBe(false);
+  });
+  it("participantes também; o compromisso aparece em cada coluna dos donos", () => {
+    const m = build(ev("reuniao", ["m-ana", "m-beto"]), "person");
+    expect(m.columns.map((c) => c.placed.length)).toEqual([1, 1]);
+  });
+  it("sem dono-recurso fica na coluna 'Compromissos e tarefas'", () => {
+    const m = build(ev("reuniao", ["m-outro"]), "person");
+    expect(m.columns.at(-1)).toMatchObject({ kind: "internal" });
+    expect(m.columns.at(-1)?.placed).toHaveLength(1);
+    expect(m.columns.slice(0, 2).every((c) => c.placed.length === 0)).toBe(true);
+  });
+  it("por sala: todos na coluna separada", () => {
+    const m = build(ev("reuniao", ["m-ana"]), "room");
+    expect(m.columns.at(-1)).toMatchObject({ kind: "internal" });
+    expect(m.columns[0].placed).toHaveLength(0);
+  });
+  it("o compromisso ocupa a coluna do profissional (sem vaga livre) mas não conta como 'acima da capacidade'", () => {
+    const a = appt({ rooms: ["sala1"], startTime: at(14), endTime: at(15), contactName: "x" });
+    a.resources.push({ resourceId: "ana" as never, role: "person", name: "Ana", allocated: true });
+    const m = buildDayGridModel({ day: day({ resources: people, appointments: [a] }), internal: ev("reuniao", ["m-ana"]), groupBy: "person", now: NOW });
+    const ana = m.columns[0];
+    expect(ana.placed).toHaveLength(2);
+    expect(ana.placed.every((p) => !p.over)).toBe(true);
+    expect(ana.peak).toBe(1);
+    expect(freeGaps(ana, DATE, TZ).every((g) => g.endMin <= 14 * 60 || g.startMin >= 15 * 60)).toBe(true);
+  });
+});
+
+describe("acima da capacidade por grupo de sobreposição", () => {
+  it("só o trecho com mais simultâneos que a capacidade é marcado; o cabeçalho avisa o pico sempre", () => {
+    const d = dayInput2([
+      appt({ rooms: ["sala2"], startTime: at(9), endTime: at(10) }),
+      appt({ rooms: ["sala2"], startTime: at(9), endTime: at(10) }),
+      appt({ rooms: ["sala2"], startTime: at(9), endTime: at(10) }),
+      appt({ rooms: ["sala2"], startTime: at(15), endTime: at(16) }),
+    ]);
+    const col = buildDayGridModel({ day: d, internal: [], groupBy: "room", now: at(9) + 5 * 86_400_000 }).columns[1];
+    const over = col.placed.map((p) => p.over);
+    expect(over.filter(Boolean)).toHaveLength(3);
+    expect(col.peak).toBe(3);
+    const lone = col.placed.find((p) => p.item.startMin === 15 * 60)!;
+    expect(lone.over).toBe(false);
+  });
+  it("dentro da capacidade nada é marcado", () => {
+    const col = buildDayGridModel({ day: dayInput2([appt({ rooms: ["sala2"], startTime: at(9), endTime: at(10) }), appt({ rooms: ["sala2"], startTime: at(9), endTime: at(10) })]), internal: [], groupBy: "room", now: NOW }).columns[1];
+    expect(col.placed.some((p) => p.over)).toBe(false);
+    expect(col.peak).toBe(2);
+  });
+  function dayInput2(appointments: GridAppointment[]) {
+    return day({ appointments });
+  }
 });

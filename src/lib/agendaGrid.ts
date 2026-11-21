@@ -14,7 +14,7 @@
 import { gridHourRange, layoutOverlaps, MIN_EVENT_MINUTES } from "./agendaLayout";
 import { statusMeta } from "./agendaStatus";
 import type { ResourceKind, SchedAppointmentView } from "./agendaTypes";
-import { zonedDayBounds, zonedMinutes, zonedToday } from "./agendaZone";
+import { addLocalDays, diffLocalDays, zonedDayBounds, zonedMinutes, zonedToday } from "./agendaZone";
 
 export type GroupBy = "room" | "person";
 
@@ -79,6 +79,8 @@ export interface InternalItem {
   source: "event" | "task";
   allDay: boolean;
   assigneeName?: string;
+  /** Responsável e participantes (ids de membro): decidem em que coluna de profissional o item aparece. */
+  memberIds: string[];
   canEdit?: boolean;
 }
 
@@ -90,6 +92,12 @@ export function toInternalItems(raw: readonly unknown[] | undefined | null): Int
     if (!e || typeof e._id !== "string" || typeof e.startTime !== "number") continue;
     const end = typeof e.endTime === "number" && e.endTime >= e.startTime ? e.endTime : e.startTime;
     const assignee = e.assignee as { name?: unknown } | null | undefined;
+    const ids = new Set<string>();
+    if (typeof e.assignedTo === "string") ids.add(e.assignedTo);
+    for (const a of Array.isArray(e.attendees) ? e.attendees : []) {
+      if (typeof a === "string") ids.add(a);
+      else if (a && typeof (a as { _id?: unknown })._id === "string") ids.add((a as { _id: string })._id);
+    }
     out.push({
       id: e._id,
       title: typeof e.title === "string" && e.title.trim() ? e.title : "Sem título",
@@ -99,10 +107,41 @@ export function toInternalItems(raw: readonly unknown[] | undefined | null): Int
       source: e._source === "task" ? "task" : "event",
       allDay: e.allDay === true,
       assigneeName: typeof assignee?.name === "string" ? assignee.name : undefined,
+      memberIds: [...ids],
       canEdit: typeof e.canEdit === "boolean" ? e.canEdit : undefined,
     });
   }
   return out.sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
+}
+
+/**
+ * Itens internos que tocam o DIA local da org. A busca de `getEvents` recua um dia de propósito (para trazer o
+ * que começou ontem e cruza a meia-noite), então o recorte por dia é feito UMA vez, aqui, e a mesma lista vai
+ * para a grade, a lista e os chips "Dia inteiro". Com horário e dia inteiro vale a sobreposição com `[início, fim)`
+ * do dia no fuso da org; item sem duração conta se começa dentro do dia.
+ */
+export function filterInternalForDay(items: readonly InternalItem[], localDate: string, tz: string): InternalItem[] {
+  const b = zonedDayBounds(localDate, tz);
+  return items.filter((e) =>
+    e.endTime <= e.startTime ? e.startTime >= b.start && e.startTime < b.end : e.startTime < b.end && e.endTime > b.start
+  );
+}
+
+/** Quantos itens internos tocam cada dia de `[from, to]` (indicador do mês). */
+export function internalCountsByDay(items: readonly InternalItem[], from: string, to: string, tz: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (let d = from; diffLocalDays(d, to) >= 0; d = addLocalDays(d, 1)) {
+    const n = filterInternalForDay(items, d, tz).length;
+    if (n > 0) out[d] = n;
+  }
+  return out;
+}
+
+/** Hora cheia ou meia hora seguinte ao instante, no fuso da org (máx. 23:30): início sugerido de "Novo compromisso". */
+export function nextHalfHour(now: number, tz: string): { hour: number; minute: number } {
+  const m = zonedMinutes(now, tz);
+  const next = Math.min(23 * 60 + 30, Math.ceil((m + 1) / 30) * 30);
+  return { hour: Math.floor(next / 60), minute: next % 60 };
 }
 
 export interface DayInput {
@@ -147,6 +186,8 @@ export interface PlacedItem {
   /** Faixa (0-based) e total de faixas do cluster, já com a capacidade. */
   column: number;
   columns: number;
+  /** Mais agendamentos simultâneos que a capacidade neste trecho (compromisso interno não conta). */
+  over: boolean;
 }
 
 export interface ColumnLoad {
@@ -170,6 +211,8 @@ export interface GridColumn {
   /** Bloqueios de horário do recurso. */
   blocked: MinuteSpan[];
   load: ColumnLoad;
+  /** Maior simultaneidade de agendamentos no dia; acima da capacidade o cabeçalho avisa sempre. */
+  peak: number;
 }
 
 export interface DayGridModel {
@@ -259,15 +302,23 @@ export function columnLoad(items: readonly Pick<GridItem, "startMin" | "endMin">
   return { used: peakConcurrency(items), basis: "peak" };
 }
 
+/** Itens que ocupam a capacidade (compromisso interno não conta para "acima da capacidade"). */
+const isReal = (i: Pick<GridItem, "kind">) => i.kind !== "internal";
+
 /** Faixas de um recurso: sobreposição em clusters, mas nunca menos faixas que a capacidade. */
 export function layoutLanes(items: readonly GridItem[], capacity: number): PlacedItem[] {
   const cap = Number.isFinite(capacity) && capacity >= 1 ? Math.floor(capacity) : 1;
   const byId = new Map(items.map((i) => [i.id, i]));
-  return layoutOverlaps(items.map((i) => ({ id: i.id, startMin: i.startMin, endMin: i.endMin }))).map((l) => ({
-    item: byId.get(l.id)!,
-    column: l.column,
-    columns: Math.max(l.columns, cap),
-  }));
+  const real = items.filter(isReal);
+  const overOf = (i: GridItem): boolean => {
+    if (!isReal(i)) return false;
+    const points = [i.startMin, ...real.filter((o) => o.startMin > i.startMin && o.startMin < Math.max(i.endMin, i.startMin + 1)).map((o) => o.startMin)];
+    return points.some((p) => concurrencyAt(real, p) > cap);
+  };
+  return layoutOverlaps(items.map((i) => ({ id: i.id, startMin: i.startMin, endMin: i.endMin }))).map((l) => {
+    const item = byId.get(l.id)!;
+    return { item, column: l.column, columns: Math.max(l.columns, cap), over: overOf(item) };
+  });
 }
 
 /** Janelas de funcionamento (em minutos) dos recursos mostrados; vazio se nada abre. */
@@ -337,13 +388,24 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
 
   const allDay: InternalItem[] = [];
   const timedInternal: GridItem[] = [];
+  const ownerColumns = new Map<string, string[]>();
+  if (groupBy === "person") {
+    for (const r of shown) if (r.teamMemberId) ownerColumns.set(r.teamMemberId, [...(ownerColumns.get(r.teamMemberId) ?? []), r._id]);
+  }
   for (const e of input.internal) {
     if (e.allDay) {
       allDay.push(e);
       continue;
     }
     const span = daySpan(e.startTime, e.endTime, day.localDate, tz);
-    if (span) timedInternal.push({ kind: "internal", id: `${e.source}:${e.id}`, startMin: span.startMin, endMin: span.endMin, internal: e });
+    if (!span) continue;
+    const base = { kind: "internal" as const, startMin: span.startMin, endMin: span.endMin, internal: e };
+    // Por profissional, o compromisso vai para a coluna de quem é dono (responsável ou participante) e a coluna
+    // não parece livre; o que não tem dono-recurso fica na coluna "Compromissos e tarefas".
+    const owners = new Set(e.memberIds.flatMap((m) => ownerColumns.get(m) ?? []));
+    if (owners.size > 0) {
+      for (const rid of owners) byColumn.get(rid)?.push({ ...base, id: `${e.source}:${e.id}:${rid}` });
+    } else timedInternal.push({ ...base, id: `${e.source}:${e.id}` });
   }
 
   // Janela de horas: a do expediente, ampliada para caber qualquer item.
@@ -371,7 +433,8 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
       placed: layoutLanes(items, r.capacity),
       offHours: closed ? [] : complementSpans([...openSpans, ...blocked], fromMin, toMin),
       blocked: closed ? [] : blocked,
-      load: columnLoad(items, nowMin),
+      load: columnLoad(items.filter(isReal), nowMin),
+      peak: peakConcurrency(items.filter(isReal)),
     };
   });
   if (unassigned.length > 0) {
@@ -387,6 +450,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
       offHours: [],
       blocked: [],
       load: columnLoad(unassigned, nowMin),
+      peak: peakConcurrency(unassigned),
     });
   }
   if (timedInternal.length > 0) {
@@ -402,6 +466,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
       offHours: [],
       blocked: [],
       load: { used: 0, basis: "peak" },
+      peak: 0,
     });
   }
 

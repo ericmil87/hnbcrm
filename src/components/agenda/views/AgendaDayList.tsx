@@ -1,6 +1,6 @@
 import { CalendarDays, CheckSquare, ChevronRight, DoorOpen, Lock, Plus, TriangleAlert, UserRound } from "lucide-react";
 import { Fragment } from "react";
-import { AppointmentOriginBadge } from "@/components/agenda/AppointmentOriginBadge";
+import { OriginMark as AppointmentOriginBadge } from "./OriginMark";
 import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { VacancyIndicator } from "@/components/agenda/VacancyIndicator";
 import { Button } from "@/components/ui/Button";
@@ -9,7 +9,7 @@ import { Menu, type MenuItem } from "@/components/ui/Menu";
 import { fillVocab } from "@/lib/agendaCopy";
 import { appointmentLabel, type GroupBy, type InternalItem } from "@/lib/agendaGrid";
 import type { ListEntry, ListGroup, ResourceSummary } from "@/lib/agendaDayList";
-import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
+import { dayLabels, VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import type { ListMode } from "@/lib/agendaViewParams";
 import { minutesLabel, zonedRangeLabel, zonedTimeLabel } from "@/lib/agendaZone";
 import { cn } from "@/lib/utils";
@@ -27,6 +27,8 @@ export interface AgendaDayListProps {
   groupBy: GroupBy;
   canBook: boolean;
   canClose: boolean;
+  /** O dia aberto é hoje: rótulos "hoje"; senão "neste dia". */
+  isToday: boolean;
   /** Recursos para o menu do resumo (fechar/abrir). */
   resources: readonly DayResource[];
   onAppointmentClick: (appointmentId: string) => void;
@@ -148,9 +150,11 @@ function SummaryChip({
   resource,
   canBook,
   canClose,
+  isToday,
   onAction,
 }: {
   s: ResourceSummary;
+  isToday: boolean;
   resource: DayResource | undefined;
   canBook: boolean;
   canClose: boolean;
@@ -159,7 +163,7 @@ function SummaryChip({
   const feminine = s.kind === "room";
   const state =
     s.state === "closed"
-      ? feminine ? t.closed : t.closedGeneric
+      ? feminine ? (isToday ? t.closed : VIEWS_COPY.grid.closedDay) : isToday ? t.closedGeneric : VIEWS_COPY.grid.closedDayGeneric
       : s.state === "full"
         ? feminine ? t.full : t.fullGeneric
         : feminine ? t.open : t.openGeneric;
@@ -188,8 +192,11 @@ function SummaryChip({
     items.push({ id: "book", label: VIEWS_COPY.grid.bookHere, icon: <Plus size={16} aria-hidden="true" />, onSelect: () => onAction(resource, "book") });
   }
   if (resource && canClose) {
-    if (s.state === "closed") items.push({ id: "reopen", label: VOCAB.scheduling.openToday, onSelect: () => onAction(resource, "reopen") });
-    else items.push({ id: "close-today", label: VOCAB.scheduling.closeToday, onSelect: () => onAction(resource, "closeToday") });
+    const labels = dayLabels(isToday);
+    if (s.state === "closed") {
+      items.push({ id: "reopen", label: labels.reopen, onSelect: () => onAction(resource, "reopen") });
+      items.push({ id: "reopen-period", label: VIEWS_COPY.grid.reopenPeriod, onSelect: () => onAction(resource, "reopenPeriod") });
+    } else items.push({ id: "close-today", label: labels.close, onSelect: () => onAction(resource, "closeToday") });
     items.push({ id: "close-period", label: VIEWS_COPY.grid.closePeriod, onSelect: () => onAction(resource, "closePeriod") });
   }
   const cls = cn("flex min-h-11 items-center gap-2 rounded-card border px-3 py-1.5", tone);
@@ -244,6 +251,7 @@ export function AgendaDayList(p: AgendaDayListProps) {
                 resource={resourceById.get(s.resourceId)}
                 canBook={p.canBook}
                 canClose={p.canClose}
+                isToday={p.isToday}
                 onAction={p.onResourceAction}
               />
             ))}
@@ -273,7 +281,7 @@ export function AgendaDayList(p: AgendaDayListProps) {
                   {g.closed && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-semantic-error/10 px-2 py-0.5 text-xs font-medium text-semantic-error">
                       <Lock size={12} aria-hidden="true" />
-                      {resourceById.get(g.resourceId ?? "")?.kind === "room" ? VIEWS_COPY.grid.closed : VIEWS_COPY.grid.closedGeneric}
+                      {resourceById.get(g.resourceId ?? "")?.kind === "room" ? dayLabels(p.isToday).closed.fem : dayLabels(p.isToday).closed.masc}
                     </span>
                   )}
                   {g.closed && g.closedReason && <span className="truncate text-caption text-text-muted">{g.closedReason}</span>}
@@ -284,7 +292,7 @@ export function AgendaDayList(p: AgendaDayListProps) {
                       className="ml-auto"
                       onClick={() => p.onResourceAction(resourceById.get(g.resourceId!)!, "reopen")}
                     >
-                      {VOCAB.scheduling.openToday}
+                      {dayLabels(p.isToday).reopen}
                     </Button>
                   )}
                 </div>

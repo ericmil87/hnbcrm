@@ -102,3 +102,41 @@ export function rulesErrorMessage(error: unknown): string | null {
   const messages = list.map((v) => (v && typeof (v as { message?: unknown }).message === "string" ? (v as { message: string }).message : "")).filter(Boolean);
   return messages.length > 0 ? messages.join(" ") : null;
 }
+
+export interface MissingGroup {
+  missing: ResourceLite;
+  candidates: ResourceLite[];
+}
+
+/**
+ * O que saiu do agendamento (sala e/ou profissional): `conflict.resourceIds`, senão `resourceId`, senão os não
+ * alocados do agendamento; cada um com os candidatos do MESMO tipo (que o agendamento ainda não usa).
+ */
+export function missingGroups(
+  resources: readonly ResourceLite[],
+  appointmentResources: ReadonlyArray<{ resourceId: string; allocated: boolean }>,
+  conflict: { resourceId?: string; resourceIds?: readonly string[] }
+): MissingGroup[] {
+  const ids =
+    conflict.resourceIds && conflict.resourceIds.length > 0
+      ? [...conflict.resourceIds]
+      : conflict.resourceId
+        ? [conflict.resourceId]
+        : appointmentResources.filter((r) => !r.allocated).map((r) => r.resourceId);
+  const used = new Set(appointmentResources.map((r) => r.resourceId));
+  const out: MissingGroup[] = [];
+  for (const id of [...new Set(ids)]) {
+    const missing = resources.find((r) => r._id === id);
+    if (!missing) continue;
+    out.push({ missing, candidates: resources.filter((r) => r.kind === missing.kind && r.active !== false && !used.has(r._id) && r._id !== id) });
+  }
+  return out;
+}
+
+/** Lista completa de recursos do agendamento com cada ausente trocado pela escolha (ordem original). */
+export function applyReplacements(
+  appointmentResources: ReadonlyArray<{ resourceId: string }>,
+  choices: Readonly<Record<string, string>>
+): string[] {
+  return appointmentResources.map((r) => choices[r.resourceId] ?? r.resourceId);
+}

@@ -20,7 +20,7 @@ describe("codecs da URL", () => {
   it("visão: válida passa, inválida ou ausente vira null (o padrão é do aparelho)", () => {
     expect(viewParam.parse("lista")).toBe("lista");
     expect(viewParam.parse("mes")).toBe("mes");
-    expect(viewParam.parse("semana")).toBeNull();
+    expect(viewParam.parse("ano")).toBeNull();
     expect(viewParam.parse(null)).toBeNull();
     expect(viewParam.serialize("dia")).toBe("dia");
     expect(viewParam.serialize(null)).toBeNull();
@@ -92,5 +92,28 @@ describe("rótulo do período", () => {
     expect(periodLabel("2026-11-23", "dia")).toBe("seg, 23/11");
     expect(periodLabel("2026-11-23", "lista")).toBe("seg, 23/11");
     expect(periodLabel("2026-03-05", "mes")).toBe("Março de 2026");
+  });
+});
+
+import { migrateLegacyParams } from "./agendaViewParams";
+
+describe("parâmetros antigos da Agenda", () => {
+  const m = (q: string) => migrateLegacyParams(new URLSearchParams(q));
+  it("?date= do Painel vira ?data=", () => {
+    expect(m("date=2026-11-23")).toEqual({ date: null, data: "2026-11-23" });
+  });
+  it("?view= vira ?visao= e leva a data junto", () => {
+    expect(m("view=day&date=2026-11-23")).toEqual({ visao: "dia", view: null, date: null, data: "2026-11-23" });
+    expect(m("view=month")).toEqual({ visao: "mes", view: null });
+  });
+  it("semana: vai para a visão Semana e mantém view e date (são os da CalendarPage)", () => {
+    expect(m("view=week&date=2026-11-23")).toEqual({ visao: "semana" });
+  });
+  it("com ?visao= nada muda; data inválida é descartada; ?data= existente não é sobrescrito", () => {
+    expect(m("visao=semana&view=week&date=2026-11-23")).toBeNull();
+    expect(m("date=2026-02-30")).toEqual({ date: null });
+    expect(m("date=2026-11-23&data=2026-11-25")).toEqual({ date: null });
+    expect(m("")).toBeNull();
+    expect(m("view=xyz")).toEqual({ view: null });
   });
 });

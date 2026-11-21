@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { CalendarClock, CheckCheck, Undo2, XCircle } from "lucide-react";
-import { AppointmentOriginBadge } from "@/components/agenda/AppointmentOriginBadge";
+import { OriginMark as AppointmentOriginBadge } from "./OriginMark";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
-import { conflictKindText, type ResourceLite, type SuggestionRow } from "@/lib/agendaConflict";
+import { fillVocab } from "@/lib/agendaCopy";
+import { conflictKindText, type MissingGroup, type SuggestionRow } from "@/lib/agendaConflict";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import { VOCAB } from "@/lib/vocab";
 
@@ -16,9 +17,11 @@ export interface ConflictResolverViewProps {
   origin: string;
   kind: string | undefined;
   suggestions: readonly SuggestionRow[];
-  candidates: readonly ResourceLite[];
+  /** O que saiu (sala e/ou profissional) e quem pode substituir cada um. */
+  groups: readonly MissingGroup[];
   busy: boolean;
-  onPickResource: (resourceId: string) => void;
+  /** Troca de recursos: `choices` = ausente -> substituto (todos os ausentes têm escolha). */
+  onApplyResources: (choices: Record<string, string>) => void;
   onPickSuggestion: (s: SuggestionRow) => void;
   onReschedule: () => void;
   onCancel: (reason: string) => void;
@@ -38,6 +41,9 @@ const optionClass =
 export function ConflictResolverView(p: ConflictResolverViewProps) {
   const [sub, setSub] = useState<Sub>(null);
   const [text, setText] = useState("");
+  const [choices, setChoices] = useState<Record<string, string>>({});
+  const single = p.groups.length === 1;
+  const allChosen = p.groups.length > 0 && p.groups.every((g) => choices[g.missing._id]);
 
   if (sub) {
     const cancel = sub === "cancel";
@@ -93,23 +99,43 @@ export function ConflictResolverView(p: ConflictResolverViewProps) {
         </section>
       )}
 
-      <section aria-labelledby="conflict-resources" className="space-y-2">
+      <section aria-labelledby="conflict-resources" className="space-y-3">
         <h3 id="conflict-resources" className="text-sm font-semibold text-text-primary">
           {t.chooseResource}
         </h3>
-        {p.candidates.length === 0 ? (
+        {p.groups.every((g) => g.candidates.length === 0) ? (
           <p className="text-sm text-text-muted">{t.noCandidates}</p>
         ) : (
-          <ul className="space-y-2">
-            {p.candidates.map((r) => (
-              <li key={`cand:${r._id}`}>
-                <button type="button" disabled={p.busy} onClick={() => p.onPickResource(r._id)} className={optionClass}>
-                  <span className="flex-1">{r.name}</span>
-                  <span className="text-caption text-text-muted">{VOCAB.scheduling.resource[r.kind].title}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          p.groups.map((g) => (
+            <div key={`missing:${g.missing._id}`} className="space-y-2">
+              {!single && <p className="text-caption font-medium text-text-secondary">{fillVocab(t.replaceFor, { nome: g.missing.name })}</p>}
+              {g.candidates.length === 0 ? (
+                <p className="text-sm text-text-muted">{t.noCandidates}</p>
+              ) : (
+                <ul className="space-y-2">
+                  {g.candidates.map((r) => (
+                    <li key={`cand:${g.missing._id}:${r._id}`}>
+                      <button
+                        type="button"
+                        disabled={p.busy}
+                        aria-pressed={single ? undefined : choices[g.missing._id] === r._id}
+                        onClick={() => (single ? p.onApplyResources({ [g.missing._id]: r._id }) : setChoices((c) => ({ ...c, [g.missing._id]: r._id })))}
+                        className={`${optionClass} ${!single && choices[g.missing._id] === r._id ? "border-brand-500 bg-brand-500/10" : ""}`}
+                      >
+                        <span className="flex-1">{r.name}</span>
+                        <span className="text-caption text-text-muted">{VOCAB.scheduling.resource[r.kind].title}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))
+        )}
+        {!single && p.groups.length > 1 && (
+          <Button size="sm" disabled={!allChosen || p.busy} onClick={() => p.onApplyResources(choices)}>
+            {t.applyChoices}
+          </Button>
         )}
       </section>
 

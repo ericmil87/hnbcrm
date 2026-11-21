@@ -22,4 +22,12 @@ describe("ClientPickerView", () => {
     rerender(<ClientPickerView {...base} results={undefined} />);
     expect(screen.getByText("Buscando…")).toBeInTheDocument();
   });
+  it("'Novo contato' só aparece quando há o atalho e chama o fluxo existente", () => {
+    const onNewContact = vi.fn();
+    const { rerender } = render(<ClientPickerView {...base} results={[]} />);
+    expect(screen.queryByRole("button", { name: "Novo contato" })).toBeNull();
+    rerender(<ClientPickerView {...base} results={[]} onNewContact={onNewContact} />);
+    fireEvent.click(screen.getByRole("button", { name: "Novo contato" }));
+    expect(onNewContact).toHaveBeenCalled();
+  });
 });

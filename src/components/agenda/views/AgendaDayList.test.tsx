@@ -24,6 +24,7 @@ function setup(d = dayInput(), mode: ListMode = "hora", over: Partial<AgendaDayL
       groupBy="room"
       canBook
       canClose
+      isToday
       resources={d.resources}
       {...handlers}
       {...over}
@@ -112,5 +113,18 @@ describe("AgendaDayList por recurso", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Sala1, Aberta/ }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Fechar hoje" }));
     expect(h.onResourceAction).toHaveBeenCalledWith(expect.objectContaining({ _id: "sala1" }), "closeToday");
+  });
+});
+
+describe("AgendaDayList: dia que não é hoje", () => {
+  it("resumo e grupo fechado dizem 'neste dia'", () => {
+    const d = dayInput({ resources: [res("sala1", "room", { closed: true, open: [] }), res("sala2", "room")], exceptions: [{ resourceId: "sala1", mode: "closed" }], appointments: [appt(["sala2"], at(10), at(11))] });
+    const h = setup(d, "recurso", { isToday: false });
+    const sala1 = screen.getByRole("listitem", { name: "Sala1" });
+    expect(within(sala1).getByText("Fechada neste dia")).toBeInTheDocument();
+    fireEvent.click(within(sala1).getByRole("button", { name: "Reabrir neste dia" }));
+    expect(h.onResourceAction).toHaveBeenCalledWith(expect.objectContaining({ _id: "sala1" }), "reopen");
+    fireEvent.click(screen.getByRole("button", { name: /^Sala2, Aberta/ }));
+    expect(screen.getByRole("menuitem", { name: "Fechar neste dia" })).toBeInTheDocument();
   });
 });

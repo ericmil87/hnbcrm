@@ -7,7 +7,7 @@
 import { ConvexError } from "convex/values";
 import { fillVocab } from "./agendaCopy";
 import { VIEWS_COPY } from "./agendaViewsCopy";
-import { isValidLocalDate, diffLocalDays } from "./agendaZone";
+import { isValidLocalDate, diffLocalDays, shortDateLabel } from "./agendaZone";
 import type { ResourceKind } from "./agendaTypes";
 
 const t = VIEWS_COPY.closure;
@@ -76,7 +76,7 @@ export interface PreviewSummary {
 }
 
 /** Resume a prévia em contagens e frases. `affected` é a contagem que vai em `expectedAffected`. */
-export function summarizePreview(result: ClosureResult, o: { resourceName: string; kind: ResourceKind | null }): PreviewSummary {
+export function summarizePreview(result: ClosureResult, o: { resourceName: string; kind: ResourceKind | null; org?: boolean }): PreviewSummary {
   const total = result.affected;
   const skipped = result.items.filter((i) => i.outcome === "skipped").length;
   const unknownLines = result.items.filter((i) => i.outcome === "unknown").length;
@@ -84,8 +84,14 @@ export function summarizePreview(result: ClosureResult, o: { resourceName: strin
   const noAutoMove = o.kind === null || !movesAutomatically(o.kind);
   const sentences: string[] = [];
   if (total > 0) {
-    sentences.push(fillVocab(total === 1 ? t.headline.one : t.headline.many, { n: total, nome: o.resourceName }));
-    if (noAutoMove) {
+    sentences.push(
+      result.capped
+        ? fillVocab(t.headlineAtLeast, { n: total, nome: o.resourceName })
+        : fillVocab(total === 1 ? t.headline.one : t.headline.many, { n: total, nome: o.resourceName })
+    );
+    if (o.org) {
+      sentences.push(fillVocab(total === 1 ? t.orgAll.one : t.orgAll.many, { n: total }));
+    } else if (noAutoMove) {
       if (result.conflicts > 0) sentences.push(fillVocab(o.kind === "person" ? t.noAuto : t.noAutoGeneric, { n: result.conflicts }));
     } else {
       if (result.reallocated > 0) sentences.push(plural(result.reallocated, t.moves[o.kind === "equipment" ? "equipment" : "room"].one, t.moves[o.kind === "equipment" ? "equipment" : "room"].many));
@@ -98,10 +104,15 @@ export function summarizePreview(result: ClosureResult, o: { resourceName: strin
 }
 
 /** Rótulo do botão de confirmar: com afetados o aceite é explícito. */
-export function confirmLabel(s: Pick<PreviewSummary, "total" | "moved" | "unplaced">): string {
-  if (s.total === 0) return t.confirm.plain;
-  if (s.moved > 0 && s.unplaced === 0) return fillVocab(t.confirm.move, { n: s.moved });
-  return t.confirm.anyway;
+export function confirmLabel(s: Pick<PreviewSummary, "total" | "moved" | "unplaced">, period?: string): string {
+  const base = s.total === 0 ? t.confirm.plain : s.moved > 0 && s.unplaced === 0 ? fillVocab(t.confirm.move, { n: s.moved }) : t.confirm.anyway;
+  return period ? `${base} em ${period}` : base;
+}
+
+/** "qui, 26/11" ou "qui, 26/11 a sex, 27/11"; com `today` o dia de hoje leva "(hoje)". */
+export function periodText(from: string, to: string, today?: string): string {
+  const one = (d: string) => (today === d ? fillVocab(t.todayMark, { data: shortDateLabel(d) }) : shortDateLabel(d));
+  return from === to ? one(from) : `${one(from)} a ${one(to)}`;
 }
 
 /** O que acontece com um afetado, em texto (a cor nunca é o único sinal). */

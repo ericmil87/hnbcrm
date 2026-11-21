@@ -66,3 +66,29 @@ describe("erro de regra", () => {
     expect(rulesErrorMessage(new Error("x"))).toBeNull();
   });
 });
+
+import { applyReplacements, missingGroups } from "./agendaConflict";
+
+describe("o que saiu do agendamento", () => {
+  const appt = [
+    { resourceId: "s1", allocated: false },
+    { resourceId: "p1", allocated: false },
+  ];
+  it("usa resourceIds do conflito (sala e profissional), cada um com candidatos do mesmo tipo", () => {
+    const g = missingGroups(resources, appt, { resourceIds: ["s1", "p1"] });
+    expect(g.map((x) => [x.missing._id, x.candidates.map((c) => c._id)])).toEqual([["s1", ["s2"]], ["p1", ["p2"]]]);
+  });
+  it("cai para resourceId e depois para os não alocados", () => {
+    expect(missingGroups(resources, appt, { resourceId: "p1" }).map((x) => x.missing._id)).toEqual(["p1"]);
+    expect(missingGroups(resources, appt, {}).map((x) => x.missing._id)).toEqual(["s1", "p1"]);
+  });
+  it("recurso arquivado que saiu ainda aparece como o que saiu", () => {
+    const g = missingGroups(resources, [{ resourceId: "s3", allocated: false }], { resourceIds: ["s3"] });
+    expect(g[0].missing._id).toBe("s3");
+    expect(g[0].candidates.map((c) => c._id)).toEqual(["s1", "s2"]);
+  });
+  it("lista completa na ordem do agendamento", () => {
+    expect(applyReplacements(appt, { s1: "s2", p1: "p2" })).toEqual(["s2", "p2"]);
+    expect(applyReplacements([{ resourceId: "s1" }, { resourceId: "p9" }], { s1: "s2" })).toEqual(["s2", "p9"]);
+  });
+});

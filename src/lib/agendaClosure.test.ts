@@ -146,3 +146,30 @@ describe("reabrir", () => {
     expect(reopenNotice(undefined)).toBeNull();
   });
 });
+
+import { periodText } from "./agendaClosure";
+
+describe("data por extenso", () => {
+  it("um dia, vários dias, e 'hoje' só quando é hoje", () => {
+    expect(periodText("2026-11-26", "2026-11-26")).toBe("qui, 26/11");
+    expect(periodText("2026-11-26", "2026-11-26", "2026-11-26")).toBe("qui, 26/11 (hoje)");
+    expect(periodText("2026-11-26", "2026-11-26", "2026-11-23")).toBe("qui, 26/11");
+    expect(periodText("2026-11-26", "2026-11-27", "2026-11-26")).toBe("qui, 26/11 (hoje) a sex, 27/11");
+  });
+  it("botão de confirmar leva a data", () => {
+    expect(confirmLabel({ total: 3, moved: 3, unplaced: 0 }, "qui, 26/11")).toBe("Fechar e mover 3 em qui, 26/11");
+    expect(confirmLabel({ total: 0, moved: 0, unplaced: 0 }, "qui, 26/11")).toBe("Fechar em qui, 26/11");
+  });
+  it("agenda inteira: nada realocado, todos sem lugar, e prévia cortada diz 'pelo menos'", () => {
+    const s = summarizePreview(
+      { mode: "preview", dates: [], affected: 12, reallocated: 0, conflicts: 12, pending: 0, simulated: 12, capped: false, removed: 0, restorable: 0, items: [] },
+      { resourceName: "Toda a agenda", kind: null, org: true }
+    );
+    expect(s.sentences[1]).toBe("Todos os 12 horários deste período ficam sem lugar e vão para a fila de pendências.");
+    const c = summarizePreview(
+      { mode: "preview", dates: [], affected: 80, reallocated: 0, conflicts: 40, pending: 0, simulated: 40, capped: true, removed: 0, restorable: 0, items: [] },
+      { resourceName: "Sala 1", kind: "room" }
+    );
+    expect(c.sentences[0]).toBe("Pelo menos 80 horários marcados em Sala 1 neste período");
+  });
+});

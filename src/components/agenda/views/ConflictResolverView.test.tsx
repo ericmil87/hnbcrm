@@ -3,12 +3,12 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { ConflictResolverView, type ConflictResolverViewProps } from "./ConflictResolverView";
 
 function setup(over: Partial<ConflictResolverViewProps> = {}) {
-  const h = { onPickResource: vi.fn(), onPickSuggestion: vi.fn(), onReschedule: vi.fn(), onCancel: vi.fn(), onManual: vi.fn(), onClose: vi.fn() };
+  const h = { onApplyResources: vi.fn(), onPickSuggestion: vi.fn(), onReschedule: vi.fn(), onCancel: vi.fn(), onManual: vi.fn(), onClose: vi.fn() };
   render(
     <ConflictResolverView
       who="Maria" when="seg, 23/11 · 14:00" service="Sessão" origin="staff" kind="resource_closed" busy={false}
       suggestions={[{ key: "1", startTime: 111, resourceIds: ["s2"], label: "qua, 25/11 às 14:00 em Sala 2" }]}
-      candidates={[{ _id: "s2", kind: "room", name: "Sala 2" }]}
+      groups={[{ missing: { _id: "s1", kind: "room", name: "Sala 1" }, candidates: [{ _id: "s2", kind: "room", name: "Sala 2" }] }]}
       {...h} {...over}
     />
   );
@@ -31,10 +31,10 @@ describe("ConflictResolverView", () => {
   it("escolher outra sala ou profissional", () => {
     const h = setup();
     fireEvent.click(screen.getByRole("button", { name: /Sala 2\s*Sala/ }));
-    expect(h.onPickResource).toHaveBeenCalledWith("s2");
+    expect(h.onApplyResources).toHaveBeenCalledWith({ s1: "s2" });
   });
   it("sem opções: avisa", () => {
-    setup({ candidates: [], suggestions: [] });
+    setup({ groups: [], suggestions: [] });
     expect(screen.getByText("Nenhuma outra opção cadastrada.")).toBeInTheDocument();
     expect(screen.queryByText("Horários sugeridos")).toBeNull();
   });
@@ -62,5 +62,23 @@ describe("ConflictResolverView", () => {
   it("ocupado desabilita as opções", () => {
     setup({ busy: true });
     expect(screen.getByRole("button", { name: "Remarcar" })).toBeDisabled();
+  });
+  it("sala e profissional saíram: escolhe um substituto para cada e aplica as duas escolhas juntas", () => {
+    const h = setup({
+      groups: [
+        { missing: { _id: "s1", kind: "room", name: "Sala 1" }, candidates: [{ _id: "s2", kind: "room", name: "Sala 2" }] },
+        { missing: { _id: "p1", kind: "person", name: "Ana" }, candidates: [{ _id: "p2", kind: "person", name: "Beto" }] },
+      ],
+    });
+    expect(screen.getByText("Trocar Sala 1")).toBeInTheDocument();
+    expect(screen.getByText("Trocar Ana")).toBeInTheDocument();
+    const apply = screen.getByRole("button", { name: "Usar estas escolhas" });
+    expect(apply).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Sala 2/ }));
+    expect(apply).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: /^Beto/ }));
+    expect(apply).toBeEnabled();
+    fireEvent.click(apply);
+    expect(h.onApplyResources).toHaveBeenCalledWith({ s1: "s2", p1: "p2" });
   });
 });
