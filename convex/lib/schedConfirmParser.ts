@@ -36,9 +36,25 @@ export type ParseConfirmationContext<TId extends string = string> = {
   /** Fuso IANA da org. */
   tz: string;
   services?: Array<ConfirmServiceRef<TId>>;
-  /** Proposta aberta na conversa: completa dia/hora que a resposta curta ("ok", "combinado") não repete. */
-  proposal?: { localDate?: LocalDate; timeMin?: number };
+  /**
+   * Proposta aberta na conversa. Só completa dia/hora de uma RESPOSTA CURTA ("ok", "combinado", "👍")
+   * quando `by === "cliente"` e `at` tem menos de 48 h. O parser nunca decide sozinho: quem chama ainda
+   * confere `matchesProposal` (terceira condição do plano §8.1).
+   */
+  proposal?: ConfirmProposal;
 };
+
+export type ConfirmProposal = {
+  localDate?: LocalDate;
+  timeMin?: number;
+  /** Quem fez a proposta: mensagem do cliente, oferta da IA ou mensagem anterior do humano. */
+  by: "cliente" | "ia" | "humano";
+  /** Instante (ms) da proposta. */
+  at: number;
+};
+
+/** Validade de uma proposta aberta. */
+export const PROPOSAL_TTL_MS = 48 * 60 * 60 * 1000;
 
 export type ConfirmEvidence = {
   /** Trechos literais (substrings de `normalizeConfirmationText(text)`) que sustentam cada campo. */
@@ -67,6 +83,13 @@ export type ParsedConfirmation<TId extends string = string> = {
   level: "completo" | "parcial" | "nenhum";
   /** Dia/hora vieram da `proposal` da conversa, não da mensagem. */
   fromProposal: { date: boolean; time: boolean };
+  /** Dia/hora tirados DA PRÓPRIA mensagem (sem preenchimento pela proposta). */
+  fromMessage: { localDate?: LocalDate; timeMin?: number };
+  /**
+   * "explicito": dia e hora escritos na própria mensagem. "resposta_curta": algum deles veio da proposta
+   * ("ok", "fechado", "👍"). Só existe quando há ato acionável.
+   */
+  form?: "explicito" | "resposta_curta";
   evidence: ConfirmEvidence;
   signals: string[];
   negatives: string[];
@@ -524,6 +547,14 @@ function analyzeSegment(orig: string, n: string, start: number, end: number, que
     pushDay(x, { kind: "dmy", d, m: mo, y, lit: xlit(x) });
     return true;
   });
+  // dd-mm (26-11): só dois dígitos de cada lado e sem cara de quantidade ("2-3 pessoas")
+  scan(new RegExp(`(?<![\\d-])(\\d{1,2})-(\\d{1,2})(?![\\d-])(?!\\s*(?:${QTY})\\b)`, "g"), (x) => {
+    const d = Number(x[1]);
+    const mo = Number(x[2]);
+    if (d < 1 || d > 31 || mo < 1 || mo > 12) return false;
+    pushDay(x, { kind: "dmy", d, m: mo, lit: xlit(x) });
+    return true;
+  });
   // dd.mm (26.11); "10.30" com minuto > 12 é hora, não data
   scan(/(?<![\d.$])(\d{1,2})\.(\d{1,2})(?![\d.])/g, (x) => {
     const d = Number(x[1]);
@@ -535,10 +566,10 @@ function analyzeSegment(orig: string, n: string, start: number, end: number, que
   });
   // "27 de novembro", "27 nov" (com "de"); rua/avenida com data no nome não é data
   scan(
-    new RegExp(`(?:\\bdia\\s+)?\\b(\\d{1,2})[\u00ba\u00b0]?\\s*(?:de\\s+)?(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\\b|(?:\\bdia\\s+)?\\b(\\d{1,2})\\s+de\\s+(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)\\b`, "g"),
+    new RegExp(`(?:\\bdia\\s+)?\\b(\\d{1,2})[\u00ba\u00b0]?\\s*(?:de\\s+)?(janeiro|fevereiro|marco|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\\b|(?:\\bdia\\s+)?\\b(\\d{1,2})\\s+(?:de\\s+)?(?:(jan|fev|abr|mai|jun|jul|ago|out|nov|dez)|(?<=de\\s)(mar|set))\\b`, "g"),
     (x) => {
       const d = Number(x[1] ?? x[3]);
-      const mo = MONTHS[x[2] ?? x[4]];
+      const mo = MONTHS[x[2] ?? x[4] ?? x[5]];
       if (!mo || d < 1 || d > 31) return false;
       const before = t.slice(0, x.index!);
       if (!/^dia\b/.test(x[0]) && /\b(?:da|na|rua|r|av|avenida|travessa|tv|alameda|al|praca|pca|rodovia|estrada|largo)\.?\s*$/.test(before)) return true; // endereço: consome sem virar data
@@ -547,7 +578,7 @@ function analyzeSegment(orig: string, n: string, start: number, end: number, que
     },
   );
   // "dia 27"
-  scan(/\bdia\s+(\d{1,2})(?![\d:/])(?!\s*(?:h|hs)\b)/g, (x) => {
+  scan(/\bdia\s+(\d{1,2})[\u00ba\u00b0]?(?![\d:/])(?!\s*(?:h|hs)\b)/g, (x) => {
     const d = Number(x[1]);
     if (d < 1 || d > 31) return false;
     pushDay(x, { kind: "dom", day: d, lit: xlit(x) });
@@ -555,12 +586,27 @@ function analyzeSegment(orig: string, n: string, start: number, end: number, que
   });
 
   // semana que vem solta: sem dia da semana colado não resolve nada
+  // O modificador só vale COLADO ao dia; o trecho do modificador entra nos spans (forma fechada).
   const wdMod = (a: number, b: number): "bare" | "next" | "weekNext" => {
     const before = t.slice(0, a);
     const after = t.slice(b);
-    if (/^\s*(?:da\s+|na\s+)?(?:semana\s+(?:que|q)\s+vem|proxima\s+semana|semana\s+proxima)/.test(after)) return "weekNext";
-    if (/(?:semana\s+(?:que|q)\s+vem|proxima\s+semana)\s+(?:n[ao]\s+)?$/.test(before)) return "weekNext";
-    if (/^\s*(?:que vem|q vem|qvem|proxima|prox|que vai vir)\b/.test(after) || /\b(?:proxim[oa]|prox)\.?\s+(?:n[ao]\s+)?$/.test(before)) return "next";
+    let mm: RegExpExecArray | null;
+    if ((mm = /^\s*(?:da\s+|na\s+)?(?:semana\s+(?:que|q)\s+vem|proxima\s+semana|semana\s+proxima)/.exec(after))) {
+      span(b, b + mm[0].length);
+      return "weekNext";
+    }
+    if ((mm = /(?:semana\s+(?:que|q)\s+vem|proxima\s+semana)\s+(?:n[ao]\s+)?$/.exec(before))) {
+      span(a - mm[0].length, a);
+      return "weekNext";
+    }
+    if ((mm = /^\s*(?:que vem|q vem|qvem|proxima|prox|que vai vir)\b/.exec(after))) {
+      span(b, b + mm[0].length);
+      return "next";
+    }
+    if ((mm = /\b(?:proxim[oa]|prox)\.?\s+(?:n[ao]\s+)?$/.exec(before))) {
+      span(a - mm[0].length, a);
+      return "next";
+    }
     return "bare";
   };
 
@@ -582,6 +628,11 @@ function analyzeSegment(orig: string, n: string, start: number, end: number, que
     pushDay(x, { kind: "wd", wd: k - 1, mod: wdMod(x.index!, x.index! + x[0].length), lit: xlit(x) });
     return true;
   });
+  // "4ª 8h30": ordinal feminino colado a uma hora é dia da semana; "2ª sessão", "4º andar" continuam ordinais
+  scan(new RegExp(`\\b([2-6])\\s*\\u00aa(?=\\s*(?:as\\s+|a\\s+)?(?:(?:${NUM})\\s*(?:h|hs|hr|hrs|:\\d{2})|meio[- ]?dia))`, "g"), (x) => {
+    pushDay(x, { kind: "wd", wd: Number(x[1]) - 1, mod: wdMod(x.index!, x.index! + x[0].length), lit: xlit(x) });
+    return true;
+  });
   // abreviações ambíguas ("ter", "sex", "dom"…) só contam coladas a uma hora
   scan(new RegExp(`\\b(${Object.keys(WEEKDAY_ABBR).join("|")})\\b\\.?(?:[- ]?feira)?`, "g"), (x) => {
     const a = x.index!;
@@ -596,6 +647,15 @@ function analyzeSegment(orig: string, n: string, start: number, end: number, que
     return true;
   });
 
+  // "quinta (26)": dia do mês entre parênteses só vale ao lado de um dia da semana (e precisa bater com ele)
+  if (seg.days.some((d) => d.kind === "wd")) {
+    scan(/\((\d{1,2})\)/g, (x) => {
+      const d = Number(x[1]);
+      if (d < 1 || d > 31) return false;
+      pushDay(x, { kind: "dom", day: d, lit: xlit(x) });
+      return true;
+    });
+  }
   // hoje / amanhã
   scan(/\b(?:hoje|hj)\b/g, (x) => {
     pushDay(x, { kind: "rel", offset: 0, lit: xlit(x) });
@@ -720,6 +780,7 @@ function analyze(text: string): Analysis {
   test("promessa", RE_PROMISE);
   test("relato", RE_REPORT);
   test("citacao", RE_QUOTE);
+  test("emoji_negativo", RE_NEG_EMOJI, n);
   test("encaminhada", RE_FORWARD);
   if (RE_QUOTE_LINE.test(text)) {
     globalBlock.push("citacao");
@@ -744,14 +805,23 @@ const segCarries = (s: Seg) => segHasTokens(s) || s.limited;
 const RE_OPENING_CLOSING = new RegExp(
   [
     "oi|ola|bom dia|boa tarde|boa noite|tudo bem|tudo certo|ok|okay|certo|beleza|blz|show|perfeito|otimo|claro|sim|valeu|obrigad[oa]|muito obrigad[oa]|obg|brigad[oa]",
-    "ate la|ate logo|ate breve|ate mais|ate|abracos?|beijos?|bjs?|tchau|um otimo dia|boa semana|conte comigo|por favor",
+    "ate la|ate logo|ate breve|ate mais|ate|abracos?|beijos?|bjs?|tchau|um otimo dia|boa semana|conte comigo",
   ]
     .join("|")
     .replace(/^/, "\\b(?:")
     .concat(")\\b"),
   "g",
 );
-const RE_CONNECTORS = /\b(?:pra|para|no|na|em|nesta|nessa|esta|essa|ta|ficou|as|a|dia|que vem|q vem|proxima|prox|do|da|de)\b/g;
+const RE_CONNECTORS = /\b(?:pra|para|no|na|em|nesta|nessa|esta|essa|ta|ficou|as|a|dia|do|da|de)\b/g;
+// "pra você" e "sua avaliação/consulta…" depois do marcador: dirigido ao cliente, serviço genérico
+const RE_DIRECTED = /\b(?:(?:pra|para)\s+(?:voce|vc)|(?:sua|seu)\s+(?:avaliacao|consulta|sessao|horario|atendimento|aula|agendamento))\b/g;
+// Emojis permitidos na forma fechada (com tons de pele e seletor de variação); qualquer outro emoji é sobra.
+const ALLOWED_EMOJI = /(?:\u2705|\ud83d\udc4d|\ud83d\udc4c|\ud83d\ude4f|\ud83d\ude0a|\ud83d\ude42|\ud83d\ude09|\ud83e\udd1d|\u2764|\ud83d\ude18|\ud83e\udd70)(?:\ud83c[\udffb-\udfff])?\ufe0f?/g;
+const ANY_PICTOGRAPH = /[\ud800-\udfff\u2190-\u2bff\u203c\u2049\u2122\u200d\ufe0f]/;
+// Emoji claramente negativo/incerto: nem "confirmou".
+const RE_NEG_EMOJI = /\ud83d\udc4e|\u274c|\u274e|\ud83d\udeab|\ud83d\ude45|\u2753|\u2754|\u2049|\ud83e\udd14|\ud83e\udd37|\ud83e\udd21|\ud83d\ude44|\ud83d\ude43|\u2716|\u26d4|\ud83d\uded1|\ud83d\ude21|\ud83d\ude20|\ud83d\ude12/;
+// Termina em conector solto ("…10h nã", "…quinta 10h mas"): mensagem truncada.
+const TRAILING_CONNECTOR = /\b(?:na|no|nas|nos|mas|e|que|de|do|da|pra|para|com|ou|se|em|a|o|as|os|ate|nao|nem|so|porem|pois)[\s\W]*$/;
 
 /**
  * Forma fechada: depois de tirar marcadores fortes, dia, hora (já extraídos), saudação/fecho da
@@ -763,9 +833,10 @@ function fitsClosedForm(a: Analysis, extra?: RegExp): boolean {
   const chars = a.n.split("");
   for (const sg of a.segs) for (const [x, y] of sg.spans) for (let i = x; i < y; i++) chars[i] = " ";
   let r = chars.join("");
+  if (TRAILING_CONNECTOR.test(a.n.replace(ALLOWED_EMOJI, " "))) return false;
   if (extra) r = r.replace(extra, " ");
-  r = r.replace(RE_OPENING_CLOSING, " ").replace(RE_CONNECTORS, " ");
-  return !/[a-z0-9\u00aa\u00ba$%@#+*=/\\]/.test(r);
+  r = r.replace(ALLOWED_EMOJI, " ").replace(RE_DIRECTED, " ").replace(RE_OPENING_CLOSING, " ").replace(RE_CONNECTORS, " ");
+  return !/[a-z0-9\u00aa\u00ba$%@#+*=/\\]/.test(r) && !ANY_PICTOGRAPH.test(r);
 }
 
 // ───────────────────────── pré-filtro ─────────────────────────
@@ -804,11 +875,13 @@ export function prefilterConfirmation(raw: string): PrefilterResult {
 
 type DateRes = { date: LocalDate | null; why?: string };
 
-function resolveDay(tok: DayTok, today: LocalDate): DateRes {
+function resolveDay(tok: DayTok, today: LocalDate, nowMin: number): DateRes {
   const [ty, tm, td] = ymdParts(today);
   const dow = weekdayOf(today);
   switch (tok.kind) {
     case "rel":
+      // "amanhã" escrito entre 00h e 05h locais: o remetente pode estar falando do dia que ainda "não virou" para ele
+      if (tok.offset >= 1 && nowMin < 300) return { date: null, why: "amanha_madrugada" };
       return { date: addDays(today, tok.offset) };
     case "wd": {
       if (tok.mod === "weekNext") {
@@ -816,7 +889,11 @@ function resolveDay(tok: DayTok, today: LocalDate): DateRes {
         return { date: addDays(today, toMonday + ((tok.wd + 6) % 7)) };
       }
       const k = (tok.wd - dow + 7) % 7;
-      if (tok.mod === "next") return { date: addDays(today, k || 7) };
+      if (tok.mod === "next") {
+        // "sábado que vem" dito na sexta: amanhã ou daqui a 8 dias?
+        if (k === 1) return { date: null, why: "proximo_dia_semana_amanha" };
+        return { date: addDays(today, k || 7) };
+      }
       if (k === 0) return { date: null, why: "dia_semana_hoje" }; // "quinta" numa quinta: hoje ou semana que vem?
       return { date: addDays(today, k) };
     }
@@ -824,7 +901,9 @@ function resolveDay(tok: DayTok, today: LocalDate): DateRes {
       if (tok.day >= td) return validYmd(ty, tm, tok.day) ? { date: fmtDate(ty, tm, tok.day) } : { date: null, why: "dia_invalido" };
       const nm = tm === 12 ? 1 : tm + 1;
       const ny = tm === 12 ? ty + 1 : ty;
-      return validYmd(ny, nm, tok.day) ? { date: fmtDate(ny, nm, tok.day) } : { date: null, why: "dia_invalido" };
+      if (!validYmd(ny, nm, tok.day)) return { date: null, why: "dia_invalido" };
+      // dia que acabou de passar neste mês (1–3 dias): provavelmente referência ao passado; resolve, com aviso, e nunca "completo"
+      return { date: fmtDate(ny, nm, tok.day), why: td - tok.day <= 3 ? "dia_ja_passou_neste_mes" : undefined };
     }
     case "dmy": {
       if (tok.y !== undefined) {
@@ -835,20 +914,21 @@ function resolveDay(tok: DayTok, today: LocalDate): DateRes {
       if (!validYmd(ty, tok.m, tok.d)) return { date: null, why: "data_invalida" };
       const d = fmtDate(ty, tok.m, tok.d);
       if (d >= today) return { date: d };
-      if (daysBetween(d, today) > 60 && validYmd(ty + 1, tok.m, tok.d)) return { date: fmtDate(ty + 1, tok.m, tok.d) }; // virada de ano
+      // virada de ano: só se a data do ano seguinte estiver a até 60 dias; senão é referência a data que já passou
+      if (validYmd(ty + 1, tok.m, tok.d) && daysBetween(today, fmtDate(ty + 1, tok.m, tok.d)) <= 60) return { date: fmtDate(ty + 1, tok.m, tok.d) };
       return { date: null, why: "data_passada" };
     }
   }
 }
 
-function pickDate(tokens: DayTok[], today: LocalDate, negatives: string[]): { date?: LocalDate; lits: string[] } {
+function pickDate(tokens: DayTok[], today: LocalDate, nowMin: number, negatives: string[]): { date?: LocalDate; lits: string[] } {
   const lits = tokens.map((t) => t.lit);
   if (tokens.length === 0) return { lits };
   const explicit: LocalDate[] = [];
   const weekdays: Array<{ wd: number; date: LocalDate | null }> = [];
   let unresolved = false;
   for (const tok of tokens) {
-    const r = resolveDay(tok, today);
+    const r = resolveDay(tok, today, nowMin);
     if (r.why) negatives.push(r.why);
     if (tok.kind === "wd") weekdays.push({ wd: tok.wd, date: r.date });
     else if (r.date) explicit.push(r.date);
@@ -916,6 +996,7 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
     resolved: { act: false, date: false, time: false },
     level: "nenhum",
     fromProposal: { date: false, time: false },
+    fromMessage: {},
     evidence: { act: [], date: [], time: [], service: [], blocked },
     signals: [],
     negatives,
@@ -947,7 +1028,12 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
   let weakClosed = false;
 
   const todayClock = localClock(ctx.now, ctx.tz);
-  const proposal = ctx.proposal;
+  const proposalRaw = ctx.proposal;
+  const proposalFresh = proposalRaw !== undefined && ctx.now - proposalRaw.at < PROPOSAL_TTL_MS;
+  if (proposalRaw && !proposalFresh) negatives.push("proposta_velha");
+  // só proposta do CLIENTE e recente preenche dia/hora de resposta curta
+  const proposal = proposalFresh && proposalRaw.by === "cliente" ? proposalRaw : undefined;
+  if (proposalRaw && proposalFresh && !proposal) negatives.push("proposta_nao_e_do_cliente");
   const actSegs = (k: ActHit["act"]) => clean.filter((s) => s.acts.some((h) => h.act === k) && segHasTokens(s));
 
   if (has("remarcou").length) {
@@ -1014,11 +1100,11 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
   } else if (proposal && (proposal.localDate !== undefined || proposal.timeMin !== undefined)) {
     // "ok", "sim", "pode ser", "👍" respondendo a uma proposta aberta: só a mensagem INTEIRA na lista fechada
     const weakRe = new RegExp(`\\b(?:${WEAK_WORDS})\\b`, "g");
-    const weakHit = weakRe.test(a.n) || RE_WEAK_EMOJI.test(a.n);
+    const weakHit = weakRe.test(a.n) || new RegExp(RE_WEAK_EMOJI.source).test(a.n); // sem /g: .test com /g guarda estado entre chamadas
     if (weakHit && a.segs.every((s) => s.blockers.length === 0 && !s.question)) {
       const extra = new RegExp(`${weakRe.source}|${RE_WEAK_EMOJI.source}|${EMOJI}`, "g");
       const ok = fitsClosedForm({ ...a, segs: a.segs }, extra);
-      const d = pickDate(clean.flatMap((s) => s.days), todayClock.date, []).date;
+      const d = pickDate(clean.flatMap((s) => s.days), todayClock.date, todayClock.minutes, []).date;
       const tm = pickTime(clean.flatMap((s) => s.times), []).min;
       const consistent =
         (d === undefined || proposal.localDate === undefined || d === proposal.localDate) && (tm === undefined || proposal.timeMin === undefined || tm === proposal.timeMin);
@@ -1033,7 +1119,7 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
     }
   }
   if (act === "nenhum") {
-    if (qOnly.some(segHasTokens) && !blocked.some(segHasTokens) && !proposal && qOnly.some((s) => s.acts.some((h) => h.act === "propos"))) {
+    if (qOnly.some(segHasTokens) && !blocked.some(segHasTokens) && !proposalRaw && qOnly.some((s) => s.acts.some((h) => h.act === "propos"))) {
       act = "propos";
       pool = qOnly;
       negatives.push("pergunta_com_horario");
@@ -1051,7 +1137,7 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
   // ── dia e hora
   const days = pool.flatMap((s) => s.days);
   const times = pool.flatMap((s) => s.times);
-  const d = pickDate(days, todayClock.date, negatives);
+  const d = pickDate(days, todayClock.date, todayClock.minutes, negatives);
   const tm = pickTime(times, negatives);
   let localDate = d.date;
   let timeMin = tm.min;
@@ -1065,6 +1151,7 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
     timeMin = undefined;
   }
 
+  const fromMessage = { localDate, timeMin };
   const fromProposal = { date: false, time: false };
   if (act === "confirmou" && proposal) {
     const sameDay = localDate === undefined || proposal.localDate === undefined || localDate === proposal.localDate;
@@ -1093,9 +1180,13 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
   if (svc.ambiguous) negatives.push("servico_ambiguo");
 
   const resolved = { act: true, date: localDate !== undefined, time: timeMin !== undefined };
+  if (localDate !== undefined && daysBetween(todayClock.date, localDate) > 30) negatives.push("data_distante");
+  const form: "explicito" | "resposta_curta" = !weakClosed && fromMessage.localDate !== undefined && fromMessage.timeMin !== undefined ? "explicito" : "resposta_curta";
   // lista de permissão: só "completo" se a mensagem inteira cabe na forma fechada
   const closed = act === "confirmou" && (weakClosed || (resolved.date && resolved.time && a.segs.some((s) => s.markerCount > 0) && fitsClosedForm(a)));
-  const level: ParsedConfirmation["level"] = closed && resolved.date && resolved.time ? "completo" : "parcial";
+  const SOFT = ["dia_ja_passou_neste_mes", "proximo_dia_semana_amanha", "amanha_madrugada"];
+  const soft = negatives.some((x) => SOFT.includes(x));
+  const level: ParsedConfirmation["level"] = closed && !soft && resolved.date && resolved.time ? "completo" : "parcial";
   if (act === "confirmou" && level === "parcial" && resolved.date && resolved.time) negatives.push("fora_da_forma_fechada");
   const signals = [`ato:${act}`];
   if (resolved.date) signals.push("dia");
@@ -1109,8 +1200,137 @@ export function parseConfirmation<TId extends string = string>(raw: string, ctx:
     resolved,
     level,
     fromProposal,
+    fromMessage: { localDate: fromMessage.localDate, timeMin: fromMessage.timeMin },
+    form,
     evidence: { act: actLits, date: d.lits, time: tm.lits, service: svc.lits, blocked: blockedLits },
     signals,
     negatives: [...new Set(negatives)],
   };
+}
+
+// ───────────────────────── terceira condição: proposta coincidente ─────────────────────────
+
+export type ProposalMatch = {
+  ok: boolean;
+  /** "ok" ou o motivo da recusa (ex.: "dia_diferente", "hora_diferente", "proposta_velha"). */
+  reason:
+    | "ok"
+    | "nao_confirmou"
+    | "sem_proposta"
+    | "proposta_velha"
+    | "proposta_incompleta"
+    | "sem_dia_ou_hora"
+    | "resposta_curta_exige_cliente"
+    | "dia_diferente"
+    | "hora_diferente";
+};
+
+/**
+ * Terceira condição para criar sozinho (plano §8.1): existe uma proposta aberta (< 48 h) com o MESMO dia
+ * e a MESMA hora que o parser tirou da própria mensagem. Pura; a escolha da proposta (mensagem anterior
+ * do cliente, oferta da IA, mensagem anterior do humano) é de quem chama.
+ *
+ * - `form: "explicito"`: compara `fromMessage` (dia e hora escritos na mensagem) com a proposta, de qualquer origem.
+ * - `form: "resposta_curta"`: a proposta precisa ser do cliente (o "ok" do dono à própria proposta não confirma nada).
+ *
+ * Isto NÃO substitui `level === "completo"`: quem chama confere os dois.
+ */
+export function matchesProposal(parsed: Pick<ParsedConfirmation, "act" | "form" | "localDate" | "timeMin" | "fromMessage">, proposal: ConfirmProposal | undefined, now: number): ProposalMatch {
+  if (parsed.act !== "confirmou") return { ok: false, reason: "nao_confirmou" };
+  if (!proposal) return { ok: false, reason: "sem_proposta" };
+  if (now - proposal.at >= PROPOSAL_TTL_MS) return { ok: false, reason: "proposta_velha" };
+  if (proposal.localDate === undefined || proposal.timeMin === undefined) return { ok: false, reason: "proposta_incompleta" };
+  const short = parsed.form === "resposta_curta";
+  if (short && proposal.by !== "cliente") return { ok: false, reason: "resposta_curta_exige_cliente" };
+  const date = short ? parsed.localDate : parsed.fromMessage.localDate;
+  const time = short ? parsed.timeMin : parsed.fromMessage.timeMin;
+  if (date === undefined || time === undefined) return { ok: false, reason: "sem_dia_ou_hora" };
+  if (date !== proposal.localDate) return { ok: false, reason: "dia_diferente" };
+  if (time !== proposal.timeMin) return { ok: false, reason: "hora_diferente" };
+  return { ok: true, reason: "ok" };
+}
+
+// ───────────────────────── menções de dia/hora (mensagens do CLIENTE) ─────────────────────────
+
+export type DateTimeMention = {
+  localDate?: LocalDate;
+  timeMin?: number;
+  /** Trechos literais (substrings de `normalizeConfirmationText(text)`). */
+  evidence: string[];
+};
+
+const MENTION_BLOCKED_GLOBAL = new Set(["condicional", "relato", "citacao", "encaminhada", "transcricao", "ironia", "emoji_negativo"]);
+
+/**
+ * Menções de dia e/ou hora numa mensagem (do cliente), SEM exigir marcador de confirmação — para o
+ * chamador achar a proposta aberta nas mensagens anteriores. Mesmas regras de ambiguidade do parser;
+ * na dúvida devolve vazio: dia que não resolve descarta a menção, trecho com negação/passado/limite/
+ * faixa/assunto financeiro não conta, hora ambígua ou "depois das 18h" não é hora exata. Pergunta conta
+ * ("pode ser quinta às 10?"). Duas menções na mesma frase ("quinta 10h ou sexta 14h") viram duas.
+ */
+export function extractDateTimeMentions(raw: string, ctx: { now: number; tz: string }): DateTimeMention[] {
+  assertTz(ctx.tz);
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  const text = normalizeConfirmationText(raw);
+  if (text.length > CONFIRM_MAX_CHARS) return [];
+  const a = analyze(text);
+  if (a.globalBlock.some((b) => MENTION_BLOCKED_GLOBAL.has(b))) return [];
+  const clock = localClock(ctx.now, ctx.tz);
+  const out: DateTimeMention[] = [];
+  const seen = new Set<string>();
+  for (const seg of a.segs) {
+    if (seg.blockers.length > 0 || seg.hasRange || seg.hasLimit) continue;
+    const toks = [
+      ...seg.days.map((d) => ({ k: "d" as const, at: d.at, d })),
+      ...seg.times.map((tt) => ({ k: "t" as const, at: tt.at, t: tt })),
+    ].sort((x, y) => x.at - y.at);
+    type Group = { days: DayTok[]; time?: TimeTok };
+    const groups: Group[] = [];
+    let cur: Group = { days: [] };
+    let lastEnd = -1;
+    let lastKind: "d" | "t" | undefined;
+    const flush = () => {
+      if (cur.days.length || cur.time) groups.push(cur);
+      cur = { days: [] };
+    };
+    for (const tk of toks) {
+      const between = lastEnd >= 0 ? a.n.slice(lastEnd, tk.at) : "";
+      if (tk.k === "d") {
+        // dias seguidos sem "ou/e/vírgula" entre si descrevem o MESMO dia ("quinta 26/11", "quinta (26)")
+        const sameDay = lastKind === "d" && !/\b(?:ou|e)\b/.test(between);
+        if (!sameDay && cur.days.length > 0) flush();
+        cur.days.push(tk.d);
+        lastEnd = tk.at + tk.d.lit.length;
+        lastKind = "d";
+      } else {
+        if (cur.time) flush();
+        cur.time = tk.t;
+        lastEnd = tk.at + tk.t.lit.length;
+        lastKind = "t";
+      }
+    }
+    flush();
+    for (const gr of groups) {
+      const neg: string[] = [];
+      let date: LocalDate | undefined;
+      if (gr.days.length) {
+        date = pickDate(gr.days, clock.date, clock.minutes, neg).date;
+        if (date === undefined) continue; // dia citado que não resolve: descarta a menção inteira
+        if (date < clock.date) continue;
+      }
+      let time: number | undefined;
+      if (gr.time) {
+        const tm = pickTime([gr.time], neg);
+        time = tm.min;
+        if (time === undefined && date === undefined) continue;
+        if (time !== undefined && date === clock.date && time <= clock.minutes) continue;
+      }
+      if (date === undefined && time === undefined) continue;
+      const key = `${date ?? "-"}|${time ?? "-"}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ localDate: date, timeMin: time, evidence: [...gr.days.map((d) => d.lit), ...(gr.time ? [gr.time.lit] : [])] });
+    }
+  }
+  return out;
 }
