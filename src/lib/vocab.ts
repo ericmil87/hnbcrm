@@ -202,8 +202,68 @@ export const VOCAB = {
     },
     bookedBy: "Marcado por {quem} às {hora}",
     withCompanion: "Vem acompanhado?",
+    // --- B2: entradas fora da página (chip e bloco); os textos da folha e do painel vivem em `lib/bookingCopy.ts`
+    block: {
+      title: "Agendamentos",
+      upcoming: "Próximos",
+      recent: "Recentes",
+      chipNext: "Próximo: {quando}",
+    },
     pendingTabs: { approval: "Aguardando aprovação", conflicts: "Conflitos", noOutcome: "Sem desfecho", suggestions: "Sugestões" },
     view: { day: "Dia", week: "Semana", month: "Mês", list: "Lista", byRoom: "Por sala", byPerson: "Por profissional" },
+    /** B1 (configurações e assistente): textos compartilhados entre painéis, assistente e testes. Texto por TIPO para o gênero concordar (a sala, o profissional, o equipamento). */
+    config: {
+      capacityLabel: "Quantas pessoas ao mesmo tempo",
+      noAccess: { title: "Sem acesso à agenda", hint: "Peça a quem administra a conta a permissão para configurar a agenda." },
+      noAccessAutomation: { title: "Sem acesso a estas configurações", hint: "Só quem pode gerenciar a agenda vê as regras de sugestão e da IA." },
+      emptyClosures: { title: "Nenhum fechamento programado", hint: "Feriados, folgas e horários especiais aparecem aqui." },
+      kind: {
+        person: {
+          newTitle: "Novo profissional",
+          created: "Profissional criado",
+          archived: "Profissional arquivado",
+          reactivated: "Profissional reativado",
+          weeklyHint: "Quando este profissional atende. Dias sem turno ficam fechados.",
+          any: "Qualquer profissional",
+          only: "Só profissionais que eu escolher",
+        },
+        room: {
+          newTitle: "Nova sala",
+          created: "Sala criada",
+          archived: "Sala arquivada",
+          reactivated: "Sala reativada",
+          weeklyHint: "Quando esta sala está disponível. Dias sem turno ficam fechados.",
+          any: "Qualquer sala",
+          only: "Só salas que eu escolher",
+          exclusive: "Ocupa a sala inteira",
+          capacityExample:
+            "Uma sala comum atende 1 pessoa por vez. Se esta comporta mais, coloque aqui: com 2, duas pessoas marcam o mesmo horário (por exemplo, um casal na sala dupla) e só então o horário fica cheio.",
+        },
+        equipment: {
+          newTitle: "Novo equipamento",
+          created: "Equipamento criado",
+          archived: "Equipamento arquivado",
+          reactivated: "Equipamento reativado",
+          weeklyHint: "Quando este equipamento está disponível. Dias sem turno ficam fechados.",
+          any: "Qualquer equipamento",
+          only: "Só equipamentos que eu escolher",
+          exclusive: "Ocupa o equipamento inteiro",
+          capacityExample:
+            "Um equipamento comum atende 1 pessoa por vez. Se este comporta mais, coloque aqui: com 2, duas pessoas marcam o mesmo horário e só então o horário fica cheio.",
+        },
+      },
+      smartModes: {
+        off: { title: "Desligada", hint: "Os horários livres aparecem em ordem, do mais cedo ao mais tarde." },
+        rank: {
+          title: "Destacar os melhores",
+          hint: "Oferece primeiro os horários colados em outro atendimento, para não deixar buracos na sua agenda. Os outros continuam disponíveis.",
+        },
+        restrict: {
+          title: "Oferecer só os melhores",
+          hint: "A IA e o link só mostram os horários que fecham os buracos. Se houver poucos, completa com os melhores até o mínimo de opções.",
+        },
+      },
+    },
     onboarding: {
       title: "Configurar o agendamento",
       steps: { model: "Como você atende?", review: "Revise o que preparamos", ai: "Como a IA participa?" },
