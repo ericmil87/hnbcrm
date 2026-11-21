@@ -1,5 +1,5 @@
 import { v, ConvexError } from "convex/values";
-import { deactivatePersonResourcesForMemberCore } from "./lib/schedExceptionOps";
+import { deactivatePersonResourcesForMemberCore } from "./lib/schedConfigOps";
 import { markMemberNotificationsRead } from "./lib/notificationResolve";
 import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
@@ -427,7 +427,7 @@ export const removeTeamMember = mutation({
     await deactivatePersonResourcesForMemberCore(ctx, {
       organizationId: teamMember.organizationId,
       memberId: args.teamMemberId,
-      actor: { type: "human", member: userMember, via: "app" },
+      actor: userMember,
       now,
     });
 

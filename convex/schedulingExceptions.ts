@@ -1,5 +1,8 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
+import { internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import schema from "./schema";
+import { resolveAgendaReader } from "./lib/schedRead";
+import { slotValidator } from "./lib/schedViews";
 import type { Id } from "./_generated/dataModel";
 import { requirePermission } from "./lib/auth";
 import { assertModule } from "./lib/orgModules";
@@ -39,17 +42,21 @@ const closureFields = {
   reason: v.optional(v.string()),
 };
 
-const outcomeV = v.union(v.literal("reallocated"), v.literal("conflict"), v.literal("skipped"));
+const outcomeV = v.union(v.literal("reallocated"), v.literal("conflict"), v.literal("skipped"), v.literal("unknown"));
 export const closureLineValidator = v.object({
   appointmentId: v.id("schedAppointments"),
-  resourceId: v.id("schedResources"),
-  resourceName: v.string(),
+  /** Recursos que saíram do agendamento (sala e/ou profissional). */
+  resourceIds: v.array(v.id("schedResources")),
+  resourceNames: v.array(v.string()),
   startTime: v.number(),
   localDate: v.string(),
   serviceName: v.string(),
   contactName: v.optional(v.string()),
+  partyKey: v.optional(v.string()),
   outcome: outcomeV,
   toResourceName: v.optional(v.string()),
+  /** Conflito de PESSOA: horários (formato `Slot`) para a equipe escolher. */
+  suggestions: v.array(slotValidator),
 });
 export const closureResultValidator = v.object({
   mode: v.union(v.literal("preview"), v.literal("commit")),
@@ -58,11 +65,20 @@ export const closureResultValidator = v.object({
   reallocated: v.number(),
   conflicts: v.number(),
   pending: v.number(),
+  simulated: v.number(),
   capped: v.boolean(),
   exceptionIds: v.array(v.id("schedExceptions")),
+  runId: v.optional(v.id("schedClosureRuns")),
+  removed: v.number(),
+  restorable: v.number(),
+  reason: v.optional(v.union(v.literal("covered_by_org_closure"), v.literal("nothing_to_reopen"))),
   items: v.array(closureLineValidator),
 });
-export const reopenResultValidator = v.object({ removed: v.number(), restorable: v.number(), dates: v.array(v.string()) });
+export const closureRunValidator = v.object({
+  _id: v.id("schedClosureRuns"),
+  _creationTime: v.number(),
+  ...schema.tables.schedClosureRuns.validator.fields,
+});
 
 async function enter(
   ctx: MutationCtx,
@@ -74,7 +90,10 @@ async function enter(
   return { actor: { type: "human", member, via: "app" }, now: Date.now() };
 }
 
-async function closure(ctx: MutationCtx, args: typeof closureArgs.type, mode: "preview" | "commit", acceptAffected?: boolean) {
+const closureArgs = v.object(closureFields);
+const commitFields = { acceptAffected: v.optional(v.boolean()), expectedAffected: v.optional(v.number()) };
+
+async function closure(ctx: MutationCtx, args: typeof closureArgs.type, mode: "preview" | "commit", extra: { acceptAffected?: boolean; expectedAffected?: number } = {}) {
   const { actor, now } = await enter(ctx, args.organizationId, args.resourceId === undefined);
   return await setResourceDayExceptionCore(ctx, {
     organizationId: args.organizationId,
@@ -88,30 +107,35 @@ async function closure(ctx: MutationCtx, args: typeof closureArgs.type, mode: "p
     reasonCode: args.reasonCode,
     reason: args.reason,
     mode,
-    acceptAffected,
+    ...extra,
     now,
   });
 }
-const closureArgs = v.object(closureFields);
 
-/** Prévia: quem seria afetado e o que acontece com cada um. Não grava NADA e é igual ao resultado real. */
+/** Prévia: quem seria afetado e o que acontece com cada um. Não grava NADA e usa a mesma decisão do commit. */
 export const previewResourceClosure = mutation({
   args: closureFields,
   returns: closureResultValidator,
   handler: async (ctx, args) => closure(ctx, args, "preview"),
 });
 
-/** Fecha (grava as exceções, uma por data) e realoca/abre conflito para os afetados. Com afetados, exige `acceptAffected`. */
+/**
+ * Fecha (grava as exceções, uma por data) e trata os afetados (sala/equipamento realoca; pessoa, org e tipo viram
+ * conflito). Com afetados exige `acceptAffected`; `expectedAffected` = contagem vista na prévia (diferente = recusa).
+ */
 export const setResourceClosure = mutation({
-  args: { ...closureFields, acceptAffected: v.optional(v.boolean()) },
+  args: { ...closureFields, ...commitFields },
   returns: closureResultValidator,
   handler: async (ctx, args) => {
-    const { acceptAffected, ...rest } = args;
-    return closure(ctx, rest, "commit", acceptAffected);
+    const { acceptAffected, expectedAffected, ...rest } = args;
+    return closure(ctx, rest, "commit", { acceptAffected, expectedAffected });
   },
 });
 
-/** Reabrir: remove as exceções manuais do escopo nas datas; NÃO desfaz realocações. */
+/**
+ * Reabrir: remove as exceções MANUAIS do escopo nas datas, SÓ do `kind` pedido (padrão `closed`); NÃO desfaz
+ * realocações. Remover `extra`/`custom` com agendamentos dentro tem prévia e afetados como fechar.
+ */
 export const removeResourceClosure = mutation({
   args: {
     organizationId: v.id("organizations"),
@@ -119,11 +143,44 @@ export const removeResourceClosure = mutation({
     resourceKind: v.optional(kindV),
     fromLocalDate: v.string(),
     toLocalDate: v.optional(v.string()),
+    kind: v.optional(exceptionKindV),
+    mode: v.optional(v.union(v.literal("preview"), v.literal("commit"))),
+    ...commitFields,
   },
-  returns: reopenResultValidator,
+  returns: closureResultValidator,
   handler: async (ctx, args) => {
     const { actor, now } = await enter(ctx, args.organizationId, args.resourceId === undefined);
-    return await clearResourceDayExceptionCore(ctx, { ...args, actor, now });
+    return await clearResourceDayExceptionCore(ctx, {
+      organizationId: args.organizationId, actor, resourceId: args.resourceId, resourceKind: args.resourceKind,
+      fromLocalDate: args.fromLocalDate, toLocalDate: args.toLocalDate, kind: args.kind,
+      mode: args.mode ?? "commit", acceptAffected: args.acceptAffected, expectedAffected: args.expectedAffected, now,
+    });
+  },
+});
+
+/** Progresso e resultado de um fechamento (`pending > 0`/`status: "running"` enquanto os lotes rodam). `null` = não existe ou sem acesso. */
+export const getClosureRun = query({
+  args: { organizationId: v.id("organizations"), runId: v.id("schedClosureRuns") },
+  returns: v.union(v.null(), closureRunValidator),
+  handler: async (ctx, args) => {
+    if (!(await resolveAgendaReader(ctx, args.organizationId, "view_all"))) return null;
+    const run = await ctx.db.get(args.runId);
+    return run && run.organizationId === args.organizationId ? run : null;
+  },
+});
+
+/** Fechamentos recentes da org (mais novos primeiro, até 20). */
+export const listClosureRuns = query({
+  args: { organizationId: v.id("organizations"), limit: v.optional(v.number()) },
+  returns: v.array(closureRunValidator),
+  handler: async (ctx, args) => {
+    if (!(await resolveAgendaReader(ctx, args.organizationId, "view_all"))) return [];
+    const limit = Math.max(1, Math.min(20, Math.trunc(args.limit ?? 10)));
+    return await ctx.db
+      .query("schedClosureRuns")
+      .withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId))
+      .order("desc")
+      .take(limit);
   },
 });
 
@@ -154,26 +211,35 @@ export const resolveConflict = mutation({
   },
 });
 
-/** Lote agendado do fechamento/remoção (idempotente; reagenda o que sobrar). Só o scheduler chama. */
+const exceptionLiteV = v.object({
+  resourceId: v.optional(v.id("schedResources")),
+  resourceKind: v.optional(kindV),
+  localDate: v.string(),
+  mode: exceptionKindV,
+  intervals: v.optional(intervalsV),
+});
+
+/** Lote agendado do fechamento/remoção: RELÊ a faixa por cursor, agenda o próximo antes de processar, isola falha por item. Só o scheduler chama. */
 export const internalProcessClosureBatch = internalMutation({
   args: {
     organizationId: v.id("organizations"),
-    kind: v.union(v.literal("resource_closed"), v.literal("resource_removed")),
-    items: v.array(v.object({ appointmentId: v.id("schedAppointments"), resourceId: v.id("schedResources") })),
+    runId: v.id("schedClosureRuns"),
+    scope: v.object({
+      mode: v.union(v.literal("closure"), v.literal("removal")),
+      resourceId: v.optional(v.id("schedResources")),
+      resourceKind: v.optional(kindV),
+      fromLocalDate: v.string(),
+      toLocalDate: v.string(),
+      changeKind: v.optional(exceptionKindV),
+    }),
+    adjust: v.object({ excludeIds: v.optional(v.array(v.id("schedExceptions"))), includeBefore: v.optional(v.array(exceptionLiteV)) }),
+    cursor: v.number(),
+    attempt: v.number(),
     actorMemberId: v.optional(v.id("teamMembers")),
-    closureKey: v.string(),
-    dates: v.optional(v.array(v.string())),
-    resourceName: v.optional(v.string()),
-    resourceId: v.optional(v.id("schedResources")),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const { dates, ...rest } = args;
-    await processClosureBatchCore(ctx, {
-      ...rest,
-      ...(dates && dates.length === 2 ? { dates: [dates[0], dates[1]] as [string, string] } : {}),
-      now: Date.now(),
-    });
+    await processClosureBatchCore(ctx, { ...args, now: Date.now() });
     return null;
   },
 });

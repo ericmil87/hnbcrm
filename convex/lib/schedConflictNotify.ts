@@ -21,6 +21,7 @@ export async function notifyClosureConflicts(
   args: {
     organizationId: Id<"organizations">;
     closureKey: string;
+    runId?: Id<"schedClosureRuns">;
     kind: "resource_closed" | "resource_removed";
     count: number;
     resourceName?: string;
@@ -45,7 +46,7 @@ export async function notifyClosureConflicts(
       memberId: m._id,
       type: "appointment_conflict",
       ...notificationCopy({ type: "appointment_conflict", kind: args.kind, count: args.count, resourceName: args.resourceName, dateLabel }),
-      data: { closureKey: args.closureKey, kind: args.kind },
+      data: { closureKey: args.closureKey, kind: args.kind, ...(args.runId ? { runId: args.runId } : {}), ...(args.firstDate ? { fromLocalDate: args.firstDate } : {}), ...(args.lastDate ? { toLocalDate: args.lastDate } : {}) },
       coalesce: {
         key: `appointment_conflict:${args.closureKey}`,
         increment: args.count,

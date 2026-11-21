@@ -61,6 +61,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "schedResources", index: "by_organization" },
   { table: "schedSettings", index: "by_organization" },
   { table: "schedJobState", index: "by_organization" },
+  { table: "schedClosureRuns", index: "by_organization_and_created" },
   { table: "savedViews", index: "by_organization" },
   { table: "onboardingProgress", index: "by_organization" },
   // Onboarding v2: filhos da sessão antes do pai (P2.3), sessão com o rascunho (P2.1).

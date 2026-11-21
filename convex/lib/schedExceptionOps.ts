@@ -2,26 +2,35 @@
  * Agenda v2 (A3c): fechar/abrir recurso (ou a org) num dia, realocação dos agendamentos afetados e a
  * fila de conflitos (`schedConflicts`). Irmão de `schedBookingOps.ts`.
  *
- * QUEM ESCREVE O QUÊ: este arquivo escreve em `schedExceptions` e `schedConflicts`. Ele NÃO insere nem
- * apaga alocações e NÃO altera agendamentos: tudo isso passa pela porta (`planClosureRelocation`,
+ * QUEM ESCREVE O QUÊ: este arquivo escreve em `schedExceptions`, `schedConflicts` e `schedClosureRuns`. Ele NÃO
+ * insere nem apaga alocações e NÃO altera agendamentos: tudo isso passa pela porta (`planClosureRelocation`,
  * `relocateAllocationCore`, `releaseAllocationForConflictCore`, `changeResourceCore`,
  * `rescheduleAppointmentCore`, `cancelAppointmentCore`), que lê a capacidade e respeita o teto
  * (guard `schedulingPort.test.ts`: este arquivo nem cita as tabelas quentes).
  *
- * FECHAR: `mode: "preview"` devolve a lista dos afetados e o que aconteceria com cada um (realocado
- * para qual recurso equivalente NO MESMO horário, ou "sem lugar"); `mode: "commit"` grava as exceções
- * (uma linha por data) e, para cada afetado, na MESMA função de decisão da prévia (`planClosureRelocation`,
- * com ocupação e exceções hipotéticas na prévia; banco real no commit) realoca ou retira a alocação do
- * recurso fechado e abre linha em `schedConflicts` (`resource_closed`). NADA é cancelado, o status do
- * agendamento não muda e nenhuma mensagem vai ao cliente. Reabrir NÃO desfaz realocações.
+ * FECHAR: `mode: "preview"` devolve a lista dos afetados e o que aconteceria com cada um; `mode: "commit"` grava
+ * as exceções (uma linha por data) e trata os afetados pela MESMA decisão da prévia (`planClosureRelocation`,
+ * com ocupação e exceções hipotéticas na prévia; banco real no commit):
+ *   - recurso SALA ou EQUIPAMENTO: realoca o agendamento (ou o grupo/casal INTEIRO, `partyKey`) para UM recurso
+ *     equivalente no MESMO horário; sem lugar = conflito;
+ *   - recurso PESSOA, org inteira ou tipo de recurso: NUNCA realoca (trocar de profissional o cliente percebe;
+ *     org/tipo = tudo fechado): vira conflito `resource_closed` com até 3 sugestões (outro profissional
+ *     equivalente no mesmo horário; o mesmo profissional no próximo horário livre);
+ *   - um conflito por AGENDAMENTO (com a lista de recursos que saíram); retira só a alocação do recurso fechado.
+ * NADA é cancelado, o status do agendamento não muda e nenhuma mensagem vai ao cliente. Reabrir NÃO desfaz
+ * realocações.
  *
- * CUSTO (documentos lidos): descoberta dos afetados = 1 (org) + exceções do período (≤ 500) + por
- * recurso alvo as faixas de `readResourceAllocations` (teto 200 + 300) + 1 agendamento por alocação
- * lida; teto de afetados = `CLOSURE_MAX_AFFECTED` (acima, prévia `capped` e commit recusado). Cada
- * afetado processado custa ≈ 30–60 documentos (serviço, recursos do pool, exceções do dia, faixa de
- * capacidade dos candidatos, compromissos internos). No commit só `CLOSURE_INLINE_AFFECTED` entram na
- * mesma transação; o resto vai em lotes agendados (`internal.schedulingExceptions.*`), idempotentes:
- * um item já processado (a alocação do recurso fechado não existe mais) é pulado.
+ * LOTES (nenhum caminho termina com afetado sem alocação válida e sem linha em `schedConflicts`): o commit trata
+ * `CLOSURE_INLINE_AFFECTED` unidades na transação e AGENDA o próximo lote ANTES de processar o atual; cada lote
+ * RELÊ a faixa por cursor (o item já tratado sai da faixa: idempotente; não há lista que se perca). Item que lança
+ * é isolado: vira conflito numa tentativa só de liberação (e, se nem isso, linha de conflito + auditoria).
+ * `schedClosureRuns` guarda o progresso e o resultado final; o aviso à equipe sai quando o fechamento termina.
+ *
+ * CUSTO (documentos lidos): página de varredura = 1 org + exceções do período (≤ 500) + (recurso: faixas de
+ * `readResourceAllocations`, teto 200+300) ou (org/tipo: ≤ 200 agendamentos por índice de início, sem alocações) +
+ * 1 leitura por candidato. Cada unidade decidida custa ≈ 30–60 documentos (serviço, recursos do pool, exceções do
+ * dia, faixa de capacidade dos candidatos, compromissos internos); a prévia simula no máximo
+ * `PREVIEW_SIM_UNITS` unidades (o resto sai "unknown"); org/tipo não simula nada (sempre conflito).
  */
 import { ConvexError } from "convex/values";
 import { internal } from "../_generated/api";
@@ -35,63 +44,79 @@ import {
   cancelAppointmentCore,
   canRestoreOriginalPlacement,
   changeResourceCore,
-  clearAppointmentAttentionCore,
   type ClosureKind,
+  type EquivalentSlot,
   loadAppointmentOfOrg,
+  MOVABLE_STATUSES,
   newClosureResourceBook,
   planClosureRelocation,
   relocateAllocationCore,
   releaseAllocationForConflictCore,
   rescheduleAppointmentCore,
-  MOVABLE_STATUSES,
+  settleManualConflictCore,
 } from "./schedBookingOps";
 import { actorMemberId, actorVia, recordActorTypeOf, type SchedActor } from "./schedBookingEffects";
 import { notifyClosureConflicts } from "./schedConflictNotify";
-import {
-  computeDayAvailability,
-  type AllocationLite,
-  type ExceptionLite,
-  overlaps,
-  validateIntervals,
-} from "./schedAvailability";
-import { readExceptionsRange, readResourceAllocations } from "./schedRead";
+import { computeDayAvailability, type AllocationLite, type ExceptionLite, overlaps, validateIntervals } from "./schedAvailability";
+import { readAppointmentsStartingBetween, readExceptionsRange, readResourceAllocations } from "./schedRead";
+import { searchSlots } from "./schedSearch";
+import { type Slot, toSlot } from "./schedViews";
 import { addLocalDays, assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type LocalDate, localDateOf } from "./schedTime";
 
 export const MAX_CLOSURE_DAYS = 60;
+/** Unidades (agendamento ou grupo) tratadas na transação do commit. */
 export const CLOSURE_INLINE_AFFECTED = 15;
+/** Unidades por lote agendado. */
 export const CLOSURE_BATCH_SIZE = 15;
-export const CLOSURE_MAX_AFFECTED = 200;
+/** Agendamentos lidos por página na varredura de org/tipo. */
+export const CLOSURE_PAGE_APPOINTMENTS = 200;
+/** Unidades que a PRÉVIA simula (cada uma custa ≈ 30–60 documentos); as demais saem `unknown`. */
+export const PREVIEW_SIM_UNITS = 40;
+/** Páginas encadeadas no máximo por fechamento (freio contra laço se algo travar). */
+export const CLOSURE_MAX_PASSES = 400;
 const REASON_MAX = 120;
 const MAX_INTERVALS = 6;
+const MAX_SUGGESTIONS = 3;
+const MAX_NEXT_FREE_SEARCHES = 5;
+const REMOVAL_LOOKAHEAD_MS = 4 * 365 * 24 * 3_600_000;
 
 export type ExceptionKind = "closed" | "custom" | "extra" | "block";
 export type ResourceKindLite = "person" | "room" | "equipment";
-export type ClosureItem = { appointmentId: AppointmentId; resourceId: Id<"schedResources"> };
-export type ClosureOutcomeKind = "reallocated" | "conflict" | "skipped";
+export type ClosureOutcomeKind = "reallocated" | "conflict" | "skipped" | "unknown";
 
 export type ClosureLine = {
   appointmentId: AppointmentId;
-  resourceId: Id<"schedResources">;
-  resourceName: string;
+  resourceIds: Id<"schedResources">[];
+  resourceNames: string[];
   startTime: number;
   localDate: string;
   serviceName: string;
   contactName?: string;
+  partyKey?: string;
   outcome: ClosureOutcomeKind;
   toResourceName?: string;
+  /** Só em conflito de PESSOA: horários para a equipe escolher. */
+  suggestions: Slot[];
 };
 
 export type ClosureResult = {
   mode: "preview" | "commit";
   dates: string[];
+  /** Agendamentos afetados (um por agendamento, mesmo que tenha perdido sala E profissional). */
   affected: number;
   reallocated: number;
   conflicts: number;
-  /** Ainda por processar em lotes agendados (só no commit). */
+  /** Ainda por tratar em lotes agendados (commit). */
   pending: number;
-  /** Mais afetados que o teto: a lista é parcial (e o commit é recusado). */
+  /** Prévia: quantas unidades foram simuladas; as demais linhas saem `unknown`. */
+  simulated: number;
+  /** A varredura tem mais páginas: `affected` é "pelo menos". */
   capped: boolean;
   exceptionIds: Id<"schedExceptions">[];
+  runId?: Id<"schedClosureRuns">;
+  removed: number;
+  restorable: number;
+  reason?: "covered_by_org_closure" | "nothing_to_reopen";
   items: ClosureLine[];
 };
 
@@ -146,13 +171,14 @@ function validateRange(from: LocalDate, to: LocalDate | undefined, tz: string, n
 async function resolveTargets(
   ctx: MutationCtx,
   organizationId: Id<"organizations">,
-  scope: Scope
+  scope: Scope,
+  allowArchived = false
 ): Promise<Doc<"schedResources">[]> {
   if (scope.resourceId !== undefined) {
     if (scope.resourceKind !== undefined) fail("Informe o recurso OU o tipo de recurso, não os dois.");
     const r = await ctx.db.get(scope.resourceId);
     if (!r || r.organizationId !== organizationId) fail("Recurso não encontrado");
-    if (!r.active) fail("Esse recurso está arquivado.");
+    if (!r.active && !allowArchived) fail("Esse recurso está arquivado.");
     return [r];
   }
   const rows = await ctx.db
@@ -169,144 +195,188 @@ function violatesDay(resource: Doc<"schedResources">, exceptions: ExceptionLite[
   return day.blocks.some((b) => b.source === "block" && overlaps(b.start, b.end, core.start, core.end));
 }
 
-type Affected = ClosureLine & { sortKey: string };
+// ---------------------------------------------------------------------------
+// Varredura dos afetados (a MESMA função na prévia e nos lotes)
+// ---------------------------------------------------------------------------
 
-/** Afetados = quem violaria o dia DEPOIS da exceção e não violava ANTES (forçados antes não entram). */
-async function findAffected(
-  ctx: MutationCtx,
-  p: { organizationId: Id<"organizations">; tz: string; targets: Doc<"schedResources">[]; dates: LocalDate[]; hypothetical: ExceptionLite[]; now: number }
-): Promise<{ items: Affected[]; capped: boolean }> {
-  const first = p.dates[0];
-  const last = p.dates[p.dates.length - 1];
-  const dbEx = await readExceptionsRange(ctx, p.organizationId, first, last);
-  if (dbEx.completeBefore !== null) fail("Há exceções demais nesse período para conferir com segurança. Revise os fechamentos.");
-  const dateSet = new Set<string>(p.dates);
-  const window = { start: dayBounds(first, p.tz).start, end: dayBounds(last, p.tz).end };
-  const apptCache = new Map<string, AppointmentDoc | null>();
-  const items: Affected[] = [];
-  for (const resource of p.targets) {
-    const read = await readResourceAllocations(ctx, resource, window);
-    if (read.coverage !== null) fail("Há agendamentos demais desse recurso nesse período para conferir com segurança. Feche por períodos menores.");
-    for (const row of read.allocations) {
-      if (row.coreEnd <= p.now) continue;
-      let a = apptCache.get(row.appointmentId);
-      if (a === undefined) {
-        a = await ctx.db.get(row.appointmentId);
-        apptCache.set(row.appointmentId, a);
-      }
-      if (!a || a.organizationId !== p.organizationId || !MOVABLE_STATUSES.includes(a.status) || !dateSet.has(a.localDate)) continue;
-      const before = dbEx.rows.filter((e) => e.localDate === a.localDate);
-      const after = [...before, ...p.hypothetical.filter((e) => e.localDate === a.localDate)];
-      const core = { start: a.startTime, end: a.endTime };
-      if (!violatesDay(resource, after, a.localDate, p.tz, core) || violatesDay(resource, before, a.localDate, p.tz, core)) continue;
-      items.push({
-        appointmentId: a._id,
-        resourceId: resource._id,
-        resourceName: resource.name,
-        startTime: a.startTime,
-        localDate: a.localDate,
-        serviceName: a.serviceName,
-        ...(a.contactName ? { contactName: a.contactName } : {}),
-        outcome: "skipped",
-        sortKey: `${String(a.startTime).padStart(15, "0")}|${a._id}|${resource._id}`,
-      });
-    }
-  }
-  items.sort((x, y) => (x.sortKey < y.sortKey ? -1 : x.sortKey > y.sortKey ? 1 : 0));
-  return { items: items.slice(0, CLOSURE_MAX_AFFECTED), capped: items.length > CLOSURE_MAX_AFFECTED };
-}
+/** Unidade de trabalho: um agendamento, ou o GRUPO (casal/`partyKey`) que se move junto no mesmo horário. */
+type Unit = {
+  appointments: AppointmentDoc[];
+  /** Recursos que saíram (os fechados que o agendamento usa). */
+  resourceIds: Id<"schedResources">[];
+  /** Chave de ordem e de cursor (`blockStart` na varredura por recurso; `startTime` na de org/tipo). */
+  cursorKey: number;
+};
 
-async function openConflictFor(ctx: MutationCtx, appointmentId: AppointmentId, kind: ClosureKind, resourceId: Id<"schedResources">): Promise<boolean> {
-  const rows = await ctx.db.query("schedConflicts").withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId)).take(10);
-  return rows.some((r) => r.status === "open" && r.kind === kind && r.resourceId === resourceId);
-}
+export type StateAdjust = {
+  /** Prévia de adicionar: exceções que ainda não existem (só no estado "depois"). */
+  addHypothetical?: ExceptionLite[];
+  /** Prévia de remover: linhas que a remoção apagaria (saem do estado "depois"). */
+  removeIds?: Id<"schedExceptions">[];
+  /** Lote depois de ADICIONAR: linhas recém-gravadas (saem do estado "antes"). */
+  excludeIds?: Id<"schedExceptions">[];
+  /** Lote depois de REMOVER: linhas já apagadas (voltam ao estado "antes"). */
+  includeBefore?: ExceptionLite[];
+};
 
-type ProcessResult = { lines: Array<{ appointmentId: AppointmentId; resourceId: Id<"schedResources">; outcome: ClosureOutcomeKind; toResourceName?: string }>; conflicts: number; reallocated: number };
+type ScanScope = {
+  mode: "closure" | "removal";
+  resourceId?: Id<"schedResources">;
+  resourceKind?: ResourceKindLite;
+  fromLocalDate: LocalDate;
+  toLocalDate: LocalDate;
+};
 
-/**
- * Decide e (no commit) aplica, na ordem, o destino de cada item. A prévia usa a MESMA decisão
- * (`planClosureRelocation`) com ocupação e exceções hipotéticas; o commit lê o banco real.
- */
-async function processItems(
+/** Afetado = violaria o dia DEPOIS da mudança e não violava ANTES (quem já estava forçado antes não entra). */
+async function scanUnits(
   ctx: MutationCtx,
   p: {
     organizationId: Id<"organizations">;
-    items: ClosureItem[];
-    kind: ClosureKind;
-    actor: SchedActor;
-    mode: "preview" | "commit";
-    hypothetical?: ExceptionLite[];
+    tz: string;
+    scope: ScanScope;
+    targets: Doc<"schedResources">[];
+    adjust: StateAdjust;
+    cursor?: number;
     now: number;
   }
-): Promise<ProcessResult> {
-  const rb = newClosureResourceBook(p.organizationId);
-  const overlay: AllocationLite[] = [];
-  const out: ProcessResult = { lines: [], conflicts: 0, reallocated: 0 };
-  const reason = p.kind === "resource_closed" ? "recurso fechado" : "recurso removido";
-  for (const item of p.items) {
-    const plan =
-      p.kind === "resource_removed"
-        ? await planConflictOnly(ctx, p.organizationId, item)
-        : await planClosureRelocation(ctx, {
-            appointmentId: item.appointmentId,
-            organizationId: p.organizationId,
-            closedResourceId: item.resourceId,
-            hypothetical: p.hypothetical,
-            overlay,
-            rb,
-            now: p.now,
-          });
-    if (plan.outcome === "skip") {
-      out.lines.push({ ...item, outcome: "skipped" });
-      continue;
+): Promise<{ units: Unit[]; nextCursor: number | null }> {
+  const { scope } = p;
+  const apptCache = new Map<string, AppointmentDoc | null>();
+  const getAppt = async (id: AppointmentId) => {
+    let a = apptCache.get(id);
+    if (a === undefined) {
+      a = await ctx.db.get(id);
+      apptCache.set(id, a);
     }
-    if (plan.outcome === "reallocated") {
-      if (p.mode === "preview") {
-        overlay.push(plan.overlayRow);
-        out.reallocated++;
-        out.lines.push({ ...item, outcome: "reallocated", toResourceName: plan.toResource.name });
-        continue;
-      }
-      if (await relocateAllocationCore(ctx, { plan, closedResourceId: item.resourceId, actor: p.actor, reason, now: p.now })) {
-        out.reallocated++;
-        out.lines.push({ ...item, outcome: "reallocated", toResourceName: plan.toResource.name });
-        continue;
-      }
+    return a;
+  };
+  const movable = (a: AppointmentDoc | null): a is AppointmentDoc => a !== null && a.organizationId === p.organizationId && MOVABLE_STATUSES.includes(a.status);
+
+  // --- remoção do recurso: todo agendamento futuro movível que usa o recurso
+  if (scope.mode === "removal") {
+    const resource = p.targets[0];
+    if (!resource) return { units: [], nextCursor: null };
+    const start = Math.max(p.cursor ?? p.now, p.now);
+    const read = await readResourceAllocations(ctx, resource, { start, end: start + REMOVAL_LOOKAHEAD_MS });
+    const horizon = read.coverage?.to ?? Infinity;
+    const units = new Map<string, Unit>();
+    for (const row of read.allocations) {
+      if (row.blockStart >= horizon || row.blockStart < start || row.coreEnd <= p.now) continue;
+      const a = await getAppt(row.appointmentId);
+      if (!movable(a) || !a.resources.some((r) => r.resourceId === resource._id && r.allocated)) continue;
+      units.set(a._id, { appointments: [a], resourceIds: [resource._id], cursorKey: a.blockStart });
     }
-    // Conflito (sem lugar equivalente, ou a capacidade mudou entre a decisão e a escrita).
-    out.conflicts++;
-    out.lines.push({ ...item, outcome: "conflict" });
-    if (p.mode === "preview") continue;
-    const appointment: AppointmentDoc = plan.appointment;
-    const released = await releaseAllocationForConflictCore(ctx, { appointment, resourceId: item.resourceId, kind: p.kind, actor: p.actor, now: p.now });
-    if (released.released && !(await openConflictFor(ctx, appointment._id, p.kind, item.resourceId))) {
-      await ctx.db.insert("schedConflicts", {
-        organizationId: p.organizationId,
-        appointmentId: appointment._id,
-        kind: p.kind,
-        status: "open",
-        resourceId: item.resourceId,
-        localDate: appointment.localDate,
-        createdAt: p.now,
-      });
+    return { units: sortUnits([...units.values()]), nextCursor: read.coverage ? read.coverage.to : null };
+  }
+
+  const dates = datesBetween(scope.fromLocalDate, scope.toLocalDate);
+  const dateSet = new Set<string>(dates);
+  const dbEx = await readExceptionsRange(ctx, p.organizationId, scope.fromLocalDate, scope.toLocalDate);
+  if (dbEx.completeBefore !== null) fail("Há exceções demais nesse período para conferir com segurança. Revise os fechamentos.");
+  const removeSet = new Set<string>(p.adjust.removeIds ?? []);
+  const exclSet = new Set<string>(p.adjust.excludeIds ?? []);
+  const states = (date: LocalDate) => {
+    const db = dbEx.rows.filter((e) => e.localDate === date);
+    return {
+      before: [...db.filter((e) => !exclSet.has(e._id)), ...(p.adjust.includeBefore ?? []).filter((e) => e.localDate === date)] as ExceptionLite[],
+      after: [...db.filter((e) => !removeSet.has(e._id)), ...(p.adjust.addHypothetical ?? []).filter((e) => e.localDate === date)] as ExceptionLite[],
+    };
+  };
+  const affects = (resource: Doc<"schedResources">, a: AppointmentDoc): boolean => {
+    const { before, after } = states(a.localDate);
+    const core = { start: a.startTime, end: a.endTime };
+    return violatesDay(resource, after, a.localDate, p.tz, core) && !violatesDay(resource, before, a.localDate, p.tz, core);
+  };
+  const firstStart = dayBounds(scope.fromLocalDate, p.tz).start;
+  const lastEnd = dayBounds(scope.toLocalDate, p.tz).end;
+
+  // --- um recurso: varre as alocações dele (agrupa casal/partyKey no mesmo horário)
+  if (scope.resourceId !== undefined) {
+    const resource = p.targets[0];
+    if (!resource) return { units: [], nextCursor: null };
+    const start = Math.max(p.cursor ?? firstStart, firstStart);
+    const read = await readResourceAllocations(ctx, resource, { start, end: lastEnd });
+    if (read.coverage && read.coverage.from !== -Infinity) fail("Há agendamentos demais desse recurso nesse período para conferir com segurança. Feche por períodos menores.");
+    const horizon = read.coverage?.to ?? Infinity;
+    const groups = new Map<string, Unit>();
+    for (const row of read.allocations) {
+      if (row.blockStart >= horizon || row.blockStart < start || row.coreEnd <= p.now) continue;
+      const a = await getAppt(row.appointmentId);
+      if (!movable(a) || !dateSet.has(a.localDate) || !a.resources.some((r) => r.resourceId === resource._id && r.allocated)) continue;
+      if (!affects(resource, a)) continue;
+      const key = a.partyKey ? `${a.partyKey}|${a.startTime}|${a.endTime}` : a._id;
+      const g = groups.get(key);
+      if (g) g.appointments.push(a);
+      else groups.set(key, { appointments: [a], resourceIds: [resource._id], cursorKey: a.blockStart });
+    }
+    for (const g of groups.values()) g.appointments.sort((x, y) => (x._id < y._id ? -1 : 1));
+    return { units: sortUnits([...groups.values()]), nextCursor: read.coverage ? read.coverage.to : null };
+  }
+
+  // --- org inteira / tipo: varre os AGENDAMENTOS por início (1 documento cada, sem ler alocações)
+  const targetById = new Map(p.targets.map((r) => [r._id as string, r]));
+  const from = Math.max(p.cursor ?? firstStart, firstStart);
+  const page = await readAppointmentsStartingBetween(ctx, p.organizationId, from, lastEnd, CLOSURE_PAGE_APPOINTMENTS);
+  let rows = page.rows;
+  let nextCursor: number | null = null;
+  if (page.more) {
+    const last = rows[rows.length - 1].startTime;
+    const cut = rows.filter((r) => r.startTime < last);
+    if (cut.length > 0) {
+      rows = cut;
+      nextCursor = last;
+    } else {
+      // Mais de uma página de agendamentos no MESMO minuto: improvável; segue pelo minuto seguinte.
+      nextCursor = last + 1;
     }
   }
-  return out;
+  const units: Unit[] = [];
+  for (const a of rows) {
+    if (a.endTime <= p.now || !movable(a) || !dateSet.has(a.localDate)) continue;
+    const hit: Id<"schedResources">[] = [];
+    for (const r of a.resources) {
+      const resource = targetById.get(r.resourceId);
+      if (resource && r.allocated && affects(resource, a)) hit.push(resource._id);
+    }
+    if (hit.length > 0) units.push({ appointments: [a], resourceIds: hit, cursorKey: a.startTime });
+  }
+  return { units: sortUnits(units), nextCursor };
 }
 
-/** Remoção do recurso: nunca realoca sozinho (decisão do plano §3.1); só confere o agendamento. */
-async function planConflictOnly(ctx: MutationCtx, organizationId: Id<"organizations">, item: ClosureItem): Promise<{ outcome: "conflict"; appointment: AppointmentDoc } | { outcome: "skip" }> {
-  const a = await loadAppointmentOfOrg(ctx, organizationId, item.appointmentId);
-  if (!a || !MOVABLE_STATUSES.includes(a.status) || !a.resources.some((r) => r.resourceId === item.resourceId && r.allocated)) return { outcome: "skip" };
-  return { outcome: "conflict", appointment: a };
+function sortUnits(units: Unit[]): Unit[] {
+  return units.sort((x, y) => x.cursorKey - y.cursorKey || (x.appointments[0]._id < y.appointments[0]._id ? -1 : 1));
 }
 
-function toLines(affected: Affected[], res: ProcessResult): ClosureLine[] {
-  return affected.map((a) => {
-    const line = res.lines.find((l) => l.appointmentId === a.appointmentId && l.resourceId === a.resourceId);
-    const { sortKey: _sortKey, ...rest } = a;
-    void _sortKey;
-    return { ...rest, outcome: line?.outcome ?? "skipped", ...(line?.toResourceName ? { toResourceName: line.toResourceName } : {}) };
+const appointmentsIn = (units: Unit[]) => units.reduce((n, u) => n + u.appointments.length, 0);
+
+// ---------------------------------------------------------------------------
+// Decidir e aplicar (a MESMA função na prévia e no commit)
+// ---------------------------------------------------------------------------
+
+type UnitMode = { relocate: boolean; wantSuggestions: boolean; closureKind: ClosureKind; afterDate?: LocalDate };
+type ProcessTotals = { lines: ClosureLine[]; reallocated: number; conflicts: number; failed: number; processedAppointments: number };
+
+async function openConflictFor(ctx: MutationCtx, appointmentId: AppointmentId, kind: ClosureKind): Promise<boolean> {
+  const rows = await ctx.db.query("schedConflicts").withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId)).take(10);
+  return rows.some((r) => r.status === "open" && r.kind === kind);
+}
+
+async function ensureConflictRow(
+  ctx: MutationCtx,
+  a: AppointmentDoc,
+  p: { kind: ClosureKind; resourceIds: Id<"schedResources">[]; suggestions: EquivalentSlot[]; now: number }
+): Promise<void> {
+  if (await openConflictFor(ctx, a._id, p.kind)) return;
+  await ctx.db.insert("schedConflicts", {
+    organizationId: a.organizationId,
+    appointmentId: a._id,
+    kind: p.kind,
+    status: "open",
+    resourceId: p.resourceIds[0],
+    resourceIds: p.resourceIds,
+    localDate: a.localDate,
+    ...(p.suggestions.length > 0 ? { suggestions: p.suggestions.slice(0, MAX_SUGGESTIONS).map((s) => ({ startTime: s.startTime, resourceIds: s.resourceIds })) } : {}),
+    createdAt: p.now,
   });
 }
 
@@ -321,6 +391,7 @@ async function writeExceptionAudit(
     before?: Record<string, unknown>;
     after?: Record<string, unknown>;
     metadata: Record<string, unknown>;
+    severity?: "low" | "medium" | "high";
     now: number;
   }
 ): Promise<void> {
@@ -335,337 +406,612 @@ async function writeExceptionAudit(
     ...(p.before || p.after ? { changes: { ...(p.before ? { before: p.before } : {}), ...(p.after ? { after: p.after } : {}) } } : {}),
     metadata: { via: actorVia(p.actor), ...p.metadata },
     description: p.description,
-    severity: "medium",
+    severity: p.severity ?? "medium",
     createdAt: p.now,
   });
 }
 
+/**
+ * Decide e (no commit) aplica o destino de cada unidade, na ordem. A prévia usa a MESMA decisão
+ * (`planClosureRelocation`) com ocupação e exceções hipotéticas; o commit lê o banco real. Cada unidade é
+ * ISOLADA: se lançar, vira conflito (tentativa só de liberação; sem isso, linha de conflito + auditoria).
+ */
+async function processUnits(
+  ctx: MutationCtx,
+  p: {
+    organizationId: Id<"organizations">;
+    tz: string;
+    units: Unit[];
+    mode: "preview" | "commit";
+    unitMode: UnitMode;
+    actor: SchedActor;
+    hypothetical?: ExceptionLite[];
+    runKey: string;
+    now: number;
+  }
+): Promise<ProcessTotals> {
+  const rb = newClosureResourceBook(p.organizationId);
+  const overlay: AllocationLite[] = [];
+  const out: ProcessTotals = { lines: [], reallocated: 0, conflicts: 0, failed: 0, processedAppointments: 0 };
+  const reason = p.unitMode.closureKind === "resource_closed" ? "recurso fechado" : "recurso removido";
+  const names = new Map<string, string>();
+  const nameOf = async (id: Id<"schedResources">): Promise<string> => {
+    let n = names.get(id);
+    if (n === undefined) {
+      const r = await ctx.db.get(id);
+      n = r && r.organizationId === p.organizationId ? r.name : "";
+      names.set(id, n);
+    }
+    return n;
+  };
+  const nextFreeCache = new Map<string, EquivalentSlot | null>();
+  let searches = 0;
+  const nextFree = async (a: AppointmentDoc, resourceId: Id<"schedResources">): Promise<EquivalentSlot | null> => {
+    const afterDate = p.unitMode.afterDate;
+    if (!afterDate) return null;
+    const key = `${a.serviceId}|${a.variantKey ?? ""}|${resourceId}`;
+    if (nextFreeCache.has(key)) return nextFreeCache.get(key)!;
+    if (searches >= MAX_NEXT_FREE_SEARCHES) return null;
+    searches++;
+    let found: EquivalentSlot | null = null;
+    try {
+      const res = await searchSlots(ctx, {
+        organizationId: p.organizationId, serviceId: a.serviceId, variantKey: a.variantKey, fromLocalDate: afterDate,
+        toLocalDate: addLocalDays(afterDate, 6), resourceIds: [resourceId], ignoreAppointmentId: a._id, audience: "staff", now: p.now, limit: 1,
+      });
+      const slot = res.slots[0];
+      if (slot) found = { startTime: slot.startTime, endTime: slot.endTime, resourceIds: slot.resourceIds };
+    } catch {
+      found = null;
+    }
+    nextFreeCache.set(key, found);
+    return found;
+  };
+  const toSlots = async (list: EquivalentSlot[]): Promise<Slot[]> => {
+    const ids = new Set<Id<"schedResources">>(list.flatMap((s) => s.resourceIds));
+    for (const id of ids) await nameOf(id);
+    return list.map((s) => toSlot({ startTime: s.startTime, endTime: s.endTime, plan: s.resourceIds.map((resourceId) => ({ resourceId })) }, { now: p.now, tz: p.tz, resourceNames: names, reveal: true }));
+  };
+  const lineOf = async (a: AppointmentDoc, resourceIds: Id<"schedResources">[], outcome: ClosureOutcomeKind, extra: { toResourceName?: string; suggestions?: EquivalentSlot[] } = {}): Promise<ClosureLine> => ({
+    appointmentId: a._id,
+    resourceIds,
+    resourceNames: await Promise.all(resourceIds.map(nameOf)),
+    startTime: a.startTime,
+    localDate: a.localDate,
+    serviceName: a.serviceName,
+    ...(a.contactName ? { contactName: a.contactName } : {}),
+    ...(a.partyKey ? { partyKey: a.partyKey } : {}),
+    outcome,
+    ...(extra.toResourceName ? { toResourceName: extra.toResourceName } : {}),
+    suggestions: extra.suggestions && extra.suggestions.length > 0 ? await toSlots(extra.suggestions) : [],
+  });
+
+  for (const unit of p.units) {
+    const ids = unit.appointments.map((a) => a._id);
+    const closedId = unit.resourceIds[0];
+    try {
+      const single = unit.resourceIds.length === 1;
+      const plan = await planClosureRelocation(ctx, {
+        appointmentIds: ids,
+        organizationId: p.organizationId,
+        closedResourceId: closedId,
+        relocate: p.unitMode.relocate && single,
+        wantEquivalents: p.unitMode.wantSuggestions && single,
+        hypothetical: p.hypothetical,
+        overlay,
+        rb,
+        now: p.now,
+      });
+      if (plan.outcome === "skip") {
+        for (const a of unit.appointments) out.lines.push(await lineOf(a, unit.resourceIds, "skipped"));
+        continue;
+      }
+      if (plan.outcome === "reallocated") {
+        if (p.mode === "preview") {
+          for (const m of plan.members) overlay.push(m.overlayRow);
+          out.reallocated += plan.members.length;
+          out.processedAppointments += plan.members.length;
+          for (const m of plan.members) out.lines.push(await lineOf(m.appointment, unit.resourceIds, "reallocated", { toResourceName: plan.toResource.name }));
+          continue;
+        }
+        let moved = 0;
+        for (const m of plan.members) {
+          if (!(await relocateAllocationCore(ctx, { plan: m, closedResourceId: closedId, actor: p.actor, reason, now: p.now }))) break;
+          moved++;
+        }
+        for (const [i, m] of plan.members.entries()) {
+          if (i < moved) {
+            out.reallocated++;
+            out.processedAppointments++;
+            out.lines.push(await lineOf(m.appointment, unit.resourceIds, "reallocated", { toResourceName: plan.toResource.name }));
+          } else {
+            await applyConflict(ctx, p, out, m.appointment, unit.resourceIds, [], lineOf, undefined);
+          }
+        }
+        continue;
+      }
+      // conflito
+      let suggestions: EquivalentSlot[] = plan.equivalents;
+      if (p.unitMode.wantSuggestions && unit.resourceIds.length === 1 && suggestions.length < MAX_SUGGESTIONS) {
+        const free = await nextFree(plan.appointments[0], closedId);
+        if (free) suggestions = [...suggestions, free];
+      }
+      for (const a of plan.appointments) {
+        if (p.mode === "preview") {
+          out.conflicts++;
+          out.processedAppointments++;
+          out.lines.push(await lineOf(a, unit.resourceIds, "conflict", { suggestions }));
+        } else {
+          await applyConflict(ctx, p, out, a, unit.resourceIds, suggestions, lineOf, undefined);
+        }
+      }
+    } catch (e) {
+      // ISOLA a falha: nenhum caminho termina com afetado sem alocação válida e sem linha em `schedConflicts`.
+      out.failed++;
+      const message = e instanceof Error ? e.message : String(e);
+      if (p.mode === "preview") {
+        for (const a of unit.appointments) out.lines.push(await lineOf(a, unit.resourceIds, "unknown"));
+        continue;
+      }
+      for (const a of unit.appointments) {
+        try {
+          await applyConflict(ctx, p, out, a, unit.resourceIds, [], lineOf, message);
+        } catch {
+          // Nem a liberação foi possível: ao menos a linha de conflito visível na fila + auditoria.
+          await ensureConflictRow(ctx, a, { kind: p.unitMode.closureKind, resourceIds: unit.resourceIds, suggestions: [], now: p.now });
+          out.conflicts++;
+          out.processedAppointments++;
+          out.lines.push(await lineOf(a, unit.resourceIds, "conflict"));
+        }
+        await writeExceptionAudit(ctx, {
+          organizationId: p.organizationId, entityId: p.runKey, action: "create", actor: p.actor,
+          description: "Não foi possível tratar um agendamento do fechamento; ele foi para a fila de conflitos",
+          metadata: { appointmentId: a._id, error: message.slice(0, 200) }, now: p.now,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+async function applyConflict(
+  ctx: MutationCtx,
+  p: { organizationId: Id<"organizations">; actor: SchedActor; unitMode: UnitMode; now: number },
+  out: ProcessTotals,
+  a: AppointmentDoc,
+  resourceIds: Id<"schedResources">[],
+  suggestions: EquivalentSlot[],
+  lineOf: (a: AppointmentDoc, ids: Id<"schedResources">[], o: ClosureOutcomeKind, e?: { suggestions?: EquivalentSlot[] }) => Promise<ClosureLine>,
+  error: string | undefined
+): Promise<void> {
+  await releaseAllocationForConflictCore(ctx, { appointment: a, resourceIds, kind: p.unitMode.closureKind, actor: p.actor, now: p.now, error });
+  await ensureConflictRow(ctx, a, { kind: p.unitMode.closureKind, resourceIds, suggestions, now: p.now });
+  out.conflicts++;
+  out.processedAppointments++;
+  out.lines.push(await lineOf(a, resourceIds, "conflict", { suggestions }));
+}
+
 // ---------------------------------------------------------------------------
-// Fechar
+// Execuções (`schedClosureRuns`): progresso dos lotes e resultado final
 // ---------------------------------------------------------------------------
 
-export type SetResourceDayExceptionArgs = {
+async function finishRun(ctx: MutationCtx, runId: Id<"schedClosureRuns">, now: number): Promise<void> {
+  const run = await ctx.db.get(runId);
+  if (!run || run.status === "done") return;
+  await ctx.db.patch(runId, { status: "done", total: run.processed, totalIsPartial: false, completedAt: now, updatedAt: now });
+  if (run.conflicts > 0) {
+    const resource = run.resourceId ? await ctx.db.get(run.resourceId) : null;
+    await notifyClosureConflicts(ctx, {
+      organizationId: run.organizationId,
+      closureKey: String(runId),
+      runId,
+      kind: run.kind,
+      count: run.conflicts,
+      resourceName: resource?.name,
+      firstDate: run.fromLocalDate,
+      lastDate: run.toLocalDate,
+    });
+  }
+}
+
+async function bumpRun(ctx: MutationCtx, runId: Id<"schedClosureRuns">, d: ProcessTotals, now: number): Promise<void> {
+  const run = await ctx.db.get(runId);
+  if (!run) return;
+  await ctx.db.patch(runId, {
+    processed: run.processed + d.processedAppointments,
+    reallocated: run.reallocated + d.reallocated,
+    conflicts: run.conflicts + d.conflicts,
+    failed: run.failed + d.failed,
+    updatedAt: now,
+  });
+}
+
+type LiteWithId = ExceptionLite & { resourceId?: Id<"schedResources"> };
+
+type ContinuationArgs = {
+  organizationId: Id<"organizations">;
+  runId: Id<"schedClosureRuns">;
+  scope: ScanScope & { changeKind?: ExceptionKind };
+  adjust: { excludeIds?: Id<"schedExceptions">[]; includeBefore?: LiteWithId[] };
+  cursor: number;
+  attempt: number;
+  actorMemberId?: Id<"teamMembers">;
+};
+
+async function scheduleBatch(ctx: MutationCtx, args: ContinuationArgs): Promise<void> {
+  await ctx.scheduler.runAfter(0, internal.schedulingExceptions.internalProcessClosureBatch, args);
+}
+
+function unitModeFor(scope: ScanScope & { changeKind?: ExceptionKind }, targets: Doc<"schedResources">[]): UnitMode {
+  if (scope.mode === "removal") return { relocate: false, wantSuggestions: false, closureKind: "resource_removed" };
+  const single = scope.resourceId !== undefined && targets.length === 1;
+  const isPerson = single && targets[0].kind === "person";
+  return {
+    // Só SALA/EQUIPAMENTO (um recurso) realoca sozinho; pessoa, org inteira e tipo viram conflito.
+    relocate: single && !isPerson,
+    wantSuggestions: single && isPerson,
+    closureKind: "resource_closed",
+    afterDate: addLocalDays(scope.toLocalDate, 1),
+  };
+}
+
+/** Lote agendado: RELÊ a faixa por cursor, agenda o próximo ANTES de processar e isola a falha por item. */
+export async function processClosureBatchCore(ctx: MutationCtx, args: ContinuationArgs & { now: number }): Promise<{ processed: number; conflicts: number; reallocated: number; next: boolean }> {
+  const empty = { processed: 0, conflicts: 0, reallocated: 0, next: false };
+  const run = await ctx.db.get(args.runId);
+  if (!run || run.organizationId !== args.organizationId || run.status === "done") return empty;
+  const org = await ctx.db.get(args.organizationId);
+  if (!org || !modulesOf(org).scheduling) {
+    await finishRun(ctx, args.runId, args.now);
+    return empty;
+  }
+  const tz = assertValidTimezone(org.settings.timezone);
+  let actor: SchedActor = { type: "system", via: "job" };
+  if (args.actorMemberId) {
+    const m = await ctx.db.get(args.actorMemberId);
+    if (m && m.organizationId === args.organizationId && m.type === "human" && m.removedAt === undefined) actor = { type: "human", member: m, via: "app" };
+  }
+  const scope = args.scope;
+  const targets = await resolveTargets(ctx, args.organizationId, { resourceId: scope.resourceId, resourceKind: scope.resourceKind }, scope.mode === "removal").catch(() => []);
+  const { units, nextCursor } = targets.length
+    ? await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets, adjust: args.adjust, cursor: args.cursor, now: args.now })
+    : { units: [] as Unit[], nextCursor: null };
+  const batch = units.slice(0, CLOSURE_BATCH_SIZE);
+  const nextCursorKey = units.length > CLOSURE_BATCH_SIZE ? units[CLOSURE_BATCH_SIZE].cursorKey : nextCursor;
+  const hasNext = nextCursorKey !== null && args.attempt < CLOSURE_MAX_PASSES;
+  // O PRÓXIMO lote entra na fila ANTES de processar este: o que acontecer aqui não perde o resto.
+  if (hasNext) {
+    const { now: _now, ...carry } = args;
+    void _now;
+    await scheduleBatch(ctx, { ...carry, cursor: nextCursorKey!, attempt: args.attempt + 1 });
+  }
+  const done = await processUnits(ctx, {
+    organizationId: args.organizationId, tz, units: batch, mode: "commit", unitMode: unitModeFor(scope, targets), actor,
+    runKey: String(args.runId), now: args.now,
+  });
+  await bumpRun(ctx, args.runId, done, args.now);
+  if (!hasNext) await finishRun(ctx, args.runId, args.now);
+  return { processed: done.processedAppointments, conflicts: done.conflicts, reallocated: done.reallocated, next: hasNext };
+}
+
+async function startRun(
+  ctx: MutationCtx,
+  p: { organizationId: Id<"organizations">; kind: ClosureKind; scope: Scope; from: LocalDate; to: LocalDate; total: number; partial: boolean; exceptionIds?: Id<"schedExceptions">[]; actor: SchedActor; now: number }
+): Promise<Id<"schedClosureRuns">> {
+  const by = actorMemberId(p.actor);
+  return await ctx.db.insert("schedClosureRuns", {
+    organizationId: p.organizationId,
+    kind: p.kind,
+    ...(p.scope.resourceId ? { resourceId: p.scope.resourceId } : {}),
+    ...(p.scope.resourceKind ? { resourceKind: p.scope.resourceKind } : {}),
+    fromLocalDate: p.from,
+    toLocalDate: p.to,
+    status: "running",
+    total: p.total,
+    totalIsPartial: p.partial,
+    processed: 0,
+    reallocated: 0,
+    conflicts: 0,
+    failed: 0,
+    ...(p.exceptionIds ? { exceptionIds: p.exceptionIds } : {}),
+    ...(by ? { createdBy: by } : {}),
+    createdAt: p.now,
+    updatedAt: p.now,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Fechar / reabrir (mudança de exceções com prévia e afetados)
+// ---------------------------------------------------------------------------
+
+export type ExceptionChange =
+  | { type: "add"; kind: ExceptionKind; intervals?: Array<{ startMin: number; endMin: number }>; reasonCode?: "no_staff" | "maintenance" | "day_off" | "holiday" | "other"; reason?: string }
+  | { type: "remove"; kind: ExceptionKind };
+
+type ChangeArgs = {
   organizationId: Id<"organizations">;
   actor: SchedActor;
   resourceId?: Id<"schedResources">;
   resourceKind?: ResourceKindLite;
   fromLocalDate: LocalDate;
   toLocalDate?: LocalDate;
+  change: ExceptionChange;
+  mode: "preview" | "commit";
+  acceptAffected?: boolean;
+  /** Contagem de afetados que a pessoa viu na prévia; diferente = "a situação mudou". */
+  expectedAffected?: number;
+  now: number;
+};
+
+export type SetResourceDayExceptionArgs = Omit<ChangeArgs, "change"> & {
   kind: ExceptionKind;
   intervals?: Array<{ startMin: number; endMin: number }>;
   reasonCode?: "no_staff" | "maintenance" | "day_off" | "holiday" | "other";
   reason?: string;
-  mode: "preview" | "commit";
-  acceptAffected?: boolean;
-  now: number;
 };
 
 export async function setResourceDayExceptionCore(ctx: MutationCtx, args: SetResourceDayExceptionArgs): Promise<ClosureResult> {
+  const { kind, intervals, reasonCode, reason, ...rest } = args;
+  return runChange(ctx, { ...rest, change: { type: "add", kind, intervals, reasonCode, reason } });
+}
+
+export async function clearResourceDayExceptionCore(
+  ctx: MutationCtx,
+  args: Omit<ChangeArgs, "change"> & { kind?: ExceptionKind }
+): Promise<ClosureResult> {
+  const { kind, ...rest } = args;
+  return runChange(ctx, { ...rest, change: { type: "remove", kind: kind ?? "closed" } });
+}
+
+async function runChange(ctx: MutationCtx, args: ChangeArgs): Promise<ClosureResult> {
   const { tz } = await loadOrg(ctx, args.organizationId);
   const dates = validateRange(args.fromLocalDate, args.toLocalDate, tz, args.now);
+  const from = dates[0];
+  const to = dates[dates.length - 1];
   const scope: Scope = { resourceId: args.resourceId, resourceKind: args.resourceKind };
-  if (args.resourceId === undefined && args.resourceKind === undefined && args.kind === "block") fail("Bloquear horário exige um recurso ou um tipo de recurso.");
-  if (args.kind === "closed") {
-    if (args.intervals && args.intervals.length > 0) fail("Fechar o dia inteiro não leva intervalos. Para um trecho, use bloqueio.");
-  } else {
-    if (!args.intervals || args.intervals.length < 1 || args.intervals.length > MAX_INTERVALS) fail(`Informe de 1 a ${MAX_INTERVALS} intervalos.`);
-    const ok = validateIntervals(args.intervals);
-    if (!ok.ok) fail(ok.error);
+  const change = args.change;
+  if (change.type === "add") {
+    if (args.resourceId === undefined && args.resourceKind === undefined && change.kind === "block") fail("Bloquear horário exige um recurso ou um tipo de recurso.");
+    if (change.kind === "closed") {
+      if (change.intervals && change.intervals.length > 0) fail("Fechar o dia inteiro não leva intervalos. Para um trecho, use bloqueio.");
+    } else {
+      if (!change.intervals || change.intervals.length < 1 || change.intervals.length > MAX_INTERVALS) fail(`Informe de 1 a ${MAX_INTERVALS} intervalos.`);
+      const ok = validateIntervals(change.intervals);
+      if (!ok.ok) fail(ok.error);
+    }
   }
-  const targets = await resolveTargets(ctx, args.organizationId, scope);
-  const hypothetical: ExceptionLite[] = dates.map((localDate) => ({
-    ...(args.resourceId ? { resourceId: args.resourceId } : {}),
-    ...(args.resourceKind ? { resourceKind: args.resourceKind } : {}),
-    localDate,
-    mode: args.kind,
-    ...(args.intervals ? { intervals: args.intervals } : {}),
-  }));
+  const targets = await resolveTargets(ctx, args.organizationId, scope, change.type === "remove");
+  const dbEx = await readExceptionsRange(ctx, args.organizationId, from, to);
+  if (dbEx.completeBefore !== null) fail("Há exceções demais nesse período. Revise os fechamentos.");
+  const toLite = (e: Doc<"schedExceptions">): LiteWithId => ({
+    ...(e.resourceId ? { resourceId: e.resourceId } : {}),
+    ...(e.resourceKind ? { resourceKind: e.resourceKind } : {}),
+    localDate: e.localDate,
+    mode: e.mode,
+    ...(e.intervals ? { intervals: e.intervals } : {}),
+  });
+  const hypothetical: ExceptionLite[] =
+    change.type === "add"
+      ? dates.map((localDate) => ({
+          ...(args.resourceId ? { resourceId: args.resourceId } : {}),
+          ...(args.resourceKind ? { resourceKind: args.resourceKind } : {}),
+          localDate,
+          mode: change.kind,
+          ...(change.intervals ? { intervals: change.intervals } : {}),
+        }))
+      : [];
+  const removeRows = change.type === "remove" ? dbEx.rows.filter((e) => e.source === "manual" && e.mode === change.kind && scopeMatches(e, scope)) : [];
+  const adjust: StateAdjust = change.type === "add" ? { addHypothetical: hypothetical } : { removeIds: removeRows.map((e) => e._id) };
+
+  // Só muda a ocupação possível quem fecha/bloqueia/estreita (add != extra) ou remove horário `extra`/`custom`.
+  const scansForAffected = change.type === "add" ? change.kind !== "extra" : change.kind === "extra" || change.kind === "custom";
+  const scanScope: ScanScope = { mode: "closure", resourceId: args.resourceId, resourceKind: args.resourceKind, fromLocalDate: from, toLocalDate: to };
   const found =
-    args.kind === "extra" || targets.length === 0
-      ? { items: [] as Affected[], capped: false }
-      : await findAffected(ctx, { organizationId: args.organizationId, tz, targets, dates, hypothetical, now: args.now });
-  const closureItems: ClosureItem[] = found.items.map((i) => ({ appointmentId: i.appointmentId, resourceId: i.resourceId }));
-  const base = { dates, affected: found.items.length, capped: found.capped };
+    scansForAffected && targets.length > 0 && (change.type === "add" || removeRows.length > 0)
+      ? await scanUnits(ctx, { organizationId: args.organizationId, tz, scope: scanScope, targets, adjust, now: args.now })
+      : { units: [] as Unit[], nextCursor: null as number | null };
+  const affected = appointmentsIn(found.units);
+  const capped = found.nextCursor !== null;
+  const unitMode = unitModeFor(scanScope, targets);
+  const base = { dates, affected, capped, removed: 0, restorable: 0 };
 
   if (args.mode === "preview") {
-    const sim = await processItems(ctx, { organizationId: args.organizationId, items: closureItems, kind: "resource_closed", actor: args.actor, mode: "preview", hypothetical, now: args.now });
-    return { mode: "preview", ...base, reallocated: sim.reallocated, conflicts: sim.conflicts, pending: 0, exceptionIds: [], items: toLines(found.items, sim) };
+    const sim = await processUnits(ctx, {
+      organizationId: args.organizationId, tz, units: found.units.slice(0, PREVIEW_SIM_UNITS), mode: "preview", unitMode,
+      actor: args.actor, hypothetical, runKey: "preview", now: args.now,
+    });
+    const simulatedIds = new Set<string>(sim.lines.map((l) => l.appointmentId));
+    const unknown: ClosureLine[] = [];
+    for (const u of found.units.slice(PREVIEW_SIM_UNITS)) {
+      for (const a of u.appointments) {
+        if (!simulatedIds.has(a._id)) {
+          unknown.push({
+            appointmentId: a._id, resourceIds: u.resourceIds, resourceNames: [], startTime: a.startTime, localDate: a.localDate, serviceName: a.serviceName,
+            ...(a.contactName ? { contactName: a.contactName } : {}), ...(a.partyKey ? { partyKey: a.partyKey } : {}), outcome: "unknown", suggestions: [],
+          });
+        }
+      }
+    }
+    return {
+      mode: "preview", ...base, reallocated: sim.reallocated, conflicts: sim.conflicts, pending: 0,
+      simulated: sim.processedAppointments, exceptionIds: [], restorable: 0, items: [...sim.lines, ...unknown],
+    };
   }
 
-  if (found.capped) fail(`Mais de ${CLOSURE_MAX_AFFECTED} agendamentos seriam afetados. Feche por períodos menores.`);
-  if (found.items.length > 0 && args.acceptAffected !== true) {
-    fail(`${found.items.length} agendamento(s) serão afetados. Confira a prévia e confirme para continuar.`);
+  if (args.expectedAffected !== undefined && args.expectedAffected !== affected) {
+    fail("A situação mudou desde a prévia. Confira de novo antes de confirmar.");
   }
-  // 1) grava as exceções (uma linha por data; fechamento repetido do mesmo escopo não duplica)
+  if (affected > 0 && args.acceptAffected !== true) {
+    fail(`${affected} agendamento(s) serão afetados. Confira a prévia e confirme para continuar.`);
+  }
+
+  // 1) grava (ou apaga) as exceções
   const exceptionIds: Id<"schedExceptions">[] = [];
-  const reason = cleanReason(args.reason);
-  for (const localDate of dates) {
-    const day = await ctx.db.query("schedExceptions").withIndex("by_organization_and_date", (q) => q.eq("organizationId", args.organizationId).eq("localDate", localDate)).take(301);
-    if (day.length > 300) fail("Há exceções demais nesse dia. Revise os fechamentos.");
-    const same = day.find((e) => scopeMatches(e, scope) && e.mode === args.kind && args.kind === "closed");
-    if (same) {
-      exceptionIds.push(same._id);
-      continue;
-    }
-    exceptionIds.push(
-      await ctx.db.insert("schedExceptions", {
+  const newIds: Id<"schedExceptions">[] = [];
+  let removed = 0;
+  let reasonOut: ClosureResult["reason"];
+  const reason = change.type === "add" ? cleanReason(change.reason) : undefined;
+  if (change.type === "add") {
+    for (const localDate of dates) {
+      const day = dbEx.rows.filter((e) => e.localDate === localDate);
+      const same = change.kind === "closed" ? day.find((e) => scopeMatches(e, scope) && e.mode === "closed") : undefined;
+      if (same) {
+        exceptionIds.push(same._id);
+        continue;
+      }
+      const id = await ctx.db.insert("schedExceptions", {
         organizationId: args.organizationId,
         ...(args.resourceId ? { resourceId: args.resourceId } : {}),
         ...(args.resourceKind && !args.resourceId ? { resourceKind: args.resourceKind } : {}),
         localDate,
-        mode: args.kind,
-        ...(args.intervals ? { intervals: args.intervals.map((i) => ({ startMin: i.startMin, endMin: i.endMin })) } : {}),
-        ...(args.reasonCode ? { reasonCode: args.reasonCode } : {}),
+        mode: change.kind,
+        ...(change.intervals ? { intervals: change.intervals.map((i) => ({ startMin: i.startMin, endMin: i.endMin })) } : {}),
+        ...(change.reasonCode ? { reasonCode: change.reasonCode } : {}),
         ...(reason ? { reason } : {}),
         source: "manual",
         ...(actorMemberId(args.actor) ? { createdBy: actorMemberId(args.actor) } : {}),
         createdAt: args.now,
-      })
-    );
+      });
+      exceptionIds.push(id);
+      newIds.push(id);
+    }
+  } else {
+    for (const e of removeRows) {
+      await ctx.db.delete(e._id);
+      removed++;
+    }
+    if (removed === 0) {
+      // Reabrir um recurso quando o fechamento foi da org (ou do tipo) inteira: dizer por quê, em vez de "removi 0".
+      const resource = targets[0];
+      const covered =
+        args.resourceId !== undefined &&
+        dbEx.rows.some((e) => e.resourceId === undefined && e.mode === "closed" && (e.resourceKind === undefined || e.resourceKind === resource?.kind));
+      reasonOut = covered ? "covered_by_org_closure" : "nothing_to_reopen";
+    }
   }
-  // 2) realoca / abre conflito (os primeiros na mesma transação; o resto em lotes)
-  const inline = closureItems.slice(0, CLOSURE_INLINE_AFFECTED);
-  const rest = closureItems.slice(CLOSURE_INLINE_AFFECTED);
-  const done = await processItems(ctx, { organizationId: args.organizationId, items: inline, kind: "resource_closed", actor: args.actor, mode: "commit", now: args.now });
-  const closureKey = String(exceptionIds[0]);
-  if (rest.length > 0) {
-    await ctx.scheduler.runAfter(0, internal.schedulingExceptions.internalProcessClosureBatch, {
-      organizationId: args.organizationId,
-      kind: "resource_closed",
-      items: rest,
-      actorMemberId: actorMemberId(args.actor),
-      closureKey,
-      dates: [dates[0], dates[dates.length - 1]],
+
+  // 2) conflitos abertos do período: o lugar original voltou a caber? (índice por data; só oferece, não resolve)
+  let restorable = 0;
+  if (change.type === "remove" && removed > 0) restorable = await reevaluateOpenConflicts(ctx, args.organizationId, from, to, args.now);
+
+  // 3) trata os afetados (os primeiros aqui; o resto em lotes que releem a faixa)
+  const inlineUnits = found.units.slice(0, CLOSURE_INLINE_AFFECTED);
+  let runId: Id<"schedClosureRuns"> | undefined;
+  let done: ProcessTotals = { lines: [], reallocated: 0, conflicts: 0, failed: 0, processedAppointments: 0 };
+  const key = String(exceptionIds[0] ?? removeRows[0]?._id ?? args.now);
+  if (found.units.length > 0) {
+    runId = await startRun(ctx, {
+      organizationId: args.organizationId, kind: "resource_closed", scope, from, to, total: affected, partial: capped,
+      exceptionIds: exceptionIds.length > 0 ? exceptionIds.slice(0, MAX_CLOSURE_DAYS) : undefined, actor: args.actor, now: args.now,
     });
+    const leftover = found.units.length > CLOSURE_INLINE_AFFECTED;
+    const nextCursorKey = leftover ? found.units[CLOSURE_INLINE_AFFECTED].cursorKey : found.nextCursor;
+    const adjustForBatches = change.type === "add" ? { excludeIds: newIds } : { includeBefore: removeRows.map(toLite) };
+    if (nextCursorKey !== null) {
+      // Agenda o próximo lote ANTES de processar este.
+      await scheduleBatch(ctx, {
+        organizationId: args.organizationId, runId, scope: { ...scanScope, changeKind: change.kind }, adjust: adjustForBatches,
+        cursor: nextCursorKey, attempt: 1, actorMemberId: actorMemberId(args.actor),
+      });
+    }
+    done = await processUnits(ctx, {
+      organizationId: args.organizationId, tz, units: inlineUnits, mode: "commit", unitMode, actor: args.actor, runKey: String(runId), now: args.now,
+    });
+    await bumpRun(ctx, runId, done, args.now);
+    if (nextCursorKey === null) await finishRun(ctx, runId, args.now);
   }
+  const processedUnitsAppointments = appointmentsIn(inlineUnits);
+  const pending = Math.max(0, affected - processedUnitsAppointments) + (capped ? 1 : 0);
   await writeExceptionAudit(ctx, {
     organizationId: args.organizationId,
-    entityId: closureKey,
-    action: "create",
+    entityId: key,
+    action: change.type === "add" ? "create" : "delete",
     actor: args.actor,
-    description: `${args.kind === "closed" ? "Fechou" : args.kind === "block" ? "Bloqueou horário de" : "Alterou o horário de"} ${targets.length === 1 && args.resourceId ? targets[0].name : "recursos"} em ${dates.length === 1 ? dates[0] : `${dates[0]} a ${dates[dates.length - 1]}`}`,
-    after: { resourceId: args.resourceId, resourceKind: args.resourceKind, mode: args.kind, dates, intervals: args.intervals, reasonCode: args.reasonCode },
-    metadata: { affected: found.items.length, reallocated: done.reallocated, conflicts: done.conflicts, pending: rest.length, acceptAffected: args.acceptAffected === true, exceptionIds: exceptionIds.map(String) },
+    description:
+      change.type === "add"
+        ? `${change.kind === "closed" ? "Fechou" : change.kind === "block" ? "Bloqueou horário de" : "Alterou o horário de"} ${args.resourceId && targets[0] ? targets[0].name : "recursos"} em ${dates.length === 1 ? dates[0] : `${from} a ${to}`}`
+        : `Removeu ${change.kind === "closed" ? "o fechamento" : "exceção de horário"} ${args.resourceId ? "do recurso" : "da agenda"} em ${dates.length === 1 ? dates[0] : `${from} a ${to}`}`,
+    ...(change.type === "add"
+      ? { after: { resourceId: args.resourceId, resourceKind: args.resourceKind, mode: change.kind, dates, intervals: change.intervals, reasonCode: change.reasonCode } }
+      : { before: { resourceId: args.resourceId, resourceKind: args.resourceKind, mode: change.kind, dates } }),
+    metadata: {
+      affected, reallocated: done.reallocated, conflicts: done.conflicts, pending, acceptAffected: args.acceptAffected === true,
+      removed, restorableConflicts: restorable, ...(runId ? { runId } : {}),
+      exceptionIds: (change.type === "add" ? exceptionIds : removeRows.map((e) => e._id)).map(String),
+    },
     now: args.now,
   });
-  if (done.conflicts > 0) {
-    await notifyClosureConflicts(ctx, {
-      organizationId: args.organizationId,
-      closureKey,
-      kind: "resource_closed",
-      count: done.conflicts,
-      resourceName: args.resourceId && targets[0] ? targets[0].name : undefined,
-      firstDate: dates[0],
-      lastDate: dates[dates.length - 1],
-    });
+  const items = [...done.lines];
+  for (const u of found.units.slice(CLOSURE_INLINE_AFFECTED)) {
+    for (const a of u.appointments) {
+      items.push({
+        appointmentId: a._id, resourceIds: u.resourceIds, resourceNames: [], startTime: a.startTime, localDate: a.localDate, serviceName: a.serviceName,
+        ...(a.contactName ? { contactName: a.contactName } : {}), ...(a.partyKey ? { partyKey: a.partyKey } : {}), outcome: "unknown", suggestions: [],
+      });
+    }
   }
-  return { mode: "commit", ...base, reallocated: done.reallocated, conflicts: done.conflicts, pending: rest.length, exceptionIds, items: toLines(found.items.slice(0, CLOSURE_INLINE_AFFECTED), done) };
+  return {
+    mode: "commit", ...base, removed, restorable, reallocated: done.reallocated, conflicts: done.conflicts, pending, simulated: 0,
+    exceptionIds: change.type === "add" ? exceptionIds : [], ...(runId ? { runId } : {}), ...(reasonOut ? { reason: reasonOut } : {}), items,
+  };
 }
 
-/** Lote agendado (idempotente): processa até `CLOSURE_BATCH_SIZE` itens e reagenda o resto. */
-export async function processClosureBatchCore(
-  ctx: MutationCtx,
-  args: {
-    organizationId: Id<"organizations">;
-    kind: ClosureKind;
-    items: ClosureItem[];
-    actorMemberId?: Id<"teamMembers">;
-    closureKey: string;
-    dates?: [string, string];
-    resourceName?: string;
-    resourceId?: Id<"schedResources">;
-    now: number;
+/** Reabrir: conflito aberto cujo lugar original voltou a caber ganha esse lugar como 1ª sugestão (a tela oferece resolver). */
+async function reevaluateOpenConflicts(ctx: MutationCtx, organizationId: Id<"organizations">, from: LocalDate, to: LocalDate, now: number): Promise<number> {
+  const open = await ctx.db
+    .query("schedConflicts")
+    .withIndex("by_organization_and_status_and_date", (q) => q.eq("organizationId", organizationId).eq("status", "open").gte("localDate", from).lte("localDate", to))
+    .take(300);
+  let restorable = 0;
+  for (const c of open) {
+    if (c.kind !== "resource_closed" || c.resourceId === undefined) continue;
+    const fit = await canRestoreOriginalPlacement(ctx, { appointmentId: c.appointmentId, organizationId, resourceId: c.resourceId, now });
+    if (!fit || !fit.ok) continue;
+    const others = (c.suggestions ?? []).filter((s) => !(s.startTime === fit.startTime && s.resourceIds.join() === fit.resourceIds.join()));
+    await ctx.db.patch(c._id, { suggestions: [{ startTime: fit.startTime, resourceIds: fit.resourceIds }, ...others].slice(0, MAX_SUGGESTIONS) });
+    restorable++;
   }
-): Promise<{ processed: number; conflicts: number; reallocated: number; remaining: number }> {
-  const org = await ctx.db.get(args.organizationId);
-  if (!org || !modulesOf(org).scheduling) return { processed: 0, conflicts: 0, reallocated: 0, remaining: 0 };
-  let actor: SchedActor = { type: "system", via: "job" };
-  if (args.actorMemberId) {
-    const m = await ctx.db.get(args.actorMemberId);
-    if (m && m.organizationId === args.organizationId && m.type === "human" && m.removedAt === undefined) actor = { type: "human", member: m, via: "app" };
-  }
-  let items = args.items;
-  if (args.kind === "resource_removed" && args.resourceId && items.length === 0) items = await futureItemsOfResource(ctx, args.organizationId, args.resourceId, args.now);
-  const chunk = items.slice(0, CLOSURE_BATCH_SIZE);
-  const rest = items.slice(CLOSURE_BATCH_SIZE);
-  const done = await processItems(ctx, { organizationId: args.organizationId, items: chunk, kind: args.kind, actor, mode: "commit", now: args.now });
-  if (done.conflicts > 0) {
-    await notifyClosureConflicts(ctx, {
-      organizationId: args.organizationId,
-      closureKey: args.closureKey,
-      kind: args.kind,
-      count: done.conflicts,
-      resourceName: args.resourceName,
-      firstDate: args.dates?.[0],
-      lastDate: args.dates?.[1],
-    });
-  }
-  const more = rest.length > 0 || (args.kind === "resource_removed" && args.resourceId !== undefined && done.conflicts > 0 && items.length >= CLOSURE_MAX_AFFECTED);
-  if (more) {
-    await ctx.scheduler.runAfter(0, internal.schedulingExceptions.internalProcessClosureBatch, {
-      organizationId: args.organizationId,
-      kind: args.kind,
-      items: args.kind === "resource_removed" && args.items.length === 0 ? [] : rest,
-      actorMemberId: args.actorMemberId,
-      closureKey: args.closureKey,
-      ...(args.dates ? { dates: args.dates } : {}),
-      ...(args.resourceName ? { resourceName: args.resourceName } : {}),
-      ...(args.resourceId ? { resourceId: args.resourceId } : {}),
-    });
-  }
-  return { processed: chunk.length, conflicts: done.conflicts, reallocated: done.reallocated, remaining: rest.length };
+  return restorable;
 }
 
 // ---------------------------------------------------------------------------
 // Recurso removido (arquivado, ou membro removido que era o recurso-pessoa)
 // ---------------------------------------------------------------------------
 
-async function futureItemsOfResource(ctx: MutationCtx, organizationId: Id<"organizations">, resourceId: Id<"schedResources">, now: number): Promise<ClosureItem[]> {
-  const resource = await ctx.db.get(resourceId);
-  if (!resource || resource.organizationId !== organizationId) return [];
-  const read = await readResourceAllocations(ctx, resource, { start: now, end: now + 4 * 365 * 24 * 3_600_000 });
-  const seen = new Set<string>();
-  const items: ClosureItem[] = [];
-  for (const row of read.allocations.sort((x, y) => x.coreStart - y.coreStart)) {
-    if (row.coreEnd <= now || seen.has(row.appointmentId)) continue;
-    seen.add(row.appointmentId);
-    items.push({ appointmentId: row.appointmentId, resourceId });
-  }
-  return items.slice(0, CLOSURE_MAX_AFFECTED);
-}
-
 /**
  * Recurso arquivado/inativado com agendamentos futuros: cada futuro perde a alocação do recurso e vira conflito
- * `resource_removed` (nunca realoca sozinho, nada é cancelado). Os primeiros na mesma transação, o resto em lotes.
+ * `resource_removed` (nunca realoca sozinho, nada é cancelado). Os primeiros na mesma transação; o resto em lotes que
+ * RELEEM a faixa por cursor até ela voltar vazia (sem teto fixo: 230 futuros terminam).
  */
 export async function openRemovedResourceConflictsCore(
   ctx: MutationCtx,
   args: { organizationId: Id<"organizations">; resourceId: Id<"schedResources">; actor: SchedActor; now: number }
-): Promise<{ conflicts: number; pending: number }> {
+): Promise<{ conflicts: number; pending: number; runId?: Id<"schedClosureRuns"> }> {
   const resource = await ctx.db.get(args.resourceId);
   if (!resource || resource.organizationId !== args.organizationId) return { conflicts: 0, pending: 0 };
-  const items = await futureItemsOfResource(ctx, args.organizationId, args.resourceId, args.now);
-  const inline = items.slice(0, CLOSURE_INLINE_AFFECTED);
-  const rest = items.slice(CLOSURE_INLINE_AFFECTED);
-  const closureKey = `removed:${args.resourceId}`;
-  const done = await processItems(ctx, { organizationId: args.organizationId, items: inline, kind: "resource_removed", actor: args.actor, mode: "commit", now: args.now });
-  if (done.conflicts > 0) {
-    await notifyClosureConflicts(ctx, { organizationId: args.organizationId, closureKey, kind: "resource_removed", count: done.conflicts, resourceName: resource.name });
-  }
-  if (rest.length > 0 || items.length >= CLOSURE_MAX_AFFECTED) {
-    await ctx.scheduler.runAfter(0, internal.schedulingExceptions.internalProcessClosureBatch, {
-      organizationId: args.organizationId,
-      kind: "resource_removed",
-      items: rest,
-      actorMemberId: actorMemberId(args.actor),
-      closureKey,
-      resourceName: resource.name,
-      resourceId: args.resourceId,
-    });
-  }
-  return { conflicts: done.conflicts, pending: rest.length };
-}
-
-/**
- * Membro removido da equipe: o recurso-pessoa dele fica inativo e os futuros viram conflito `resource_removed`.
- * Chamado por `teamMembers.removeTeamMember` (ponto único). Sem módulo ligado, nada acontece.
- */
-export async function deactivatePersonResourcesForMemberCore(
-  ctx: MutationCtx,
-  args: { organizationId: Id<"organizations">; memberId: Id<"teamMembers">; actor: SchedActor; now: number }
-): Promise<{ resources: number; conflicts: number }> {
   const org = await ctx.db.get(args.organizationId);
-  if (!org || !modulesOf(org).scheduling) return { resources: 0, conflicts: 0 };
-  const rows = await ctx.db.query("schedResources").withIndex("by_team_member", (q) => q.eq("teamMemberId", args.memberId)).take(20);
-  let resources = 0;
-  let conflicts = 0;
-  for (const r of rows) {
-    if (r.organizationId !== args.organizationId || !r.active) continue;
-    await ctx.db.patch(r._id, { active: false, updatedAt: args.now });
-    resources++;
-    await ctx.db.insert("auditLogs", {
-      organizationId: args.organizationId,
-      entityType: "schedResource",
-      entityId: r._id,
-      action: "update",
-      ...(actorMemberId(args.actor) ? { actorId: actorMemberId(args.actor) } : {}),
-      actorType: recordActorTypeOf(args.actor),
-      changes: { before: { active: true }, after: { active: false } },
-      metadata: { via: "member_removed", memberId: args.memberId },
-      description: `Inativou ${r.name} na Agenda porque o membro foi removido da equipe`,
-      severity: "medium",
-      createdAt: args.now,
-    });
-    conflicts += (await openRemovedResourceConflictsCore(ctx, { organizationId: args.organizationId, resourceId: r._id, actor: args.actor, now: args.now })).conflicts;
+  if (!org) return { conflicts: 0, pending: 0 };
+  const tz = assertValidTimezone(org.settings.timezone);
+  const today = localDateOf(args.now, tz);
+  const scope: ScanScope = { mode: "removal", resourceId: args.resourceId, fromLocalDate: today, toLocalDate: today };
+  const found = await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets: [resource], adjust: {}, now: args.now });
+  if (found.units.length === 0 && found.nextCursor === null) return { conflicts: 0, pending: 0 };
+  const affected = appointmentsIn(found.units);
+  const runId = await startRun(ctx, {
+    organizationId: args.organizationId, kind: "resource_removed", scope: { resourceId: args.resourceId }, from: today, to: today,
+    total: affected, partial: found.nextCursor !== null, actor: args.actor, now: args.now,
+  });
+  const inline = found.units.slice(0, CLOSURE_INLINE_AFFECTED);
+  const nextKey = found.units.length > CLOSURE_INLINE_AFFECTED ? found.units[CLOSURE_INLINE_AFFECTED].cursorKey : found.nextCursor;
+  if (nextKey !== null) {
+    await scheduleBatch(ctx, { organizationId: args.organizationId, runId, scope, adjust: {}, cursor: nextKey, attempt: 1, actorMemberId: actorMemberId(args.actor) });
   }
-  return { resources, conflicts };
-}
-
-// ---------------------------------------------------------------------------
-// Reabrir
-// ---------------------------------------------------------------------------
-
-/**
- * Reabrir = remove as exceções MANUAIS do escopo nas datas. NÃO desfaz realocações. Conflitos abertos
- * (`resource_closed`) dessas datas são reavaliados: se o lugar original voltou a caber, a linha ganha como
- * primeira sugestão o horário e os recursos originais (a tela oferece resolver; nada é automático).
- */
-export async function clearResourceDayExceptionCore(
-  ctx: MutationCtx,
-  args: {
-    organizationId: Id<"organizations">;
-    actor: SchedActor;
-    resourceId?: Id<"schedResources">;
-    resourceKind?: ResourceKindLite;
-    fromLocalDate: LocalDate;
-    toLocalDate?: LocalDate;
-    now: number;
-  }
-): Promise<{ removed: number; restorable: number; dates: string[] }> {
-  const { tz } = await loadOrg(ctx, args.organizationId);
-  const dates = validateRange(args.fromLocalDate, args.toLocalDate, tz, args.now);
-  const scope: Scope = { resourceId: args.resourceId, resourceKind: args.resourceKind };
-  if (args.resourceId !== undefined) {
-    if (args.resourceKind !== undefined) fail("Informe o recurso OU o tipo de recurso, não os dois.");
-    const r = await ctx.db.get(args.resourceId);
-    if (!r || r.organizationId !== args.organizationId) fail("Recurso não encontrado");
-  }
-  const removedIds: string[] = [];
-  const removedModes: string[] = [];
-  for (const localDate of dates) {
-    const day = await ctx.db.query("schedExceptions").withIndex("by_organization_and_date", (q) => q.eq("organizationId", args.organizationId).eq("localDate", localDate)).take(301);
-    if (day.length > 300) fail("Há exceções demais nesse dia. Revise os fechamentos.");
-    for (const e of day) {
-      if (e.source !== "manual" || !scopeMatches(e, scope)) continue;
-      await ctx.db.delete(e._id);
-      removedIds.push(e._id);
-      removedModes.push(e.mode);
-    }
-  }
-  let restorable = 0;
-  if (removedIds.length > 0) {
-    const dateSet = new Set<string>(dates);
-    const open = await ctx.db.query("schedConflicts").withIndex("by_organization_and_status_and_created", (q) => q.eq("organizationId", args.organizationId).eq("status", "open")).take(100);
-    for (const c of open) {
-      if (c.kind !== "resource_closed" || c.resourceId === undefined || c.localDate === undefined || !dateSet.has(c.localDate)) continue;
-      const fit = await canRestoreOriginalPlacement(ctx, { appointmentId: c.appointmentId, organizationId: args.organizationId, resourceId: c.resourceId, now: args.now });
-      if (!fit || !fit.ok) continue;
-      const others = (c.suggestions ?? []).filter((s) => !(s.startTime === fit.startTime && s.resourceIds.join() === fit.resourceIds.join()));
-      await ctx.db.patch(c._id, { suggestions: [{ startTime: fit.startTime, resourceIds: fit.resourceIds }, ...others].slice(0, 3) });
-      restorable++;
-    }
-    await writeExceptionAudit(ctx, {
-      organizationId: args.organizationId,
-      entityId: removedIds[0],
-      action: "delete",
-      actor: args.actor,
-      description: `Reabriu ${args.resourceId ? "o recurso" : "a agenda"} em ${dates.length === 1 ? dates[0] : `${dates[0]} a ${dates[dates.length - 1]}`}`,
-      before: { resourceId: args.resourceId, resourceKind: args.resourceKind, modes: removedModes, dates },
-      metadata: { removed: removedIds.length, restorableConflicts: restorable, exceptionIds: removedIds },
-      now: args.now,
-    });
-  }
-  return { removed: removedIds.length, restorable, dates };
+  const done = await processUnits(ctx, {
+    organizationId: args.organizationId, tz, units: inline, mode: "commit", unitMode: unitModeFor(scope, [resource]), actor: args.actor, runKey: String(runId), now: args.now,
+  });
+  await bumpRun(ctx, runId, done, args.now);
+  if (nextKey === null) await finishRun(ctx, runId, args.now);
+  return { conflicts: done.conflicts, pending: Math.max(0, affected - appointmentsIn(inline)), runId };
 }
 
 // ---------------------------------------------------------------------------
@@ -707,7 +1053,8 @@ export async function resolveConflictCore(
   } else if (act.type === "cancel") {
     await cancelAppointmentCore(ctx, { appointment, actor: args.actor, byClass: "staff", reason: act.reason, now: args.now });
   } else {
-    await clearAppointmentAttentionCore(ctx, { appointmentId: appointment._id, organizationId: appointment.organizationId, codes: ["resource_closed", "resource_removed", "capacity_conflict"], now: args.now });
+    // Decisão do operador: segue ativo SEM alocação (não ocupa capacidade); a grade marca "sem sala/profissional definido".
+    await settleManualConflictCore(ctx, { appointmentId: appointment._id, organizationId: appointment.organizationId, now: args.now });
   }
   const memberId = actorMemberId(args.actor);
   const fresh = await ctx.db.get(conflict._id);
@@ -717,6 +1064,7 @@ export async function resolveConflictCore(
     await ctx.db.patch(conflict._id, { resolvedBy: memberId });
   }
   const note = act.type === "manual" ? cleanReason(act.note) : undefined;
+  const forced = (act.type === "resource" || act.type === "reschedule") && act.force && act.force.length > 0 ? act.force : undefined;
   await ctx.db.insert("auditLogs", {
     organizationId: conflict.organizationId,
     entityType: "schedConflict",
@@ -725,7 +1073,7 @@ export async function resolveConflictCore(
     ...(memberId ? { actorId: memberId } : {}),
     actorType: recordActorTypeOf(args.actor),
     changes: { before: { status: "open", kind: conflict.kind }, after: { status: "resolved" } },
-    metadata: { via: actorVia(args.actor), action: act.type, appointmentId: conflict.appointmentId, ...(note ? { note } : {}) },
+    metadata: { via: actorVia(args.actor), action: act.type, appointmentId: conflict.appointmentId, ...(note ? { note } : {}), ...(forced ? { forcedRules: forced } : {}) },
     description: `Resolveu o conflito de agenda (${act.type === "resource" ? "novo recurso" : act.type === "reschedule" ? "remarcou" : act.type === "cancel" ? "cancelou" : "resolvido manualmente"})`,
     severity: "medium",
     createdAt: args.now,

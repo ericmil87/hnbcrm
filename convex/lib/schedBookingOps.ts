@@ -141,7 +141,7 @@ const RESOURCE_CODES: readonly RuleCode[] = [
   "INTERNAL_EVENT_OVERLAP",
 ];
 /** `needsAttention.code` que a troca de recurso resolve. */
-const RESOURCE_ATTENTION_CODES: readonly string[] = ["capacity_conflict", "resource_closed", "resource_removed"];
+const RESOURCE_ATTENTION_CODES: readonly string[] = ["capacity_conflict", "resource_closed", "resource_removed", "no_resource"];
 /** "Trocar sala" só reavalia o que é do recurso; tempo e contato não mudam. */
 const REASSIGN_CODES: readonly RuleCode[] = [...RESOURCE_CODES, "WRONG_ORG_OR_INACTIVE"];
 
@@ -1770,6 +1770,11 @@ export async function setAppointmentStatusCore(
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   const memberId = actorMemberId(args.actor);
+  // Invariante "ativo sem alocação => conflito aberto": quem está sem sala/profissional (fila de conflitos) não é aprovado
+  // por cima do conflito; a equipe resolve primeiro (trocar recurso, remarcar, cancelar ou marcar como resolvido).
+  if (args.to === "scheduled" && a.resources.some((r) => !r.allocated)) {
+    fail("Resolva o conflito de sala/profissional antes de aprovar este agendamento.");
+  }
   const superseded = args.to === "scheduled" && a.rescheduleOfId ? await assertProposalApprovable(ctx, a, now) : null;
   const releasing = allocationEffect(a.status, args.to) === "delete";
   const allocations = releasing ? await snapshotAllocations(ctx, a._id) : undefined;
@@ -2083,13 +2088,17 @@ export const reassignAppointmentResourcesCore = changeResourceCore;
 // Estas funções são a PORTA das escritas que o fechamento provoca em agendamento e alocação
 // (`lib/schedExceptionOps.ts` não toca nessas tabelas: guard `schedulingPort.test.ts`).
 //  - `planClosureRelocation`: SOMENTE LEITURA. Decide, com as mesmas regras e a mesma leitura de
-//    `changeResourceCore`, se o agendamento cabe em outro recurso equivalente no MESMO horário.
-//    `hypothetical` = exceções que a prévia ainda não gravou; `overlay` = ocupação que as realocações
-//    anteriores da prévia teriam criado. No commit os dois vão vazios (o banco já tem tudo): a prévia
-//    e o resultado real usam a MESMA função.
+//    `changeResourceCore`, se o GRUPO (casal/`partyKey` marcado junto, ou um agendamento só) cabe INTEIRO em
+//    UM outro recurso equivalente no MESMO horário. `hypothetical` = exceções que a prévia ainda não gravou;
+//    `overlay` = ocupação que as realocações anteriores da prévia teriam criado. No commit os dois vão vazios
+//    (o banco já tem tudo): a prévia e o resultado real usam a MESMA função. Com `relocate:false` (recurso
+//    PESSOA, org inteira ou tipo, recurso removido) nunca realoca; `wantEquivalents` devolve até 2 recursos
+//    equivalentes livres no mesmo horário como SUGESTÃO para a equipe.
 //  - `relocateAllocationCore`: troca só a alocação do recurso fechado, por `assertCapacityAndAllocate`.
-//  - `releaseAllocationForConflictCore`: retira a alocação do recurso e marca o agendamento (NADA é
-//    cancelado, o status não muda, nenhuma mensagem sai); quem chama abre a linha em `schedConflicts`.
+//  - `releaseAllocationForConflictCore`: retira a alocação dos recursos e marca o agendamento (NADA é
+//    cancelado, o status não muda, nenhuma mensagem sai; webhook `appointment.needs_attention`); quem chama
+//    abre a linha em `schedConflicts`.
+//  `checked_in` fica de fora de `MOVABLE_STATUSES` de propósito: quem já está em atendimento não é mexido.
 // ---------------------------------------------------------------------------
 
 export type AppointmentDoc = Doc<"schedAppointments">;
@@ -2098,79 +2107,125 @@ export type ClosureKind = "resource_closed" | "resource_removed";
 /** Só estes estados seguram vaga e ainda podem ser movidos (em andamento/concluído/terminal ficam como estão). */
 export const MOVABLE_STATUSES: readonly SchedStatus[] = ["pending_approval", "scheduled", "confirmed"];
 
-export type ClosurePlan =
-  | { outcome: "reallocated"; toResource: Resource; req: ServiceRequirementLite; units: number; exclusive: boolean; appointment: AppointmentDoc; overlayRow: AllocationLite }
-  | { outcome: "conflict"; appointment: AppointmentDoc }
+export type ClosureMemberPlan = {
+  appointment: AppointmentDoc;
+  toResource: Resource;
+  req: ServiceRequirementLite;
+  units: number;
+  exclusive: boolean;
+  overlayRow: AllocationLite;
+};
+export type EquivalentSlot = { startTime: number; endTime: number; resourceIds: Id<"schedResources">[] };
+export type ClosureGroupPlan =
+  | { outcome: "reallocated"; toResource: Resource; members: ClosureMemberPlan[] }
+  | { outcome: "conflict"; appointments: AppointmentDoc[]; equivalents: EquivalentSlot[] }
   | { outcome: "skip" };
 
 export async function planClosureRelocation(
   ctx: MutationCtx,
   args: {
-    appointmentId: AppointmentId;
+    appointmentIds: AppointmentId[];
     organizationId: Id<"organizations">;
     closedResourceId: Id<"schedResources">;
+    relocate: boolean;
+    wantEquivalents?: boolean;
     hypothetical?: ExceptionLite[];
     overlay?: AllocationLite[];
     rb?: ResourceBook;
     now: number;
   }
-): Promise<ClosurePlan> {
-  const a = await ctx.db.get(args.appointmentId);
-  if (!a || a.organizationId !== args.organizationId || !MOVABLE_STATUSES.includes(a.status) || a.endTime <= args.now) return { outcome: "skip" };
-  const closedEntry = a.resources.find((r) => r.resourceId === args.closedResourceId && r.allocated);
-  if (!closedEntry) return { outcome: "skip" }; // já processado (idempotência dos lotes)
-  const org = assertOrgModule(await ctx.db.get(a.organizationId));
-  const loaded = await loadContext(ctx, { organizationId: a.organizationId, serviceId: a.serviceId }, org, "staff");
-  if (!loaded.ok) return { outcome: "conflict", appointment: a };
-  const bc = loaded.bc;
-  const req = bc.service.requirements.find((r) => r.role === closedEntry.role);
-  if (!req) return { outcome: "conflict", appointment: a };
-  const rb = args.rb ?? newResourceBook(a.organizationId);
-  const inPlan = new Set<string>(a.resources.map((r) => r.resourceId));
-  const pool = (await loadPool(ctx, rb)).filter((r) => r.active && !inPlan.has(r._id) && requirementMatches(r, req)).sort(bySortOrder);
-  if (pool.length === 0) return { outcome: "conflict", appointment: a };
-  const timing: Timing = { startTime: a.startTime, endTime: a.endTime, blockStart: a.blockStart, blockEnd: a.blockEnd };
+): Promise<ClosureGroupPlan> {
+  const appointments: AppointmentDoc[] = [];
+  for (const id of args.appointmentIds) {
+    const a = await ctx.db.get(id);
+    if (!a || a.organizationId !== args.organizationId || !MOVABLE_STATUSES.includes(a.status) || a.endTime <= args.now) continue;
+    if (!a.resources.some((r) => r.resourceId === args.closedResourceId && r.allocated)) continue; // já processado (idempotência)
+    appointments.push(a);
+  }
+  if (appointments.length === 0) return { outcome: "skip" };
+  const first = appointments[0];
+  const conflict = (equivalents: EquivalentSlot[] = []): ClosureGroupPlan => ({ outcome: "conflict", appointments, equivalents });
+  if (!args.relocate && !args.wantEquivalents) return conflict();
+  // todos do grupo no MESMO horário (quem difere já foi separado por quem chama)
+  if (appointments.some((a) => a.startTime !== first.startTime || a.endTime !== first.endTime || a.blockStart !== first.blockStart || a.blockEnd !== first.blockEnd)) return conflict();
+  const org = assertOrgModule(await ctx.db.get(first.organizationId));
+  const rb = args.rb ?? newResourceBook(first.organizationId);
+  const reqs: ServiceRequirementLite[] = [];
+  let bc: BookingContext | null = null;
+  for (const a of appointments) {
+    const loaded = await loadContext(ctx, { organizationId: a.organizationId, serviceId: a.serviceId }, org, "staff");
+    if (!loaded.ok) return conflict();
+    bc ??= loaded.bc;
+    const entry = a.resources.find((r) => r.resourceId === args.closedResourceId && r.allocated)!;
+    const req = loaded.bc.service.requirements.find((r) => r.role === entry.role);
+    if (!req) return conflict();
+    reqs.push(req);
+  }
+  const bookingContext = bc!;
+  const inPlan = new Set<string>(appointments.flatMap((a) => a.resources.map((r) => r.resourceId)));
+  const pool = (await loadPool(ctx, rb)).filter((r) => r.active && !inPlan.has(r._id) && reqs.every((req) => requirementMatches(r, req))).sort(bySortOrder);
+  const timing: Timing = { startTime: first.startTime, endTime: first.endTime, blockStart: first.blockStart, blockEnd: first.blockEnd };
   const reads: WindowReads = {
-    ...(await readExceptions(ctx, a.organizationId, a.localDate, args.hypothetical)),
+    ...(await readExceptions(ctx, first.organizationId, first.localDate, args.hypothetical)),
     contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0,
-    internalEvents: internalEventsReader(ctx, a.organizationId, a.blockStart, a.blockEnd),
+    internalEvents: internalEventsReader(ctx, first.organizationId, first.blockStart, first.blockEnd),
   };
   const overlay = args.overlay ?? [];
+  const ids = new Set<string>(appointments.map((a) => a._id));
+  const equivalents: EquivalentSlot[] = [];
   for (const cand of pool) {
-    const item = toPlanItem(req, cand);
+    const items = reqs.map((req) => toPlanItem(req, cand));
+    const total = items.reduce((sum, i) => sum + i.units, 0);
     const rowsCache: RowsCache = new Map();
-    const dbRows = await readCapacityRows(ctx, cand, a.blockStart, a.blockEnd, a._id);
-    rowsCache.set(cand._id, [...dbRows, ...overlay.filter((o) => o.resourceId === cand._id && o.appointmentId !== a._id)]);
+    const dbRows = await readCapacityRows(ctx, cand, first.blockStart, first.blockEnd);
+    rowsCache.set(cand._id, [
+      ...dbRows.filter((r) => !ids.has(r.appointmentId)),
+      ...overlay.filter((o) => o.resourceId === cand._id && !ids.has(o.appointmentId)),
+    ]);
     const violations = (
-      await evaluatePlan(ctx, { bc, reads, rowsCache, origin: "staff", action: "book", now: args.now, timing, items: [item], ignoreAppointmentId: a._id })
+      await evaluatePlan(ctx, {
+        bc: bookingContext, reads, rowsCache, origin: "staff", action: "book", now: args.now, timing,
+        items: [{ ...items[0], units: total }], ignoreAppointmentId: first._id,
+      })
     ).filter((v) => REASSIGN_CODES.includes(v.code));
     if (violations.length > 0) continue;
-    const units = item.units;
+    if (!args.relocate) {
+      equivalents.push({
+        startTime: first.startTime,
+        endTime: first.endTime,
+        resourceIds: first.resources.map((r) => (r.resourceId === args.closedResourceId ? cand._id : r.resourceId)),
+      });
+      if (equivalents.length >= 2) break;
+      continue;
+    }
     return {
       outcome: "reallocated",
       toResource: cand,
-      req,
-      units,
-      exclusive: item.exclusive,
-      appointment: a,
-      overlayRow: {
-        appointmentId: a._id, resourceId: cand._id, blockStart: a.blockStart, blockEnd: a.blockEnd, coreStart: a.startTime, coreEnd: a.endTime,
-        units: item.exclusive ? cand.capacity : units,
-      },
+      members: appointments.map((a, i) => ({
+        appointment: a,
+        toResource: cand,
+        req: reqs[i],
+        units: items[i].units,
+        exclusive: items[i].exclusive,
+        overlayRow: {
+          appointmentId: a._id, resourceId: cand._id, blockStart: a.blockStart, blockEnd: a.blockEnd, coreStart: a.startTime, coreEnd: a.endTime,
+          units: items[i].exclusive ? cand.capacity : items[i].units,
+        },
+      })),
     };
   }
-  return { outcome: "conflict", appointment: a };
+  return conflict(equivalents);
 }
 
-async function deleteAllocationRowsOfResource(ctx: MutationCtx, appointmentId: AppointmentId, resourceId: Id<"schedResources">): Promise<void> {
+async function deleteAllocationRowsOfResources(ctx: MutationCtx, appointmentId: AppointmentId, resourceIds: readonly Id<"schedResources">[]): Promise<void> {
   const rows = await ctx.db.query("schedAllocations").withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId)).take(50);
-  for (const row of rows) if (row.resourceId === resourceId) await ctx.db.delete(row._id);
+  for (const row of rows) if (resourceIds.includes(row.resourceId)) await ctx.db.delete(row._id);
 }
 
 /** Troca SÓ a alocação do recurso fechado pelo equivalente decidido por `planClosureRelocation`. `false` = a capacidade mudou no meio (vira conflito). */
 export async function relocateAllocationCore(
   ctx: MutationCtx,
-  args: { plan: Extract<ClosurePlan, { outcome: "reallocated" }>; closedResourceId: Id<"schedResources">; actor: SchedActor; reason: string; now: number }
+  args: { plan: ClosureMemberPlan; closedResourceId: Id<"schedResources">; actor: SchedActor; reason: string; now: number }
 ): Promise<boolean> {
   const a = args.plan.appointment;
   const alloc = await assertCapacityAndAllocate(ctx, {
@@ -2183,7 +2238,7 @@ export async function relocateAllocationCore(
     coreEnd: a.endTime,
   });
   if (!alloc.ok) return false;
-  await deleteAllocationRowsOfResource(ctx, a._id, args.closedResourceId);
+  await deleteAllocationRowsOfResources(ctx, a._id, [args.closedResourceId]);
   const resources = a.resources.map((r) =>
     r.resourceId === args.closedResourceId && r.allocated
       ? { resourceId: args.plan.toResource._id, role: r.role, name: args.plan.toResource.name, allocated: true }
@@ -2209,17 +2264,18 @@ export async function relocateAllocationCore(
   return true;
 }
 
-/** Retira a alocação do recurso e marca o agendamento em conflito. NADA é cancelado; status e mensagens ao cliente não mudam. */
+/** Retira a alocação dos recursos e marca o agendamento em conflito. NADA é cancelado; status e mensagens ao cliente não mudam. */
 export async function releaseAllocationForConflictCore(
   ctx: MutationCtx,
-  args: { appointment: AppointmentDoc; resourceId: Id<"schedResources">; kind: ClosureKind; actor: SchedActor; now: number }
+  args: { appointment: AppointmentDoc; resourceIds: Id<"schedResources">[]; kind: ClosureKind; actor: SchedActor; now: number; error?: string }
 ): Promise<{ released: boolean }> {
   const a = await ctx.db.get(args.appointment._id);
   if (!a || a.organizationId !== args.appointment.organizationId) return { released: false };
-  if (!a.resources.some((r) => r.resourceId === args.resourceId && r.allocated)) return { released: false };
-  await deleteAllocationRowsOfResource(ctx, a._id, args.resourceId);
+  const closed = new Set<string>(args.resourceIds);
+  if (!a.resources.some((r) => closed.has(r.resourceId) && r.allocated)) return { released: false };
+  await deleteAllocationRowsOfResources(ctx, a._id, args.resourceIds);
   await ctx.db.patch(a._id, {
-    resources: a.resources.map((r) => (r.resourceId === args.resourceId ? { ...r, allocated: false } : r)),
+    resources: a.resources.map((r) => (closed.has(r.resourceId) ? { ...r, allocated: false } : r)),
     needsAttention: { code: args.kind, at: args.now },
     updatedAt: args.now,
   });
@@ -2235,10 +2291,11 @@ export async function releaseAllocationForConflictCore(
     description: `Agendamento ${label} ficou sem recurso (${args.kind === "resource_closed" ? "recurso fechado" : "recurso removido"}): na fila de conflitos`,
     before: appointmentSnapshot(a),
     after: appointmentSnapshot(after),
-    metadata: { statusChange: false, closure: true, conflict: args.kind, resourceId: args.resourceId },
+    metadata: { statusChange: false, closure: true, conflict: args.kind, resourceIds: args.resourceIds, ...(args.error ? { error: args.error.slice(0, 200) } : {}) },
     now: args.now,
   });
   await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Precisa de novo recurso: ${label}`, actor: args.actor, now: args.now });
+  // Webhook `appointment.needs_attention`: o agendamento perdeu o recurso (ver docs/architecture/agenda.md).
   await emitAppointmentWebhook(ctx, { event: "appointment.needs_attention", appointment: after, tz });
   return { released: true };
 }
@@ -2272,14 +2329,19 @@ export async function canRestoreOriginalPlacement(
   return { ok: violations.length === 0, resourceIds: a.resources.map((r) => r.resourceId), startTime: a.startTime };
 }
 
-/** Limpa o aviso de atenção (resolução manual de conflito). */
-export async function clearAppointmentAttentionCore(ctx: MutationCtx, args: { appointmentId: AppointmentId; organizationId: Id<"organizations">; codes: readonly string[]; now: number }): Promise<void> {
+/** Limpa o aviso de atenção (resolução manual de conflito) e, se ainda há recurso sem alocação, marca `no_resource` para a grade. */
+export async function settleManualConflictCore(ctx: MutationCtx, args: { appointmentId: AppointmentId; organizationId: Id<"organizations">; now: number }): Promise<void> {
   const a = await ctx.db.get(args.appointmentId);
   if (!a || a.organizationId !== args.organizationId) return;
-  if (a.needsAttention && args.codes.includes(a.needsAttention.code)) await ctx.db.patch(a._id, { needsAttention: undefined, updatedAt: args.now });
+  if (a.resources.some((r) => !r.allocated)) {
+    // Decisão do operador: o agendamento segue ATIVO sem alocação (não ocupa capacidade); a grade mostra "sem sala/profissional definido".
+    await ctx.db.patch(a._id, { needsAttention: { code: "no_resource", at: args.now }, updatedAt: args.now });
+  } else if (a.needsAttention && RESOURCE_ATTENTION_CODES.includes(a.needsAttention.code)) {
+    await ctx.db.patch(a._id, { needsAttention: undefined, updatedAt: args.now });
+  }
 }
 
-/** Carrega o agendamento da org para a resolução de conflito (resposta única para inexistente e de outra org). */
+/** Carrega o agendamento da org (resposta única para inexistente e de outra org). */
 export async function loadAppointmentOfOrg(ctx: MutationCtx, organizationId: Id<"organizations">, appointmentId: AppointmentId): Promise<AppointmentDoc | null> {
   const a = await ctx.db.get(appointmentId);
   return a && a.organizationId === organizationId ? a : null;

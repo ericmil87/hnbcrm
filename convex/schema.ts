@@ -4958,13 +4958,40 @@ const applicationTables = {
     kind: v.union(v.literal("resource_closed"), v.literal("capacity"), v.literal("human_confirm"), v.literal("resource_removed")),
     status: v.union(v.literal("open"), v.literal("resolved"), v.literal("dismissed")),
     resourceId: v.optional(v.id("schedResources")),
+    // A3c: todos os recursos que saíram do agendamento (fechar a org/um tipo pode tirar sala E profissional: 1 linha por agendamento).
+    resourceIds: v.optional(v.array(v.id("schedResources"))),
     localDate: v.optional(v.string()),
     suggestions: v.optional(v.array(v.object({ startTime: v.number(), resourceIds: v.array(v.id("schedResources")) }))), // ≤ 3
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()), resolvedBy: v.optional(v.id("teamMembers")),
   })
     .index("by_organization_and_status_and_created", ["organizationId", "status", "createdAt"])
+    // A3c: conflitos abertos de um intervalo de datas (reabrir recurso reavalia só estes). `localDate` sempre definido nas linhas do fechamento.
+    .index("by_organization_and_status_and_date", ["organizationId", "status", "localDate"])
     .index("by_appointment", ["appointmentId"]),
+
+  // A3c: resumo de cada fechamento/remoção de recurso (progresso dos lotes e resultado final). 1 linha pequena por
+  // fechamento; derivado/efêmero: fora do backup, apagado na purga.
+  schedClosureRuns: defineTable({
+    organizationId: v.id("organizations"),
+    kind: v.union(v.literal("resource_closed"), v.literal("resource_removed")),
+    resourceId: v.optional(v.id("schedResources")),
+    resourceKind: v.optional(v.union(v.literal("person"), v.literal("room"), v.literal("equipment"))),
+    fromLocalDate: v.string(),
+    toLocalDate: v.string(),
+    status: v.union(v.literal("running"), v.literal("done")),
+    total: v.number(),                 // agendamentos conhecidos (ao concluir = processed)
+    totalIsPartial: v.boolean(),       // true = ainda há mais por achar (total é "pelo menos")
+    processed: v.number(),
+    reallocated: v.number(),
+    conflicts: v.number(),
+    failed: v.number(),                // itens cujo tratamento lançou erro (viraram conflito)
+    exceptionIds: v.optional(v.array(v.id("schedExceptions"))),
+    createdBy: v.optional(v.id("teamMembers")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_organization_and_created", ["organizationId", "createdAt"]),
 
   // Estado da agenda POR CONVERSA (fora do doc quente `conversations`).
   schedConversationState: defineTable({

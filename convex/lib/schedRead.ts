@@ -217,6 +217,24 @@ export async function readExceptionsRange(
   return { rows, completeBefore: null };
 }
 
+/**
+ * Agendamentos da org com início em `[from, to)`, em ordem crescente (índice por início, teto `limit`). `more` = há
+ * mais depois do teto. Usado pelo fechamento da org/tipo (1 documento por agendamento, sem ler alocações).
+ */
+export async function readAppointmentsStartingBetween(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  from: number,
+  to: number,
+  limit: number
+): Promise<{ rows: Doc<"schedAppointments">[]; more: boolean }> {
+  const rows = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_organization_and_start", (q) => q.eq("organizationId", organizationId).gte("startTime", from).lt("startTime", to))
+    .take(limit + 1);
+  return { rows: rows.slice(0, limit), more: rows.length > limit };
+}
+
 /** `true` se o dia não foi lido por inteiro por `readExceptionsRange` (fail-closed). */
 export function exceptionsUnverifiedOn(completeBefore: LocalDate | null, date: LocalDate): boolean {
   return completeBefore !== null && date >= completeBefore;

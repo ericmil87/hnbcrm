@@ -27,6 +27,8 @@ export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
   "schedInterpretations",
   // Carimbo do aviso diário "sem desfecho" (1 linha por org): estado de job, recomputável.
   "schedJobState",
+  // A3c: resumo de cada fechamento de recurso (progresso dos lotes): estado de job, recomputável.
+  "schedClosureRuns",
   "apiKeys",
   "orgSecrets",
   // Descriptor CIFRADO da mídia de grupo não baixada (carrega o `MediaKey`).
