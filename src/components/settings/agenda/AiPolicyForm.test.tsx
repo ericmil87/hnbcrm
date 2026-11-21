@@ -36,9 +36,14 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Cancela sozinha/ }));
     expect(onChange).toHaveBeenCalledWith({ ...base(true), cancel: "auto" });
   });
-  it("explica as confirmações pelo WhatsApp e o 'na dúvida só sugere'", () => {
-    render(<AiPolicyForm value={base()} onChange={() => {}} />);
-    expect(screen.getByText(/Na dúvida, ele só sugere/)).toBeInTheDocument();
+  it("explica as confirmações pelo WhatsApp: padrão só sugerir; marcar sozinho é experimental, com aviso de risco e Desfazer", () => {
+    const { rerender } = render(<AiPolicyForm value={{ ...base(), humanConfirmMode: "suggest" }} onChange={() => {}} />);
+    expect(screen.getByText(/Nada é marcado sozinho, a menos que você ligue a opção experimental/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Só sugerir \(recomendado\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /\(experimental\)/ })).toBeInTheDocument();
+    expect(screen.queryByRole("note")).toBeNull();
+    rerender(<AiPolicyForm value={{ ...base(), humanConfirmMode: "auto" }} onChange={() => {}} />);
+    expect(screen.getByRole("note")).toHaveTextContent(/pode marcar errado.*desfazer em até 24 horas/i);
   });
   it("assistente: três opções e o interruptor das confirmações; sozinha pede o mesmo aceite", () => {
     const onChange = vi.fn();
@@ -51,6 +56,7 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Entendi, ligar" }));
     expect(onChange).toHaveBeenLastCalledWith({ ...base(), book: "auto", ackAcceptedNow: true });
+    // Ligar o interruptor liga o padrão "só sugerir" (nunca o experimental); desligar = off.
     fireEvent.click(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" }));
     expect(onChange).toHaveBeenLastCalledWith({ ...base(), humanConfirmMode: "off" });
   });

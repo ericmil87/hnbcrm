@@ -130,10 +130,12 @@ export async function dispatchNotificationChannels(
     /** No patch, false = o push não sai (Telegram segue). Padrão true. */
     pushAllowed?: boolean;
     email?: EmailFallback;
+    /** Só o sino: nada de Telegram nem push. */
+    bellOnly?: boolean;
   }
 ): Promise<{ pushScheduled: boolean }> {
   let pushScheduled = false;
-  if (!args.isPatch || args.externalOnPatch) {
+  if (!args.bellOnly && (!args.isPatch || args.externalOnPatch)) {
     await maybeScheduleTelegram(ctx, args);
     if (args.pushAllowed !== false) pushScheduled = await maybeSchedulePush(ctx, args);
   }
