@@ -4,7 +4,7 @@
  * org. O núcleo com banco está em `calendarCore.ts`; `calendar.ts` só registra.
  */
 import { ConvexError } from "convex/values";
-import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
+import { completeLegacyPermissions, hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
 import { localParts } from "./groupPostSchedule";
 import { localInstant } from "./copilotDates";
 import { safeTimezone } from "./promptDateTime";
@@ -176,7 +176,9 @@ type EventOwnership = {
 type MemberLike = { _id: string; role: string; permissions?: unknown };
 
 export function memberPermissions(member: MemberLike, override?: Permissions): Permissions {
-  return override ?? resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+  // `override` = permissões gravadas na chave de API: chave legada (sem `agenda`) é completada.
+  if (override) return completeLegacyPermissions(override);
+  return resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
 }
 
 /** Dono para EDITAR: quem criou ou o responsável. */
@@ -189,29 +191,32 @@ export function isEventParticipant(memberId: string, event: EventOwnership): boo
   return isEventEditor(memberId, event) || (event.attendees ?? []).includes(memberId);
 }
 
-/** `view_all` ou mais vê todos os eventos; `view_own` só os seus. */
+/** `view_all` ou mais vê todos os eventos; `view_own` só os seus. Categoria `agenda`. */
 export function canViewAllEvents(perms: Permissions): boolean {
-  return hasPermission(perms, "tasks", "view_all");
+  return hasPermission(perms, "agenda", "view_all");
 }
 
 export function canViewAnyEvent(perms: Permissions): boolean {
-  return hasPermission(perms, "tasks", "view_own");
+  return hasPermission(perms, "agenda", "view_own");
 }
 
 export function canViewEvent(perms: Permissions, memberId: string, event: EventOwnership): boolean {
-  if (!hasPermission(perms, "tasks", "view_own")) return false;
+  if (!hasPermission(perms, "agenda", "view_own")) return false;
   return canViewAllEvents(perms) || isEventParticipant(memberId, event);
 }
 
-/** Criar exige `edit_own`. */
+/** Criar exige `edit` (o nível da recepção). */
 export function canCreateEvent(perms: Permissions): boolean {
-  return hasPermission(perms, "tasks", "edit_own");
+  return hasPermission(perms, "agenda", "edit");
 }
 
-/** Editar/reagendar/concluir/cancelar/excluir: os seus com `edit_own`, os dos outros com `edit_all`. */
-export function canEditEvent(perms: Permissions, memberId: string, event: EventOwnership): boolean {
-  if (isEventEditor(memberId, event)) return hasPermission(perms, "tasks", "edit_own");
-  return hasPermission(perms, "tasks", "edit_all");
+/**
+ * Editar/reagendar/concluir/cancelar/excluir: `edit` ou mais mexe em QUALQUER
+ * compromisso da org (a recepção remarca o de um colega); `view_all` e abaixo nunca.
+ * O dono (`memberId`/`event`) não muda o resultado: fica na assinatura por simetria.
+ */
+export function canEditEvent(perms: Permissions, _memberId: string, _event: EventOwnership): boolean {
+  return hasPermission(perms, "agenda", "edit");
 }
 
 // ---------------------------------------------------------------------------

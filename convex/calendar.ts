@@ -29,7 +29,7 @@ import {
 /**
  * Agenda (`calendarEvents`). Toda a regra vive em `lib/calendarCore.ts`; aqui
  * só se resolve o ator (app: `requirePermission`; REST/MCP: `teamMemberId` da
- * API key) e se registra a função. Permissões na categoria `tasks` (decisão
+ * API key) e se registra a função. Permissões na categoria `agenda` (decisão
  * provisória até a Agenda v2): ver docs/architecture/calendar.md.
  */
 
@@ -220,7 +220,7 @@ export const createEvent = mutation({
   args: { organizationId: v.id("organizations"), ...createArgs },
   returns: v.id("calendarEvents"),
   handler: async (ctx, { organizationId, ...input }) => {
-    const member = await requirePermission(ctx, organizationId, "tasks", "edit_own");
+    const member = await requirePermission(ctx, organizationId, "agenda", "edit");
     return await createEventCore(ctx, appActor(member), input);
   },
 });
@@ -230,7 +230,7 @@ export const updateEvent = mutation({
   args: { eventId: v.id("calendarEvents"), ...updateFields },
   returns: v.null(),
   handler: async (ctx, { eventId, ...input }) => {
-    const member = await requirePermission(ctx, await eventOrg(ctx, eventId), "tasks", "edit_own");
+    const member = await requirePermission(ctx, await eventOrg(ctx, eventId), "agenda", "edit");
     await updateEventCore(ctx, appActor(member), eventId, input);
     return null;
   },
@@ -245,7 +245,7 @@ export const rescheduleEvent = mutation({
   },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "tasks", "edit_own");
+    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "agenda", "edit");
     await rescheduleEventCore(ctx, appActor(member), args.eventId, args.newStartTime, args.newEndTime);
     return null;
   },
@@ -256,7 +256,7 @@ export const completeEvent = mutation({
   args: { eventId: v.id("calendarEvents") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "tasks", "edit_own");
+    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "agenda", "edit");
     await completeEventCore(ctx, appActor(member), args.eventId);
     return null;
   },
@@ -267,7 +267,7 @@ export const cancelEvent = mutation({
   args: { eventId: v.id("calendarEvents") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "tasks", "edit_own");
+    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "agenda", "edit");
     await cancelEventCore(ctx, appActor(member), args.eventId);
     return null;
   },
@@ -278,7 +278,7 @@ export const deleteEvent = mutation({
   args: { eventId: v.id("calendarEvents") },
   returns: v.null(),
   handler: async (ctx, args) => {
-    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "tasks", "edit_own");
+    const member = await requirePermission(ctx, await eventOrg(ctx, args.eventId), "agenda", "edit");
     await deleteEventCore(ctx, appActor(member), args.eventId);
     return null;
   },

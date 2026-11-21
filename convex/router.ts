@@ -11,6 +11,7 @@ import { OPENAPI_SPEC } from "./openapiSpec";
 import {
   hasPermission,
   resolvePermissions,
+  completeLegacyPermissions,
   type Role,
   type Permissions,
   type PermissionCategory,
@@ -118,8 +119,10 @@ async function authenticateApiKey(ctx: any, request: Request) {
 
   // Resolve permissions: apiKey.permissions > teamMember.permissions > role defaults
   const teamMember = apiKeyRecord.teamMember;
+  // Chave legada com permissões gravadas e sem `agenda`: deriva de `tasks` (completeLegacyPermissions).
   const permissions: Permissions = apiKeyRecord.permissions
-    ?? resolvePermissions(
+    ? (completeLegacyPermissions(apiKeyRecord.permissions) as Permissions)
+    : resolvePermissions(
       (teamMember?.role ?? "agent") as Role,
       teamMember?.permissions ?? undefined
     );
@@ -247,17 +250,16 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   "GET /api/v1/tasks/comments": { category: "tasks", level: "view_own" }, // taskComments.getComments
   "POST /api/v1/tasks/comments/add": { category: "tasks", level: "view_own" }, // taskComments.addComment
 
-  // Agenda — convex/calendar.ts (`requirePermission` na categoria `tasks`, provisório até a
-  // Agenda v2): ler = view_own (view_all enxerga os de todos); escrever = edit_own (editar
-  // evento de OUTRO membro exige edit_all, checado no núcleo `lib/calendarCore.ts`).
-  "GET /api/v1/calendar/events": { category: "tasks", level: "view_own" }, // calendar.getEvents
-  "GET /api/v1/calendar/events/get": { category: "tasks", level: "view_own" }, // calendar.getEvent
-  "POST /api/v1/calendar/events/create": { category: "tasks", level: "edit_own" }, // calendar.createEvent
-  "POST /api/v1/calendar/events/update": { category: "tasks", level: "edit_own" }, // calendar.updateEvent
-  "POST /api/v1/calendar/events/delete": { category: "tasks", level: "edit_own" }, // calendar.deleteEvent
-  "POST /api/v1/calendar/events/reschedule": { category: "tasks", level: "edit_own" }, // calendar.rescheduleEvent
-  "POST /api/v1/calendar/events/complete": { category: "tasks", level: "edit_own" }, // calendar.completeEvent
-  "POST /api/v1/calendar/events/cancel": { category: "tasks", level: "edit_own" }, // calendar.cancelEvent
+  // Agenda — convex/calendar.ts (categoria `agenda`): ler = view_own (view_all enxerga os de
+  // todos); escrever = edit (altera qualquer compromisso da org, checado em `lib/calendarCore.ts`).
+  "GET /api/v1/calendar/events": { category: "agenda", level: "view_own" }, // calendar.getEvents
+  "GET /api/v1/calendar/events/get": { category: "agenda", level: "view_own" }, // calendar.getEvent
+  "POST /api/v1/calendar/events/create": { category: "agenda", level: "edit" }, // calendar.createEvent
+  "POST /api/v1/calendar/events/update": { category: "agenda", level: "edit" }, // calendar.updateEvent
+  "POST /api/v1/calendar/events/delete": { category: "agenda", level: "edit" }, // calendar.deleteEvent
+  "POST /api/v1/calendar/events/reschedule": { category: "agenda", level: "edit" }, // calendar.rescheduleEvent
+  "POST /api/v1/calendar/events/complete": { category: "agenda", level: "edit" }, // calendar.completeEvent
+  "POST /api/v1/calendar/events/cancel": { category: "agenda", level: "edit" }, // calendar.cancelEvent
 
   // Preferências de notificação — convex/notificationPreferences.ts
   "GET /api/v1/notifications/preferences": "authenticated", // rota self-scoped (preferências do PRÓPRIO membro da key) — espelha requireAuth de notificationPreferences.getMyPreferences; team:view no app é só p/ ver preferências de OUTRO membro

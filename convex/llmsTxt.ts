@@ -18,7 +18,7 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal, instagram, messenger (Instagram/Messenger: see "Instagram & Messenger" below)
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
-- Permissions: Granular RBAC with 10 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys, campaigns). API keys can have scoped permissions. EVERY /api/v1 route enforces a minimum category+level (see the route→permission table in /llms-full.txt); insufficient keys get 403 \`{ error: "Permissão insuficiente", code: 403 }\`.
+- Permissions: Granular RBAC with 11 categories (leads, contacts, inbox, tasks, reports, team, settings, auditLogs, apiKeys, campaigns, agenda). API keys can have scoped permissions. EVERY /api/v1 route enforces a minimum category+level (see the route→permission table in /llms-full.txt); insufficient keys get 403 \`{ error: "Permissão insuficiente", code: 403 }\`.
 
 ## WhatsApp Channel
 
@@ -122,8 +122,9 @@ Paths below omit the \`/api/v1\` prefix:
 | \`leads: view_own\` | GET /leads, GET /leads/get, POST /leads/update, POST /leads/move-stage, POST /leads/assign, GET /files/:id/url, GET /boards, GET /field-definitions, GET /lead-sources, GET /activities, POST /activities |
 | \`reports: view\` | GET /dashboard |
 | \`settings: manage\` | POST /exports, GET /exports, GET /exports/get, GET /exports/download, POST /imports, GET /imports, GET /imports/get, POST /imports/mapping, POST /imports/preview, POST /imports/confirm, POST /imports/rollback, GET /imports/failed-rows, POST /groups/monitor, POST /groups/sync |
-| \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add, GET /calendar/events, GET /calendar/events/get (view_all sees everyone's events) |
-| \`tasks: edit_own\` | POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete, POST /calendar/events/cancel (editing another member's event needs tasks: edit_all) |
+| \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add |
+| \`agenda: view_own\` | GET /calendar/events, GET /calendar/events/get (view_all sees everyone's events) |
+| \`agenda: edit\` | POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete, POST /calendar/events/cancel (edit changes ANY event of the org; legacy keys without \`agenda\` inherit it from \`tasks\`: edit_own/edit_all/full become edit) |
 | valid API key only | GET /team-members, GET /notifications/preferences, PUT /notifications/preferences (self-scoped — mirrors the app, which requires only membership for these) |
 
 Public \`/api/v1\` routes (no API key, no permission): GET /forms/public, POST /forms/public/submit, POST /forms/public/partial, POST /forms/experiment/view, GET /embed.js, GET /openapi.json, POST /webhooks/resend (Resend signature).

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   CATEGORY_LABELS,
+  completeLegacyPermissions,
   DEFAULT_PERMISSIONS,
   getLevelsForCategory,
   hasPermission,
@@ -56,5 +57,39 @@ describe("categoria agenda", () => {
     expect(hasPermission(agent, "agenda", "edit")).toBe(true);
     expect(hasPermission(agent, "agenda", "manage")).toBe(false);
     expect(hasPermission(resolvePermissions("admin", undefined), "agenda", "manage")).toBe(true);
+  });
+});
+
+describe("completeLegacyPermissions (chave de API legada sem agenda)", () => {
+  const base = { leads: "none", contacts: "none", inbox: "none", reports: "none", team: "none", settings: "none", auditLogs: "none", apiKeys: "none" } as const;
+  const expected: Array<[string, string]> = [
+    ["none", "none"],
+    ["view_own", "view_own"],
+    ["view_all", "view_all"],
+    ["edit_own", "edit"],
+    ["edit_all", "edit"],
+    ["full", "edit"],
+  ];
+
+  test.each(expected)("tasks %s vira agenda %s", (tasks, agenda) => {
+    expect(completeLegacyPermissions({ ...base, tasks } as any).agenda).toBe(agenda);
+  });
+
+  test("nunca concede manage e nunca mexe nas outras categorias", () => {
+    for (const [tasks] of expected) {
+      const out = completeLegacyPermissions({ ...base, tasks } as any);
+      expect(out.agenda).not.toBe("manage");
+      expect({ ...out, agenda: undefined }).toEqual({ ...base, tasks, agenda: undefined });
+    }
+  });
+
+  test("quem já tem agenda volta igual (idempotente, inclusive none)", () => {
+    const p = { ...base, tasks: "full", agenda: "none" } as any;
+    expect(completeLegacyPermissions(p)).toBe(p);
+    expect(completeLegacyPermissions(completeLegacyPermissions({ ...base, tasks: "edit_own" } as any)).agenda).toBe("edit");
+  });
+
+  test("valor inesperado de tasks fecha (none)", () => {
+    expect(completeLegacyPermissions({ ...base, tasks: "xyz" } as any).agenda).toBe("none");
   });
 });
