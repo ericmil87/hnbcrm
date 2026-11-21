@@ -1109,3 +1109,44 @@ export async function executeSchedPendingAction(
       raise(`Ação desconhecida: ${pending.tool}`);
   }
 }
+
+// ---------------------------------------------------------------------------
+// Resumo matinal do Telegram: linha da agenda do dia e das pendências (só contagens e horários, sem nome de cliente)
+// ---------------------------------------------------------------------------
+
+export type AgendaMorningSummary = {
+  /** Agendamentos ativos de hoje que o membro enxerga (`view_own`: só os seus). */
+  today: number;
+  /** Horários (HH:MM, fuso da org) dos próximos até 3 a partir de agora. */
+  nextTimes: string[];
+  approvals: number;
+  conflicts: number;
+  noOutcome: number;
+  capped: boolean;
+};
+
+/** `null` = módulo desligado ou membro sem `agenda` (a linha não aparece). Mesmas leituras das telas. */
+export async function buildAgendaMorningSummary(
+  db: QueryCtx["db"],
+  org: Doc<"organizations">,
+  member: Doc<"teamMembers">,
+  now: number,
+  tz: string
+): Promise<AgendaMorningSummary | null> {
+  if (!modulesOf(org).scheduling) return null;
+  const reader = agendaReaderOfMember(member, "view_own");
+  if (!reader) return null;
+  const ctx = { db } as unknown as QueryCtx;
+  const day = await readAgendaDay(ctx, org._id, localDateOf(now, tz), reader);
+  if (!day.enabled) return null;
+  const active = day.appointments.filter((a) => ACTIVE.has(a.status) && a.status !== "completed").sort((a, b) => a.startTime - b.startTime);
+  const pending = await readAgendaPending(ctx, org._id, now, reader);
+  return {
+    today: active.length,
+    nextTimes: active.filter((a) => a.endTime > now).slice(0, 3).map((a) => hhmm(minutesOfDay(a.startTime, tz))),
+    approvals: pending.approvals.length,
+    conflicts: pending.conflicts.length,
+    noOutcome: pending.noOutcome.length,
+    capped: day.capped || pending.capped.approvals || pending.capped.conflicts || pending.capped.noOutcome,
+  };
+}

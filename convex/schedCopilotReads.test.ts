@@ -15,6 +15,8 @@ import { atLocalMinutes } from "./lib/schedTime";
 import { schedSessionInfo } from "./lib/schedCopilotOps";
 import { schedSpecAllowed, SCHED_COPILOT_READ_TOOLS, SCHED_COPILOT_WRITE_TOOLS, parseRef } from "./lib/schedCopilotTools";
 import { COPILOT_READ_TOOLS } from "./lib/agentTools";
+import * as TelegramReports from "./telegramReports";
+import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const TZ = "America/Sao_Paulo";
@@ -289,5 +291,31 @@ describe("findAgendaGaps", () => {
     void room;
     const r = await read(s.admin, "findAgendaGaps", { date: "hoje", minMinutes: 30, includeEdges: true });
     expect(r.itens[0]).toMatchObject({ de: "12:00", ate: "18:00" });
+  });
+});
+
+describe("resumo matinal do Telegram: linha da agenda", () => {
+  const morning = (who: Person): Promise<any> =>
+    t.query(internal.telegramReports.internalBuildReportData, { organizationId: s.orgId, memberId: who.memberId, kind: "morning", now: Date.now() });
+
+  test("com o módulo ligado traz contagens e horários (sem nome de cliente); a linha do relatório sai no PT-BR", async () => {
+    await seedDay();
+    vi.setSystemTime(new Date(at(MON, 9, 30)));
+    const data = await morning(s.admin);
+    assertMatchesReturns(data, TelegramReports.internalBuildReportData); // o `returns` real aceita o campo novo
+    expect(data.morning.agenda).toEqual({ today: 2, nextTimes: ["10:00", "11:00"], approvals: 0, conflicts: 0, noOutcome: 0, capped: false });
+    expect(JSON.stringify(data.morning.agenda)).not.toMatch(/Maria|Segredo/);
+    const { formatMorningReport } = await import("./lib/executiveReport");
+    const out = formatMorningReport(data, { memberName: "Admin", orgName: "Clínica", timezone: TZ, currency: "BRL", now: Date.now(), discreet: false, appBaseUrl: "https://x.test", usdBrlRate: 5 });
+    expect(out.text).toContain("🗓 Agenda: 2 atendimentos hoje (próximos: 10:00, 11:00)");
+  });
+
+  test("view_own só conta os próprios; sem `agenda` ou com o módulo desligado a linha não existe", async () => {
+    await seedDay();
+    vi.setSystemTime(new Date(at(MON, 9, 30)));
+    expect((await morning(s.viewOwn)).morning.agenda).toMatchObject({ today: 1, nextTimes: ["10:00"] });
+    expect((await morning(s.none)).morning.agenda).toBeUndefined();
+    await t.run((ctx) => ctx.db.patch(s.orgId, { settings: { timezone: TZ, currency: "BRL", modules: { scheduling: false } } }));
+    expect((await morning(s.admin)).morning.agenda).toBeUndefined();
   });
 });

@@ -124,6 +124,8 @@ export type MorningData = {
   newLeads: Counted & { mine: number; sinceLabel: string; items: { title: string; source?: string }[] };
   unread: Counted;
   channels: { total: number; down: string[] };
+  /** Agenda v2 (E1): ausente = módulo desligado ou membro sem `agenda`. Só contagens e horários. */
+  agenda?: { today: number; nextTimes: string[]; approvals: number; conflicts: number; noOutcome: number; capped: boolean };
 };
 
 export type EveningData = {
@@ -266,6 +268,20 @@ export function formatMorningReport(data: ReportData, o: ReportOptions): ReportO
         ? "🟢 Canais conectados"
         : `🔴 Fora do ar: ${m.channels.down.map((c) => labelText(c, o.discreet)).join(", ")}`,
     );
+  }
+
+  if (m.agenda) {
+    const a = m.agenda;
+    const more = a.capped ? "+" : "";
+    const parts = [
+      a.today === 0
+        ? "nenhum atendimento hoje"
+        : `${a.today}${more} ${a.today === 1 ? "atendimento" : "atendimentos"} hoje${a.nextTimes.length ? ` (próximos: ${a.nextTimes.join(", ")})` : ""}`,
+    ];
+    if (a.approvals > 0) parts.push(`${a.approvals}${more} aguardando aprovação`);
+    if (a.conflicts > 0) parts.push(`${a.conflicts}${more} sem lugar`);
+    if (a.noOutcome > 0) parts.push(`${a.noOutcome}${more} sem desfecho`);
+    lines.push(`🗓 Agenda: ${parts.join(" · ")}`);
   }
 
   const details: string[] = [];
