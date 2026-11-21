@@ -48,6 +48,7 @@ export const PUSH_TEMPLATES: Partial<Record<NotificationType, PushTemplate>> = {
   task_overdue: TASKS,
   ai_followup_needs_human: TASKS,
   channel_session_lost: CHANNEL,
+  appointment_conflict: TASKS, // Agenda v2 (A3c): precisa de gente resolver (normal, 24 h)
 };
 
 /** Informativos (sino/e-mail/Telegram conforme preferência) e o lead atribuído (tabela do PLANO, seção 4). */

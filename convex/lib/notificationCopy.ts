@@ -69,6 +69,7 @@ export type CopyInput =
   | { type: "ai_spend_reached"; costBrl: string; capBrl: string; blockMode: boolean }
   | { type: "new_message"; contactName?: string; count: number; preview?: string }
   | { type: "lead_assigned"; leadTitle: string; actorName?: string }
+  | { type: "appointment_conflict"; kind: "resource_closed" | "resource_removed"; count: number; resourceName?: string; dateLabel?: string }
   | { type: "plan_usage_warning"; meter: "ai" | "campaign"; pct: number; month: string }
   | { type: "plan_usage_reached"; meter: "ai" | "campaign"; overageEnabled: boolean }
   | { type: "plan_overage_cap_reached"; capBrl: string }
@@ -508,6 +509,14 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         title: input.actorName ? `${entity(input.actorName, "Alguém")} atribuiu o lead ${lead} a você` : `Lead ${lead} atribuído a você`,
       };
     }
+    case "appointment_conflict": {
+      const what = input.resourceName ? entity(input.resourceName, "Um recurso") : "Um recurso";
+      const cause = input.kind === "resource_closed" ? `${what} fechou${input.dateLabel ? ` em ${input.dateLabel}` : ""}` : `${what} saiu da agenda`;
+      return {
+        title: input.count === 1 ? "1 agendamento precisa de novo lugar" : `${input.count} agendamentos precisam de novo lugar`,
+        body: `${cause}. Nada foi cancelado nem avisado ao cliente: escolha outro recurso ou horário na fila de pendências da Agenda.`,
+      };
+    }
   }
 }
 
@@ -547,4 +556,5 @@ export const COPY_TYPES = [
   "plan_cancel_scheduled",
   "plan_canceled",
   "plan_refunded",
+  "appointment_conflict",
 ] as const satisfies readonly CopyInput["type"][];

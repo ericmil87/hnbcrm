@@ -42,7 +42,9 @@ export type NotificationType =
   | "plan_change_scheduled"
   | "plan_cancel_scheduled"
   | "plan_canceled"
-  | "plan_refunded";
+  | "plan_refunded"
+  // Agenda v2 (A3c)
+  | "appointment_conflict";
 
 // Tipo → flag de preferência: `PREFERENCE_FLAG` mora em `lib/notificationPolicy.ts` (pura).
 

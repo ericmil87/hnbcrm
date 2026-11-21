@@ -31,6 +31,7 @@ import {
   MAX_RESOURCES_PER_ORG,
   MAX_SERVICES_PER_ORG,
 } from "./schedConstants";
+import { openRemovedResourceConflictsCore } from "./schedExceptionOps";
 import { countFutureAppointmentsOfService, effectiveAllocationUnits, hasFutureActiveAppointment, listFutureAllocations } from "./schedRead";
 import { assertValidTimezone, localDateOf } from "./schedTime";
 import { type SchedTemplateDraft, isSchedTemplateKey } from "./schedTemplates";
@@ -692,6 +693,15 @@ export async function setResourceActiveCore(
     metadata: { futureAppointments, acceptFuture: args.acceptFuture === true },
     now: args.now,
   });
+  // A3c: os futuros do recurso arquivado perdem a alocação e viram conflito `resource_removed` (nada é cancelado).
+  if (!args.active && futureAppointments > 0) {
+    await openRemovedResourceConflictsCore(ctx, {
+      organizationId: args.organizationId,
+      resourceId: res._id,
+      actor: { type: "human", member: args.member, via: "app" },
+      now: args.now,
+    });
+  }
   return { changed: true, futureAppointments, servicesAffected };
 }
 

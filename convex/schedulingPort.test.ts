@@ -174,6 +174,15 @@ describe("porta única de reserva", () => {
     expect(inserts[0].index!).toBeLessThan(nextFn);
   });
 
+  test("A3c: lib/schedExceptionOps.ts escreve só em schedExceptions/schedConflicts: não cita as tabelas quentes (tudo pela porta)", () => {
+    // Sem exceção na lista (regras 1–3 já o reprovariam); este teste fixa a intenção e o motivo: fechar recurso
+    // realoca/libera vaga por `planClosureRelocation`/`relocateAllocationCore`/`releaseAllocationForConflictCore`.
+    const src = stripComments(readFileSync(path.join(CONVEX_DIR, "lib/schedExceptionOps.ts"), "utf8"));
+    expect(ALLOC_NAME_RE.test(src)).toBe(false);
+    expect(APPT_NAME_RE.test(src)).toBe(false);
+    expect(findPortViolations(readFileSync(path.join(CONVEX_DIR, "lib/schedExceptionOps.ts"), "utf8"), "lib/schedExceptionOps.ts")).toEqual([]);
+  });
+
   test("toda exceção vigente aponta para um arquivo que existe", () => {
     const existing = new Set(files.map(rel));
     for (const key of [...Object.keys(INSERT_ALLOWED), ...Object.keys(ALLOC_NAME_ALLOWED), ...Object.keys(APPT_WRITE_ALLOWED)]) {

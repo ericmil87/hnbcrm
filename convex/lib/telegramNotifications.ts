@@ -138,6 +138,7 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   plan_cancel_scheduled: "generic",
   plan_canceled: "generic",
   plan_refunded: "generic",
+  appointment_conflict: "generic", // Agenda v2 (A3c)
 };
 
 /** Types deliberately NOT sent to Telegram (none in F1; add with a reason). */

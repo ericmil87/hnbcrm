@@ -31,6 +31,8 @@ export function notificationTargetPath(type: NotificationType | string, d: Notif
     }
     case "ai_followup_needs_human":
       return d.taskId ? `/app/tarefas?task=${d.taskId}` : (conversation ?? "/app/tarefas");
+    case "appointment_conflict":
+      return "/app/calendario";
     default:
       return d.taskId ? `/app/tarefas?task=${d.taskId}` : (conversation ?? "/app/painel");
   }

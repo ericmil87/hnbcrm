@@ -1,0 +1,626 @@
+/// <reference types="vite/client" />
+/**
+ * Agenda v2, A3c: fechar recurso no dia (prévia = resultado real, realocação pela porta, fila de conflitos),
+ * resolver conflito, recurso arquivado/membro removido, notificação agrupada e a UNIFICAÇÃO busca × porta
+ * (casos P1–P3, exceções além do teto e `exclusive`; alternativas no formato `Slot` sanitizado).
+ */
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { convexTest, type TestConvex } from "convex-test";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import schema from "./schema";
+import * as X from "./schedulingExceptions";
+import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
+import { type AgendaSeed, identityOf, type Person, seedAgenda } from "./lib/schedTestSeed.test-helper";
+import { peakUnits } from "./lib/schedAvailability";
+import { atLocalMinutes } from "./lib/schedTime";
+import { MAX_INTERNAL_EVENTS_PER_MEMBER } from "./lib/schedRead";
+import { CLOSURE_BATCH_SIZE, CLOSURE_INLINE_AFFECTED } from "./lib/schedExceptionOps";
+
+const modules = import.meta.glob("./**/!(*.*.*)*.*s");
+const TZ = "America/Sao_Paulo";
+const MON = "2026-06-15";
+const TUE = "2026-06-16";
+const NOW = Date.UTC(2026, 5, 12, 15, 0);
+const MIN = 60_000;
+const at = (date: string, hh: number, mm = 0) => atLocalMinutes(date, hh * 60 + mm, TZ);
+const weekly = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 }));
+
+let t: TestConvex<typeof schema>;
+let s: AgendaSeed;
+const as = (p: Person) => t.withIdentity(identityOf(p));
+
+beforeEach(async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(NOW));
+  t = convexTest(schema, modules);
+  s = await seedAgenda(t);
+});
+afterEach(async () => {
+  await assertNoOvercapacity(s.orgId);
+  vi.useRealTimers();
+});
+
+/** Nenhum recurso passa da capacidade (pico no núcleo; linha exclusive vale a capacidade inteira). */
+async function assertNoOvercapacity(orgId: Id<"organizations">) {
+  const problems = await t.run(async (ctx) => {
+    const out: string[] = [];
+    const resources = await ctx.db.query("schedResources").withIndex("by_organization", (q) => q.eq("organizationId", orgId)).collect();
+    for (const r of resources) {
+      const rows = await ctx.db.query("schedAllocations").withIndex("by_resource_and_start", (q) => q.eq("resourceId", r._id)).collect();
+      const lite = rows.map((x) => ({ ...x, units: x.exclusive ? Math.max(x.units, r.capacity) : x.units }));
+      if (lite.length === 0) continue;
+      const peak = peakUnits(lite, Math.min(...lite.map((x) => x.coreStart)), Math.max(...lite.map((x) => x.coreEnd)), "core");
+      if (peak > r.capacity) out.push(`${r.name}: pico ${peak} > ${r.capacity}`);
+    }
+    return out;
+  });
+  expect(problems).toEqual([]);
+}
+
+const mkRes = (name: string, over: Record<string, unknown> = {}, sortOrder = 0) =>
+  t.run((ctx) =>
+    ctx.db.insert("schedResources", {
+      organizationId: s.orgId, kind: "room", name, capacity: 1, weekly, tags: [], sortOrder, active: true, createdAt: 1, updatedAt: 1, ...over,
+    } as any)
+  );
+const mkSvc = (over: Record<string, unknown> = {}) =>
+  t.run((ctx) =>
+    ctx.db.insert("schedServices", {
+      organizationId: s.orgId, name: "Sessão", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0,
+      requirements: [{ role: "Sala", kind: "room" }], sortOrder: 0, active: true, createdAt: 1, updatedAt: 1, ...over,
+    } as any)
+  );
+const book = (serviceId: Id<"schedServices">, start: number, resourceIds?: Id<"schedResources">[], extra: Record<string, unknown> = {}) =>
+  as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.orgId, serviceId, startTime: start, resourceIds, ...extra } as any);
+const bookId = async (...a: Parameters<typeof book>) => (await book(...a)).appointmentIds[0] as Id<"schedAppointments">;
+const apptOf = (id: Id<"schedAppointments">) => t.run((ctx) => ctx.db.get(id));
+const allocOf = (id: Id<"schedAppointments">) => t.run((ctx) => ctx.db.query("schedAllocations").withIndex("by_appointment", (q) => q.eq("appointmentId", id)).collect());
+const conflicts = () => t.run((ctx) => ctx.db.query("schedConflicts").collect());
+const counts = () =>
+  t.run(async (ctx) => {
+    const out: Record<string, number> = {};
+    for (const table of ["schedExceptions", "schedAppointments", "schedAllocations", "schedConflicts", "auditLogs", "activities", "notifications", "messages", "webhooks"] as const) {
+      out[table] = (await ctx.db.query(table).collect()).length;
+    }
+    out.scheduled = (await ctx.db.system.query("_scheduled_functions").collect()).length;
+    return out;
+  });
+const closeArgs = (resourceId: Id<"schedResources"> | undefined, over: Record<string, unknown> = {}) => ({
+  organizationId: s.orgId, ...(resourceId ? { resourceId } : {}), fromLocalDate: MON, ...over,
+});
+const preview = (who: Person, args: any) => as(who).mutation(api.schedulingExceptions.previewResourceClosure, args);
+const close = (who: Person, args: any) => as(who).mutation(api.schedulingExceptions.setResourceClosure, args);
+const drain = async () => {
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+};
+const shape = (items: Array<{ appointmentId: string; outcome: string; toResourceName?: string }>) =>
+  items.map((i) => `${i.appointmentId}:${i.outcome}:${i.toResourceName ?? "-"}`).sort();
+async function rulesData(p: Promise<unknown>): Promise<any> {
+  try {
+    await p;
+  } catch (e) {
+    let d = (e as { data?: unknown }).data;
+    if (typeof d === "string") {
+      try { d = JSON.parse(d); } catch { /* texto */ }
+    }
+    return d;
+  }
+  throw new Error("esperava erro");
+}
+
+describe("fechar com 0, 1 e N afetados", () => {
+  test("0 afetados: grava a exceção, nada mais; a prévia não grava", async () => {
+    const s1 = await mkRes("Sala 1");
+    await mkRes("Sala 2", {}, 1);
+    const before = await counts();
+    const p = await preview(s.manager, closeArgs(s1));
+    expect(p).toMatchObject({ mode: "preview", affected: 0, items: [], capped: false });
+    assertMatchesReturns(p, X.previewResourceClosure);
+    expect(await counts()).toEqual(before);
+    const r = await close(s.manager, closeArgs(s1, { reasonCode: "maintenance" }));
+    assertMatchesReturns(r, X.setResourceClosure);
+    expect(r).toMatchObject({ mode: "commit", affected: 0, reallocated: 0, conflicts: 0, pending: 0 });
+    const ex = await t.run((ctx) => ctx.db.query("schedExceptions").collect());
+    expect(ex).toHaveLength(1);
+    expect(ex[0]).toMatchObject({ resourceId: s1, localDate: MON, mode: "closed", source: "manual", reasonCode: "maintenance" });
+    expect((await conflicts()).length).toBe(0);
+  });
+
+  test("1 afetado cabe em recurso equivalente no MESMO horário; nada cancelado; status igual; sem mensagem", async () => {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 10), [s1], { leadId: s.leadId });
+    const before = await counts();
+    const p = await preview(s.agent, closeArgs(s1));
+    expect(p.items).toMatchObject([{ appointmentId: a, outcome: "reallocated", toResourceName: "Sala 2", resourceName: "Sala 1" }]);
+    expect(await counts()).toEqual(before); // prévia não grava nada
+    await expect(close(s.agent, closeArgs(s1))).rejects.toThrow(/confirme/); // exige o aceite
+    expect((await counts()).schedExceptions).toBe(0);
+    const r = await close(s.agent, closeArgs(s1, { acceptAffected: true }));
+    expect(r).toMatchObject({ affected: 1, reallocated: 1, conflicts: 0 });
+    const doc = (await apptOf(a))!;
+    expect(doc.status).toBe("scheduled");
+    expect(doc.startTime).toBe(at(MON, 10));
+    expect(doc.resources[0]).toMatchObject({ resourceId: s2, allocated: true, name: "Sala 2" });
+    expect((await allocOf(a)).map((x) => x.resourceId)).toEqual([s2]);
+    const after = await counts();
+    expect(after.messages).toBe(0);
+    expect(after.schedAppointments).toBe(1);
+    const audits = await t.run((ctx) => ctx.db.query("auditLogs").collect());
+    expect(audits.some((x) => x.entityType === "schedException" && x.action === "create")).toBe(true);
+    expect(audits.some((x) => x.entityType === "schedAppointment" && x.metadata?.closure === true && x.changes?.after)).toBe(true);
+    const acts = await t.run((ctx) => ctx.db.query("activities").collect());
+    expect(acts.filter((x) => x.leadId === s.leadId).length).toBeGreaterThan(0);
+  });
+
+  test("realoca para a sala dupla que ainda tem 1 vaga", async () => {
+    const s1 = await mkRes("Sala 1");
+    const dupla = await mkRes("Sala Dupla", { capacity: 2 }, 1);
+    const svc = await mkSvc({ requirements: [{ role: "Sala", kind: "room", resourceIds: [s1, dupla] }] });
+    const a = await bookId(svc, at(MON, 10), [s1]);
+    await bookId(svc, at(MON, 10), [dupla]); // dupla com 1 vaga ocupada
+    const r = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect(r).toMatchObject({ reallocated: 1, conflicts: 0 });
+    expect((await allocOf(a)).map((x) => x.resourceId)).toEqual([dupla]);
+  });
+
+  test("sem lugar: tira a alocação, abre conflito resource_closed e NÃO cancela", async () => {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 10), [s1]);
+    await bookId(svc, at(MON, 10), [s2]);
+    const p = await preview(s.admin, closeArgs(s1));
+    expect(p).toMatchObject({ affected: 1, conflicts: 1, reallocated: 0 });
+    const r = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect(r).toMatchObject({ affected: 1, conflicts: 1 });
+    const doc = (await apptOf(a))!;
+    expect(doc.status).toBe("scheduled");
+    expect(doc.resources[0].allocated).toBe(false);
+    expect(doc.needsAttention?.code).toBe("resource_closed");
+    expect(await allocOf(a)).toHaveLength(0);
+    const cs = await conflicts();
+    expect(cs).toHaveLength(1);
+    expect(cs[0]).toMatchObject({ kind: "resource_closed", status: "open", appointmentId: a, resourceId: s1, localDate: MON });
+    const hooks = await t.run((ctx) => ctx.db.query("scheduledMessages").collect().catch(() => []));
+    expect(hooks).toHaveLength(0);
+  });
+
+  test("N afetados: a prévia é IGUAL ao resultado real, inclusive com disputa pela mesma alternativa", async () => {
+    const dupla = await mkRes("Dupla", { capacity: 2 });
+    const r1 = await mkRes("Sala 1", {}, 1);
+    const svc = await mkSvc();
+    const a1 = await bookId(svc, at(MON, 10), [dupla]);
+    const a2 = await bookId(svc, at(MON, 10), [dupla]);
+    const a3 = await bookId(svc, at(MON, 15), [dupla]);
+    const p = await preview(s.admin, closeArgs(dupla));
+    // só a Sala 1 pode receber: 10:00 -> uma entra, a outra fica sem lugar; 15:00 entra
+    expect(p.affected).toBe(3);
+    expect(p.reallocated).toBe(2);
+    expect(p.conflicts).toBe(1);
+    const real = await close(s.admin, closeArgs(dupla, { acceptAffected: true }));
+    expect(shape(real.items)).toEqual(shape(p.items));
+    expect({ r: real.reallocated, c: real.conflicts }).toEqual({ r: p.reallocated, c: p.conflicts });
+    expect((await allocOf(a3)).map((x) => x.resourceId)).toEqual([r1]);
+    expect((await conflicts()).length).toBe(1);
+    expect([a1, a2].length).toBe(2);
+  });
+});
+
+describe("escopo: org inteira, intervalo parcial, reabrir", () => {
+  test("fechar a ORG no dia exige manage e fecha todos os recursos", async () => {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 10), [s1]);
+    const b = await bookId(svc, at(MON, 11), [s2]);
+    const args = closeArgs(undefined, { acceptAffected: true });
+    await expect(close(s.manager, args)).rejects.toThrow(); // edit não fecha a org
+    const r = await close(s.admin, args);
+    expect(r).toMatchObject({ affected: 2, reallocated: 0, conflicts: 2 });
+    const ex = await t.run((ctx) => ctx.db.query("schedExceptions").collect());
+    expect(ex).toHaveLength(1);
+    expect(ex[0].resourceId).toBeUndefined();
+    expect((await apptOf(a))!.resources[0].allocated).toBe(false);
+    expect((await apptOf(b))!.resources[0].allocated).toBe(false);
+  });
+
+  test("intervalo parcial (bloqueio) só afeta quem sobrepõe; de/até cria uma linha por data", async () => {
+    const s1 = await mkRes("Sala 1");
+    await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const manha = await bookId(svc, at(MON, 9), [s1]);
+    const tarde = await bookId(svc, at(MON, 14), [s1]);
+    const p = await preview(s.agent, closeArgs(s1, { kind: "block", intervals: [{ startMin: 13 * 60, endMin: 15 * 60 }] }));
+    expect(p.items.map((i: any) => i.appointmentId)).toEqual([tarde]);
+    const r = await close(s.agent, closeArgs(s1, { kind: "block", intervals: [{ startMin: 13 * 60, endMin: 15 * 60 }], toLocalDate: TUE, acceptAffected: true }));
+    expect(r).toMatchObject({ affected: 1, reallocated: 1 });
+    expect(r.dates).toEqual([MON, TUE]);
+    expect(r.exceptionIds).toHaveLength(2);
+    expect((await allocOf(manha))[0].resourceId).toBe(s1);
+    await expect(close(s.agent, closeArgs(s1, { kind: "block", fromLocalDate: "2026-06-10" }))).rejects.toThrow(); // sem intervalos
+  });
+
+  test("custom (horário especial) afeta quem fica fora do novo expediente; extra não afeta ninguém", async () => {
+    const s1 = await mkRes("Sala 1");
+    await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const cedo = await bookId(svc, at(MON, 9), [s1]);
+    await bookId(svc, at(MON, 16), [s1]);
+    const p = await preview(s.admin, closeArgs(s1, { kind: "custom", intervals: [{ startMin: 12 * 60, endMin: 18 * 60 }] }));
+    expect(p.items.map((i: any) => i.appointmentId)).toEqual([cedo]);
+    const e = await preview(s.admin, closeArgs(s1, { kind: "extra", intervals: [{ startMin: 7 * 60, endMin: 8 * 60 }] }));
+    expect(e.affected).toBe(0);
+  });
+
+  test("reabrir remove a exceção, NÃO desfaz a realocação, e oferece o lugar original nos conflitos que voltaram a caber", async () => {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const moved = await bookId(svc, at(MON, 10), [s1]);
+    const stuck = await bookId(svc, at(MON, 11), [s1]);
+    await bookId(svc, at(MON, 11), [s2]);
+    await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect((await allocOf(moved))[0].resourceId).toBe(s2);
+    const [c] = await conflicts();
+    expect(c.appointmentId).toBe(stuck);
+    const r = await as(s.manager).mutation(api.schedulingExceptions.removeResourceClosure, { organizationId: s.orgId, resourceId: s1, fromLocalDate: MON });
+    assertMatchesReturns(r, X.removeResourceClosure);
+    expect(r).toMatchObject({ removed: 1, restorable: 1 });
+    expect((await t.run((ctx) => ctx.db.query("schedExceptions").collect())).length).toBe(0);
+    expect((await allocOf(moved))[0].resourceId).toBe(s2); // não desfaz
+    const [after] = await conflicts();
+    expect(after.status).toBe("open"); // não resolve sozinho
+    expect(after.suggestions?.[0]).toMatchObject({ startTime: at(MON, 11) });
+    await as(s.manager).mutation(api.schedulingExceptions.resolveConflict, {
+      organizationId: s.orgId, conflictId: c._id, action: { type: "resource", resourceIds: [s1] },
+    });
+    expect((await allocOf(stuck))[0].resourceId).toBe(s1);
+  });
+});
+
+describe("a porta × fechamento (reservar depois de fechar, fechar depois de reservar)", () => {
+  test("reservar DEPOIS de fechar: equipe recebe aviso forçável, IA é bloqueada; com recurso livre a porta escolhe outro", async () => {
+    const s1 = await mkRes("Sala 1");
+    const svc = await mkSvc({ requirements: [{ role: "Sala", kind: "room", resourceIds: [s1] }] });
+    await close(s.admin, closeArgs(s1));
+    const err = await rulesData(book(svc, at(MON, 10), [s1]));
+    expect(err.violations.map((v: any) => v.code)).toContain("RESOURCE_CLOSED");
+    expect(err.violations.find((v: any) => v.code === "RESOURCE_CLOSED")?.severity).toBe("warn");
+    const forced = await book(svc, at(MON, 10), [s1], { force: ["RESOURCE_CLOSED"] });
+    expect(forced.appointmentIds).toHaveLength(1);
+    const ai = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.orgId, serviceId: svc, startTime: at(MON, 14), actor: { type: "system", via: "public_link" }, origin: "public",
+    } as any);
+    expect(ai.ok).toBe(false);
+    expect(ai.violations.map((v: any) => v.code)).toContain("RESOURCE_CLOSED");
+  });
+
+  test("fechar DEPOIS de reservar com concorrência lógica: duas reservas no mesmo horário não passam da capacidade", async () => {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    await Promise.allSettled([book(svc, at(MON, 10), [s1]), book(svc, at(MON, 10), [s1])]);
+    await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    const rows = await t.run((ctx) => ctx.db.query("schedAllocations").collect());
+    expect(rows.every((r) => r.resourceId === s2)).toBe(true);
+  });
+});
+
+describe("lotes agendados", () => {
+  test("acima do orçamento da transação continua em lotes idempotentes; reprocessar não duplica", async () => {
+    const s1 = await mkRes("Sala 1", { capacity: 30 });
+    const svc = await mkSvc();
+    const total = CLOSURE_INLINE_AFFECTED + CLOSURE_BATCH_SIZE + 3;
+    for (let i = 0; i < total; i++) await t.run(async (ctx) => {
+      const start = at(MON, 9) + i * MIN;
+      const id = await ctx.db.insert("schedAppointments", {
+        organizationId: s.orgId, serviceId: svc, serviceName: "Sessão", kind: "normal", startTime: start, endTime: start + 30 * MIN, blockStart: start, blockEnd: start + 30 * MIN,
+        localDate: MON, status: "scheduled", origin: "staff", resources: [{ resourceId: s1, role: "Sala", name: "Sala 1", allocated: true }],
+        statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+      } as any);
+      await ctx.db.insert("schedAllocations", { organizationId: s.orgId, appointmentId: id, resourceId: s1, role: "Sala", blockStart: start, blockEnd: start + 30 * MIN, coreStart: start, coreEnd: start + 30 * MIN, units: 1 } as any);
+    });
+    const r = await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    expect(r.affected).toBe(total);
+    expect(r.conflicts).toBe(CLOSURE_INLINE_AFFECTED);
+    expect(r.pending).toBe(total - CLOSURE_INLINE_AFFECTED);
+    await drain();
+    expect((await conflicts()).length).toBe(total);
+    expect((await t.run((ctx) => ctx.db.query("schedAllocations").collect())).length).toBe(0);
+    // reprocessar tudo: nada novo
+    const all = await t.run((ctx) => ctx.db.query("schedAppointments").collect());
+    await t.mutation(internal.schedulingExceptions.internalProcessClosureBatch, {
+      organizationId: s.orgId, kind: "resource_closed", items: all.map((a) => ({ appointmentId: a._id, resourceId: s1 })), closureKey: "x",
+    });
+    expect((await conflicts()).length).toBe(total);
+  });
+});
+
+describe("resolver conflito (4 vias)", () => {
+  async function conflictFixture() {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 10), [s1], { leadId: s.leadId });
+    const blocker = await bookId(svc, at(MON, 10), [s2]);
+    await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    const [c] = await conflicts();
+    return { s1, s2, svc, a, blocker, c };
+  }
+  const resolve = (who: Person, conflictId: Id<"schedConflicts">, action: any) =>
+    as(who).mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.orgId, conflictId, action });
+
+  test("escolhendo recurso (passa pela porta: capacidade respeitada, depois que liberar cabe)", async () => {
+    const { s2, a, blocker, c } = await conflictFixture();
+    const err = await rulesData(resolve(s.agent, c._id, { type: "resource", resourceIds: [s2] }));
+    expect(err.violations.map((v: any) => v.code)).toContain("CAPACITY_EXCEEDED");
+    await as(s.admin).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.orgId, appointmentId: blocker });
+    const out = await resolve(s.agent, c._id, { type: "resource", resourceIds: [s2] });
+    expect(out).toBeNull();
+    expect((await allocOf(a))[0].resourceId).toBe(s2);
+    expect((await apptOf(a))!.needsAttention).toBeUndefined();
+    const [after] = await conflicts();
+    expect(after).toMatchObject({ status: "resolved", resolvedBy: s.agent.memberId });
+    await expect(resolve(s.agent, c._id, { type: "manual" })).rejects.toThrow(/já foi resolvido/);
+  });
+
+  test("remarcando", async () => {
+    const { s2, a, c } = await conflictFixture();
+    await resolve(s.manager, c._id, { type: "reschedule", startTime: at(MON, 14), resourceIds: [s2] });
+    expect((await apptOf(a))!.status).toBe("rescheduled");
+    expect((await conflicts())[0].status).toBe("resolved");
+  });
+
+  test("cancelando", async () => {
+    const { a, c } = await conflictFixture();
+    await resolve(s.manager, c._id, { type: "cancel", reason: "cliente desistiu" });
+    expect((await apptOf(a))!.status).toBe("cancelled");
+    expect((await conflicts())[0].status).toBe("resolved");
+  });
+
+  test("manualmente, com nota (auditada); view_all não resolve", async () => {
+    const { a, c } = await conflictFixture();
+    await expect(resolve(s.viewAll, c._id, { type: "manual" })).rejects.toThrow();
+    await resolve(s.agent, c._id, { type: "manual", note: "Trocado por telefone" });
+    expect((await apptOf(a))!.needsAttention).toBeUndefined();
+    const log = (await t.run((ctx) => ctx.db.query("auditLogs").collect())).find((x) => x.entityType === "schedConflict");
+    expect(log?.metadata).toMatchObject({ action: "manual", note: "Trocado por telefone" });
+    expect(log?.actorId).toBe(s.agent.memberId);
+  });
+});
+
+describe("recurso arquivado e membro removido", () => {
+  test("arquivar com futuros (acceptFuture) gera conflitos resource_removed e não cancela", async () => {
+    const s1 = await mkRes("Sala 1");
+    await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 10), [s1]);
+    const refused = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: s1 });
+    expect(refused.changed).toBe(false);
+    expect(await conflicts()).toHaveLength(0);
+    const out = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: s1, acceptFuture: true });
+    expect(out.changed).toBe(true);
+    const [c] = await conflicts();
+    expect(c).toMatchObject({ kind: "resource_removed", appointmentId: a, resourceId: s1, status: "open" });
+    expect((await apptOf(a))!.status).toBe("scheduled");
+    expect(await allocOf(a)).toHaveLength(0);
+  });
+
+  test("membro removido que era o recurso-pessoa: recurso inativo e futuros em conflito", async () => {
+    const pro = await mkRes("Profissional", { kind: "person", teamMemberId: s.agent.memberId });
+    const svc = await mkSvc({ requirements: [{ role: "Pro", kind: "person" }] });
+    const a = await bookId(svc, at(MON, 10), [pro]);
+    await as(s.admin).mutation(api.teamMembers.removeTeamMember, { teamMemberId: s.agent.memberId });
+    expect((await t.run((ctx) => ctx.db.get(pro)))!.active).toBe(false);
+    const [c] = await conflicts();
+    expect(c).toMatchObject({ kind: "resource_removed", appointmentId: a });
+    expect((await apptOf(a))!.status).toBe("scheduled");
+  });
+});
+
+describe("notificação appointment_conflict", () => {
+  test("um aviso por fechamento (com N conflitos), só para quem pode agir, nunca de outra org", async () => {
+    const s1 = await mkRes("Sala 1");
+    const svc = await mkSvc();
+    for (let i = 0; i < 3; i++) await bookId(svc, at(MON, 9 + i), [s1]);
+    await close(s.admin, closeArgs(s1, { acceptAffected: true }));
+    const notes = await t.run((ctx) => ctx.db.query("notifications").collect());
+    const mine = notes.filter((n) => n.type === "appointment_conflict");
+    const byMember = new Map<string, number>();
+    for (const n of mine) byMember.set(n.memberId, (byMember.get(n.memberId) ?? 0) + 1);
+    for (const p of [s.admin, s.manager, s.agent]) expect(byMember.get(p.memberId)).toBe(1);
+    for (const p of [s.viewAll, s.viewOwn, s.none, s.outsider]) expect(byMember.has(p.memberId)).toBe(false);
+    expect(mine.every((n) => n.data?.count === 3)).toBe(true);
+    expect(mine.every((n) => !/Cliente|@|\d{8}/.test(`${n.title} ${n.body}`))).toBe(true);
+  });
+});
+
+describe("RBAC e isolamento", () => {
+  test("view_all, view_own e sem agenda não fecham; edit fecha; outra org e recurso de outra org recebem a mesma recusa", async () => {
+    const s1 = await mkRes("Sala 1");
+    for (const p of [s.viewAll, s.viewOwn, s.none, s.outsider]) {
+      await expect(close(p, closeArgs(s1))).rejects.toThrow();
+      await expect(preview(p, closeArgs(s1))).rejects.toThrow();
+    }
+    await close(s.manager, closeArgs(s1));
+    const foreign = await t.run((ctx) =>
+      ctx.db.insert("schedResources", { organizationId: s.otherOrgId, kind: "room", name: "Alheia", capacity: 1, weekly, sortOrder: 0, active: true, createdAt: 1, updatedAt: 1 } as any)
+    );
+    const gone = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("schedResources", { organizationId: s.orgId, kind: "room", name: "X", capacity: 1, weekly, sortOrder: 0, active: true, createdAt: 1, updatedAt: 1 } as any);
+      await ctx.db.delete(id);
+      return id;
+    });
+    const e1 = await preview(s.admin, closeArgs(foreign)).catch((e) => String(e.data ?? e.message));
+    const e2 = await preview(s.admin, closeArgs(gone)).catch((e) => String(e.data ?? e.message));
+    expect(e1).toContain("Recurso não encontrado");
+    expect(e2).toBe(e1);
+    const otherAdmin = as(s.outsider);
+    const c = await t.run(async (ctx) => {
+      const svc = await ctx.db.insert("schedServices", { organizationId: s.orgId, name: "Z", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0, requirements: [{ role: "Sala", kind: "room" }], sortOrder: 0, active: true, createdAt: 1, updatedAt: 1 } as any);
+      const a = await ctx.db.insert("schedAppointments", { organizationId: s.orgId, serviceId: svc, serviceName: "Z", kind: "normal", startTime: at(MON, 10), endTime: at(MON, 11), blockStart: at(MON, 10), blockEnd: at(MON, 11), localDate: MON, status: "scheduled", origin: "staff", resources: [], statusChangedAt: 1, createdAt: 1, updatedAt: 1 } as any);
+      return await ctx.db.insert("schedConflicts", { organizationId: s.orgId, appointmentId: a, kind: "resource_closed", status: "open", createdAt: 1 });
+    });
+    await expect(otherAdmin.mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.otherOrgId, conflictId: c, action: { type: "manual" } })).rejects.toThrow("Conflito não encontrado");
+  });
+
+  test("módulo desligado recusa; datas inválidas e período > 60 dias recusados", async () => {
+    const s1 = await mkRes("Sala 1");
+    await expect(preview(s.admin, closeArgs(s1, { fromLocalDate: "2026-13-40" }))).rejects.toThrow(/Data inválida/);
+    await expect(preview(s.admin, closeArgs(s1, { toLocalDate: "2026-09-30" }))).rejects.toThrow(/no máximo 60/);
+    await expect(preview(s.admin, closeArgs(s1, { fromLocalDate: "2026-06-01" }))).rejects.toThrow(/já passou/);
+    await t.run(async (ctx) => ctx.db.patch(s.orgId, { settings: { timezone: TZ, currency: "BRL", modules: { scheduling: false } } }));
+    await expect(close(s.admin, closeArgs(s1))).rejects.toThrow(/Módulo/);
+  });
+});
+
+describe("UNIFICAÇÃO busca × porta", () => {
+  const find = (svc: Id<"schedServices">, over: Record<string, unknown> = {}) =>
+    as(s.admin).query(api.scheduling.findSlots, { organizationId: s.orgId, serviceId: svc, fromLocalDate: MON, limit: 30, now: NOW, ...over } as any);
+  const times = (out: { slots: Array<{ startTime: number }> }) => out.slots.map((x) => x.startTime);
+  const aiBook = (svc: Id<"schedServices">, start: number) =>
+    t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.orgId, serviceId: svc, startTime: start, actor: { type: "system", via: "public_link" }, origin: "public",
+    } as any);
+  const rawAppt = (res: Id<"schedResources">, svc: Id<"schedServices">, start: number, durMin: number, alloc: Record<string, unknown> = {}) =>
+    t.run(async (ctx) => {
+      const end = start + durMin * MIN;
+      const id = await ctx.db.insert("schedAppointments", {
+        organizationId: s.orgId, serviceId: svc, serviceName: "X", kind: "normal", startTime: start, endTime: end, blockStart: start, blockEnd: end,
+        localDate: MON, status: "scheduled", origin: "staff", resources: [{ resourceId: res, role: "Sala", name: "Sala", allocated: true }], statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+      } as any);
+      await ctx.db.insert("schedAllocations", { organizationId: s.orgId, appointmentId: id, resourceId: res, role: "Sala", blockStart: start, blockEnd: end, coreStart: start, coreEnd: end, units: 1, ...alloc } as any);
+    });
+  const publicSvc = (over: Record<string, unknown> = {}) => mkSvc({ publicBookable: true, ...over });
+
+  test("P1: 300 blocos na margem não escondem o horário ocupado; busca e porta concordam", async () => {
+    const room = await mkRes("Sala");
+    const svc = await publicSvc();
+    for (let i = 0; i < 300; i++) await rawAppt(room, svc, at("2026-06-14", 20) + i * 30_000, 0.25);
+    await rawAppt(room, svc, at(MON, 10), 60);
+    const out = await find(svc);
+    expect(times(out)).not.toContain(at(MON, 10));
+    expect(times(out)).toContain(at(MON, 9));
+    const busy = await aiBook(svc, at(MON, 10));
+    expect(busy.ok).toBe(false);
+    expect(busy.violations.map((v: any) => v.code)).toContain("CAPACITY_EXCEEDED");
+    expect((await aiBook(svc, at(MON, 9))).ok).toBe(true);
+  });
+
+  test("P2: alocação exclusive depois de subir a capacidade ocupa a capacidade ATUAL inteira nos dois lados", async () => {
+    const room = await mkRes("Sala", { capacity: 2 });
+    const svc = await publicSvc();
+    await rawAppt(room, svc, at(MON, 10), 60, { units: 2, exclusive: true });
+    await t.run((ctx) => ctx.db.patch(room, { capacity: 3 }));
+    expect(times(await find(svc))).not.toContain(at(MON, 10));
+    const r = await aiBook(svc, at(MON, 10));
+    expect(r.ok).toBe(false);
+    expect(r.violations.map((v: any) => v.code)).toContain("CAPACITY_EXCEEDED");
+  });
+
+  const ev = (assignedTo: Id<"teamMembers">, start: number, end: number) => ({
+    organizationId: s.orgId, title: "x", eventType: "call" as const, allDay: false, status: "scheduled" as const, createdBy: s.none.memberId, createdAt: 1, updatedAt: 1,
+    assignedTo, startTime: start, endTime: end,
+  });
+
+  test("P3: 501 compromissos de quem NÃO é recurso não bloqueiam a porta (antes bloqueavam para a IA); o do profissional bloqueia", async () => {
+    await mkRes("Ana", { kind: "person", teamMemberId: s.admin.memberId });
+    const svc = await publicSvc({ requirements: [{ role: "Pro", kind: "person" }] });
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 501; i++) await ctx.db.insert("calendarEvents", ev(s.none.memberId, at(MON, 0) + i * MIN, at(MON, 0) + (i + 15) * MIN));
+      await ctx.db.insert("calendarEvents", ev(s.admin.memberId, at(MON, 10), at(MON, 11)));
+    });
+    const out = await find(svc);
+    expect(times(out)).not.toContain(at(MON, 10));
+    expect(times(out)).toContain(at(MON, 12));
+    expect((await aiBook(svc, at(MON, 12))).ok).toBe(true);
+    const blocked = await aiBook(svc, at(MON, 10));
+    expect(blocked.ok).toBe(false);
+    expect(blocked.violations.map((v: any) => v.code)).toContain("INTERNAL_EVENT_OVERLAP");
+  });
+
+  test("P3: evento longo (> 1 dia) que começou antes da margem bloqueia a busca e a porta", async () => {
+    await mkRes("Ana", { kind: "person", teamMemberId: s.admin.memberId });
+    const svc = await publicSvc({ requirements: [{ role: "Pro", kind: "person" }] });
+    await t.run((ctx) => ctx.db.insert("calendarEvents", { ...ev(s.admin.memberId, at("2026-06-12", 8), at("2026-06-17", 8)), longStart: at("2026-06-12", 8) } as any));
+    expect((await find(svc)).slots).toEqual([]);
+    const r = await aiBook(svc, at(MON, 10));
+    expect(r.ok).toBe(false);
+    expect(r.violations.map((v: any) => v.code)).toContain("INTERNAL_EVENT_OVERLAP");
+  });
+
+  test("P3: compromissos do profissional além do teto: busca = unverifiable; porta = IA/link bloqueiam, equipe vê aviso forçável", async () => {
+    await mkRes("Ana", { kind: "person", teamMemberId: s.admin.memberId });
+    const svc = await publicSvc({ requirements: [{ role: "Pro", kind: "person" }] });
+    await t.run(async (ctx) => {
+      for (let i = 0; i <= MAX_INTERNAL_EVENTS_PER_MEMBER; i++) await ctx.db.insert("calendarEvents", ev(s.admin.memberId, at(MON, 0) + i * 10 * MIN, at(MON, 0) + i * 10 * MIN + 5 * MIN));
+    });
+    const out = await find(svc);
+    expect(out).toMatchObject({ slots: [], reason: "unverifiable" });
+    const ai = await aiBook(svc, at(MON, 15));
+    expect(ai.ok).toBe(false);
+    expect(ai.violations.find((v: any) => v.code === "INTERNAL_EVENT_OVERLAP")?.severity).toBe("block");
+    const staffErr = await rulesData(book(svc, at(MON, 15)));
+    expect(staffErr.violations.find((v: any) => v.code === "INTERNAL_EVENT_OVERLAP")?.severity).toBe("warn");
+    expect((await book(svc, at(MON, 15), undefined, { force: ["INTERNAL_EVENT_OVERLAP"] })).appointmentIds).toHaveLength(1);
+  });
+
+  test("exceções além do teto no dia: busca = unverifiable; porta = IA bloqueia, equipe com aviso forçável", async () => {
+    await mkRes("Sala");
+    const svc = await publicSvc();
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 501; i++) await ctx.db.insert("schedExceptions", { organizationId: s.orgId, localDate: MON, mode: "block", intervals: [{ startMin: 0, endMin: 1 }], source: "manual", createdAt: 1 });
+    });
+    expect(await find(svc)).toMatchObject({ slots: [], reason: "unverifiable" });
+    const ai = await aiBook(svc, at(MON, 10));
+    expect(ai.ok).toBe(false);
+    expect(ai.violations.find((v: any) => v.code === "RESOURCE_CLOSED")?.severity).toBe("block");
+    const staffErr = await rulesData(book(svc, at(MON, 10)));
+    expect(staffErr.violations.find((v: any) => v.code === "RESOURCE_CLOSED")?.severity).toBe("warn");
+    expect((await find(svc, { fromLocalDate: TUE })).slots.length).toBeGreaterThan(0);
+    expect((await aiBook(svc, at(TUE, 10))).ok).toBe(true);
+  });
+
+  test("exclusive: sala dupla reservada inteira recusa nos dois lados; capacidade nunca é forçável", async () => {
+    const dupla = await mkRes("Dupla", { capacity: 2 });
+    const svc = await publicSvc({ requirements: [{ role: "Sala", kind: "room", resourceIds: [dupla], exclusive: true }] });
+    await book(svc, at(MON, 10), [dupla]);
+    expect(times(await find(svc))).not.toContain(at(MON, 10));
+    const r = await aiBook(svc, at(MON, 10));
+    expect(r.ok).toBe(false);
+    const staffErr = await rulesData(book(svc, at(MON, 10), [dupla], { force: ["CAPACITY_EXCEEDED"] }));
+    expect(staffErr.violations.map((v: any) => v.code)).toContain("CAPACITY_EXCEEDED");
+    expect(staffErr.violations.find((v: any) => v.code === "CAPACITY_EXCEEDED").severity).toBe("block");
+  });
+
+  test("alternatives no formato Slot da busca, sanitizado por audiência (IA/link sem nome, motivo nem pontuação)", async () => {
+    const room = await mkRes("Sala Secreta");
+    await mkRes("Sala Dois", {}, 1);
+    const svc = await publicSvc({ requirements: [{ role: "Sala", kind: "room", resourceIds: [room] }] });
+    await book(svc, at(MON, 10), [room], { contactId: s.contactId });
+    const staff = await rulesData(book(svc, at(MON, 10), [room]));
+    expect(staff.alternatives.length).toBeGreaterThan(0);
+    for (const a of staff.alternatives) {
+      expect(Object.keys(a).sort()).toEqual(["endTime", "label", "localDate", "reasons", "resourceIds", "resourceNames", "score", "startTime"]);
+      expect(a.resourceNames).toEqual(["Sala Secreta"]);
+      expect(typeof a.label).toBe("string");
+    }
+    const ai = await aiBook(svc, at(MON, 10));
+    expect(ai.ok).toBe(false);
+    expect(ai.alternatives.length).toBeGreaterThan(0);
+    for (const a of ai.alternatives) {
+      expect(a.resourceNames).toEqual([]);
+      expect(a.reasons).toEqual([]);
+      expect(a.score).toBe(0);
+      expect(a.resourceIds.length).toBe(1);
+    }
+    expect(JSON.stringify(ai)).not.toContain("Secreta");
+    assertMatchesReturns(ai, (await import("./schedulingMutations")).internalBookAppointment);
+    // a alternativa devolvida é reservável
+    const alt = staff.alternatives[0];
+    expect((await book(svc, alt.startTime, alt.resourceIds, { contactId: s.contactId })).appointmentIds).toHaveLength(1);
+  });
+});
