@@ -196,6 +196,16 @@ function violatesDay(resource: Doc<"schedResources">, exceptions: ExceptionLite[
   return day.blocks.some((b) => b.source === "block" && overlaps(b.start, b.end, core.start, core.end));
 }
 
+/**
+ * Motivos que um fechamento introduz (`RESOURCE_CLOSED`/`RESOURCE_BLOCKED`), comparados por MOTIVO e não por "violava ou não":
+ * um encaixe aceito fora do expediente (`OUTSIDE_HOURS` em `forcedRules`) já violava antes, mas continua afetado se o recurso
+ * fecha ou se o bloqueio passa a cobri-lo.
+ */
+function closureCauses(resource: Doc<"schedResources">, exceptions: ExceptionLite[], date: LocalDate, tz: string, core: { start: number; end: number }): { closed: boolean; blocked: boolean } {
+  const day = computeDayAvailability({ date, tz, resources: [resource], exceptions, allocations: [], internalEvents: [] }).get(resource._id)!;
+  return { closed: day.closed, blocked: day.blocks.some((b) => b.source === "block" && overlaps(b.start, b.end, core.start, core.end)) };
+}
+
 // ---------------------------------------------------------------------------
 // Varredura dos afetados (a MESMA função na prévia e nos lotes)
 // ---------------------------------------------------------------------------
@@ -232,7 +242,7 @@ type ScanScope = {
   toLocalDate: LocalDate;
 };
 
-/** Afetado = violaria o dia DEPOIS da mudança e não violava ANTES (quem já estava forçado antes não entra). */
+/** Afetado = passa a ter `RESOURCE_CLOSED`/`RESOURCE_BLOCKED` que não tinha (avisos já aceitos não escondem), ou passa a violar o dia. */
 async function scanUnits(
   ctx: MutationCtx,
   p: {
@@ -300,6 +310,10 @@ async function scanUnits(
       const core = { start: Math.max(a.startTime, b.start), end: Math.min(a.endTime, b.end) };
       if (core.end <= core.start) return false;
       const { before, after } = states(date);
+      const ca = closureCauses(resource, after, date, p.tz, core);
+      const cb = closureCauses(resource, before, date, p.tz, core);
+      // Novo motivo de fechamento (mesmo que o encaixe já tivesse avisos aceitos) OU passou a violar o dia (ex.: horário especial removido).
+      if ((ca.closed && !cb.closed) || (ca.blocked && !cb.blocked)) return true;
       return violatesDay(resource, after, date, p.tz, core) && !violatesDay(resource, before, date, p.tz, core);
     });
   const touchesPeriod = (a: AppointmentDoc) => touchedDates(a).some((d) => dateSet.has(d));
