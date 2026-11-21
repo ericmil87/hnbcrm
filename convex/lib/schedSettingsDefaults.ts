@@ -4,7 +4,13 @@
  * Puro (sem imports de servidor), serve também ao front.
  */
 import type { Doc, Id } from "../_generated/dataModel";
-import { DEFAULT_GRID_MIN, DEFAULT_MAX_ADVANCE_DAYS, DEFAULT_MIN_NOTICE_MIN } from "./schedConstants";
+import {
+  DEFAULT_GRID_MIN,
+  DEFAULT_MAX_ADVANCE_DAYS,
+  DEFAULT_MIN_NOTICE_MIN,
+  DEFAULT_OUTCOME_GRACE_MIN,
+  DEFAULT_OUTCOME_NOTICE_HOUR,
+} from "./schedConstants";
 
 export type SchedSmartMode = "off" | "rank" | "restrict";
 export type SchedAiBookMode = "off" | "propose" | "auto";
@@ -68,6 +74,8 @@ export type ResolvedSchedSettings = {
     mentionService: boolean;
     template: string | undefined;
   };
+  /** Pendência "sem desfecho" (A4). */
+  outcome: { graceMin: number; noticeHour: number };
   templateKey: string | undefined;
 };
 
@@ -112,6 +120,10 @@ export function resolveSchedSettings(
       hoursBefore: rem?.hoursBefore,
       mentionService: rem?.mentionService ?? false,
       template: rem?.template,
+    },
+    outcome: {
+      graceMin: doc?.outcome?.graceMin ?? DEFAULT_OUTCOME_GRACE_MIN,
+      noticeHour: doc?.outcome?.noticeHour ?? DEFAULT_OUTCOME_NOTICE_HOUR,
     },
     templateKey: doc?.templateKey,
   };

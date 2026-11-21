@@ -20,5 +20,17 @@ export const DEFAULT_MIN_NOTICE_MIN = 120;
 export const DEFAULT_MAX_ADVANCE_DAYS = 60;
 export const DEFAULT_GRID_MIN = 30;
 
+/** Pendência "sem desfecho" (A4): folga após o fim, hora local do aviso diário, janela de leitura e tetos. */
+export const DEFAULT_OUTCOME_GRACE_MIN = 120;
+export const DEFAULT_OUTCOME_NOTICE_HOUR = 8;
+/** O job só olha agendamentos que começaram nos últimos N dias (o mais antigo já foi marcado quando estava na janela). */
+export const OUTCOME_LOOKBACK_DAYS = 14;
+/** Linhas lidas por página do job, e teto da contagem do aviso diário. */
+export const OUTCOME_SCAN_PAGE = 100;
+export const OUTCOME_NOTICE_CAP = 200;
+export const OUTCOME_ORG_PAGE = 100;
+/** Destinatários do aviso diário (mesmo teto das demais notificações da agenda). */
+export const OUTCOME_NOTICE_RECIPIENTS_CAP = 25;
+
 /** Passos de grade aceitos em `schedSettings.gridMinutes`. */
 export const GRID_MINUTES_OPTIONS = [5, 10, 15, 20, 30, 60] as const;

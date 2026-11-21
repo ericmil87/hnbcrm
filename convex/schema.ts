@@ -890,6 +890,8 @@ const applicationTables = {
     billing: v.optional(orgBillingValidator),
     // C1: carimbo "AAAA-MM-DD" (data local da org) do último resumo diário enviado.
     lastDailyDigestDate: v.optional(v.string()),
+    // Agenda v2 (A4): data local do último aviso diário "sem desfecho" (carimbo; vale mesmo com N = 0).
+    lastSchedOutcomeNoticeDate: v.optional(v.string()),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
       companySize: v.optional(v.string()),
@@ -2537,7 +2539,9 @@ const applicationTables = {
       v.literal("plan_change_scheduled"),
       v.literal("plan_cancel_scheduled"),
       v.literal("plan_canceled"),
-      v.literal("plan_refunded")
+      v.literal("plan_refunded"),
+      // Agenda v2 (A4) — resumo diário: atendimentos de ontem ainda sem desfecho (equipe com `agenda:edit`+).
+      v.literal("appointment_no_outcome")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2772,6 +2776,8 @@ const applicationTables = {
     aiSpendAlert: v.optional(v.boolean()),
     // Billing B4 — avisos de plano (franquia, excedente, teste); sino + e-mail `planAlert`.
     planAlert: v.optional(v.boolean()),
+    // Agenda v2 (A4) — resumo diário "sem desfecho" (sino; sem e-mail).
+    agendaActivity: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
@@ -4787,6 +4793,10 @@ const applicationTables = {
       template: v.optional(v.string()),
     })),
     templateKey: v.optional(v.string()),          // modelo aplicado no onboarding do módulo
+    outcome: v.optional(v.object({                // pendência "sem desfecho" (A4)
+      graceMin: v.optional(v.number()),           // folga após o fim antes de marcar; ausente = 120
+      noticeHour: v.optional(v.number()),         // hora local (0..23) do aviso diário; ausente = 8
+    })),
     updatedBy: v.optional(v.id("teamMembers")),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
