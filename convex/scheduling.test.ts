@@ -366,6 +366,32 @@ describe("loadWindow", () => {
 });
 
 describe("grade do dia e do período", () => {
+  test("listAgendaDay: agendamento que começou no dia anterior e cruza a meia-noite aparece no dia seguinte (mesmas regras de visibilidade)", async () => {
+    const SUN = "2026-06-14";
+    const cross = await book({ start: at(SUN, 23), durationMin: 90, localDate: SUN, resources: [R(clinic.pros.bia, "Profissional", "Bia")] }); // 23:00-00:30
+    const endsAtMidnight = await book({ start: at(SUN, 23), durationMin: 60, localDate: SUN, resources: [R(clinic.pros.caio, "Profissional", "Caio")] }); // até 00:00 exato
+    const sameDay = await book({ start: at(MON, 9), resources: [R(clinic.pros.ana, "Profissional", "Ana")] });
+    const day = (p: Person, date: string) => as(p).query(api.scheduling.listAgendaDay, { organizationId: s.orgId, localDate: date });
+    const mon = await day(s.admin, MON);
+    assertMatchesReturns(mon, sched.listAgendaDay);
+    expect(mon.appointments.map((a) => a._id).sort()).toEqual([cross, sameDay].sort());
+    expect(mon.appointments.map((a) => a._id)).not.toContain(endsAtMidnight);
+    expect(mon.appointments[0]._id).toBe(cross); // em ordem de início
+    // No dia em que começou, continua aparecendo (e o que termina à meia-noite também).
+    expect((await day(s.admin, SUN)).appointments.map((a) => a._id).sort()).toEqual([cross, endsAtMidnight].sort());
+    // view_own (é a Bia): vê o dela; o de outro profissional vira ocupação anônima, nunca linha.
+    await t.run((ctx) => ctx.db.patch(cross, { createdBy: undefined }));
+    const own = await day(s.viewOwn, MON);
+    expect(own.appointments.map((a) => a._id)).toEqual([cross]);
+    const other = await book({ start: at(SUN, 23, 30), durationMin: 60, localDate: SUN, resources: [R(clinic.pros.duda, "Profissional", "Duda")] });
+    const own2 = await day(s.viewOwn, MON);
+    expect(own2.appointments.map((a) => a._id)).not.toContain(other);
+    expect(own2.busy.some((b) => b.resourceIds.includes(clinic.pros.duda))).toBe(true);
+    // Outra org e sem permissão: vazio.
+    expect((await day(s.outsider, MON)).appointments).toEqual([]);
+    expect((await day(s.none, MON)).appointments).toEqual([]);
+  });
+
   test("listAgendaDay: recursos com abertura, fechamento e agendamentos do dia", async () => {
     const { a1 } = await clinicDay();
     const res = await as(s.admin).query(api.scheduling.listAgendaDay, { organizationId: s.orgId, localDate: MON });

@@ -14,7 +14,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { hasPermission } from "./lib/permissions";
-import { computeDayAvailability, usableIntervals } from "./lib/schedAvailability";
+import { computeDayAvailability, MAX_BLOCK_MIN, usableIntervals } from "./lib/schedAvailability";
 import {
   type AgendaReader,
   canSeeAppointment,
@@ -170,8 +170,18 @@ export const listAgendaDay = query({
         q.eq("organizationId", args.organizationId).gte("startTime", bounds.start).lt("startTime", bounds.end)
       )
       .take(DAY_APPOINTMENTS_CAP + 1);
+    // Quem começou ANTES do dia e cruza a meia-noite: o bloco tem teto `MAX_BLOCK_MIN`, então só pode ter começado
+    // nessa faixa (mesmo índice, sem `.filter()`); entra quem ainda não terminou à meia-noite.
+    const before = await ctx.db
+      .query("schedAppointments")
+      .withIndex("by_organization_and_start", (q) =>
+        q.eq("organizationId", args.organizationId).gte("startTime", bounds.start - MAX_BLOCK_MIN * MINUTE_MS).lt("startTime", bounds.start)
+      )
+      .take(DAY_APPOINTMENTS_CAP + 1);
+    const crossing = before.filter((a) => a.endTime > bounds.start);
+    const all = [...crossing, ...rows];
     const own = await ownResourceIds(ctx, reader);
-    const page = rows.slice(0, DAY_APPOINTMENTS_CAP);
+    const page = all.slice(0, DAY_APPOINTMENTS_CAP);
     const appointments = page.filter((a) => canSeeAppointment(reader, a, own)).map(toAppointmentRow);
     const busy = reader.seesAll
       ? []
@@ -212,7 +222,7 @@ export const listAgendaDay = query({
       appointments,
       busy,
       exceptions: exceptions as Doc<"schedExceptions">[],
-      capped: rows.length > DAY_APPOINTMENTS_CAP,
+      capped: all.length > DAY_APPOINTMENTS_CAP || before.length > DAY_APPOINTMENTS_CAP,
     };
   },
 });
