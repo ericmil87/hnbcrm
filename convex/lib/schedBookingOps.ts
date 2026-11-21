@@ -70,6 +70,7 @@ import {
   unitsFor,
 } from "./schedCandidates";
 import { MAX_RESOURCES_PER_ORG } from "./schedConstants";
+import { MAX_PARTY_COMPANIONS, sharedResourceIds } from "./schedParty";
 import {
   type AppointmentWebhookEvent,
   actorClassOf,
@@ -121,7 +122,6 @@ const DAY_MS = 24 * HOUR_MS;
 const MAX_EPOCH_MS = 4_102_444_800_000;
 const MAX_ALTERNATIVES = 3;
 const MAX_ALT_RESOURCES = 12;
-const MAX_PARTY_COMPANIONS = 3;
 const CONTACT_WINDOW_CAP = 50;
 const CONTACT_FUTURE_CAP = 10;
 const NOTES_MAX = 500;
@@ -1463,8 +1463,12 @@ export async function bookPartyCore(
   const placedList: Array<Extract<Placed, { kind: "placed" }>> = [];
   const allIds: Id<"schedAppointments">[] = [];
   let anyExisting = false;
+  let shared: Id<"schedResources">[] = [];
   for (const [index, member] of members.entries()) {
-    const placed = await placeAppointment(ctx, member, {}, now);
+    // Regra de grupo (`schedParty.ts`): sala e equipamento são UM recurso para todas as pessoas, então o acompanhante
+    // tenta primeiro o MESMO recurso da pessoa principal; o profissional é um por pessoa (o dele, pela checagem de capacidade).
+    const attempt = index > 0 && member.resourceIds === undefined && shared.length > 0 ? { ...member, resourceIds: shared } : member;
+    const placed = await placeAppointment(ctx, attempt, {}, now);
     if (index === 0 && placed.kind === "existing" && placed.duplicate) {
       // A pessoa principal já tem esse horário: é o mesmo pedido de grupo repetido, sem acompanhantes duplicados.
       return { ok: true, appointmentIds: [placed.appointment._id], duplicate: true };
@@ -1472,6 +1476,15 @@ export async function bookPartyCore(
     if (placed.kind === "placed") {
       placedList.push(placed);
       allIds.push(placed.appointment._id);
+      if (index === 0) {
+        const reqs = placed.bc.service.requirements;
+        shared = sharedResourceIds(
+          placed.appointment.resources.flatMap((r) => {
+            const req = reqs.find((x) => x.role === r.role);
+            return req ? [{ req, resourceId: r.resourceId }] : [];
+          })
+        ) as Id<"schedResources">[];
+      }
     } else if (placed.kind === "existing") {
       anyExisting = true;
       allIds.push(placed.appointment._id);

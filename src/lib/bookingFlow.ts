@@ -275,9 +275,17 @@ export interface FindSlotsArgs {
   period?: Exclude<SlotPeriod, "qualquer">;
   resourceIds?: Id<"schedResources">[];
   rescheduleAppointmentId?: Id<"schedAppointments">;
+  /** Pessoas no mesmo horário (2 a 4); ausente = 1. */
+  partySize?: number;
   audience: "staff";
   limit: number;
   now: number;
+}
+
+/** Pessoas do grupo (a principal + acompanhantes com nome), de 1 a 4. */
+export function partySizeOf(state: Pick<BookingState, "companions">): number {
+  const named = state.companions.filter((n) => n.trim().length > 0).length;
+  return Math.min(1 + named, MAX_COMPANIONS + 1);
 }
 
 /** Argumentos de `findSlots` (chamada avulsa). `null` enquanto não há serviço escolhido. */
@@ -304,6 +312,7 @@ export function buildFindSlotsArgs(input: {
     ...(input.rescheduleAppointmentId
       ? { rescheduleAppointmentId: input.rescheduleAppointmentId as Id<"schedAppointments"> }
       : {}),
+    ...(partySizeOf(state) > 1 ? { partySize: partySizeOf(state) } : {}),
     audience: "staff",
     limit: state.expanded ? EXPANDED_LIMIT : SUGGESTED_COUNT,
     now,

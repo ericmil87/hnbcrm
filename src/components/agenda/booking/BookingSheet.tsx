@@ -27,6 +27,7 @@ import {
   mergeRefreshedSlots,
   newIdempotencyKey,
   normalizeOffered,
+  partySizeOf,
   pickedFromOffered,
   submitBooking,
   undoFreshBooking,
@@ -153,7 +154,7 @@ function useSlotSearch(input: {
   const lastFilter = useRef<string | null>(null);
   const requestId = useRef(0);
   const onSlotStep = state.step === "slot";
-  const filterKey = JSON.stringify([state.serviceId, state.variantKey, state.dayPreset, state.otherDate, state.period, state.pinned]);
+  const filterKey = JSON.stringify([state.serviceId, state.variantKey, state.dayPreset, state.otherDate, state.period, state.pinned, partySizeOf(state)]);
 
   useEffect(() => {
     if (!onSlotStep) return;

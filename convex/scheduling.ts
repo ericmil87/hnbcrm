@@ -780,6 +780,8 @@ export const findSlots = query({
     period: v.optional(v.union(v.literal("manha"), v.literal("tarde"), v.literal("noite"), v.literal("qualquer"))),
     resourceIds: v.optional(v.array(v.id("schedResources"))),
     rescheduleAppointmentId: v.optional(v.id("schedAppointments")),
+    /** Pessoas no mesmo horário (1–4): só horários em que a mesma sala comporta todas e há um profissional por pessoa. */
+    partySize: v.optional(v.number()),
     audience: v.optional(v.union(v.literal("staff"), v.literal("ai"), v.literal("public"))),
     limit: v.optional(v.number()),
     now: v.number(),
@@ -829,6 +831,7 @@ export const findSlots = query({
       period: args.period,
       resourceIds: args.resourceIds,
       ignoreAppointmentId,
+      partySize: args.partySize,
       audience,
       now: args.now,
       limit: args.limit,

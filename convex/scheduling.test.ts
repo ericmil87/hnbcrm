@@ -695,3 +695,88 @@ describe("contrato de returns (config)", () => {
     expect(prev.enabled).toBe(true);
   });
 });
+
+describe("findSlots com acompanhantes (partySize) e a regra de grupo da porta", () => {
+  const bookParty = (args: Record<string, unknown>) =>
+    as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.orgId, contactId: s.contactId, ...args } as any);
+  const coupleService = async () =>
+    await as(s.admin).mutation(api.schedulingConfig.upsertService, {
+      organizationId: s.orgId, name: "Massagem casal", durationMin: 60,
+      requirements: [{ role: "Sala", kind: "room", resourceIds: [clinic.rooms.dual] }, { role: "Profissional", kind: "person" }],
+    });
+  const search = (serviceId: Id<"schedServices">, partySize?: number) =>
+    as(s.admin).query(api.scheduling.findSlots, findArgs({ serviceId, ...(partySize ? { partySize } : {}) }));
+
+  test("tamanho do grupo é de 1 a 4 e o retorno confere com o validator", async () => {
+    for (const bad of [0, 5, 2.5, -1]) {
+      await expect(as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: bad }))).rejects.toThrow(/de 1 a 4/);
+    }
+    const ok = await as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: 2 }));
+    assertMatchesReturns(ok, sched.findSlots);
+  });
+
+  test("2 pessoas: só a sala que comporta as duas; sem partySize as salas simples também aparecem", async () => {
+    const one = await as(s.admin).query(api.scheduling.findSlots, findArgs());
+    const two = await as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: 2 }));
+    expect(two.slots.length).toBeGreaterThan(0);
+    for (const sl of two.slots) expect(sl.resourceIds).toContain(clinic.rooms.dual);
+    expect(one.slots.some((sl) => !sl.resourceIds.includes(clinic.rooms.dual))).toBe(true);
+    // 5 pessoas não existem; 3 e 4 também não cabem na sala dupla (capacidade 2).
+    expect((await as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: 3 }))).slots).toEqual([]);
+  });
+
+  test("exclusive nunca comporta mais de uma pessoa; equipamento segue a sala", async () => {
+    const exclusive = await as(s.admin).mutation(api.schedulingConfig.upsertService, {
+      organizationId: s.orgId, name: "Sala inteira", durationMin: 60,
+      requirements: [{ role: "Sala", kind: "room", resourceIds: [clinic.rooms.dual], exclusive: true }],
+    });
+    expect((await search(exclusive)).slots.length).toBeGreaterThan(0);
+    expect((await search(exclusive, 2)).slots).toEqual([]);
+  });
+
+  test("concorda com a porta: todo horário oferecido para 2 é marcável em grupo, e a sala é a mesma", async () => {
+    const svc = await coupleService();
+    const res = await search(svc, 2);
+    expect(res.slots.length).toBeGreaterThan(2);
+    // horários que não se sobrepõem (cada reserva ocupa a sala dupla com 2 unidades no bloco)
+    const picked: typeof res.slots = [];
+    for (const sl of [...res.slots].sort((a, b) => a.startTime - b.startTime)) {
+      if (picked.every((p) => sl.startTime >= p.endTime)) picked.push(sl);
+    }
+    expect(picked.length).toBeGreaterThanOrEqual(2);
+    for (const sl of picked) {
+      const done = await bookParty({ serviceId: svc, startTime: sl.startTime, resourceIds: sl.resourceIds, companions: [{ guestName: "Acompanhante" }] });
+      expect(done.appointmentIds).toHaveLength(2);
+      const docs = await t.run(async (ctx) => await Promise.all(done.appointmentIds.map((id: Id<"schedAppointments">) => ctx.db.get(id))));
+      const rooms = docs.map((d) => d!.resources.find((r) => r.role === "Sala")!.resourceId);
+      const pros = docs.map((d) => d!.resources.find((r) => r.role === "Profissional")!.resourceId);
+      expect(new Set(rooms).size).toBe(1);
+      expect(new Set(pros).size).toBe(2); // um profissional por pessoa
+    }
+    const { schedInvariantProblems } = await import("./lib/schedInvariants.test-helper");
+    expect(await schedInvariantProblems(t, s.orgId, NOW)).toEqual([]);
+  });
+
+  test("sala dupla já com 1 pessoa: a busca para 2 não oferece e a porta recusa o grupo (para 1 ainda cabe)", async () => {
+    const svc = await coupleService();
+    await book({ serviceId: svc, start: at(MON, 10), resources: [R(clinic.rooms.dual, "Sala", "Sala dupla"), R(clinic.pros.ana, "Profissional", "Ana")] });
+    expect(starts((await search(svc)).slots)).toContain("10:00");
+    expect(starts((await search(svc, 2)).slots)).not.toContain("10:00");
+    await expect(bookParty({ serviceId: svc, startTime: at(MON, 10), companions: [{ guestName: "G" }] })).rejects.toThrow();
+    const apptsBefore = await t.run((ctx) => ctx.db.query("schedAppointments").collect());
+    expect(apptsBefore).toHaveLength(1); // nada ficou pela metade
+    const { schedInvariantProblems } = await import("./lib/schedInvariants.test-helper");
+    expect(await schedInvariantProblems(t, s.orgId, NOW)).toEqual([]);
+  });
+
+  test("profissionais insuficientes: com 1 livre a busca para 2 não oferece e a porta recusa", async () => {
+    const svc = await coupleService();
+    // Ana, Bia e Caio ocupados às 11h (Duda livre); a sala dupla segue vazia.
+    for (const [pro, name] of [[clinic.pros.ana, "Ana"], [clinic.pros.bia, "Bia"], [clinic.pros.caio, "Caio"]] as const) {
+      await book({ start: at(MON, 11), resources: [R(clinic.rooms.r1, "Sala", "Sala 1"), R(pro, "Profissional", name)] });
+    }
+    expect(starts((await search(svc)).slots)).toContain("11:00");
+    expect(starts((await search(svc, 2)).slots)).not.toContain("11:00");
+    await expect(bookParty({ serviceId: svc, startTime: at(MON, 11), companions: [{ guestName: "G" }] })).rejects.toThrow();
+  });
+});

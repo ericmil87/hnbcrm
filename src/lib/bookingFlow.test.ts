@@ -644,6 +644,17 @@ describe("prévia de 'Outro horário'", () => {
   });
 });
 
+describe("busca com acompanhantes (partySize)", () => {
+  const argsFor = (companions: string[]) => buildFindSlotsArgs({ organizationId: "org", state: { ...base({ serviceId: "svc1" }), companions }, tz: "America/Sao_Paulo", now: Date.UTC(2026, 10, 26, 15) });
+  it("sem acompanhante não manda partySize; com nomes manda 1 + nomes (máx. 4)", () => {
+    expect(argsFor([])).not.toHaveProperty("partySize");
+    expect(argsFor(["", "  "])).not.toHaveProperty("partySize");
+    expect(argsFor(["Maria"])?.partySize).toBe(2);
+    expect(argsFor(["Maria", "", "Bia", "Cris"])?.partySize).toBe(4);
+    expect(argsFor(["a", "b", "c", "d", "e"])?.partySize).toBe(4);
+  });
+});
+
 describe("hora pedida pela Agenda", () => {
   const tz = "America/Sao_Paulo";
   const at = (date: string, h: number, m = 0) => atLocalMinutes(date, h * 60 + m, tz);
