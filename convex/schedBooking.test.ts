@@ -14,6 +14,8 @@ import { DEFAULT_PERMISSIONS } from "./lib/permissions";
 import { peakUnits } from "./lib/schedAvailability";
 import { bookAppointmentCore, bookPartyCore } from "./lib/schedBookingOps";
 import * as M from "./schedulingMutations";
+import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
+import { schedInvariantProblems } from "./lib/schedInvariants.test-helper";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -1605,5 +1607,95 @@ describe("revisão: códigos de violação onde só se conferia 'falhou'", () =>
     expect(result).toMatchObject({ ok: false });
     expect((result as { violations: Array<{ code: string }> }).violations.map((v) => v.code)).toEqual(["OUTSIDE_HOURS"]);
     expect(await allAppointments()).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A3d: prévia de remarcação (`previewBooking` com `rescheduleAppointmentId`)
+// ---------------------------------------------------------------------------
+
+describe("A3d: simular remarcação", () => {
+  const preview = (s: Seed, appointmentId: Id<"schedAppointments">, startTime: number, extra: Record<string, unknown> = {}) =>
+    asAdmin(s).mutation(api.schedulingMutations.previewBooking, { organizationId: s.organizationId, serviceId: s.services.solo, startTime, rescheduleAppointmentId: appointmentId, ...extra } as never);
+
+  test("o próprio horário não conta como ocupado e nada é gravado", async () => {
+    const s = await seedOrg();
+    const first = await book(s, "solo", at(10), { leadId: s.leadId });
+    const id = first.appointmentIds[0];
+    // Sem rescheduleAppointmentId, 10:30 conflita com o próprio agendamento (mesma profissional, capacidade 1).
+    const plain = await asAdmin(s).mutation(api.schedulingMutations.previewBooking, bookArgs(s, "solo", at(10, 30), { contactId: s.contacts[1] }) as never);
+    expect(plain.ok).toBe(false);
+    const before = await counts();
+    const res = await preview(s, id, at(10, 30));
+    expect(res.ok).toBe(true);
+    expect(res.preview).toBe(true);
+    expect(res.plan.length).toBeGreaterThan(0);
+    assertMatchesReturns(res, M.previewBooking);
+    expect(await counts()).toEqual(before);
+    expect((await appointmentOf(id))!.status).toBe("scheduled");
+    expect(await allocationsOf(id)).toHaveLength(1);
+  });
+
+  test("horário tomado por outro agendamento recusa com violação e alternativas", async () => {
+    const s = await seedOrg();
+    const first = await book(s, "solo", at(10));
+    await book(s, "solo", at(14), { contactId: s.contacts[1] });
+    const before = await counts();
+    const res = await preview(s, first.appointmentIds[0], at(14));
+    expect(res.ok).toBe(false);
+    expect(res.violations.map((x: { code: string }) => x.code)).toContain("CAPACITY_EXCEEDED");
+    assertMatchesReturns(res, M.previewBooking);
+    expect(await counts()).toEqual(before);
+  });
+
+  test("aplica as regras de remarcar: mesmo horário, proposta, status terminal, serviço diferente", async () => {
+    const s = await seedOrg();
+    const first = await book(s, "solo", at(10));
+    const id = first.appointmentIds[0];
+    await expect(preview(s, id, at(10))).rejects.toThrow(/igual ao atual/);
+    await expect(preview(s, id, at(11), { serviceId: s.services.sessao })).rejects.toThrow(/serviço não é o do agendamento/i);
+    const proposal = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(15), contactId: s.contacts[0],
+      actor: { type: "human", memberId: s.admin.memberId, via: "rest" }, origin: "api", rescheduleOfId: id, initialStatus: "pending_approval",
+    });
+    expect(proposal.ok).toBe(true);
+    await expect(preview(s, proposal.appointmentId!, at(16))).rejects.toThrow(/proposta/i);
+    await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: id });
+    await expect(preview(s, id, at(11))).rejects.toThrow(/não permitida/);
+  });
+
+  test("RBAC e org: sem agenda:edit, outra org e id inexistente recusam do mesmo jeito", async () => {
+    const s = await seedOrg();
+    const f = await seedForeign();
+    const first = await book(s, "solo", at(10));
+    const id = first.appointmentIds[0];
+    await expect(as(s.viewAll.userId).mutation(api.schedulingMutations.previewBooking, { organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(11), rescheduleAppointmentId: id } as never)).rejects.toThrow();
+    await expect(as(s.none.userId).mutation(api.schedulingMutations.previewBooking, { organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(11), rescheduleAppointmentId: id } as never)).rejects.toThrow();
+    // Admin da outra org com o id do agendamento desta.
+    await expect(
+      as(f.userId).mutation(api.schedulingMutations.previewBooking, { organizationId: f.organizationId, serviceId: f.serviceId, startTime: at(11), rescheduleAppointmentId: id } as never)
+    ).rejects.toThrow("Agendamento não encontrado");
+    // Admin desta org com agendamento da outra.
+    await expect(preview(s, f.appointmentId, at(11))).rejects.toThrow("Agendamento não encontrado");
+  });
+
+  test("a internal aceita só em prévia e a IA só vê o agendamento da própria conversa", async () => {
+    const s = await seedOrg();
+    const first = await book(s, "solo", at(10), { leadId: s.leadId });
+    const id = first.appointmentIds[0];
+    const base = { organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(11), rescheduleAppointmentId: id };
+    await expect(
+      t.mutation(internal.schedulingMutations.internalBookAppointment, { ...base, actor: { type: "human", memberId: s.admin.memberId, via: "rest" }, origin: "api" })
+    ).rejects.toThrow(/internalRescheduleAppointment/);
+    const ok = await t.mutation(internal.schedulingMutations.internalBookAppointment, { ...base, mode: "preview", actor: { type: "human", memberId: s.admin.memberId, via: "rest" }, origin: "api" });
+    expect(ok.ok).toBe(true);
+    assertMatchesReturns(ok, M.internalBookAppointment);
+    // IA da conversa do contato 0 enxerga; o agendamento de outro contato é "não encontrado".
+    const other = await book(s, "solo", at(14), { contactId: s.contacts[1] });
+    const ai = { type: "ai" as const, memberId: s.aiMemberId, conversationId: s.conversationId };
+    await expect(
+      t.mutation(internal.schedulingMutations.internalBookAppointment, { ...base, rescheduleAppointmentId: other.appointmentIds[0], mode: "preview", actor: ai, origin: "ai" })
+    ).rejects.toThrow("Agendamento não encontrado");
+    expect(await schedInvariantProblems(t, s.organizationId, Date.now())).toEqual([]);
   });
 });

@@ -272,6 +272,13 @@ describe("argumentos de marcar e remarcar", () => {
     expect(preview).not.toHaveProperty("companions");
     expect(preview).not.toHaveProperty("idempotencyKey");
   });
+  it("prévia de remarcação leva rescheduleAppointmentId; marcar de verdade nunca leva", () => {
+    const manual = state({ slot: picked({ manual: true, resourceIds: [] }) });
+    const preview = buildBookArgs({ organizationId: "org", state: manual, who: {}, mode: "preview", rescheduleAppointmentId: "appt1" });
+    expect(preview?.rescheduleAppointmentId).toBe("appt1");
+    expect(buildBookArgs({ organizationId: "org", state: manual, who: {}, mode: "preview" })).not.toHaveProperty("rescheduleAppointmentId");
+    expect(buildBookArgs({ organizationId: "org", state: manual, who: {}, rescheduleAppointmentId: "appt1" })).not.toHaveProperty("rescheduleAppointmentId");
+  });
   it("só inclui os ids de quem foi informado", () => {
     const args = buildBookArgs({ organizationId: "org", state: state(), who: { conversationId: "v1" } });
     expect(args).not.toHaveProperty("contactId");

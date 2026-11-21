@@ -342,6 +342,8 @@ export interface BookArgs {
   notes?: string;
   idempotencyKey?: string;
   companions?: Array<{ guestName: string }>;
+  /** Só na prévia: simula a REMARCAÇÃO desse agendamento (o servidor usa o contato e o serviço dele). */
+  rescheduleAppointmentId?: Id<"schedAppointments">;
 }
 
 /** Argumentos de `bookAppointment` e `previewBooking` (a prévia ignora `companions`/`idempotencyKey`). */
@@ -352,6 +354,8 @@ export function buildBookArgs(input: {
   /** Códigos de aviso aceitos (só os que a pessoa viu). */
   force?: readonly string[];
   mode?: "commit" | "preview";
+  /** Só vale com `mode: "preview"`: prévia de remarcação (as alocações do próprio agendamento não contam). */
+  rescheduleAppointmentId?: string;
 }): BookArgs | null {
   const { state, who } = input;
   if (!state.serviceId || !state.slot) return null;
@@ -372,6 +376,7 @@ export function buildBookArgs(input: {
     ...(cleanNotes(state.notes) ? { notes: cleanNotes(state.notes) } : {}),
     ...(commit ? { idempotencyKey: state.idempotencyKey } : {}),
     ...(commit && companions.length > 0 ? { companions: companions.map((guestName) => ({ guestName })) } : {}),
+    ...(!commit && input.rescheduleAppointmentId ? { rescheduleAppointmentId: input.rescheduleAppointmentId as Id<"schedAppointments"> } : {}),
   };
 }
 

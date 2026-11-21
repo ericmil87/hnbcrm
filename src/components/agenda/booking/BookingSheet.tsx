@@ -290,9 +290,14 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
   };
 
   const previewManual = async (startTime: number): Promise<ManualPreviewResult> => {
-    // Remarcar: a prévia contaria o próprio horário como ocupado; o servidor confere ao remarcar.
-    if (reschedule) return { kind: "ok", warnings: [], resourceNames: [] };
-    const args = buildBookArgs({ organizationId, state: { ...state, slot: { startTime, endTime: null, resourceIds: [], resourceNames: [], reasons: [], manual: true, warnings: [] } }, who, mode: "preview" });
+    // Remarcar: a prévia é a da REMARCAÇÃO (o servidor ignora as alocações do próprio agendamento).
+    const args = buildBookArgs({
+      organizationId,
+      state: { ...state, slot: { startTime, endTime: null, resourceIds: [], resourceNames: [], reasons: [], manual: true, warnings: [] } },
+      who,
+      mode: "preview",
+      rescheduleAppointmentId: reschedule?.appointmentId,
+    });
     if (!args) return { kind: "error", message: t.slot.manualInvalid };
     try {
       return interpretPreview(await previewBooking(args), { tz, now: Date.now(), durationMin });

@@ -1517,12 +1517,15 @@ export async function rescheduleAppointmentCore(
     resourceIds?: Id<"schedResources">[];
     force?: string[];
     idempotencyKey?: string;
+    /** `preview`: simula a remarcação (mesmas validações, MESMA leitura de capacidade com as alocações do antigo ignoradas) sem gravar nada. */
+    mode?: "commit" | "preview";
     now?: number;
   }
 ): Promise<BookResult> {
   const now = args.now ?? Date.now();
+  const preview = args.mode === "preview";
   const old = await loadAppointment(ctx, args.appointment, args.actor);
-  if (args.idempotencyKey) {
+  if (args.idempotencyKey && !preview) {
     // Repetir o pedido (mesma chave) devolve o novo agendamento, mesmo com o antigo já `rescheduled`.
     const key = args.idempotencyKey;
     const hit = await ctx.db
@@ -1557,7 +1560,8 @@ export async function rescheduleAppointmentCore(
       resourceIds: args.resourceIds ?? old.resources.map((r) => r.resourceId),
       force: args.force,
       notes: old.notes,
-      idempotencyKey: args.idempotencyKey,
+      idempotencyKey: preview ? undefined : args.idempotencyKey,
+      mode: preview ? "preview" : undefined,
       now,
     },
     {
