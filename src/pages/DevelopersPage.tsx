@@ -1323,6 +1323,22 @@ cp -r .claude/skills/hnbcrm/ ~/.sua-plataforma/skills/hnbcrm/`}</CodeBlock>
                   "group.post.failed",
                   "group.post.paused",
                   "group.post.ended",
+                  "calendar_event.created",
+                  "calendar_event.updated",
+                  "calendar_event.rescheduled",
+                  "calendar_event.completed",
+                  "calendar_event.cancelled",
+                  "calendar_event.deleted",
+                  "appointment.created",
+                  "appointment.approved",
+                  "appointment.confirmed",
+                  "appointment.rescheduled",
+                  "appointment.cancelled",
+                  "appointment.completed",
+                  "appointment.no_show",
+                  "appointment.needs_attention",
+                  "appointment.undone",
+                  "appointment.restored",
                 ].map((event) => (
                   <code
                     key={event}

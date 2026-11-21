@@ -22,9 +22,9 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { ConvexError } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { getActiveMembership } from "./auth";
+import { getActiveMembership, isMembershipRevoked } from "./auth";
 import { getModules } from "./orgModules";
-import { type AgendaLevel, hasPermission, type Permissions, resolvePermissions, type Role } from "./permissions";
+import { type AgendaLevel, completeLegacyPermissions, hasPermission, type Permissions, resolvePermissions, type Role } from "./permissions";
 import { MAX_EVENT_DURATION_MS, SHORT_EVENT_MS } from "./calendarRules";
 import { MAX_BLOCK_MIN, MAX_SEARCH_DAYS } from "./schedConstants";
 import { type ResolvedSchedSettings, resolveSchedSettings } from "./schedSettingsDefaults";
@@ -69,6 +69,33 @@ export async function resolveAgendaReader(
   const member = await getActiveMembership(ctx, organizationId, userId);
   if (!member) return null;
   const permissions = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+  if (!hasPermission(permissions, "agenda", min)) return null;
+  return {
+    member,
+    level: permissions.agenda,
+    seesAll: hasPermission(permissions, "agenda", "view_all"),
+    canEdit: hasPermission(permissions, "agenda", "edit"),
+    canManage: hasPermission(permissions, "agenda", "manage"),
+    permissions,
+  };
+}
+
+/**
+ * Leitor da agenda para a REST/MCP: o membro dono da API key (da MESMA org, ativo) com as permissões DA CHAVE quando
+ * informadas (vencem as do membro, como `restActor` do calendário) ou as do papel. `null` = membro inexistente/removido/
+ * de outra org, ou `agenda` abaixo de `min`. NUNCA lança (a rota traduz `null` em 404/403 conforme o caso).
+ */
+export async function restAgendaReader(
+  ctx: QueryCtx | MutationCtx,
+  args: { organizationId: Id<"organizations">; teamMemberId: Id<"teamMembers">; permissions?: Permissions },
+  min: "view_own" | "view_all" | "edit" | "manage" = "view_own"
+): Promise<AgendaReader | null> {
+  const member = await ctx.db.get(args.teamMemberId);
+  if (!member || member.organizationId !== args.organizationId || isMembershipRevoked(member)) return null;
+  const permissions =
+    args.permissions !== undefined
+      ? (completeLegacyPermissions(args.permissions) as Permissions)
+      : resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
   if (!hasPermission(permissions, "agenda", min)) return null;
   return {
     member,

@@ -18,9 +18,11 @@ import { toAppointmentRow } from "./schedViews";
 export const DAY_APPOINTMENTS_CAP = 200;
 /** Documentos lidos da faixa que antecede o dia (agendamentos que podem cruzar a meia-noite). */
 export const CROSSING_READ_CAP = 100;
-export const PENDING_CAP = 50;
+export const DEFAULT_PENDING_CAP = 50;
+export const PENDING_CAP = DEFAULT_PENDING_CAP;
 /** Documentos lidos (no máximo) por seção quando o filtro de visibilidade é aplicado depois do índice. */
-export const VISIBLE_READ_CAP = 300;
+export const DEFAULT_VISIBLE_READ_CAP = 300;
+export const VISIBLE_READ_CAP = DEFAULT_VISIBLE_READ_CAP;
 export const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
 const ACTIVE = new Set<string>(ACTIVE_STATUSES);
@@ -159,7 +161,16 @@ export async function readAgendaDay(ctx: QueryCtx, organizationId: Id<"organizat
 }
 
 /** Pendências da equipe (as mesmas de `listPending`). `nowArg` é arredondado à hora aqui. */
-export async function readAgendaPending(ctx: QueryCtx, organizationId: Id<"organizations">, nowArg: number, reader: AgendaReader) {
+export async function readAgendaPending(
+  ctx: QueryCtx,
+  organizationId: Id<"organizations">,
+  nowArg: number,
+  reader: AgendaReader,
+  /** A REST passa tetos menores (plano Free); a tela e o Copiloto usam os padrões (`PENDING_CAP`/`VISIBLE_READ_CAP`). */
+  limits?: { perSection: number; readCap: number }
+) {
+    const PENDING_CAP = limits?.perSection ?? DEFAULT_PENDING_CAP;
+    const VISIBLE_READ_CAP = limits?.readCap ?? DEFAULT_VISIBLE_READ_CAP;
     const now = Math.floor(nowArg / HOUR_MS) * HOUR_MS;
     const own = await ownResourceIds(ctx, reader);
     const visible = (a: Doc<"schedAppointments">) => canSeeAppointment(reader, a, own);

@@ -6,7 +6,7 @@ HNBCRM: multi-tenant CRM where humans and AI agents work as one team. Backend **
 
 - `convex/` backend (≈200 modules; pure helpers in `convex/lib/`; tests `convex/**/*.test.ts`). See `convex/CLAUDE.md`.
 - `src/` frontend (`src/components/<area>/`, primitives in `src/components/ui/`, pure logic in `src/lib/`). See `src/CLAUDE.md`, `STYLE_GUIDE.md`.
-- `mcp-server/` MCP server (68 `crm_*` tools) over the REST API. `scripts/claude/` hook scripts + no-loss guard. `docs/` plans, status, architecture. `temp/` gitignored scratch.
+- `mcp-server/` MCP server (87 `crm_*`/`calendar_*` tools) over the REST API. `scripts/claude/` hook scripts + no-loss guard. `docs/` plans, status, architecture. `temp/` gitignored scratch.
 
 ## Commands
 

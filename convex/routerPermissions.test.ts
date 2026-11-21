@@ -195,6 +195,33 @@ describe("sanidade dos mapeamentos-chave", () => {
     }
   });
 
+  test("rotas da agenda v2 (/scheduling): categoria agenda; leitura view_own, escrita edit, andamento do fechamento view_all", () => {
+    const rotas = Object.keys(ROUTE_PERMISSIONS).filter((k) => k.includes("/api/v1/scheduling/"));
+    expect(rotas).toHaveLength(17);
+    for (const key of rotas) {
+      const esperado = key === "GET /api/v1/scheduling/closures/get" ? "view_all" : key.startsWith("GET ") ? "view_own" : "edit";
+      expect(ROUTE_PERMISSIONS[key], key).toEqual({ category: "agenda", level: esperado });
+    }
+    // sem `manage` na tabela: fechar a agenda inteira checa `manage` DENTRO do handler (e na internal)
+    const dia = AUTHENTICATED.find((r) => r.key === "POST /api/v1/scheduling/resources/day")!;
+    expect(dia.block).toContain('hasPermission(auth.permissions, "agenda", "manage")');
+    const reabrir = AUTHENTICATED.find((r) => r.key === "POST /api/v1/scheduling/resources/reopen")!;
+    expect(reabrir.block).toContain('hasPermission(auth.permissions, "agenda", "manage")');
+  });
+
+  test("escritas de agendamento só chamam as internal* da porta (nunca uma mutation pública nem escrita direta)", () => {
+    const rotas = AUTHENTICATED.filter((r) => r.path.startsWith("/api/v1/scheduling/"));
+    expect(rotas).toHaveLength(17);
+    for (const r of rotas) {
+      expect(r.block, r.key).not.toMatch(/\bapi\.scheduling/);
+      expect(r.block, r.key).not.toMatch(/ctx\.db\./);
+      for (const m of r.block.matchAll(/ctx\.run(?:Query|Mutation)\(\s*(internal|api)\.(\w+)\.(\w+)/g)) {
+        expect(m[1], r.key).toBe("internal");
+        expect(["schedulingRest", "schedulingMutations"], r.key).toContain(m[2]);
+      }
+    }
+  });
+
   test("authenticateApiKey completa a chave legada (sem agenda) antes de qualquer checagem", () => {
     const bloco = ROUTER_SOURCE.slice(ROUTER_SOURCE.indexOf("async function authenticateApiKey"));
     expect(bloco.slice(0, 1500)).toContain("completeLegacyPermissions(apiKeyRecord.permissions)");

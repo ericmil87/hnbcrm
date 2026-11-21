@@ -41,6 +41,9 @@ import { telegramWebhook } from "./telegramHttp";
 import { asaasWebhook } from "./billingHttp";
 import { clientIpKey } from "./lib/onboardingBudget";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
+import { IDEMPOTENCY_REUSED_MESSAGE } from "./lib/schedBookingOps";
+import { isoWithOffset } from "./lib/schedBookingEffects";
+import { apiAppointment, apiConfigDoc, apiConflict, cleanBodyText, isReadLimitError, parseWhen, restIdempotencyKey, type SchedAppointmentId, withTimes } from "./lib/schedRestView";
 
 /** Valores aceitos em `GET /api/v1/contacts?relation=`. */
 const CONTACT_RELATION_FILTERS: readonly string[] = [...CONTACT_RELATIONS, "none", "non_customer"];
@@ -73,7 +76,7 @@ http.route({
 const corsHeaders = {
   "Access-Control-Allow-Origin": process.env.ALLOWED_ORIGIN || "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-API-Key",
+  "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Idempotency-Key",
 };
 
 // Preflight handler
@@ -260,6 +263,26 @@ export const ROUTE_PERMISSIONS: Record<string, RouteAccess> = {
   "POST /api/v1/calendar/events/reschedule": { category: "agenda", level: "edit" }, // calendar.rescheduleEvent
   "POST /api/v1/calendar/events/complete": { category: "agenda", level: "edit" }, // calendar.completeEvent
   "POST /api/v1/calendar/events/cancel": { category: "agenda", level: "edit" }, // calendar.cancelEvent
+
+  // Agenda v2 — agendamentos (I1). Ler = view_own (a chave com view_own só enxerga o que a tela mostraria ao membro); escrever
+  // = edit (mesmos níveis das mutations de schedulingMutations.ts); fechar a agenda inteira exige manage DENTRO do handler.
+  "GET /api/v1/scheduling/services": { category: "agenda", level: "view_own" }, // schedulingConfig.getConfig (serviços ativos)
+  "GET /api/v1/scheduling/resources": { category: "agenda", level: "view_own" }, // schedulingConfig.getConfig (recursos ativos)
+  "GET /api/v1/scheduling/slots": { category: "agenda", level: "view_own" }, // scheduling.findSlots (equipe só com edit+)
+  "GET /api/v1/scheduling/appointments": { category: "agenda", level: "view_own" }, // scheduling.listAgendaAppointments
+  "GET /api/v1/scheduling/appointments/get": { category: "agenda", level: "view_own" }, // scheduling.getAppointment
+  "GET /api/v1/scheduling/pending": { category: "agenda", level: "view_own" }, // scheduling.listPending
+  "POST /api/v1/scheduling/appointments/preview": { category: "agenda", level: "edit" }, // schedulingMutations.previewBooking
+  "POST /api/v1/scheduling/appointments/book": { category: "agenda", level: "edit" }, // schedulingMutations.bookAppointment
+  "POST /api/v1/scheduling/appointments/reschedule": { category: "agenda", level: "edit" }, // schedulingMutations.rescheduleAppointment
+  "POST /api/v1/scheduling/appointments/cancel": { category: "agenda", level: "edit" }, // schedulingMutations.cancelAppointment
+  "POST /api/v1/scheduling/appointments/status": { category: "agenda", level: "edit" }, // schedulingMutations.setAppointmentStatus (+ recusar = cancelar)
+  "POST /api/v1/scheduling/appointments/undo-status": { category: "agenda", level: "edit" }, // schedulingMutations.undoAppointmentStatus
+  "POST /api/v1/scheduling/appointments/resources": { category: "agenda", level: "edit" }, // schedulingMutations.reassignResources
+  "POST /api/v1/scheduling/resources/day": { category: "agenda", level: "edit" }, // schedulingExceptions.setResourceClosure (sem recurso: manage no handler)
+  "POST /api/v1/scheduling/resources/reopen": { category: "agenda", level: "edit" }, // schedulingExceptions.removeResourceClosure (idem)
+  "GET /api/v1/scheduling/closures/get": { category: "agenda", level: "view_all" }, // schedulingExceptions.getClosureRun (view_all)
+  "POST /api/v1/scheduling/conflicts/resolve": { category: "agenda", level: "edit" }, // schedulingExceptions.resolveConflict
 
   // Preferências de notificação — convex/notificationPreferences.ts
   "GET /api/v1/notifications/preferences": "authenticated", // rota self-scoped (preferências do PRÓPRIO membro da key) — espelha requireAuth de notificationPreferences.getMyPreferences; team:view no app é só p/ ver preferências de OUTRO membro
@@ -3547,6 +3570,831 @@ http.route({
   }),
 });
 
+// ---- Agenda v2 (I1): agendamentos, horários livres, fechar recurso, conflitos ----
+// Handlers finos: chamam as `internal*` de `schedulingRest.ts` (leituras e fechamento) e de `schedulingMutations.ts`
+// (marcar, remarcar, cancelar, status…) com o ATOR = membro dono da chave (humano, `via: "rest"`, origem `api`).
+// Erro de regra (`sched_rules`) = 409 `{ error, code: "sched_rules", violations, alternatives }`; id malformado = 400;
+// inexistente/outra org/que a chave não enxerga = 404 (mesma resposta); sem permissão = 403; módulo desligado = 400
+// "Módulo não habilitado: Agenda" (o padrão de `assertModule` nas demais rotas). Datas de entrada e saída: ISO com offset,
+// `…Local` (AAAA-MM-DDTHH:mm no fuso da org) e `timezone`.
+
+const SCHED_ID_RE = /^[A-Za-z0-9;_-]{1,64}$/;
+const SCHED_STATUS_FILTERS = ["pending_approval", "scheduled", "confirmed", "checked_in", "completed", "no_show", "cancelled", "rescheduled"] as const;
+const SCHED_STATUS_TARGETS = ["scheduled", "confirmed", "checked_in", "completed", "no_show"] as const;
+
+/** Credenciais da chave para as `internal*` da agenda (membro dono + permissões da CHAVE). */
+function schedKey(auth: { organizationId: Id<"organizations">; teamMemberId: Id<"teamMembers">; permissions: Permissions }) {
+  return { organizationId: auth.organizationId, teamMemberId: auth.teamMemberId, permissions: auth.permissions };
+}
+/** Ator das escritas: o membro dono da chave com as permissões EFETIVAS da chave (o mesmo modelo das leituras e do calendário). */
+function schedActor(auth: { teamMemberId: Id<"teamMembers">; permissions: Permissions }) {
+  return { type: "human" as const, memberId: auth.teamMemberId, via: "rest" as const, permissions: auth.permissions };
+}
+
+function schedId<T extends string>(value: unknown): T | null {
+  return typeof value === "string" && SCHED_ID_RE.test(value) ? (value as T) : null;
+}
+/** `undefined` = ausente; `null` = inválida; senão a lista (teto 10). */
+function schedIdList<T extends string>(value: unknown): T[] | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length > 10) return null;
+  const out: T[] = [];
+  for (const item of value) {
+    const id = schedId<T>(item);
+    if (id === null) return null;
+    out.push(id);
+  }
+  return out;
+}
+function schedStringList(value: unknown): string[] | null | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!Array.isArray(value) || value.length > 10) return null;
+  return value.every((x) => typeof x === "string" && x.length > 0 && x.length <= 40) ? (value as string[]) : null;
+}
+
+async function schedBody(request: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const body: unknown = await request.json();
+    return body !== null && typeof body === "object" && !Array.isArray(body) ? (body as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function schedViolations(violations: Array<{ code: string; severity: string; message: string }>) {
+  return violations.map((v) => ({ code: v.code, severity: v.severity, message: v.message }));
+}
+
+/** 409 de regra: corpo estruturado; `alternatives` no formato `Slot` (com ISO e hora local). */
+async function schedRulesResponse(
+  ctx: any,
+  organizationId: Id<"organizations"> | undefined,
+  violations: Array<{ code: string; severity: string; message: string }>,
+  alternatives: Array<{ startTime: number; endTime: number }>
+): Promise<Response> {
+  const tz = organizationId ? await ctx.runQuery(internal.schedulingRest.internalTimezone, { organizationId }) : "";
+  const decorated = tz ? alternatives.map((s) => withTimes(s, tz)) : alternatives;
+  const body = {
+    error: violations[0]?.message ?? "As regras da agenda impediram esta operação.",
+    code: "sched_rules",
+    violations: schedViolations(violations),
+    alternatives: decorated,
+  };
+  return new Response(JSON.stringify(body), { status: 409, headers: { "Content-Type": "application/json", ...corsHeaders } });
+}
+
+/** Dados de um `ConvexError({ code: "sched_rules", … })`, mesmo quando chega serializado. */
+function schedRulesData(error: unknown): { violations: any[]; alternatives: any[] } | null {
+  const tryParse = (text: string): unknown => {
+    const at = text.indexOf("{");
+    if (at === -1) return undefined;
+    try {
+      return JSON.parse(text.slice(at).split("\n")[0]);
+    } catch {
+      return undefined;
+    }
+  };
+  const candidates: unknown[] = [];
+  if (error instanceof ConvexError) candidates.push(error.data);
+  if (error instanceof Error) candidates.push(error.message);
+  for (const c of candidates) {
+    const data = typeof c === "string" ? tryParse(c) : c;
+    if (typeof data !== "object" || data === null) continue;
+    const d = data as { code?: unknown; violations?: unknown; alternatives?: unknown };
+    if (d.code !== "sched_rules") continue;
+    return { violations: Array.isArray(d.violations) ? d.violations : [], alternatives: Array.isArray(d.alternatives) ? d.alternatives : [] };
+  }
+  return null;
+}
+
+/** Erros da agenda: regra = 409; chave de idempotência reusada = 409; "não encontrado" = 404; o resto como `startConversationError`. */
+async function schedError(ctx: any, organizationId: Id<"organizations"> | undefined, error: unknown): Promise<Response> {
+  const rules = schedRulesData(error);
+  if (rules) return await schedRulesResponse(ctx, organizationId, rules.violations, rules.alternatives);
+  const raw = plainErrorMessage(error);
+  if (raw.startsWith(IDEMPOTENCY_REUSED_MESSAGE)) {
+    return new Response(JSON.stringify({ error: raw, code: "idempotency_key_reused" }), {
+      status: 409,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
+  }
+  if (/não encontrad[oa]$/i.test(raw)) return errorResponse(raw, 404);
+  if (raw.includes("O ator humano precisa ser um membro humano")) {
+    return errorResponse("Chaves de agentes de IA só leem a agenda por esta API", 403);
+  }
+  if (isReadLimitError(raw)) return errorResponse("A consulta ficou grande demais: restrinja a janela de datas ou os recursos.", 400);
+  return startConversationError(error);
+}
+
+/** Entrada de data da escrita: `startsAt` | `startsAtLocal` | `startTime`; o fuso da org converte a hora local. */
+async function schedWhen(ctx: any, organizationId: Id<"organizations">, body: Record<string, unknown>): Promise<{ startTime: number } | Response> {
+  const tz: string = await ctx.runQuery(internal.schedulingRest.internalTimezone, { organizationId });
+  const when = parseWhen({ startsAt: body.startsAt, startsAtLocal: body.startsAtLocal, startTime: body.startTime }, tz);
+  return when.ok ? { startTime: when.startTime } : errorResponse(when.error, 400);
+}
+
+function schedIdemKey(request: Request, body: Record<string, unknown>) {
+  return restIdempotencyKey(request.headers.get("Idempotency-Key") ?? body.requestId);
+}
+
+/** Campos comuns de prévia e criação. Devolve a `Response` 400 quando algo é inválido. */
+async function schedBookParts(ctx: any, organizationId: Id<"organizations">, body: Record<string, unknown>) {
+  const serviceId = schedId<Id<"schedServices">>(body.serviceId);
+  if (!serviceId) return errorResponse("serviceId inválido ou ausente", 400);
+  const when = await schedWhen(ctx, organizationId, body);
+  if (when instanceof Response) return when;
+  const optional = (name: string) => (body[name] === undefined || body[name] === null ? undefined : schedId<string>(body[name]));
+  const contactId = optional("contactId");
+  const leadId = optional("leadId");
+  const conversationId = optional("conversationId");
+  if (contactId === null) return errorResponse("contactId inválido", 400);
+  if (leadId === null) return errorResponse("leadId inválido", 400);
+  if (conversationId === null) return errorResponse("conversationId inválido", 400);
+  const resourceIds = schedIdList<Id<"schedResources">>(body.resourceIds);
+  if (resourceIds === null) return errorResponse("resourceIds inválido (lista de até 10 ids)", 400);
+  const force = schedStringList(body.force);
+  if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
+  if (body.variantKey !== undefined && typeof body.variantKey !== "string") return errorResponse("variantKey inválido", 400);
+  const notes = cleanBodyText(body.notes, 500);
+  return {
+    serviceId,
+    startTime: when.startTime,
+    ...(typeof body.variantKey === "string" ? { variantKey: body.variantKey } : {}),
+    ...(contactId ? { contactId: contactId as Id<"contacts"> } : {}),
+    ...(leadId ? { leadId: leadId as Id<"leads"> } : {}),
+    ...(conversationId ? { conversationId: conversationId as Id<"conversations"> } : {}),
+    ...(resourceIds ? { resourceIds } : {}),
+    ...(force ? { force } : {}),
+    ...(notes ? { notes } : {}),
+  };
+}
+
+/** Resultado achatado de uma porta de reserva: `ok:false` = 409 de regra. */
+async function schedOutcome(
+  ctx: any,
+  organizationId: Id<"organizations">,
+  result: { ok: boolean; violations: any[]; alternatives: any[] },
+  onOk: () => Response
+): Promise<Response> {
+  if (!result.ok) return await schedRulesResponse(ctx, organizationId, result.violations, result.alternatives);
+  return onOk();
+}
+
+function schedBookedBody(result: { appointmentId?: string; status?: string; created: boolean; duplicate: boolean; inConflict: boolean; warnings: any[] }) {
+  return {
+    success: true,
+    appointmentId: result.appointmentId,
+    status: result.status,
+    created: result.created,
+    duplicate: result.duplicate,
+    inConflict: result.inConflict,
+    warnings: schedViolations(result.warnings),
+  };
+}
+
+// Serviços ativos
+http.route({
+  path: "/api/v1/scheduling/services",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/services");
+      if (denied) return denied;
+      const catalog = await ctx.runQuery(internal.schedulingRest.internalCatalog, schedKey(auth));
+      return jsonResponse({
+        timezone: catalog.timezone,
+        services: catalog.services.map((s: Record<string, unknown>) => apiConfigDoc(s)),
+      });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Recursos ativos (pessoa, sala, equipamento)
+http.route({
+  path: "/api/v1/scheduling/resources",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/resources");
+      if (denied) return denied;
+      const catalog = await ctx.runQuery(internal.schedulingRest.internalCatalog, schedKey(auth));
+      return jsonResponse({
+        timezone: catalog.timezone,
+        resources: catalog.resources.map((r: Record<string, unknown>) => apiConfigDoc(r)),
+      });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Horários livres (serviceId + from [+ to, até 7 dias], period, resourceIds, partySize, rescheduleAppointmentId)
+http.route({
+  path: "/api/v1/scheduling/slots",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/slots");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const serviceId = schedId<Id<"schedServices">>(url.searchParams.get("serviceId"));
+      if (!serviceId) return errorResponse("serviceId inválido ou ausente", 400);
+      const from = url.searchParams.get("from");
+      if (!from) return errorResponse("from required (AAAA-MM-DD)", 400);
+      const to = url.searchParams.get("to") || undefined;
+      const period = url.searchParams.get("period") || undefined;
+      if (period !== undefined && !["manha", "tarde", "noite", "qualquer"].includes(period)) {
+        return errorResponse("period deve ser manha, tarde, noite ou qualquer", 400);
+      }
+      const rawResources = url.searchParams.get("resourceIds");
+      const resourceIds = rawResources ? rawResources.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      if (resourceIds.length > 10 || resourceIds.some((id) => !schedId(id))) return errorResponse("resourceIds inválido", 400);
+      const rescheduleRaw = url.searchParams.get("rescheduleAppointmentId");
+      const rescheduleAppointmentId = rescheduleRaw ? schedId<SchedAppointmentId>(rescheduleRaw) : undefined;
+      if (rescheduleRaw && !rescheduleAppointmentId) return errorResponse("rescheduleAppointmentId inválido", 400);
+      const partySize = numParam(url.searchParams.get("partySize"));
+      const limit = numParam(url.searchParams.get("limit"));
+      if (Number.isNaN(partySize) || Number.isNaN(limit)) return errorResponse("partySize e limit devem ser números", 400);
+      const result = await ctx.runQuery(internal.schedulingRest.internalFindSlots, {
+        ...schedKey(auth),
+        serviceId,
+        fromLocalDate: from,
+        ...(to ? { toLocalDate: to } : {}),
+        ...(url.searchParams.get("variantKey") ? { variantKey: url.searchParams.get("variantKey") as string } : {}),
+        ...(period ? { period: period as "manha" | "tarde" | "noite" | "qualquer" } : {}),
+        ...(resourceIds.length > 0 ? { resourceIds: resourceIds as Id<"schedResources">[] } : {}),
+        ...(rescheduleAppointmentId ? { rescheduleAppointmentId } : {}),
+        ...(partySize !== undefined ? { partySize } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        now: Math.floor(Date.now() / 60_000) * 60_000,
+      });
+      const tz = result.timezone;
+      return jsonResponse({
+        ...result,
+        slots: result.slots.map((s: { startTime: number; endTime: number }) => withTimes(s, tz)),
+        ...(result.firstPossible ? { firstPossible: withTimes(result.firstPossible, tz) } : {}),
+        earliestBookableAtIso: isoWithOffset(result.earliestBookableAt, tz),
+      });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Agendamentos por intervalo de datas locais (paginação por cursor)
+http.route({
+  path: "/api/v1/scheduling/appointments",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/appointments");
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const from = url.searchParams.get("from");
+      const to = url.searchParams.get("to") || from;
+      if (!from || !to) return errorResponse("from required (AAAA-MM-DD); to opcional (padrão = from)", 400);
+      const status = url.searchParams.get("status") || undefined;
+      if (status !== undefined && !(SCHED_STATUS_FILTERS as readonly string[]).includes(status)) return errorResponse("status inválido", 400);
+      const limit = numParam(url.searchParams.get("limit"));
+      if (Number.isNaN(limit)) return errorResponse("limit must be a number", 400);
+      const page = await ctx.runQuery(internal.schedulingRest.internalListAppointments, {
+        ...schedKey(auth),
+        fromLocalDate: from,
+        toLocalDate: to,
+        ...(status ? { status: status as (typeof SCHED_STATUS_FILTERS)[number] } : {}),
+        ...(limit !== undefined ? { limit } : {}),
+        ...(url.searchParams.get("cursor") ? { cursor: url.searchParams.get("cursor") as string } : {}),
+      });
+      return jsonResponse({
+        timezone: page.timezone,
+        appointments: page.appointments.map((a: any) => apiAppointment(a, page.timezone)),
+        hasMore: page.hasMore,
+        nextCursor: page.nextCursor,
+      });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Um agendamento (id na query string)
+http.route({
+  path: "/api/v1/scheduling/appointments/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/appointments/get");
+      if (denied) return denied;
+      const appointmentId = schedId<SchedAppointmentId>(new URL(request.url).searchParams.get("id"));
+      if (!appointmentId) return errorResponse("id inválido ou ausente", 400);
+      const found = await ctx.runQuery(internal.schedulingRest.internalGetAppointment, { ...schedKey(auth), appointmentId });
+      if (!found) return errorResponse("Agendamento não encontrado", 404);
+      const { detail, timezone } = found;
+      return jsonResponse({
+        appointment: apiAppointment(detail.appointment as any, timezone),
+        openConflicts: detail.openConflicts,
+        canEdit: detail.canEdit,
+        createdByName: detail.createdByName,
+        statusActors: detail.statusActors,
+      });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Pendências: aprovações, conflitos, sem desfecho e sugestões (as sugestões só para `view_all`+)
+http.route({
+  path: "/api/v1/scheduling/pending",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/pending");
+      if (denied) return denied;
+      const limit = numParam(new URL(request.url).searchParams.get("limit"));
+      if (Number.isNaN(limit)) return errorResponse("limit must be a number", 400);
+      const { pending, timezone } = await ctx.runQuery(internal.schedulingRest.internalListPending, {
+        ...schedKey(auth),
+        ...(limit !== undefined ? { limit } : {}),
+        now: Math.floor(Date.now() / 3_600_000) * 3_600_000,
+      });
+      const rows = (list: any[]) => list.map((a) => apiAppointment(a, timezone));
+      return jsonResponse({
+        timezone,
+        approvals: rows(pending.approvals),
+        conflicts: pending.conflicts.map((c: any) => apiConflict(c, timezone)),
+        noOutcome: rows(pending.noOutcome),
+        suggestions: pending.suggestions,
+        capped: pending.capped,
+      });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Prévia de marcar (ou de remarcar, com rescheduleAppointmentId): não grava nada
+http.route({
+  path: "/api/v1/scheduling/appointments/preview",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/preview");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const parts = await schedBookParts(ctx, auth.organizationId, body);
+      if (parts instanceof Response) return parts;
+      const rescheduleRaw = body.rescheduleAppointmentId;
+      const rescheduleAppointmentId = rescheduleRaw === undefined || rescheduleRaw === null ? undefined : schedId<SchedAppointmentId>(rescheduleRaw);
+      if (rescheduleAppointmentId === null) return errorResponse("rescheduleAppointmentId inválido", 400);
+      const result = await ctx.runMutation(internal.schedulingMutations.internalBookAppointment, {
+        organizationId: auth.organizationId,
+        ...parts,
+        actor: schedActor(auth),
+        origin: "api",
+        mode: "preview",
+        ...(rescheduleAppointmentId ? { rescheduleAppointmentId } : {}),
+      });
+      return await schedOutcome(ctx, auth.organizationId, result, () =>
+        jsonResponse({ preview: true, plan: result.plan, warnings: schedViolations(result.warnings), ...(result.duplicateOf ? { duplicateOf: result.duplicateOf } : {}) })
+      );
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Marcar. `Idempotency-Key` (cabeçalho) ou `requestId` (corpo) OBRIGATÓRIO: mesma chave = mesmo agendamento
+http.route({
+  path: "/api/v1/scheduling/appointments/book",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/book");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const key = schedIdemKey(request, body);
+      if (!key.ok) return errorResponse(key.error, 400);
+      const parts = await schedBookParts(ctx, auth.organizationId, body);
+      if (parts instanceof Response) return parts;
+      // Grupo (pessoa principal + 1 a 3 acompanhantes, tudo ou nada): mesma porta de grupo da tela, idempotente por grupo.
+      if (body.companions !== undefined) {
+        const list = body.companions;
+        if (!Array.isArray(list) || list.length < 1 || list.length > 3) return errorResponse("companions deve ter de 1 a 3 acompanhantes", 400);
+        const companions: Array<{ guestName: string; resourceIds?: Id<"schedResources">[] }> = [];
+        for (const c of list) {
+          const name = c && typeof c === "object" ? cleanBodyText((c as Record<string, unknown>).guestName, 80) : undefined;
+          const ids = c && typeof c === "object" ? schedIdList<Id<"schedResources">>((c as Record<string, unknown>).resourceIds) : undefined;
+          if (!name) return errorResponse("cada acompanhante precisa de guestName", 400);
+          if (ids === null) return errorResponse("resourceIds do acompanhante inválido", 400);
+          companions.push({ guestName: name, ...(ids ? { resourceIds: ids } : {}) });
+        }
+        const party = await ctx.runMutation(internal.schedulingMutations.internalBookParty, {
+          organizationId: auth.organizationId,
+          ...parts,
+          companions,
+          actor: schedActor(auth),
+          origin: "api",
+          idempotencyKey: key.key,
+        });
+        return await schedOutcome(ctx, auth.organizationId, party, () =>
+          jsonResponse(
+            { success: true, appointmentId: party.appointmentIds[0], appointmentIds: party.appointmentIds, created: !party.duplicate, duplicate: party.duplicate, partySize: party.appointmentIds.length },
+            party.duplicate ? 200 : 201
+          )
+        );
+      }
+      const result = await ctx.runMutation(internal.schedulingMutations.internalBookAppointment, {
+        organizationId: auth.organizationId,
+        ...parts,
+        actor: schedActor(auth),
+        origin: "api",
+        mode: "commit",
+        idempotencyKey: key.key,
+      });
+      return await schedOutcome(ctx, auth.organizationId, result, () => jsonResponse(schedBookedBody(result), result.created ? 201 : 200));
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Remarcar (novo agendamento + o antigo `rescheduled`, na mesma transação). `Idempotency-Key`/`requestId` opcional
+http.route({
+  path: "/api/v1/scheduling/appointments/reschedule",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/reschedule");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const appointmentId = schedId<SchedAppointmentId>(body.appointmentId);
+      if (!appointmentId) return errorResponse("appointmentId inválido ou ausente", 400);
+      const when = await schedWhen(ctx, auth.organizationId, body);
+      if (when instanceof Response) return when;
+      const resourceIds = schedIdList<Id<"schedResources">>(body.resourceIds);
+      if (resourceIds === null) return errorResponse("resourceIds inválido (lista de até 10 ids)", 400);
+      const force = schedStringList(body.force);
+      if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
+      const rawKey = request.headers.get("Idempotency-Key") ?? body.requestId;
+      const key = rawKey === undefined || rawKey === null ? undefined : schedIdemKey(request, body);
+      if (key && !key.ok) return errorResponse(key.error, 400);
+      const result = await ctx.runMutation(internal.schedulingMutations.internalRescheduleAppointment, {
+        organizationId: auth.organizationId,
+        appointmentId,
+        actor: schedActor(auth),
+        startTime: when.startTime,
+        ...(resourceIds ? { resourceIds } : {}),
+        ...(force ? { force } : {}),
+        ...(key && key.ok ? { idempotencyKey: key.key } : {}),
+      });
+      return await schedOutcome(ctx, auth.organizationId, result, () => jsonResponse(schedBookedBody(result)));
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Cancelar (`cancelledBy`: staff (padrão) ou client)
+http.route({
+  path: "/api/v1/scheduling/appointments/cancel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/cancel");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const appointmentId = schedId<SchedAppointmentId>(body.appointmentId);
+      if (!appointmentId) return errorResponse("appointmentId inválido ou ausente", 400);
+      if (body.cancelledBy !== undefined && body.cancelledBy !== "staff" && body.cancelledBy !== "client") {
+        return errorResponse("cancelledBy deve ser staff ou client", 400);
+      }
+      const result = await ctx.runMutation(internal.schedulingMutations.internalCancelAppointment, {
+        organizationId: auth.organizationId,
+        appointmentId,
+        actor: schedActor(auth),
+        byClass: body.cancelledBy === "client" ? "client" : "staff",
+        ...(cleanBodyText(body.reason, 200) ? { reason: cleanBodyText(body.reason, 200) } : {}),
+      });
+      return jsonResponse({ success: true, lateCancel: result.lateCancel });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Mudar status: to = scheduled (aprovar) | confirmed | checked_in | completed | no_show. `action: "reject"` recusa (cancela)
+http.route({
+  path: "/api/v1/scheduling/appointments/status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/status");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const appointmentId = schedId<SchedAppointmentId>(body.appointmentId);
+      if (!appointmentId) return errorResponse("appointmentId inválido ou ausente", 400);
+      if (body.action === "reject") {
+        const cancelled = await ctx.runMutation(internal.schedulingMutations.internalCancelAppointment, {
+          organizationId: auth.organizationId,
+          appointmentId,
+          actor: schedActor(auth),
+          byClass: "staff",
+          // recusar só vale para proposta pendente: outro status = erro claro (use /appointments/cancel)
+          expectStatus: "pending_approval",
+          ...(cleanBodyText(body.reason, 200) ? { reason: cleanBodyText(body.reason, 200) } : {}),
+        });
+        return jsonResponse({ success: true, lateCancel: cancelled.lateCancel });
+      }
+      const to = body.action === "approve" ? "scheduled" : body.to;
+      if (typeof to !== "string" || !(SCHED_STATUS_TARGETS as readonly string[]).includes(to)) {
+        return errorResponse("to deve ser scheduled, confirmed, checked_in, completed ou no_show (ou action: approve | reject)", 400);
+      }
+      await ctx.runMutation(internal.schedulingMutations.internalSetAppointmentStatus, {
+        organizationId: auth.organizationId,
+        appointmentId,
+        actor: schedActor(auth),
+        to: to as (typeof SCHED_STATUS_TARGETS)[number],
+      });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Desfazer a última mudança de status
+http.route({
+  path: "/api/v1/scheduling/appointments/undo-status",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/undo-status");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const appointmentId = schedId<SchedAppointmentId>(body.appointmentId);
+      if (!appointmentId) return errorResponse("appointmentId inválido ou ausente", 400);
+      const result = await ctx.runMutation(internal.schedulingMutations.internalUndoAppointmentStatus, {
+        organizationId: auth.organizationId,
+        appointmentId,
+        actor: schedActor(auth),
+      });
+      return await schedOutcome(ctx, auth.organizationId, result, () => jsonResponse({ success: true, restoredTo: result.restoredTo }));
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Trocar sala/profissional/equipamento (mesmas regras de capacidade de marcar)
+http.route({
+  path: "/api/v1/scheduling/appointments/resources",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/appointments/resources");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const appointmentId = schedId<SchedAppointmentId>(body.appointmentId);
+      if (!appointmentId) return errorResponse("appointmentId inválido ou ausente", 400);
+      const resourceIds = schedIdList<Id<"schedResources">>(body.resourceIds);
+      if (!resourceIds || resourceIds.length === 0) return errorResponse("resourceIds inválido ou ausente", 400);
+      const force = schedStringList(body.force);
+      if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
+      const result = await ctx.runMutation(internal.schedulingMutations.internalReassignResources, {
+        organizationId: auth.organizationId,
+        appointmentId,
+        actor: schedActor(auth),
+        resourceIds,
+        ...(force ? { force } : {}),
+      });
+      return await schedOutcome(ctx, auth.organizationId, result, () => jsonResponse(schedBookedBody(result)));
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+/** Campos comuns de fechar/reabrir recurso (escopo, datas, aceite). `Response` 400 quando inválido. */
+function schedClosureParts(body: Record<string, unknown>) {
+  const resourceId = body.resourceId === undefined || body.resourceId === null ? undefined : schedId<Id<"schedResources">>(body.resourceId);
+  if (resourceId === null) return errorResponse("resourceId inválido", 400);
+  const kinds = ["room", "person", "equipment"];
+  if (body.resourceKind !== undefined && !kinds.includes(body.resourceKind as string)) return errorResponse("resourceKind deve ser room, person ou equipment", 400);
+  if (typeof body.fromLocalDate !== "string") return errorResponse("fromLocalDate required (AAAA-MM-DD)", 400);
+  if (body.toLocalDate !== undefined && typeof body.toLocalDate !== "string") return errorResponse("toLocalDate inválido", 400);
+  const mode = body.mode === undefined ? "preview" : body.mode;
+  if (mode !== "preview" && mode !== "commit") return errorResponse("mode deve ser preview (padrão) ou commit", 400);
+  if (body.acceptAffected !== undefined && typeof body.acceptAffected !== "boolean") return errorResponse("acceptAffected deve ser booleano", 400);
+  if (body.expectedAffected !== undefined && !isFiniteNumber(body.expectedAffected)) return errorResponse("expectedAffected deve ser número", 400);
+  const exceptionKinds = ["closed", "custom", "extra", "block"];
+  if (body.kind !== undefined && !exceptionKinds.includes(body.kind as string)) return errorResponse("kind deve ser closed, custom, extra ou block", 400);
+  return {
+    ...(resourceId ? { resourceId } : {}),
+    ...(body.resourceKind !== undefined ? { resourceKind: body.resourceKind as "room" | "person" | "equipment" } : {}),
+    fromLocalDate: body.fromLocalDate,
+    ...(typeof body.toLocalDate === "string" ? { toLocalDate: body.toLocalDate } : {}),
+    ...(body.kind !== undefined ? { kind: body.kind as "closed" | "custom" | "extra" | "block" } : {}),
+    mode: mode as "preview" | "commit",
+    ...(body.acceptAffected !== undefined ? { acceptAffected: body.acceptAffected as boolean } : {}),
+    ...(body.expectedAffected !== undefined ? { expectedAffected: body.expectedAffected as number } : {}),
+  };
+}
+
+/** Linhas do fechamento com ISO e hora local (nunca nome além do que a tela mostra à equipe). */
+function schedClosureBody(result: { items: Array<{ startTime: number }> }, tz: string) {
+  return { ...result, items: result.items.map((i) => withTimes(i, tz)) };
+}
+
+// Fechar recurso/dia (ou horário especial, extra, bloqueio). `mode: "preview"` (padrão) não grava; `commit` com
+// `expectedAffected` (a contagem da prévia) e `acceptAffected`. Sem `resourceId` (agenda inteira ou tipo) exige `manage`.
+http.route({
+  path: "/api/v1/scheduling/resources/day",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/resources/day");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const parts = schedClosureParts(body);
+      if (parts instanceof Response) return parts;
+      if (parts.resourceId === undefined && !hasPermission(auth.permissions, "agenda", "manage")) {
+        return errorResponse(PERMISSION_DENIED_MESSAGE, 403);
+      }
+      const reasonCodes = ["no_staff", "maintenance", "day_off", "holiday", "other"];
+      if (body.reasonCode !== undefined && !reasonCodes.includes(body.reasonCode as string)) return errorResponse("reasonCode inválido", 400);
+      const intervals = Array.isArray(body.intervals) ? body.intervals : undefined;
+      if (body.intervals !== undefined && (!intervals || intervals.length > 6 || !intervals.every((i: any) => i && isFiniteNumber(i.startMin) && isFiniteNumber(i.endMin)))) {
+        return errorResponse("intervals inválido (até 6 itens { startMin, endMin })", 400);
+      }
+      const result = await ctx.runMutation(internal.schedulingRest.internalSetResourceDay, {
+        ...schedKey(auth),
+        ...parts,
+        ...(intervals ? { intervals: intervals.map((i: any) => ({ startMin: i.startMin, endMin: i.endMin })) } : {}),
+        ...(body.reasonCode !== undefined ? { reasonCode: body.reasonCode as "no_staff" | "maintenance" | "day_off" | "holiday" | "other" } : {}),
+        ...(cleanBodyText(body.reason, 120) ? { reason: cleanBodyText(body.reason, 120) } : {}),
+      });
+      const tz: string = await ctx.runQuery(internal.schedulingRest.internalTimezone, { organizationId: auth.organizationId });
+      return jsonResponse(schedClosureBody(result, tz));
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Reabrir recurso/dia (remove as exceções manuais do tipo pedido; não desfaz realocações). Mesma prévia e mesmo `manage`
+http.route({
+  path: "/api/v1/scheduling/resources/reopen",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/resources/reopen");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const parts = schedClosureParts(body);
+      if (parts instanceof Response) return parts;
+      if (parts.resourceId === undefined && !hasPermission(auth.permissions, "agenda", "manage")) {
+        return errorResponse(PERMISSION_DENIED_MESSAGE, 403);
+      }
+      const result = await ctx.runMutation(internal.schedulingRest.internalReopenResourceDay, { ...schedKey(auth), ...parts });
+      const tz: string = await ctx.runQuery(internal.schedulingRest.internalTimezone, { organizationId: auth.organizationId });
+      return jsonResponse(schedClosureBody(result, tz));
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Andamento de um fechamento em lotes (`runId` devolvido por resources/day)
+http.route({
+  path: "/api/v1/scheduling/closures/get",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/closures/get");
+      if (denied) return denied;
+      const runId = schedId<Id<"schedClosureRuns">>(new URL(request.url).searchParams.get("runId"));
+      if (!runId) return errorResponse("runId inválido ou ausente", 400);
+      const run = await ctx.runQuery(internal.schedulingRest.internalGetClosureRun, { ...schedKey(auth), runId });
+      if (!run) return errorResponse("Fechamento não encontrado", 404);
+      return jsonResponse({ run });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
+// Resolver conflito: action = { type: "resource", resourceIds } | { type: "reschedule", startsAt|startsAtLocal|startTime, resourceIds? }
+// | { type: "cancel", reason? } | { type: "manual", note? }
+http.route({
+  path: "/api/v1/scheduling/conflicts/resolve",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let orgId: Id<"organizations"> | undefined;
+    try {
+      const auth = await authenticateApiKey(ctx, request);
+      orgId = auth.organizationId;
+      const denied = requireRoutePermission(auth, "POST", "/api/v1/scheduling/conflicts/resolve");
+      if (denied) return denied;
+      const body = await schedBody(request);
+      if (!body) return errorResponse("Corpo JSON inválido", 400);
+      const conflictId = schedId<Id<"schedConflicts">>(body.conflictId);
+      if (!conflictId) return errorResponse("conflictId inválido ou ausente", 400);
+      const raw = body.action;
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return errorResponse("action required", 400);
+      const act = raw as Record<string, unknown>;
+      const resourceIds = schedIdList<Id<"schedResources">>(act.resourceIds);
+      if (resourceIds === null) return errorResponse("resourceIds inválido (lista de até 10 ids)", 400);
+      const force = schedStringList(act.force);
+      if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
+      let action:
+        | { type: "resource"; resourceIds: Id<"schedResources">[]; force?: string[] }
+        | { type: "reschedule"; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[] }
+        | { type: "cancel"; reason?: string }
+        | { type: "manual"; note?: string };
+      if (act.type === "resource") {
+        if (!resourceIds || resourceIds.length === 0) return errorResponse("action.resourceIds required", 400);
+        action = { type: "resource", resourceIds, ...(force ? { force } : {}) };
+      } else if (act.type === "reschedule") {
+        const when = await schedWhen(ctx, auth.organizationId, act);
+        if (when instanceof Response) return when;
+        action = { type: "reschedule", startTime: when.startTime, ...(resourceIds ? { resourceIds } : {}), ...(force ? { force } : {}) };
+      } else if (act.type === "cancel") {
+        const reason = cleanBodyText(act.reason, 200);
+        action = { type: "cancel", ...(reason ? { reason } : {}) };
+      } else if (act.type === "manual") {
+        const note = cleanBodyText(act.note, 200);
+        action = { type: "manual", ...(note ? { note } : {}) };
+      } else {
+        return errorResponse("action.type deve ser resource, reschedule, cancel ou manual", 400);
+      }
+      await ctx.runMutation(internal.schedulingRest.internalResolveConflict, { ...schedKey(auth), conflictId, action });
+      return jsonResponse({ success: true });
+    } catch (error) {
+      return await schedError(ctx, orgId, error);
+    }
+  }),
+});
+
 // ---- Notification Preferences Endpoints ----
 
 http.route({
@@ -4634,6 +5482,23 @@ http.route({ path: "/api/v1/calendar/events/delete", method: "OPTIONS", handler:
 http.route({ path: "/api/v1/calendar/events/reschedule", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/calendar/events/complete", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/calendar/events/cancel", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/services", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/resources", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/slots", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/pending", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/preview", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/book", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/reschedule", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/cancel", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/status", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/undo-status", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/appointments/resources", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/resources/day", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/resources/reopen", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/closures/get", method: "OPTIONS", handler: optionsHandler });
+http.route({ path: "/api/v1/scheduling/conflicts/resolve", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/upload-url", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files", method: "OPTIONS", handler: optionsHandler });
 http.route({ path: "/api/v1/files/:id/url", method: "OPTIONS", handler: optionsHandler });
