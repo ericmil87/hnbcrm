@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { addDays, startOfWeek } from "@/lib/agendaDates";
 import { Button } from "../ui/Button";
 import { CalendarFilters } from "./CalendarFilters";
 import { MONTHS_LONG, WEEKDAYS_LONG } from "./constants";
@@ -45,13 +46,8 @@ export function CalendarHeader({
     }
 
     if (view === "week") {
-      // Get week start (Monday) and end (Sunday)
-      const dayOfWeek = currentDate.getDay();
-      const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-      const weekStart = new Date(currentDate);
-      weekStart.setDate(currentDate.getDate() - diff);
-      const weekEnd = new Date(weekStart);
-      weekEnd.setDate(weekStart.getDate() + 6);
+      const weekStart = startOfWeek(currentDate);
+      const weekEnd = addDays(weekStart, 6);
 
       const startDay = weekStart.getDate();
       const endDay = weekEnd.getDate();
@@ -79,7 +75,7 @@ export function CalendarHeader({
           <button
             onClick={() => onViewChange("day")}
             className={cn(
-              "px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] md:min-w-[60px]",
+              "px-3 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] min-h-[44px] md:min-w-[60px]",
               view === "day"
                 ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:text-text-primary"
@@ -90,7 +86,7 @@ export function CalendarHeader({
           <button
             onClick={() => onViewChange("week")}
             className={cn(
-              "px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] md:min-w-[60px]",
+              "px-3 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] min-h-[44px] md:min-w-[60px]",
               view === "week"
                 ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:text-text-primary"
@@ -101,7 +97,7 @@ export function CalendarHeader({
           <button
             onClick={() => onViewChange("month")}
             className={cn(
-              "px-2 py-1 md:px-3 md:py-1.5 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] md:min-w-[60px]",
+              "px-3 rounded-full text-xs md:text-sm font-medium transition-colors min-w-[48px] min-h-[44px] md:min-w-[60px]",
               view === "month"
                 ? "bg-brand-600 text-white"
                 : "text-text-secondary hover:text-text-primary"
@@ -113,7 +109,7 @@ export function CalendarHeader({
 
         {/* Right side: Hoje + Filters + Create */}
         <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={onGoToToday} className="px-2 md:px-3">
+          <Button variant="secondary" size="sm" onClick={onGoToToday} className="px-2 md:px-3 min-h-[44px]">
             Hoje
           </Button>
           <CalendarFilters
@@ -125,7 +121,7 @@ export function CalendarHeader({
           />
           <Button onClick={onCreateEvent} size="sm" className="hidden md:flex">
             <Plus size={16} />
-            Novo Evento
+            Novo evento
           </Button>
         </div>
       </div>
@@ -134,7 +130,7 @@ export function CalendarHeader({
       <div className="flex items-center justify-center gap-2">
         <button
           onClick={onNavigatePrev}
-          className="p-1.5 md:p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-w-[36px] min-h-[36px] md:min-w-[44px] md:min-h-[44px] flex items-center justify-center"
+          className="p-1.5 md:p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
           aria-label="Anterior"
         >
           <ChevronLeft size={20} />
@@ -148,7 +144,7 @@ export function CalendarHeader({
 
         <button
           onClick={onNavigateNext}
-          className="p-1.5 md:p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-w-[36px] min-h-[36px] md:min-w-[44px] md:min-h-[44px] flex items-center justify-center"
+          className="p-1.5 md:p-2 rounded-full text-text-secondary hover:text-text-primary hover:bg-surface-overlay transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
           aria-label="Próximo"
         >
           <ChevronRight size={20} />

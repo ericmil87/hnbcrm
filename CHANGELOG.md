@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Agenda: datas, filtro e grade corrigidos
+
+- **Evento salvo no dia escolhido.** Antes o evento era gravado um dia antes e cada "Editar > Atualizar" o empurrava mais um dia. Agora data e hora seguem o horário do seu aparelho.
+- **Filtro por vários tipos, cabeçalho do mês e navegação.** Com dois ou mais tipos marcados todos aparecem; os dias da semana do mês batem com a grade (começa na segunda); avançar ou voltar mês não pula de mês em dia 31 e a última linha do mês mostra os eventos.
+- **Eventos no mesmo horário lado a lado**, eventos de madrugada, de noite, que passam da meia-noite ou de vários dias aparecem na grade. O formulário "Novo evento" abre limpo e avisa se o fim é antes do início. Navegar não pisca mais a tela e os botões da agenda têm 44 px.
+
 ### Contatos que não são clientes ("Não é cliente" / "Virar lead")
 
 - **Marque quem não é cliente e a IA deixa a pessoa em paz.** Família, equipe, fornecedor, parceiro ou robô que escreve no mesmo WhatsApp pode ser marcado como não-cliente. A partir daí a Atendente IA nunca responde nem lê essas conversas (sem transcrição de áudio, leitura de imagem ou PDF, tradução), não há follow-up, campanha, repasse nem aviso de "mensagem nova", e nada disso conta no limite mensal de atendimentos da IA. O lead dessa pessoa sai do funil (fica arquivado) e a conversa continua na lista, para você ler quando quiser.

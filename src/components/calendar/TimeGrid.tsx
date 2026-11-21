@@ -1,16 +1,18 @@
 import { useMemo, useEffect, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
-import { TIME_SLOTS } from "./constants";
+import { HOUR_HEIGHT_PX } from "./constants";
+import { isSameDay, localDateKey } from "@/lib/agendaDates";
+import { clipToDay, gridHourRange, layoutOverlaps, MIN_EVENT_MINUTES } from "@/lib/agendaLayout";
 import { EventBlock } from "./EventBlock";
 
 interface TimeGridEvent {
   _id: string;
   title: string;
-  startTime: string;
-  endTime: string;
+  startTime: number;
+  endTime: number;
   eventType: string;
-  assignee?: { name: string; type: "human" | "ai" };
+  assignee?: { name: string; type: "human" | "ai" } | null;
   _source?: "event" | "task";
 }
 
@@ -21,6 +23,14 @@ interface TimeGridProps {
   onSlotClick: (date: Date, hour: number, minute: number) => void;
   columns?: number; // For week view, number of columns
   columnDates?: Date[]; // For week view, the dates of each column
+}
+
+interface PlacedEvent {
+  event: TimeGridEvent;
+  startMin: number;
+  endMin: number;
+  column: number;
+  columns: number;
 }
 
 export function TimeGrid({
@@ -41,62 +51,50 @@ export function TimeGrid({
     return () => clearInterval(interval);
   }, []);
 
-  const isToday = (checkDate: Date) => {
-    const today = new Date();
-    return (
-      checkDate.getDate() === today.getDate() &&
-      checkDate.getMonth() === today.getMonth() &&
-      checkDate.getFullYear() === today.getFullYear()
-    );
-  };
-
-  // Group events by column (day)
-  const eventsByColumn = useMemo(() => {
-    return columnDates.map((colDate) => {
-      const colStart = new Date(colDate);
-      colStart.setHours(0, 0, 0, 0);
-      const colEnd = new Date(colDate);
-      colEnd.setHours(23, 59, 59, 999);
-
-      return events.filter((event) => {
-        const eventStart = new Date(event.startTime);
-        return eventStart >= colStart && eventStart <= colEnd;
-      });
+  // Por coluna (dia): recorta cada evento ao dia (cruza a meia-noite / vários dias)
+  // e reparte colunas entre os que se sobrepõem.
+  const { placedByColumn, range } = useMemo(() => {
+    const segments: Array<{ startMin: number; endMin: number }> = [];
+    const placed = columnDates.map((colDate) => {
+      const inputs: Array<{ id: string; startMin: number; endMin: number }> = [];
+      const byId = new Map<string, TimeGridEvent>();
+      for (const event of events) {
+        const seg = clipToDay(event.startTime, event.endTime, colDate);
+        if (!seg) continue;
+        segments.push(seg);
+        inputs.push({ id: event._id, ...seg });
+        byId.set(event._id, event);
+      }
+      return layoutOverlaps(inputs).map<PlacedEvent>((l) => ({
+        event: byId.get(l.id)!,
+        startMin: l.startMin,
+        endMin: l.endMin,
+        column: l.column,
+        columns: l.columns,
+      }));
     });
+    return { placedByColumn: placed, range: gridHourRange(segments) };
   }, [columnDates, events]);
 
-  // Calculate position for event block
-  const getEventStyle = (event: TimeGridEvent) => {
-    const startDate = new Date(event.startTime);
-    const endDate = new Date(event.endTime);
-    const startHour = startDate.getHours();
-    const startMinute = startDate.getMinutes();
-    const endHour = endDate.getHours();
-    const endMinute = endDate.getMinutes();
+  const hours = useMemo(
+    () => Array.from({ length: range.endHour - range.startHour }, (_, i) => range.startHour + i),
+    [range]
+  );
+  const pxPerMin = HOUR_HEIGHT_PX / 60;
+  const gridStartMin = range.startHour * 60;
 
-    const top = ((startHour - 6) * 60 + startMinute) * (60 / 60); // pixels per minute
-    const duration = (endHour - startHour) * 60 + (endMinute - startMinute);
-    const height = Math.max(duration * (60 / 60), 30); // minimum 30px
-
-    return { top: `${top}px`, height: `${height}px` };
-  };
-
-  // Current time indicator position
-  const currentTimePosition = useMemo(() => {
-    const hour = currentTime.getHours();
-    const minute = currentTime.getMinutes();
-    if (hour < 6 || hour >= 22) return null;
-    return ((hour - 6) * 60 + minute) * (60 / 60);
-  }, [currentTime]);
+  // Posição da linha "agora" (null fora da janela desenhada).
+  const nowMin = currentTime.getHours() * 60 + currentTime.getMinutes();
+  const currentTimePosition =
+    nowMin >= gridStartMin && nowMin < range.endHour * 60 ? (nowMin - gridStartMin) * pxPerMin : null;
 
   return (
     <div className="flex-1 overflow-auto">
-      <div className="flex">
-        {/* Time labels column */}
+      <div className="flex pt-3">
+        {/* Time labels column: alinhada com as linhas (sem espaçador) */}
         <div className="w-10 md:w-14 shrink-0 border-r border-border">
-          <div className="h-12" /> {/* Header spacer */}
-          {TIME_SLOTS.map((hour) => (
-            <div key={hour} className="h-[60px] relative">
+          {hours.map((hour) => (
+            <div key={hour} className="relative" style={{ height: HOUR_HEIGHT_PX }}>
               <span className="absolute -top-2.5 right-1 md:right-2 text-caption md:text-xs text-text-muted tabular-nums">
                 {hour.toString().padStart(2, "0")}:00
               </span>
@@ -107,13 +105,15 @@ export function TimeGrid({
         {/* Grid columns */}
         {columnDates.map((colDate, colIndex) => (
           <TimeGridColumn
-            key={colDate.toISOString()}
+            key={localDateKey(colDate)}
             date={colDate}
-            events={eventsByColumn[colIndex]}
+            hours={hours}
+            placed={placedByColumn[colIndex]}
+            gridStartMin={gridStartMin}
+            pxPerMin={pxPerMin}
             onEventClick={onEventClick}
             onSlotClick={onSlotClick}
-            getEventStyle={getEventStyle}
-            isToday={isToday(colDate)}
+            isToday={isSameDay(colDate, currentTime)}
             currentTimePosition={currentTimePosition}
             compact={columns > 1}
           />
@@ -125,10 +125,12 @@ export function TimeGrid({
 
 interface TimeGridColumnProps {
   date: Date;
-  events: TimeGridEvent[];
+  hours: number[];
+  placed: PlacedEvent[];
+  gridStartMin: number;
+  pxPerMin: number;
   onEventClick: (eventId: string, source: "event" | "task") => void;
   onSlotClick: (date: Date, hour: number, minute: number) => void;
-  getEventStyle: (event: TimeGridEvent) => { top: string; height: string };
   isToday: boolean;
   currentTimePosition: number | null;
   compact?: boolean;
@@ -136,50 +138,52 @@ interface TimeGridColumnProps {
 
 function TimeGridColumn({
   date,
-  events,
+  hours,
+  placed,
+  gridStartMin,
+  pxPerMin,
   onEventClick,
   onSlotClick,
-  getEventStyle,
   isToday,
   currentTimePosition,
   compact,
 }: TimeGridColumnProps) {
+  const pad = compact ? 1 : 4;
   return (
     <div className="flex-1 relative min-w-0 border-r border-border last:border-r-0">
-      {TIME_SLOTS.map((hour) => (
+      {hours.map((hour) => (
         <div key={hour}>
-          <TimeSlot
-            date={date}
-            hour={hour}
-            minute={0}
-            onSlotClick={onSlotClick}
-          />
-          <TimeSlot
-            date={date}
-            hour={hour}
-            minute={30}
-            onSlotClick={onSlotClick}
-            isHalfHour
-          />
+          <TimeSlot date={date} hour={hour} minute={0} onSlotClick={onSlotClick} />
+          <TimeSlot date={date} hour={hour} minute={30} onSlotClick={onSlotClick} isHalfHour />
         </div>
       ))}
 
       {/* Event blocks */}
       <div className="absolute inset-0 pointer-events-none">
-        <div className={cn("relative h-full pointer-events-auto", compact ? "px-px" : "px-1")}>
-          {events.map((event) => {
-            const style = getEventStyle(event);
-            return (
-              <div
-                key={event._id}
-                className={compact ? "absolute left-px right-px" : "absolute left-1 right-1"}
-                style={{ top: style.top, height: style.height }}
-              >
-                <EventBlock event={event} onClick={() => onEventClick(event._id, event._source || "event")} compact={compact} />
-              </div>
-            );
-          })}
-        </div>
+        {placed.map(({ event, startMin, endMin, column, columns }) => {
+          const top = (startMin - gridStartMin) * pxPerMin;
+          const height = Math.max((endMin - startMin) * pxPerMin, MIN_EVENT_MINUTES * pxPerMin);
+          const widthPct = 100 / columns;
+          return (
+            <div
+              key={event._id}
+              className="absolute pointer-events-auto"
+              style={{
+                top,
+                height,
+                left: `calc(${column * widthPct}% + ${pad}px)`,
+                width: `calc(${widthPct}% - ${pad * 2}px)`,
+              }}
+            >
+              <EventBlock
+                event={event}
+                dragKey={localDateKey(date)}
+                onClick={() => onEventClick(event._id, event._source || "event")}
+                compact={compact || columns > 1}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {/* Current time indicator */}
@@ -204,7 +208,7 @@ interface TimeSlotProps {
 }
 
 function TimeSlot({ date, hour, minute, onSlotClick, isHalfHour }: TimeSlotProps) {
-  const slotId = `slot-${date.toISOString()}-${hour}-${minute}`;
+  const slotId = `slot-${localDateKey(date)}-${hour}-${minute}`;
   const { setNodeRef, isOver } = useDroppable({
     id: slotId,
     data: { date, hour, minute },
