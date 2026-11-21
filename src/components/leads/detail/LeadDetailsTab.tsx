@@ -28,11 +28,14 @@ export function LeadDetailsTab({ leadId, organizationId }: LeadDetailsTabProps) 
     );
   }
 
+  const leadContact = lead.contact as { firstName?: string; lastName?: string; phone?: string } | null | undefined;
+  const leadClientName = [leadContact?.firstName, leadContact?.lastName].filter(Boolean).join(" ") || undefined;
+
   return (
     <div className="p-4 space-y-6">
       {/* Central (opcional por org): unidade, tipo de contato e origem */}
       <LeadCentralSection organizationId={organizationId} lead={lead} />
-      <AppointmentsBlock organizationId={organizationId} leadId={leadId} />
+      <AppointmentsBlock organizationId={organizationId} leadId={leadId} name={leadClientName} phone={leadContact?.phone} />
       <LeadContactBlock leadId={leadId} organizationId={organizationId} lead={lead} />
       <LeadOwnerStageBlock leadId={leadId} organizationId={organizationId} lead={lead} />
       <LeadBasicsBlock leadId={leadId} lead={lead} />

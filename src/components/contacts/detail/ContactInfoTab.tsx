@@ -87,7 +87,7 @@ export function ContactInfoTab({
 
   return (
     <div>
-      <AppointmentsBlock organizationId={contact.organizationId} contactId={contactId} name={displayName} />
+      <AppointmentsBlock organizationId={contact.organizationId} contactId={contactId} name={displayName || undefined} phone={contact.phone} />
       {/* Dados */}
       <CollapsibleSection
         title="Dados"

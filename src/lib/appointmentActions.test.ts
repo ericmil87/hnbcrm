@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_STATUSES, canTransition } from "../../convex/lib/schedStatus";
-import { actionLabel, appointmentHistory, availableActions, STATUS_TARGET, type DetailAction } from "./appointmentActions";
+import { actionLabel, isProposalExpired, appointmentHistory, availableActions, STATUS_TARGET, type DetailAction } from "./appointmentActions";
 
 const NOW = 1_000_000;
 const ctx = (status: string, over = {}) => ({ status, canEdit: true, startTime: NOW + 3_600_000, now: NOW, ...over });
@@ -13,6 +13,17 @@ describe("availableActions", () => {
     const a = availableActions(ctx("pending_approval"));
     expect(a.status).toEqual(["approve", "decline"]);
     expect(a.other).toEqual(["reschedule"]);
+  });
+  it("proposta vencida (início já passou): sem aprovar, só recusar", () => {
+    const a = availableActions(ctx("pending_approval", { startTime: NOW - 1 }));
+    expect(a.status).toEqual(["decline"]);
+    expect(a.other).toEqual([]);
+    expect(isProposalExpired("pending_approval", NOW - 1, NOW)).toBe(true);
+    expect(isProposalExpired("pending_approval", NOW + 1, NOW)).toBe(false);
+    expect(isProposalExpired("scheduled", NOW - 1, NOW)).toBe(false);
+  });
+  it("desfazer some quando o servidor disse que não há o que desfazer", () => {
+    expect(availableActions(ctx("cancelled", { undoUnavailable: true })).other).toEqual([]);
   });
   it("proposta de remarcação não oferece remarcar", () => {
     expect(availableActions(ctx("pending_approval", { isRescheduleProposal: true })).other).toEqual([]);

@@ -2,6 +2,7 @@ import { AlertTriangle, Ban } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { VOCAB } from "@/lib/vocab";
+import { BOOKING_COPY } from "@/lib/bookingCopy";
 import {
   classifyViolations,
   isSlotTaken,
@@ -18,6 +19,8 @@ interface RuleWarningsDialogProps {
   alternatives: OfferedSlot[];
   resourceNames?: ReadonlyMap<string, string>;
   tz: string;
+  /** Como o horário foi escolhido: o título de "tomado" só vale para sugestão; digitado = "não está livre". */
+  slotSource?: "suggestion" | "manual";
   busy?: boolean;
   /** Reenvia com `force` SÓ dos códigos mostrados (nunca chamado quando há bloqueio). */
   onForce: (codes: string[]) => void;
@@ -36,15 +39,22 @@ export function RuleWarningsDialog({
   alternatives,
   resourceNames,
   tz,
+  slotSource = "suggestion",
   busy = false,
   onForce,
   onPickAlternative,
   onClose,
 }: RuleWarningsDialogProps) {
-  const t = VOCAB.scheduling.booking.rulesDialog;
+  const t = BOOKING_COPY.rulesDialog;
   const outcome = classifyViolations(violations);
   const blocked = !outcome.canForce;
-  const title = blocked ? (isSlotTaken(violations) ? t.takenTitle : t.blockTitle) : t.warnTitle;
+  const title = blocked
+    ? isSlotTaken(violations)
+      ? slotSource === "manual"
+        ? t.notFreeTitle
+        : t.takenTitle
+      : t.blockTitle
+    : t.warnTitle;
   const show = blocked ? violations : outcome.warnings;
   return (
     <Modal open={open} onClose={onClose} title={title}>

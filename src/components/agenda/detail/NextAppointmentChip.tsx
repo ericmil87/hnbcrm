@@ -1,9 +1,5 @@
-import { useQuery } from "convex/react";
 import { CalendarClock } from "lucide-react";
-import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
-import { useRoundedNow } from "@/components/agenda/booking/useRoundedNow";
-import { useSchedulingGate } from "@/components/agenda/booking/useSchedulingGate";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { fillVocab } from "@/lib/agendaCopy";
 import { zonedWhenPhrase } from "@/lib/agendaZone";
@@ -11,34 +7,26 @@ import { VOCAB } from "@/lib/vocab";
 
 interface NextAppointmentChipProps {
   organizationId: Id<"organizations">;
-  conversationId: Id<"conversations">;
-  /** Abre o painel do agendamento. */
-  onOpen: (appointmentId: Id<"schedAppointments">) => void;
+  /** Início do próximo agendamento (UTC ms). */
+  startTime: number;
+  /** Quantos outros vêm depois (o "+2"). */
+  extra: number;
+  onOpen: () => void;
 }
 
-/**
- * Chip "Próximo: qui, 26/11 às 10:00" no cabeçalho da conversa. Módulo desligado (ou sem `agenda`): não
- * renderiza nada e não assina nada da agenda.
- */
-export function NextAppointmentChip(props: NextAppointmentChipProps) {
-  const gate = useSchedulingGate(props.organizationId);
-  if (!gate.enabled) return null;
-  return <NextAppointmentChipInner {...props} />;
-}
-
-function NextAppointmentChipInner({ organizationId, conversationId, onOpen }: NextAppointmentChipProps) {
+/** Chip "Próximo: qui, 26/11 às 10:00" no cabeçalho da conversa (os dados vêm de `useConversationBooking`). */
+export function NextAppointmentChip({ organizationId, startTime, extra, onOpen }: NextAppointmentChipProps) {
   const tz = useOrgTimezone(organizationId);
-  const now = useRoundedNow("hour");
-  const related = useQuery(api.scheduling.listForConversation, { conversationId, now, limit: 5 });
-  const next = related?.upcoming[0];
-  if (!next) return null;
-  const extra = related.upcoming.length - 1;
-  const when = zonedWhenPhrase(next.startTime, tz);
-  const label = fillVocab(VOCAB.scheduling.block.chipNext, { quando: when });
+  const label = fillVocab(VOCAB.scheduling.block.chipNext, { quando: zonedWhenPhrase(startTime, tz) });
+  return <NextAppointmentChipView label={label} extra={extra} onOpen={onOpen} />;
+}
+
+/** Só a aparência (testável sem Convex). */
+export function NextAppointmentChipView({ label, extra, onOpen }: { label: string; extra: number; onOpen: () => void }) {
   return (
     <button
       type="button"
-      onClick={() => onOpen(next._id)}
+      onClick={onOpen}
       className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-500/10 px-2.5 text-xs font-medium text-brand-400 transition-colors hover:bg-brand-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 coarse:h-9"
     >
       <CalendarClock size={12} aria-hidden="true" />

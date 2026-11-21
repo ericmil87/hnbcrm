@@ -1,6 +1,7 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { lockBodyScroll } from "@/lib/scrollLock";
+import { isTopLayer, nextLayerOrder, popLayer, pushLayer } from "@/lib/layerStack";
 import { useKeyboardViewportBox } from "@/hooks/useKeyboardViewportBox";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
@@ -22,12 +23,27 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
   // at commit, before any effect of the layer runs, so an effect would see the child as the "trigger".
   const triggerRef = useRef<HTMLElement | null>(null);
   if (open && triggerRef.current === null && document.activeElement instanceof HTMLElement) triggerRef.current = document.activeElement;
+  // Esc fecha só a camada do topo (pilha em `lib/layerStack`).
+  const layerId = useId();
+  // Posição na pilha: tirada na 1ª renderização aberta (pai antes do filho), devolvida ao fechar.
+  const orderRef = useRef<number | null>(null);
+  if (!open) orderRef.current = null;
+  else if (orderRef.current === null) orderRef.current = nextLayerOrder();
+  const layerOrder = orderRef.current;
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && isTopLayer(layerId)) onClose();
     },
-    [onClose]
+    [onClose, layerId]
   );
+
+  // Empilha uma vez por abertura (não refaz a cada render: a ordem de abertura é a ordem da pilha).
+  useEffect(() => {
+    if (!open) return;
+    if (layerOrder === null) return;
+    pushLayer(layerId, layerOrder);
+    return () => popLayer(layerId);
+  }, [open, layerId, layerOrder]);
 
   useEffect(() => {
     if (!open) return;
@@ -37,7 +53,7 @@ export function Modal({ open, onClose, title, children, className }: ModalProps)
       document.removeEventListener("keydown", handleKeyDown);
       unlock();
     };
-  }, [open, handleKeyDown]);
+  }, [open, handleKeyDown, layerId]);
 
   if (!open) return null;
 

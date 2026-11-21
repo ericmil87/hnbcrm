@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { roundNow, type NowUnit } from "@/lib/bookingFlow";
+import { roundNow, type NowUnit } from "@/lib/roundNow";
 
 /**
  * Relógio arredondado para argumentos de query (`findSlots`: minuto; `listFor*`: hora). Só muda quando o

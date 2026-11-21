@@ -208,12 +208,14 @@ export function ConversationHeader({
 
   // Funil do lead da conversa aberta (C2): "Funil: <board> → <etapa>" + lead.
   const openLeadId = conversation.leadId as Id<"leads"> | undefined;
+  const contactPhone = (conversation.contact as { phone?: string } | null | undefined)?.phone;
   const scheduling = useConversationBooking({
     organizationId,
     conversationId,
     leadId: openLeadId,
     contactId: openContactId,
     name: contactName || undefined,
+    phone: contactPhone,
     isGroup,
   });
   const leadBoardId = conversation.lead?.boardId as Id<"boards"> | undefined;
@@ -494,7 +496,7 @@ export function ConversationHeader({
   const relationBadge = <ContactRelationBadge relation={contactRelation} />;
 
   const windowClosed = windowInfo?.closed === true;
-  const hasStripItems = !!(funnelChip || originLine || languagePill || showAiControls || windowInfo || scheduling.enabled);
+  const hasStripItems = !!(funnelChip || originLine || languagePill || showAiControls || windowInfo || scheduling.hasNext);
 
   return (
     <>
@@ -632,7 +634,7 @@ export function ConversationHeader({
 
         {/* Detalhes: recolhíveis no celular, sempre à vista no desktop */}
         <div className={cn(detailsOpen ? "block" : "hidden md:block")}>
-          {(funnelChip || originLine || languagePill || windowInfo || scheduling.enabled || (showAiControls && !isGroup)) && (
+          {(funnelChip || originLine || languagePill || windowInfo || scheduling.hasNext || (showAiControls && !isGroup)) && (
             <div
               className="flex items-center gap-2 overflow-x-auto px-3 pb-1.5 [-ms-overflow-style:none] [scrollbar-width:none] md:px-4 [&::-webkit-scrollbar]:hidden"
               role="toolbar"

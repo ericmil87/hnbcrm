@@ -6,7 +6,7 @@
 import { UNDO_TARGETS, type SchedStatus } from "../../convex/lib/schedStatus";
 import { fillVocab } from "./agendaCopy";
 import { originLabel } from "./agendaStatus";
-import { VOCAB } from "./vocab";
+import { DETAIL_COPY } from "./bookingCopy";
 
 export type DetailAction =
   | "approve"
@@ -33,6 +33,13 @@ export interface ActionContext {
   now: number;
   /** Proposta de remarcação da IA (aprove ou recuse antes de mexer no horário). */
   isRescheduleProposal?: boolean;
+  /** O servidor já disse que não há o que desfazer (esconde "Desfazer"). */
+  undoUnavailable?: boolean;
+}
+
+/** Proposta (aguardando aprovação) cujo início já passou: não dá mais para aprovar, só recusar. */
+export function isProposalExpired(status: string, startTime: number, now: number): boolean {
+  return status === "pending_approval" && startTime <= now;
 }
 
 const NONE: DetailActions = { status: [], other: [] };
@@ -45,8 +52,10 @@ export function availableActions(ctx: ActionContext): DetailActions {
   const out: DetailActions = { status: [], other: [] };
   switch (status) {
     case "pending_approval":
-      out.status.push("approve", "decline");
-      if (!ctx.isRescheduleProposal) out.other.push("reschedule");
+      // Vencida: aprovar falharia; a saída é recusar.
+      if (!isProposalExpired(ctx.status, ctx.startTime, ctx.now)) out.status.push("approve");
+      out.status.push("decline");
+      if (!ctx.isRescheduleProposal && !isProposalExpired(ctx.status, ctx.startTime, ctx.now)) out.other.push("reschedule");
       break;
     case "scheduled":
       out.status.push("confirm", "checkIn", "complete");
@@ -65,13 +74,13 @@ export function availableActions(ctx: ActionContext): DetailActions {
     default:
       break;
   }
-  if ((UNDO_TARGETS[status] ?? []).length > 0) out.other.push("undo");
+  if ((UNDO_TARGETS[status] ?? []).length > 0 && !ctx.undoUnavailable) out.other.push("undo");
   return out;
 }
 
 /** Rótulo do botão. */
 export function actionLabel(action: DetailAction): string {
-  return VOCAB.scheduling.detail.actions[action];
+  return DETAIL_COPY.actions[action];
 }
 
 /** Mutation de status do servidor (`setAppointmentStatus.to`) para cada ação de status. */
@@ -84,11 +93,11 @@ export const STATUS_TARGET: Partial<Record<DetailAction, "scheduled" | "confirme
 };
 
 export const STATUS_TOAST: Partial<Record<DetailAction, string>> = {
-  approve: VOCAB.scheduling.detail.toast.approved,
-  confirm: VOCAB.scheduling.detail.toast.confirmed,
-  checkIn: VOCAB.scheduling.detail.toast.checkedIn,
-  complete: VOCAB.scheduling.detail.toast.completed,
-  noShow: VOCAB.scheduling.detail.toast.noShow,
+  approve: DETAIL_COPY.toast.approved,
+  confirm: DETAIL_COPY.toast.confirmed,
+  checkIn: DETAIL_COPY.toast.checkedIn,
+  complete: DETAIL_COPY.toast.completed,
+  noShow: DETAIL_COPY.toast.noShow,
 };
 
 export interface HistoryInput {
@@ -111,7 +120,7 @@ export interface HistoryEvent {
 
 /** Histórico curto, do mais antigo ao mais novo, a partir dos carimbos do agendamento (no máximo 6). */
 export function appointmentHistory(a: HistoryInput): HistoryEvent[] {
-  const h = VOCAB.scheduling.detail.history;
+  const h = DETAIL_COPY.history;
   const events: HistoryEvent[] = [{ at: a.createdAt, label: fillVocab(h.created, { origem: originLabel(a.origin) }) }];
   if (a.approvedAt) events.push({ at: a.approvedAt, label: h.approved });
   if (a.clientConfirmedAt) events.push({ at: a.clientConfirmedAt, label: h.confirmed });

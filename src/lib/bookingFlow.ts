@@ -16,7 +16,6 @@ import { ConvexError } from "convex/values";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   addLocalDays,
-  shortDateLabel,
   weekdayOf,
   zonedDateKey,
   zonedDateTimeLabel,
@@ -25,24 +24,13 @@ import {
   type LocalDate,
 } from "./agendaZone";
 import { fillVocab } from "./agendaCopy";
+import { roundNow, type NowUnit } from "./roundNow";
+import { BOOKING_COPY } from "./bookingCopy";
 import { VOCAB } from "./vocab";
 
 const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
 
-// ---------------------------------------------------------------------------
-// Relógio arredondado
-// ---------------------------------------------------------------------------
-
-/** `findSlots` recebe o minuto; `listForContact/Lead/Conversation` e `listPending`, a hora. */
-export type NowUnit = "minute" | "hour";
-
-/** Arredonda PARA BAIXO (o servidor também arredonda assim nas listas). `now` inválido vira 0. */
-export function roundNow(now: number, unit: NowUnit): number {
-  if (!Number.isFinite(now) || now < 0) return 0;
-  const size = unit === "hour" ? HOUR_MS : MINUTE_MS;
-  return Math.floor(now / size) * size;
-}
+export { roundNow, type NowUnit };
 
 // ---------------------------------------------------------------------------
 // Passos
@@ -319,6 +307,15 @@ export function buildFindSlotsArgs(input: {
   };
 }
 
+/**
+ * `force` do envio: o que a pessoa aceitou agora MAIS os avisos que ela já viu na prévia de "Outro horário"
+ * (só os forçáveis; para não confirmar o mesmo aviso duas vezes). Nunca inclui bloqueio.
+ */
+function mergeForce(extra: readonly string[] | undefined, seen: readonly ViolationView[]): string[] | undefined {
+  const codes = new Set<string>([...(extra ?? []), ...seen.filter(isForceable).map((v) => v.code)]);
+  return codes.size > 0 ? [...codes] : undefined;
+}
+
 function cleanNotes(notes: string): string | undefined {
   const t = notes.trim();
   return t.length > 0 ? t.slice(0, 500) : undefined;
@@ -360,7 +357,7 @@ export function buildBookArgs(input: {
   const resourceIds = requestedResources(state);
   const companions = state.companions.map((n) => n.trim()).filter((n) => n.length > 0);
   const commit = input.mode !== "preview";
-  const force = input.force && input.force.length > 0 ? [...new Set(input.force)] : undefined;
+  const force = mergeForce(input.force, state.slot.warnings);
   return {
     organizationId: input.organizationId as Id<"organizations">,
     serviceId: state.serviceId as Id<"schedServices">,
@@ -395,7 +392,7 @@ export function buildRescheduleArgs(input: {
 }): RescheduleArgs | null {
   if (!input.state.slot) return null;
   const resourceIds = requestedResources(input.state);
-  const force = input.force && input.force.length > 0 ? [...new Set(input.force)] : undefined;
+  const force = mergeForce(input.force, input.state.slot.warnings);
   return {
     organizationId: input.organizationId as Id<"organizations">,
     appointmentId: input.appointmentId as Id<"schedAppointments">,
@@ -431,6 +428,8 @@ export interface OfferedSlot {
   resourceNames: string[];
   score: number;
   reasons: string[];
+  /** Códigos estruturados dos motivos (formato futuro do servidor, p.ex. `ADJACENT`); vazio hoje. */
+  reasonCodes: string[];
 }
 
 function isRecord(x: unknown): x is Record<string, unknown> {
@@ -464,6 +463,7 @@ export function normalizeOffered(raw: unknown, ctx: { tz: string; now?: number; 
     resourceNames: strings(raw.resourceNames).length === resourceIds.length ? strings(raw.resourceNames) : [],
     score: typeof raw.score === "number" && Number.isFinite(raw.score) ? raw.score : 0,
     reasons: strings(raw.reasons),
+    reasonCodes: strings(raw.reasonCodes),
   };
 }
 
@@ -502,8 +502,16 @@ export function pickedFromOffered(slot: OfferedSlot, manual = false): PickedSlot
   };
 }
 
-/** O servidor explica o horário em PT-BR ("logo após outro atendimento"): encostado = junto de outro marcado. */
-export function isAdjacentSlot(slot: Pick<OfferedSlot, "reasons">): boolean {
+/** Código estruturado de "encostado em outro atendimento" (formato futuro de `reasonCodes`). */
+export const ADJACENT_CODE = "ADJACENT";
+
+/**
+ * Encostado = junto de outro atendimento. ÚNICO ponto de detecção: lê primeiro `reasonCodes` (formato
+ * estruturado que o servidor vai mandar) e só então cai no texto PT-BR dos motivos ("logo antes/após ...").
+ * `bookingFlow.test` roda o `scoreCandidate` real do servidor por esta função: se o texto mudar, quebra.
+ */
+export function isAdjacentSlot(slot: { reasons: readonly string[]; reasonCodes?: readonly string[] }): boolean {
+  if (slot.reasonCodes && slot.reasonCodes.length > 0) return slot.reasonCodes.includes(ADJACENT_CODE);
   return slot.reasons.some((r) => /\blogo (antes|ap[óo]s)\b/i.test(r));
 }
 
@@ -522,26 +530,6 @@ export function splitSuggestions(slots: readonly OfferedSlot[], top = SUGGESTED_
   const suggested = slots.slice(0, top);
   const others = slots.slice(top).sort((a, b) => a.startTime - b.startTime);
   return { suggested, others };
-}
-
-export interface DayGroup {
-  localDate: LocalDate;
-  slots: OfferedSlot[];
-}
-
-/** Agrupa por dia local, em ordem de data (a ordem dentro do dia é a recebida). */
-export function groupByDay(slots: readonly OfferedSlot[]): DayGroup[] {
-  const map = new Map<LocalDate, OfferedSlot[]>();
-  for (const s of slots) map.set(s.localDate, [...(map.get(s.localDate) ?? []), s]);
-  return [...map.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([localDate, list]) => ({ localDate, slots: list }));
-}
-
-/** "Hoje · qui, 26/11", "Amanhã · sex, 27/11" ou "sáb, 28/11". */
-export function dayHeading(dateKey: LocalDate, today: LocalDate): string {
-  const short = shortDateLabel(dateKey);
-  if (dateKey === today) return `Hoje · ${short}`;
-  if (dateKey === addLocalDays(today, 1)) return `Amanhã · ${short}`;
-  return short;
 }
 
 // ---------------------------------------------------------------------------
@@ -679,4 +667,139 @@ export function isProposalFailure(error: unknown): boolean {
     ? typeof error.data === "string" ? error.data : ""
     : error instanceof Error ? error.message : "";
   return /venceu|n[ãa]o vale mais/i.test(msg);
+}
+
+// ---------------------------------------------------------------------------
+// Quem é o cliente, atualização da lista e orquestração do envio
+// ---------------------------------------------------------------------------
+
+/** Nome para a revisão: nome, senão o telefone já formatado, senão "Cliente desta conversa". Nunca vazio. */
+export function clientLabel(name?: string | null, formattedPhone?: string | null): string {
+  return name?.trim() || formattedPhone?.trim() || BOOKING_COPY.review.clientFallback;
+}
+
+/** Chave estável de um horário oferecido (início + recursos). */
+export function offeredKey(s: Pick<OfferedSlot, "startTime" | "resourceIds">): string {
+  return `${s.startTime}|${[...s.resourceIds].sort().join(",")}`;
+}
+
+/**
+ * Rebusca silenciosa (a cada minuto, "Ver mais horários"): a lista que a pessoa está olhando NÃO se reordena
+ * nem pisca. Mantém a ordem exibida, tira só o que já passou e acrescenta no fim os horários novos.
+ */
+export function mergeRefreshedSlots(prev: readonly OfferedSlot[], next: readonly OfferedSlot[], now: number): OfferedSlot[] {
+  const fresh = new Map(next.map((s) => [offeredKey(s), s]));
+  const kept = prev.filter((s) => s.startTime > now).map((s) => fresh.get(offeredKey(s)) ?? s);
+  const have = new Set(kept.map(offeredKey));
+  const added = next.filter((s) => s.startTime > now && !have.has(offeredKey(s)));
+  return [...kept, ...added];
+}
+
+export type SubmitOutcome =
+  | { kind: "invalid" }
+  | { kind: "booked"; appointmentIds: string[] }
+  /** O servidor devolveu um agendamento que já existia (mesmo serviço e horário): nada foi criado. */
+  | { kind: "duplicate"; appointmentId: string | undefined }
+  | { kind: "rescheduled"; appointmentId: string }
+  /** Falha de regra: `blocked` = há bloqueio (sem forçar); senão só avisos. */
+  | { kind: "rules"; violations: ViolationView[]; alternatives: OfferedSlot[]; blocked: boolean }
+  | { kind: "error"; error: unknown };
+
+export interface SubmitDeps {
+  book: (args: BookArgs) => Promise<{ appointmentIds: readonly string[]; duplicate: boolean }>;
+  reschedule: (args: RescheduleArgs) => Promise<unknown>;
+}
+
+/** Envia (marcar ou remarcar) e traduz o resultado/erro do servidor; a tela só decide o que mostrar. */
+export async function submitBooking(
+  deps: SubmitDeps,
+  input: {
+    organizationId: string;
+    state: BookingState;
+    who: BookingWho;
+    rescheduleAppointmentId?: string;
+    force?: readonly string[];
+    tz: string;
+    now: number;
+    durationMin?: number;
+  }
+): Promise<SubmitOutcome> {
+  try {
+    if (input.rescheduleAppointmentId) {
+      const args = buildRescheduleArgs({
+        organizationId: input.organizationId,
+        appointmentId: input.rescheduleAppointmentId,
+        state: input.state,
+        force: input.force,
+      });
+      if (!args) return { kind: "invalid" };
+      await deps.reschedule(args);
+      return { kind: "rescheduled", appointmentId: input.rescheduleAppointmentId };
+    }
+    const args = buildBookArgs({ organizationId: input.organizationId, state: input.state, who: input.who, force: input.force });
+    if (!args) return { kind: "invalid" };
+    const res = await deps.book(args);
+    if (res.duplicate) return { kind: "duplicate", appointmentId: res.appointmentIds[0] };
+    return { kind: "booked", appointmentIds: [...res.appointmentIds] };
+  } catch (error) {
+    const rules = parseSchedRulesError(error);
+    if (!rules) return { kind: "error", error };
+    return {
+      kind: "rules",
+      violations: rules.violations,
+      alternatives: readAlternatives(rules.alternatives, { tz: input.tz, now: input.now, durationMin: input.durationMin }),
+      blocked: !classifyViolations(rules.violations).canForce,
+    };
+  }
+}
+
+/**
+ * Desfaz a marcação RECÉM-FEITA (toast "Desfazer"). ÚNICA função que sabe como: hoje cancela como equipe com o
+ * motivo "Desfeito ao marcar"; o backend vai ganhar `schedulingMutations.undoBooking({ organizationId,
+ * appointmentIds })` e a troca é só aqui. Em grupo (cliente + acompanhantes) desfaz em sequência e continua se
+ * um falhar; devolve os rótulos dos que ficaram marcados.
+ */
+export async function undoFreshBooking(
+  cancel: (args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; reason: string }) => Promise<unknown>,
+  input: { organizationId: string; appointmentIds: readonly string[]; labels: readonly string[] }
+): Promise<{ failed: string[] }> {
+  const failed: string[] = [];
+  for (const [i, id] of input.appointmentIds.entries()) {
+    try {
+      await cancel({
+        organizationId: input.organizationId as Id<"organizations">,
+        appointmentId: id as Id<"schedAppointments">,
+        reason: BOOKING_COPY.undoReason,
+      });
+    } catch {
+      failed.push(input.labels[i] ?? BOOKING_COPY.review.clientFallback);
+    }
+  }
+  return { failed };
+}
+
+/** Rótulos para `undoFreshBooking`: o cliente primeiro, depois "Acompanhante 2", "Acompanhante 3"... */
+export function bookingLabels(clientName: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => (i === 0 ? clientName : `Acompanhante ${i + 1}`));
+}
+
+export type PreviewVerdict =
+  | { kind: "duplicate"; appointmentId: string }
+  | { kind: "ok"; warnings: ViolationView[]; resourceNames: string[] }
+  | { kind: "warn"; warnings: ViolationView[] }
+  | { kind: "blocked"; violations: ViolationView[]; alternatives: OfferedSlot[] };
+
+/** Lê o resultado de `previewBooking` ("Outro horário"). */
+export function interpretPreview(
+  res: { ok: boolean; warnings: unknown; violations: unknown; alternatives: unknown; plan: ReadonlyArray<{ resourceName?: string }>; duplicateOf?: string },
+  ctx: { tz: string; now: number; durationMin?: number }
+): PreviewVerdict {
+  if (res.duplicateOf) return { kind: "duplicate", appointmentId: res.duplicateOf };
+  if (res.ok) {
+    return { kind: "ok", warnings: parseViolations(res.warnings), resourceNames: res.plan.map((p) => p.resourceName ?? "").filter(Boolean) };
+  }
+  const violations = parseViolations(res.violations);
+  const outcome = classifyViolations(violations);
+  if (outcome.canForce) return { kind: "warn", warnings: outcome.warnings };
+  return { kind: "blocked", violations, alternatives: readAlternatives(res.alternatives, ctx) };
 }

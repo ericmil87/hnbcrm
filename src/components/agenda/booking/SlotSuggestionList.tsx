@@ -2,7 +2,7 @@ import { Clock, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { VOCAB } from "@/lib/vocab";
+import { BOOKING_COPY } from "@/lib/bookingCopy";
 import { shortDateLabel, zonedTimeLabel } from "@/lib/agendaZone";
 import { isAdjacentSlot, joinNames, reasonLine, type OfferedSlot } from "@/lib/bookingFlow";
 
@@ -43,7 +43,7 @@ export function SlotButton({ slot, tz, selected, showDay, onPick }: SlotButtonPr
             {adjacent && (
               <Badge variant="brand" className="gap-1">
                 <Link2 size={12} aria-hidden="true" />
-                {VOCAB.scheduling.booking.slot.adjacent}
+                {BOOKING_COPY.slot.adjacent}
               </Badge>
             )}
           </span>
@@ -70,7 +70,7 @@ interface SlotSuggestionListProps {
 export function SlotSuggestionList({ suggested, others, tz, selectedStart, onPick, canExpand, onExpand }: SlotSuggestionListProps) {
   const days = new Set([...suggested, ...others].map((s) => s.localDate));
   const showDay = days.size > 1;
-  const t = VOCAB.scheduling.booking.slot;
+  const t = BOOKING_COPY.slot;
   return (
     <div className="space-y-3">
       {suggested.length > 0 && (

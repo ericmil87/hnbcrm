@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ConvexError } from "convex/values";
+import { computeDayAvailability } from "../../convex/lib/schedAvailability";
+import { scoreCandidate, DEFAULT_WEIGHTS } from "../../convex/lib/schedScore";
+import { atLocalMinutes } from "../../convex/lib/schedTime";
 import {
   EXPANDED_LIMIT,
   NEVER_FORCEABLE,
@@ -8,12 +11,17 @@ import {
   buildBookArgs,
   buildFindSlotsArgs,
   buildRescheduleArgs,
+  bookingLabels,
+  clientLabel,
+  interpretPreview,
+  mergeRefreshedSlots,
+  submitBooking,
+  undoFreshBooking,
+  ADJACENT_CODE,
   canAdvance,
   chosenDurationMin,
   classifyViolations,
-  dayHeading,
   defaultServiceId,
-  groupByDay,
   initialBookingState,
   isAdjacentSlot,
   isProposalFailure,
@@ -347,6 +355,7 @@ describe("encostado, sugeridos e dias", () => {
     resourceNames: [],
     score: 0,
     reasons,
+    reasonCodes: [],
   });
   it("detecta encostado nos motivos do servidor", () => {
     expect(isAdjacentSlot(mk(10, ["logo após outro atendimento"]))).toBe(true);
@@ -359,15 +368,6 @@ describe("encostado, sugeridos e dias", () => {
     const { suggested, others } = splitSuggestions(list);
     expect(suggested.map((s) => s.startTime)).toEqual([at(15), at(9), at(11)]);
     expect(others.map((s) => s.startTime)).toEqual([at(10), at(17)]);
-  });
-  it("agrupa por dia local em ordem de data", () => {
-    const groups = groupByDay([mk(9, [], "2026-11-27"), mk(10), mk(11, [], "2026-11-27")]);
-    expect(groups.map((g) => [g.localDate, g.slots.length])).toEqual([["2026-11-26", 1], ["2026-11-27", 2]]);
-  });
-  it("títulos de dia", () => {
-    expect(dayHeading("2026-11-26", "2026-11-26")).toBe("Hoje · qui, 26/11");
-    expect(dayHeading("2026-11-27", "2026-11-26")).toBe("Amanhã · sex, 27/11");
-    expect(dayHeading("2026-11-28", "2026-11-26")).toBe("sáb, 28/11");
   });
 });
 
@@ -477,5 +477,150 @@ describe("erro sched_rules e proposta vencida", () => {
     expect(isProposalFailure(new Error("Uncaught Error: Esta proposta venceu"))).toBe(true);
     expect(isProposalFailure(new ConvexError("Agendamento não encontrado"))).toBe(false);
     expect(isProposalFailure(undefined)).toBe(false);
+  });
+});
+
+describe("encostado: códigos estruturados primeiro, texto do servidor depois", () => {
+  const slot = (reasons: string[], reasonCodes?: string[]) => ({ reasons, reasonCodes });
+  it("reasonCodes manda quando existe", () => {
+    expect(isAdjacentSlot(slot([], [ADJACENT_CODE]))).toBe(true);
+    expect(isAdjacentSlot(slot(["logo após outro atendimento"], ["OUTRO_CODIGO"]))).toBe(false);
+  });
+  it("sem códigos, cai no texto", () => {
+    expect(isAdjacentSlot(slot(["logo antes de outro atendimento"], []))).toBe(true);
+    expect(isAdjacentSlot(slot(["logo antes de outro atendimento"]))).toBe(true);
+  });
+  it("PROTEÇÃO: o texto REAL do servidor (scoreCandidate) continua sendo reconhecido como encostado", () => {
+    const tz = "America/Sao_Paulo";
+    const MON = "2026-11-23";
+    const at = (hh: number) => atLocalMinutes(MON, hh * 60, tz);
+    const room = { _id: "A", kind: "room" as const, name: "Sala A", capacity: 1, weekly: [{ weekday: 1, startMin: 480, endMin: 1080 }], sortOrder: 0, active: true };
+    const busy = { appointmentId: "x", resourceId: "A", blockStart: at(9), blockEnd: at(10), coreStart: at(9), coreEnd: at(10), units: 1 };
+    const day = computeDayAvailability({ date: MON, tz, resources: [room], exceptions: [], allocations: [busy], internalEvents: [] });
+    const cand = (h: number) => ({ startTime: at(h), endTime: at(h + 1), blockStart: at(h), blockEnd: at(h + 1), plan: [{ role: "Sala", resourceId: "A", units: 1 }] });
+    const opts = { minUsefulGapMin: 30 };
+    const weights = { ...DEFAULT_WEIGHTS, balance: 0 };
+    const touching = scoreCandidate(cand(10), day, weights, opts); // logo após o das 9h
+    const touchingBefore = scoreCandidate(cand(8), day, weights, opts); // logo antes do das 9h
+    const apart = scoreCandidate(cand(14), day, weights, opts);
+    expect(isAdjacentSlot({ reasons: touching.reasons })).toBe(true);
+    expect(isAdjacentSlot({ reasons: touchingBefore.reasons })).toBe(true);
+    expect(isAdjacentSlot({ reasons: apart.reasons })).toBe(false);
+  });
+});
+
+describe("force do envio inclui os avisos já vistos na prévia", () => {
+  const warn = (code: string) => ({ code, severity: "warn" as const, message: "" });
+  const state = (warnings: ReturnType<typeof warn>[]): BookingState => ({
+    ...base({ serviceId: "svc1" }),
+    slot: picked({ manual: true, warnings: [...warnings, { code: "CAPACITY_EXCEEDED", severity: "block", message: "" }] }),
+  });
+  it("só os forçáveis, sem repetir, e soma ao que foi aceito agora", () => {
+    const args = buildBookArgs({ organizationId: "org", state: state([warn("OUTSIDE_HOURS")]), who: { contactId: "c1" }, force: ["BUFFER_OVERLAP", "OUTSIDE_HOURS"] });
+    expect(args?.force?.sort()).toEqual(["BUFFER_OVERLAP", "OUTSIDE_HOURS"]);
+    expect(args?.force).not.toContain("CAPACITY_EXCEEDED");
+    expect(buildRescheduleArgs({ organizationId: "org", appointmentId: "a", state: state([warn("OUTSIDE_HOURS")]) })?.force).toEqual(["OUTSIDE_HOURS"]);
+  });
+  it("sem aviso visto nem aceito, nada vai", () => {
+    expect(buildBookArgs({ organizationId: "org", state: { ...base({ serviceId: "svc1" }), slot: picked() }, who: { contactId: "c1" } })).not.toHaveProperty("force");
+  });
+});
+
+describe("rebusca silenciosa da lista", () => {
+  const mk = (h: number, res = "r"): OfferedSlot => ({ startTime: at(h), endTime: at(h + 1), localDate: "2026-11-26", label: "", resourceIds: [res], resourceNames: [], score: 0, reasons: [], reasonCodes: [] });
+  it("mantém a ordem exibida, tira só o que passou e acrescenta o novo no fim", () => {
+    const prev = [mk(15), mk(11), mk(17)];
+    const next = [mk(11), mk(15), mk(12), mk(17)];
+    const out = mergeRefreshedSlots(prev, next, at(11) + 1);
+    expect(out.map((s) => s.startTime)).toEqual([at(15), at(17), at(12)]);
+  });
+  it("horário que sumiu do servidor continua até passar (o envio trata o tomado)", () => {
+    const out = mergeRefreshedSlots([mk(15), mk(16)], [mk(16)], at(10));
+    expect(out.map((s) => s.startTime)).toEqual([at(15), at(16)]);
+  });
+});
+
+describe("cliente na revisão", () => {
+  it("nome, senão telefone, senão texto genérico; nunca vazio", () => {
+    expect(clientLabel(" Maria ", "+55 11 99999-1234")).toBe("Maria");
+    expect(clientLabel("", "+55 11 99999-1234")).toBe("+55 11 99999-1234");
+    expect(clientLabel(undefined, undefined)).toBe("Cliente desta conversa");
+    expect(clientLabel("  ", " ")).toBe("Cliente desta conversa");
+  });
+});
+
+describe("submitBooking", () => {
+  const state: BookingState = { ...base({ serviceId: "svc1" }), slot: picked() };
+  const input = { organizationId: "org", state, who: { contactId: "c1" }, tz: TZ, now: NOW };
+  const rulesErr = (violations: unknown[], alternatives: unknown[] = []) => new ConvexError({ code: "sched_rules", violations, alternatives } as never);
+  const deps = (over: Partial<Parameters<typeof submitBooking>[0]> = {}) => ({
+    book: async () => ({ appointmentIds: ["a1"], duplicate: false }),
+    reschedule: async () => null,
+    ...over,
+  });
+
+  it("marcou", async () => {
+    expect(await submitBooking(deps(), input)).toEqual({ kind: "booked", appointmentIds: ["a1"] });
+  });
+  it("sem horário: inválido", async () => {
+    expect(await submitBooking(deps(), { ...input, state: base({ serviceId: "svc1" }) })).toEqual({ kind: "invalid" });
+  });
+  it("duplicado: devolve o existente e NÃO conta como marcação nova", async () => {
+    const out = await submitBooking(deps({ book: async () => ({ appointmentIds: ["velho"], duplicate: true }) }), input);
+    expect(out).toEqual({ kind: "duplicate", appointmentId: "velho" });
+  });
+  it("remarcar usa a porta de remarcar", async () => {
+    const calls: unknown[] = [];
+    const out = await submitBooking(deps({ reschedule: async (a) => void calls.push(a) }), { ...input, rescheduleAppointmentId: "a9" });
+    expect(out).toEqual({ kind: "rescheduled", appointmentId: "a9" });
+    expect(calls[0]).toMatchObject({ appointmentId: "a9", startTime: at(14) });
+  });
+  it("só avisos: regras sem bloqueio (forçável)", async () => {
+    const out = await submitBooking(deps({ book: async () => { throw rulesErr([{ code: "OUTSIDE_HOURS", severity: "warn", message: "x" }]); } }), input);
+    expect(out).toMatchObject({ kind: "rules", blocked: false });
+  });
+  it("capacidade: bloqueado, com alternativas dos dois formatos", async () => {
+    const alt = at(16);
+    const out = await submitBooking(
+      deps({ book: async () => { throw rulesErr([{ code: "CAPACITY_EXCEEDED", severity: "block", message: "x" }], [{ startTime: alt, resourceIds: ["r"] }]); } }),
+      input
+    );
+    expect(out).toMatchObject({ kind: "rules", blocked: true });
+    expect(out.kind === "rules" && out.alternatives.map((a) => a.startTime)).toEqual([alt]);
+  });
+  it("outro erro é devolvido como está", async () => {
+    const boom = new Error("boom");
+    expect(await submitBooking(deps({ book: async () => { throw boom; } }), input)).toEqual({ kind: "error", error: boom });
+  });
+});
+
+describe("desfazer a marcação recém-feita", () => {
+  it("cancela em sequência com o motivo e relata quem ficou", async () => {
+    const calls: string[] = [];
+    const cancel = async (a: { appointmentId: string; reason: string }) => {
+      calls.push(a.appointmentId);
+      expect(a.reason).toBe("Desfeito ao marcar");
+      if (a.appointmentId === "b") throw new Error("falhou");
+    };
+    const out = await undoFreshBooking(cancel as never, { organizationId: "org", appointmentIds: ["a", "b", "c"], labels: bookingLabels("Maria", 3) });
+    expect(calls).toEqual(["a", "b", "c"]);
+    expect(out.failed).toEqual(["Acompanhante 2"]);
+  });
+  it("tudo certo: ninguém ficou", async () => {
+    expect((await undoFreshBooking((async () => null) as never, { organizationId: "o", appointmentIds: ["a"], labels: ["Maria"] })).failed).toEqual([]);
+  });
+});
+
+describe("prévia de 'Outro horário'", () => {
+  const ctx = { tz: TZ, now: NOW };
+  const res = (over = {}) => ({ ok: true, warnings: [], violations: [], alternatives: [], plan: [{ resourceName: "Sala 1" }], ...over });
+  it("já existe: duplicado, não segue", () => {
+    expect(interpretPreview(res({ duplicateOf: "velho" }), ctx)).toEqual({ kind: "duplicate", appointmentId: "velho" });
+  });
+  it("livre, com avisos e bloqueado", () => {
+    expect(interpretPreview(res(), ctx)).toMatchObject({ kind: "ok", resourceNames: ["Sala 1"] });
+    expect(interpretPreview(res({ ok: false, violations: [{ code: "OUTSIDE_HOURS", severity: "warn", message: "" }] }), ctx).kind).toBe("warn");
+    const blocked = interpretPreview(res({ ok: false, violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "" }], alternatives: [{ startTime: at(16), resourceIds: [] }] }), ctx);
+    expect(blocked.kind).toBe("blocked");
   });
 });

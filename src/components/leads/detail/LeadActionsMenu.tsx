@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ContactRelationSheet } from "@/components/contacts/ContactRelationSheet";
 import { useContactRelationChange } from "@/components/contacts/useContactRelationChange";
-import { BookingSheet } from "@/components/agenda/booking/BookingSheet";
+import { LazyBookingSheet } from "@/components/agenda/booking/LazyBookingSheet";
 import { useSchedulingGate } from "@/components/agenda/booking/useSchedulingGate";
 import { VOCAB } from "@/lib/vocab";
 import { asContactRelation, type ContactRelation } from "@/lib/contactRelationUi";
@@ -48,6 +48,7 @@ export function LeadActionsMenu({
   if (!canArchive && !canDelete && !canMarkContact && !scheduling.canBook) return null;
 
   const contact = lead?.contact as { firstName?: string; lastName?: string; relation?: unknown } | null | undefined;
+  const contactPhone = (lead?.contact as { phone?: string } | null | undefined)?.phone;
   const contactName = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ");
   const relation = asContactRelation(contact?.relation);
   const selectRelation = (next: ContactRelation) => {
@@ -134,14 +135,12 @@ export function LeadActionsMenu({
         ]}
       />
 
-      {bookOpen && (
-        <BookingSheet
-          organizationId={organizationId}
-          open
-          onClose={() => setBookOpen(false)}
-          who={{ leadId, contactId, name: contactName || undefined }}
-        />
-      )}
+      <LazyBookingSheet
+        organizationId={organizationId}
+        open={bookOpen}
+        onClose={() => setBookOpen(false)}
+        who={{ leadId, contactId, name: contactName || undefined, phone: contactPhone }}
+      />
 
       {canMarkContact && (
         <ContactRelationSheet
