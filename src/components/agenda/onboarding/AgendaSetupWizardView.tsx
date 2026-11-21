@@ -3,6 +3,7 @@ import { ArrowLeft, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { Modal } from "@/components/ui/Modal";
 import { ChoiceCards } from "@/components/agenda/ChoiceCards";
 import { AiPolicyForm } from "@/components/settings/agenda/AiPolicyForm";
@@ -13,7 +14,7 @@ import { Stepper } from "@/components/ui/Stepper";
 import { WeeklyHoursEditor } from "@/components/agenda/WeeklyHoursEditor";
 import { weekErrors, weekSummary, type WeekForm } from "@/lib/agendaWeek";
 import {
-  addSetupResource, addSetupService, draftToForm, formToDraft, hasSetupErrors, removeSetupResource, removeSetupService, setupErrors, setupSummary,
+  addSetupResource, addSetupService, draftToForm, formToDraft, hasSetupErrors, isSetupDirty, removeSetupResource, removeSetupService, setupErrors, setupSummary,
   updateSetupResource, updateSetupService, SETUP_MAX_RESOURCES, SETUP_MAX_SERVICES, type SetupForm,
 } from "@/lib/agendaSetupDraft";
 import { SCHED_TEMPLATE_KEYS, SCHED_TEMPLATE_LABELS, type SchedTemplateDraft, type SchedTemplateKey } from "../../../../convex/lib/schedTemplates";
@@ -38,10 +39,14 @@ export interface AgendaSetupWizardViewProps {
   onApply: (draft: SchedTemplateDraft, ai: AutomationForm) => void;
   /** A agenda foi criada, mas a escolha da IA não foi salva: a tela explica e só oferece fechar. */
   partialNotice?: string | null;
+  /** A IA da organização está ativa? `undefined` (carregando) e `true` mostram todas as opções; `false` só o interruptor das confirmações. */
+  aiActive?: boolean;
+  /** Atalho para a configuração da IA (passo da IA sem IA ativa). Ausente = sem o atalho. */
+  onOpenAiSettings?: () => void;
 }
 
 /** Assistente de 3 passos. Apresentacional: o container liga `previewTemplate` e `applyTemplate`. */
-export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateChange, serverDraft, submitting, error, onApply, partialNotice = null }: AgendaSetupWizardViewProps) {
+export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateChange, serverDraft, submitting, error, onApply, partialNotice = null, aiActive, onOpenAiSettings }: AgendaSetupWizardViewProps) {
   const [step, setStep] = useState<StepId>("model");
   const [formState, setFormState] = useState<SetupForm | null>(null);
   // Chave do modelo cujo rascunho já virou formulário: atualização do servidor com o assistente aberto NÃO
@@ -49,10 +54,16 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
   const [loadedKey, setLoadedKey] = useState<string | null>(null);
   const [ai, setAi] = useState<AutomationForm>(() => defaultAutomationForm());
   const [showErrors, setShowErrors] = useState(false);
+  // Saída (fechar ou ir para as configurações da IA) que espera a confirmação de descartar a edição pendente.
+  const [pendingExit, setPendingExit] = useState<(() => void) | null>(null);
+  // O que o modelo trouxe, para saber se a pessoa mexeu em algo.
+  const [initialForm, setInitialForm] = useState<SetupForm | null>(null);
 
   useEffect(() => {
     if (serverDraft && serverDraft.templateKey === templateKey && loadedKey !== templateKey) {
-      setFormState(draftToForm(serverDraft));
+      const loaded = draftToForm(serverDraft);
+      setFormState(loaded);
+      setInitialForm(loaded);
       setLoadedKey(templateKey);
     }
   }, [serverDraft, templateKey, loadedKey]);
@@ -69,6 +80,11 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
   const setForm = (next: SetupForm | null) => setFormState(next);
 
   const errors = form ? setupErrors(form) : null;
+  // Depois de criada (aviso parcial) ou enviando, não há mais o que descartar/perguntar.
+  const dirty = !partialNotice && !submitting && isSetupDirty(loadedKey === templateKey ? initialForm : null, form, ai, defaultAutomationForm());
+  /** Fechar (Esc, X, "Agora não") com edição pendente pergunta antes de descartar. */
+  const leave = (action: () => void) => (dirty ? setPendingExit(() => action) : action());
+  const requestClose = () => leave(onClose);
   const stepIndex = STEPS.findIndex((s) => s.id === step);
   const loading = templateKey !== null && serverDraft === undefined;
   const unavailable = templateKey !== null && serverDraft === null;
@@ -85,7 +101,7 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
   const set = (next: SetupForm) => setForm(next);
 
   return (
-    <Modal open={open} onClose={onClose} title={VOCAB.scheduling.onboarding.title} className="sm:max-w-2xl">
+    <Modal open={open} onClose={submitting ? () => undefined : requestClose} title={VOCAB.scheduling.onboarding.title} className="sm:max-w-2xl">
       <div className="space-y-5">
         <Stepper steps={STEPS} current={step} completed={STEPS.slice(0, stepIndex).map((s) => s.id)} ariaLabel="Passos do assistente" />
 
@@ -102,7 +118,7 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
             {loading && <div className="flex justify-center py-2"><Spinner /></div>}
             {unavailable && <p role="alert" className="text-sm text-semantic-error">Não foi possível preparar este modelo. Tente de novo.</p>}
             <div className="flex gap-2">
-              <Button variant="secondary" className="flex-1" onClick={onClose}>Agora não</Button>
+              <Button variant="secondary" className="flex-1" onClick={requestClose}>Agora não</Button>
               <Button className="flex-1" disabled={!form} onClick={toAdjust}>Continuar</Button>
             </div>
           </div>
@@ -180,7 +196,7 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
             ) : (
               <>
                 <p className="text-sm text-text-secondary">Escolha quanto a IA decide sozinha na agenda. Você pode mudar isso quando quiser em Configurações › Sugestões e IA.</p>
-                <AiPolicyForm variant="wizard" value={ai} onChange={setAi} disabled={submitting} />
+                <AiPolicyForm variant="wizard" value={ai} onChange={setAi} disabled={submitting} aiActive={aiActive} onOpenAiSettings={onOpenAiSettings ? () => leave(onOpenAiSettings) : undefined} />
                 {error && <p role="alert" className="rounded-card border border-semantic-error/30 bg-semantic-error/5 p-3 text-sm text-semantic-error">{error}</p>}
                 <div className="flex gap-2">
                   <Button variant="secondary" className="flex-1" disabled={submitting} onClick={() => setStep("adjust")}>
@@ -193,6 +209,20 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
           </div>
         )}
       </div>
+      <ConfirmDialog
+        open={pendingExit !== null}
+        onClose={() => setPendingExit(null)}
+        onConfirm={() => {
+          const action = pendingExit;
+          setPendingExit(null);
+          action?.();
+        }}
+        title="Descartar o que você ajustou?"
+        description="Você mudou algo no assistente e ainda não criou a agenda. Se sair agora, essas mudanças se perdem."
+        confirmLabel="Descartar e sair"
+        cancelLabel="Continuar ajustando"
+        variant="danger"
+      />
     </Modal>
   );
 }

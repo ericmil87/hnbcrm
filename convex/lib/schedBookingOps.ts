@@ -70,7 +70,7 @@ import {
   unitsFor,
 } from "./schedCandidates";
 import { notifyPendingApproval } from "./schedApprovalNotify";
-import { MAX_RESOURCES_PER_ORG, UNDO_BOOKING_WINDOW_MIN } from "./schedConstants";
+import { MAX_RESOURCES_PER_ORG, UNDO_BOOKING_WINDOW_MIN, UNDO_HUMAN_CONFIRM_WINDOW_MIN } from "./schedConstants";
 import { MAX_PARTY_COMPANIONS, MAX_PARTY_SIZE, sharedResourceIds } from "./schedParty";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
 import {
@@ -83,6 +83,7 @@ import {
   moveFunnelStage,
   recordAppointmentActivity,
   recordAppointmentAudit,
+  restoreStageAfterUndo,
   type SchedActor,
 } from "./schedBookingEffects";
 import {
@@ -348,6 +349,27 @@ async function deleteAllocationRows(ctx: MutationCtx, appointmentId: Id<"schedAp
     .withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId))
     .take(50);
   for (const row of rows) await ctx.db.delete(row._id);
+}
+
+/**
+ * Capacidade reduzida com atendimento JÁ em andamento: quem começou antes da mudança não é mexido, e a linha ganha a
+ * marca `capacityGrandfatheredAt` (a única escrita fora de `assertCapacityAndAllocate` nas alocações, só este campo)
+ * para o excesso ser verificável, não uma heurística de relógio.
+ */
+export async function markCapacityGrandfatheredCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; allocationIds: Id<"schedAllocations">[]; now: number }
+): Promise<number> {
+  let marked = 0;
+  for (const id of args.allocationIds) {
+    const row = await ctx.db.get(id);
+    if (!row || row.organizationId !== args.organizationId || row.coreStart >= args.now) continue;
+    if (row.capacityGrandfatheredAt === undefined) {
+      await ctx.db.patch(id, { capacityGrandfatheredAt: args.now });
+      marked++;
+    }
+  }
+  return marked;
 }
 
 export type AllocationSnapshot = { resourceId: string; role: string; units: number; exclusive: boolean };
@@ -1908,6 +1930,8 @@ export async function undoBookingCore(
     }
     const before = await stateBeforeReschedule(ctx, old!, a._id);
     if (!before) refusal("Não há registro do estado anterior do horário: recuse ou cancele pelo painel.");
+    // A3e: proposta antiga VENCIDA não volta a `pending_approval` no passado (mesma recusa de `undoAppointmentStatusCore`).
+    if (before!.status === "pending_approval" && old!.startTime < now) refusal("Esse horário já passou: a proposta anterior venceu e não pode voltar para a fila. Marque de novo.");
     olds.set(a._id, { doc: old!, before: before! });
   }
 
@@ -1985,6 +2009,117 @@ export async function undoBookingCore(
     restoredIds.push(old._id);
   }
   return { undoneIds: docs.map((a) => a._id), restoredIds };
+}
+
+// ---------------------------------------------------------------------------
+// Desfazer a criação automática pela mensagem do humano (C1)
+// ---------------------------------------------------------------------------
+
+const UNDO_HUMAN_CONFIRM_REASON = "Desfeito: não era uma confirmação";
+
+/**
+ * Desfaz o agendamento que o sistema criou sozinho a partir da confirmação do humano pelo WhatsApp. Via própria (não
+ * é `undoBookingCore`: aqui a origem é `human_message` e a janela é de `UNDO_HUMAN_CONFIRM_WINDOW_MIN`, 24 h): quem
+ * tem `agenda: edit`; só agendamento de origem `human_message` ainda `scheduled` e sem nenhuma mudança depois de
+ * criado; cancela com classe `system` (nunca é cancelamento tardio), libera a vaga, fecha a linha de conflito (se a
+ * criação foi para a fila), não manda nada ao cliente e emite `appointment.undone` (não `appointment.cancelled`: quem
+ * integra já recebeu `created`). A auditoria leva `metadata.outcome:"undone"` e `undo:true` (o "Desfazer" genérico
+ * não reinstala o que foi desfeito). Quem chama marca a interpretação como `undone`.
+ */
+export async function undoHumanConfirmBookingCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; actor: SchedActor; now?: number }
+): Promise<{ appointmentId: Id<"schedAppointments">; kind: "created" | "approved"; sourceMessageId?: Id<"messages"> }> {
+  const now = args.now ?? Date.now();
+  const { actor } = args;
+  if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
+  const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
+  if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  const org = assertOrgModule(await ctx.db.get(args.organizationId));
+  const tz = orgTimezone(org);
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId) fail("Agendamento não encontrado");
+  const appt = a!;
+  if (appt.origin !== "human_message") return await undoHumanApprovalCore(ctx, { appt, actor, tz, now });
+  if (!appt.sourceMessageId) fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  if (now - appt.createdAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A marcação foi feita há mais de 24 horas: use Cancelar.");
+  const untouched = appt.statusChangedAt <= appt.createdAt && appt.approvedAt === undefined && appt.clientConfirmedAt === undefined;
+  if (appt.status !== "scheduled" || !untouched) fail("O horário já mudou de situação: use Cancelar.");
+
+  const snapshot = await snapshotAllocations(ctx, appt._id);
+  await ctx.db.patch(appt._id, {
+    status: "cancelled",
+    cancelledAt: now,
+    cancelledByClass: "system",
+    cancelReason: UNDO_HUMAN_CONFIRM_REASON,
+    statusChangedAt: now,
+    updatedAt: now,
+    outcomePendingSince: undefined,
+  });
+  await releaseAllocations(ctx, appt._id);
+  await closeConflictsIfResolved(ctx, appt._id, now, { actor, resolution: "undone" });
+  const after = (await ctx.db.get(appt._id))!;
+  const label = appointmentLabel(after, tz);
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor,
+    severity: "medium",
+    description: `Desfez a marcação feita por uma confirmação no WhatsApp ${label}`,
+    before: { ...appointmentSnapshot(appt), allocations: snapshot },
+    after: { status: "cancelled" },
+    metadata: { statusChange: true, outcome: "undone", undo: true, byClass: "system", lateCancel: false, messageId: appt.sourceMessageId },
+    now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Marcação desfeita: ${label}`, actor, now });
+  await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz });
+  // A etapa do funil que ESTA marcação deu ao lead volta (só se o lead ainda está nela).
+  await restoreStageAfterUndo(ctx, { appointment: after, actor, now });
+  return { appointmentId: appt._id, kind: "created", sourceMessageId: appt.sourceMessageId };
+}
+
+/**
+ * Desfaz a APROVAÇÃO feita pelo sistema a partir da confirmação do humano (pendente da IA ou do link que virou
+ * `scheduled`): volta a `pending_approval`, sem cancelar nem avisar o cliente. Só vale se a última mudança de status
+ * foi essa aprovação (auditoria com `metadata.via:"human_message"`), dentro de 24 h e sem outra mudança depois.
+ * Webhook: `appointment.undone` (o agendamento volta a aguardar aprovação; não é cancelamento).
+ */
+async function undoHumanApprovalCore(
+  ctx: MutationCtx,
+  args: { appt: Doc<"schedAppointments">; actor: SchedActor; tz: string; now: number }
+): Promise<{ appointmentId: Id<"schedAppointments">; kind: "approved" }> {
+  const { appt, actor, tz, now } = args;
+  if (appt.approvedAt === undefined) fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  if (now - appt.approvedAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A aprovação foi feita há mais de 24 horas: use Cancelar.");
+  const untouched = appt.status === "scheduled" && appt.approvedAt !== undefined && appt.approvedBy === undefined && appt.statusChangedAt === appt.approvedAt && appt.clientConfirmedAt === undefined;
+  if (!untouched) fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  const logs = await ctx.db
+    .query("auditLogs")
+    .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", appt._id))
+    .order("desc")
+    .take(UNDO_AUDIT_SCAN);
+  const last = logs.find((l) => l.organizationId === appt.organizationId && l.metadata?.statusChange === true);
+  if (!last || last.metadata?.via !== "human_message" || last.metadata?.undo === true || last.changes?.after?.status !== "scheduled" || last.changes?.before?.status !== "pending_approval") {
+    fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  }
+  await ctx.db.patch(appt._id, { status: "pending_approval", approvedAt: undefined, statusChangedAt: now, updatedAt: now });
+  const after = (await ctx.db.get(appt._id))!;
+  const label = appointmentLabel(after, tz);
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor,
+    severity: "medium",
+    description: `Desfez a aprovação ${label}`,
+    before: { status: "scheduled" },
+    after: { status: "pending_approval" },
+    metadata: { statusChange: true, outcome: "undone", undo: true, byClass: "system" },
+    now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Aprovação desfeita: ${label}`, actor, now });
+  await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz });
+  await restoreStageAfterUndo(ctx, { appointment: after, actor, now });
+  return { appointmentId: appt._id, kind: "approved" };
 }
 
 // ---------------------------------------------------------------------------
@@ -2067,6 +2202,8 @@ export async function setAppointmentStatusCore(
   const a = await loadAppointment(ctx, args.appointment, args.actor);
   const check = checkTransition(a.status, args.to, actorClassOf(args.actor), now, a.startTime);
   if (!check.ok) return statusError(check.reason);
+  // A3e: proposta comum (não só a de remarcação) vencida não é aprovada: o horário já passou (a equipe recusa/cancela).
+  if (args.to === "scheduled" && a.status === "pending_approval" && a.startTime < now) fail(PROPOSAL_EXPIRED);
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   const memberId = actorMemberId(args.actor);
@@ -2155,6 +2292,50 @@ export async function markOutcomePendingCore(
   return true;
 }
 
+/** Marca de atenção da proposta que venceu sem decisão (`needsAttention.code`); a fila mostra "vencida". */
+export const PROPOSAL_EXPIRED_CODE = "proposal_expired";
+
+/**
+ * Job diário: proposta `pending_approval` cujo horário JÁ PASSOU vence. NÃO cancela e não muda o status (a equipe
+ * recusa/cancela): grava a marca `needsAttention: proposal_expired`, solta a alocação (o horário passou: não segura
+ * mais capacidade) e registra auditoria + atividade + webhook `appointment.needs_attention`. Sem alocação o
+ * invariante se sustenta pela marca (o verificador aceita `proposal_expired` ao lado de conflito aberto e `no_resource`).
+ * Idempotente: já marcada devolve `false`.
+ */
+export async function expireProposalCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; now: number }
+): Promise<boolean> {
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId) return false;
+  if (a.status !== "pending_approval" || a.startTime >= args.now || a.needsAttention?.code === PROPOSAL_EXPIRED_CODE) return false;
+  await releaseAllocations(ctx, a._id);
+  await ctx.db.patch(a._id, {
+    resources: a.resources.map((r) => ({ ...r, allocated: false })),
+    needsAttention: { code: PROPOSAL_EXPIRED_CODE, at: args.now },
+    updatedAt: args.now,
+  });
+  const after = (await ctx.db.get(a._id))!;
+  const org = assertOrgModule(await ctx.db.get(a.organizationId));
+  const tz = orgTimezone(org);
+  const label = appointmentLabel(after, tz);
+  const actor: SchedActor = { type: "system", via: "job" };
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor,
+    severity: "low",
+    description: `Proposta ${label} venceu sem decisão: horário passou, vaga liberada (recuse ou cancele)`,
+    before: appointmentSnapshot(a),
+    after: appointmentSnapshot(after),
+    metadata: { statusChange: false, proposalExpired: true },
+    now: args.now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Proposta vencida: ${label}`, actor, now: args.now });
+  await emitAppointmentWebhook(ctx, { event: "appointment.needs_attention", appointment: after, tz });
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Desfazer (pela auditoria)
 // ---------------------------------------------------------------------------
@@ -2201,6 +2382,8 @@ export async function undoAppointmentStatusCore(
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   let skipped: RestoreSkip[] = [];
+  // A3e: recusa de proposta VENCIDA não se desfaz: voltaria `pending_approval` com a vaga segurada no passado.
+  if (target === "pending_approval" && a.startTime < now) fail("Esse horário já passou: a proposta venceu e não pode voltar para a fila. Marque de novo.");
   if (allocationEffect(a.status, target) === "recreate") {
     const restored = await recreateAllocations(ctx, a, args.actor, now, previous.allocations, "conflict");
     if (!restored.ok) return restored;
@@ -2491,7 +2674,7 @@ export const reassignAppointmentResourcesCore = changeResourceCore;
 
 export type AppointmentDoc = Doc<"schedAppointments">;
 export type AppointmentId = Id<"schedAppointments">;
-export type ClosureKind = "resource_closed" | "resource_removed";
+export type ClosureKind = "resource_closed" | "resource_removed" | "capacity";
 /** Só estes estados seguram vaga e ainda podem ser movidos (em andamento/concluído/terminal ficam como estão). */
 export const MOVABLE_STATUSES: readonly SchedStatus[] = ["pending_approval", "scheduled", "confirmed"];
 
@@ -2664,7 +2847,7 @@ export async function releaseAllocationForConflictCore(
   await deleteAllocationRowsOfResources(ctx, a._id, args.resourceIds);
   await ctx.db.patch(a._id, {
     resources: a.resources.map((r) => (closed.has(r.resourceId) ? { ...r, allocated: false } : r)),
-    needsAttention: { code: args.kind, at: args.now },
+    needsAttention: { code: args.kind === "capacity" ? "capacity_conflict" : args.kind, at: args.now },
     updatedAt: args.now,
   });
   const after = (await ctx.db.get(a._id))!;
@@ -2676,7 +2859,7 @@ export async function releaseAllocationForConflictCore(
     action: "update",
     actor: args.actor,
     severity: "medium",
-    description: `Agendamento ${label} ficou sem recurso (${args.kind === "resource_closed" ? "recurso fechado" : "recurso removido"}): na fila de conflitos`,
+    description: `Agendamento ${label} ficou sem recurso (${args.kind === "resource_closed" ? "recurso fechado" : args.kind === "capacity" ? "capacidade reduzida" : "recurso removido"}): na fila de conflitos`,
     before: appointmentSnapshot(a),
     after: appointmentSnapshot(after),
     metadata: { statusChange: false, closure: true, conflict: args.kind, resourceIds: args.resourceIds, ...(args.error ? { error: args.error.slice(0, 200) } : {}) },

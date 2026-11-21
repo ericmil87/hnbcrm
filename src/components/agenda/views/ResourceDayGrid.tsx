@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarDays, CheckSquare, DoorOpen, Lock, MoreVertical, Plus, UserRound } from "lucide-react";
+import { AlertTriangle, CalendarDays, CalendarX, CheckSquare, DoorOpen, Lock, MoreVertical, Plus, UserRound } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { OriginMark as AppointmentOriginBadge } from "./OriginMark";
 import { APPOINTMENT_STATUS_ICON } from "@/components/agenda/AppointmentStatusChip";
@@ -64,7 +64,7 @@ function apptAria(item: Extract<GridItem, { kind: "appointment" }>, tz: string, 
     zonedRangeLabel(a.startTime, a.endTime, tz),
     appointmentLabel(a),
     a.serviceName,
-    statusMeta(a.status).label,
+    item.expired ? VOCAB.scheduling.proposalExpired : statusMeta(a.status).label,
     place,
     item.conflict ? t.conflictMark : "",
     over ? t.overCapacity : "",
@@ -258,7 +258,7 @@ function PlacedBlock({
   }
   const a = item.appointment;
   const meta = statusMeta(a.status);
-  const Icon = APPOINTMENT_STATUS_ICON[a.status as AppointmentStatus] ?? APPOINTMENT_STATUS_ICON.scheduled;
+  const Icon = item.expired ? CalendarX : (APPOINTMENT_STATUS_ICON[a.status as AppointmentStatus] ?? APPOINTMENT_STATUS_ICON.scheduled);
   return (
     <Block
       placed={placed}
@@ -270,6 +270,7 @@ function PlacedBlock({
       <span className="flex items-center gap-1">
         <Icon size={12} className="shrink-0" aria-hidden="true" />
         <span className="truncate font-medium tabular-nums">{zonedTimeLabel(a.startTime, tz)}</span>
+        {item.expired && <span className="shrink-0 font-semibold">{VOCAB.scheduling.proposalExpired}</span>}
         {item.conflict && <AlertTriangle size={12} className="shrink-0 text-semantic-warning" aria-hidden="true" />}
         <span className="ml-auto shrink-0">
           <AppointmentOriginBadge origin={a.origin} compact className="px-1 py-0" />
@@ -364,6 +365,30 @@ export function ResourceDayGrid({
                   <span className="rounded-full bg-surface-raised px-2">{t.blocked}</span>
                 </div>
               ))}
+              {col.allDayBands.length > 0 && (
+                <>
+                  <div className="pointer-events-none absolute inset-0 border-2 border-dashed border-ai-500 bg-ai-500/10" aria-hidden="true" />
+                  <ul className="absolute inset-x-1 top-1 z-10 space-y-1" aria-label={t.allDay}>
+                    {col.allDayBands.map((e) => (
+                      <li key={`band:${e.source}:${e.id}`}>
+                        <button
+                          type="button"
+                          onClick={(ev) => {
+                            ev.stopPropagation();
+                            onInternalClick(e);
+                          }}
+                          aria-label={fillVocab(t.allDayBand, { titulo: e.title })}
+                          className="flex min-h-11 w-full items-center gap-1.5 rounded-field border border-dashed border-ai-500 bg-surface-raised px-2 text-left text-xs text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                        >
+                          <CalendarDays size={12} className="shrink-0 text-ai-400" aria-hidden="true" />
+                          <span className="shrink-0 font-semibold">{t.allDayShort}</span>
+                          <span className="truncate">{e.title}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {col.closed && (
                 <div className="pointer-events-none absolute inset-0 bg-surface-sunken/60" style={HATCH} aria-hidden="true" />
               )}

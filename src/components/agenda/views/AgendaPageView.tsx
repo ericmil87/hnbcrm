@@ -33,6 +33,7 @@ import {
   type DayResource,
   type InternalItem,
 } from "@/lib/agendaGrid";
+import { isExpiredProposal } from "@/lib/agendaStatus";
 import { buildMonthCells } from "@/lib/agendaMonth";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
 import { fillVocab } from "@/lib/agendaCopy";
@@ -59,10 +60,10 @@ import { VOCAB } from "@/lib/vocab";
 import { AgendaHeader } from "./AgendaHeader";
 import { AgendaDayList } from "./AgendaDayList";
 import type { ColumnAction } from "./ResourceDayGrid";
-import type { PendingConflict, PendingData } from "./PendingQueueView";
+import type { PendingAppointment, PendingConflict, PendingData } from "./PendingQueueView";
 import type { ClosureTarget } from "./ResourceDaySheet";
 import { isManualNoPlace } from "@/lib/agendaConflict";
-import { bookingContextParts, bookingSheetExtraProps } from "@/lib/agendaBooking";
+import { bookingContextParts, bookingSheetExtraProps, rebookTarget } from "@/lib/agendaBooking";
 import type { PickedClient } from "./ClientPickerSheet";
 
 const t = VIEWS_COPY;
@@ -176,6 +177,7 @@ export function AgendaPageView() {
   const [closure, setClosure] = useState<ClosureTarget | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [rescheduling, setRescheduling] = useState<PendingConflict | null>(null);
+  const [rebooking, setRebooking] = useState<NonNullable<ReturnType<typeof rebookTarget>> | null>(null);
 
   // --- dados ---
   const canQuery = access.canView && !week;
@@ -378,7 +380,7 @@ export function AgendaPageView() {
               {grid.noPlace.map((a) => (
                 <li key={`noplace:${a._id}`}>
                   <Button size="sm" variant="secondary" onClick={() => openAppointment(a._id)}>
-                    {isManualNoPlace(a) ? t.conflict.undefinedPlace[group] : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
+                    {isExpiredProposal(a, now) ? VOCAB.scheduling.proposalExpired : isManualNoPlace(a) ? t.conflict.undefinedPlace[group] : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
                   </Button>
                 </li>
               ))}
@@ -486,6 +488,11 @@ export function AgendaPageView() {
             now={now}
             canEdit={access.canEdit}
             onOpenAppointment={openAppointment}
+            onRebook={(a: PendingAppointment) => {
+              const target = rebookTarget(a);
+              if (target) setRebooking(target);
+              else openAppointment(a._id);
+            }}
             onResolveConflict={(conflictId, appointmentId) => {
               if (appointmentId) setResolvingId(conflictId);
             }}
@@ -536,6 +543,28 @@ export function AgendaPageView() {
               serviceId: rescheduling.appointment.serviceId,
               variantKey: rescheduling.appointment.variantKey,
               startTime: rescheduling.appointment.startTime,
+            }}
+          />
+        </Suspense>
+      )}
+
+      {rebooking && (
+        <Suspense fallback={null}>
+          <BookingSheet
+            organizationId={organizationId}
+            open
+            onClose={() => setRebooking(null)}
+            onDone={() => setRebooking(null)}
+            who={{
+              contactId: rebooking.who.contactId as Id<"contacts"> | undefined,
+              leadId: rebooking.who.leadId as Id<"leads"> | undefined,
+              conversationId: rebooking.who.conversationId as Id<"conversations"> | undefined,
+              name: rebooking.who.name,
+            }}
+            initialService={{ serviceId: rebooking.service.serviceId as Id<"schedServices">, variantKey: rebooking.service.variantKey }}
+            onOpenAppointment={(id) => {
+              setRebooking(null);
+              openAppointment(id);
             }}
           />
         </Suspense>

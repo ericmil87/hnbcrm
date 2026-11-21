@@ -14,13 +14,24 @@ describe("availableActions", () => {
     expect(a.status).toEqual(["approve", "decline"]);
     expect(a.other).toEqual(["reschedule"]);
   });
-  it("proposta vencida (início já passou): sem aprovar, só recusar", () => {
+  it("proposta vencida (início já passou): sem aprovar, só recusar ou marcar de novo", () => {
     const a = availableActions(ctx("pending_approval", { startTime: NOW - 1 }));
-    expect(a.status).toEqual(["decline"]);
+    expect(a.status).toEqual(["decline", "rebook"]);
     expect(a.other).toEqual([]);
     expect(isProposalExpired("pending_approval", NOW - 1, NOW)).toBe(true);
     expect(isProposalExpired("pending_approval", NOW + 1, NOW)).toBe(false);
     expect(isProposalExpired("scheduled", NOW - 1, NOW)).toBe(false);
+  });
+  it("marca proposal_expired do servidor vence a proposta mesmo com horário futuro; nunca aprova nem remarca", () => {
+    const a = availableActions(ctx("pending_approval", { needsAttentionCode: "proposal_expired" }));
+    expect(a).toEqual({ status: ["decline", "rebook"], other: [] });
+    expect(isProposalExpired("pending_approval", NOW + 1, NOW, "proposal_expired")).toBe(true);
+    expect(isProposalExpired("pending_approval", NOW + 1, NOW, "no_resource")).toBe(false);
+    expect(isProposalExpired("scheduled", NOW + 1, NOW, "proposal_expired")).toBe(false);
+  });
+  it("só proposta vencida oferece marcar de novo", () => {
+    for (const s of ALL_STATUSES) expect(availableActions(ctx(s)).status, s).not.toContain("rebook");
+    expect(actionLabel("rebook")).toBe("Marcar de novo");
   });
   it("desfazer some quando o servidor disse que não há o que desfazer", () => {
     expect(availableActions(ctx("cancelled", { undoUnavailable: true })).other).toEqual([]);
@@ -51,7 +62,7 @@ describe("availableActions", () => {
       const { status } = availableActions(ctx(s, { startTime }));
       for (const action of status as DetailAction[]) {
         const to = STATUS_TARGET[action];
-        if (action === "decline") continue; // recusar = cancelar (outra porta)
+        if (action === "decline" || action === "rebook") continue; // recusar = cancelar (outra porta); marcar de novo abre o fluxo de marcar
         expect(to, action).toBeDefined();
         expect(canTransition(s, to!, "staff", NOW, startTime), `${s} -> ${to}`).toBe(true);
       }

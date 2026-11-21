@@ -184,6 +184,52 @@ export function appointmentLabel(a: Pick<Doc<"schedAppointments">, "startTime" |
   return `${formatSlotLabel(a.startTime, 0, tz)} (${a.serviceName})`;
 }
 
+/**
+ * Desfazer uma marcação que o sistema fez pela confirmação do humano: se o lead AINDA está na etapa para onde ESTA
+ * marcação o moveu (lida na auditoria da etapa: `metadata.appointmentId`), devolve-o à etapa anterior pela porta única
+ * (`moveLeadToStageCore`). Lead que já mudou de etapa por outro motivo não é mexido. Nunca lança.
+ */
+export async function restoreStageAfterUndo(
+  ctx: MutationCtx,
+  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; now: number }
+): Promise<boolean> {
+  const { appointment } = args;
+  if (!appointment.leadId) return false;
+  try {
+    const lead = await ctx.db.get(appointment.leadId);
+    if (!lead || lead.organizationId !== appointment.organizationId) return false;
+    if (lead.archivedAt !== undefined || lead.closedType !== undefined) return false;
+    const logs = await ctx.db
+      .query("auditLogs")
+      .withIndex("by_entity", (q) => q.eq("entityType", "lead").eq("entityId", lead._id))
+      .order("desc")
+      .take(30);
+    const hit = logs.find(
+      (l) =>
+        l.organizationId === lead.organizationId &&
+        l.metadata?.via === "scheduling" &&
+        l.metadata?.appointmentId === appointment._id &&
+        l.metadata?.undo !== true &&
+        l.changes?.after?.stageId === lead.stageId &&
+        typeof l.changes?.before?.stageId === "string"
+    );
+    if (!hit) return false;
+    const previous = await ctx.db.get(hit.changes!.before!.stageId as Id<"stages">);
+    if (!previous || previous.organizationId !== lead.organizationId || previous.boardId !== lead.boardId) return false;
+    await moveLeadToStageCore(ctx, {
+      lead,
+      newStageId: previous._id,
+      newStage: previous,
+      actor: stageActorOf(args.actor),
+      metadata: { via: "scheduling", appointmentId: appointment._id, undo: true },
+      now: args.now,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type FunnelOutcome = "moved" | "skipped" | "failed";
 
 /**

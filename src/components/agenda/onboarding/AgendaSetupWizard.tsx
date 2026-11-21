@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import type { SchedTemplateDraft, SchedTemplateKey } from "../../../../convex/lib/schedTemplates";
 import { automationToPatch, defaultAutomationForm, type AutomationForm } from "@/lib/agendaAutomation";
 import { mutationErrorMessage } from "@/lib/errors";
+import { TAB_ROUTES } from "@/lib/routes";
 import { AgendaSetupWizardView } from "./AgendaSetupWizardView";
 
 interface AgendaSetupWizardProps {
@@ -20,6 +22,8 @@ export function AgendaSetupWizard({ organizationId, open, onClose }: AgendaSetup
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [partialNotice, setPartialNotice] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const aiStatus = useQuery(api.aiSettings.getAiStatus, open ? { organizationId } : "skip");
   const apply = useMutation(api.schedulingConfig.applyTemplate);
   const updateSettings = useMutation(api.schedulingConfig.updateSettings);
   const serverDraft = useQuery(api.schedulingConfig.previewTemplate, open && templateKey ? { organizationId, templateKey } : "skip");
@@ -75,6 +79,11 @@ export function AgendaSetupWizard({ organizationId, open, onClose }: AgendaSetup
       submitting={submitting}
       error={error}
       partialNotice={partialNotice}
+      aiActive={aiStatus === undefined ? undefined : aiStatus.active}
+      onOpenAiSettings={() => {
+        onClose();
+        navigate(`${TAB_ROUTES.settings}?secao=ai`);
+      }}
       onApply={(d, ai) => void onApply(d, ai)}
     />
   );

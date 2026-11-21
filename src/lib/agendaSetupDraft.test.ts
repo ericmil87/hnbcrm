@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildTemplateDraft } from "../../convex/lib/schedTemplates";
-import { addSetupResource, draftToForm, formToDraft, hasSetupErrors, removeSetupResource, setupErrors, setupSummary, updateSetupResource, updateSetupService, addSetupService } from "./agendaSetupDraft";
+import { addSetupResource, draftToForm, formToDraft, hasSetupErrors, isSetupDirty, removeSetupResource, setupErrors, setupSummary, updateSetupResource, updateSetupService, addSetupService } from "./agendaSetupDraft";
 
 const clinic = () => draftToForm(buildTemplateDraft("clinic", { members: [{ id: "m1", name: "Ana" }] }));
 
@@ -42,5 +42,18 @@ describe("agendaSetupDraft: clínica do caso (4 terapeutas, 3 salas, uma para 2)
   it("sem dia de funcionamento é erro", () => {
     const f = { ...clinic(), week: [[], [], [], [], [], [], []] };
     expect(setupErrors(f).week).toBeDefined();
+  });
+});
+
+describe("isSetupDirty", () => {
+  const form = () => draftToForm(buildTemplateDraft("clinic", { members: [] }));
+  it("igual ao que o modelo trouxe e IA padrão: limpo", () => {
+    expect(isSetupDirty(form(), form(), { a: 1 }, { a: 1 })).toBe(false);
+    expect(isSetupDirty(null, null, { a: 1 }, { a: 1 })).toBe(false);
+  });
+  it("mexeu no formulário ou na IA: sujo", () => {
+    const edited = updateSetupResource(form(), form().resources[0].ref, { name: "Outro nome" });
+    expect(isSetupDirty(form(), edited, { a: 1 }, { a: 1 })).toBe(true);
+    expect(isSetupDirty(form(), form(), { a: 2 }, { a: 1 })).toBe(true);
   });
 });

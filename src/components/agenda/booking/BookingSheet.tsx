@@ -61,6 +61,8 @@ export interface BookingSheetProps {
   who: BookingSheetWho;
   /** Modo remarcar: o horário atual deixa de contar como ocupado na busca; `startTime` alimenta "De X para Y". */
   reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number };
+  /** Serviço (e variação) já decididos ao marcar de novo uma proposta vencida; o passo de serviço não é repetido. */
+  initialService?: { serviceId: Id<"schedServices">; variantKey?: string };
   /** Abre num dia (`YYYY-MM-DD`), ex.: "+ livre" da Agenda. */
   initialDate?: LocalDate;
   /** Hora pedida (minutos do dia no fuso da org); só vale junto de `initialDate`: destaca a sugestão mais próxima e pré-preenche "Outro horário". */
@@ -200,7 +202,7 @@ function useSlotSearch(input: {
   return { slots, reload };
 }
 
-function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
+function BookingFlow({ organizationId, onClose, who, reschedule, initialService, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
   const bookAppointment = useMutation(api.schedulingMutations.bookAppointment);
   const rescheduleAppointment = useMutation(api.schedulingMutations.rescheduleAppointment);
   const undoBooking = useMutation(api.schedulingMutations.undoBooking);
@@ -215,8 +217,8 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
       initialBookingState({
         services,
         preferredServiceId,
-        serviceId: reschedule?.serviceId,
-        variantKey: reschedule?.variantKey,
+        serviceId: reschedule?.serviceId ?? initialService?.serviceId,
+        variantKey: reschedule?.variantKey ?? initialService?.variantKey,
         idempotencyKey: newIdempotencyKey(),
         date: initialDate,
         pinned: initialPinned,

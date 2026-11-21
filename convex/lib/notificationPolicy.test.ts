@@ -130,7 +130,7 @@ describe("acionáveis", () => {
       [
         "handoff_requested", "new_message", "conversation_transferred", "task_comment_mention", "group_mention",
         "ai_draft_pending", "task_assigned", "task_due_soon", "task_overdue", "lead_assigned",
-        "channel_session_lost", "ai_followup_needs_human", "appointment_conflict", "appointment_pending_approval",
+        "channel_session_lost", "ai_followup_needs_human", "appointment_conflict", "appointment_pending_approval", "appointment_suggestion",
       ].sort()
     );
   });

@@ -22,7 +22,7 @@ export async function notifyClosureConflicts(
     organizationId: Id<"organizations">;
     closureKey: string;
     runId?: Id<"schedClosureRuns">;
-    kind: "resource_closed" | "resource_removed";
+    kind: "resource_closed" | "resource_removed" | "capacity";
     count: number;
     /** `failed`/`truncated`: o fechamento NÃO terminou por inteiro; o aviso diz para conferir a agenda. */
     problem?: "failed" | "truncated";

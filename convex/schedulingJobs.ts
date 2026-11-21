@@ -4,6 +4,8 @@
  *     passou há mais que a folga (`schedSettings.outcome.graceMin`, default 120 min), SÓ pela porta
  *     (`markOutcomePendingCore`). Nunca muda status, nunca solta alocação, nunca fala com o cliente
  *     (falta NUNCA é automática);
+ *  1b. (A3e, só na passada diária) propostas `pending_approval` cujo horário já passou: marca
+ *     `needsAttention: proposal_expired` e solta a alocação (`expireProposalCore`); NÃO cancela;
  *  2. a partir da hora local configurada (default 8h), uma vez por dia local, avisa a equipe de
  *     quantos atendimentos de ONTEM seguem sem desfecho (`lib/schedOutcomeNotice.ts`). Pendências mais
  *     antigas aparecem na fila, não em novo aviso.
@@ -14,7 +16,7 @@
  * (`schedJobState`) UMA vez, e varre os 3 status (até 100 linhas por faixa; sobra continua pelo
  * scheduler carregando o contexto nos args, sem reler). A passada horária olha só
  * `startTime ∈ [agora − folga − 1 dia, agora − folga]`; a varredura de 14 dias roda 1 vez por dia, junto
- * do aviso. `cronsDisabled()` primeiro em todas as funções. Este arquivo só LÊ `schedAppointments`.
+ * do aviso. `cronsDisabled()` primeiro em todas as funções. Este arquivo só LÊ `schedAppointments` (as escritas passam pela porta).
  */
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -22,7 +24,7 @@ import { internalMutation } from "./_generated/server";
 import { cronsDisabled } from "./lib/cronGuard";
 import { modulesOf } from "./lib/orgModules";
 import { safeTimezone } from "./lib/promptDateTime";
-import { markOutcomePendingCore } from "./lib/schedBookingOps";
+import { expireProposalCore, markOutcomePendingCore } from "./lib/schedBookingOps";
 import { OUTCOME_LOOKBACK_DAYS, OUTCOME_NOTICE_CAP, OUTCOME_ORG_PAGE, OUTCOME_SCAN_PAGE } from "./lib/schedConstants";
 import { resolveSchedSettings } from "./lib/schedSettingsDefaults";
 import { AWAITING_OUTCOME_STATUSES } from "./lib/schedStatus";
@@ -88,19 +90,23 @@ export const internalOutcomePendingOrg = internalMutation({
     const graceMs = run.graceMin * 60 * 1000;
     const from = run.full ? args.now - OUTCOME_LOOKBACK_DAYS * DAY_MS : args.now - graceMs - DAY_MS;
     let cursor = run.cursor;
-    for (let i = run.statusIndex; i < AWAITING_OUTCOME_STATUSES.length; i++) {
-      const status = AWAITING_OUTCOME_STATUSES[i];
+    // A3e: depois dos status "sem desfecho", na passada diária, as propostas `pending_approval` com horário vencido.
+    const scanStatuses = run.full ? [...AWAITING_OUTCOME_STATUSES, "pending_approval" as const] : AWAITING_OUTCOME_STATUSES;
+    for (let i = run.statusIndex; i < scanStatuses.length; i++) {
+      const status = scanStatuses[i];
+      const proposals = status === "pending_approval";
       const page = await ctx.db
         .query("schedAppointments")
-        .withIndex("by_organization_and_status_and_start", (q) =>
-          q
-            .eq("organizationId", args.organizationId)
-            .eq("status", status)
-            .gte("startTime", from)
-            .lte("startTime", args.now - graceMs),
-        )
+        .withIndex("by_organization_and_status_and_start", (q) => {
+          const base = q.eq("organizationId", args.organizationId).eq("status", status).gte("startTime", from);
+          return proposals ? base.lt("startTime", args.now) : base.lte("startTime", args.now - graceMs);
+        })
         .paginate({ numItems: OUTCOME_SCAN_PAGE, cursor });
       for (const appt of page.page) {
+        if (proposals) {
+          await expireProposalCore(ctx, { organizationId: args.organizationId, appointmentId: appt._id, now: args.now });
+          continue;
+        }
         if (appt.outcomePendingSince !== undefined) continue;
         await markOutcomePendingCore(ctx, { organizationId: args.organizationId, appointmentId: appt._id, graceMs, now: args.now });
       }

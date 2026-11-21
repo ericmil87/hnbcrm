@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { ChoiceCards } from "@/components/agenda/ChoiceCards";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { FormField } from "@/components/ui/FormField";
@@ -16,6 +17,13 @@ interface AiPolicyFormProps {
   errors?: { maxAiBookingsPerContactPerDay?: string };
   /** `wizard`: uma escolha só (não mexe / propõe / marca sozinha) e o interruptor das confirmações. */
   variant?: "panel" | "wizard";
+  /**
+   * Só no assistente: a IA da organização está ativa? `false` = só o interruptor das confirmações (que sem IA apenas
+   * sugere) e a explicação com o atalho; `undefined`/`true` = tudo. As opções de IA só valem com a IA ligada.
+   */
+  aiActive?: boolean;
+  /** Atalho para a configuração da IA (mostrado só no assistente sem IA ativa). */
+  onOpenAiSettings?: () => void;
   /** "Você aceitou ... em 12/11/2026." (já montado; só aparece com aceite gravado). */
   ackNote?: string;
 }
@@ -27,16 +35,23 @@ const LEVELS = (verb: string): Array<{ value: AiLevel; title: string; hint: stri
 ];
 
 const CONFIRM: Array<{ value: HumanConfirmMode; title: string; hint: string }> = [
-  { value: "auto", title: "Marcar sozinho", hint: "Quando você confirma um horário na conversa, o sistema marca." },
-  { value: "suggest", title: "Só sugerir", hint: "O sistema mostra a sugestão e você toca para marcar." },
+  { value: "suggest", title: "Só sugerir (recomendado)", hint: "O sistema mostra a sugestão e você toca para marcar." },
+  { value: "auto", title: "Marcar sozinho quando tiver certeza (experimental)", hint: "Experimental: pode marcar errado. Você é avisado e tem 24 h para Desfazer." },
   { value: "off", title: "Desligado", hint: "O sistema não interpreta suas mensagens." },
 ];
 
 const INTERPRET_EXPLAIN =
-  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e marca para você. Na dúvida, ele só sugere: nunca marca por conta própria sem ter certeza.";
+  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e sugere a marcação: você toca para marcar. Nada é marcado sozinho, a menos que você ligue a opção experimental.";
+const AUTO_RISK =
+  "Marcar sozinho é experimental: o sistema pode marcar errado (por exemplo, um horário que não era de atendimento). Você é avisado a cada marcação e pode desfazer em até 24 horas; nada é enviado ao cliente.";
+
+const INTERPRET_EXPLAIN_NO_AI =
+  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e mostra a sugestão. Sem a IA ativa ele só sugere: você toca para marcar.";
+const NO_AI_NOTE = "As opções de como a IA participa da agenda aparecem quando a IA da organização estiver ativa.";
+const NO_AI_LINK = "Configurar a IA";
 
 /** Política da IA por ação, com AVISO + ACEITE ao escolher "marca sozinha". Controlado, sem Convex. */
-export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant = "panel", ackNote }: AiPolicyFormProps) {
+export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant = "panel", ackNote, aiActive = true, onOpenAiSettings }: AiPolicyFormProps) {
   const [pending, setPending] = useState<{ next: AutomationForm } | null>(null);
   const set = (patch: Partial<AutomationForm>) => onChange({ ...value, ...patch });
   const needsAsk = (next: AutomationForm) => next.book === "auto" || next.reschedule === "auto" || next.cancel === "auto" ? !value.hasAck && !value.ackAcceptedNow : false;
@@ -61,11 +76,11 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-text-primary">{VOCAB.scheduling.onboarding.understandConfirmations}</p>
-          <p className="mt-0.5 text-sm text-text-muted">{INTERPRET_EXPLAIN}</p>
+          <p className="mt-0.5 text-sm text-text-muted">{aiActive ? INTERPRET_EXPLAIN : INTERPRET_EXPLAIN_NO_AI}</p>
         </div>
         <Switch
           checked={value.humanConfirmMode !== "off"}
-          onCheckedChange={(on) => set({ humanConfirmMode: on ? "auto" : "off" })}
+          onCheckedChange={(on) => set({ humanConfirmMode: on ? "suggest" : "off" })}
           label="Interpretar minhas confirmações pelo WhatsApp"
           hideLabel
           disabled={disabled}
@@ -76,8 +91,29 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
         <p className="text-sm font-medium text-text-primary">Interpretar minhas confirmações pelo WhatsApp</p>
         <p className="text-sm text-text-muted">{INTERPRET_EXPLAIN}</p>
         <ChoiceCards label="Interpretar minhas confirmações pelo WhatsApp" options={CONFIRM} value={value.humanConfirmMode} disabled={disabled} onChange={(humanConfirmMode) => set({ humanConfirmMode })} />
+        {value.humanConfirmMode === "auto" && (
+          <p role="note" className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 text-sm text-text-primary">
+            {AUTO_RISK}
+          </p>
+        )}
       </div>
     );
+
+  if (variant === "wizard" && !aiActive) {
+    return (
+      <div className="space-y-4">
+        {interpret}
+        <div role="note" className="space-y-2 rounded-card border border-border bg-surface-sunken p-3">
+          <p className="text-sm text-text-secondary">{NO_AI_NOTE}</p>
+          {onOpenAiSettings && (
+            <Button type="button" size="sm" variant="secondary" onClick={onOpenAiSettings}>
+              {NO_AI_LINK}
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

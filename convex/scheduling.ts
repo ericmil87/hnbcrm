@@ -22,6 +22,7 @@ import {
   personResourceIdsOf,
   resolveAgendaReader,
 } from "./lib/schedRead";
+import { SUGGESTION_TTL_MS } from "./lib/schedInterpretPure";
 import { searchSlots } from "./lib/schedSearch";
 import { ACTIVE_STATUSES } from "./lib/schedStatus";
 import { addLocalDays, assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type LocalDate, localDateOf } from "./lib/schedTime";
@@ -657,6 +658,10 @@ export const listPending = query({
         conversationId: v.id("conversations"),
         act: v.string(),
         parsed: v.object({ localDate: v.optional(v.string()), timeMin: v.optional(v.number()), serviceId: v.optional(v.id("schedServices")) }),
+        /** Por que não marcou sozinho (código curto: `sem_ia`, `servico_ambiguo`, `regra:OUTSIDE_HOURS`…). */
+        reason: v.optional(v.string()),
+        /** Remarcar/cancelar: o agendamento-alvo, quando único. */
+        appointmentId: v.optional(v.id("schedAppointments")),
         createdAt: v.number(),
       })
     ),
@@ -729,20 +734,29 @@ export const listPending = query({
       conversationId: Id<"conversations">;
       act: string;
       parsed: { localDate?: string; timeMin?: number; serviceId?: Id<"schedServices"> };
+      reason?: string;
+      appointmentId?: Id<"schedAppointments">;
       createdAt: number;
     }> = [];
     let suggestionsCapped = false;
     if (reader.seesAll) {
       const recent = await ctx.db
         .query("schedInterpretations")
-        .withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId))
+        .withIndex("by_organization_and_status_and_created", (q) => q.eq("organizationId", args.organizationId).eq("status", "open"))
         .order("desc")
         .take(100);
-      const matching = recent.filter((i) => i.status === "open" && i.decision === "proposed");
+      // Aberta e ainda dentro das 48 h (a validade é lida aqui: não há job que a feche; `now` já vem arredondado à hora).
+      const matching = recent.filter((i) => i.status === "open" && i.decision === "proposed" && now - i.createdAt < SUGGESTION_TTL_MS);
       suggestionsCapped = matching.length > PENDING_CAP || recent.length >= 100;
-      suggestions = matching
-        .slice(0, PENDING_CAP)
-        .map((i) => ({ _id: i._id, conversationId: i.conversationId, act: i.act, parsed: i.parsed, createdAt: i.createdAt }));
+      suggestions = matching.slice(0, PENDING_CAP).map((i) => ({
+        _id: i._id,
+        conversationId: i.conversationId,
+        act: i.act,
+        parsed: i.parsed,
+        ...(i.reason ? { reason: i.reason } : {}),
+        ...(i.appointmentId ? { appointmentId: i.appointmentId } : {}),
+        createdAt: i.createdAt,
+      }));
     }
 
     return {

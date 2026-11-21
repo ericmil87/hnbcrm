@@ -119,7 +119,7 @@ function EntryRow({
     <button
       type="button"
       onClick={() => onAppointmentClick(a._id)}
-      aria-label={[zonedRangeLabel(a.startTime, a.endTime, tz), appointmentLabel(a), a.serviceName, entry.place].filter(Boolean).join(", ")}
+      aria-label={[zonedRangeLabel(a.startTime, a.endTime, tz), appointmentLabel(a), a.serviceName, entry.expired ? VOCAB.scheduling.proposalExpired : "", entry.place].filter(Boolean).join(", ")}
       className={cn(rowBase, "border-border-subtle hover:bg-surface-overlay")}
     >
       <TimeCell start={zonedTimeLabel(a.startTime, tz)} end={zonedTimeLabel(a.endTime, tz)} />
@@ -130,7 +130,7 @@ function EntryRow({
           {showPlace && entry.place ? ` · ${entry.place}` : ""}
         </span>
         <span className="mt-1 flex flex-wrap items-center gap-1.5">
-          <AppointmentStatusChip status={a.status} />
+          <AppointmentStatusChip status={a.status} expired={entry.expired} />
           <AppointmentOriginBadge origin={a.origin} />
           {entry.conflict && (
             <span className="inline-flex items-center gap-1 text-caption font-medium text-semantic-warning">

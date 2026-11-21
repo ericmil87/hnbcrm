@@ -36,9 +36,14 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     fireEvent.click(screen.getByRole("radio", { name: /Cancela sozinha/ }));
     expect(onChange).toHaveBeenCalledWith({ ...base(true), cancel: "auto" });
   });
-  it("explica as confirmações pelo WhatsApp e o 'na dúvida só sugere'", () => {
-    render(<AiPolicyForm value={base()} onChange={() => {}} />);
-    expect(screen.getByText(/Na dúvida, ele só sugere/)).toBeInTheDocument();
+  it("explica as confirmações pelo WhatsApp: padrão só sugerir; marcar sozinho é experimental, com aviso de risco e Desfazer", () => {
+    const { rerender } = render(<AiPolicyForm value={{ ...base(), humanConfirmMode: "suggest" }} onChange={() => {}} />);
+    expect(screen.getByText(/Nada é marcado sozinho, a menos que você ligue a opção experimental/)).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /Só sugerir \(recomendado\)/ })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /\(experimental\)/ })).toBeInTheDocument();
+    expect(screen.queryByRole("note")).toBeNull();
+    rerender(<AiPolicyForm value={{ ...base(), humanConfirmMode: "auto" }} onChange={() => {}} />);
+    expect(screen.getByRole("note")).toHaveTextContent(/pode marcar errado.*desfazer em até 24 horas/i);
   });
   it("assistente: três opções e o interruptor das confirmações; sozinha pede o mesmo aceite", () => {
     const onChange = vi.fn();
@@ -51,8 +56,25 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "Entendi, ligar" }));
     expect(onChange).toHaveBeenLastCalledWith({ ...base(), book: "auto", ackAcceptedNow: true });
+    // Ligar o interruptor liga o padrão "só sugerir" (nunca o experimental); desligar = off.
     fireEvent.click(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" }));
     expect(onChange).toHaveBeenLastCalledWith({ ...base(), humanConfirmMode: "off" });
+  });
+  it("assistente sem IA ativa: só o interruptor, a explicação e o atalho", () => {
+    const onChange = vi.fn();
+    const onOpenAiSettings = vi.fn();
+    render(<AiPolicyForm variant="wizard" aiActive={false} value={base()} onChange={onChange} onOpenAiSettings={onOpenAiSettings} />);
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.getByText(/Sem a IA ativa ele só sugere/)).toBeInTheDocument();
+    expect(screen.getByText("As opções de como a IA participa da agenda aparecem quando a IA da organização estiver ativa.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), humanConfirmMode: "off" });
+    fireEvent.click(screen.getByRole("button", { name: "Configurar a IA" }));
+    expect(onOpenAiSettings).toHaveBeenCalled();
+  });
+  it("o painel de Configurações não muda com aiActive", () => {
+    render(<AiPolicyForm aiActive={false} value={base()} onChange={() => {}} />);
+    expect(screen.getAllByRole("radio").length).toBeGreaterThan(3);
   });
   it("mostra quem aceitou", () => {
     render(<AiPolicyForm value={base(true)} onChange={() => {}} ackNote='Ana aceitou o aviso do "marca sozinha" em 01/01/2026.' />);

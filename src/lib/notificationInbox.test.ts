@@ -76,6 +76,13 @@ describe("notificationHref", () => {
     expect(notificationHref(n({ type: "appointment_no_outcome" }))).toBe("/app/calendario?pendencias=1");
   });
 
+  it("appointment_created e appointment_suggestion (C1) abrem a conversa de origem; sem conversa, a fila da agenda", () => {
+    for (const type of ["appointment_created", "appointment_suggestion"] as const) {
+      expect(notificationHref(n({ type, conversationId: "C1" } as never))).toBe("/app/entrada?conversation=C1");
+      expect(notificationHref(n({ type }))).toBe("/app/calendario?pendencias=1");
+    }
+  });
+
   it("lead_assigned abre o lead", () => {
     expect(notificationHref(n({ type: "lead_assigned", leadId: "L1" }))).toBe("/app/pipeline?lead=L1");
     expect(notificationHref(n({ type: "lead_assigned", leadId: null, data: { leadId: "L2" } }))).toBe("/app/pipeline?lead=L2");

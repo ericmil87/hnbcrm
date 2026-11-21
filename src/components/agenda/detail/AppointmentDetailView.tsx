@@ -15,6 +15,7 @@ import {
   type HistoryInput,
 } from "@/lib/appointmentActions";
 import { joinNames, longRangePhrase } from "@/lib/bookingFlow";
+import { HUMAN_UNDO_COPY } from "@/lib/agendaHumanConfirm";
 
 const t = DETAIL_COPY;
 
@@ -28,6 +29,7 @@ export interface DetailAppointment extends HistoryInput {
   notes?: string;
   resources: ReadonlyArray<{ name: string }>;
   rescheduleOfId?: string;
+  needsAttention?: { code: string };
 }
 
 export interface AppointmentDetailViewProps {
@@ -45,6 +47,9 @@ export interface AppointmentDetailViewProps {
   onAction: (action: DetailAction) => void;
   /** "Abrir conversa" (ausente = sem o atalho). */
   onOpenConversation?: () => void;
+  /** C1: o sistema marcou/aprovou a partir de uma confirmação no WhatsApp e a janela de 24 h ainda vale (`humanConfirmUndoKind`). */
+  humanUndo?: "created" | "approved" | null;
+  onUndoHumanConfirm?: () => void;
 }
 
 /** Conteúdo do painel do agendamento, só por props: dados, status, origem, avisos, ações e histórico. */
@@ -59,14 +64,17 @@ export function AppointmentDetailView({
   undoUnavailable,
   onAction,
   onOpenConversation,
+  humanUndo = null,
+  onUndoHumanConfirm,
 }: AppointmentDetailViewProps) {
-  const expired = isProposalExpired(appt.status, appt.startTime, now);
+  const expired = isProposalExpired(appt.status, appt.startTime, now, appt.needsAttention?.code);
   const actions = availableActions({
     status: appt.status,
     canEdit,
     startTime: appt.startTime,
     now,
     isRescheduleProposal: Boolean(appt.rescheduleOfId),
+    needsAttentionCode: appt.needsAttention?.code,
     undoUnavailable,
   });
   // Proposta que não vale mais (vencida ou falhou ao aprovar): a saída é recusar, então o destaque vai para "Recusar".
@@ -99,7 +107,7 @@ export function AppointmentDetailView({
   return (
     <div className="space-y-5 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <AppointmentStatusChip status={appt.status} />
+        <AppointmentStatusChip status={appt.status} expired={expired} />
         <AppointmentOriginBadge origin={appt.origin} />
       </div>
 
@@ -124,7 +132,7 @@ export function AppointmentDetailView({
             <Button
               key={action}
               type="button"
-              variant={action === "decline" ? (declineFirst ? "primary" : "secondary") : "primary"}
+              variant={action === "rebook" ? "secondary" : action === "decline" ? (declineFirst ? "primary" : "secondary") : "primary"}
               disabled={busy}
               onClick={() => onAction(action)}
             >
@@ -142,6 +150,15 @@ export function AppointmentDetailView({
               )}
             />
           )}
+        </div>
+      )}
+
+      {humanUndo && canEdit && onUndoHumanConfirm && (
+        <div className="space-y-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3">
+          <p className="text-sm text-text-primary">{HUMAN_UNDO_COPY[humanUndo].hint}</p>
+          <Button type="button" variant="secondary" disabled={busy} onClick={onUndoHumanConfirm}>
+            {HUMAN_UNDO_COPY[humanUndo].button}
+          </Button>
         </div>
       )}
 

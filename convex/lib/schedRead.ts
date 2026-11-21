@@ -29,7 +29,7 @@ import { MAX_EVENT_DURATION_MS, SHORT_EVENT_MS } from "./calendarRules";
 import { MAX_BLOCK_MIN, MAX_SEARCH_DAYS } from "./schedConstants";
 import { type ResolvedSchedSettings, resolveSchedSettings } from "./schedSettingsDefaults";
 import { ACTIVE_STATUSES } from "./schedStatus";
-import { assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type LocalDate } from "./schedTime";
+import { assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type LocalDate, localDateOf } from "./schedTime";
 
 type ReadCtx = { db: QueryCtx["db"] };
 
@@ -235,6 +235,29 @@ export async function readAppointmentsStartingBetween(
   return { rows: rows.slice(0, limit), more: rows.length > limit };
 }
 
+/**
+ * Agendamentos do CONTATO a partir de `fromStart` (índice por contato, ordem crescente, teto `cap`), só os da org e só os
+ * `statuses` pedidos. Nunca consulta com `contactId` indefinido (leria documentos de outra org). Usado pela interpretação
+ * da confirmação do humano (C1) para achar "já marcado" e "pendente de aprovação".
+ */
+const CONTACT_SCAN_CAP = 100;
+export async function readContactAppointmentsFrom(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  contactId: Id<"contacts"> | undefined,
+  fromStart: number,
+  statuses: readonly string[],
+  cap = 20
+): Promise<Doc<"schedAppointments">[]> {
+  if (!contactId) return [];
+  const rows = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_contact_and_start", (q) => q.eq("contactId", contactId).gte("startTime", fromStart))
+    .take(Math.max(cap, CONTACT_SCAN_CAP));
+  // O índice é por início, não por status: lê até o teto de varredura e só então filtra (o que importa não some atrás de cancelados).
+  return rows.filter((r) => r.organizationId === organizationId && statuses.includes(r.status)).slice(0, cap);
+}
+
 /** `true` se o dia não foi lido por inteiro por `readExceptionsRange` (fail-closed). */
 export function exceptionsUnverifiedOn(completeBefore: LocalDate | null, date: LocalDate): boolean {
   return completeBefore !== null && date >= completeBefore;
@@ -286,8 +309,31 @@ export async function readResourceAllocations(
  * Compromissos internos `scheduled`, com horário, dos membros ligados a recurso-pessoa (`memberResources`:
  * membro → recursos dele). Índice por membro e tempo (curtos ≤ 1 dia recuam 1 dia) + 1 faixa de eventos
  * longos. Estourou o teto: os recursos do membro (ou todos, se foi a faixa de longos) ficam em `unverified`.
- * Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
+ * Dia inteiro vale o dia local inteiro (fuso da org). Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
  */
+/** Folga da consulta por índice: o dia inteiro expandido pode começar até 12h antes e terminar até 12h depois do gravado. */
+const ALL_DAY_SLACK_MS = 24 * 60 * 60 * 1000;
+const HALF_DAY_MS = 12 * 60 * 60 * 1000;
+const SHORT_ALL_DAY_MS = 20 * 60 * 60 * 1000;
+
+/**
+ * Intervalo que um compromisso de DIA INTEIRO ocupa: do início do primeiro ao fim do último dia LOCAL (fuso da org).
+ * Ancorado pelo CENTRO do dia (`início + 12h` até `fim − 12h`), então vale para quem gravou à meia-noite local
+ * (00:00–23:59:59.999), em UTC (00:00Z–24:00Z) ou em outro fuso (navegador a leste/oeste). Busca e porta usam ESTA conta.
+ */
+export function allDaySpan(ev: Pick<Doc<"calendarEvents">, "startTime" | "endTime">, tz: string | null): { start: number; end: number } {
+  if (tz === null) return { start: ev.startTime, end: Math.max(ev.endTime, ev.startTime + 1) };
+  // Duração curta (< ~20h: "dia inteiro" com horário, só via REST/MCP): é de UM dia só, o do início (o centro erraria à tarde).
+  if (ev.endTime - ev.startTime < SHORT_ALL_DAY_MS) {
+    const day = localDateOf(ev.startTime, tz);
+    return { start: dayBounds(day, tz).start, end: dayBounds(day, tz).end };
+  }
+  const first = localDateOf(ev.startTime + HALF_DAY_MS, tz);
+  const lastRaw = localDateOf(ev.endTime - HALF_DAY_MS, tz);
+  const last = lastRaw < first ? first : lastRaw;
+  return { start: dayBounds(first, tz).start, end: dayBounds(last, tz).end };
+}
+
 export async function readInternalEventsOfMembers(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
@@ -299,11 +345,19 @@ export async function readInternalEventsOfMembers(
   if (memberResources.size === 0) return { events, unverified: [], truncated: false };
   let truncated = false;
   const seen = new Set<string>();
+  // Só `scheduled` conta (cancelado/concluído não bloqueia). Dia inteiro (`allDay`) vale o(s) dia(s) LOCAL(IS) inteiro(s) no
+  // fuso da org (evento de vários dias cobre todos); o fuso só é lido se aparecer um desses.
+  const allDayRows: Doc<"calendarEvents">[] = [];
   const take = (ev: Doc<"calendarEvents">) => {
     if (seen.has(ev._id)) return;
     seen.add(ev._id);
-    if (ev.status !== "scheduled" || ev.allDay || ev.assignedTo === undefined) return;
-    if (!memberResources.has(ev.assignedTo) || ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
+    if (ev.status !== "scheduled" || ev.assignedTo === undefined) return;
+    if (!memberResources.has(ev.assignedTo)) return;
+    if (ev.allDay) {
+      allDayRows.push(ev);
+      return;
+    }
+    if (ev.endTime <= window.start || ev.startTime >= window.end || ev.endTime <= ev.startTime) return;
     events.push({ teamMemberId: ev.assignedTo, start: ev.startTime, end: ev.endTime });
   };
   for (const [memberId, ids] of memberResources) {
@@ -313,8 +367,8 @@ export async function readInternalEventsOfMembers(
         q
           .eq("organizationId", organizationId)
           .eq("assignedTo", memberId as Id<"teamMembers">)
-          .gte("startTime", window.start - SHORT_EVENT_MS)
-          .lt("startTime", window.end)
+          .gte("startTime", window.start - SHORT_EVENT_MS - ALL_DAY_SLACK_MS)
+          .lt("startTime", window.end + ALL_DAY_SLACK_MS)
       )
       .take(MAX_INTERNAL_EVENTS_PER_MEMBER + 1);
     if (rows.length > MAX_INTERNAL_EVENTS_PER_MEMBER) {
@@ -326,7 +380,7 @@ export async function readInternalEventsOfMembers(
   const longRows = await ctx.db
     .query("calendarEvents")
     .withIndex("by_organization_and_long_start", (q) =>
-      q.eq("organizationId", organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS).lt("longStart", window.end)
+      q.eq("organizationId", organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS - ALL_DAY_SLACK_MS).lt("longStart", window.end + ALL_DAY_SLACK_MS)
     )
     .take(MAX_LONG_EVENTS + 1);
   if (longRows.length > MAX_LONG_EVENTS) {
@@ -334,6 +388,20 @@ export async function readInternalEventsOfMembers(
     for (const ids of memberResources.values()) for (const id of ids) unverified.add(id);
   }
   longRows.slice(0, MAX_LONG_EVENTS).forEach(take);
+  if (allDayRows.length > 0) {
+    const org = await ctx.db.get(organizationId);
+    let tz: string | null = null;
+    try {
+      tz = org ? assertValidTimezone(org.settings.timezone) : null;
+    } catch {
+      tz = null;
+    }
+    for (const ev of allDayRows) {
+      const span = allDaySpan(ev, tz);
+      if (span.end <= window.start || span.start >= window.end) continue;
+      events.push({ teamMemberId: ev.assignedTo!, start: span.start, end: span.end });
+    }
+  }
   return { events, unverified: [...unverified], truncated };
 }
 

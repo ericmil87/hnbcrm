@@ -225,7 +225,7 @@ export const internalProcessClosureBatch = internalMutation({
     organizationId: v.id("organizations"),
     runId: v.id("schedClosureRuns"),
     scope: v.object({
-      mode: v.union(v.literal("closure"), v.literal("removal")),
+      mode: v.union(v.literal("closure"), v.literal("removal"), v.literal("capacity")),
       resourceId: v.optional(v.id("schedResources")),
       resourceKind: v.optional(kindV),
       fromLocalDate: v.string(),

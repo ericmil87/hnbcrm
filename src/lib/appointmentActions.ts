@@ -5,7 +5,7 @@
  */
 import { UNDO_TARGETS, type SchedStatus } from "../../convex/lib/schedStatus";
 import { fillVocab } from "./agendaCopy";
-import { originLabel } from "./agendaStatus";
+import { isExpiredProposal, originLabel } from "./agendaStatus";
 import { DETAIL_COPY } from "./bookingCopy";
 
 export type DetailAction =
@@ -15,6 +15,7 @@ export type DetailAction =
   | "checkIn"
   | "complete"
   | "noShow"
+  | "rebook"
   | "reschedule"
   | "cancel"
   | "swap"
@@ -33,13 +34,15 @@ export interface ActionContext {
   now: number;
   /** Proposta de remarcação da IA (aprove ou recuse antes de mexer no horário). */
   isRescheduleProposal?: boolean;
+  /** `needsAttention.code` do agendamento (`proposal_expired` = o servidor já marcou a proposta como vencida). */
+  needsAttentionCode?: string;
   /** O servidor já disse que não há o que desfazer (esconde "Desfazer"). */
   undoUnavailable?: boolean;
 }
 
 /** Proposta (aguardando aprovação) cujo início já passou: não dá mais para aprovar, só recusar. */
-export function isProposalExpired(status: string, startTime: number, now: number): boolean {
-  return status === "pending_approval" && startTime <= now;
+export function isProposalExpired(status: string, startTime: number, now: number, needsAttentionCode?: string): boolean {
+  return isExpiredProposal({ status, startTime, needsAttention: needsAttentionCode ? { code: needsAttentionCode } : undefined }, now);
 }
 
 const NONE: DetailActions = { status: [], other: [] };
@@ -52,10 +55,13 @@ export function availableActions(ctx: ActionContext): DetailActions {
   const out: DetailActions = { status: [], other: [] };
   switch (status) {
     case "pending_approval":
-      // Vencida: aprovar falharia; a saída é recusar.
-      if (!isProposalExpired(ctx.status, ctx.startTime, ctx.now)) out.status.push("approve");
-      out.status.push("decline");
-      if (!ctx.isRescheduleProposal && !isProposalExpired(ctx.status, ctx.startTime, ctx.now)) out.other.push("reschedule");
+      // Vencida: aprovar falharia; as saídas são recusar ou marcar de novo (nunca aprovar nem remarcar a proposta).
+      if (isProposalExpired(ctx.status, ctx.startTime, ctx.now, ctx.needsAttentionCode)) {
+        out.status.push("decline", "rebook");
+        break;
+      }
+      out.status.push("approve", "decline");
+      if (!ctx.isRescheduleProposal) out.other.push("reschedule");
       break;
     case "scheduled":
       out.status.push("confirm", "checkIn", "complete");

@@ -43,6 +43,8 @@ export interface ClosureResult {
 }
 
 export interface ClosureRunLike {
+  /** Modo do lote (`schedClosureRuns.kind`); ausente = fechamento. `capacity` = excedente solto ao reduzir a capacidade. */
+  kind?: "resource_closed" | "resource_removed" | "capacity";
   status: "running" | "done" | "failed";
   failure?: string;
   truncated?: boolean;
@@ -153,6 +155,7 @@ export interface RunView {
 
 /** Andamento e resultado de um fechamento em lotes (`getClosureRun`). `failed` e `truncated` = não terminou por inteiro. */
 export function runView(run: ClosureRunLike): RunView {
+  if (run.kind === "capacity") return capacityRunView(run);
   if (run.status === "failed" || run.truncated) return { state: "incomplete", text: t.run.incomplete, progress: null };
   if (run.status === "running") {
     const text = run.totalIsPartial
@@ -165,6 +168,23 @@ export function runView(run: ClosureRunLike): RunView {
       ? t.run.doneNone
       : fillVocab(t.run.done, { moved: run.reallocated, conflicts: run.conflicts + run.failed });
   return { state: "done", text, progress: 1 };
+}
+
+/** Rótulo curto do modo do lote ("Fechamento", "Arquivamento", "Capacidade reduzida"), para listas de `listClosureRuns`. */
+export function closureRunKindLabel(kind: ClosureRunLike["kind"]): string {
+  return t.run.kinds[kind ?? "resource_closed"];
+}
+
+/** Lote de `capacity`: nada muda de lugar, o excedente vai para a fila (`conflicts`); o texto não fala em fechar. */
+function capacityRunView(run: ClosureRunLike): RunView {
+  const c = t.run.capacity;
+  if (run.status === "failed" || run.truncated) return { state: "incomplete", text: c.incomplete, progress: null };
+  if (run.status === "running") {
+    const text = run.totalIsPartial ? fillVocab(c.runningPartial, { done: run.processed }) : fillVocab(c.running, { done: run.processed, total: run.total });
+    return { state: "running", text, progress: run.totalIsPartial || run.total === 0 ? null : Math.min(1, run.processed / run.total) };
+  }
+  const without = run.conflicts + run.failed;
+  return { state: "done", text: without === 0 ? c.doneNone : plural(without, c.done.one, c.done.many), progress: 1 };
 }
 
 /** Texto da tela de reabrir a partir do `reason` do servidor; `null` = há o que reabrir. */

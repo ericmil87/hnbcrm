@@ -23,6 +23,7 @@ import { BOOKING_COPY, DETAIL_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday } from "@/lib/agendaZone";
 import { STATUS_TARGET, STATUS_TOAST, type DetailAction } from "@/lib/appointmentActions";
+import { HUMAN_UNDO_COPY, humanConfirmUndoKind } from "@/lib/agendaHumanConfirm";
 import { clientLabel, isProposalFailure, parseSchedRulesError, type ViolationView } from "@/lib/bookingFlow";
 import { AppointmentDetailView } from "./AppointmentDetailView";
 
@@ -75,6 +76,7 @@ function DetailBody({
   const cancel = useMutation(api.schedulingMutations.cancelAppointment);
   const undo = useMutation(api.schedulingMutations.undoAppointmentStatus);
   const reassign = useMutation(api.schedulingMutations.reassignResources);
+  const undoHuman = useMutation(api.schedulingInterpret.undoHumanConfirmBooking);
 
   const [busy, setBusy] = useState(false);
   const [proposalBroken, setProposalBroken] = useState(false);
@@ -82,6 +84,7 @@ function DetailBody({
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
+  const [rebooking, setRebooking] = useState(false);
 
   if (data === undefined) {
     return (
@@ -111,6 +114,20 @@ function DetailBody({
     }
   };
   const undoAction = { label: VOCAB.scheduling.undo, onClick: () => void doUndo() };
+  // C1: "Desfazer" do que o sistema marcou/aprovou por uma confirmação no WhatsApp (via própria, 24 h).
+  const humanUndo = humanConfirmUndoKind({ ...appt, statusActors: data.statusActors }, now);
+  const doUndoHuman = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await undoHuman({ organizationId, appointmentId });
+      toast.success(HUMAN_UNDO_COPY.toastDone);
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, HUMAN_UNDO_COPY.toastFailed));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = async (action: DetailAction) => {
     if (busy) return;
@@ -152,6 +169,7 @@ function DetailBody({
 
   const onAction = (action: DetailAction) => {
     if (action === "reschedule") setRescheduling(true);
+    else if (action === "rebook") setRebooking(true);
     else if (action === "cancel") setCancelOpen(true);
     else if (action === "swap") setSwapOpen(true);
     else if (action === "undo") void doUndo();
@@ -171,6 +189,8 @@ function DetailBody({
         undoUnavailable={undoUnavailable}
         onAction={onAction}
         onOpenConversation={appt.conversationId && onOpenConversation ? () => onOpenConversation(appt.conversationId!) : undefined}
+        humanUndo={humanUndo}
+        onUndoHumanConfirm={() => void doUndoHuman()}
       />
       {rescheduling && (
         <BookingSheet
@@ -179,6 +199,16 @@ function DetailBody({
           onClose={() => setRescheduling(false)}
           who={{ contactId: appt.contactId, leadId: appt.leadId, conversationId: appt.conversationId, name: clientLabel(who) }}
           reschedule={{ appointmentId, serviceId: appt.serviceId, variantKey: appt.variantKey, startTime: appt.startTime }}
+        />
+      )}
+      {rebooking && (
+        <BookingSheet
+          organizationId={organizationId}
+          open
+          onClose={() => setRebooking(false)}
+          onDone={() => setRebooking(false)}
+          who={{ contactId: appt.contactId, leadId: appt.leadId, conversationId: appt.conversationId, name: clientLabel(who) }}
+          initialService={{ serviceId: appt.serviceId, variantKey: appt.variantKey }}
         />
       )}
       <CancelDialog open={cancelOpen} busy={busy} onClose={() => setCancelOpen(false)} onConfirm={(reason) => void confirmCancel(reason)} />

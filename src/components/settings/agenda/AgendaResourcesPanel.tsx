@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useNavigate } from "react-router";
 import { toast } from "sonner";
 import { Archive, DoorOpen, Pencil, Plus, RotateCcw, Users } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
@@ -15,7 +16,7 @@ import { useAgendaConfig } from "@/hooks/useAgendaConfig";
 import {
   hasErrors, isEmptyPatch, newResourceForm, resourceCreateArgs, resourceErrors, resourceFormFrom, resourcePatchArgs, type ResourceForm, type ResourceKind,
 } from "@/lib/agendaConfigForms";
-import { resourceArchiveAccept, resourceEditAccept, runWithFutureAccept } from "@/lib/agendaFutureAccept";
+import { capacityExcessNotice, resourceArchiveAccept, resourceEditAccept, runWithFutureAccept } from "@/lib/agendaFutureAccept";
 import { weekSummary } from "@/lib/agendaWeek";
 import { mutationErrorMessage } from "@/lib/errors";
 import { VOCAB } from "@/lib/vocab";
@@ -41,6 +42,7 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
   const archive = useMutation(api.schedulingConfig.archiveResource);
   const reactivate = useMutation(api.schedulingConfig.reactivateResource);
   const { ask, dialog } = useFutureAsk();
+  const navigate = useNavigate();
 
   const [editing, setEditing] = useState<{ id: Id<"schedResources"> | null; initial: ResourceForm } | null>(null);
   const [draft, setDraft] = useState<ResourceForm | null>(null);
@@ -116,7 +118,12 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
           toast("Nada foi alterado");
           return;
         }
-        toast.success("Alterações salvas");
+        const notice = capacityExcessNotice(name, outcome.result);
+        if (notice) {
+          toast.warning(notice.message, { duration: 12000, action: { label: notice.actionLabel, onClick: () => navigate(notice.href) } });
+        } else {
+          toast.success("Alterações salvas");
+        }
       }
       close();
     } catch (e) {

@@ -4,7 +4,7 @@
  *  - nenhum recurso passa da capacidade (pico no núcleo; linha `exclusive` vale a capacidade inteira);
  *  - todo agendamento ativo, ainda por acontecer, tem para CADA recurso: alocação com linha em recurso ativo e não
  *    fechado (salvo aviso forçado `RESOURCE_CLOSED` ou em andamento), OU linha aberta em `schedConflicts`, OU a marca
- *    `no_resource` (resolução manual do operador).
+ *    `no_resource` (resolução manual do operador) OU `proposal_expired` (só `pending_approval`) (proposta vencida: o horário passou, vaga solta pelo job).
  */
 import type { TestConvex } from "convex-test";
 import type { Id } from "../_generated/dataModel";
@@ -22,6 +22,8 @@ export async function schedInvariantProblems(t: TestConvex<typeof schema>, orgId
       if (rows.length === 0) continue;
       const lite = rows.map((x) => ({ ...x, units: x.exclusive ? Math.max(x.units, r.capacity) : x.units }));
       for (const x of lite) {
+        // A3e: atendimento já em andamento quando a capacidade foi reduzida (marca gravada pela porta) não é cobrado do excesso.
+        if (x.capacityGrandfatheredAt !== undefined && x.coreStart < x.capacityGrandfatheredAt) continue;
         const pk = peakUnits(lite, x.coreStart, x.coreEnd, "core");
         if (pk > r.capacity) {
           out.push(`CAPACIDADE ${r.name}: ${pk} > ${r.capacity}`);
@@ -40,7 +42,8 @@ export async function schedInvariantProblems(t: TestConvex<typeof schema>, orgId
       for (const e of a.resources) {
         const r = rmap.get(e.resourceId);
         if (!e.allocated) {
-          if (!hasOpenConflict && a.needsAttention?.code !== "no_resource") out.push(`SEM-ALOCACAO-SEM-CONFLITO ${a._id} (${a.status})`);
+          // `proposal_expired` (A3e): proposta cujo horário passou perde a alocação sem virar conflito; a marca é o sinal (a equipe recusa/cancela).
+          if (!hasOpenConflict && a.needsAttention?.code !== "no_resource" && !(a.needsAttention?.code === "proposal_expired" && a.status === "pending_approval")) out.push(`SEM-ALOCACAO-SEM-CONFLITO ${a._id} (${a.status})`);
           continue;
         }
         if (!allocs.some((x) => x.resourceId === e.resourceId)) out.push(`MARCADO-ALOCADO-SEM-LINHA ${a._id}`);

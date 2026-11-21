@@ -139,3 +139,29 @@ describe("agenda sem recursos (módulo recém-ligado)", () => {
     expect(grid.columns.map((c) => c.kind)).toEqual(["internal"]);
   });
 });
+
+describe("dia inteiro do profissional e proposta vencida", () => {
+  const folga = { id: "e1", title: "Folga", startTime: at(0), endTime: at(23, 59), eventType: "other", source: "event" as const, allDay: true, memberIds: ["m1"] };
+  const d = day([], { resources: [{ ...res("ana", "person"), teamMemberId: "m1" } as never, { ...res("bia", "person"), teamMemberId: "m2" } as never] });
+
+  it("por recurso: o grupo do profissional ganha o compromisso, perde o '+ livre' e o item não repete no fim", () => {
+    const groups = buildDayList({ day: d, internal: [folga], groupBy: "person", mode: "recurso", now: NOW, withFree: true });
+    const ana = groups.find((g) => g.key === "res:ana")!;
+    expect(ana.entries.map((e) => e.kind)).toEqual(["internal"]);
+    const bia = groups.find((g) => g.key === "res:bia")!;
+    expect(bia.entries.some((e) => e.kind === "free")).toBe(true);
+    expect(groups.some((g) => g.kind === "internal")).toBe(false);
+  });
+  it("compromisso sem dono-recurso continua no grupo próprio", () => {
+    const groups = buildDayList({ day: d, internal: [{ ...folga, memberIds: ["x"] }], groupBy: "person", mode: "recurso", now: NOW, withFree: true });
+    expect(groups.find((g) => g.kind === "internal")?.entries).toHaveLength(1);
+  });
+  it("proposta vencida: marcada como vencida e sem 'sem lugar'", () => {
+    const old = appt([], at(8), at(9), { status: "pending_approval" }, ["sala1"]);
+    const live = appt(["sala1"], at(14), at(15), { status: "pending_approval" });
+    const [g] = buildDayList({ day: day([old, live]), internal: [], groupBy: "room", mode: "hora", now: NOW, withFree: false });
+    const byId = (id: string) => g.entries.find((e) => e.kind === "appointment" && e.appointment._id === id) as Extract<(typeof g.entries)[number], { kind: "appointment" }>;
+    expect(byId(old._id)).toMatchObject({ expired: true, conflict: false });
+    expect(byId(live._id)).toMatchObject({ expired: false });
+  });
+});

@@ -6,6 +6,7 @@ import {
   lineOutcomeText,
   movesAutomatically,
   reopenNotice,
+  closureRunKindLabel,
   runView,
   summarizePreview,
   validatePeriod,
@@ -171,5 +172,29 @@ describe("data por extenso", () => {
       { resourceName: "Sala 1", kind: "room" }
     );
     expect(c.sentences[0]).toBe("Pelo menos 80 horários marcados em Sala 1 neste período");
+  });
+});
+
+describe("lote de capacidade reduzida", () => {
+  const run = (over: Partial<ClosureRunLike> = {}): ClosureRunLike => ({
+    kind: "capacity", status: "running", total: 6, totalIsPartial: false, processed: 3, reallocated: 0, conflicts: 2, failed: 0, ...over,
+  });
+  it("andamento com rótulo próprio, sem falar em fechar", () => {
+    expect(runView(run())).toEqual({ state: "running", text: "Ajustando os horários da sala… 3 de 6", progress: 0.5 });
+    expect(runView(run({ totalIsPartial: true })).text).toBe("Ajustando os horários da sala… 3 até agora");
+  });
+  it("concluído: quantos ficaram sem lugar (singular, plural, nenhum; falhas contam)", () => {
+    expect(runView(run({ status: "done", conflicts: 1 })).text).toBe("Capacidade ajustada: 1 agendamento ficou sem lugar e foi para a fila de pendências.");
+    expect(runView(run({ status: "done", conflicts: 2, failed: 1 })).text).toBe("Capacidade ajustada: 3 agendamentos ficaram sem lugar e foram para a fila de pendências.");
+    expect(runView(run({ status: "done", conflicts: 0 })).text).toBe("Capacidade ajustada. Nenhum agendamento ficou sem lugar.");
+  });
+  it("não terminou por inteiro", () => {
+    expect(runView(run({ status: "failed" }))).toMatchObject({ state: "incomplete", text: "O ajuste de capacidade não terminou por inteiro. Confira a fila de pendências." });
+    expect(runView(run({ status: "done", truncated: true })).state).toBe("incomplete");
+  });
+  it("rótulo do modo", () => {
+    expect(closureRunKindLabel("capacity")).toBe("Capacidade reduzida");
+    expect(closureRunKindLabel("resource_removed")).toBe("Arquivamento");
+    expect(closureRunKindLabel(undefined)).toBe("Fechamento");
   });
 });

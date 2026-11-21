@@ -14,6 +14,13 @@
  * conta é escrever. Arquivo que só tipa a tabela e escreve em OUTRA tabela precisa entrar na lista
  * com o motivo (preferimos listar a afrouxar o padrão).
  *
+ *  4. (A3e) por NOME DE CAMPO: `patch(`/`replace(` cujo argumento cita chaves exclusivas de agendamento/alocação
+ *     (`blockStart`, `coreStart`, `outcomePendingSince`, `rescheduledToId`, `forcedRules`, `resources:`, `status:` com
+ *     literal que só existe em `schedStatus`…) fora da porta. Cobre o buraco da regra 3: um `ctx.db.patch(id, …)` com id
+ *     tipado vindo de outro arquivo (sem a string da tabela) escapava. Medido na criação: 0 falsos positivos fora da porta.
+ *     LIMITE: patch montado por variável/spread (`patch(id, patchObj)`) não tem chave literal e escapa; chave genérica
+ *     (`resources`) de uma tabela FUTURA com o mesmo nome acusa e entra em `FIELD_WRITE_ALLOWED` com a justificativa.
+ *
  * Comentários são ignorados (`//` e bloco); crases contam como aspas (template literal).
  * LIMITE da heurística: nome de tabela montado em runtime (`"sched" + "Allocations"`) ou alias de
  * tipo importado de outro arquivo (`type A = Doc<…>` re-exportado) escapa; a revisão cobre isso.
@@ -55,12 +62,35 @@ const APPT_WRITE_ALLOWED: Record<string, string> = {
   "opsPurge.ts": "purga da org apaga os agendamentos (delete puro)",
   "exports.ts": "hoje só LÊ os agendamentos (BACKUP_TABLES, internalCollectPage); os .patch do arquivo são de exportJobs, nenhum em sched*. Escrever em sched* aqui reprova na revisão",
 };
+/** Regra 4: quem pode dar patch/replace com chaves de agendamento/alocação (nenhum fora da porta). */
+const FIELD_WRITE_ALLOWED: Record<string, string> = {
+  [PORT]: "a porta única de reserva",
+};
+const EXCLUSIVE_FIELD_RE =
+  /\b(?:blockStart|blockEnd|coreStart|coreEnd|outcomePendingSince|rescheduledToId|rescheduleOfId|forcedRules|clientConfirmedAt|checkedInAt|noShowAt|needsAttention|partyKey|resources|lateCancel|cancelledByClass)\s*:|\bstatus\s*:\s*["'`](?:pending_approval|confirmed|checked_in|no_show|rescheduled)["'`]/;
+const PATCH_OR_REPLACE_RE = /\.(?:patch|replace)\s*\(/g;
+
+/** Texto do argumento de cada `.patch(`/`.replace(` (parênteses balanceados). */
+function writeCallArguments(src: string): Array<{ index: number; args: string }> {
+  const out: Array<{ index: number; args: string }> = [];
+  for (const m of src.matchAll(PATCH_OR_REPLACE_RE)) {
+    let depth = 1;
+    let j = m.index! + m[0].length;
+    while (j < src.length && depth > 0) {
+      if (src[j] === "(") depth++;
+      else if (src[j] === ")") depth--;
+      j++;
+    }
+    out.push({ index: m.index!, args: src.slice(m.index! + m[0].length, j) });
+  }
+  return out;
+}
 const INSERT_RE = /\.insert\(\s*["'`]sched(?:Appointments|Allocations)["'`]/;
 const ALLOC_NAME_RE = /["'`]schedAllocations["'`]/;
 const APPT_NAME_RE = /["'`]schedAppointments["'`]/;
 const WRITE_CALL_RE = /\.(?:patch|replace|delete)\s*\(/;
 
-type Violation = { file: string; rule: 1 | 2 | 3; snippet: string };
+type Violation = { file: string; rule: 1 | 2 | 3 | 4; snippet: string };
 
 /** Troca comentários por espaços (preserva as linhas); `//` precisa vir no começo ou depois de espaço (não corta URL). */
 export function stripComments(src: string): string {
@@ -85,6 +115,15 @@ export function findPortViolations(rawSrc: string, file: string): Violation[] {
   if (APPT_NAME_RE.test(src) && !allowedWrite) {
     const write = WRITE_CALL_RE.exec(src);
     if (write) out.push({ file, rule: 3, snippet: `L${lineOf(src, write.index)}: ${write[0]}` });
+  }
+  if (!(file in FIELD_WRITE_ALLOWED)) {
+    for (const call of writeCallArguments(src)) {
+      const field = EXCLUSIVE_FIELD_RE.exec(call.args);
+      if (field) {
+        out.push({ file, rule: 4, snippet: `L${lineOf(src, call.index)}: patch/replace com ${field[0].trim()}` });
+        break;
+      }
+    }
   }
   return out;
 }
@@ -145,6 +184,28 @@ describe("heurística (auto-teste com arquivo de exemplo em memória)", () => {
   });
 });
 
+describe("regra 4 (por nome de campo)", () => {
+  test("pega patch/replace com chaves exclusivas mesmo sem a string da tabela (id tipado importado)", () => {
+    const rules = (src: string) => findPortViolations(src, "x.ts").map((v) => v.rule);
+    expect(rules(`await ctx.db.patch(id, { blockStart: 1, blockEnd: 2 })`)).toContain(4);
+    expect(rules(`await ctx.db.patch(appt._id, { status: "no_show", noShowAt: now })`)).toContain(4);
+    expect(rules(`await ctx.db.replace(id, { ...doc, outcomePendingSince: undefined })`)).toContain(4);
+    expect(rules(`await ctx.db.patch(a, { status: "pending_approval" })`)).toContain(4);
+    expect(rules(`await ctx.db.patch(a._id, { rescheduledToId: other, resources: [] })`)).toContain(4);
+    expect(rules(`await ctx.db.patch(id, {\n  needsAttention: { code: "x", at: 1 },\n})`)).toContain(4);
+  });
+
+  test("não acusa patch comum, status compartilhado com outras tabelas, nem a porta", () => {
+    const rules = (src: string, file = "x.ts") => findPortViolations(src, file).map((v) => v.rule);
+    expect(rules(`await ctx.db.patch(lead._id, { title: "x", updatedAt: now })`)).toEqual([]);
+    expect(rules(`await ctx.db.patch(task._id, { status: "completed" })`)).toEqual([]);
+    expect(rules(`await ctx.db.patch(ev._id, { status: "cancelled" })`)).toEqual([]);
+    expect(rules(`const x = { blockStart: 1 }; await ctx.db.patch(id, { updatedAt: 1 })`)).toEqual([]);
+    expect(rules(`// ctx.db.patch(id, { blockStart: 1 })\nconst y = 1;`)).toEqual([]);
+    expect(rules(`await ctx.db.patch(id, { blockStart: 1 })`, PORT)).toEqual([]);
+  });
+});
+
 describe("porta única de reserva", () => {
   const files = walk(CONVEX_DIR);
 
@@ -186,7 +247,7 @@ describe("porta única de reserva", () => {
 
   test("toda exceção vigente aponta para um arquivo que existe", () => {
     const existing = new Set(files.map(rel));
-    for (const key of [...Object.keys(INSERT_ALLOWED), ...Object.keys(ALLOC_NAME_ALLOWED), ...Object.keys(APPT_WRITE_ALLOWED)]) {
+    for (const key of [...Object.keys(INSERT_ALLOWED), ...Object.keys(ALLOC_NAME_ALLOWED), ...Object.keys(APPT_WRITE_ALLOWED), ...Object.keys(FIELD_WRITE_ALLOWED)]) {
       expect(existing.has(key), key).toBe(true);
     }
   });

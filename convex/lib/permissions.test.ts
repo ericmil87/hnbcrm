@@ -119,3 +119,25 @@ describe("agenda derivada para quem configura a organização", () => {
     expect(resolvePermissions("admin", { ...gravadas, tasks: "none" }).agenda).toBe("none");
   });
 });
+
+describe("A3e: uma derivação só (membro e chave de API legada)", () => {
+  const levels = ["none", "view_own", "view_all", "edit_own", "edit_all", "full"] as const;
+  const settingsLevels = ["none", "view", "manage"] as const;
+  const base = { leads: "none", contacts: "none", inbox: "none", reports: "none", team: "none", auditLogs: "none", apiKeys: "none" } as const;
+
+  test.each(levels.flatMap((tasks) => settingsLevels.map((settings) => [tasks, settings] as const)))(
+    "tasks %s + settings %s: chave legada e membro resolvem a MESMA agenda",
+    (tasks, settings) => {
+      const stored = { ...base, tasks, settings } as any;
+      const viaKey = completeLegacyPermissions(stored).agenda;
+      const viaMember = resolvePermissions("agent", stored).agenda;
+      expect(viaKey).toBe(viaMember);
+    }
+  );
+
+  test("settings manage + edição em tarefas promove a manage também na chave; sem settings manage continua edit", () => {
+    expect(completeLegacyPermissions({ ...base, tasks: "edit_all", settings: "manage" } as any).agenda).toBe("manage");
+    expect(completeLegacyPermissions({ ...base, tasks: "full", settings: "view" } as any).agenda).toBe("edit");
+    expect(completeLegacyPermissions({ ...base, tasks: "view_all", settings: "manage" } as any).agenda).toBe("view_all");
+  });
+});
