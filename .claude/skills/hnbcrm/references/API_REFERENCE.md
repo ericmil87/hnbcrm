@@ -96,6 +96,23 @@ The last column shows whether the **default** permissions of the `ai` and `agent
 | `POST /api/v1/calendar/events/reschedule` | `agenda: edit` | sim |
 | `POST /api/v1/calendar/events/complete` | `agenda: edit` | sim |
 | `POST /api/v1/calendar/events/cancel` | `agenda: edit` | sim |
+| `GET /api/v1/scheduling/services` | `agenda: view_own` | sim |
+| `GET /api/v1/scheduling/resources` | `agenda: view_own` | sim |
+| `GET /api/v1/scheduling/slots` | `agenda: view_own` | sim |
+| `GET /api/v1/scheduling/appointments` | `agenda: view_own` | sim |
+| `GET /api/v1/scheduling/appointments/get` | `agenda: view_own` | sim |
+| `GET /api/v1/scheduling/pending` | `agenda: view_own` | sim |
+| `POST /api/v1/scheduling/appointments/preview` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/appointments/book` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/appointments/reschedule` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/appointments/cancel` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/appointments/status` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/appointments/undo-status` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/appointments/resources` | `agenda: edit` | sim |
+| `POST /api/v1/scheduling/resources/day` | `agenda: edit` (`manage` without `resourceId`) | sim |
+| `POST /api/v1/scheduling/resources/reopen` | `agenda: edit` (`manage` without `resourceId`) | sim |
+| `GET /api/v1/scheduling/closures/get` | `agenda: view_all` | sim |
+| `POST /api/v1/scheduling/conflicts/resolve` | `agenda: edit` | sim |
 | `GET /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
 | `PUT /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
 | `GET /api/v1/groups` | `inbox: view_own` | sim |
@@ -769,7 +786,47 @@ Reschedule a calendar event to a new time.
 
 ### Additional Calendar REST Endpoints
 
-**POST /api/v1/calendar/events/complete** — Mark event as completed. Body: `{ eventId }`. If event has recurrence, auto-generates next instance.
+**POST /api/v1/calendar/events/complete** — Mark event as completed. Body: `{ eventId }`. If event has recurrence, auto-generates next instance. MCP: `calendar_complete_event`.
+
+**POST /api/v1/calendar/events/cancel** — Mark a scheduled event as cancelled. Body: `{ eventId }`. MCP: `calendar_cancel_event`.
+
+---
+
+## Scheduling (Agenda v2)
+
+Appointments for services that use resources (people, rooms, equipment), with the **same rules as the app screens**. Needs the optional Scheduling module on (otherwise `400 "Módulo não habilitado: Agenda"`). The key's member is the actor (origin `api`); keys of AI members can read but not write. Read = `agenda: view_own` (a `view_own` key only sees appointments where its member is the professional or the creator), write = `agenda: edit`, closing the whole agenda = `agenda: manage`. A legacy key without `agenda` inherits it from `tasks`.
+
+**Agent rules:** never invent a time (use `crm_find_slots` / `GET /scheduling/slots`); preview before booking; on a 409 offer one of the `alternatives`; always send an idempotency key when booking.
+
+**Dates.** Input: `startsAt` (ISO 8601 with offset), `startsAtLocal` (`YYYY-MM-DDTHH:mm`, organization timezone) or `startTime` (epoch ms). Output: epoch plus `startsAt`, `startsAtLocal`, `endsAt`, `endsAtLocal`, `timezone`. Day filters are `YYYY-MM-DD`.
+
+| MCP tool | REST | Notes |
+|----------|------|-------|
+| `crm_list_scheduling_services` | `GET /scheduling/services` | active services |
+| `crm_list_scheduling_resources` | `GET /scheduling/resources` | active resources |
+| `crm_find_slots` | `GET /scheduling/slots?serviceId&from&to&period&resourceIds&partySize&rescheduleAppointmentId` | window up to 7 days; staff audience (names, `reasonCodes`) only with `agenda: edit`+ |
+| `crm_list_agenda` | `GET /scheduling/appointments?from&to&status&limit&cursor` | stable cursor: `{ appointments, hasMore, nextCursor }` |
+| `crm_get_appointment` | `GET /scheduling/appointments/get?id` | 404 identical for missing/other-org/not-visible |
+| `crm_list_scheduling_pending` | `GET /scheduling/pending` | approvals, conflicts, no-outcome, suggestions |
+| `crm_preview_appointment` | `POST /scheduling/appointments/preview` | writes nothing |
+| `crm_book_appointment` | `POST /scheduling/appointments/book` | `Idempotency-Key` header or `requestId` **required** |
+| `crm_reschedule_appointment` | `POST /scheduling/appointments/reschedule` | key optional |
+| `crm_cancel_appointment` | `POST /scheduling/appointments/cancel` | `{ appointmentId, reason?, cancelledBy? }` |
+| `crm_set_appointment_status` | `POST /scheduling/appointments/status` | `to` scheduled/confirmed/checked_in/completed/no_show, or `action` approve/reject |
+| `crm_undo_appointment_status` | `POST /scheduling/appointments/undo-status` | `{ restoredTo }` |
+| `crm_change_appointment_resources` | `POST /scheduling/appointments/resources` | same capacity rules as booking |
+| `crm_close_resource` | `POST /scheduling/resources/day` | `mode: preview` (default) then `commit` with `expectedAffected` + `acceptAffected` |
+| `crm_reopen_resource` | `POST /scheduling/resources/reopen` | same preview flow |
+| `crm_get_closure_run` | `GET /scheduling/closures/get?runId` | progress of a batched closure |
+| `crm_resolve_conflict` | `POST /scheduling/conflicts/resolve` | `action.type` resource/reschedule/cancel/manual |
+| `calendar_complete_event` | `POST /calendar/events/complete` | internal events |
+| `calendar_cancel_event` | `POST /calendar/events/cancel` | internal events |
+
+**409 on a rule** (`code: "sched_rules"`): `{ error, code, violations: [{ code, severity: "block"|"warn", message }], alternatives: Slot[] }`. `alternatives` (up to 3, same day) uses the same `Slot` shape as the search: `{ startTime, endTime, localDate, label, resourceIds, resourceNames, score, reasons, reasonCodes, startsAt, startsAtLocal, endsAt, endsAtLocal, timezone }`. `force: ["CODE"]` accepts only `severity: "warn"` codes (e.g. `OUTSIDE_HOURS`, `BUFFER_OVERLAP`) and only by human decision; `block` codes (`CAPACITY_EXCEEDED`, `DURATION_TOO_LONG`, `WRONG_ORG_OR_INACTIVE`) never pass. The same idempotency key with different data is `409 { code: "idempotency_key_reused" }`; the same key and data returns the same appointment (`200`, `created: false`). Malformed id = 400; not found / other org = 404 (same body); no permission = 403.
+
+**Closing a resource:** preview first (`affected`, `items`), then `mode: "commit"` with `acceptAffected: true` and `expectedAffected` = the preview's `affected` (a different count is refused). Rooms/equipment are reallocated, people become conflicts in `pending`.
+
+**Webhooks:** `appointment.created`, `.approved`, `.confirmed`, `.rescheduled`, `.cancelled`, `.completed`, `.no_show`, `.needs_attention`, `.undone`, `.restored` (payload: `appointmentId, status, origin, serviceName, startsAt, startsAtLocal, timezone, resources[{name, role}], leadId?, contactId?, previousAppointmentId?`; no phone, e-mail or notes). Lead timeline activities: `appointment_booked`, `appointment_changed`, `appointment_completed`.
 
 ---
 

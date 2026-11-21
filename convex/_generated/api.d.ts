@@ -383,6 +383,7 @@ import type * as onboardingHttp from "../onboardingHttp.js";
 import type * as onboardingSeed from "../onboardingSeed.js";
 import type * as onboardingSessions from "../onboardingSessions.js";
 import type * as onboardingSources from "../onboardingSources.js";
+import type * as openapiScheduling from "../openapiScheduling.js";
 import type * as openapiSpec from "../openapiSpec.js";
 import type * as opsAgentProfile from "../opsAgentProfile.js";
 import type * as opsAnonymous from "../opsAnonymous.js";
@@ -837,6 +838,7 @@ declare const fullApi: ApiFromModules<{
   onboardingSeed: typeof onboardingSeed;
   onboardingSessions: typeof onboardingSessions;
   onboardingSources: typeof onboardingSources;
+  openapiScheduling: typeof openapiScheduling;
   openapiSpec: typeof openapiSpec;
   opsAgentProfile: typeof opsAgentProfile;
   opsAnonymous: typeof opsAnonymous;
