@@ -93,3 +93,49 @@ export function restIdempotencyKey(raw: unknown): { ok: true; key: string } | { 
   }
   return { ok: true, key: `rest:${raw}` };
 }
+
+/** Erro do runtime por estourar o teto de leitura de uma função (a rota devolve 400 pedindo para restringir, nunca 500). */
+export function isReadLimitError(message: string): boolean {
+  return /Too many (documents|bytes) read|read limit|transaction.*too large/i.test(message);
+}
+
+type Row = Record<string, unknown> & { startTime: number; endTime: number };
+
+/**
+ * Projeção PRÓPRIA da API para um agendamento (estável e documentada em `openapiScheduling.ts`): sem `organizationId`,
+ * `_creationTime`, `blockStart/blockEnd`, `createdBy`/`approvedBy` crus. O que as telas leem não muda (a projeção é
+ * só da REST). `notes` só existe no detalhe e passa se vier.
+ */
+const APPOINTMENT_API_KEYS = [
+  "_id", "serviceId", "serviceName", "variantKey", "kind", "startTime", "endTime", "localDate", "status", "origin",
+  "contactId", "leadId", "conversationId", "contactName", "guestName", "partyKey", "resources", "notes", "forcedRules",
+  "needsAttention", "rescheduledFromId", "rescheduledToId", "rescheduleOfId", "approvedAt", "clientConfirmedAt",
+  "checkedInAt", "completedAt", "noShowAt", "cancelledAt", "cancelledByClass", "cancelReason", "lateCancel",
+  "statusChangedAt", "createdAt", "updatedAt",
+] as const;
+
+export function apiAppointment(row: Row, tz: string) {
+  const out: Record<string, unknown> = {};
+  for (const k of APPOINTMENT_API_KEYS) if (row[k] !== undefined) out[k] = row[k];
+  return withTimes(out as Row, tz);
+}
+
+/** Serviço/recurso: sem `organizationId` nem `_creationTime`. */
+export function apiConfigDoc<T extends Record<string, unknown>>(doc: T): Omit<T, "organizationId" | "_creationTime"> {
+  const { organizationId: _o, _creationTime: _c, ...rest } = doc;
+  void [_o, _c];
+  return rest;
+}
+
+/** Conflito aberto da lista de pendências: sem campos de resolução nem `_creationTime`. */
+export function apiConflict(c: Record<string, unknown>, tz: string) {
+  const out: Record<string, unknown> = {};
+  for (const k of ["_id", "kind", "appointmentId", "resourceId", "resourceIds", "localDate", "suggestions", "createdAt"]) {
+    if (c[k] !== undefined) out[k] = c[k];
+  }
+  const suggestions = out.suggestions as Array<{ startTime: number }> | undefined;
+  if (suggestions) out.suggestions = suggestions.map((x) => ({ ...x, startsAt: isoWithOffset(x.startTime, tz) }));
+  const appt = c.appointment as Row | null | undefined;
+  out.appointment = appt ? apiAppointment(appt, tz) : null;
+  return out;
+}

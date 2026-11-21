@@ -794,7 +794,7 @@ Reschedule a calendar event to a new time.
 
 ## Scheduling (Agenda v2)
 
-Appointments for services that use resources (people, rooms, equipment), with the **same rules as the app screens**. Needs the optional Scheduling module on (otherwise `400 "Módulo não habilitado: Agenda"`). The key's member is the actor (origin `api`); keys of AI members can read but not write. Read = `agenda: view_own` (a `view_own` key only sees appointments where its member is the professional or the creator), write = `agenda: edit`, closing the whole agenda = `agenda: manage`. A legacy key without `agenda` inherits it from `tasks`.
+Appointments for services that use resources (people, rooms, equipment), with the **same rules as the app screens**. Needs the optional Scheduling module on (otherwise `400 "Módulo não habilitado: Agenda"`). The key's member is the actor (origin `api`); keys of AI members can read but writing is 403 ("Chaves de agentes de IA só leem a agenda por esta API"). The key's own permissions apply (else the member's), equal on read and write. **Limits:** lists up to 31 days per request, slots default 3 days (max 7), `pending?limit=` (default 20, max 50). **Group booking:** `companions: [{ guestName, resourceIds? }]` (1-3) on book, all-or-nothing, idempotent per group. Read = `agenda: view_own` (a `view_own` key only sees appointments where its member is the professional or the creator), write = `agenda: edit`, closing the whole agenda = `agenda: manage`. A legacy key without `agenda` inherits it from `tasks`.
 
 **Agent rules:** never invent a time (use `crm_find_slots` / `GET /scheduling/slots`); preview before booking; on a 409 offer one of the `alternatives`; always send an idempotency key when booking.
 
@@ -812,7 +812,7 @@ Appointments for services that use resources (people, rooms, equipment), with th
 | `crm_book_appointment` | `POST /scheduling/appointments/book` | `Idempotency-Key` header or `requestId` **required** |
 | `crm_reschedule_appointment` | `POST /scheduling/appointments/reschedule` | key optional |
 | `crm_cancel_appointment` | `POST /scheduling/appointments/cancel` | `{ appointmentId, reason?, cancelledBy? }` |
-| `crm_set_appointment_status` | `POST /scheduling/appointments/status` | `to` scheduled/confirmed/checked_in/completed/no_show, or `action` approve/reject |
+| `crm_set_appointment_status` | `POST /scheduling/appointments/status` | `to` scheduled/confirmed/checked_in/completed/no_show, or `action` approve/reject (reject only for a pending proposal; otherwise 400, use cancel) |
 | `crm_undo_appointment_status` | `POST /scheduling/appointments/undo-status` | `{ restoredTo }` |
 | `crm_change_appointment_resources` | `POST /scheduling/appointments/resources` | same capacity rules as booking |
 | `crm_close_resource` | `POST /scheduling/resources/day` | `mode: preview` (default) then `commit` with `expectedAffected` + `acceptAffected` |
@@ -822,7 +822,7 @@ Appointments for services that use resources (people, rooms, equipment), with th
 | `calendar_complete_event` | `POST /calendar/events/complete` | internal events |
 | `calendar_cancel_event` | `POST /calendar/events/cancel` | internal events |
 
-**409 on a rule** (`code: "sched_rules"`): `{ error, code, violations: [{ code, severity: "block"|"warn", message }], alternatives: Slot[] }`. `alternatives` (up to 3, same day) uses the same `Slot` shape as the search: `{ startTime, endTime, localDate, label, resourceIds, resourceNames, score, reasons, reasonCodes, startsAt, startsAtLocal, endsAt, endsAtLocal, timezone }`. `force: ["CODE"]` accepts only `severity: "warn"` codes (e.g. `OUTSIDE_HOURS`, `BUFFER_OVERLAP`) and only by human decision; `block` codes (`CAPACITY_EXCEEDED`, `DURATION_TOO_LONG`, `WRONG_ORG_OR_INACTIVE`) never pass. The same idempotency key with different data is `409 { code: "idempotency_key_reused" }`; the same key and data returns the same appointment (`200`, `created: false`). Malformed id = 400; not found / other org = 404 (same body); no permission = 403.
+**409 on a rule** (`code: "sched_rules"`): `{ error, code, violations: [{ code, severity: "block"|"warn", message }], alternatives: Slot[] }`. `alternatives` (up to 3, same day) uses the same `Slot` shape as the search: `{ startTime, endTime, localDate, label, resourceIds, resourceNames, score, reasons, reasonCodes, startsAt, startsAtLocal, endsAt, endsAtLocal, timezone }`. `force: ["CODE"]` accepts only `severity: "warn"` codes (e.g. `OUTSIDE_HOURS`, `BUFFER_OVERLAP`) and only by human decision; `block` codes (`CAPACITY_EXCEEDED`, `DURATION_TOO_LONG`, `WRONG_ORG_OR_INACTIVE`) never pass. The same idempotency key with different data (service, start, contact/lead/conversation, `variantKey`, or the `resourceIds` set when sent) is `409 { code: "idempotency_key_reused" }` (different `notes` is not); the same key and data returns the same appointment (`200`, `created: false`). Malformed id = 400; not found / other org = 404 (same body); no permission = 403.
 
 **Closing a resource:** preview first (`affected`, `items`), then `mode: "commit"` with `acceptAffected: true` and `expectedAffected` = the preview's `affected` (a different count is refused). Rooms/equipment are reallocated, people become conflicts in `pending`.
 

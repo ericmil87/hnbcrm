@@ -48,9 +48,9 @@ const DAY_APPOINTMENTS_CAP = 200;
 const CROSSING_READ_CAP = 100;
 const RANGE_STATUS_CAP = 800;
 const RANGE_EXCEPTIONS_CAP = 1000;
-const PENDING_CAP = 50;
+const PENDING_CAP_DEFAULT = 50;
 /** Documentos lidos (no máximo) por seção quando o filtro de visibilidade é aplicado depois do índice. */
-const VISIBLE_READ_CAP = 300;
+const VISIBLE_READ_CAP_DEFAULT = 300;
 const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
 const ACTIVE = new Set<string>(ACTIVE_STATUSES);
@@ -697,7 +697,10 @@ export const listPending = query({
 });
 
 /** Núcleo das pendências (sessão ou chave REST); o leitor já vem resolvido ou `null`. */
-export async function listPendingFor(ctx: QueryCtx, reader: AgendaReader | null, args: { organizationId: Id<"organizations">; now: number }) {
+export async function listPendingFor(ctx: QueryCtx, reader: AgendaReader | null, args: { organizationId: Id<"organizations">; now: number; limits?: { perSection: number; readCap: number } }) {
+  // A REST passa tetos menores (plano Free); a tela usa os padrões.
+  const PENDING_CAP = args.limits?.perSection ?? PENDING_CAP_DEFAULT;
+  const VISIBLE_READ_CAP = args.limits?.readCap ?? VISIBLE_READ_CAP_DEFAULT;
   const noCap = { approvals: false, conflicts: false, noOutcome: false, suggestions: false };
   const empty = { enabled: false, approvals: [], conflicts: [], noOutcome: [], suggestions: [], capped: noCap };
   if (!Number.isFinite(args.now)) throw new ConvexError("Horário de referência inválido.");

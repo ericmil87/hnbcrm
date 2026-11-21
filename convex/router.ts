@@ -43,7 +43,7 @@ import { clientIpKey } from "./lib/onboardingBudget";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
 import { IDEMPOTENCY_REUSED_MESSAGE } from "./lib/schedBookingOps";
 import { isoWithOffset } from "./lib/schedBookingEffects";
-import { cleanBodyText, parseWhen, restIdempotencyKey, type SchedAppointmentId, withTimes } from "./lib/schedRestView";
+import { apiAppointment, apiConfigDoc, apiConflict, cleanBodyText, isReadLimitError, parseWhen, restIdempotencyKey, type SchedAppointmentId, withTimes } from "./lib/schedRestView";
 
 /** Valores aceitos em `GET /api/v1/contacts?relation=`. */
 const CONTACT_RELATION_FILTERS: readonly string[] = [...CONTACT_RELATIONS, "none", "non_customer"];
@@ -3586,8 +3586,9 @@ const SCHED_STATUS_TARGETS = ["scheduled", "confirmed", "checked_in", "completed
 function schedKey(auth: { organizationId: Id<"organizations">; teamMemberId: Id<"teamMembers">; permissions: Permissions }) {
   return { organizationId: auth.organizationId, teamMemberId: auth.teamMemberId, permissions: auth.permissions };
 }
-function schedActor(auth: { teamMemberId: Id<"teamMembers"> }) {
-  return { type: "human" as const, memberId: auth.teamMemberId, via: "rest" as const };
+/** Ator das escritas: o membro dono da chave com as permissões EFETIVAS da chave (o mesmo modelo das leituras e do calendário). */
+function schedActor(auth: { teamMemberId: Id<"teamMembers">; permissions: Permissions }) {
+  return { type: "human" as const, memberId: auth.teamMemberId, via: "rest" as const, permissions: auth.permissions };
 }
 
 function schedId<T extends string>(value: unknown): T | null {
@@ -3678,6 +3679,10 @@ async function schedError(ctx: any, organizationId: Id<"organizations"> | undefi
     });
   }
   if (/não encontrad[oa]$/i.test(raw)) return errorResponse(raw, 404);
+  if (raw.includes("O ator humano precisa ser um membro humano")) {
+    return errorResponse("Chaves de agentes de IA só leem a agenda por esta API", 403);
+  }
+  if (isReadLimitError(raw)) return errorResponse("A consulta ficou grande demais: restrinja a janela de datas ou os recursos.", 400);
   return startConversationError(error);
 }
 
@@ -3761,7 +3766,7 @@ http.route({
       const catalog = await ctx.runQuery(internal.schedulingRest.internalCatalog, schedKey(auth));
       return jsonResponse({
         timezone: catalog.timezone,
-        services: catalog.services.map(({ organizationId: _o, ...s }: { organizationId: unknown }) => s),
+        services: catalog.services.map((s: Record<string, unknown>) => apiConfigDoc(s)),
       });
     } catch (error) {
       return await schedError(ctx, orgId, error);
@@ -3783,7 +3788,7 @@ http.route({
       const catalog = await ctx.runQuery(internal.schedulingRest.internalCatalog, schedKey(auth));
       return jsonResponse({
         timezone: catalog.timezone,
-        resources: catalog.resources.map(({ organizationId: _o, ...r }: { organizationId: unknown }) => r),
+        resources: catalog.resources.map((r: Record<string, unknown>) => apiConfigDoc(r)),
       });
     } catch (error) {
       return await schedError(ctx, orgId, error);
@@ -3876,7 +3881,7 @@ http.route({
       });
       return jsonResponse({
         timezone: page.timezone,
-        appointments: page.appointments.map((a: { startTime: number; endTime: number }) => withTimes(a, page.timezone)),
+        appointments: page.appointments.map((a: any) => apiAppointment(a, page.timezone)),
         hasMore: page.hasMore,
         nextCursor: page.nextCursor,
       });
@@ -3903,7 +3908,7 @@ http.route({
       if (!found) return errorResponse("Agendamento não encontrado", 404);
       const { detail, timezone } = found;
       return jsonResponse({
-        appointment: withTimes(detail.appointment, timezone),
+        appointment: apiAppointment(detail.appointment as any, timezone),
         openConflicts: detail.openConflicts,
         canEdit: detail.canEdit,
         createdByName: detail.createdByName,
@@ -3926,18 +3931,18 @@ http.route({
       orgId = auth.organizationId;
       const denied = requireRoutePermission(auth, "GET", "/api/v1/scheduling/pending");
       if (denied) return denied;
+      const limit = numParam(new URL(request.url).searchParams.get("limit"));
+      if (Number.isNaN(limit)) return errorResponse("limit must be a number", 400);
       const { pending, timezone } = await ctx.runQuery(internal.schedulingRest.internalListPending, {
         ...schedKey(auth),
+        ...(limit !== undefined ? { limit } : {}),
         now: Math.floor(Date.now() / 3_600_000) * 3_600_000,
       });
-      const rows = (list: Array<{ startTime: number; endTime: number }>) => list.map((a) => withTimes(a, timezone));
+      const rows = (list: any[]) => list.map((a) => apiAppointment(a, timezone));
       return jsonResponse({
         timezone,
         approvals: rows(pending.approvals),
-        conflicts: pending.conflicts.map((c: { appointment: { startTime: number; endTime: number } | null }) => ({
-          ...c,
-          appointment: c.appointment ? withTimes(c.appointment, timezone) : null,
-        })),
+        conflicts: pending.conflicts.map((c: any) => apiConflict(c, timezone)),
         noOutcome: rows(pending.noOutcome),
         suggestions: pending.suggestions,
         capped: pending.capped,
@@ -4000,6 +4005,33 @@ http.route({
       if (!key.ok) return errorResponse(key.error, 400);
       const parts = await schedBookParts(ctx, auth.organizationId, body);
       if (parts instanceof Response) return parts;
+      // Grupo (pessoa principal + 1 a 3 acompanhantes, tudo ou nada): mesma porta de grupo da tela, idempotente por grupo.
+      if (body.companions !== undefined) {
+        const list = body.companions;
+        if (!Array.isArray(list) || list.length < 1 || list.length > 3) return errorResponse("companions deve ter de 1 a 3 acompanhantes", 400);
+        const companions: Array<{ guestName: string; resourceIds?: Id<"schedResources">[] }> = [];
+        for (const c of list) {
+          const name = c && typeof c === "object" ? cleanBodyText((c as Record<string, unknown>).guestName, 80) : undefined;
+          const ids = c && typeof c === "object" ? schedIdList<Id<"schedResources">>((c as Record<string, unknown>).resourceIds) : undefined;
+          if (!name) return errorResponse("cada acompanhante precisa de guestName", 400);
+          if (ids === null) return errorResponse("resourceIds do acompanhante inválido", 400);
+          companions.push({ guestName: name, ...(ids ? { resourceIds: ids } : {}) });
+        }
+        const party = await ctx.runMutation(internal.schedulingMutations.internalBookParty, {
+          organizationId: auth.organizationId,
+          ...parts,
+          companions,
+          actor: schedActor(auth),
+          origin: "api",
+          idempotencyKey: key.key,
+        });
+        return await schedOutcome(ctx, auth.organizationId, party, () =>
+          jsonResponse(
+            { success: true, appointmentId: party.appointmentIds[0], appointmentIds: party.appointmentIds, created: !party.duplicate, duplicate: party.duplicate, partySize: party.appointmentIds.length },
+            party.duplicate ? 200 : 201
+          )
+        );
+      }
       const result = await ctx.runMutation(internal.schedulingMutations.internalBookAppointment, {
         organizationId: auth.organizationId,
         ...parts,
@@ -4108,6 +4140,8 @@ http.route({
           appointmentId,
           actor: schedActor(auth),
           byClass: "staff",
+          // recusar só vale para proposta pendente: outro status = erro claro (use /appointments/cancel)
+          expectStatus: "pending_approval",
           ...(cleanBodyText(body.reason, 200) ? { reason: cleanBodyText(body.reason, 200) } : {}),
         });
         return jsonResponse({ success: true, lateCancel: cancelled.lateCancel });

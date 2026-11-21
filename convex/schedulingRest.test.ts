@@ -15,6 +15,8 @@ import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
 import { type AgendaSeed, seedAgenda } from "./lib/schedTestSeed.test-helper";
 import { schedInvariantProblems } from "./lib/schedInvariants.test-helper";
 import { DEFAULT_PERMISSIONS } from "./lib/permissions";
+import { sameResourceSet } from "./lib/schedBookingOps";
+import { isReadLimitError } from "./lib/schedRestView";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const NOW = Date.UTC(2026, 5, 12, 15, 0); // sexta 12:00 em São Paulo
@@ -605,3 +607,195 @@ describe("webhooks e auditoria da porta", () => {
     expect(acts.some((x) => x.type === "appointment_booked")).toBe(true);
   });
 });
+
+describe("revisão adversarial (I1)", () => {
+  const perms = (base: "admin" | "agent", agenda: string) => ({ ...DEFAULT_PERMISSIONS[base], agenda }) as Record<string, string>;
+
+  test("idempotência: mesma chave com outros recursos ou variação = 409; notes diferente = repetição", async () => {
+    const a = await book("manage", "adv-1");
+    expect(a.status).toBe(201);
+    const other = await book("manage", "adv-1", { resourceIds: [res.p2], notes: "outra" });
+    expect(other.status).toBe(409);
+    expect(other.json.code).toBe("idempotency_key_reused");
+    expect((await book("manage", "adv-1", { variantKey: "curta" })).status).toBe(409);
+    const same = await book("manage", "adv-1", { resourceIds: [res.p1], notes: "outra nota" });
+    expect(same.status).toBe(200);
+    expect(same.json.appointmentId).toBe(a.json.appointmentId);
+    expect(await appts()).toHaveLength(1);
+  });
+
+  test("sameResourceSet: ordem não importa; sem recursos pedidos não restringe", () => {
+    const ex = [{ resourceId: "a" }, { resourceId: "b" }];
+    expect(sameResourceSet(ex, ["b", "a"])).toBe(true);
+    expect(sameResourceSet(ex, undefined)).toBe(true);
+    expect(sameResourceSet(ex, [])).toBe(true);
+    expect(sameResourceSet(ex, ["a"])).toBe(false);
+    expect(sameResourceSet(ex, ["a", "c"])).toBe(false);
+  });
+
+  test("recusar só vale para proposta pendente: agendamento confirmado não é cancelado por reject", async () => {
+    const a = await book("manage", "rej-1");
+    const id = a.json.appointmentId as string;
+    expect((await post("edit", "/appointments/status", { appointmentId: id, to: "confirmed" })).status).toBe(200);
+    const r = await post("edit", "/appointments/status", { appointmentId: id, action: "reject" });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toBe("Este agendamento não é uma proposta pendente; use cancelar.");
+    expect((await t.run((ctx) => ctx.db.get(id as Id<"schedAppointments">)))?.status).toBe("confirmed");
+    expect((await post("edit", "/appointments/cancel", { appointmentId: id })).status).toBe(200);
+  });
+
+  test("matriz chave x membro: a chave vale igual em leitura e escrita (acima, abaixo e sem permissões gravadas)", async () => {
+    // chave ACIMA do membro (membro view_own, chave manage): lê tudo, marca e fecha a agenda inteira
+    await mkKey("ownAsManage", s.viewOwn.memberId, s.orgId, perms("agent", "manage"));
+    const seed = await book("manage", "mx-seed");
+    expect((await get("ownAsManage", `/appointments/get?id=${seed.json.appointmentId}`)).status).toBe(200);
+    expect((await book("ownAsManage", "mx-up", { startsAtLocal: `${MON}T15:00` })).status).toBe(201);
+    expect((await post("ownAsManage", "/resources/day", { fromLocalDate: MON })).status).toBe(200);
+    // chave ABAIXO do membro (admin, chave view_own): só os próprios, não marca, não fecha
+    await mkKey("adminAsOwn", s.admin.memberId, s.orgId, perms("admin", "view_own"));
+    expect((await book("adminAsOwn", "mx-down")).status).toBe(403);
+    expect((await post("adminAsOwn", "/resources/day", { resourceId: res.p1, fromLocalDate: MON })).status).toBe(403);
+    expect((await post("adminAsOwn", "/appointments/cancel", { appointmentId: seed.json.appointmentId })).status).toBe(403);
+    // chave edit sobre membro admin: marca, mas NÃO fecha a agenda inteira (manage nas duas camadas)
+    await mkKey("adminAsEdit", s.admin.memberId, s.orgId, perms("admin", "edit"));
+    expect((await book("adminAsEdit", "mx-edit", { startsAtLocal: `${MON}T16:00` })).status).toBe(201);
+    expect((await post("adminAsEdit", "/resources/day", { fromLocalDate: MON })).status).toBe(403);
+    // sem permissões gravadas na chave: vale o membro (viewOwn do seed não escreve; admin escreve)
+    expect((await book("own", "mx-own")).status).toBe(403);
+    expect((await book("manage", "mx-manage", { startsAtLocal: `${MON}T17:00` })).status).toBe(201);
+  });
+
+  test("andamento do fechamento: só campos de andamento, sem org, autor nem mensagem interna", async () => {
+    const run = await t.run((ctx) => ctx.db.insert("schedClosureRuns", {
+      organizationId: s.orgId, kind: "resource_closed", resourceId: res.p1, fromLocalDate: MON, toLocalDate: MON, status: "failed",
+      failure: "Error: detalhe interno stack", total: 3, totalIsPartial: false, processed: 1, reallocated: 0, conflicts: 1, failed: 2,
+      createdBy: s.admin.memberId, exceptionIds: [], createdAt: NOW, updatedAt: NOW,
+    }));
+    const r = await get("all", `/closures/get?runId=${run}`);
+    expect(r.status).toBe(200);
+    expect(Object.keys(r.json.run).sort()).toEqual([
+      "_id", "conflicts", "createdAt", "failed", "failureMessage", "fromLocalDate", "kind", "processed", "reallocated",
+      "resourceId", "status", "toLocalDate", "total", "totalIsPartial", "updatedAt",
+    ]);
+    expect(JSON.stringify(r.json)).not.toMatch(/interno|stack|organizationId|createdBy/);
+    assertMatchesReturns(await t.query(internal.schedulingRest.internalGetClosureRun, { organizationId: s.orgId, teamMemberId: s.viewAll.memberId, runId: run }), R.internalGetClosureRun);
+  });
+
+  test("linhas de agendamento da REST: projeção própria, sem org, _creationTime, bloco nem autor cru", async () => {
+    const b = await book("manage", "pr-1", { contactId: s.contactId, notes: "n" });
+    const row = (await get("manage", `/appointments?from=${MON}`)).json.appointments[0];
+    for (const k of ["organizationId", "_creationTime", "blockStart", "blockEnd", "createdBy", "approvedBy", "idempotencyKey", "reminder", "notes"]) {
+      expect(row[k], k).toBeUndefined();
+    }
+    expect(row).toMatchObject({ _id: b.json.appointmentId, serviceName: "Consulta", startsAtLocal: `${MON}T10:00`, timezone: "America/Sao_Paulo" });
+    const detail = (await get("manage", `/appointments/get?id=${b.json.appointmentId}`)).json.appointment;
+    expect(detail.notes).toBe("n");
+    expect(detail.organizationId).toBeUndefined();
+    expect(detail.createdBy).toBeUndefined();
+    const cat = (await get("manage", "/resources")).json.resources[0];
+    expect(cat.organizationId).toBeUndefined();
+    expect(cat._creationTime).toBeUndefined();
+  });
+
+  test("limites de custo: lista até 31 dias, pendências com limit, janela padrão de 3 dias nos horários", async () => {
+    expect((await get("manage", `/appointments?from=2026-06-01&to=2026-07-01`)).status).toBe(200);
+    const big = await get("manage", `/appointments?from=2026-06-01&to=2026-07-02`);
+    expect(big.status).toBe(400);
+    expect(big.json.error).toMatch(/31 dias/);
+    const slots = await get("manage", `/slots?serviceId=${svc}&from=${MON}&limit=50`);
+    expect(slots.status).toBe(200);
+    const days = new Set(slots.json.slots.map((x: Json) => x.localDate));
+    expect([...days].sort()).toEqual(["2026-06-15", "2026-06-16", "2026-06-17"]);
+    const week = await get("manage", `/slots?serviceId=${svc}&from=${MON}&to=2026-06-21&limit=50`);
+    expect(new Set(week.json.slots.map((x: Json) => x.localDate)).size).toBeGreaterThan(3);
+    // pendências: limit corta por seção
+    const mk = (h: number) => t.run((ctx) => ctx.db.insert("schedAppointments", {
+      organizationId: s.orgId, serviceId: svc, serviceName: "Consulta", kind: "normal", startTime: Date.UTC(2026, 5, 15, h + 3), endTime: Date.UTC(2026, 5, 15, h + 4),
+      blockStart: Date.UTC(2026, 5, 15, h + 3), blockEnd: Date.UTC(2026, 5, 15, h + 4), localDate: MON, status: "pending_approval", origin: "ai",
+      resources: [{ resourceId: res.p2, role: "Profissional", name: "Profissional Dois", allocated: false }], needsAttention: { code: "no_resource", at: NOW },
+      statusChangedAt: NOW, createdAt: NOW, updatedAt: NOW,
+    }));
+    await mk(9);
+    await mk(10);
+    const p = await get("manage", "/pending?limit=1");
+    expect(p.json.approvals).toHaveLength(1);
+    expect(p.json.capped.approvals).toBe(true);
+    expect((await get("manage", "/pending")).json.approvals).toHaveLength(2);
+    expect((await get("manage", "/pending?limit=x")).status).toBe(400);
+    await t.run(async (ctx) => { for (const a of await ctx.db.query("schedAppointments").collect()) await ctx.db.delete(a._id); });
+  });
+
+  test("horários: serviço inexistente ou de outra org = 404 igual ao das outras rotas", async () => {
+    const ghost = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("schedServices", { organizationId: s.orgId, name: "x", durationMin: 30, bufferBeforeMin: 0, bufferAfterMin: 0, requirements: [{ role: "Sala", kind: "room" }], sortOrder: 9, active: true, createdAt: 1, updatedAt: 1 });
+      await ctx.db.delete(id);
+      return id;
+    });
+    const r = await get("edit", `/slots?serviceId=${ghost}&from=${MON}`);
+    expect(r.status).toBe(404);
+    expect(r.json).toEqual({ error: "Serviço não encontrado", code: 404 });
+    expect((await get("outsider", `/slots?serviceId=${svc}&from=${MON}`)).json).toEqual(r.json);
+  });
+
+  test("chave de membro de IA: lê a agenda, escrever = 403 com mensagem clara", async () => {
+    const aiMember = await t.run((ctx) => ctx.db.insert("teamMembers", { organizationId: s.orgId, name: "Agente IA", role: "ai", type: "ai", status: "active", createdAt: 1, updatedAt: 1 }));
+    await mkKey("ai", aiMember, s.orgId);
+    expect((await get("ai", "/services")).status).toBe(200);
+    for (const [path, body] of [
+      ["/appointments/book", bookBody({ requestId: "ai-1" })],
+      ["/appointments/cancel", { appointmentId: await ghostAppt() }],
+      ["/resources/day", { resourceId: res.p1, fromLocalDate: MON }],
+    ] as const) {
+      const r = await post("ai", path, body);
+      expect(r.status, path).toBe(403);
+      expect(r.json.error).toBe("Chaves de agentes de IA só leem a agenda por esta API");
+    }
+    expect(await appts()).toHaveLength(0);
+  });
+
+  test("marcar em grupo (casal na sala dupla): tudo ou nada, idempotente por grupo", async () => {
+    const dupla = await t.run((ctx) => ctx.db.insert("schedResources", { organizationId: s.orgId, kind: "room", name: "Sala Dupla", capacity: 2, weekly, tags: [], sortOrder: 7, active: true, createdAt: 1, updatedAt: 1 }));
+    const casal = await t.run((ctx) => ctx.db.insert("schedServices", {
+      organizationId: s.orgId, name: "Massagem casal", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0,
+      requirements: [{ role: "Sala", kind: "room", resourceIds: [dupla] }], sortOrder: 8, active: true, createdAt: 1, updatedAt: 1,
+    }));
+    const body = { serviceId: casal, startsAtLocal: `${MON}T10:00`, contactId: s.contactId, companions: [{ guestName: "Acompanhante" }], requestId: "party-1" };
+    const r = await post("edit", "/appointments/book", body);
+    expect(r.status).toBe(201);
+    expect(r.json.appointmentIds).toHaveLength(2);
+    expect(r.json.partySize).toBe(2);
+    const rows = await appts();
+    expect(rows.map((x) => x.guestName ?? "").sort()).toEqual(["", "Acompanhante"]);
+    expect(new Set(rows.map((x) => x.partyKey)).size).toBe(1);
+    const again = await post("edit", "/appointments/book", body);
+    expect(again.status).toBe(200);
+    expect(again.json.duplicate).toBe(true);
+    expect(await appts()).toHaveLength(2);
+    // sala cheia (2 pessoas): outro casal no mesmo horário = 409 e nada novo gravado
+    const full = await post("edit", "/appointments/book", { ...body, requestId: "party-2", contactId: undefined });
+    expect(full.status).toBe(409);
+    expect(full.json.violations.some((v: Json) => v.code === "CAPACITY_EXCEEDED")).toBe(true);
+    expect(await appts()).toHaveLength(2);
+    // validação
+    expect((await post("edit", "/appointments/book", { ...body, requestId: "p3", companions: [] })).status).toBe(400);
+    expect((await post("edit", "/appointments/book", { ...body, requestId: "p4", companions: [{ guestName: "" }] })).status).toBe(400);
+    expect((await post("all", "/appointments/book", { ...body, requestId: "p5" })).status).toBe(403);
+  });
+
+  test("estouro do teto de leitura do runtime vira 400, nunca 500", () => {
+    expect(isReadLimitError("Too many documents read in a single function execution (limit: 32000)")).toBe(true);
+    expect(isReadLimitError("Too many bytes read in a single function execution (limit: 16777216 bytes)")).toBe(true);
+    expect(isReadLimitError("Serviço não encontrado")).toBe(false);
+  });
+});
+
+async function ghostAppt(): Promise<string> {
+  return t.run(async (ctx) => {
+    const id = await ctx.db.insert("schedAppointments", {
+      organizationId: s.orgId, serviceId: svc, serviceName: "x", kind: "normal", startTime: 1, endTime: 2, blockStart: 1, blockEnd: 2,
+      localDate: MON, status: "cancelled", origin: "staff", resources: [], statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+    });
+    await ctx.db.delete(id);
+    return id as string;
+  });
+}

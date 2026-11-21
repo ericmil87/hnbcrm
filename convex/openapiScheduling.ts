@@ -59,11 +59,12 @@ const op = (
 ) => ({ tags: ["Agenda"], summary, description, operationId, ...extra });
 
 const READ_ERRORS = { "400": resp("BadRequest"), "401": resp("Unauthorized"), "403": resp("Forbidden") };
+const LIMITS = "Limites (custo de leitura do plano Free): lista de agendamentos até 31 dias por consulta; horários com janela padrão de 3 dias e máximo de 7; pendências com limit (padrão 20, máx. 50 por seção). Consulta que estoura o teto de leitura do servidor = 400 pedindo para restringir janela/recursos.";
 
 export const SCHEDULING_TAG = {
   name: "Agenda",
   description:
-    "Agenda v2: serviços, recursos, horários livres e agendamentos com as MESMAS regras das telas. Datas: ISO com offset + hora local + timezone. Módulo `scheduling` desligado = 400 «Módulo não habilitado: Agenda». Eventos de webhook: appointment.created, .approved, .confirmed, .rescheduled, .cancelled, .completed, .no_show, .needs_attention, .undone, .restored (payload sem telefone, e-mail nem notas). Atividades no lead: appointment_booked, appointment_changed, appointment_completed.",
+    "Agenda v2: serviços, recursos, horários livres e agendamentos com as MESMAS regras das telas. Datas: ISO com offset + hora local + timezone. Módulo `scheduling` desligado = 400 «Módulo não habilitado: Agenda». Eventos de webhook: appointment.created, .approved, .confirmed, .rescheduled, .cancelled, .completed, .no_show, .needs_attention, .undone, .restored (payload sem telefone, e-mail nem notas). Atividades no lead: appointment_booked, appointment_changed, appointment_completed. Permissões: valem as da CHAVE (quando gravadas; senão as do membro), iguais em leitura e escrita; a chave nunca pode mais do que declara e fechar a agenda inteira exige manage. Chave de membro de IA só lê (escrever = 403). " + LIMITS,
 };
 
 export const SCHEDULING_PATHS: Record<string, Json> = {
@@ -80,13 +81,13 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
   "/api/v1/scheduling/slots": {
     get: op(
       "Buscar horários livres",
-      `Horários livres de um serviço numa janela de até 7 dias. NUNCA invente um horário: use os devolvidos aqui. Chave com agenda: edit ou mais recebe a audiência da equipe (resourceNames, reasons, reasonCodes e score); abaixo disso os mesmos horários SEM nome de recurso, motivo nem pontuação. Nunca traz dado de cliente. reason ≠ ok explica a lista vazia (service_unavailable, no_matching_resource, unverifiable = não deu para verificar com segurança, appointment_unavailable). ${key("view_own")}`,
+      `Horários livres de um serviço numa janela de até 7 dias. NUNCA invente um horário: use os devolvidos aqui. Chave com agenda: edit ou mais recebe a audiência da equipe (resourceNames, reasons, reasonCodes e score); abaixo disso os mesmos horários SEM nome de recurso, motivo nem pontuação. Nunca traz dado de cliente. Serviço inexistente ou de outra organização = 404. reason ≠ ok explica a lista vazia (service_unavailable, no_matching_resource, unverifiable = não deu para verificar com segurança, appointment_unavailable). ${key("view_own")}`,
       "schedulingFindSlots",
       {
         parameters: [
           q("serviceId", "ID do serviço", true),
           q("from", "Primeiro dia (AAAA-MM-DD, fuso da organização)", true),
-          q("to", "Último dia (padrão = from; no máximo 7 dias)"),
+          q("to", "Último dia (padrão = from + 2, ou seja 3 dias; no máximo 7 dias)"),
           q("period", "Período do dia", false, { type: "string", enum: ["manha", "tarde", "noite", "qualquer"] }),
           q("resourceIds", "IDs de recursos separados por vírgula (restringe o plano)"),
           q("partySize", "Pessoas no mesmo horário (1 a 4)", false, { type: "integer" }),
@@ -119,7 +120,7 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
   "/api/v1/scheduling/appointments": {
     get: op(
       "Listar agendamentos por intervalo",
-      `Agendamentos com início entre from e to (datas locais), em ordem cronológica, com paginação por cursor opaco (nextCursor; hasMore). Chave com agenda: view_own só vê os agendamentos em que o membro é o profissional ou o criador; view_all ou mais vê todos. ${key("view_own")}`,
+      `Agendamentos com início entre from e to (datas locais), em ordem cronológica, com paginação por cursor opaco (nextCursor; hasMore). Chave com agenda: view_own só vê os agendamentos em que o membro é o profissional ou o criador; view_all ou mais vê todos. Até 31 dias por consulta (mais = 400); use cursor para paginar. ${key("view_own")}`,
       "schedulingListAppointments",
       {
         parameters: [
@@ -156,7 +157,8 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
     }),
   },
   "/api/v1/scheduling/pending": {
-    get: op("Pendências da agenda", `Aprovações de proposta (IA/cliente), conflitos abertos, atendimentos sem desfecho e sugestões de 1 toque (sugestões só com view_all ou mais). Até 50 por seção; capped diz que há mais. ${key("view_own")}`, "schedulingPending", {
+    get: op("Pendências da agenda", `Aprovações de proposta (IA/cliente), conflitos abertos, atendimentos sem desfecho e sugestões de 1 toque (sugestões só com view_all ou mais). Até limit por seção (padrão 20, máx. 50); capped diz que há mais. ${key("view_own")}`, "schedulingPending", {
+      parameters: [q("limit", "Itens por seção (padrão 20, máx. 50)", false, { type: "integer" })],
       responses: {
         "200": ok("Pendências", {
           type: "object",
@@ -192,11 +194,11 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
   "/api/v1/scheduling/appointments/book": {
     post: op(
       "Marcar horário",
-      `Cria o agendamento (origem api; o ator é o membro dono da chave). Idempotency-Key (cabeçalho) ou requestId (corpo) é OBRIGATÓRIO: a mesma chave com os mesmos dados devolve o MESMO agendamento (200, created: false); a mesma chave com outros dados = 409 idempotency_key_reused. Regra impeditiva = 409 sched_rules com alternatives. force só aceita avisos. Efeitos: auditoria, atividade no lead, webhook appointment.created. ${key("edit")}`,
+      `Cria o agendamento (origem api; o ator é o membro dono da chave). Idempotency-Key (cabeçalho) ou requestId (corpo) é OBRIGATÓRIO: a mesma chave com os mesmos dados devolve o MESMO agendamento (200, created: false); a mesma chave com outros dados = 409 idempotency_key_reused. Regra impeditiva = 409 sched_rules com alternatives. force só aceita avisos. Efeitos: auditoria, atividade no lead, webhook appointment.created. Idempotência: a chave vale para serviço, início, contato/lead/conversa, variantKey e, quando resourceIds é enviado, o conjunto de recursos (ordem não importa); notes diferente NÃO conta (devolve o agendamento já criado). Marcar em grupo: companions (1 a 3, { guestName, resourceIds? }) marca a pessoa principal e os acompanhantes juntos, tudo ou nada, idempotente por grupo (appointmentIds, partySize). Chave de membro de IA lê, mas escrever = 403. ${key("edit")}`,
       "schedulingBook",
       {
         parameters: [IDEMPOTENCY_HEADER],
-        requestBody: body(["serviceId"], { ...BOOK_PROPS, requestId: str("Chave de idempotência (alternativa ao cabeçalho)") }),
+        requestBody: body(["serviceId"], { ...BOOK_PROPS, requestId: str("Chave de idempotência (alternativa ao cabeçalho)"), companions: { type: "array", minItems: 1, maxItems: 3, items: { type: "object", required: ["guestName"], properties: { guestName: str("Nome do acompanhante (até 80 caracteres)"), resourceIds: BOOK_PROPS.resourceIds } }, description: "Marcar em grupo (casal etc.): pessoa principal + acompanhantes, tudo ou nada" } }),
         responses: {
           "201": ok("Agendamento criado", ref("SchedBooked")),
           "200": ok("Repetição idempotente: o agendamento já existia", ref("SchedBooked")),
@@ -228,7 +230,7 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
   "/api/v1/scheduling/appointments/status": {
     post: op(
       "Mudar status (confirmar, chegou, atendido, faltou, aprovar, recusar)",
-      `to: scheduled (aprova uma proposta pendente), confirmed, checked_in, completed ou no_show. action: approve (= scheduled) ou reject (recusa a proposta = cancela). Transição inválida = 400. ${key("edit")}`,
+      `to: scheduled (aprova uma proposta pendente), confirmed, checked_in, completed ou no_show. action: approve (= scheduled) ou reject (recusa uma proposta PENDENTE = cancela). reject só vale para status pending_approval: outro status = 400 «Este agendamento não é uma proposta pendente; use cancelar» e nada muda (para cancelar um agendamento ativo use /appointments/cancel). Transição inválida = 400. ${key("edit")}`,
       "schedulingSetStatus",
       {
         requestBody: body(["appointmentId"], { appointmentId: str("Agendamento"), to: { type: "string", enum: ["scheduled", "confirmed", "checked_in", "completed", "no_show"] }, action: { type: "string", enum: ["approve", "reject"] }, reason: str("Motivo, em reject") }),
@@ -289,7 +291,7 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
   "/api/v1/scheduling/closures/get": {
     get: op("Andamento de um fechamento em lotes", `Estado e totais do fechamento (runId vem de resources/day). ${key("view_all")}`, "schedulingClosureRun", {
       parameters: [q("runId", "ID do fechamento", true)],
-      responses: { "200": ok("Fechamento", { type: "object", properties: { run: { type: "object", additionalProperties: true } } }), ...READ_ERRORS, "404": NOT_FOUND },
+      responses: { "200": ok("Fechamento", { type: "object", properties: { run: ref("SchedClosureRun") } }), ...READ_ERRORS, "404": NOT_FOUND },
     }),
   },
   "/api/v1/scheduling/conflicts/resolve": {
@@ -353,6 +355,8 @@ export const SCHEDULING_SCHEMAS: Record<string, Json> = {
       success: { type: "boolean" },
       appointmentId: { type: "string" },
       status: { type: "string", enum: ["pending_approval", "scheduled"] },
+      appointmentIds: { type: "array", items: { type: "string" }, description: "Só em grupo (companions): todos os agendamentos do grupo" },
+      partySize: { type: "integer", description: "Só em grupo" },
       created: { type: "boolean", description: "false na repetição idempotente" },
       duplicate: { type: "boolean", description: "true quando já havia o mesmo horário do mesmo cliente e serviço" },
       inConflict: { type: "boolean" },
@@ -392,7 +396,7 @@ export const SCHEDULING_SCHEMAS: Record<string, Json> = {
   },
   SchedAppointment: {
     type: "object",
-    description: "Agendamento (sem token de lembrete, chave de idempotência nem identificador de calendário; notes só no detalhe).",
+    description: "Projeção da API (estável): sem organização, _creationTime, blockStart/blockEnd, createdBy/approvedBy, token de lembrete, chave de idempotência nem identificador de calendário; notes só no detalhe.",
     properties: {
       _id: { type: "string" },
       serviceId: { type: "string" },
@@ -401,8 +405,6 @@ export const SCHEDULING_SCHEMAS: Record<string, Json> = {
       kind: { type: "string", enum: ["normal", "fit_in", "untimed"] },
       startTime: { type: "number" },
       endTime: { type: "number" },
-      blockStart: { type: "number" },
-      blockEnd: { type: "number" },
       localDate: { type: "string" },
       status: { type: "string", enum: ["pending_approval", "scheduled", "confirmed", "checked_in", "completed", "no_show", "cancelled", "rescheduled"] },
       origin: { type: "string", enum: ["staff", "ai", "public", "api", "human_message", "waitlist", "import"] },
@@ -419,7 +421,6 @@ export const SCHEDULING_SCHEMAS: Record<string, Json> = {
       rescheduledFromId: { type: "string" },
       rescheduledToId: { type: "string" },
       rescheduleOfId: { type: "string" },
-      createdBy: { type: "string" },
       cancelledByClass: { type: "string", enum: ["staff", "client", "ai", "system"] },
       cancelReason: { type: "string" },
       lateCancel: { type: "boolean" },
@@ -429,6 +430,30 @@ export const SCHEDULING_SCHEMAS: Record<string, Json> = {
       ...timesProps,
     },
     additionalProperties: true,
+  },
+  SchedClosureRun: {
+    type: "object",
+    description: "Andamento de um fechamento em lotes. Só campos de andamento (sem organização, autor nem erro interno).",
+    properties: {
+      _id: { type: "string" },
+      kind: { type: "string", enum: ["resource_closed", "resource_removed", "capacity"] },
+      resourceId: { type: "string" },
+      resourceKind: { type: "string", enum: ["person", "room", "equipment"] },
+      fromLocalDate: { type: "string" },
+      toLocalDate: { type: "string" },
+      status: { type: "string", enum: ["running", "done", "failed"] },
+      truncated: { type: "boolean" },
+      total: { type: "number" },
+      totalIsPartial: { type: "boolean" },
+      processed: { type: "number" },
+      reallocated: { type: "number" },
+      conflicts: { type: "number" },
+      failed: { type: "number" },
+      failureMessage: { type: "string", description: "Só quando status = failed: mensagem genérica" },
+      createdAt: { type: "number" },
+      updatedAt: { type: "number" },
+      completedAt: { type: "number" },
+    },
   },
   SchedClosureResult: {
     type: "object",

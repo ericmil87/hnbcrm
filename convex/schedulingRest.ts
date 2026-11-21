@@ -18,7 +18,7 @@ import { type Permissions } from "./lib/permissions";
 import { type AgendaReader, restAgendaReader } from "./lib/schedRead";
 import { type SchedActor, throwSchedRules } from "./lib/schedBookingOps";
 import { clearResourceDayExceptionCore, resolveConflictCore, setResourceDayExceptionCore } from "./lib/schedExceptionOps";
-import { isValidLocalDate } from "./lib/schedTime";
+import { addLocalDays, diffLocalDays, isValidLocalDate } from "./lib/schedTime";
 import { resourceDocValidator, serviceDocValidator, slotValidator, type Slot } from "./lib/schedViews";
 import { MAX_RESOURCES_PER_ORG, MAX_SERVICES_PER_ORG } from "./lib/schedConstants";
 import {
@@ -32,10 +32,16 @@ import {
   redact,
 } from "./scheduling";
 import { appointmentRowValidator } from "./lib/schedViews";
-import { closureResultValidator, closureRunValidator } from "./schedulingExceptions";
+import { closureResultValidator } from "./schedulingExceptions";
 import { permissionsValidator } from "./schema";
 
 const PERMISSION_DENIED = "Permissão insuficiente";
+/** Teto de dias da lista de agendamentos pela REST (a tela aceita 366; aqui o custo de leitura é do plano Free). */
+export const REST_MAX_LIST_DAYS = 31;
+const SLOTS_DEFAULT_DAYS = 3;
+const PENDING_REST_DEFAULT = 20;
+const PENDING_REST_MAX = 50;
+const PENDING_REST_READ_CAP = 150;
 
 /** Autenticação da chave: o membro dono (`teamMemberId`) e as permissões da CHAVE (já completas pelo router). */
 const keyArgs = {
@@ -132,9 +138,14 @@ export const internalFindSlots = internalQuery({
   handler: async (ctx, args) => {
     const reader = await enterRead(ctx, args);
     const org = await ctx.db.get(args.organizationId);
+    // Serviço inexistente ou de outra org = o mesmo "não encontrado" das demais rotas (não um 200 com `reason`).
+    const service = await ctx.db.get(args.serviceId);
+    if (!service || service.organizationId !== args.organizationId) throw new ConvexError("Serviço não encontrado");
     const { teamMemberId: _m, permissions: _p, ...search } = args;
     void [_m, _p];
-    const res = await findSlotsFor(ctx, reader, { ...search, audience: "staff" });
+    // REST: janela padrão de 3 dias (a busca da tela é de 1); o máximo de 7 continua valendo no núcleo.
+    const toLocalDate = search.toLocalDate ?? (isValidLocalDate(search.fromLocalDate) ? addLocalDays(search.fromLocalDate, SLOTS_DEFAULT_DAYS - 1) : undefined);
+    const res = await findSlotsFor(ctx, reader, { ...search, toLocalDate, audience: "staff" });
     const clean = (s: Slot): Slot => (reader.canEdit ? s : redact(s, "ai"));
     return {
       timezone: org?.settings.timezone ?? "",
@@ -181,6 +192,9 @@ export const internalListAppointments = internalQuery({
   }),
   handler: async (ctx, args) => {
     const reader = await enterRead(ctx, args);
+    if (isValidLocalDate(args.fromLocalDate) && isValidLocalDate(args.toLocalDate) && diffLocalDays(args.fromLocalDate, args.toLocalDate) + 1 > REST_MAX_LIST_DAYS) {
+      throw new ConvexError(`O período aceita no máximo ${REST_MAX_LIST_DAYS} dias por consulta; pagine por janelas (e use cursor dentro de cada uma).`);
+    }
     const after = decodeCursor(args.cursor);
     const page = await listAppointmentsFor(ctx, reader, {
       organizationId: args.organizationId,
@@ -215,12 +229,18 @@ export const internalGetAppointment = internalQuery({
 });
 
 export const internalListPending = internalQuery({
-  args: { ...keyArgs, now: v.number() },
+  args: { ...keyArgs, now: v.number(), limit: v.optional(v.number()) },
   returns: v.object({ timezone: v.string(), pending: pendingResultValidator }),
   handler: async (ctx, args) => {
     const reader = await enterRead(ctx, args);
     const org = await ctx.db.get(args.organizationId);
-    const pending = await listPendingFor(ctx, reader, { organizationId: args.organizationId, now: args.now });
+    // Itens por seção (padrão 20, máx. 50) e leitura limitada para `view_own` (a tela lê até 300 por seção).
+    const perSection = Math.max(1, Math.min(PENDING_REST_MAX, Math.trunc(args.limit ?? PENDING_REST_DEFAULT)));
+    const pending = await listPendingFor(ctx, reader, {
+      organizationId: args.organizationId,
+      now: args.now,
+      limits: { perSection, readCap: PENDING_REST_READ_CAP },
+    });
     return { timezone: org?.settings.timezone ?? "", pending };
   },
 });
@@ -232,14 +252,59 @@ export const internalTimezone = internalQuery({
   handler: async (ctx, args) => (await ctx.db.get(args.organizationId))?.settings.timezone ?? "",
 });
 
+/** Andamento de um fechamento: SÓ os campos de andamento (nada de org, autor nem texto interno de erro). */
+export const closureRunApiValidator = v.object({
+  _id: v.id("schedClosureRuns"),
+  kind: v.union(v.literal("resource_closed"), v.literal("resource_removed"), v.literal("capacity")),
+  resourceId: v.optional(v.id("schedResources")),
+  resourceKind: v.optional(v.union(v.literal("person"), v.literal("room"), v.literal("equipment"))),
+  fromLocalDate: v.string(),
+  toLocalDate: v.string(),
+  status: v.union(v.literal("running"), v.literal("done"), v.literal("failed")),
+  truncated: v.optional(v.boolean()),
+  total: v.number(),
+  totalIsPartial: v.boolean(),
+  processed: v.number(),
+  reallocated: v.number(),
+  conflicts: v.number(),
+  failed: v.number(),
+  /** Presente só quando o fechamento falhou: texto genérico (o motivo interno fica no servidor). */
+  failureMessage: v.optional(v.string()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+  completedAt: v.optional(v.number()),
+});
+
+export const FAILURE_MESSAGE = "O fechamento não foi concluído por completo; revise os agendamentos afetados em /scheduling/pending.";
+
 /** Andamento de um fechamento em lotes (`view_all`, como a tela). `null` = não existe ou é de outra org. */
 export const internalGetClosureRun = internalQuery({
   args: { ...keyArgs, runId: v.id("schedClosureRuns") },
-  returns: v.union(v.null(), closureRunValidator),
+  returns: v.union(v.null(), closureRunApiValidator),
   handler: async (ctx, args) => {
     await enterRead(ctx, args, "view_all");
     const run = await ctx.db.get(args.runId);
-    return run && run.organizationId === args.organizationId ? run : null;
+    if (!run || run.organizationId !== args.organizationId) return null;
+    return {
+      _id: run._id,
+      kind: run.kind,
+      ...(run.resourceId !== undefined ? { resourceId: run.resourceId } : {}),
+      ...(run.resourceKind !== undefined ? { resourceKind: run.resourceKind } : {}),
+      fromLocalDate: run.fromLocalDate,
+      toLocalDate: run.toLocalDate,
+      status: run.status,
+      ...(run.truncated !== undefined ? { truncated: run.truncated } : {}),
+      total: run.total,
+      totalIsPartial: run.totalIsPartial,
+      processed: run.processed,
+      reallocated: run.reallocated,
+      conflicts: run.conflicts,
+      failed: run.failed,
+      ...(run.status === "failed" || run.failure !== undefined ? { failureMessage: FAILURE_MESSAGE } : {}),
+      createdAt: run.createdAt,
+      updatedAt: run.updatedAt,
+      ...(run.completedAt !== undefined ? { completedAt: run.completedAt } : {}),
+    };
   },
 });
 

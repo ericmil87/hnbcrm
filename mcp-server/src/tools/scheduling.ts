@@ -206,9 +206,15 @@ export function registerSchedulingTools(server: McpServer, client: HnbCrmClient)
 
   server.tool(
     "crm_book_appointment",
-    "Book an appointment (same rules as the app). Only after crm_preview_appointment succeeded and the customer agreed to that exact time. `idempotencyKey` is REQUIRED: generate a unique key per booking intent and reuse the SAME key only when retrying the identical request (the same key + same data returns the same appointment; the same key with other data is a 409 idempotency_key_reused). On a 409 sched_rules the result has `violations` and `alternatives`: offer one of them, never retry the same time and never force a block code.",
+    "Book an appointment (same rules as the app). Only after crm_preview_appointment succeeded and the customer agreed to that exact time. `idempotencyKey` is REQUIRED: generate a unique key per booking intent and reuse the SAME key only when retrying the identical request (the same key + same data returns the same appointment; the key also covers variantKey and, when sent, the resourceIds set; for a group (companions) the result lists every appointmentId; the same key with other data is a 409 idempotency_key_reused). On a 409 sched_rules the result has `violations` and `alternatives`: offer one of them, never retry the same time and never force a block code.",
     {
       ...bookFields,
+      companions: z
+        .array(z.object({ guestName: z.string().min(1).max(80), resourceIds: z.array(z.string()).max(10).optional() }))
+        .min(1)
+        .max(3)
+        .optional()
+        .describe("Group booking (e.g. a couple): 1 to 3 companions booked together with the main person, all or nothing; idempotent per group"),
       idempotencyKey: z
         .string()
         .min(1)
@@ -274,7 +280,7 @@ export function registerSchedulingTools(server: McpServer, client: HnbCrmClient)
   };
   server.tool(
     "crm_set_appointment_status",
-    "Change an appointment's status: approve (accept a proposal waiting for approval), reject (refuse that proposal = cancel), confirm, check_in (customer arrived), complete (attended), no_show. An invalid transition is a 400 with the reason. Use crm_undo_appointment_status to revert the last change.",
+    "Change an appointment's status: approve (accept a proposal waiting for approval), reject (refuse a PENDING proposal = cancel; on any other status it fails with a 400 and nothing changes: use crm_cancel_appointment to cancel an active appointment), confirm, check_in (customer arrived), complete (attended), no_show. An invalid transition is a 400 with the reason. Use crm_undo_appointment_status to revert the last change.",
     {
       appointmentId: z.string().describe("Appointment ID"),
       action: z.enum(["approve", "reject", "confirm", "check_in", "complete", "no_show"]).describe("What happened"),

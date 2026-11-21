@@ -135,6 +135,18 @@ const UNAVAILABLE = "Esse horário não está disponível.";
 export const IDEMPOTENCY_REUSED_MESSAGE = "Esta chave de idempotência já foi usada com outros dados.";
 const IDEMPOTENCY_REUSED = IDEMPOTENCY_REUSED_MESSAGE;
 
+/**
+ * Chave de idempotência: quando o pedido NOMEIA recursos, o conjunto (ordem não importa) tem de ser o do agendamento
+ * existente. Pedido sem `resourceIds` (a porta escolheu) não restringe. Limite: se a 1ª chamada caiu no plano alternativo
+ * (`allowResourceFallback`), repetir com os mesmos `resourceIds` pedidos dá `idempotency_key_reused`; repita sem eles.
+ */
+export function sameResourceSet(existing: ReadonlyArray<{ resourceId: string }>, requested: readonly string[] | undefined): boolean {
+  if (requested === undefined || requested.length === 0) return true;
+  const a = new Set(existing.map((r) => r.resourceId));
+  const b = new Set(requested);
+  return a.size === b.size && [...a].every((id) => b.has(id));
+}
+
 /** Códigos que dependem do RECURSO escolhido: trocar de recurso pode resolver. */
 const RESOURCE_CODES: readonly RuleCode[] = [
   "CAPACITY_EXCEEDED",
@@ -1278,7 +1290,10 @@ async function prepareAttempt(
         hit.startTime === args.startTime &&
         (args.contactId === undefined || hit.contactId === args.contactId) &&
         (args.leadId === undefined || hit.leadId === args.leadId) &&
-        (args.conversationId === undefined || hit.conversationId === args.conversationId);
+        (args.conversationId === undefined || hit.conversationId === args.conversationId) &&
+        hit.variantKey === args.variantKey &&
+        sameResourceSet(hit.resources, args.resourceIds);
+      // `notes` diferente NÃO vira 409 (texto interno; a repetição devolve o agendamento já criado).
       if (!sameData) fail(IDEMPOTENCY_REUSED);
       return { done: { kind: "existing", appointment: hit, duplicate: false } };
     }
