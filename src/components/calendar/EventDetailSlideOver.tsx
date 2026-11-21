@@ -24,6 +24,8 @@ import {
 } from "lucide-react";
 import { EVENT_TYPE_LABELS, EVENT_STATUS_LABELS } from "./constants";
 import { toast } from "sonner";
+import { mutationErrorMessage } from "@/lib/errors";
+import { CALENDAR_READONLY_NOTE, canEditCalendarItem } from "@/lib/agendaPermissions";
 
 interface EventDetailSlideOverProps {
   open: boolean;
@@ -51,7 +53,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
       toast.success("Evento concluído!");
       onClose();
     } catch (error) {
-      toast.error("Não foi possível concluir o evento.");
+      toast.error(mutationErrorMessage(error, "Não foi possível concluir o evento."));
       console.error(error);
     }
   };
@@ -63,7 +65,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
       toast.success("Evento cancelado!");
       onClose();
     } catch (error) {
-      toast.error("Não foi possível cancelar o evento.");
+      toast.error(mutationErrorMessage(error, "Não foi possível cancelar o evento."));
       console.error(error);
     }
   };
@@ -76,7 +78,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
       setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
-      toast.error("Não foi possível excluir o evento.");
+      toast.error(mutationErrorMessage(error, "Não foi possível excluir o evento."));
       console.error(error);
     }
   };
@@ -250,6 +252,9 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
           )}
 
           {/* Actions */}
+          {!canEditCalendarItem(event) ? (
+            <p className="pt-4 border-t border-border text-sm text-text-muted">{CALENDAR_READONLY_NOTE}</p>
+          ) : (
           <div className="space-y-2 pt-4 border-t border-border">
             {event.status === "scheduled" && (
               <>
@@ -291,6 +296,7 @@ export function EventDetailSlideOver({ open, onClose, eventId, onEdit }: EventDe
               Excluir
             </Button>
           </div>
+          )}
         </div>
       </SlideOver>
 

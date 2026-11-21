@@ -26,6 +26,9 @@ import { useKeepPrevious } from "@/hooks/useKeepPrevious";
 import { addDays, startOfWeek } from "@/lib/agendaDates";
 import { calendarQueryKey, serverEventTypeFilter } from "@/lib/agendaQuery";
 import { memberLabel } from "@/lib/teamMembers";
+import { usePermissions } from "@/hooks/usePermissions";
+import { mutationErrorMessage } from "@/lib/errors";
+import { isCalendarItemDraggable } from "@/lib/agendaPermissions";
 
 /** Fallback vazio que limpa o `?event=` inválido ao montar. */
 function ClearEventParam({ onClear }: { onClear: () => void }) {
@@ -51,6 +54,10 @@ export function CalendarPage() {
     eventParam,
     setSelectedEvent,
   } = useCalendarState();
+
+  // Criar evento exige poder editar tarefas/agenda (`tasks` >= edit_own).
+  const { can } = usePermissions(organizationId);
+  const canCreate = can("tasks", "edit_own");
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
@@ -131,6 +138,9 @@ export function CalendarPage() {
       return;
     }
 
+    // Defesa: o bloco já nasce sem arrasto, mas o servidor é quem decide.
+    if (!isCalendarItemDraggable(eventData)) return;
+
     // Handle drop on day cell (month view)
     if (over.id.toString().startsWith("day-")) {
       const targetDate = over.data.current?.date as Date;
@@ -147,7 +157,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Não foi possível reagendar o evento.");
+        toast.error(mutationErrorMessage(error, "Não foi possível reagendar o evento."));
         console.error(error);
       }
       return;
@@ -173,7 +183,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Não foi possível reagendar o evento.");
+        toast.error(mutationErrorMessage(error, "Não foi possível reagendar o evento."));
         console.error(error);
       }
     }
@@ -185,6 +195,7 @@ export function CalendarPage() {
   };
 
   const handleSlotClick = (date: Date, hour: number, minute: number) => {
+    if (!canCreate) return;
     setInitialDate(date);
     setInitialHour(hour);
     setInitialMinute(minute);
@@ -234,6 +245,7 @@ export function CalendarPage() {
           onNavigateNext={navigateNext}
           onGoToToday={goToToday}
           onCreateEvent={handleCreateEvent}
+          canCreate={canCreate}
           teamMembers={teamMembers.map((m) => ({ _id: m._id, name: memberLabel(m) }))}
           selectedMemberId={selectedMemberId}
           selectedEventTypes={selectedEventTypes}
@@ -277,6 +289,7 @@ export function CalendarPage() {
         </div>
 
         {/* Mobile FAB - shows only on mobile, positioned above bottom tab bar */}
+        {canCreate && (
         <button
           onClick={handleCreateEvent}
           className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-brand-600 text-white shadow-lg flex items-center justify-center hover:bg-brand-700 active:scale-95 transition-all"
@@ -284,6 +297,7 @@ export function CalendarPage() {
         >
           <Plus size={24} />
         </button>
+        )}
 
         <DragOverlay>
           {activeEvent && (

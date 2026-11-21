@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { EVENT_TYPE_LABELS, RECURRENCE_OPTIONS } from "./constants";
 import { toast } from "sonner";
+import { mutationErrorMessage } from "@/lib/errors";
 import { formatLocalTime, localDateKey, addDays, parseLocalDateTime } from "@/lib/agendaDates";
 import { buildEventTimes, endDateFieldValue } from "@/lib/agendaForm";
 
@@ -179,7 +180,7 @@ export function CalendarEventModal({
 
       onClose();
     } catch (error) {
-      toast.error("Não foi possível salvar o evento.");
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar o evento."));
       console.error(error);
     } finally {
       setIsSubmitting(false);
