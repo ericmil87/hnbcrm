@@ -24,6 +24,7 @@ import { GroupAvatar } from "@/components/inbox/GroupAvatar";
 import { ConversationActionsMenu } from "@/components/inbox/ConversationActionsMenu";
 import { ConversationSearchBar } from "@/components/inbox/ConversationSearchBar";
 import { FollowUpChip } from "@/components/inbox/FollowUpChip";
+import { useConversationBooking } from "@/components/agenda/booking/useConversationBooking";
 import { ConversationLanguageChip, ConversationLanguageDialog } from "@/components/inbox/ConversationLanguageChip";
 import { useConversationLanguage } from "@/components/inbox/useConversationLanguage";
 import { useTranslationSettings } from "@/hooks/useTranslationSettings";
@@ -207,6 +208,14 @@ export function ConversationHeader({
 
   // Funil do lead da conversa aberta (C2): "Funil: <board> → <etapa>" + lead.
   const openLeadId = conversation.leadId as Id<"leads"> | undefined;
+  const scheduling = useConversationBooking({
+    organizationId,
+    conversationId,
+    leadId: openLeadId,
+    contactId: openContactId,
+    name: contactName || undefined,
+    isGroup,
+  });
   const leadBoardId = conversation.lead?.boardId as Id<"boards"> | undefined;
   const leadStageId = conversation.lead?.stageId as Id<"stages"> | undefined;
   const leadBoards = useQuery(
@@ -402,7 +411,16 @@ export function ConversationHeader({
       archivedAt={conversation.archivedAt}
       labelIds={(conversation.labelIds ?? []) as string[]}
       onArchivedChange={onArchivedChange}
-      renderLeadingItems={leadingItems}
+      renderLeadingItems={
+        scheduling.menuItem
+          ? (close) => (
+              <>
+                {leadingItems?.(close)}
+                {scheduling.menuItem?.(close)}
+              </>
+            )
+          : leadingItems
+      }
       renderExtraItems={
         isGroup && groupMenu
           ? (close) => (
@@ -476,7 +494,7 @@ export function ConversationHeader({
   const relationBadge = <ContactRelationBadge relation={contactRelation} />;
 
   const windowClosed = windowInfo?.closed === true;
-  const hasStripItems = !!(funnelChip || originLine || languagePill || showAiControls || windowInfo);
+  const hasStripItems = !!(funnelChip || originLine || languagePill || showAiControls || windowInfo || scheduling.enabled);
 
   return (
     <>
@@ -614,7 +632,7 @@ export function ConversationHeader({
 
         {/* Detalhes: recolhíveis no celular, sempre à vista no desktop */}
         <div className={cn(detailsOpen ? "block" : "hidden md:block")}>
-          {(funnelChip || originLine || languagePill || windowInfo || (showAiControls && !isGroup)) && (
+          {(funnelChip || originLine || languagePill || windowInfo || scheduling.enabled || (showAiControls && !isGroup)) && (
             <div
               className="flex items-center gap-2 overflow-x-auto px-3 pb-1.5 [-ms-overflow-style:none] [scrollbar-width:none] md:px-4 [&::-webkit-scrollbar]:hidden"
               role="toolbar"
@@ -624,6 +642,7 @@ export function ConversationHeader({
               {originLine}
               {languagePill}
               {showAiControls && <FollowUpChip conversationId={conversationId} />}
+              {scheduling.chip}
               {windowInfo && (
                 <span className={cn(chipClass, windowInfo.tone, windowClosed && "hidden md:inline-flex")}>
                   <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -637,6 +656,7 @@ export function ConversationHeader({
       </div>
 
       {!isGroup && aiControls.overlays}
+      {scheduling.overlays}
 
       <ConversationLanguageDialog
         open={languageDialogOpen}

@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/Badge";
+import { AppointmentsBlock } from "@/components/agenda/detail/AppointmentsBlock";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { AvatarUpload } from "@/components/ui/AvatarUpload";
 import { SocialIcons } from "@/components/SocialIcons";
@@ -86,6 +87,7 @@ export function ContactInfoTab({
 
   return (
     <div>
+      <AppointmentsBlock organizationId={contact.organizationId} contactId={contactId} name={displayName} />
       {/* Dados */}
       <CollapsibleSection
         title="Dados"

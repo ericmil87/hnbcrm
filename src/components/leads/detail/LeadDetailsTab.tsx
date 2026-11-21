@@ -3,6 +3,7 @@ import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { Spinner } from "@/components/ui/Spinner";
 import { LeadCentralSection } from "@/components/inbox/central/LeadCentralSection";
+import { AppointmentsBlock } from "@/components/agenda/detail/AppointmentsBlock";
 import { LeadContactBlock } from "./LeadContactBlock";
 import { LeadOwnerStageBlock } from "./LeadOwnerStageBlock";
 import { LeadBasicsBlock } from "./LeadBasicsBlock";
@@ -31,6 +32,7 @@ export function LeadDetailsTab({ leadId, organizationId }: LeadDetailsTabProps) 
     <div className="p-4 space-y-6">
       {/* Central (opcional por org): unidade, tipo de contato e origem */}
       <LeadCentralSection organizationId={organizationId} lead={lead} />
+      <AppointmentsBlock organizationId={organizationId} leadId={leadId} />
       <LeadContactBlock leadId={leadId} organizationId={organizationId} lead={lead} />
       <LeadOwnerStageBlock leadId={leadId} organizationId={organizationId} lead={lead} />
       <LeadBasicsBlock leadId={leadId} lead={lead} />
