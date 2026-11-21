@@ -24,6 +24,7 @@ import {
   type LocalDate,
 } from "./agendaZone";
 import { fillVocab } from "./agendaCopy";
+import { slotTouchesAnother } from "./agendaSlots";
 import { roundNow, type NowUnit } from "./roundNow";
 import { BOOKING_COPY } from "./bookingCopy";
 import { VOCAB } from "./vocab";
@@ -428,7 +429,7 @@ export interface OfferedSlot {
   resourceNames: string[];
   score: number;
   reasons: string[];
-  /** Códigos estruturados dos motivos (formato futuro do servidor, p.ex. `ADJACENT`); vazio hoje. */
+  /** Códigos estruturados dos motivos (`ADJACENT`, `EDGE_OF_DAY`...); vazio fora da equipe. */
   reasonCodes: string[];
 }
 
@@ -502,17 +503,12 @@ export function pickedFromOffered(slot: OfferedSlot, manual = false): PickedSlot
   };
 }
 
-/** Código estruturado de "encostado em outro atendimento" (formato futuro de `reasonCodes`). */
-export const ADJACENT_CODE = "ADJACENT";
-
 /**
- * Encostado = junto de outro atendimento. ÚNICO ponto de detecção: lê primeiro `reasonCodes` (formato
- * estruturado que o servidor vai mandar) e só então cai no texto PT-BR dos motivos ("logo antes/após ...").
- * `bookingFlow.test` roda o `scoreCandidate` real do servidor por esta função: se o texto mudar, quebra.
+ * Encostado = junto de outro atendimento. Delega à ÚNICA regra (`agendaSlots.slotTouchesAnother`: código
+ * `ADJACENT` primeiro, texto PT-BR como reserva). `bookingFlow.test` roda o `scoreCandidate` real.
  */
 export function isAdjacentSlot(slot: { reasons: readonly string[]; reasonCodes?: readonly string[] }): boolean {
-  if (slot.reasonCodes && slot.reasonCodes.length > 0) return slot.reasonCodes.includes(ADJACENT_CODE);
-  return slot.reasons.some((r) => /\blogo (antes|ap[óo]s)\b/i.test(r));
+  return slotTouchesAnother(slot);
 }
 
 /** "Logo após outro atendimento · No início do expediente". */

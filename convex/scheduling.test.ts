@@ -188,6 +188,8 @@ describe("findSlots: clínica do plano", () => {
     const staff = await as(s.admin).query(api.scheduling.findSlots, findArgs({ now }));
     expect(starts(staff.slots)).toContain("09:00");
     expect(staff.slots.some((x) => x.reasons.length > 0)).toBe(true);
+    expect(staff.slots.some((x) => x.reasonCodes.length > 0)).toBe(true);
+    expect(staff.slots.every((x) => x.reasons.length === 0 || x.reasonCodes.length > 0)).toBe(true);
     const ai = await as(s.admin).query(api.scheduling.findSlots, findArgs({ now, audience: "ai", limit: undefined }));
     assertMatchesReturns(ai, sched.findSlots);
     expect(ai.earliestBookableAt).toBe(now + 120 * 60_000);
@@ -197,6 +199,7 @@ describe("findSlots: clínica do plano", () => {
       expect(sl.startTime).toBeGreaterThanOrEqual(now + 120 * 60_000);
       expect(sl.resourceNames).toEqual([]);
       expect(sl.reasons).toEqual([]);
+      expect(sl.reasonCodes).toEqual([]);
       expect(sl.score).toBe(0);
       expect(sl.resourceIds.length).toBe(2);
     }

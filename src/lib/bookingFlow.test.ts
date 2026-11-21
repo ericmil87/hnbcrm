@@ -3,6 +3,7 @@ import { ConvexError } from "convex/values";
 import { computeDayAvailability } from "../../convex/lib/schedAvailability";
 import { scoreCandidate, DEFAULT_WEIGHTS } from "../../convex/lib/schedScore";
 import { atLocalMinutes } from "../../convex/lib/schedTime";
+import { slotTouchesAnother } from "./agendaSlots";
 import {
   EXPANDED_LIMIT,
   NEVER_FORCEABLE,
@@ -17,7 +18,6 @@ import {
   mergeRefreshedSlots,
   submitBooking,
   undoFreshBooking,
-  ADJACENT_CODE,
   canAdvance,
   chosenDurationMin,
   classifyViolations,
@@ -483,7 +483,7 @@ describe("erro sched_rules e proposta vencida", () => {
 describe("encostado: códigos estruturados primeiro, texto do servidor depois", () => {
   const slot = (reasons: string[], reasonCodes?: string[]) => ({ reasons, reasonCodes });
   it("reasonCodes manda quando existe", () => {
-    expect(isAdjacentSlot(slot([], [ADJACENT_CODE]))).toBe(true);
+    expect(isAdjacentSlot(slot([], ["ADJACENT"]))).toBe(true);
     expect(isAdjacentSlot(slot(["logo após outro atendimento"], ["OUTRO_CODIGO"]))).toBe(false);
   });
   it("sem códigos, cai no texto", () => {
@@ -506,6 +506,16 @@ describe("encostado: códigos estruturados primeiro, texto do servidor depois", 
     expect(isAdjacentSlot({ reasons: touching.reasons })).toBe(true);
     expect(isAdjacentSlot({ reasons: touchingBefore.reasons })).toBe(true);
     expect(isAdjacentSlot({ reasons: apart.reasons })).toBe(false);
+    // O código estruturado do servidor decide igual ao texto.
+    expect(isAdjacentSlot(touching)).toBe(true);
+    expect(isAdjacentSlot(touchingBefore)).toBe(true);
+    expect(isAdjacentSlot(apart)).toBe(false);
+    expect(touching.reasonCodes).toContain("ADJACENT");
+  });
+  it("isAdjacentSlot delega à regra única de agendaSlots", () => {
+    for (const s of [slot([], ["ADJACENT"]), slot(["logo após outro atendimento"], ["NEW_RESOURCE"]), slot(["logo antes de outro atendimento"]), slot(["no início do expediente"], ["EDGE_OF_DAY"])]) {
+      expect(isAdjacentSlot(s)).toBe(slotTouchesAnother(s));
+    }
   });
 });
 

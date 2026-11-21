@@ -36,6 +36,18 @@ describe("PROTEÇÃO: o texto real do servidor ainda é reconhecido", () => {
     const before = score(cand("08:00", "09:00"));
     expect(slotTouchesAnother({ reasons: before.reasons })).toBe(true);
   });
+  it("o código real do servidor decide igual: ADJACENT e EDGE_OF_DAY", () => {
+    const after = score(cand("10:00", "11:00"));
+    const before = score(cand("08:00", "09:00"));
+    expect(after.reasonCodes).toEqual(expect.arrayContaining(["ADJACENT", "ADJACENT_BEFORE"]));
+    expect(slotTouchesAnother(after)).toBe(true);
+    expect(slotTouchesAnother(before)).toBe(true);
+    expect(slotTouchesAnother(score(cand("14:00", "15:00")))).toBe(false);
+    // Borda do expediente sem vizinho: não é "encostado".
+    const edge = score(cand("17:00", "18:00"));
+    expect(edge.reasonCodes).toContain("EDGE_OF_DAY");
+    expect(slotTouchesAnother(edge)).toBe(false);
+  });
   it("candidato solto no meio do dia não é", () => {
     expect(slotTouchesAnother({ reasons: score(cand("14:00", "15:00")).reasons })).toBe(false);
   });

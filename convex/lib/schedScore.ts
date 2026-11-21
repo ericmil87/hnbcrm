@@ -48,11 +48,39 @@ export const DEFAULT_WEIGHTS: SmartWeights = {
   preference: 30,
 };
 
+/**
+ * Códigos estruturados dos motivos (lista FECHADA; as telas leem o código, o texto PT-BR é só apresentação):
+ *  - `ADJACENT` = colado em outro atendimento/bloqueio (antes e/ou depois); `ADJACENT_BEFORE` (vizinho ANTES do horário, "logo após") e
+ *    `ADJACENT_AFTER` (vizinho DEPOIS, "logo antes") detalham o lado (vêm JUNTO de `ADJACENT`, nunca sozinhos);
+ *  - `EDGE_OF_DAY` = colado na borda do expediente (início ou fim do turno), sem vizinho;
+ *  - `DEAD_GAP` = deixa uma lacuna menor que a mínima útil (pontuação negativa);
+ *  - `NEW_RESOURCE` = abre um recurso que ainda não tinha nada no dia (pontuação negativa);
+ *  - `EARLY` = começa nas primeiras horas do expediente (só com peso `earlyFirst` > 0);
+ *  - `BALANCE` = equilibra a carga entre a equipe (só com peso `balance` > 0);
+ *  - `PREFERENCE` = combina com a preferência informada (período e/ou recurso).
+ * Não existe `NO_DEAD_GAP`: é a ausência de `DEAD_GAP`.
+ */
+export const SCORE_REASON_CODES = [
+  "ADJACENT",
+  "ADJACENT_BEFORE",
+  "ADJACENT_AFTER",
+  "EDGE_OF_DAY",
+  "DEAD_GAP",
+  "NEW_RESOURCE",
+  "EARLY",
+  "BALANCE",
+  "PREFERENCE",
+] as const;
+export type ScoreReasonCode = (typeof SCORE_REASON_CODES)[number];
+/** `EARLY` vale quando a média de `earlyFirst` dos recursos do plano chega a este valor. */
+const EARLY_CODE_MIN = 0.8;
+
 export type ScoredCandidate = Candidate & {
   score: number;
   parts: Record<keyof SmartWeights, number>; // parcelas com peso e sinal (deadGap e openNewResource negativas)
   features: Record<keyof SmartWeights, number>; // soma crua das features (não ponderada)
   reasons: string[]; // PT-BR: "logo após outro atendimento"
+  reasonCodes: ScoreReasonCode[]; // mesmos motivos, estruturados (ver `SCORE_REASON_CODES`)
 };
 
 export type SmartMode = "off" | "rank" | "restrict";
@@ -174,6 +202,7 @@ export function scoreCandidate(
   const addReason = (r: string) => {
     if (!reasons.includes(r)) reasons.push(r);
   };
+  const codes = new Set<ScoreReasonCode>();
 
   for (const entry of c.plan) {
     const rd = day.get(entry.resourceId);
@@ -184,13 +213,29 @@ export function scoreCandidate(
     features.openNewResource += f.openNew;
     features.earlyFirst += f.earlyFirst;
     features.balance += f.balance;
-    if (f.touchBefore) addReason(f.prevIsNeighbor ? "logo após outro atendimento" : "no início do expediente");
-    if (f.touchAfter) addReason(f.nextIsNeighbor ? "logo antes de outro atendimento" : "no fim do expediente");
+    if (f.touchBefore) {
+      addReason(f.prevIsNeighbor ? "logo após outro atendimento" : "no início do expediente");
+      if (f.prevIsNeighbor) {
+        codes.add("ADJACENT");
+        codes.add("ADJACENT_BEFORE");
+      } else codes.add("EDGE_OF_DAY");
+    }
+    if (f.touchAfter) {
+      addReason(f.nextIsNeighbor ? "logo antes de outro atendimento" : "no fim do expediente");
+      if (f.nextIsNeighbor) {
+        codes.add("ADJACENT");
+        codes.add("ADJACENT_AFTER");
+      } else codes.add("EDGE_OF_DAY");
+    }
     if (f.deadGap > 0) {
+      codes.add("DEAD_GAP");
       const g = f.gapBeforeMin > 0 && f.gapBeforeMin < opts.minUsefulGapMin ? f.gapBeforeMin : f.gapAfterMin;
       addReason(`deixa uma lacuna de ${Math.round(g)} min`);
     }
-    if (f.openNew > 0) addReason("abre um recurso novo");
+    if (f.openNew > 0) {
+      addReason("abre um recurso novo");
+      codes.add("NEW_RESOURCE");
+    }
   }
 
   const pref = opts.preference;
@@ -207,9 +252,16 @@ export function scoreCandidate(
       if (!c.plan.some((p) => pref.resourceIds!.includes(p.resourceId))) match = false;
     }
     features.preference = match ? 1 : 0;
-    if (match) addReason("combina com a preferência do cliente");
+    if (match) {
+      addReason("combina com a preferência do cliente");
+      codes.add("PREFERENCE");
+    }
   }
-  if (w.balance > 0 && features.balance > 0) addReason("equilibra a carga entre a equipe");
+  if (w.balance > 0 && features.balance > 0) {
+    addReason("equilibra a carga entre a equipe");
+    codes.add("BALANCE");
+  }
+  if (w.earlyFirst > 0 && c.plan.length > 0 && features.earlyFirst / c.plan.length >= EARLY_CODE_MIN) codes.add("EARLY");
 
   const parts: Record<keyof SmartWeights, number> = {
     adjacency: w.adjacency * features.adjacency,
@@ -221,7 +273,8 @@ export function scoreCandidate(
   };
   const score =
     parts.adjacency + parts.deadGap + parts.openNewResource + parts.earlyFirst + parts.balance + parts.preference;
-  return { ...c, score, parts, features, reasons };
+  const reasonCodes = SCORE_REASON_CODES.filter((code) => codes.has(code));
+  return { ...c, score, parts, features, reasons, reasonCodes };
 }
 
 function planKey(c: Candidate): string {

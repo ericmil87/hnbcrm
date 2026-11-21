@@ -5,6 +5,7 @@ import {
   applySmartMode,
   DEFAULT_WEIGHTS,
   pickOffers,
+  SCORE_REASON_CODES,
   type ScoredCandidate,
   scoreCandidate,
   type SmartWeights,
@@ -79,6 +80,29 @@ describe("exemplo das 3 salas (relatório 04 §5.3)", () => {
     expect(c8.parts.openNewResource).toBe(-20);
     expect(c8.reasons).toContain("abre um recurso novo");
     expect(scoreCandidate(cand("A", "11:00", "12:00"), day, W, opts).reasons).toContain("logo após outro atendimento");
+  });
+
+  it("reasonCodes: estruturados, na ordem da lista fechada, coerentes com o texto", () => {
+    const a8 = scoreCandidate(cand("A", "08:00", "09:00"), day, W, opts);
+    expect(a8.reasonCodes).toEqual(["ADJACENT", "ADJACENT_AFTER", "EDGE_OF_DAY", "EARLY"]);
+    expect(scoreCandidate(cand("A", "11:00", "12:00"), day, W, opts).reasonCodes).toEqual(expect.arrayContaining(["ADJACENT", "ADJACENT_BEFORE"]));
+    expect(scoreCandidate(cand("A", "11:15", "12:15"), day, W, opts).reasonCodes).toContain("DEAD_GAP");
+    const c8 = scoreCandidate(cand("C", "08:00", "09:00"), day, W, opts);
+    expect(c8.reasonCodes).toContain("NEW_RESOURCE");
+    expect(c8.reasonCodes).toContain("EDGE_OF_DAY");
+    expect(c8.reasonCodes).not.toContain("ADJACENT");
+    for (const code of [a8, c8].flatMap((x) => x.reasonCodes)) expect(SCORE_REASON_CODES).toContain(code);
+    // Detalhe do lado só vem junto de ADJACENT.
+    for (const [r, st, en] of expected) {
+      const codes = scoreCandidate(cand(r, st, en), day, W, opts).reasonCodes;
+      if (codes.includes("ADJACENT_BEFORE") || codes.includes("ADJACENT_AFTER")) expect(codes).toContain("ADJACENT");
+    }
+  });
+
+  it("reasonCodes: PREFERENCE e BALANCE só com peso/preferência", () => {
+    const pref = scoreCandidate(cand("A", "11:00", "12:00"), day, W, { ...opts, tz: "UTC", preference: { resourceIds: ["A"] } });
+    expect(pref.reasonCodes).toContain("PREFERENCE");
+    expect(scoreCandidate(cand("A", "11:00", "12:00"), day, { ...W, earlyFirst: 0 }, opts).reasonCodes).not.toContain("EARLY");
   });
 
   it("ranking A 08:00 > A 11:00 > B 13:00 > C 08:00 > A 11:15", () => {
@@ -205,7 +229,7 @@ describe("applySmartMode", () => {
     score,
     parts: { adjacency: 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 },
     features: { adjacency: strict ? 1 : 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 },
-    reasons: [],
+    reasons: [], reasonCodes: [],
   });
   const list = [mk("A", "10:00", 5), mk("A", "09:00", 20), mk("B", "09:00", 20), mk("A", "11:00", 1, false)];
 
@@ -242,7 +266,7 @@ describe("pickOffers", () => {
       startTime: at(date, s), endTime: at(date, end), blockStart: at(date, s), blockEnd: at(date, end),
       plan: [{ role: "Sala", resourceId: res, units: 1 }],
       score, parts: { adjacency: 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 },
-      features: { adjacency: 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 }, reasons: [],
+      features: { adjacency: 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 }, reasons: [], reasonCodes: [],
     };
   };
   it("devolve no máximo `max`, melhor primeiro, variando período e dia", () => {
@@ -283,7 +307,7 @@ describe("restrict: minOffer e fallback por dia (regressão da revisão)", () =>
     startTime: at(date, s), endTime: at(date, `${String(Number(s.slice(0, 2)) + 1).padStart(2, "0")}:${s.slice(3)}`),
     blockStart: at(date, s), blockEnd: at(date, `${String(Number(s.slice(0, 2)) + 1).padStart(2, "0")}:${s.slice(3)}`),
     score, parts: { adjacency: 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 },
-    features: { adjacency: adj, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 }, reasons: [],
+    features: { adjacency: adj, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 }, reasons: [], reasonCodes: [],
   });
   const D1 = "2026-11-23";
   const D2 = "2026-11-24";

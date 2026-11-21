@@ -77,6 +77,8 @@ export const slotValidator = v.object({
   resourceNames: v.array(v.string()),
   score: v.number(),
   reasons: v.array(v.string()),
+  /** Motivos estruturados (`SCORE_REASON_CODES` em `schedScore.ts`; `ADJACENT` = encostado). Só audiência equipe. */
+  reasonCodes: v.array(v.string()),
 });
 /** Formato ÚNICO de horário oferecido: busca (`findSlots`) e `alternatives` das portas de reserva. */
 export type Slot = Infer<typeof slotValidator>;
@@ -87,7 +89,7 @@ export type Slot = Infer<typeof slotValidator>;
  * `resourceIds` ficam (opacos; a oferta precisa deles).
  */
 export function toSlot(
-  c: { startTime: number; endTime: number; plan: ReadonlyArray<{ resourceId: string }>; score?: number; reasons?: string[] },
+  c: { startTime: number; endTime: number; plan: ReadonlyArray<{ resourceId: string }>; score?: number; reasons?: string[]; reasonCodes?: readonly string[] },
   o: { now: number; tz: string; resourceNames: ReadonlyMap<string, string>; reveal: boolean }
 ): Slot {
   return {
@@ -99,6 +101,7 @@ export function toSlot(
     resourceNames: o.reveal ? c.plan.map((p) => o.resourceNames.get(p.resourceId) ?? "") : [],
     score: o.reveal ? (c.score ?? 0) : 0,
     reasons: o.reveal ? [...(c.reasons ?? [])] : [],
+    reasonCodes: o.reveal ? [...(c.reasonCodes ?? [])] : [],
   };
 }
 

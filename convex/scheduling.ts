@@ -704,7 +704,7 @@ const findSlotsReason = v.union(
 
 /** Redundância: o wrapper também corta (a própria `searchSlots` já sanitiza por construção). */
 function redact(slot: Slot, audience: "staff" | "ai" | "public"): Slot {
-  return audience === "staff" ? slot : { ...slot, resourceNames: [], reasons: [], score: 0 };
+  return audience === "staff" ? slot : { ...slot, resourceNames: [], reasons: [], reasonCodes: [], score: 0 };
 }
 
 /**
