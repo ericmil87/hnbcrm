@@ -2,6 +2,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, mutation, type MutationCtx } from "./_generated/server";
 import { isMembershipRevoked, requirePermission } from "./lib/auth";
+import { slotValidator } from "./lib/schedViews";
 import { assertModule } from "./lib/orgModules";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import {
@@ -40,7 +41,8 @@ const violationV = v.object({
   message: v.string(),
   detail: v.optional(v.record(v.string(), v.any())),
 });
-const alternativeV = v.object({ startTime: v.number(), resourceIds: v.array(v.id("schedResources")) });
+/** `alternatives` no formato ÚNICO `Slot` da busca (`lib/schedViews`), sanitizado pela audiência do ator. */
+const alternativeV = slotValidator;
 const planItemV = v.object({
   role: v.string(),
   resourceId: v.id("schedResources"),
