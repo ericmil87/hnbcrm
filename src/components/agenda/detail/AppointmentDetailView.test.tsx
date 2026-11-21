@@ -81,9 +81,31 @@ describe("AppointmentDetailView", () => {
   it("proposta vencida: avisa desde a abertura, esconde Aprovar e deixa Recusar proposta como ação principal", () => {
     setup({}, { status: "pending_approval", origin: "ai", startTime: NOW - HOUR, endTime: NOW });
     expect(screen.queryByRole("button", { name: "Aprovar proposta" })).toBeNull();
-    expect(screen.getByRole("alert")).toHaveTextContent("O horário desta proposta já passou");
+    expect(screen.getByRole("alert")).toHaveTextContent("Proposta vencida: o horário já passou");
     const decline = screen.getByRole("button", { name: "Recusar proposta" });
     expect(decline.className).toMatch(/bg-brand-600/);
+  });
+
+  it("proposta vencida: chip Vencida (texto, não só cor) e ações só Recusar proposta e Marcar de novo", async () => {
+    const { onAction } = setup({}, { status: "pending_approval", origin: "ai", startTime: NOW - HOUR, endTime: NOW });
+    expect(screen.getByText("Vencida")).toBeInTheDocument();
+    expect(screen.queryByText("Aguardando aprovação")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mais ações do horário" })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Marcar de novo" }));
+    expect(onAction).toHaveBeenCalledWith("rebook");
+  });
+
+  it("marcada pelo servidor (proposal_expired) vale mesmo com horário futuro: nunca Aprovar", () => {
+    setup({}, { status: "pending_approval", origin: "ai", needsAttention: { code: "proposal_expired" } });
+    expect(screen.getByText("Vencida")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprovar proposta" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Recusar proposta" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Marcar de novo" })).toBeInTheDocument();
+  });
+
+  it("proposta viva não oferece Marcar de novo", () => {
+    setup({}, { status: "pending_approval", origin: "ai" });
+    expect(screen.queryByRole("button", { name: "Marcar de novo" })).toBeNull();
   });
 
   it("aprovação que falhou (não vale mais): aviso e Recusar em destaque", () => {

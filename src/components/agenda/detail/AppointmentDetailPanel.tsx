@@ -82,6 +82,7 @@ function DetailBody({
   const [rescheduling, setRescheduling] = useState(false);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [swapOpen, setSwapOpen] = useState(false);
+  const [rebooking, setRebooking] = useState(false);
 
   if (data === undefined) {
     return (
@@ -152,6 +153,7 @@ function DetailBody({
 
   const onAction = (action: DetailAction) => {
     if (action === "reschedule") setRescheduling(true);
+    else if (action === "rebook") setRebooking(true);
     else if (action === "cancel") setCancelOpen(true);
     else if (action === "swap") setSwapOpen(true);
     else if (action === "undo") void doUndo();
@@ -179,6 +181,16 @@ function DetailBody({
           onClose={() => setRescheduling(false)}
           who={{ contactId: appt.contactId, leadId: appt.leadId, conversationId: appt.conversationId, name: clientLabel(who) }}
           reschedule={{ appointmentId, serviceId: appt.serviceId, variantKey: appt.variantKey, startTime: appt.startTime }}
+        />
+      )}
+      {rebooking && (
+        <BookingSheet
+          organizationId={organizationId}
+          open
+          onClose={() => setRebooking(false)}
+          onDone={() => setRebooking(false)}
+          who={{ contactId: appt.contactId, leadId: appt.leadId, conversationId: appt.conversationId, name: clientLabel(who) }}
+          initialService={{ serviceId: appt.serviceId, variantKey: appt.variantKey }}
         />
       )}
       <CancelDialog open={cancelOpen} busy={busy} onClose={() => setCancelOpen(false)} onConfirm={(reason) => void confirmCancel(reason)} />

@@ -20,11 +20,11 @@ import {
   type InternalItem,
 } from "./agendaGrid";
 import type { ListMode } from "./agendaViewParams";
-import { vacancyOf, type Vacancy } from "./agendaStatus";
+import { isExpiredProposal, vacancyOf, type Vacancy } from "./agendaStatus";
 import { zonedAtMinutes, zonedTimeLabel } from "./agendaZone";
 
 export type ListEntry =
-  | { kind: "appointment"; id: string; startTime: number; endTime: number; appointment: GridAppointment; place: string; conflict: boolean }
+  | { kind: "appointment"; id: string; startTime: number; endTime: number; appointment: GridAppointment; place: string; conflict: boolean; expired: boolean }
   | { kind: "busy"; id: string; startTime: number; endTime: number }
   | { kind: "internal"; id: string; startTime: number; endTime: number; internal: InternalItem }
   | { kind: "free"; id: string; startTime: number; endTime: number; resourceId: string; resourceName: string; gap: FreeGap };
@@ -48,7 +48,8 @@ function placeLabel(a: GridAppointment): string {
   return names.join(" · ");
 }
 
-function appointmentEntry(a: GridAppointment, id = `appt:${a._id}`): ListEntry {
+function appointmentEntry(a: GridAppointment, now: number, id = `appt:${a._id}`): ListEntry {
+  const expired = isExpiredProposal(a, now);
   return {
     kind: "appointment",
     id,
@@ -56,7 +57,8 @@ function appointmentEntry(a: GridAppointment, id = `appt:${a._id}`): ListEntry {
     endTime: a.endTime,
     appointment: a,
     place: placeLabel(a),
-    conflict: a.resources.some((r) => !r.allocated) || a.resources.length === 0,
+    conflict: (a.resources.some((r) => !r.allocated) || a.resources.length === 0) && !expired,
+    expired,
   };
 }
 
@@ -91,11 +93,13 @@ export function buildDayList(input: DayListInput): ListGroup[] {
   if (total === 0) return [];
 
   if (input.mode === "hora") {
-    const entries = [...appts.map((a) => appointmentEntry(a)), ...busyEntries(day.busy), ...internalEntries(input.internal)].sort(byTime);
+    const entries = [...appts.map((a) => appointmentEntry(a, input.now)), ...busyEntries(day.busy), ...internalEntries(input.internal)].sort(byTime);
     return [{ key: "time", title: "", kind: "time", entries }];
   }
 
-  const grid = buildDayGridModel({ day, internal: [], groupBy, now: input.now });
+  // Só os de dia inteiro entram na grade: viram `allDayBands` da coluna do profissional (o dia dele está tomado).
+  const grid = buildDayGridModel({ day, internal: input.internal.filter((e) => e.allDay), groupBy, now: input.now });
+  const attachedAllDay = new Set(grid.columns.flatMap((c) => c.allDayBands.map((e) => `${e.source}:${e.id}`)));
   const kindOf = new Map(day.resources.map((r) => [r._id, r.kind]));
   const groups: ListGroup[] = [];
 
@@ -107,11 +111,11 @@ export function buildDayList(input: DayListInput): ListGroup[] {
     if (own.length > 0) {
       for (const r of own) {
         const list = perResource.get(r.resourceId) ?? [];
-        list.push(appointmentEntry(a, `appt:${a._id}:${r.resourceId}`));
+        list.push(appointmentEntry(a, input.now, `appt:${a._id}:${r.resourceId}`));
         perResource.set(r.resourceId, list);
       }
-    } else if (a.resources.some((r) => !r.allocated) || a.resources.length === 0) noPlace.push(appointmentEntry(a));
-    else unassigned.push(appointmentEntry(a));
+    } else if (a.resources.some((r) => !r.allocated) || a.resources.length === 0) noPlace.push(appointmentEntry(a, input.now));
+    else unassigned.push(appointmentEntry(a, input.now));
   }
 
   if (noPlace.length > 0) groups.push({ key: "noPlace", title: "", kind: "noPlace", entries: noPlace.sort(byTime) });
@@ -119,7 +123,7 @@ export function buildDayList(input: DayListInput): ListGroup[] {
   for (const col of grid.columns) {
     if (col.kind !== "resource" || !col.resource) continue;
     const r = col.resource;
-    const entries: ListEntry[] = [...(perResource.get(r._id) ?? []), ...busyEntries(day.busy, r._id)];
+    const entries: ListEntry[] = [...(perResource.get(r._id) ?? []), ...busyEntries(day.busy, r._id), ...internalEntries(col.allDayBands)];
     if (input.withFree) {
       const fromMin = grid.nowMin ?? 0;
       for (const gap of freeGaps(col, day.localDate, day.timezone, { fromMin })) {
@@ -147,7 +151,8 @@ export function buildDayList(input: DayListInput): ListGroup[] {
     });
   }
   if (unassigned.length > 0) groups.push({ key: "unassigned", title: kindLabel(groupBy).unassigned, kind: "unassigned", entries: unassigned.sort(byTime) });
-  if (input.internal.length > 0) groups.push({ key: "internal", title: "", kind: "internal", entries: internalEntries(input.internal).sort(byTime) });
+  const looseInternal = input.internal.filter((e) => !attachedAllDay.has(`${e.source}:${e.id}`));
+  if (looseInternal.length > 0) groups.push({ key: "internal", title: "", kind: "internal", entries: internalEntries(looseInternal).sort(byTime) });
   return groups;
 }
 

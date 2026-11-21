@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   APPOINTMENT_STATUS_META,
   isActiveStatus,
+  isExpiredProposal,
   isKnownOrigin,
   isKnownStatus,
   originBadgeKind,
   originLabel,
+  statusLabelOf,
   statusMeta,
   vacancyOf,
 } from "./agendaStatus";
@@ -73,5 +75,21 @@ describe("vacancyOf", () => {
     expect(vacancyOf(1, 0).label).toBe("1/1");
     expect(vacancyOf(NaN, NaN).label).toBe("0/1");
     expect(vacancyOf(1, 2.9).capacity).toBe(2);
+  });
+});
+
+describe("proposta vencida", () => {
+  const now = 1_000_000;
+  const pend = { status: "pending_approval", startTime: now + 1000 };
+  it("vence pelo horário ou pela marca do servidor, só em aguardando aprovação", () => {
+    expect(isExpiredProposal(pend, now)).toBe(false);
+    expect(isExpiredProposal({ ...pend, startTime: now - 1 }, now)).toBe(true);
+    expect(isExpiredProposal({ ...pend, needsAttention: { code: "proposal_expired" } }, now)).toBe(true);
+    expect(isExpiredProposal({ ...pend, needsAttention: { code: "no_resource" } }, now)).toBe(false);
+    expect(isExpiredProposal({ status: "scheduled", startTime: now - 1, needsAttention: { code: "proposal_expired" } }, now)).toBe(false);
+  });
+  it("rótulo: Vencida no lugar de Aguardando aprovação", () => {
+    expect(statusLabelOf({ ...pend, needsAttention: { code: "proposal_expired" } }, now)).toBe("Vencida");
+    expect(statusLabelOf(pend, now)).toBe("Aguardando aprovação");
   });
 });

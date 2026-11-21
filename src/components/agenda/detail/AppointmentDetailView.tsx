@@ -28,6 +28,7 @@ export interface DetailAppointment extends HistoryInput {
   notes?: string;
   resources: ReadonlyArray<{ name: string }>;
   rescheduleOfId?: string;
+  needsAttention?: { code: string };
 }
 
 export interface AppointmentDetailViewProps {
@@ -60,13 +61,14 @@ export function AppointmentDetailView({
   onAction,
   onOpenConversation,
 }: AppointmentDetailViewProps) {
-  const expired = isProposalExpired(appt.status, appt.startTime, now);
+  const expired = isProposalExpired(appt.status, appt.startTime, now, appt.needsAttention?.code);
   const actions = availableActions({
     status: appt.status,
     canEdit,
     startTime: appt.startTime,
     now,
     isRescheduleProposal: Boolean(appt.rescheduleOfId),
+    needsAttentionCode: appt.needsAttention?.code,
     undoUnavailable,
   });
   // Proposta que não vale mais (vencida ou falhou ao aprovar): a saída é recusar, então o destaque vai para "Recusar".
@@ -99,7 +101,7 @@ export function AppointmentDetailView({
   return (
     <div className="space-y-5 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <AppointmentStatusChip status={appt.status} />
+        <AppointmentStatusChip status={appt.status} expired={expired} />
         <AppointmentOriginBadge origin={appt.origin} />
       </div>
 
@@ -124,7 +126,7 @@ export function AppointmentDetailView({
             <Button
               key={action}
               type="button"
-              variant={action === "decline" ? (declineFirst ? "primary" : "secondary") : "primary"}
+              variant={action === "rebook" ? "secondary" : action === "decline" ? (declineFirst ? "primary" : "secondary") : "primary"}
               disabled={busy}
               onClick={() => onAction(action)}
             >

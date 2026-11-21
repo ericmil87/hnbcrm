@@ -1,5 +1,6 @@
 import { Bot, CalendarCheck, CheckCheck, MessageSquare, TriangleAlert, UserX } from "lucide-react";
 import { OriginMark as AppointmentOriginBadge } from "./OriginMark";
+import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Spinner } from "@/components/ui/Spinner";
@@ -20,7 +21,7 @@ import { conflictKindText, mustResolveBeforeApprove } from "@/lib/agendaConflict
 
 const t = VIEWS_COPY.pendingQueue;
 
-export type PendingAppointment = GridAppointment & Partial<Pick<SchedAppointmentView, "serviceId" | "variantKey">>;
+export type PendingAppointment = GridAppointment & Partial<Pick<SchedAppointmentView, "serviceId" | "variantKey" | "contactId" | "leadId">>;
 
 export interface PendingConflict {
   _id: string;
@@ -62,12 +63,14 @@ export interface PendingQueueViewProps {
   onOpen: (appointmentId: string) => void;
   onApprove: (appointmentId: string) => void;
   onDecline: (appointmentId: string) => void;
+  /** "Marcar de novo" (proposta vencida): abre o fluxo de marcar para o mesmo cliente e serviço. */
+  onRebook: (appointment: PendingAppointment) => void;
   onOutcome: (appointmentId: string, outcome: "attended" | "noShow") => void;
   onResolve: (conflictId: string, appointmentId: string | null) => void;
   onOpenConversation: (conversationId: string) => void;
 }
 
-function Row({ appointment, tz, children, onOpen, note }: { appointment: PendingAppointment; tz: string; children?: React.ReactNode; onOpen: () => void; note?: string }) {
+function Row({ appointment, tz, children, onOpen, note, expired = false }: { appointment: PendingAppointment; tz: string; children?: React.ReactNode; onOpen: () => void; note?: string; expired?: boolean }) {
   const info = pendingRowInfo(appointment, tz);
   return (
     <li className="rounded-card border border-border-subtle bg-surface-raised p-3">
@@ -79,6 +82,7 @@ function Row({ appointment, tz, children, onOpen, note }: { appointment: Pending
       >
         <span className="flex w-full items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-semibold text-text-primary">{info.who}</span>
+          {expired && <AppointmentStatusChip status={appointment.status} expired />}
           <AppointmentOriginBadge origin={appointment.origin} />
         </span>
         <span className="text-caption tabular-nums text-text-secondary">{info.when}</span>
@@ -119,10 +123,10 @@ export function PendingQueueView(p: PendingQueueViewProps) {
     switch (key) {
       case "approvals":
         return data.approvals.map((a) => {
-          const expired = proposalExpired(a.status, a.startTime, p.now);
+          const expired = proposalExpired(a.status, a.startTime, p.now, a.needsAttention?.code);
           const busy = p.busyId === a._id;
           return (
-            <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} onOpen={() => p.onOpen(a._id)}>
+            <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} expired={expired} onOpen={() => p.onOpen(a._id)}>
               {p.canEdit && (
                 <>
                   {!expired && !mustResolveBeforeApprove(a) && (
@@ -132,9 +136,14 @@ export function PendingQueueView(p: PendingQueueViewProps) {
                   )}
                   {expired && <p className="basis-full text-caption text-text-secondary">{t.expired}</p>}
                   {!expired && mustResolveBeforeApprove(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
-                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onDecline(a._id)}>
-                    {t.decline}
+                  <Button size="sm" variant={expired ? "primary" : "secondary"} disabled={busy} onClick={() => p.onDecline(a._id)}>
+                    {expired ? t.declineProposal : t.decline}
                   </Button>
+                  {expired && (
+                    <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onRebook(a)}>
+                      {t.rebook}
+                    </Button>
+                  )}
                 </>
               )}
             </Row>

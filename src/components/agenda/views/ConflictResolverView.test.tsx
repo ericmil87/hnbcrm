@@ -21,6 +21,11 @@ describe("ConflictResolverView", () => {
     expect(screen.getByText("Maria")).toBeInTheDocument();
     expect(screen.getByText("A sala ou o profissional fechou")).toBeInTheDocument();
   });
+  it("conflito de capacidade: texto próprio", () => {
+    setup({ kind: "capacity" });
+    expect(screen.getByText("A sala passou a comportar menos pessoas")).toBeInTheDocument();
+    expect(screen.queryByText("A sala ou o profissional fechou")).toBeNull();
+  });
   it("sugestões vêm primeiro e remarcam com os recursos sugeridos", () => {
     const h = setup();
     const headings = screen.getAllByRole("heading", { level: 3 }).map((e) => e.textContent);

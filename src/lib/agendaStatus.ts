@@ -72,6 +72,25 @@ export function statusMeta(status: string): StatusMeta {
   return (APPOINTMENT_STATUS_META as Record<string, StatusMeta | undefined>)[status] ?? APPOINTMENT_STATUS_META.scheduled;
 }
 
+/** `needsAttention.code` que o job diário grava na proposta que venceu sem decisão. */
+export const PROPOSAL_EXPIRED_CODE = "proposal_expired";
+
+/**
+ * Proposta (aguardando aprovação) vencida: o horário já passou OU o servidor a marcou `proposal_expired`
+ * (o job é diário, então a hora vale antes da marca). Vencida não se aprova: recusa-se ou marca-se de novo.
+ */
+export function isExpiredProposal(
+  a: { status: string; startTime: number; needsAttention?: { code: string } | undefined },
+  now: number
+): boolean {
+  return a.status === "pending_approval" && (a.needsAttention?.code === PROPOSAL_EXPIRED_CODE || a.startTime <= now);
+}
+
+/** Rótulo mostrado no lugar do status: "Vencida" para proposta vencida, senão o do status. */
+export function statusLabelOf(a: { status: string; startTime: number; needsAttention?: { code: string } | undefined }, now: number): string {
+  return isExpiredProposal(a, now) ? VOCAB.scheduling.proposalExpired : statusMeta(a.status).label;
+}
+
 export function isKnownStatus(status: string): status is AppointmentStatus {
   return (APPOINTMENT_STATUSES as readonly string[]).includes(status);
 }

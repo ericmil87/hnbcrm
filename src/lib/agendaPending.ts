@@ -4,6 +4,7 @@
  */
 import type { SchedStatus } from "../../convex/lib/schedStatus";
 import { appointmentLabel } from "./agendaGrid";
+import { isExpiredProposal } from "./agendaStatus";
 import { zonedDateTimeLabel } from "./agendaZone";
 
 export type PendingSectionKey = "approvals" | "conflicts" | "noOutcome" | "suggestions";
@@ -79,6 +80,6 @@ export const OUTCOME_TARGETS: Record<"attended" | "noShow", SchedStatus> = { att
  * `isProposalExpired` em `appointmentActions` (o teste confere); copiada porque aquele módulo puxa os textos do
  * painel (`bookingCopy`) e isso criava chunks compartilhados nas telas de Entrada e Lead.
  */
-export function proposalExpired(status: string, startTime: number, now: number): boolean {
-  return status === "pending_approval" && startTime <= now;
+export function proposalExpired(status: string, startTime: number, now: number, needsAttentionCode?: string): boolean {
+  return isExpiredProposal({ status, startTime, needsAttention: needsAttentionCode ? { code: needsAttentionCode } : undefined }, now);
 }

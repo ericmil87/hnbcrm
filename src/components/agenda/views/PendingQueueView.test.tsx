@@ -7,7 +7,7 @@ const noCap = { approvals: false, conflicts: false, noOutcome: false, suggestion
 const data = (over: Partial<PendingData> = {}): PendingData => ({ approvals: [], conflicts: [], noOutcome: [], suggestions: [], capped: noCap, ...over });
 
 function setup(d: PendingData | undefined, over: Partial<PendingQueueViewProps> = {}) {
-  const handlers = { onOpen: vi.fn(), onApprove: vi.fn(), onDecline: vi.fn(), onOutcome: vi.fn(), onResolve: vi.fn(), onOpenConversation: vi.fn() };
+  const handlers = { onOpen: vi.fn(), onApprove: vi.fn(), onDecline: vi.fn(), onRebook: vi.fn(), onOutcome: vi.fn(), onResolve: vi.fn(), onOpenConversation: vi.fn() };
   render(<PendingQueueView data={d} tz="America/Sao_Paulo" now={NOW} canEdit busyId={null} {...handlers} {...over} />);
   return handlers;
 }
@@ -36,7 +36,25 @@ describe("PendingQueueView", () => {
     const a = appt(["sala1"], NOW - 3_600_000, NOW, { status: "pending_approval" });
     setup(data({ approvals: [a] }));
     expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Recusar" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Recusar proposta" })).toBeInTheDocument();
+  });
+  it("proposta vencida: chip Vencida (texto) e Marcar de novo leva o agendamento", () => {
+    const a = appt(["sala1"], NOW - 3_600_000, NOW, { status: "pending_approval", contactName: "Maria" });
+    const h = setup(data({ approvals: [a] }));
+    expect(screen.getByText("Vencida")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Marcar de novo" }));
+    expect(h.onRebook).toHaveBeenCalledWith(a);
+  });
+  it("marca proposal_expired do servidor: Vencida mesmo com horário futuro, nunca Aprovar", () => {
+    const a = appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval", needsAttention: { code: "proposal_expired", at: NOW } });
+    setup(data({ approvals: [a] }));
+    expect(screen.getByText("Vencida")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Aprovar" })).toBeNull();
+  });
+  it("proposta viva não mostra Vencida nem Marcar de novo", () => {
+    setup(data({ approvals: [appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval" })] }));
+    expect(screen.queryByText("Vencida")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Marcar de novo" })).toBeNull();
   });
   it("sem desfecho: Atendido e Faltou em um toque", () => {
     const a = appt(["sala1"], at(8), at(9), { status: "scheduled" });
@@ -51,6 +69,11 @@ describe("PendingQueueView", () => {
     const h = setup(data({ conflicts: [{ _id: "c1", appointment: a }] }));
     fireEvent.click(screen.getByRole("button", { name: "Resolver" }));
     expect(h.onResolve).toHaveBeenCalledWith("c1", a._id);
+  });
+  it("conflito de capacidade na fila: texto próprio", () => {
+    const a = appt([], at(9), at(10), {}, ["sala1"]);
+    setup(data({ conflicts: [{ _id: "c2", kind: "capacity", appointment: a }] }));
+    expect(screen.getByText("A sala passou a comportar menos pessoas")).toBeInTheDocument();
   });
   it("sugestões só aparecem quando vêm", () => {
     setup(data({ approvals: [appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval" })] }));
@@ -97,7 +120,7 @@ describe("PendingQueueView: casos sem saída", () => {
   it("proposta vencida explica por que só há Recusar", () => {
     const a = appt(["sala1"], NOW - 3_600_000, NOW, { status: "pending_approval" });
     setup(data({ approvals: [a] }));
-    expect(screen.getByText("Proposta vencida: o horário já passou, então só dá para recusar.")).toBeInTheDocument();
+    expect(screen.getByText(/Proposta vencida: o horário já passou, então só dá para recusar a proposta ou marcar de novo/)).toBeInTheDocument();
   });
   it("vencida pelo relógio por minuto: 10 minutos depois do início já não oferece Aprovar", () => {
     const start = NOW;

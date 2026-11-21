@@ -109,7 +109,7 @@ export const DETAIL_COPY = {
   },
   proposalHint: "A IA reservou este horário e aguarda você.",
   proposalBroken: "Esta proposta não vale mais. Recuse a proposta e marque de novo.",
-  proposalExpired: "O horário desta proposta já passou. Recuse a proposta e marque de novo.",
+  proposalExpired: "Proposta vencida: o horário já passou, então ela não pode mais ser aprovada. Recuse a proposta ou marque de novo para o mesmo cliente e serviço.",
   undoUnavailable: "Não há mais o que desfazer neste horário.",
   conflict: "Este horário está sem sala ou profissional e aguarda uma decisão.",
   history: {
@@ -138,6 +138,7 @@ export const DETAIL_COPY = {
     checkIn: "Chegou",
     complete: "Atendido",
     noShow: "Faltou",
+    rebook: "Marcar de novo",
     reschedule: "Remarcar",
     cancel: "Cancelar horário",
     swap: "Trocar sala ou profissional",

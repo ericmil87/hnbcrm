@@ -92,3 +92,10 @@ describe("o que saiu do agendamento", () => {
     expect(applyReplacements([{ resourceId: "s1" }, { resourceId: "p9" }], { s1: "s2" })).toEqual(["s2", "p9"]);
   });
 });
+
+describe("conflito de capacidade", () => {
+  it("texto próprio, sem confundir com fechamento", () => {
+    expect(conflictKindText("capacity")).toBe("A sala passou a comportar menos pessoas");
+    expect(conflictKindText("resource_closed")).toBe("A sala ou o profissional fechou");
+  });
+});

@@ -7,7 +7,7 @@ import { SlideOver } from "@/components/ui/SlideOver";
 import { mutationErrorMessage } from "@/lib/errors";
 import { OUTCOME_TARGETS } from "@/lib/agendaPending";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
-import { PendingQueueView, type PendingData } from "./PendingQueueView";
+import { PendingQueueView, type PendingAppointment, type PendingData } from "./PendingQueueView";
 
 const t = VIEWS_COPY.pendingQueue;
 
@@ -20,6 +20,7 @@ interface PendingQueuePanelProps {
   now: number;
   canEdit: boolean;
   onOpenAppointment: (appointmentId: string) => void;
+  onRebook: (appointment: PendingAppointment) => void;
   onResolveConflict: (conflictId: string, appointmentId: string | null) => void;
   onOpenConversation: (conversationId: string) => void;
 }
@@ -29,7 +30,7 @@ interface PendingQueuePanelProps {
  * agendamento (`setAppointmentStatus`, `cancelAppointment`, `undoAppointmentStatus`); cada ação de um toque
  * mostra "Desfazer" no aviso. A lista é reativa: a linha some sozinha quando o servidor muda o status.
  */
-export function PendingQueuePanel({ organizationId, open, onClose, data, tz, now, canEdit, onOpenAppointment, onResolveConflict, onOpenConversation }: PendingQueuePanelProps) {
+export function PendingQueuePanel({ organizationId, open, onClose, data, tz, now, canEdit, onOpenAppointment, onRebook, onResolveConflict, onOpenConversation }: PendingQueuePanelProps) {
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
   const cancel = useMutation(api.schedulingMutations.cancelAppointment);
   const undo = useMutation(api.schedulingMutations.undoAppointmentStatus);
@@ -67,6 +68,7 @@ export function PendingQueuePanel({ organizationId, open, onClose, data, tz, now
         canEdit={canEdit}
         busyId={busyId}
         onOpen={onOpenAppointment}
+        onRebook={onRebook}
         onResolve={onResolveConflict}
         onOpenConversation={onOpenConversation}
         onApprove={(a) => void run(a, () => setStatus({ organizationId, appointmentId: id(a), to: "scheduled" }), t.toast.approved, false)}

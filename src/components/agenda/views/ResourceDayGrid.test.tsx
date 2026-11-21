@@ -105,7 +105,7 @@ describe("ResourceDayGrid: cliques", () => {
 
 describe("ResourceDayGrid: estados dos blocos", () => {
   it("aguardando aprovação tem estilo e rótulo próprios; status não depende só de cor", () => {
-    const a = appt(["sala1"], at(9), at(10), { status: "pending_approval" });
+    const a = appt(["sala1"], at(14), at(15), { status: "pending_approval" });
     setup(build(dayInput({ appointments: [a] })));
     const block = screen.getByRole("button", { name: /Aguardando aprovação/ });
     expect(block.className).toContain("border-dashed");
@@ -184,5 +184,36 @@ describe("ResourceDayGrid: marcar pelo teclado e coluna do profissional", () => 
     const col = screen.getByRole("group", { name: "Ana" });
     expect(within(col).getByRole("button", { name: /Reunião de equipe/ }).className).toContain("border-dashed");
     expect(screen.queryByRole("group", { name: "Compromissos e tarefas" })).toBeNull();
+  });
+});
+
+describe("ResourceDayGrid: dia inteiro e proposta vencida", () => {
+  const folga = { id: "e1", title: "Folga", startTime: at(0), endTime: at(23, 59), eventType: "other", source: "event" as const, allDay: true, memberIds: ["m1"] };
+  const pessoa = dayInput({ resources: [res("ana", "person", { teamMemberId: "m1" } as never), res("bia", "person", { teamMemberId: "m2" } as never)] });
+
+  it("compromisso de dia inteiro do profissional cobre a coluna dele (faixa com o título), não a do outro", () => {
+    const h = setup(buildDayGridModel({ day: pessoa, internal: [folga], groupBy: "person", now: NOW }));
+    const ana = screen.getByRole("group", { name: "Ana" });
+    const band = within(ana).getByRole("button", { name: /Dia inteiro, Folga/ });
+    expect(band).toHaveTextContent("Folga");
+    expect(within(screen.getByRole("group", { name: "Bia" })).queryByRole("button", { name: /Dia inteiro/ })).toBeNull();
+    fireEvent.click(band);
+    expect(h.onInternalClick).toHaveBeenCalledWith(folga);
+    // Tocar na faixa abre o compromisso, não marca horário na coluna.
+    expect(h.onSlotClick).not.toHaveBeenCalled();
+  });
+
+  it("por sala não há faixa (sala não tem dono)", () => {
+    setup(buildDayGridModel({ day: dayInput(), internal: [folga], groupBy: "room", now: NOW }));
+    expect(screen.queryByRole("button", { name: /Dia inteiro, Folga/ })).toBeNull();
+  });
+
+  it("proposta vencida no bloco: rótulo Vencida visível e no nome acessível", () => {
+    const a = appt(["sala1"], at(8), at(9), { status: "pending_approval", contactName: "Maria" });
+    setup(build(dayInput({ appointments: [a] })));
+    const block = screen.getByRole("button", { name: /Maria/ });
+    expect(block).toHaveTextContent("Vencida");
+    expect(block.getAttribute("aria-label")).toMatch(/Vencida/);
+    expect(block.getAttribute("aria-label")).not.toMatch(/Aguardando aprovação/);
   });
 });

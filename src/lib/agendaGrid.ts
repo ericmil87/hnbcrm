@@ -12,7 +12,7 @@
  *  - `view_own`: os blocos `busy` entram como "Ocupado", sem dado algum (o servidor já omite o resto).
  */
 import { gridHourRange, layoutOverlaps, MIN_EVENT_MINUTES } from "./agendaLayout";
-import { statusMeta } from "./agendaStatus";
+import { isExpiredProposal, statusMeta } from "./agendaStatus";
 import type { ResourceKind, SchedAppointmentView } from "./agendaTypes";
 import { addLocalDays, diffLocalDays, zonedDayBounds, zonedMinutes, zonedToday } from "./agendaZone";
 
@@ -177,7 +177,7 @@ export function daySpan(startMs: number, endMs: number, localDate: string, tz: s
 // ---------------------------------------------------------------------------
 
 export type GridItem =
-  | { kind: "appointment"; id: string; startMin: number; endMin: number; appointment: GridAppointment; conflict: boolean }
+  | { kind: "appointment"; id: string; startMin: number; endMin: number; appointment: GridAppointment; conflict: boolean; expired: boolean }
   | { kind: "busy"; id: string; startMin: number; endMin: number }
   | { kind: "internal"; id: string; startMin: number; endMin: number; internal: InternalItem };
 
@@ -210,6 +210,11 @@ export interface GridColumn {
   offHours: MinuteSpan[];
   /** Bloqueios de horário do recurso. */
   blocked: MinuteSpan[];
+  /**
+   * Compromissos de DIA INTEIRO de quem é o profissional da coluna (só no agrupamento por profissional): o dia
+   * está tomado, então a grade os mostra como faixa cobrindo a coluna e a coluna não parece livre.
+   */
+  allDayBands: InternalItem[];
   load: ColumnLoad;
   /** Maior simultaneidade de agendamentos no dia; acima da capacidade o cabeçalho avisa sempre. */
   peak: number;
@@ -336,10 +341,12 @@ function openWindowHours(resources: readonly DayResource[], localDate: string, t
   return { startHour: Math.floor(lo / 60), endHour: Math.ceil(hi / 60) };
 }
 
-function toAppointmentItem(a: GridAppointment, day: DayInput, conflict: boolean): GridItem | null {
+function toAppointmentItem(a: GridAppointment, day: DayInput, conflict: boolean, now: number): GridItem | null {
   const span = daySpan(a.startTime, a.endTime, day.localDate, day.timezone);
   if (!span) return null;
-  return { kind: "appointment", id: `appt:${a._id}`, startMin: span.startMin, endMin: span.endMin, appointment: a, conflict };
+  const expired = isExpiredProposal(a, now);
+  // Proposta vencida já soltou a vaga (o horário passou): "Vencida" explica, "sem lugar" confundiria.
+  return { kind: "appointment", id: `appt:${a._id}`, startMin: span.startMin, endMin: span.endMin, appointment: a, conflict: conflict && !expired, expired };
 }
 
 /** Sentinela da coluna "sem recurso deste tipo". */
@@ -368,13 +375,13 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
     const conflict = a.resources.some((r) => !r.allocated);
     if (allocatedOfKind.length > 0) {
       for (const r of allocatedOfKind) {
-        const item = toAppointmentItem(a, day, conflict);
+        const item = toAppointmentItem(a, day, conflict, now);
         if (item) byColumn.get(r.resourceId)?.push({ ...item, id: `appt:${a._id}:${r.resourceId}` });
       }
     } else if (conflict || a.resources.length === 0) {
       noPlace.push(a);
     } else {
-      const item = toAppointmentItem(a, day, false);
+      const item = toAppointmentItem(a, day, false, now);
       if (item) unassigned.push(item);
     }
   }
@@ -387,6 +394,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
   }
 
   const allDay: InternalItem[] = [];
+  const bandsByColumn = new Map<string, InternalItem[]>();
   const timedInternal: GridItem[] = [];
   const ownerColumns = new Map<string, string[]>();
   if (groupBy === "person") {
@@ -395,6 +403,9 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
   for (const e of input.internal) {
     if (e.allDay) {
       allDay.push(e);
+      for (const rid of new Set(e.memberIds.flatMap((m) => ownerColumns.get(m) ?? []))) {
+        bandsByColumn.set(rid, [...(bandsByColumn.get(rid) ?? []), e]);
+      }
       continue;
     }
     const span = daySpan(e.startTime, e.endTime, day.localDate, tz);
@@ -433,6 +444,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
       placed: layoutLanes(items, r.capacity),
       offHours: closed ? [] : complementSpans([...openSpans, ...blocked], fromMin, toMin),
       blocked: closed ? [] : blocked,
+      allDayBands: bandsByColumn.get(r._id) ?? [],
       load: columnLoad(items.filter(isReal), nowMin),
       peak: peakConcurrency(items.filter(isReal)),
     };
@@ -449,6 +461,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
       placed: layoutLanes(unassigned, 1),
       offHours: [],
       blocked: [],
+      allDayBands: [],
       load: columnLoad(unassigned, nowMin),
       peak: peakConcurrency(unassigned),
     });
@@ -465,6 +478,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
       placed: layoutLanes(timedInternal, 1),
       offHours: [],
       blocked: [],
+      allDayBands: [],
       load: { used: 0, basis: "peak" },
       peak: 0,
     });
@@ -527,13 +541,14 @@ export interface FreeGap {
  * (padrão: o dia todo), com pelo menos `minLenMin` de duração. Coluna fechada = nenhum.
  */
 export function freeGaps(
-  column: Pick<GridColumn, "resource" | "closed" | "placed" | "capacity">,
+  column: Pick<GridColumn, "resource" | "closed" | "placed" | "capacity"> & Partial<Pick<GridColumn, "allDayBands">>,
   localDate: string,
   tz: string,
   { fromMin = 0, minLenMin = 30 }: { fromMin?: number; minLenMin?: number } = {}
 ): FreeGap[] {
   const r = column.resource;
-  if (!r || column.closed) return [];
+  // Dia inteiro tomado por um compromisso: nada de "+ livre".
+  if (!r || column.closed || (column.allDayBands?.length ?? 0) > 0) return [];
   const open = spansOf(r.open, localDate, tz);
   const items = column.placed.map((p) => p.item);
   const points = new Set<number>([fromMin]);

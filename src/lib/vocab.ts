@@ -101,6 +101,8 @@ export const VOCAB = {
       cancelled: "Cancelado",
       rescheduled: "Remarcado",
     },
+    /** Proposta (aguardando aprovação) cujo horário passou: não é um status do servidor, é uma leitura da tela. */
+    proposalExpired: "Vencida",
     origin: { ai: "IA", staff: "Equipe", link: "Link" },
     originHint: {
       ai: "Marcado pela IA",
