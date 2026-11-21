@@ -76,6 +76,8 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "plan_cancel_scheduled",
   "plan_canceled",
   "plan_refunded",
+  // Resumo diário da agenda: sino e Telegram, nunca vibra o aparelho (plano §3.7).
+  "appointment_no_outcome",
 ]);
 
 export function pushTemplateOf(type: NotificationType): PushTemplate | null {

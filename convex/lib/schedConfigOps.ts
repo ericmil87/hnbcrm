@@ -27,6 +27,7 @@ import { assertAssignableMember, requireAccountWithEmail } from "./auth";
 import { openIntervalsForDay, peakUnits, validateWeekly } from "./schedAvailability";
 import {
   GRID_MINUTES_OPTIONS,
+  OUTCOME_GRACE_MIN_LIMITS,
   MAX_BLOCK_MIN,
   MAX_RESOURCES_PER_ORG,
   MAX_SERVICES_PER_ORG,
@@ -756,6 +757,13 @@ export const settingsPatchValidator = v.object({
       onNoShowStageId: nullable(v.id("stages")),
     })
   ),
+  // Pendência "sem desfecho" (A4): folga após o fim (30..720 min) e hora local do aviso diário (0..23).
+  outcome: v.optional(
+    v.object({
+      graceMin: nullable(v.number()),
+      noticeHour: nullable(v.number()),
+    })
+  ),
 });
 export type SettingsPatch = {
   gridMinutes?: number;
@@ -781,6 +789,7 @@ export type SettingsPatch = {
     onCompletedStageId?: Id<"stages"> | null;
     onNoShowStageId?: Id<"stages"> | null;
   };
+  outcome?: { graceMin?: number | null; noticeHour?: number | null };
 };
 
 type Group = Record<string, unknown>;
@@ -831,6 +840,8 @@ export async function updateSchedSettingsCore(
     optInt("O mínimo de ofertas", s.minOffer, 1, 10);
   }
   optInt("O limite de marcações da IA por dia", patch.ai?.maxAiBookingsPerContactPerDay, 1, 50);
+  if (patch.outcome?.graceMin != null) int("A folga para marcar o atendimento como sem desfecho (min)", patch.outcome.graceMin, OUTCOME_GRACE_MIN_LIMITS.min, OUTCOME_GRACE_MIN_LIMITS.max);
+  if (patch.outcome?.noticeHour != null) int("A hora do aviso de atendimentos sem desfecho", patch.outcome.noticeHour, 0, 23);
 
   const dsId = patch.humanConfirm?.defaultServiceId;
   if (dsId) {
@@ -875,6 +886,7 @@ export async function updateSchedSettingsCore(
     ai: doc?.ai,
     humanConfirm: doc?.humanConfirm,
     funnel: doc?.funnel,
+    outcome: doc?.outcome,
     templateKey: doc?.templateKey,
   };
   let ai = mergeGroup(doc?.ai as Group | undefined, patch.ai as Group | undefined);
@@ -897,6 +909,7 @@ export async function updateSchedSettingsCore(
     ai,
     humanConfirm: mergeGroup(doc?.humanConfirm as Group | undefined, patch.humanConfirm as Group | undefined),
     funnel: mergeGroup(doc?.funnel as Group | undefined, patch.funnel as Group | undefined),
+    outcome: mergeGroup(doc?.outcome as Group | undefined, patch.outcome as Group | undefined),
     templateKey: args.templateKey ?? doc?.templateKey,
   };
   const changed = Object.keys(next).filter((k) => JSON.stringify(next[k] ?? null) !== JSON.stringify(before[k] ?? null));
@@ -910,6 +923,7 @@ export async function updateSchedSettingsCore(
     ai: next.ai as Doc<"schedSettings">["ai"],
     humanConfirm: next.humanConfirm as Doc<"schedSettings">["humanConfirm"],
     funnel: next.funnel as Doc<"schedSettings">["funnel"],
+    outcome: next.outcome as Doc<"schedSettings">["outcome"],
     templateKey: next.templateKey as string | undefined,
     updatedBy: member._id,
     updatedAt: now,

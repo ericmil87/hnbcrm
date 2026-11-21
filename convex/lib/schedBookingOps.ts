@@ -96,6 +96,7 @@ import {
   allocationEffect,
   canUndo,
   checkTransition,
+  AWAITING_OUTCOME_STATUSES,
   isActiveStatus,
   type SchedStatus,
 } from "./schedStatus";
@@ -1651,19 +1652,19 @@ export async function cancelAppointmentCore(
   const windowMin = service?.lateCancelWindowMin;
   const lateCancel = windowMin !== undefined && now < a.startTime && a.startTime - now < windowMin * MINUTE_MS;
   const strict = args.byClass !== "staff";
-  await ctx.db.patch(
-    a._id,
-    compact({
+  await ctx.db.patch(a._id, {
+    ...compact({
       status: "cancelled" as const,
       cancelledAt: now,
       cancelledByClass: args.byClass,
       cancelReason: cleanText(args.reason, REASON_MAX, strict),
       lateCancel: lateCancel ? true : undefined,
-      outcomePendingSince: undefined,
       statusChangedAt: now,
       updatedAt: now,
-    })
-  );
+    }),
+    // `compact` descarta `undefined`: o campo só some do documento se for passado fora dele (A4).
+    outcomePendingSince: undefined,
+  });
   const allocations = await snapshotAllocations(ctx, a._id);
   await releaseAllocations(ctx, a._id);
   await resolveOpenConflicts(ctx, a._id, now);
@@ -1819,6 +1820,32 @@ export async function setAppointmentStatusCore(
   const stageId =
     args.to === "scheduled" ? settings.funnel.onScheduledStageId : args.to === "completed" ? settings.funnel.onCompletedStageId : args.to === "no_show" ? settings.funnel.onNoShowStageId : undefined;
   await applyFunnel(ctx, after, stageId, args.actor, now);
+}
+
+// ---------------------------------------------------------------------------
+// Pendência "sem desfecho" (job horário, A4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Marca `outcomePendingSince` num agendamento que já devia ter acontecido e segue sem desfecho. É a
+ * ÚNICA escrita do job `schedulingJobs`: um patch de um campo. NUNCA muda `status`, não toca em
+ * alocação, não escreve auditoria/atividade/webhook (é um derivado de leitura, não um ato) e não
+ * avisa o cliente. Relê o documento (o job pode ter lido a linha numa página anterior) e confere
+ * tudo de novo: org, status em espera de desfecho, `endTime` além da folga e ainda sem marca.
+ * Idempotente: já marcado = `false`, sem regravar. Quem limpa a marca são os atos de desfecho
+ * (concluir, falta, cancelar, remarcar) neste mesmo arquivo.
+ */
+export async function markOutcomePendingCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; graceMs: number; now: number }
+): Promise<boolean> {
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId) return false;
+  if (!(AWAITING_OUTCOME_STATUSES as readonly SchedStatus[]).includes(a.status)) return false;
+  if (a.outcomePendingSince !== undefined) return false;
+  if (a.endTime > args.now - Math.max(0, args.graceMs)) return false;
+  await ctx.db.patch(a._id, { outcomePendingSince: args.now });
+  return true;
 }
 
 // ---------------------------------------------------------------------------

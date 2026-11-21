@@ -78,6 +78,8 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   plan_refunded: "planAlert",
   // Agenda v2 (A3c)
   appointment_conflict: "agendaConflict",
+  // Agenda v2 (A4): resumo diário de agendamentos sem desfecho.
+  appointment_no_outcome: "agendaActivity",
 };
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */
@@ -124,6 +126,7 @@ export const NON_PERSONAL_FLAGS = new Set([
   "groupDigest",
   "aiSpendAlert",
   "planAlert",
+  "agendaActivity",
 ]);
 
 /**

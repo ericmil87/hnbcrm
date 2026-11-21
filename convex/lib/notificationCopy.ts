@@ -81,7 +81,8 @@ export type CopyInput =
   | { type: "plan_change_scheduled"; planLabel: string; effectiveAt: string }
   | { type: "plan_cancel_scheduled"; endsAt: string }
   | { type: "plan_canceled" }
-  | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean };
+  | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean }
+  | { type: "appointment_no_outcome"; count: number; capped?: boolean };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -503,6 +504,15 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         title: "Reembolso solicitado",
         body: `Devolvemos ${input.amountBrl ?? "o valor pago"}; ele volta pelo mesmo meio de pagamento em alguns dias. A conta ficou em modo só leitura e você ainda pode exportar seus dados.`,
       };
+    case "appointment_no_outcome": {
+      const n = Math.max(0, Math.floor(input.count));
+      const title = input.capped
+        ? `Mais de ${n} atendimentos de ontem ainda sem desfecho`
+        : n === 1
+          ? "1 atendimento de ontem ainda sem desfecho"
+          : `${n} atendimentos de ontem ainda sem desfecho`;
+      return { title, body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." };
+    }
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -557,4 +567,5 @@ export const COPY_TYPES = [
   "plan_canceled",
   "plan_refunded",
   "appointment_conflict",
+  "appointment_no_outcome",
 ] as const satisfies readonly CopyInput["type"][];

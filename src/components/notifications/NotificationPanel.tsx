@@ -26,6 +26,7 @@ import {
   Gauge,
   MessageCircle,
   UserCheck,
+  ClipboardCheck,
   Building2,
   Volume2,
   VolumeX,
@@ -115,6 +116,8 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   lead_assigned: UserCheck,
   // Agenda v2 (A3c)
   appointment_conflict: CalendarX,
+  // Agenda v2 (A4) — resumo diário de atendimentos sem desfecho.
+  appointment_no_outcome: ClipboardCheck,
 };
 
 /** Canal gravado pelo servidor em `data.channel` nos avisos de conversa; ausente nos antigos. */

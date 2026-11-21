@@ -131,7 +131,9 @@ export function notificationHref(n: InboxNotification): string | null {
     case "plan_refunded":
       return `${TAB_ROUTES.settings}?secao=billing`;
     case "appointment_conflict":
-      return TAB_ROUTES.calendar;
+      return notificationTargetPath(n.type, {});
+    case "appointment_no_outcome":
+      return notificationTargetPath(n.type, {});
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;
