@@ -16,8 +16,9 @@ import { computeDayAvailability, type ResourceDay } from "./schedAvailability";
 import { type Candidate, generateCandidates, type ServiceLite } from "./schedCandidates";
 import { periodWindow } from "./schedRelativeDates";
 import { applySmartMode, pickOffers, type ScoredCandidate, scoreCandidate, type SmartMode, type SmartWeights } from "./schedScore";
-import { assertSearchWindow, loadWindow, type WindowData } from "./schedRead";
-import { addLocalDays, diffLocalDays, formatSlotLabel, type LocalDate, localDateOf, minutesOfDay } from "./schedTime";
+import { assertSearchWindow, blockCovered, loadWindow, type WindowData } from "./schedRead";
+import { type Slot, toSlot } from "./schedViews";
+import { addLocalDays, diffLocalDays, type LocalDate, minutesOfDay } from "./schedTime";
 
 type ReadCtx = { db: QueryCtx["db"] };
 const MINUTE_MS = 60_000;
@@ -26,16 +27,7 @@ const DAY_MS = 24 * 60 * MINUTE_MS;
 export type SlotAudience = "staff" | "ai" | "public";
 export type SlotPeriod = "manha" | "tarde" | "noite" | "qualquer";
 
-export type FoundSlot = {
-  startTime: number;
-  endTime: number;
-  localDate: LocalDate;
-  label: string;
-  resourceIds: Id<"schedResources">[];
-  resourceNames: string[];
-  score: number;
-  reasons: string[];
-};
+export type FoundSlot = Slot;
 
 export type SearchSlotsArgs = {
   organizationId: Id<"organizations">;
@@ -52,6 +44,12 @@ export type SearchSlotsArgs = {
   now: number;
   /** Quantos horários devolver (default `MAX_OFFERS`; `ai`/`public` nunca passam de `MAX_OFFERS`). Até 50. */
   limit?: number;
+  /**
+   * Só a prévia da tela de regras (`previewSuggestions`, exige `manage`) liga isto: devolve nomes e motivos
+   * mesmo numa audiência que não é a equipe. Qualquer outro chamador (tools da IA, link público) deixa
+   * desligado: `searchSlots` SANITIZA por construção (`toSlot`).
+   */
+  reveal?: boolean;
   /** Prévia da tela de regras: sobrepõe a configuração salva. */
   override?: { mode?: SmartMode; weights?: SmartWeights; minOffer?: number };
 };
@@ -70,7 +68,8 @@ export type SearchSlotsResult = {
   /** Os primeiros horários em ordem cronológica (comparação "sem o modo inteligente"). */
   chronological: FoundSlot[];
   truncated: boolean;
-  reason: "ok" | "service_unavailable" | "no_matching_resource";
+  /** `unverifiable`: sem oferta porque um teto de leitura impediu de VERIFICAR (fail-closed), não porque está cheio. */
+  reason: "ok" | "service_unavailable" | "no_matching_resource" | "unverifiable";
 };
 
 const EMPTY = (earliest: number, mode: SmartMode, reason: SearchSlotsResult["reason"]): SearchSlotsResult => ({
@@ -127,9 +126,15 @@ function restrictRequirements(
 }
 
 type DayWork = { date: LocalDate; day: Map<string, ResourceDay>; scored: ScoredCandidate[] };
+type ScoreOutcome = { days: DayWork[]; dropped: number; skippedDays: number };
 
+/**
+ * FAIL-CLOSED: dia cuja exceção não foi lida por inteiro não gera candidato; candidato cujo bloco sai do que
+ * foi lido das alocações de QUALQUER recurso do plano é descartado. `dropped`/`skippedDays` alimentam `reason`.
+ */
 function scoreDays(
   data: WindowData,
+  resources: WindowData["resources"],
   dates: LocalDate[],
   input: {
     service: ServiceLite;
@@ -142,18 +147,24 @@ function scoreDays(
     weights: SmartWeights;
     minUsefulGapMin: number;
   }
-): DayWork[] {
+): ScoreOutcome {
   const win = input.period && input.period !== "qualquer" ? periodWindow(input.period) : null;
   const preference = {
     period: input.period && input.period !== "qualquer" ? PERIOD_PREF[input.period] : undefined,
     resourceIds: input.resourceIds,
   };
   const out: DayWork[] = [];
+  let dropped = 0;
+  let skippedDays = 0;
   for (const date of dates) {
+    if (data.exceptionsCompleteBefore !== null && date >= data.exceptionsCompleteBefore) {
+      skippedDays++;
+      continue;
+    }
     const day = computeDayAvailability({
       date,
       tz: data.tz,
-      resources: data.resources,
+      resources,
       exceptions: data.exceptions,
       allocations: data.allocations,
       internalEvents: data.internalEvents,
@@ -176,12 +187,14 @@ function scoreDays(
         return m >= win.startMin && m < win.endMin;
       });
     }
-    const scored = cands.map((c) =>
+    const covered = cands.filter((c) => c.plan.every((p) => blockCovered(data, p.resourceId, c.blockStart, c.blockEnd)));
+    dropped += cands.length - covered.length;
+    const scored = covered.map((c) =>
       scoreCandidate(c, day, input.weights, { minUsefulGapMin: input.minUsefulGapMin, preference, tz: data.tz })
     );
     out.push({ date, day, scored });
   }
-  return out;
+  return { days: out, dropped, skippedDays };
 }
 
 export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<SearchSlotsResult> {
@@ -208,12 +221,15 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     toLocalDate: to,
   });
   const mode: SmartMode = args.override?.mode ?? service.smartMode ?? data.settings.smart.mode;
+  // FAIL-CLOSED: recurso cujos compromissos internos não foram lidos por inteiro não é oferecido.
+  const bad = new Set<string>(data.unverifiedResourceIds);
+  const usable = data.resources.filter((r) => !bad.has(r._id));
   const { earliest, latest } = bookableRange(args.audience, args.now, service, data.settings);
 
   let requirements: ServiceLite["requirements"] = service.requirements;
   if (args.resourceIds && args.resourceIds.length > 0) {
     const wanted = new Set<string>(args.resourceIds);
-    const chosen = data.resources.filter((r) => wanted.has(r._id));
+    const chosen = usable.filter((r) => wanted.has(r._id));
     const restricted = chosen.length === 0 ? null : restrictRequirements(service, chosen);
     if (restricted === null) return EMPTY(earliest, mode, "no_matching_resource");
     requirements = restricted;
@@ -252,27 +268,20 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     minUsefulGapMin,
   };
 
-  const resourceName = new Map<string, string>(data.resources.map((r) => [r._id, r.name]));
-  const toSlot = (c: ScoredCandidate): FoundSlot => ({
-    startTime: c.startTime,
-    endTime: c.endTime,
-    localDate: localDateOf(c.startTime, data.tz),
-    label: formatSlotLabel(c.startTime, args.now, data.tz),
-    resourceIds: c.plan.map((p) => p.resourceId as Id<"schedResources">),
-    resourceNames: c.plan.map((p) => resourceName.get(p.resourceId) ?? ""),
-    score: c.score,
-    reasons: c.reasons,
-  });
+  const resourceNames = new Map<string, string>(data.resources.map((r) => [r._id, r.name]));
+  const reveal = args.audience === "staff" || args.reveal === true;
+  const asSlot = (c: ScoredCandidate): FoundSlot => toSlot(c, { now: args.now, tz: data.tz, resourceNames, reveal });
 
-  const days = scoreDays(data, datesBetween(args.fromLocalDate, to), common);
-  const all = days.flatMap((d) => d.scored);
+  const first = scoreDays(data, usable, datesBetween(args.fromLocalDate, to), common);
+  let unverifiable = first.dropped > 0 || first.skippedDays > 0 || usable.length < data.resources.length;
+  const all = first.days.flatMap((d) => d.scored);
   const smart = applySmartMode(all, mode, minOffer, args.audience, data.tz);
   const distinct = dedupeByStart(smart.list);
   const picked = effLimit <= MAX_OFFERS ? pickOffers(distinct, effLimit, data.tz) : distinct.slice(0, effLimit);
-  const slots = picked.map(toSlot);
+  const slots = picked.map(asSlot);
   const chronological = dedupeByStart(applySmartMode(all, "off", minOffer, args.audience, data.tz).list)
     .slice(0, MAX_OFFERS)
-    .map(toSlot);
+    .map(asSlot);
 
   let truncated = data.truncated;
   let firstPossible: FoundSlot | undefined;
@@ -283,9 +292,12 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
       const extTo = addLocalDays(args.fromLocalDate, MAX_SEARCH_DAYS - 1);
       const ext = await loadWindow(ctx, { organizationId: args.organizationId, fromLocalDate: extFrom, toLocalDate: extTo });
       truncated = truncated || ext.truncated;
-      const extDays = scoreDays(ext, datesBetween(extFrom, extTo), { ...common, period: undefined });
-      const first = dedupeByStart(applySmartMode(extDays.flatMap((d) => d.scored), "off", minOffer, args.audience, ext.tz).list)[0];
-      if (first) firstPossible = toSlot(first);
+      const extBad = new Set<string>(ext.unverifiedResourceIds);
+      const extUsable = ext.resources.filter((r) => !extBad.has(r._id));
+      const extOut = scoreDays(ext, extUsable, datesBetween(extFrom, extTo), { ...common, period: undefined });
+      unverifiable = unverifiable || extOut.dropped > 0 || extOut.skippedDays > 0 || extUsable.length < ext.resources.length;
+      const firstExt = dedupeByStart(applySmartMode(extOut.days.flatMap((d) => d.scored), "off", minOffer, args.audience, ext.tz).list)[0];
+      if (firstExt) firstPossible = asSlot(firstExt);
     }
   }
 
@@ -299,7 +311,7 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     earliestBookableAt: earliest,
     chronological,
     truncated,
-    reason: "ok",
+    reason: slots.length === 0 && unverifiable ? "unverifiable" : "ok",
   };
 }
 

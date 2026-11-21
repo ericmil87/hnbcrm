@@ -53,4 +53,12 @@ describe("assertMatchesValidator (helper reutilizável)", () => {
     expect(() => assertMatchesValidator({ a: "x", c: { d: "id", z: 1 } }, validator)).toThrow(/campo a mais/);
     expect(jsonProblems([1], { type: "array", value: { type: "string" } })).toHaveLength(1);
   });
+  test("confere a tabela de v.id (formato do convex-test) e as chaves de record", () => {
+    const ids = v.object({ a: v.id("schedServices") });
+    assertMatchesValidator({ a: "10;schedServices" }, ids);
+    expect(() => assertMatchesValidator({ a: "10;schedResources" }, ids)).toThrow(/id da tabela "schedResources"/);
+    const rec = v.record(v.id("schedServices"), v.number());
+    assertMatchesValidator({ "1;schedServices": 1 }, rec);
+    expect(() => assertMatchesValidator({ "1;schedResources": 1 }, rec)).toThrow(/id da tabela/);
+  });
 });

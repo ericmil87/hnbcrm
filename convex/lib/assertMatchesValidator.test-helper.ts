@@ -3,7 +3,7 @@
  *
  * O `convex-test` NÃO valida `returns`, mas o runtime recusa campo a mais num `v.object` e campo
  * obrigatório ausente. Este helper reproduz essas recusas (e confere primitivos, ids, literais,
- * arrays, records e uniões) lendo o `returns` REAL da função registrada (`exportReturns()`), então o
+ * arrays, records com as chaves, e uniões; id: confere a tabela quando o formato do convex-test permite) lendo o `returns` REAL da função registrada (`exportReturns()`), então o
  * teste falha antes do deploy se o validator e o que a função devolve divergirem.
  *
  *   import * as scheduling from "./scheduling";
@@ -39,8 +39,15 @@ export function jsonProblems(value: unknown, j: Json, path = "$"): string[] {
       return typeof value === "bigint" ? [] : [`${path}: esperava bigint, veio ${kind(value)}`];
     case "bytes":
       return value instanceof ArrayBuffer ? [] : [`${path}: esperava bytes, veio ${kind(value)}`];
-    case "id":
-      return typeof value === "string" ? [] : [`${path}: esperava id de ${j.tableName}, veio ${kind(value)}`];
+    case "id": {
+      if (typeof value !== "string") return [`${path}: esperava id de ${j.tableName}, veio ${kind(value)}`];
+      // No convex-test o id é "<n>;<tabela>": confere a tabela quando o formato é esse (no runtime real é opaco).
+      const sep = value.indexOf(";");
+      if (sep > 0 && value.slice(sep + 1) !== j.tableName) {
+        return [`${path}: id da tabela "${value.slice(sep + 1)}", esperava "${j.tableName}"`];
+      }
+      return [];
+    }
     case "literal":
       return value === j.value ? [] : [`${path}: esperava literal ${JSON.stringify(j.value)}, veio ${JSON.stringify(value)}`];
     case "array": {
@@ -50,7 +57,9 @@ export function jsonProblems(value: unknown, j: Json, path = "$"): string[] {
     case "record": {
       if (value === null || typeof value !== "object" || Array.isArray(value)) return [`${path}: esperava record, veio ${kind(value)}`];
       return Object.entries(value as Record<string, unknown>).flatMap(([k, item]) =>
-        item === undefined ? [] : jsonProblems(item, j.values.fieldType, `${path}.${k}`)
+        item === undefined
+          ? []
+          : [...jsonProblems(k, j.keys, `${path}.<chave ${k}>`), ...jsonProblems(item, j.values.fieldType, `${path}.${k}`)]
       );
     }
     case "union": {

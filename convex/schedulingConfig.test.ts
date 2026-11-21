@@ -18,6 +18,7 @@ let t: TestConvex<typeof schema>;
 let s: AgendaSeed;
 
 const as = (p: Person) => t.withIdentity(identityOf(p));
+const at10 = (n: number) => n;
 const weekdays = (days: number[], ...shifts: Array<[number, number]>) =>
   days.flatMap((weekday) => shifts.map(([startMin, endMin]) => ({ weekday, startMin, endMin })));
 const room = (over: Record<string, unknown> = {}) => ({
@@ -40,8 +41,9 @@ const service = (over: Record<string, unknown> = {}) => ({
   requirements: [{ role: "Profissional", kind: "person" as const }],
   ...over,
 });
-const mkResource = (p: Person, over: Record<string, unknown> = {}, org = s.orgId) =>
+const mkResourceFull = (p: Person, over: Record<string, unknown> = {}, org = s.orgId) =>
   as(p).mutation(api.schedulingConfig.upsertResource, { organizationId: org, ...room(over) } as any);
+const mkResource = async (p: Person, over: Record<string, unknown> = {}, org = s.orgId) => (await mkResourceFull(p, over, org)).resourceId;
 const mkService = (p: Person, over: Record<string, unknown> = {}, org = s.orgId) =>
   as(p).mutation(api.schedulingConfig.upsertService, { organizationId: org, ...service(over) } as any);
 
@@ -88,7 +90,7 @@ describe("permissão e módulo", () => {
     await expect(as(s.admin).mutation(api.schedulingConfig.applyTemplate, { organizationId: s.orgId, templateKey: "solo" })).rejects.toThrow(
       /Módulo não habilitado/
     );
-    const cfg = await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId });
+    const cfg = await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" });
     expect(cfg).toMatchObject({ enabled: false, services: [], resources: [], closures: [] });
     assertMatchesReturns(cfg, config.getConfig);
   });
@@ -96,22 +98,22 @@ describe("permissão e módulo", () => {
   test("queries: none e outra org recebem null/vazio, nunca erro", async () => {
     await mkService(s.admin, {});
     for (const p of [s.none, s.outsider]) {
-      expect(await as(p).query(api.schedulingConfig.getConfig, { organizationId: s.orgId })).toBeNull();
+      expect(await as(p).query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" })).toBeNull();
       expect(await as(p).query(api.schedulingConfig.previewTemplate, { organizationId: s.orgId, templateKey: "solo" })).toBeNull();
     }
     const out = await as(s.manager).query(api.schedulingConfig.previewTemplate, { organizationId: s.orgId, templateKey: "solo" });
     expect(out).toBeNull(); // manager é edit, não manage
-    expect(await t.query(api.schedulingConfig.getConfig, { organizationId: s.orgId })).toBeNull();
+    expect(await t.query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" })).toBeNull();
   });
 
   test("getConfig: view_own lê serviços e recursos, mas sem IA/automação; manage vê tudo", async () => {
     await mkService(s.admin);
-    const own = await as(s.viewOwn).query(api.schedulingConfig.getConfig, { organizationId: s.orgId });
+    const own = await as(s.viewOwn).query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" });
     expect(own!.services).toHaveLength(1);
     expect(own!.settings.ai).toBeUndefined();
     expect(own!.settings.humanConfirm).toBeUndefined();
     expect(own!.canManage).toBe(false);
-    const adm = await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId });
+    const adm = await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" });
     expect(adm!.settings.ai).toMatchObject({ book: "propose", cancel: "handoff" });
     expect(adm!.timezone).toBe("America/Sao_Paulo");
     assertMatchesReturns(own, config.getConfig);
@@ -120,25 +122,28 @@ describe("permissão e módulo", () => {
 });
 
 describe("serviços", () => {
-  test("cria, edita (substitui o formulário), audita antes/depois e valida", async () => {
-    const id = await mkService(s.admin, { bufferAfterMin: 10, minNoticeMin: 60 });
+  test("cria, edita por MERGE (ausente mantém, null limpa), audita antes/depois", async () => {
+    const id = await mkService(s.admin, { bufferAfterMin: 10, minNoticeMin: 60, priceCents: 5000 });
     assertMatchesReturns(id, config.upsertService);
-    const edited = await as(s.admin).mutation(api.schedulingConfig.upsertService, {
-      organizationId: s.orgId,
-      serviceId: id,
-      ...service({ durationMin: 45 }),
-    });
+    // cliente antigo/REST mandando só parte dos campos: o resto fica
+    const edited = await as(s.admin).mutation(api.schedulingConfig.upsertService, { organizationId: s.orgId, serviceId: id, durationMin: 45 });
     expect(edited).toBe(id);
-    const doc = await t.run((ctx) => ctx.db.get(id));
-    expect(doc).toMatchObject({ durationMin: 45, bufferBeforeMin: 0, active: true });
-    expect(doc!.bufferAfterMin).toBe(0); // opcional ausente zera
+    let doc = await t.run((ctx) => ctx.db.get(id));
+    expect(doc).toMatchObject({ name: "Sessão", durationMin: 45, bufferAfterMin: 10, minNoticeMin: 60, priceCents: 5000, active: true });
+    expect(doc!.requirements).toHaveLength(1);
+    // null limpa
+    await as(s.admin).mutation(api.schedulingConfig.upsertService, { organizationId: s.orgId, serviceId: id, minNoticeMin: null, bufferAfterMin: null });
+    doc = await t.run((ctx) => ctx.db.get(id));
     expect(doc!.minNoticeMin).toBeUndefined();
+    expect(doc!.bufferAfterMin).toBe(0);
+    expect(doc!.priceCents).toBe(5000);
     const logs = await audits("schedService");
-    expect(logs.map((l) => l.action).sort()).toEqual(["create", "update"]);
-    const upd = logs.find((l) => l.action === "update")!;
-    expect(upd.changes?.before?.durationMin).toBe(60);
-    expect(upd.changes?.after?.durationMin).toBe(45);
-    expect(upd.changes?.after?.id).toBe(id);
+    expect(logs.map((l) => l.action).sort()).toEqual(["create", "update", "update"]);
+    const upd = logs.find((l) => l.action === "update" && l.changes?.after?.durationMin === 45 && l.changes?.before?.durationMin === 60);
+    expect(upd?.changes?.after?.id).toBe(id);
+    // criação sem os obrigatórios é recusada
+    await expect(as(s.admin).mutation(api.schedulingConfig.upsertService, { organizationId: s.orgId, name: "X" })).rejects.toThrow(/duração é obrigatória/);
+    await expect(as(s.admin).mutation(api.schedulingConfig.upsertService, { organizationId: s.orgId, name: "X", durationMin: 30 })).rejects.toThrow(/requisitos/);
   });
 
   test("duração + folgas ≤ MAX_BLOCK_MIN (base e cada variação), nome único sem acento, requisitos 1..4", async () => {
@@ -242,9 +247,16 @@ describe("recursos", () => {
     ).rejects.toThrow(/não podem se sobrepor/);
     await expect(mkResource(s.admin, { weekly: [{ weekday: 9, startMin: 540, endMin: 600 }] })).rejects.toThrow(/Dia da semana inválido/);
     await expect(mkResource(s.admin, { tags: Array.from({ length: 11 }, (_, i) => `t${i}`) })).rejects.toThrow(/10 etiquetas/);
-    const id = await mkResource(s.admin, { capacity: 2, name: "Sala dupla", tags: ["Dupla", "dupla", " VIP "] });
-    assertMatchesReturns(id, config.upsertResource);
-    expect((await t.run((ctx) => ctx.db.get(id)))!.tags).toEqual(["dupla", "vip"]);
+    const out = await mkResourceFull(s.admin, { capacity: 2, name: "Sala dupla", tags: ["Dupla", "dupla", " VIP "] });
+    assertMatchesReturns(out, config.upsertResource);
+    expect(out).toMatchObject({ saved: true, futureOutsideHours: 0, overCapacityBy: 0, capped: false });
+    expect((await t.run((ctx) => ctx.db.get(out.resourceId)))!.tags).toEqual(["dupla", "vip"]);
+    // merge: só o nome muda; as tags ficam; null limpa
+    await as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: out.resourceId, name: "Dupla" });
+    expect(await t.run((ctx) => ctx.db.get(out.resourceId))).toMatchObject({ name: "Dupla", capacity: 2, tags: ["dupla", "vip"] });
+    await as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: out.resourceId, tags: null });
+    expect((await t.run((ctx) => ctx.db.get(out.resourceId)))!.tags).toBeUndefined();
+    await expect(as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, name: "Sem tipo" })).rejects.toThrow(/tipo do recurso é obrigatório/);
     expect(await count("schedResources")).toBe(1);
   });
 
@@ -254,7 +266,7 @@ describe("recursos", () => {
     const id = await mkResource(s.admin, { ...person({ name: "Ana" }), kind: "person", teamMemberId: s.agent.memberId });
     await expect(mkResource(s.admin, { ...person({ name: "Bia" }), teamMemberId: s.agent.memberId })).rejects.toThrow(/já está ligado a "Ana"/);
     await expect(
-      as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, ...room({ name: "Ana" }) })
+      as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, kind: "room" })
     ).rejects.toThrow(/tipo do recurso não pode mudar/);
     // membro removido não recebe vínculo novo
     await t.run((ctx) => ctx.db.patch(s.viewAll.memberId, { removedAt: Date.now() }));
@@ -287,9 +299,10 @@ describe("recursos", () => {
     ).rejects.toThrow(/Recurso não encontrado/);
   });
 
-  test("reduzir a capacidade abaixo do marcado é recusado; arquivar com marcação pede aceite", async () => {
+  test("reduzir capacidade/horário com agendamento futuro: aviso + aceite (nada é cancelado); arquivar pede aceite", async () => {
     const id = await mkResource(s.admin, { name: "Sala dupla", capacity: 2 });
-    const start = Date.now() + 3_600_000;
+    const start = at10(Date.now() + 3_600_000);
+    const apptIds: Id<"schedAppointments">[] = [];
     await t.run(async (ctx) => {
       const svc = await ctx.db.insert("schedServices", {
         organizationId: s.orgId, name: "X", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0, requirements: [], sortOrder: 0, active: true, createdAt: 1, updatedAt: 1,
@@ -300,34 +313,65 @@ describe("recursos", () => {
           blockStart: start, blockEnd: start + 3_600_000, localDate: "2026-06-12", status: "scheduled", origin: "staff",
           resources: [], statusChangedAt: 1, createdAt: 1, updatedAt: 1,
         });
+        apptIds.push(appointmentId);
         await ctx.db.insert("schedAllocations", {
           organizationId: s.orgId, appointmentId, resourceId: id, role: "Sala", blockStart: start, blockEnd: start + 3_600_000,
           coreStart: start, coreEnd: start + 3_600_000, units: 1,
         });
       }
     });
-    await expect(
-      as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, ...room({ name: "Sala dupla", capacity: 1 }) })
-    ).rejects.toThrow(/2 atendimentos ao mesmo tempo/);
-    const warn = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: id });
-    expect(warn).toMatchObject({ changed: false, futureAppointments: 2 });
-    assertMatchesReturns(warn, config.archiveResource);
-    const done = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: id, acceptFuture: true });
-    expect(done.changed).toBe(true);
+    const up = (extra: Record<string, unknown>) =>
+      as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, ...extra } as any);
+    const warn = await up({ capacity: 1 });
+    assertMatchesReturns(warn, config.upsertResource);
+    expect(warn).toMatchObject({ saved: false, overCapacityBy: 1, futureOutsideHours: 0 });
+    expect((await t.run((ctx) => ctx.db.get(id)))!.capacity).toBe(2);
+    // horário semanal sem sexta (2026-06-12): os 2 futuros ficam fora do novo horário
+    const week = await up({ weekly: weekdays([1, 2, 3, 4], [540, 720]) });
+    expect(week).toMatchObject({ saved: false, futureOutsideHours: 2 });
+    const done = await up({ capacity: 1, weekly: weekdays([1, 2, 3, 4], [540, 720]), acceptFuture: true });
+    expect(done).toMatchObject({ saved: true, futureOutsideHours: 2, overCapacityBy: 1 });
+    expect(await t.run((ctx) => ctx.db.get(id))).toMatchObject({ capacity: 1 });
+    // nada foi cancelado
+    for (const a of apptIds) expect((await t.run((ctx) => ctx.db.get(a)))!.status).toBe("scheduled");
+    // mudar só o nome não avisa nada
+    expect(await up({ name: "Renomeada" })).toMatchObject({ saved: true });
+    const archWarn = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: id });
+    expect(archWarn).toMatchObject({ changed: false, futureAppointments: 2 });
+    assertMatchesReturns(archWarn, config.archiveResource);
+    const arch = await as(s.admin).mutation(api.schedulingConfig.archiveResource, { organizationId: s.orgId, resourceId: id, acceptFuture: true });
+    expect(arch.changed).toBe(true);
     const back = await as(s.admin).mutation(api.schedulingConfig.reactivateResource, { organizationId: s.orgId, resourceId: id });
     assertMatchesReturns(back, config.reactivateResource);
     expect(back.changed).toBe(true);
-    expect((await audits("schedResource")).length).toBe(3); // create + arquivar + reativar
+    expect((await audits("schedResource")).length).toBe(5); // create + 2 edições gravadas + arquivar + reativar
+  });
+
+  test("overlap de horário só conta o que de fato sai do horário (dentro do novo horário não avisa)", async () => {
+    const id = await mkResource(s.admin, { name: "Sala X", capacity: 1 });
+    const start = at10(Date.now() + 3_600_000); // sexta 2026-06-12 ~16:00Z = 13:00 local, fora do expediente atual (09-12), mas já marcado
+    await t.run(async (ctx) => {
+      const svc = await ctx.db.insert("schedServices", { organizationId: s.orgId, name: "X", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0, requirements: [], sortOrder: 0, active: true, createdAt: 1, updatedAt: 1 });
+      const appointmentId = await ctx.db.insert("schedAppointments", {
+        organizationId: s.orgId, serviceId: svc, serviceName: "X", kind: "normal", startTime: start, endTime: start + 3_600_000, blockStart: start, blockEnd: start + 3_600_000,
+        localDate: "2026-06-12", status: "scheduled", origin: "staff", resources: [], statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+      });
+      await ctx.db.insert("schedAllocations", { organizationId: s.orgId, appointmentId, resourceId: id, role: "Sala", blockStart: start, blockEnd: start + 3_600_000, coreStart: start, coreEnd: start + 3_600_000, units: 1 });
+    });
+    const covers = await as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, weekly: weekdays([5], [0, 1440]) });
+    expect(covers).toMatchObject({ saved: true, futureOutsideHours: 0 });
   });
 });
 
 describe("configurações (schedSettings)", () => {
   const upd = (p: Person, patch: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
     as(p).mutation(api.schedulingConfig.updateSettings, { organizationId: s.orgId, patch, ...extra } as any);
-  const cfg = async () => (await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId }))!.settings;
+  const cfg = async () => (await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" }))!.settings;
 
   test("grade, modo inteligente, pesos, fuso herdado; merge parcial e null limpa", async () => {
-    expect(await upd(s.admin, { gridMinutes: 15, smart: { mode: "restrict", minOffer: 2 }, minNoticeMin: 30 })).toBeNull();
+    const ret = await upd(s.admin, { gridMinutes: 15, smart: { mode: "restrict", minOffer: 2 }, minNoticeMin: 30 });
+    expect(ret).toBeNull();
+    assertMatchesReturns(ret, config.updateSettings);
     let c = await cfg();
     expect(c).toMatchObject({ gridMinutes: 15, minNoticeMin: 30, smart: { mode: "restrict", minOffer: 2 } });
     await upd(s.admin, { smart: { weights: { adjacency: 1, deadGap: 2, openNewResource: 3, earlyFirst: 4, balance: 5, preference: 6 }, minUsefulGapMin: 45 } });
@@ -420,7 +464,7 @@ describe("modelos prontos", () => {
     expect(st.settings).toMatchObject({ templateKey: "clinic", gridMinutes: 30, smart: { mode: "rank" } });
     const logs = await audits("schedSettings");
     expect(logs.some((l) => l.description?.includes('modelo "clinic"'))).toBe(true);
-    assertMatchesReturns(await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId }), config.getConfig);
+    assertMatchesReturns(await as(s.admin).query(api.schedulingConfig.getConfig, { organizationId: s.orgId, closuresFrom: "2026-01-01" }), config.getConfig);
   });
 
   test("idempotente: segunda aplicação não duplica; outro modelo ou agenda não vazia é recusado", async () => {
@@ -507,6 +551,26 @@ describe("fuso da organização", () => {
     await t.run((ctx) => ctx.db.patch(apptId, { status: "cancelled" }));
     await changeTz("America/New_York");
     expect((await t.run((ctx) => ctx.db.get(s.orgId)))!.settings.timezone).toBe("America/New_York");
+  });
+});
+
+describe("fuso pelo onboarding", () => {
+  test("completeWizard também recusa trocar o fuso com agendamento futuro", async () => {
+    const svc = await mkService(s.admin);
+    const future = Date.now() + 86_400_000;
+    await t.run(async (ctx) => {
+      await ctx.db.insert("schedAppointments", {
+        organizationId: s.orgId, serviceId: svc, serviceName: "Sessão", kind: "normal", startTime: future, endTime: future + 3_600_000,
+        blockStart: future, blockEnd: future + 3_600_000, localDate: "2026-06-13", status: "scheduled", origin: "staff", resources: [],
+        statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+      });
+      await ctx.db.insert("onboardingProgress", {
+        organizationId: s.orgId, teamMemberId: s.admin.memberId, wizardCompleted: false, wizardCurrentStep: 1,
+        wizardData: { timezone: "America/New_York" }, checklistDismissed: false, seenSpotlights: [], celebratedMilestones: [], createdAt: 1, updatedAt: 1,
+      });
+    });
+    await expect(as(s.admin).mutation(api.onboarding.completeWizard, { organizationId: s.orgId })).rejects.toThrow(/agendamentos futuros/);
+    expect((await t.run((ctx) => ctx.db.get(s.orgId)))!.settings.timezone).toBe("America/Sao_Paulo");
   });
 });
 

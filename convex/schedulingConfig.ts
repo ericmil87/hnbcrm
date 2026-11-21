@@ -27,6 +27,7 @@ import {
 import { isSchedulingOn, resolveAgendaReader } from "./lib/schedRead";
 import { searchSlots } from "./lib/schedSearch";
 import { buildTemplateDraft, isSchedTemplateKey, TEMPLATE_MAX_PEOPLE, type SchedTemplateDraft } from "./lib/schedTemplates";
+import { isValidLocalDate } from "./lib/schedTime";
 import { resolveSchedSettings } from "./lib/schedSettingsDefaults";
 import { smartMode } from "./schema";
 import {
@@ -49,7 +50,8 @@ const CLOSURES_CAP = 200;
 // ---------------------------------------------------------------------------
 
 export const getConfig = query({
-  args: { organizationId: v.id("organizations"), closuresFrom: v.optional(v.string()) },
+  /** `closuresFrom`: data local (AAAA-MM-DD) de hoje; só os fechamentos dessa data em diante vêm (teto 200). */
+  args: { organizationId: v.id("organizations"), closuresFrom: v.string() },
   returns: v.union(
     v.null(),
     v.object({
@@ -95,11 +97,10 @@ export const getConfig = query({
       .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
       .take(MAX_RESOURCES_PER_ORG);
     const from = args.closuresFrom;
+    if (!isValidLocalDate(from)) throw new ConvexError("Data inválida: use o formato AAAA-MM-DD.");
     const closureRows = await ctx.db
       .query("schedExceptions")
-      .withIndex("by_organization_and_date", (q) =>
-        from !== undefined ? q.eq("organizationId", args.organizationId).gte("localDate", from) : q.eq("organizationId", args.organizationId)
-      )
+      .withIndex("by_organization_and_date", (q) => q.eq("organizationId", args.organizationId).gte("localDate", from))
       .take(CLOSURES_CAP + 1);
     return {
       enabled: true,
@@ -193,6 +194,7 @@ export const previewSuggestions = query({
       serviceId: args.serviceId,
       fromLocalDate: args.localDate,
       audience: args.audience ?? "ai",
+      reveal: true, // a prévia é do gestor (`manage`): mostra motivos
       now: args.now,
       limit: 3,
       override: { mode: args.mode, weights: args.weights, minOffer: args.minOffer },
@@ -254,12 +256,24 @@ export const reactivateService = mutation({
 });
 
 export const upsertResource = mutation({
-  args: { organizationId: v.id("organizations"), resourceId: v.optional(v.id("schedResources")), ...resourceInputFields },
-  returns: v.id("schedResources"),
+  args: {
+    organizationId: v.id("organizations"),
+    resourceId: v.optional(v.id("schedResources")),
+    /** Aceite do aviso de agendamentos futuros fora do novo horário/capacidade (nada é cancelado). */
+    acceptFuture: v.optional(v.boolean()),
+    ...resourceInputFields,
+  },
+  returns: v.object({
+    saved: v.boolean(),
+    resourceId: v.id("schedResources"),
+    futureOutsideHours: v.number(),
+    overCapacityBy: v.number(),
+    capped: v.boolean(),
+  }),
   handler: async (ctx, args) => {
     const member = await gate(ctx, args.organizationId);
-    const { organizationId, resourceId, ...input } = args;
-    return await upsertResourceCore(ctx, { organizationId, member, resourceId, input, now: Date.now() });
+    const { organizationId, resourceId, acceptFuture, ...input } = args;
+    return await upsertResourceCore(ctx, { organizationId, member, resourceId, input, acceptFuture, now: Date.now() });
   },
 });
 

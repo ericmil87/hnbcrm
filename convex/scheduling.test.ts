@@ -37,7 +37,8 @@ let clinic: Clinic;
 
 const weekly = [...[1, 2, 3, 4, 5].flatMap((weekday) => [{ weekday, startMin: 540, endMin: 720 }, { weekday, startMin: 840, endMin: 1080 }])];
 async function setupClinic(): Promise<Clinic> {
-  const mutate = (args: Record<string, unknown>) => as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, ...args } as any);
+  const mutate = async (args: Record<string, unknown>) =>
+    (await as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, ...args } as any)).resourceId;
   const room = (name: string, capacity: number) => mutate({ kind: "room", name, capacity, weekly });
   const pro = (name: string, teamMemberId: Id<"teamMembers">) => mutate({ kind: "person", name, capacity: 1, weekly, teamMemberId });
   const r1 = await room("Sala 1", 1);
@@ -394,18 +395,19 @@ describe("grade do dia e do período", () => {
     assertMatchesReturns(res, sched.listAgendaRange);
     expect(res.days.map((d) => d.localDate)).toEqual(["2026-06-14", MON, "2026-06-16"]);
     const mon = res.days[1];
-    expect(mon).toMatchObject({ active: 4, pending: 1, cancelled: 1, closedResources: 1 });
+    expect(mon).toMatchObject({ active: 4, pending: 1, closedResources: 1 }); // o cancelado não entra
     const person = mon.occupancy.find((o) => o.kind === "person")!;
     expect(person.bookedMinutes).toBe(4 * 60);
     expect(person.openMinutes).toBe(4 * 7 * 60); // 4 profissionais × (3h + 4h)
     const rooms = mon.occupancy.find((o) => o.kind === "room")!;
     expect(rooms.openMinutes).toBe((7 * 60) * (1 + 2)); // Sala 1 fechada; Sala 2 (1) + dupla (2)
     expect(res.days[0]).toMatchObject({ active: 0, occupancy: [] });
+    expect(res).toMatchObject({ capped: false, completeThrough: null });
     await expect(
-      as(s.admin).query(api.scheduling.listAgendaRange, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-07-13" })
-    ).rejects.toThrow(/no máximo 42 dias/);
-    const ok42 = await as(s.admin).query(api.scheduling.listAgendaRange, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-07-12" });
-    expect(ok42.days).toHaveLength(42);
+      as(s.admin).query(api.scheduling.listAgendaRange, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-07-06" })
+    ).rejects.toThrow(/no máximo 35 dias/);
+    const ok42 = await as(s.admin).query(api.scheduling.listAgendaRange, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-07-05" });
+    expect(ok42.days).toHaveLength(35);
   });
 
   test("listAgendaAppointments: cursor por startTime, filtro de status", async () => {
@@ -417,11 +419,12 @@ describe("grade do dia e do período", () => {
     const p1 = await q({ limit: 2 });
     assertMatchesReturns(p1, sched.listAgendaAppointments);
     expect(p1.appointments).toHaveLength(2);
-    expect(p1.nextAfterStartTime).toBe(at(MON, 11));
-    const p2 = await q({ limit: 2, afterStartTime: p1.nextAfterStartTime });
+    expect(p1.next).not.toBeNull();
+    const p2 = await q({ limit: 2, after: p1.next });
     expect(p2.appointments.map((a) => a.startTime)).toEqual([at(MON, 11), at(MON, 12)]);
-    const p3 = await q({ limit: 2, afterStartTime: p2.nextAfterStartTime });
-    expect(p3.nextAfterStartTime).toBeNull();
+    const p3 = await q({ limit: 2, after: p2.next });
+    expect(p3.appointments.map((a) => a.startTime)).toEqual([at(MON, 13)]);
+    expect(p3.next).toBeNull();
     const cancelled = await q({ status: "cancelled" });
     expect(cancelled.appointments).toHaveLength(1);
   });
@@ -493,10 +496,11 @@ describe("detalhe, vínculos e pendências", () => {
     const q = (p: Person) => as(p).query(api.scheduling.listPending, { organizationId: s.orgId, now: NOW });
     const all = await q(s.admin);
     assertMatchesReturns(all, sched.listPending);
-    expect(all.approvals.map((a) => a._id)).toEqual([pendAna, pendBia]);
+    expect(all.approvals.map((a) => a._id)).toEqual([pendBia, pendAna]); // mais recente primeiro
     expect(all.conflicts.map((c) => c.kind).sort()).toEqual(["capacity", "resource_closed"]);
     expect(all.conflicts.every((c) => c.appointment !== null)).toBe(true);
-    expect(all.noOutcome.map((a) => a._id)).toEqual([oldBia, oldAna]);
+    expect(all.noOutcome.map((a) => a._id)).toEqual([oldAna, oldBia]);
+    expect(all.capped).toEqual({ approvals: false, conflicts: false, noOutcome: false, suggestions: false });
     expect(all.suggestions).toHaveLength(1);
     const own = await q(s.viewOwn); // Bia
     assertMatchesReturns(own, sched.listPending);
@@ -558,7 +562,7 @@ describe("RBAC, view_own, módulo e isolamento", () => {
         expect(r, where("for*")).toEqual({ upcoming: [], recent: [] });
       }
       const pend = await c.query(api.scheduling.listPending, { organizationId: s.orgId, now: NOW });
-      expect(pend, where("pending")).toEqual({ enabled: false, approvals: [], conflicts: [], noOutcome: [], suggestions: [] });
+      expect(pend, where("pending")).toMatchObject({ enabled: false, approvals: [], conflicts: [], noOutcome: [], suggestions: [] });
       assertMatchesReturns(pend, sched.listPending);
       const slots = await c.query(api.scheduling.findSlots, findArgs());
       expect(slots, where("slots")).toMatchObject({ slots: [], reason: "no_access" });
@@ -581,7 +585,7 @@ describe("RBAC, view_own, módulo e isolamento", () => {
     expect(re).toMatchObject({ slots: [], reason: "appointment_unavailable" });
     const pend = await q.query(api.scheduling.listPending, { organizationId: s.otherOrgId, now: NOW });
     expect(pend).toMatchObject({ approvals: [], conflicts: [], noOutcome: [] });
-    const cfg = await q.query(api.schedulingConfig.getConfig, { organizationId: s.otherOrgId });
+    const cfg = await q.query(api.schedulingConfig.getConfig, { organizationId: s.otherOrgId, closuresFrom: "2026-01-01" });
     expect(cfg!.services).toEqual([]);
     expect(cfg!.resources).toEqual([]);
   });

@@ -7,7 +7,7 @@ import { type Infer, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import schema, { smartMode as smartModeValidator } from "../schema";
 import type { ResolvedSchedSettings } from "./schedSettingsDefaults";
-import type { FoundSlot } from "./schedSearch";
+import { formatSlotLabel, localDateOf } from "./schedTime";
 
 // --- documentos de configuração (campos do schema + campos de sistema) ---
 export const serviceDocValidator = v.object({
@@ -78,10 +78,28 @@ export const slotValidator = v.object({
   score: v.number(),
   reasons: v.array(v.string()),
 });
-/** Audiência fora da equipe nunca recebe nome de recurso nem motivo/pontuação (revelariam a agenda dos outros). */
-export function sanitizeSlot(slot: FoundSlot, audience: "staff" | "ai" | "public"): FoundSlot {
-  if (audience === "staff") return slot;
-  return { ...slot, resourceNames: [], reasons: [], score: 0 };
+/** Formato ÚNICO de horário oferecido: busca (`findSlots`) e `alternatives` das portas de reserva. */
+export type Slot = Infer<typeof slotValidator>;
+
+/**
+ * Monta o `Slot` de um candidato. `reveal:false` (qualquer audiência que não é a equipe) NUNCA inclui nome de
+ * recurso, motivo nem pontuação (revelariam a agenda dos outros): é a construção, não um filtro posterior.
+ * `resourceIds` ficam (opacos; a oferta precisa deles).
+ */
+export function toSlot(
+  c: { startTime: number; endTime: number; plan: ReadonlyArray<{ resourceId: string }>; score?: number; reasons?: string[] },
+  o: { now: number; tz: string; resourceNames: ReadonlyMap<string, string>; reveal: boolean }
+): Slot {
+  return {
+    startTime: c.startTime,
+    endTime: c.endTime,
+    localDate: localDateOf(c.startTime, o.tz),
+    label: formatSlotLabel(c.startTime, o.now, o.tz),
+    resourceIds: c.plan.map((p) => p.resourceId as Id<"schedResources">),
+    resourceNames: o.reveal ? c.plan.map((p) => o.resourceNames.get(p.resourceId) ?? "") : [],
+    score: o.reveal ? (c.score ?? 0) : 0,
+    reasons: o.reveal ? [...(c.reasons ?? [])] : [],
+  };
 }
 
 // --- configurações resolvidas ---

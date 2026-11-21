@@ -24,14 +24,15 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { assertAssignableMember, requireAccountWithEmail } from "./auth";
-import { peakUnits, validateWeekly } from "./schedAvailability";
+import { openIntervalsForDay, peakUnits, validateWeekly } from "./schedAvailability";
 import {
   GRID_MINUTES_OPTIONS,
   MAX_BLOCK_MIN,
   MAX_RESOURCES_PER_ORG,
   MAX_SERVICES_PER_ORG,
 } from "./schedConstants";
-import { countFutureAppointmentsOfService, hasFutureActiveAppointment, listFutureAllocations } from "./schedRead";
+import { countFutureAppointmentsOfService, effectiveAllocationUnits, hasFutureActiveAppointment, listFutureAllocations } from "./schedRead";
+import { assertValidTimezone, localDateOf } from "./schedTime";
 import { type SchedTemplateDraft, isSchedTemplateKey } from "./schedTemplates";
 import { smartMode as smartModeValidator } from "../schema";
 
@@ -139,34 +140,42 @@ export async function assertTimezoneChangeAllowed(
 // Serviços
 // ---------------------------------------------------------------------------
 
+const nul = <T extends Parameters<typeof v.optional>[0]>(x: T) => v.optional(v.union(x, v.null()));
+/**
+ * Campos do serviço na ESCRITA = MERGE: campo ausente mantém; `null` limpa (volta ao padrão). Na criação,
+ * `name`, `durationMin` e `requirements` são obrigatórios (conferido no core). Um cliente antigo, o REST ou o
+ * Copiloto que mandam só parte dos campos não apagam o resto.
+ */
 export const serviceInputFields = {
-  name: v.string(),
-  durationMin: v.number(),
-  variants: v.optional(v.array(v.object({ key: v.string(), name: v.string(), durationMin: v.number() }))),
-  bufferBeforeMin: v.optional(v.number()),
-  bufferAfterMin: v.optional(v.number()),
-  requirements: v.array(
-    v.object({
-      role: v.string(),
-      kind: resourceKindValidator,
-      resourceIds: v.optional(v.array(v.id("schedResources"))),
-      tag: v.optional(v.string()),
-      units: v.optional(v.number()),
-      exclusive: v.optional(v.boolean()),
-    })
+  name: v.optional(v.string()),
+  durationMin: v.optional(v.number()),
+  variants: nul(v.array(v.object({ key: v.string(), name: v.string(), durationMin: v.number() }))),
+  bufferBeforeMin: nul(v.number()),
+  bufferAfterMin: nul(v.number()),
+  requirements: v.optional(
+    v.array(
+      v.object({
+        role: v.string(),
+        kind: resourceKindValidator,
+        resourceIds: v.optional(v.array(v.id("schedResources"))),
+        tag: v.optional(v.string()),
+        units: v.optional(v.number()),
+        exclusive: v.optional(v.boolean()),
+      })
+    )
   ),
-  slotIntervalMin: v.optional(v.number()),
-  minNoticeMin: v.optional(v.number()),
-  maxAdvanceDays: v.optional(v.number()),
-  maxActivePerContact: v.optional(v.number()),
-  clientCanCancel: v.optional(v.boolean()),
-  clientCanReschedule: v.optional(v.boolean()),
-  minRescheduleNoticeMin: v.optional(v.number()),
-  lateCancelWindowMin: v.optional(v.number()),
-  smartMode: v.optional(smartModeValidator),
-  aiBookable: v.optional(v.boolean()),
-  publicBookable: v.optional(v.boolean()),
-  priceCents: v.optional(v.number()),
+  slotIntervalMin: nul(v.number()),
+  minNoticeMin: nul(v.number()),
+  maxAdvanceDays: nul(v.number()),
+  maxActivePerContact: nul(v.number()),
+  clientCanCancel: nul(v.boolean()),
+  clientCanReschedule: nul(v.boolean()),
+  minRescheduleNoticeMin: nul(v.number()),
+  lateCancelWindowMin: nul(v.number()),
+  smartMode: nul(smartModeValidator),
+  aiBookable: nul(v.boolean()),
+  publicBookable: nul(v.boolean()),
+  priceCents: nul(v.number()),
   sortOrder: v.optional(v.number()),
 };
 export type ServiceInput = {
@@ -197,6 +206,28 @@ export type ServiceInput = {
   priceCents?: number;
   sortOrder?: number;
 };
+
+/** Patch de escrita: ausente mantém, `null` limpa. */
+export type ServicePatch = { [K in keyof ServiceInput]?: ServiceInput[K] | null };
+
+const SERVICE_KEYS = [
+  "name", "durationMin", "variants", "bufferBeforeMin", "bufferAfterMin", "requirements", "slotIntervalMin", "minNoticeMin",
+  "maxAdvanceDays", "maxActivePerContact", "clientCanCancel", "clientCanReschedule", "minRescheduleNoticeMin",
+  "lateCancelWindowMin", "smartMode", "aiBookable", "publicBookable", "priceCents", "sortOrder",
+] as const;
+
+/** Aplica o patch sobre o que já existe (ou sobre nada, na criação): `undefined` ignora, `null` remove. */
+function mergePatch<T extends Record<string, unknown>>(base: Record<string, unknown>, patch: Record<string, unknown>, keys: readonly string[]): T {
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (base[k] !== undefined) out[k] = base[k];
+  for (const k of keys) {
+    const val = patch[k];
+    if (val === undefined) continue;
+    if (val === null) delete out[k];
+    else out[k] = val;
+  }
+  return out as T;
+}
 
 type ServiceFields = Omit<Doc<"schedServices">, "_id" | "_creationTime" | "organizationId" | "active" | "createdAt" | "updatedAt">;
 
@@ -308,21 +339,30 @@ export async function upsertServiceCore(
     organizationId: Id<"organizations">;
     member: Doc<"teamMembers">;
     serviceId?: Id<"schedServices">;
-    input: ServiceInput;
+    input: ServicePatch;
     now: number;
     /** O modelo grava uma auditoria só; as outras vias deixam `true`. */
     audit?: boolean;
   }
 ): Promise<Id<"schedServices">> {
   const { organizationId, member, now } = args;
-  const fields = normalizeServiceInput(args.input);
   const all = await loadServices(ctx, organizationId);
 
   let existing: Doc<"schedServices"> | null = null;
   if (args.serviceId !== undefined) {
     existing = all.find((s) => s._id === args.serviceId) ?? null;
     if (!existing) fail("Serviço não encontrado.");
-  } else if (all.length >= MAX_SERVICES_PER_ORG) {
+  }
+  const merged = mergePatch<Partial<ServiceInput>>(
+    (existing ?? {}) as Record<string, unknown>,
+    args.input as Record<string, unknown>,
+    SERVICE_KEYS
+  );
+  if (merged.name === undefined) fail("O nome do serviço é obrigatório.");
+  if (merged.durationMin === undefined) fail("A duração é obrigatória.");
+  if (merged.requirements === undefined) fail("O serviço precisa de 1 a 4 requisitos (ex.: uma sala e um profissional).");
+  const fields = normalizeServiceInput(merged as ServiceInput);
+  if (!existing && args.serviceId === undefined && all.length >= MAX_SERVICES_PER_ORG) {
     fail(
       `Esta organização já tem ${MAX_SERVICES_PER_ORG} serviços (contando os arquivados). Reative ou renomeie um existente em vez de criar outro.`
     );
@@ -419,13 +459,14 @@ export async function setServiceActiveCore(
 // Recursos
 // ---------------------------------------------------------------------------
 
+/** Campos do recurso na ESCRITA = MERGE (ausente mantém; `null` limpa `teamMemberId`/`tags`). Na criação `kind`, `name`, `capacity` e `weekly` são obrigatórios. */
 export const resourceInputFields = {
-  kind: resourceKindValidator,
-  name: v.string(),
-  capacity: v.number(),
-  teamMemberId: v.optional(v.id("teamMembers")),
-  weekly: v.array(weeklyItem),
-  tags: v.optional(v.array(v.string())),
+  kind: v.optional(resourceKindValidator),
+  name: v.optional(v.string()),
+  capacity: v.optional(v.number()),
+  teamMemberId: nul(v.id("teamMembers")),
+  weekly: v.optional(v.array(weeklyItem)),
+  tags: nul(v.array(v.string())),
   sortOrder: v.optional(v.number()),
 };
 export type ResourceInput = {
@@ -437,6 +478,8 @@ export type ResourceInput = {
   tags?: string[];
   sortOrder?: number;
 };
+export type ResourcePatch = { [K in keyof ResourceInput]?: ResourceInput[K] | null };
+const RESOURCE_KEYS = ["kind", "name", "capacity", "teamMemberId", "weekly", "tags", "sortOrder"] as const;
 
 export function normalizeResourceInput(input: ResourceInput) {
   const name = cleanText("O nome", input.name, 60);
@@ -473,27 +516,51 @@ async function assertMemberNotLinked(
   if (other) fail(`Este membro já está ligado a "${other.name}". Cada pessoa da equipe tem um único profissional na Agenda.`);
 }
 
+export type UpsertResourceResult = {
+  /** `false` = nada foi gravado: a mudança deixaria agendamentos futuros fora do horário/da capacidade e falta o aceite. */
+  saved: boolean;
+  resourceId: Id<"schedResources">;
+  /** Agendamentos futuros que ficam fora do NOVO horário semanal (exceções do dia não entram na conta). */
+  futureOutsideHours: number;
+  /** Unidades acima da NOVA capacidade no pior momento já marcado. */
+  overCapacityBy: number;
+  /** A leitura dos futuros estourou o teto: os números são "pelo menos". */
+  capped: boolean;
+};
+
 export async function upsertResourceCore(
   ctx: MutationCtx,
   args: {
     organizationId: Id<"organizations">;
     member: Doc<"teamMembers">;
     resourceId?: Id<"schedResources">;
-    input: ResourceInput;
+    input: ResourcePatch;
+    /** Aceite explícito do aviso de futuros afetados (nada é cancelado de qualquer jeito). */
+    acceptFuture?: boolean;
     now: number;
     audit?: boolean;
   }
-): Promise<Id<"schedResources">> {
+): Promise<UpsertResourceResult> {
   const { organizationId, member, now } = args;
-  const f = normalizeResourceInput(args.input);
   const all = await loadResources(ctx, organizationId);
 
   let existing: Doc<"schedResources"> | null = null;
   if (args.resourceId !== undefined) {
     existing = all.find((r) => r._id === args.resourceId) ?? null;
     if (!existing) fail("Recurso não encontrado.");
-    if (existing.kind !== f.kind) fail("O tipo do recurso não pode mudar depois de criado: crie outro e arquive este.");
-  } else if (all.length >= MAX_RESOURCES_PER_ORG) {
+  }
+  const merged = mergePatch<Partial<ResourceInput>>(
+    (existing ?? {}) as Record<string, unknown>,
+    args.input as Record<string, unknown>,
+    RESOURCE_KEYS
+  );
+  if (merged.kind === undefined) fail("O tipo do recurso é obrigatório.");
+  if (merged.name === undefined) fail("O nome é obrigatório.");
+  if (merged.capacity === undefined) fail("A capacidade é obrigatória.");
+  if (merged.weekly === undefined) fail("O horário semanal é obrigatório (pode ser vazio).");
+  if (existing && existing.kind !== merged.kind) fail("O tipo do recurso não pode mudar depois de criado: crie outro e arquive este.");
+  const f = normalizeResourceInput(merged as ResourceInput);
+  if (!existing && all.length >= MAX_RESOURCES_PER_ORG) {
     fail(
       `Esta organização já tem ${MAX_RESOURCES_PER_ORG} salas, profissionais e equipamentos (contando os arquivados). Reative ou renomeie um existente.`
     );
@@ -505,14 +572,39 @@ export async function upsertResourceCore(
     await assertAssignableMember(ctx, organizationId, f.teamMemberId);
     await assertMemberNotLinked(ctx, f.teamMemberId, existing?._id);
   }
-  // Reduzir a capacidade abaixo do que já está marcado furaria a ocupação.
-  if (existing && f.capacity < existing.capacity) {
-    const future = await listFutureAllocations(ctx, existing._id, now);
-    if (future.rows.length > 0) {
-      const end = Math.max(...future.rows.map((r) => r.coreEnd));
-      const peak = peakUnits(future.rows, now, end, "core");
-      if (peak > f.capacity) {
-        fail(`Já há ${peak} atendimentos ao mesmo tempo marcados em "${existing.name}". Remarque ou cancele antes de reduzir a capacidade para ${f.capacity}.`);
+
+  // Mudar horário semanal ou reduzir a capacidade com agendamento futuro: aviso + aceite (nada é cancelado).
+  let futureOutsideHours = 0;
+  let overCapacityBy = 0;
+  let capped = false;
+  if (existing) {
+    const weeklyKey = (w: Array<{ weekday: number; startMin: number; endMin: number }>) =>
+      [...w].map((x) => `${x.weekday}:${x.startMin}:${x.endMin}`).sort().join("|");
+    const weeklyChanged = weeklyKey(existing.weekly) !== weeklyKey(f.weekly);
+    const capacityDropped = f.capacity < existing.capacity;
+    if (weeklyChanged || capacityDropped) {
+      const future = await listFutureAllocations(ctx, existing._id, now);
+      capped = future.truncated;
+      if (future.rows.length > 0) {
+        const org = await ctx.db.get(organizationId);
+        const tz = assertValidTimezone(org!.settings.timezone);
+        if (weeklyChanged) {
+          const asLite = { _id: existing._id, kind: existing.kind, name: existing.name, capacity: f.capacity, weekly: f.weekly, sortOrder: existing.sortOrder, active: existing.active };
+          const outside = new Set<string>();
+          for (const row of future.rows) {
+            const open = openIntervalsForDay(asLite, [], localDateOf(row.coreStart, tz), tz);
+            if (!open.some((iv) => iv.start <= row.coreStart && iv.end >= row.coreEnd)) outside.add(row.appointmentId);
+          }
+          futureOutsideHours = outside.size;
+        }
+        if (capacityDropped) {
+          const rows = future.rows.map((r) => ({ ...r, units: effectiveAllocationUnits(r, existing.capacity) }));
+          const peak = peakUnits(rows, now, Math.max(...rows.map((r) => r.coreEnd)), "core");
+          overCapacityBy = Math.max(0, peak - f.capacity);
+        }
+      }
+      if ((futureOutsideHours > 0 || overCapacityBy > 0) && args.acceptFuture !== true) {
+        return { saved: false, resourceId: existing._id, futureOutsideHours, overCapacityBy, capped };
       }
     }
   }
@@ -545,10 +637,11 @@ export async function upsertResourceCore(
       before: existing ? auditSnapshot(existing) : undefined,
       after: auditSnapshot(await ctx.db.get(id)),
       description: `${existing ? "Editou" : "Criou"} ${f.name} na Agenda`,
+      metadata: existing ? { futureOutsideHours, overCapacityBy, acceptFuture: args.acceptFuture === true } : undefined,
       now,
     });
   }
-  return id;
+  return { saved: true, resourceId: id, futureOutsideHours, overCapacityBy, capped };
 }
 
 export async function setResourceActiveCore(
@@ -934,7 +1027,7 @@ export async function applySchedTemplateCore(
   const idByRef = new Map<string, Id<"schedResources">>();
   const resourceIds: Id<"schedResources">[] = [];
   for (const [i, r] of draft.resources.entries()) {
-    const id = await upsertResourceCore(ctx, {
+    const { resourceId: id } = await upsertResourceCore(ctx, {
       organizationId,
       member,
       input: {

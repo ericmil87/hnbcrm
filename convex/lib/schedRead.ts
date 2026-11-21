@@ -9,11 +9,13 @@
  *
  * Custo em DOCUMENTOS lidos (janela de N dias, R recursos ativos, E exceções na janela):
  *   1 (org) + 1 (schedSettings) + R (schedResources, teto 100) + E (schedExceptions na janela,
- *   teto 500) + soma das alocações de cada recurso em [início − L, fim) (teto 300 por recurso,
- *   L = MAX_BLOCK_MIN) + compromissos internos da janela (teto 500; só lidos se algum recurso é
- *   pessoa ligada a membro). Faixas de índice: 3 + R (+1). Clínica do plano (3 salas + 4 pessoas,
- *   7 recursos): ~7 faixas de alocação; 1 dia ≈ 40–60 documentos, 7 dias ≈ 80–250.
- * Estourou um teto: `truncated: true` (a leitura nunca falha em silêncio; quem decide é o chamador).
+ *   teto 500) + por recurso: margem [início − L, início) decrescente (teto 200) + janela (teto 300),
+ *   L = MAX_BLOCK_MIN + compromissos internos SÓ dos membros ligados a recurso-pessoa, por faixa de
+ *   tempo (teto 200 por membro, + 1 faixa de eventos longos, teto 100). Faixas de índice: 3 + 2R + M + 1.
+ *   Clínica do plano (3 salas + 4 pessoas): 1 dia ≈ 40–60 documentos, 7 dias ≈ 80–250.
+ * FAIL-CLOSED: estourou um teto, `truncated:true` E o dado diz o que NÃO se pode afirmar (`coverage`,
+ *   `unverifiedResourceIds`, `exceptionsCompleteBefore`). A busca nunca oferece horário que dependa do
+ *   que não foi lido; as portas de reserva devem recusar do mesmo jeito.
  * Janela máxima: MAX_SEARCH_DAYS (7) dias; mais que isso LANÇA (ConvexError).
  */
 import { getAuthUserId } from "@convex-dev/auth/server";
@@ -23,6 +25,7 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { getActiveMembership } from "./auth";
 import { getModules } from "./orgModules";
 import { type AgendaLevel, hasPermission, type Permissions, resolvePermissions, type Role } from "./permissions";
+import { MAX_EVENT_DURATION_MS, SHORT_EVENT_MS } from "./calendarRules";
 import { MAX_BLOCK_MIN, MAX_SEARCH_DAYS } from "./schedConstants";
 import { type ResolvedSchedSettings, resolveSchedSettings } from "./schedSettingsDefaults";
 import { ACTIVE_STATUSES } from "./schedStatus";
@@ -31,10 +34,12 @@ import { assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type L
 type ReadCtx = { db: QueryCtx["db"] };
 
 const MINUTE_MS = 60_000;
-export const INTERNAL_EVENT_LOOKBACK_MS = 12 * 60 * 60 * 1000;
 export const MAX_EXCEPTIONS_PER_WINDOW = 500;
 export const MAX_ALLOCATIONS_PER_RESOURCE = 300;
-export const MAX_INTERNAL_EVENTS_PER_WINDOW = 500;
+/** Margem de `L` antes da janela (leitura decrescente, teto próprio). */
+export const MAX_MARGIN_ALLOCATIONS_PER_RESOURCE = 200;
+export const MAX_INTERNAL_EVENTS_PER_MEMBER = 200;
+export const MAX_LONG_EVENTS = 100;
 
 // ---------------------------------------------------------------------------
 // Acesso (queries nunca lançam por falta de permissão)
@@ -89,8 +94,13 @@ export async function personResourceIdsOf(ctx: ReadCtx, memberId: Id<"teamMember
 }
 
 /**
- * `view_own`: o membro é o recurso-pessoa do agendamento (retrato `resources[]`) ou o criador.
- * `ownResourceIds` vem de `personResourceIdsOf` (uma leitura por query, não por agendamento).
+ * REGRA EXATA de `view_own` (quem tem `view_all` ou mais vê tudo):
+ *   o leitor vê o agendamento SE (a) ele o criou (`createdBy` = o membro) OU (b) o retrato `resources[]` do
+ *   agendamento contém um recurso-pessoa ligado a ele (`teamMemberId`), alocado ou não.
+ * Consequência deliberada: agendamento em FILA DE CONFLITO (`allocated:false`) continua visível ao profissional
+ * do retrato, porque ele precisa saber; agendamento sem criador (mensagem do aparelho/link) só aparece a
+ * quem é o profissional. Sala/equipamento NÃO dá visibilidade. Fora desta regra o leitor só recebe a
+ * ocupação anônima (`listAgendaDay.busy`). `ownResourceIds` vem de `personResourceIdsOf` (1 leitura por query).
  */
 export function canSeeAppointment(
   reader: Pick<AgendaReader, "seesAll" | "member">,
@@ -119,6 +129,9 @@ export type LoadWindowArgs = {
 
 export type InternalEventLite = { teamMemberId: Id<"teamMembers">; start: number; end: number };
 
+/** Faixa em que as alocações lidas de um recurso são COMPLETAS: o bloco do candidato precisa caber nela. */
+export type AllocationCoverage = { from: number; to: number };
+
 export type WindowData = {
   org: Doc<"organizations">;
   tz: string;
@@ -129,13 +142,40 @@ export type WindowData = {
   resources: Doc<"schedResources">[];
   /** Exceções da org (`resourceId` ausente) e dos recursos carregados, na janela. */
   exceptions: Doc<"schedExceptions">[];
-  /** Alocações com `blockStart ∈ [início − L, fim)` e `blockEnd > início`. */
+  /**
+   * Alocações com `blockStart ∈ [início − L, fim)` e `blockEnd > início`, com `units` JÁ normalizado por
+   * `effectiveAllocationUnits` (alocação `exclusive` ocupa a capacidade ATUAL inteira do recurso).
+   */
   allocations: Doc<"schedAllocations">[];
   /** Compromissos internos `scheduled`, com horário, de membros ligados a recurso-pessoa. */
   internalEvents: InternalEventLite[];
   /** Algum teto foi atingido: a leitura pode estar incompleta. */
   truncated: boolean;
+  /**
+   * FAIL-CLOSED. Só há entrada para recurso cuja leitura de alocações estourou o teto: a busca só pode
+   * oferecer bloco dentro de `[from, to]` (use `blockCovered`). Recurso ausente = completo.
+   */
+  coverage: Record<string, AllocationCoverage>;
+  /** Recursos-pessoa cujos compromissos internos estouraram o teto: NÃO se pode oferecer horário deles. */
+  unverifiedResourceIds: Id<"schedResources">[];
+  /** Exceções estouraram o teto: dias com data `>=` esta NÃO são verificáveis (sem oferta). `null` = completo. */
+  exceptionsCompleteBefore: LocalDate | null;
 };
+
+/** `true` se o bloco `[blockStart, blockEnd)` está dentro do que foi lido do recurso (completo, se não há entrada). */
+export function blockCovered(data: Pick<WindowData, "coverage">, resourceId: string, blockStart: number, blockEnd: number): boolean {
+  const c = data.coverage[resourceId];
+  return c === undefined || (blockStart >= c.from && blockEnd <= c.to);
+}
+
+/**
+ * Unidades que a alocação ocupa HOJE: `exclusive` ocupa a capacidade atual inteira (a capacidade pode ter
+ * subido depois de gravada a linha); senão, as unidades gravadas. ÚNICA normalização: a porta de reserva
+ * usa esta mesma função.
+ */
+export function effectiveAllocationUnits(row: Pick<Doc<"schedAllocations">, "units" | "exclusive">, capacity: number): number {
+  return row.exclusive === true ? Math.max(row.units, capacity) : row.units;
+}
 
 export function assertSearchWindow(from: LocalDate, to: LocalDate): void {
   if (!isValidLocalDate(from) || !isValidLocalDate(to)) {
@@ -176,56 +216,124 @@ export async function loadWindow(ctx: ReadCtx, args: LoadWindowArgs): Promise<Wi
     .filter((r) => r.active && (only === null || only.has(r._id)))
     .sort((a, b) => a.sortOrder - b.sortOrder || (a._id < b._id ? -1 : 1));
   const resourceSet = new Set<string>(resources.map((r) => r._id));
+  const capacityOf = new Map<string, number>(resources.map((r) => [r._id, r.capacity]));
 
+  // --- exceções (1 faixa por data, ordem crescente de data)
   const exceptionRows = await ctx.db
     .query("schedExceptions")
     .withIndex("by_organization_and_date", (q) =>
       q.eq("organizationId", args.organizationId).gte("localDate", args.fromLocalDate).lte("localDate", args.toLocalDate)
     )
     .take(MAX_EXCEPTIONS_PER_WINDOW + 1);
-  if (exceptionRows.length > MAX_EXCEPTIONS_PER_WINDOW) truncated = true;
+  let exceptionsCompleteBefore: LocalDate | null = null;
+  if (exceptionRows.length > MAX_EXCEPTIONS_PER_WINDOW) {
+    truncated = true;
+    exceptionsCompleteBefore = exceptionRows[MAX_EXCEPTIONS_PER_WINDOW - 1].localDate;
+  }
   const exceptions = exceptionRows
     .slice(0, MAX_EXCEPTIONS_PER_WINDOW)
     .filter((e) => e.resourceId === undefined || resourceSet.has(e.resourceId));
 
+  // --- alocações: duas faixas por recurso, cada uma com o seu teto, para que o teto valha sobre o que importa.
+  //   A) margem `[início − L, início)` em ORDEM DECRESCENTE: as mais próximas da janela primeiro; as que
+  //      terminam antes da janela são lidas e descartadas, mas não gastam o teto da janela.
+  //   B) janela `[início, fim)` em ordem crescente.
   const lookback = MAX_BLOCK_MIN * MINUTE_MS;
+  const coverage: Record<string, AllocationCoverage> = {};
+  const allocations: Doc<"schedAllocations">[] = [];
   const perResource = await Promise.all(
-    resources.map((r) =>
-      ctx.db
+    resources.map(async (r) => {
+      const margin = await ctx.db
         .query("schedAllocations")
         .withIndex("by_resource_and_start", (q) =>
-          q.eq("resourceId", r._id).gte("blockStart", window.start - lookback).lt("blockStart", window.end)
+          q.eq("resourceId", r._id).gte("blockStart", window.start - lookback).lt("blockStart", window.start)
         )
-        .take(MAX_ALLOCATIONS_PER_RESOURCE + 1)
-    )
+        .order("desc")
+        .take(MAX_MARGIN_ALLOCATIONS_PER_RESOURCE + 1);
+      const inside = await ctx.db
+        .query("schedAllocations")
+        .withIndex("by_resource_and_start", (q) =>
+          q.eq("resourceId", r._id).gte("blockStart", window.start).lt("blockStart", window.end)
+        )
+        .take(MAX_ALLOCATIONS_PER_RESOURCE + 1);
+      return { r, margin, inside };
+    })
   );
-  const allocations: Doc<"schedAllocations">[] = [];
-  for (const rows of perResource) {
-    if (rows.length > MAX_ALLOCATIONS_PER_RESOURCE) truncated = true;
-    for (const row of rows.slice(0, MAX_ALLOCATIONS_PER_RESOURCE)) {
-      if (row.blockEnd > window.start) allocations.push(row);
+  for (const { r, margin, inside } of perResource) {
+    let from = -Infinity;
+    let to = Infinity;
+    if (margin.length > MAX_MARGIN_ALLOCATIONS_PER_RESOURCE) {
+      truncated = true;
+      // Linhas mais antigas que a mais antiga lida podem se estender até ela + L.
+      from = margin[MAX_MARGIN_ALLOCATIONS_PER_RESOURCE - 1].blockStart + lookback;
+    }
+    if (inside.length > MAX_ALLOCATIONS_PER_RESOURCE) {
+      truncated = true;
+      // Linhas não lidas começam em `to` ou depois.
+      to = inside[MAX_ALLOCATIONS_PER_RESOURCE - 1].blockStart;
+    }
+    if (from !== -Infinity || to !== Infinity) coverage[r._id] = { from, to };
+    for (const row of [...margin.slice(0, MAX_MARGIN_ALLOCATIONS_PER_RESOURCE), ...inside.slice(0, MAX_ALLOCATIONS_PER_RESOURCE)]) {
+      if (row.blockEnd <= window.start) continue;
+      allocations.push({ ...row, units: effectiveAllocationUnits(row, capacityOf.get(r._id) ?? row.units) });
     }
   }
 
+  // --- compromissos internos: só de membros ligados a recurso-pessoa (índice por membro e tempo).
+  //   Curtos (≤ 1 dia) começam até 1 dia antes da janela; longos (> 1 dia, `longStart`) pela faixa própria.
+  //   Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
   const internalEvents: InternalEventLite[] = [];
-  const memberIds = new Set<string>();
-  for (const r of resources) if (r.teamMemberId !== undefined) memberIds.add(r.teamMemberId);
-  if (args.includeInternalEvents !== false && memberIds.size > 0) {
-    const events = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_organization_and_start", (q) =>
-        q.eq("organizationId", args.organizationId).gte("startTime", window.start - INTERNAL_EVENT_LOOKBACK_MS).lt("startTime", window.end)
-      )
-      .take(MAX_INTERNAL_EVENTS_PER_WINDOW + 1);
-    if (events.length > MAX_INTERNAL_EVENTS_PER_WINDOW) truncated = true;
-    for (const ev of events.slice(0, MAX_INTERNAL_EVENTS_PER_WINDOW)) {
-      if (ev.status !== "scheduled" || ev.allDay || ev.assignedTo === undefined) continue;
-      if (!memberIds.has(ev.assignedTo) || ev.endTime <= window.start || ev.endTime <= ev.startTime) continue;
+  const unverified = new Set<Id<"schedResources">>();
+  const memberResources = new Map<string, Id<"schedResources">[]>();
+  for (const r of resources) {
+    if (r.teamMemberId === undefined) continue;
+    const list = memberResources.get(r.teamMemberId);
+    if (list) list.push(r._id);
+    else memberResources.set(r.teamMemberId, [r._id]);
+  }
+  if (args.includeInternalEvents !== false && memberResources.size > 0) {
+    const seen = new Set<string>();
+    const take = (ev: Doc<"calendarEvents">) => {
+      if (seen.has(ev._id)) return;
+      seen.add(ev._id);
+      if (ev.status !== "scheduled" || ev.allDay || ev.assignedTo === undefined) return;
+      if (!memberResources.has(ev.assignedTo) || ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
       internalEvents.push({ teamMemberId: ev.assignedTo, start: ev.startTime, end: ev.endTime });
+    };
+    for (const [memberId, ids] of memberResources) {
+      const rows = await ctx.db
+        .query("calendarEvents")
+        .withIndex("by_organization_and_assigned_and_start", (q) =>
+          q
+            .eq("organizationId", args.organizationId)
+            .eq("assignedTo", memberId as Id<"teamMembers">)
+            .gte("startTime", window.start - SHORT_EVENT_MS)
+            .lt("startTime", window.end)
+        )
+        .take(MAX_INTERNAL_EVENTS_PER_MEMBER + 1);
+      if (rows.length > MAX_INTERNAL_EVENTS_PER_MEMBER) {
+        truncated = true;
+        for (const id of ids) unverified.add(id);
+      }
+      rows.slice(0, MAX_INTERNAL_EVENTS_PER_MEMBER).forEach(take);
     }
+    const longRows = await ctx.db
+      .query("calendarEvents")
+      .withIndex("by_organization_and_long_start", (q) =>
+        q.eq("organizationId", args.organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS).lt("longStart", window.end)
+      )
+      .take(MAX_LONG_EVENTS + 1);
+    if (longRows.length > MAX_LONG_EVENTS) {
+      truncated = true;
+      for (const ids of memberResources.values()) for (const id of ids) unverified.add(id);
+    }
+    longRows.slice(0, MAX_LONG_EVENTS).forEach(take);
   }
 
-  return { org, tz, settings, window, resources, exceptions, allocations, internalEvents, truncated };
+  return {
+    org, tz, settings, window, resources, exceptions, allocations, internalEvents, truncated,
+    coverage, unverifiedResourceIds: [...unverified], exceptionsCompleteBefore,
+  };
 }
 
 // ---------------------------------------------------------------------------
