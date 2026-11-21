@@ -384,95 +384,119 @@ export const listAgendaAppointments = query({
     next: v.union(cursorValidator, v.null()),
   }),
   handler: async (ctx, args) => {
-    const empty = { enabled: false, appointments: [], next: null };
-    const reader = await readerIfOn(ctx, args.organizationId);
-    if (!reader) return empty;
-    assertRange(args.fromLocalDate, args.toLocalDate, 366);
-    const org = await ctx.db.get(args.organizationId);
-    if (!org) return empty;
-    const tz = assertValidTimezone(org.settings.timezone);
-    const limit = Math.max(1, Math.min(100, Math.trunc(args.limit ?? 50)));
-    const after = args.after;
-    const lo = Math.max(dayBounds(args.fromLocalDate, tz).start, after?.startTime ?? -Infinity);
-    const hi = dayBounds(args.toLocalDate, tz).end;
-    const status = args.status;
-    const rows =
-      status !== undefined
-        ? ctx.db
-            .query("schedAppointments")
-            .withIndex("by_organization_and_status_and_start", (q) =>
-              q.eq("organizationId", args.organizationId).eq("status", status).gte("startTime", lo).lt("startTime", hi)
-            )
-        : ctx.db
-            .query("schedAppointments")
-            .withIndex("by_organization_and_start", (q) => q.eq("organizationId", args.organizationId).gte("startTime", lo).lt("startTime", hi));
-    const own = await ownResourceIds(ctx, reader);
-    const afterCursor = (a: Doc<"schedAppointments">) =>
-      after === undefined || a.startTime > after.startTime || (a.startTime === after.startTime && a._creationTime > after.creationTime);
-    const res = await scanVisible(rows, (a) => afterCursor(a) && canSeeAppointment(reader, a, own), limit, 500);
-    return {
-      enabled: true,
-      appointments: res.items.map(toAppointmentRow),
-      next: res.more && res.cursorRow ? { startTime: res.cursorRow.startTime, creationTime: res.cursorRow._creationTime } : null,
-    };
+    const { timezone: _tz, ...page } = await listAppointmentsFor(ctx, await readerIfOn(ctx, args.organizationId), args);
+    void _tz;
+    return page;
   },
 });
+
+/** Núcleo da lista (sessão do app ou chave REST): o leitor já vem resolvido (módulo ligado e `agenda` ≥ `view_own`) ou `null`. */
+export async function listAppointmentsFor(
+  ctx: QueryCtx,
+  reader: AgendaReader | null,
+  args: {
+    organizationId: Id<"organizations">;
+    fromLocalDate: string;
+    toLocalDate: string;
+    status?: Doc<"schedAppointments">["status"];
+    limit?: number;
+    after?: { startTime: number; creationTime: number };
+  }
+) {
+  const empty = { enabled: false, timezone: "", appointments: [] as AppointmentRow[], next: null as { startTime: number; creationTime: number } | null };
+  if (!reader) return empty;
+  assertRange(args.fromLocalDate, args.toLocalDate, 366);
+  const org = await ctx.db.get(args.organizationId);
+  if (!org) return empty;
+  const tz = assertValidTimezone(org.settings.timezone);
+  const limit = Math.max(1, Math.min(100, Math.trunc(args.limit ?? 50)));
+  const after = args.after;
+  const lo = Math.max(dayBounds(args.fromLocalDate, tz).start, after?.startTime ?? -Infinity);
+  const hi = dayBounds(args.toLocalDate, tz).end;
+  const status = args.status;
+  const rows =
+    status !== undefined
+      ? ctx.db
+          .query("schedAppointments")
+          .withIndex("by_organization_and_status_and_start", (q) =>
+            q.eq("organizationId", args.organizationId).eq("status", status).gte("startTime", lo).lt("startTime", hi)
+          )
+      : ctx.db
+          .query("schedAppointments")
+          .withIndex("by_organization_and_start", (q) => q.eq("organizationId", args.organizationId).gte("startTime", lo).lt("startTime", hi));
+  const own = await ownResourceIds(ctx, reader);
+  const afterCursor = (a: Doc<"schedAppointments">) =>
+    after === undefined || a.startTime > after.startTime || (a.startTime === after.startTime && a._creationTime > after.creationTime);
+  const res = await scanVisible(rows, (a) => afterCursor(a) && canSeeAppointment(reader, a, own), limit, 500);
+  return {
+    enabled: true,
+    timezone: tz,
+    appointments: res.items.map(toAppointmentRow),
+    next: res.more && res.cursorRow ? { startTime: res.cursorRow.startTime, creationTime: res.cursorRow._creationTime } : null,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Detalhe e vínculos
 // ---------------------------------------------------------------------------
 
+export const appointmentDetailResultValidator = v.union(
+  v.null(),
+  v.object({
+    appointment: appointmentDetailValidator,
+    openConflicts: v.array(
+      v.object({
+        _id: v.id("schedConflicts"),
+        kind: v.union(v.literal("resource_closed"), v.literal("capacity"), v.literal("human_confirm"), v.literal("resource_removed")),
+        resourceId: v.optional(v.id("schedResources")),
+        localDate: v.optional(v.string()),
+        createdAt: v.number(),
+      })
+    ),
+    canEdit: v.boolean(),
+    /** Quem marcou: nome do membro, ou "IA", "Link público", "Sistema". */
+    createdByName: v.string(),
+    /** Mudanças de status com o ator (auditoria; só as que a auditoria registrou), do mais antigo ao mais novo. */
+    statusActors: v.array(statusActorValidator),
+  })
+);
+
 export const getAppointment = query({
   args: { appointmentId: v.id("schedAppointments") },
-  returns: v.union(
-    v.null(),
-    v.object({
-      appointment: appointmentDetailValidator,
-      openConflicts: v.array(
-        v.object({
-          _id: v.id("schedConflicts"),
-          kind: v.union(v.literal("resource_closed"), v.literal("capacity"), v.literal("human_confirm"), v.literal("resource_removed")),
-          resourceId: v.optional(v.id("schedResources")),
-          localDate: v.optional(v.string()),
-          createdAt: v.number(),
-        })
-      ),
-      canEdit: v.boolean(),
-      /** Quem marcou: nome do membro, ou "IA", "Link público", "Sistema". */
-      createdByName: v.string(),
-      /** Mudanças de status com o ator (auditoria; só as que a auditoria registrou), do mais antigo ao mais novo. */
-      statusActors: v.array(statusActorValidator),
-    })
-  ),
+  returns: appointmentDetailResultValidator,
   handler: async (ctx, args) => {
     const appt = await ctx.db.get(args.appointmentId);
     if (!appt) return null;
-    const reader = await readerIfOn(ctx, appt.organizationId);
-    if (!reader) return null;
-    const own = await ownResourceIds(ctx, reader);
-    if (!canSeeAppointment(reader, appt, own)) return null;
-    const conflicts = await ctx.db
-      .query("schedConflicts")
-      .withIndex("by_appointment", (q) => q.eq("appointmentId", appt._id))
-      .take(20);
-    const { createdByName, statusActors } = await resolveAppointmentActors(ctx, appt);
-    return {
-      appointment: toAppointmentDetail(appt),
-      openConflicts: conflicts
-        .filter((c) => c.status === "open")
-        .map((c) => ({
-          _id: c._id,
-          kind: c.kind,
-          ...(c.resourceId !== undefined ? { resourceId: c.resourceId } : {}),
-          ...(c.localDate !== undefined ? { localDate: c.localDate } : {}),
-          createdAt: c.createdAt,
-        })),
-      canEdit: reader.canEdit,
-      createdByName,
-      statusActors,
-    };
+    return await appointmentDetailFor(ctx, await readerIfOn(ctx, appt.organizationId), appt);
   },
 });
+
+/** Detalhe (sessão ou chave REST): `null` sem leitor ou quando o leitor não pode ver este agendamento. */
+export async function appointmentDetailFor(ctx: QueryCtx, reader: AgendaReader | null, appt: Doc<"schedAppointments">) {
+  if (!reader) return null;
+  const own = await ownResourceIds(ctx, reader);
+  if (!canSeeAppointment(reader, appt, own)) return null;
+  const conflicts = await ctx.db
+    .query("schedConflicts")
+    .withIndex("by_appointment", (q) => q.eq("appointmentId", appt._id))
+    .take(20);
+  const { createdByName, statusActors } = await resolveAppointmentActors(ctx, appt);
+  return {
+    appointment: toAppointmentDetail(appt),
+    openConflicts: conflicts
+      .filter((c) => c.status === "open")
+      .map((c) => ({
+        _id: c._id,
+        kind: c.kind,
+        ...(c.resourceId !== undefined ? { resourceId: c.resourceId } : {}),
+        ...(c.localDate !== undefined ? { localDate: c.localDate } : {}),
+        createdAt: c.createdAt,
+      })),
+    canEdit: reader.canEdit,
+    createdByName,
+    statusActors,
+  };
+}
 
 const ACTOR_AUDIT_SCAN = 40;
 const ACTOR_MEMBER_CAP = 12;
@@ -636,145 +660,149 @@ void [_co, _cs, _cra, _crb];
  * `now`: passe ARREDONDADO À HORA (a assinatura reativa não deve ser refeita a cada minuto); o servidor também
  * arredonda para baixo à hora, então o resultado é o mesmo. `now` não finito = erro.
  */
+export const pendingResultValidator = v.object({
+  enabled: v.boolean(),
+  approvals: v.array(appointmentRowValidator),
+  conflicts: v.array(
+    v.object({
+      _id: v.id("schedConflicts"),
+      _creationTime: v.number(),
+      ...conflictFields,
+      appointment: v.union(v.null(), appointmentRowValidator),
+    })
+  ),
+  /** Ativos (marcado/confirmado/chegou) cujo fim já passou e ninguém registrou o desfecho. */
+  noOutcome: v.array(appointmentRowValidator),
+  /** Sugestões de 1 toque (interpretação da confirmação do humano, PR C1). Só `view_all` ou mais. */
+  suggestions: v.array(
+    v.object({
+      _id: v.id("schedInterpretations"),
+      conversationId: v.id("conversations"),
+      act: v.string(),
+      parsed: v.object({ localDate: v.optional(v.string()), timeMin: v.optional(v.number()), serviceId: v.optional(v.id("schedServices")) }),
+      /** Por que não marcou sozinho (código curto: `sem_ia`, `servico_ambiguo`, `regra:OUTSIDE_HOURS`…). */
+      reason: v.optional(v.string()),
+      /** Remarcar/cancelar: o agendamento-alvo, quando único. */
+      appointmentId: v.optional(v.id("schedAppointments")),
+      createdAt: v.number(),
+    })
+  ),
+  capped: v.object({ approvals: v.boolean(), conflicts: v.boolean(), noOutcome: v.boolean(), suggestions: v.boolean() }),
+});
+
 export const listPending = query({
   args: { organizationId: v.id("organizations"), now: v.number() },
-  returns: v.object({
-    enabled: v.boolean(),
-    approvals: v.array(appointmentRowValidator),
-    conflicts: v.array(
-      v.object({
-        _id: v.id("schedConflicts"),
-        _creationTime: v.number(),
-        ...conflictFields,
-        appointment: v.union(v.null(), appointmentRowValidator),
-      })
-    ),
-    /** Ativos (marcado/confirmado/chegou) cujo fim já passou e ninguém registrou o desfecho. */
-    noOutcome: v.array(appointmentRowValidator),
-    /** Sugestões de 1 toque (interpretação da confirmação do humano, PR C1). Só `view_all` ou mais. */
-    suggestions: v.array(
-      v.object({
-        _id: v.id("schedInterpretations"),
-        conversationId: v.id("conversations"),
-        act: v.string(),
-        parsed: v.object({ localDate: v.optional(v.string()), timeMin: v.optional(v.number()), serviceId: v.optional(v.id("schedServices")) }),
-        /** Por que não marcou sozinho (código curto: `sem_ia`, `servico_ambiguo`, `regra:OUTSIDE_HOURS`…). */
-        reason: v.optional(v.string()),
-        /** Remarcar/cancelar: o agendamento-alvo, quando único. */
-        appointmentId: v.optional(v.id("schedAppointments")),
-        createdAt: v.number(),
-      })
-    ),
-    capped: v.object({ approvals: v.boolean(), conflicts: v.boolean(), noOutcome: v.boolean(), suggestions: v.boolean() }),
-  }),
-  handler: async (ctx, args) => {
-    const noCap = { approvals: false, conflicts: false, noOutcome: false, suggestions: false };
-    const empty = { enabled: false, approvals: [], conflicts: [], noOutcome: [], suggestions: [], capped: noCap };
-    if (!Number.isFinite(args.now)) throw new ConvexError("Horário de referência inválido.");
-    const reader = await readerIfOn(ctx, args.organizationId);
-    if (!reader) return empty;
-    const now = Math.floor(args.now / HOUR_MS) * HOUR_MS;
-    const own = await ownResourceIds(ctx, reader);
-    const visible = (a: Doc<"schedAppointments">) => canSeeAppointment(reader, a, own);
-    // `view_all`+ aceita tudo: lê só `limit + 1`; `view_own` lê até VISIBLE_READ_CAP.
-    const readCap = reader.seesAll ? PENDING_CAP + 1 : VISIBLE_READ_CAP;
+  returns: pendingResultValidator,
+  handler: async (ctx, args) => listPendingFor(ctx, await readerIfOn(ctx, args.organizationId), args),
+});
 
-    const approvals = await scanVisible(
+/** Núcleo das pendências (sessão ou chave REST); o leitor já vem resolvido ou `null`. */
+export async function listPendingFor(ctx: QueryCtx, reader: AgendaReader | null, args: { organizationId: Id<"organizations">; now: number }) {
+  const noCap = { approvals: false, conflicts: false, noOutcome: false, suggestions: false };
+  const empty = { enabled: false, approvals: [], conflicts: [], noOutcome: [], suggestions: [], capped: noCap };
+  if (!Number.isFinite(args.now)) throw new ConvexError("Horário de referência inválido.");
+  if (!reader) return empty;
+  const now = Math.floor(args.now / HOUR_MS) * HOUR_MS;
+  const own = await ownResourceIds(ctx, reader);
+  const visible = (a: Doc<"schedAppointments">) => canSeeAppointment(reader, a, own);
+  // `view_all`+ aceita tudo: lê só `limit + 1`; `view_own` lê até VISIBLE_READ_CAP.
+  const readCap = reader.seesAll ? PENDING_CAP + 1 : VISIBLE_READ_CAP;
+
+  const approvals = await scanVisible(
+    ctx.db
+      .query("schedAppointments")
+      .withIndex("by_organization_and_status_and_start", (q) => q.eq("organizationId", args.organizationId).eq("status", "pending_approval"))
+      .order("desc"),
+    visible,
+    PENDING_CAP,
+    readCap
+  );
+
+  const conflictScan = await scanVisible(
+    ctx.db
+      .query("schedConflicts")
+      .withIndex("by_organization_and_status_and_created", (q) => q.eq("organizationId", args.organizationId).eq("status", "open"))
+      .order("desc"),
+    async (c) => {
+      const appt = await ctx.db.get(c.appointmentId);
+      if (appt && appt.organizationId !== args.organizationId) return false;
+      return appt ? visible(appt) : reader.seesAll;
+    },
+    PENDING_CAP,
+    readCap
+  );
+  const conflicts = [];
+  for (const c of conflictScan.items) {
+    const appt = await ctx.db.get(c.appointmentId);
+    const { organizationId: _o, status: _s, resolvedAt: _ra, resolvedBy: _rb, ...rest } = c;
+    void [_o, _s, _ra, _rb];
+    conflicts.push({ ...rest, appointment: appt ? toAppointmentRow(appt) : null });
+  }
+
+  const open: Doc<"schedAppointments">[] = [];
+  let noOutcomeCapped = false;
+  for (const status of ["scheduled", "confirmed", "checked_in"] as const) {
+    const part = await scanVisible(
       ctx.db
         .query("schedAppointments")
-        .withIndex("by_organization_and_status_and_start", (q) => q.eq("organizationId", args.organizationId).eq("status", "pending_approval"))
+        .withIndex("by_organization_and_status_and_start", (q) => q.eq("organizationId", args.organizationId).eq("status", status).lt("startTime", now))
         .order("desc"),
-      visible,
+      (a) => a.endTime <= now && visible(a),
       PENDING_CAP,
-      readCap
+      // `view_all`: poucos em andamento ficam de fora do filtro; folga para eles.
+      reader.seesAll ? PENDING_CAP + 20 : VISIBLE_READ_CAP
     );
+    noOutcomeCapped = noOutcomeCapped || part.more;
+    open.push(...part.items);
+  }
+  open.sort((a, b) => b.startTime - a.startTime);
+  noOutcomeCapped = noOutcomeCapped || open.length > PENDING_CAP;
 
-    const conflictScan = await scanVisible(
-      ctx.db
-        .query("schedConflicts")
-        .withIndex("by_organization_and_status_and_created", (q) => q.eq("organizationId", args.organizationId).eq("status", "open"))
-        .order("desc"),
-      async (c) => {
-        const appt = await ctx.db.get(c.appointmentId);
-        if (appt && appt.organizationId !== args.organizationId) return false;
-        return appt ? visible(appt) : reader.seesAll;
-      },
-      PENDING_CAP,
-      readCap
-    );
-    const conflicts = [];
-    for (const c of conflictScan.items) {
-      const appt = await ctx.db.get(c.appointmentId);
-      const { organizationId: _o, status: _s, resolvedAt: _ra, resolvedBy: _rb, ...rest } = c;
-      void [_o, _s, _ra, _rb];
-      conflicts.push({ ...rest, appointment: appt ? toAppointmentRow(appt) : null });
-    }
+  let suggestions: Array<{
+    _id: Id<"schedInterpretations">;
+    conversationId: Id<"conversations">;
+    act: string;
+    parsed: { localDate?: string; timeMin?: number; serviceId?: Id<"schedServices"> };
+    reason?: string;
+    appointmentId?: Id<"schedAppointments">;
+    createdAt: number;
+  }> = [];
+  let suggestionsCapped = false;
+  if (reader.seesAll) {
+    const recent = await ctx.db
+      .query("schedInterpretations")
+      .withIndex("by_organization_and_status_and_created", (q) => q.eq("organizationId", args.organizationId).eq("status", "open"))
+      .order("desc")
+      .take(100);
+    // Aberta e ainda dentro das 48 h (a validade é lida aqui: não há job que a feche; `now` já vem arredondado à hora).
+    const matching = recent.filter((i) => i.status === "open" && i.decision === "proposed" && now - i.createdAt < SUGGESTION_TTL_MS);
+    suggestionsCapped = matching.length > PENDING_CAP || recent.length >= 100;
+    suggestions = matching.slice(0, PENDING_CAP).map((i) => ({
+      _id: i._id,
+      conversationId: i.conversationId,
+      act: i.act,
+      parsed: i.parsed,
+      ...(i.reason ? { reason: i.reason } : {}),
+      ...(i.appointmentId ? { appointmentId: i.appointmentId } : {}),
+      createdAt: i.createdAt,
+    }));
+  }
 
-    const open: Doc<"schedAppointments">[] = [];
-    let noOutcomeCapped = false;
-    for (const status of ["scheduled", "confirmed", "checked_in"] as const) {
-      const part = await scanVisible(
-        ctx.db
-          .query("schedAppointments")
-          .withIndex("by_organization_and_status_and_start", (q) => q.eq("organizationId", args.organizationId).eq("status", status).lt("startTime", now))
-          .order("desc"),
-        (a) => a.endTime <= now && visible(a),
-        PENDING_CAP,
-        // `view_all`: poucos em andamento ficam de fora do filtro; folga para eles.
-        reader.seesAll ? PENDING_CAP + 20 : VISIBLE_READ_CAP
-      );
-      noOutcomeCapped = noOutcomeCapped || part.more;
-      open.push(...part.items);
-    }
-    open.sort((a, b) => b.startTime - a.startTime);
-    noOutcomeCapped = noOutcomeCapped || open.length > PENDING_CAP;
-
-    let suggestions: Array<{
-      _id: Id<"schedInterpretations">;
-      conversationId: Id<"conversations">;
-      act: string;
-      parsed: { localDate?: string; timeMin?: number; serviceId?: Id<"schedServices"> };
-      reason?: string;
-      appointmentId?: Id<"schedAppointments">;
-      createdAt: number;
-    }> = [];
-    let suggestionsCapped = false;
-    if (reader.seesAll) {
-      const recent = await ctx.db
-        .query("schedInterpretations")
-        .withIndex("by_organization_and_status_and_created", (q) => q.eq("organizationId", args.organizationId).eq("status", "open"))
-        .order("desc")
-        .take(100);
-      // Aberta e ainda dentro das 48 h (a validade é lida aqui: não há job que a feche; `now` já vem arredondado à hora).
-      const matching = recent.filter((i) => i.status === "open" && i.decision === "proposed" && now - i.createdAt < SUGGESTION_TTL_MS);
-      suggestionsCapped = matching.length > PENDING_CAP || recent.length >= 100;
-      suggestions = matching.slice(0, PENDING_CAP).map((i) => ({
-        _id: i._id,
-        conversationId: i.conversationId,
-        act: i.act,
-        parsed: i.parsed,
-        ...(i.reason ? { reason: i.reason } : {}),
-        ...(i.appointmentId ? { appointmentId: i.appointmentId } : {}),
-        createdAt: i.createdAt,
-      }));
-    }
-
-    return {
-      enabled: true,
-      approvals: approvals.items.map(toAppointmentRow),
-      conflicts,
-      noOutcome: open.slice(0, PENDING_CAP).map(toAppointmentRow),
-      suggestions,
-      capped: { approvals: approvals.more, conflicts: conflictScan.more, noOutcome: noOutcomeCapped, suggestions: suggestionsCapped },
-    };
-  },
-});
+  return {
+    enabled: true,
+    approvals: approvals.items.map(toAppointmentRow),
+    conflicts,
+    noOutcome: open.slice(0, PENDING_CAP).map(toAppointmentRow),
+    suggestions,
+    capped: { approvals: approvals.more, conflicts: conflictScan.more, noOutcome: noOutcomeCapped, suggestions: suggestionsCapped },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Busca de horários
 // ---------------------------------------------------------------------------
 
-const findSlotsReason = v.union(
+export const findSlotsReason = v.union(
   v.literal("ok"),
   v.literal("service_unavailable"),
   v.literal("no_matching_resource"),
@@ -785,7 +813,7 @@ const findSlotsReason = v.union(
 );
 
 /** Redundância: o wrapper também corta (a própria `searchSlots` já sanitiza por construção). */
-function redact(slot: Slot, audience: "staff" | "ai" | "public"): Slot {
+export function redact(slot: Slot, audience: "staff" | "ai" | "public"): Slot {
   return audience === "staff" ? slot : { ...slot, resourceNames: [], reasons: [], reasonCodes: [], score: 0 };
 }
 
@@ -825,59 +853,79 @@ export const findSlots = query({
     reason: findSlotsReason,
   }),
   handler: async (ctx, args): Promise<FindSlotsResult> => {
-    const emptyWith = (reason: "module_off" | "no_access" | "appointment_unavailable"): FindSlotsResult => ({
-      slots: [],
-      hasMore: false,
-      relaxed: false,
-      relaxedDays: [],
-      mode: "rank",
-      firstPossible: undefined,
-      earliestBookableAt: args.now,
-      truncated: false,
-      reason,
-    });
     const reader = await resolveAgendaReader(ctx, args.organizationId, "view_own");
-    if (!reader) return emptyWith("no_access");
-    if (!(await isSchedulingOn(ctx, args.organizationId))) return emptyWith("module_off");
-    const audience = args.audience ?? "staff";
-
-    let ignoreAppointmentId: Id<"schedAppointments"> | undefined;
-    if (args.rescheduleAppointmentId !== undefined) {
-      const appt = await ctx.db.get(args.rescheduleAppointmentId);
-      if (!appt || !canSeeAppointment(reader, appt, await ownResourceIds(ctx, reader)) || !ACTIVE.has(appt.status)) {
-        return emptyWith("appointment_unavailable");
-      }
-      ignoreAppointmentId = appt._id;
-    }
-    const res = await searchSlots(ctx, {
-      organizationId: args.organizationId,
-      serviceId: args.serviceId,
-      variantKey: args.variantKey,
-      fromLocalDate: args.fromLocalDate,
-      toLocalDate: args.toLocalDate,
-      period: args.period,
-      resourceIds: args.resourceIds,
-      ignoreAppointmentId,
-      partySize: args.partySize,
-      audience,
-      now: args.now,
-      limit: args.limit,
-    });
-    return {
-      slots: res.slots.map((s) => redact(s, audience)),
-      hasMore: res.hasMore,
-      relaxed: res.relaxed,
-      relaxedDays: res.relaxedDays,
-      mode: res.mode,
-      firstPossible: res.firstPossible ? redact(res.firstPossible, audience) : undefined,
-      earliestBookableAt: res.earliestBookableAt,
-      truncated: res.truncated,
-      reason: res.reason,
-    };
+    return await findSlotsFor(ctx, reader, args);
   },
 });
 
-type FindSlotsResult = {
+type FindSlotsArgs = {
+  organizationId: Id<"organizations">;
+  serviceId: Id<"schedServices">;
+  variantKey?: string;
+  fromLocalDate: string;
+  toLocalDate?: string;
+  period?: "manha" | "tarde" | "noite" | "qualquer";
+  resourceIds?: Id<"schedResources">[];
+  rescheduleAppointmentId?: Id<"schedAppointments">;
+  partySize?: number;
+  audience?: "staff" | "ai" | "public";
+  limit?: number;
+  now: number;
+};
+
+/** Núcleo da busca (sessão ou chave REST): `reader` já resolvido por quem chama (`null` = sem acesso). */
+export async function findSlotsFor(ctx: QueryCtx, reader: AgendaReader | null, args: FindSlotsArgs): Promise<FindSlotsResult> {
+  const emptyWith = (reason: "module_off" | "no_access" | "appointment_unavailable"): FindSlotsResult => ({
+    slots: [],
+    hasMore: false,
+    relaxed: false,
+    relaxedDays: [],
+    mode: "rank",
+    firstPossible: undefined,
+    earliestBookableAt: args.now,
+    truncated: false,
+    reason,
+  });
+  if (!reader) return emptyWith("no_access");
+  if (!(await isSchedulingOn(ctx, args.organizationId))) return emptyWith("module_off");
+  const audience = args.audience ?? "staff";
+
+  let ignoreAppointmentId: Id<"schedAppointments"> | undefined;
+  if (args.rescheduleAppointmentId !== undefined) {
+    const appt = await ctx.db.get(args.rescheduleAppointmentId);
+    if (!appt || !canSeeAppointment(reader, appt, await ownResourceIds(ctx, reader)) || !ACTIVE.has(appt.status)) {
+      return emptyWith("appointment_unavailable");
+    }
+    ignoreAppointmentId = appt._id;
+  }
+  const res = await searchSlots(ctx, {
+    organizationId: args.organizationId,
+    serviceId: args.serviceId,
+    variantKey: args.variantKey,
+    fromLocalDate: args.fromLocalDate,
+    toLocalDate: args.toLocalDate,
+    period: args.period,
+    resourceIds: args.resourceIds,
+    ignoreAppointmentId,
+    partySize: args.partySize,
+    audience,
+    now: args.now,
+    limit: args.limit,
+  });
+  return {
+    slots: res.slots.map((s) => redact(s, audience)),
+    hasMore: res.hasMore,
+    relaxed: res.relaxed,
+    relaxedDays: res.relaxedDays,
+    mode: res.mode,
+    firstPossible: res.firstPossible ? redact(res.firstPossible, audience) : undefined,
+    earliestBookableAt: res.earliestBookableAt,
+    truncated: res.truncated,
+    reason: res.reason,
+  };
+}
+
+export type FindSlotsResult = {
   slots: Slot[];
   hasMore: boolean;
   relaxed: boolean;

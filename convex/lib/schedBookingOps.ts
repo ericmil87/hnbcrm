@@ -132,7 +132,8 @@ const GUEST_NAME_MAX = 80;
 const REASON_MAX = 200;
 const UNDO_AUDIT_SCAN = 20;
 const UNAVAILABLE = "Esse horário não está disponível.";
-const IDEMPOTENCY_REUSED = "Esta chave de idempotência já foi usada com outros dados.";
+export const IDEMPOTENCY_REUSED_MESSAGE = "Esta chave de idempotência já foi usada com outros dados.";
+const IDEMPOTENCY_REUSED = IDEMPOTENCY_REUSED_MESSAGE;
 
 /** Códigos que dependem do RECURSO escolhido: trocar de recurso pode resolver. */
 const RESOURCE_CODES: readonly RuleCode[] = [
