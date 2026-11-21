@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
-import { requirePermission, isActiveMemberOf } from "./lib/auth";
+import { requireAuth, requirePermission, isActiveMemberOf } from "./lib/auth";
 import { permissionsValidator } from "./schema";
 import type { Permissions } from "./lib/permissions";
 import {
@@ -18,7 +18,13 @@ import {
   restActor,
   updateEventCore,
 } from "./lib/calendarCore";
-import { EVENTS_MAX_LIMIT, clampLimit, fail } from "./lib/calendarRules";
+import {
+  EVENTS_REST_DEFAULT_LIMIT,
+  EVENTS_REST_MAX_LIMIT,
+  canViewAnyEvent,
+  clampLimit,
+  fail,
+} from "./lib/calendarRules";
 
 /**
  * Agenda (`calendarEvents`). Toda a regra vive em `lib/calendarCore.ts`; aqui
@@ -39,6 +45,8 @@ const recurrenceValidator = v.object({
   pattern: v.union(v.literal("daily"), v.literal("weekly"), v.literal("biweekly"), v.literal("monthly")),
   endDate: v.optional(v.number()),
   lastGeneratedAt: v.optional(v.number()),
+  // Só o servidor grava (âncora do dia da série mensal); aceito para o cliente poder reenviar o que leu.
+  anchorDay: v.optional(v.number()),
 });
 
 const listFilters = {
@@ -53,9 +61,12 @@ const listFilters = {
 
 /** Eventos (sobrepondo o intervalo) + tarefas com prazo: array, como sempre. */
 async function getEventsHandler(ctx: any, args: any) {
-  const member = await requirePermission(ctx, args.organizationId, "tasks", "view_own");
+  // Quem não pode ver nada recebe vazio (o Painel monta esta query em toda abertura:
+  // lançar derrubaria a tela inicial). Não-membro continua sendo erro de auth.
+  const member = await requireAuth(ctx, args.organizationId);
   const actor = appActor(member);
-  const { events, truncated } = await listEventsCore(ctx, actor, {
+  if (!canViewAnyEvent(actor.permissions)) return { items: [], truncated: false };
+  const { events, truncated, hasMore } = await listEventsCore(ctx, actor, {
     startDate: args.startDate,
     endDate: args.endDate,
     assignedTo: args.assignedTo,
@@ -75,7 +86,7 @@ async function getEventsHandler(ctx: any, args: any) {
     taskItems = res.items;
     tasksTruncated = res.truncated;
   }
-  return { items: [...events, ...taskItems], truncated: truncated || tasksTruncated };
+  return { items: [...events, ...taskItems], truncated: truncated || hasMore || tasksTruncated };
 }
 
 const rangeArgs = {
@@ -109,8 +120,9 @@ export const getEvent = query({
     if (!event) return null;
     // Deep link de outra org vira "não encontrado", não erro.
     if (!(await isActiveMemberOf(ctx, event.organizationId))) return null;
-    const member = await requirePermission(ctx, event.organizationId, "tasks", "view_own");
-    return await getEventCore(ctx, appActor(member), event);
+    const actor = appActor(await requireAuth(ctx, event.organizationId));
+    if (!canViewAnyEvent(actor.permissions)) return null;
+    return await getEventCore(ctx, actor, event);
   },
 });
 
@@ -122,14 +134,15 @@ export const getEventsByLead = query({
     const lead = await ctx.db.get(args.leadId);
     if (!lead) return [];
     if (!(await isActiveMemberOf(ctx, lead.organizationId))) return [];
-    const member = await requirePermission(ctx, lead.organizationId, "tasks", "view_own");
+    const actor = appActor(await requireAuth(ctx, lead.organizationId));
+    if (!canViewAnyEvent(actor.permissions)) return [];
 
     const events = await ctx.db
       .query("calendarEvents")
       .withIndex("by_lead", (q) => q.eq("leadId", args.leadId))
       .order("desc")
       .take(200);
-    return await listEventsByRelationCore(ctx, appActor(member), events);
+    return await listEventsByRelationCore(ctx, actor, events);
   },
 });
 
@@ -141,14 +154,15 @@ export const getEventsByContact = query({
     const contact = await ctx.db.get(args.contactId);
     if (!contact) return [];
     if (!(await isActiveMemberOf(ctx, contact.organizationId))) return [];
-    const member = await requirePermission(ctx, contact.organizationId, "tasks", "view_own");
+    const actor = appActor(await requireAuth(ctx, contact.organizationId));
+    if (!canViewAnyEvent(actor.permissions)) return [];
 
     const events = await ctx.db
       .query("calendarEvents")
       .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
       .order("desc")
       .take(200);
-    return await listEventsByRelationCore(ctx, appActor(member), events);
+    return await listEventsByRelationCore(ctx, actor, events);
   },
 });
 
@@ -191,10 +205,13 @@ const updateFields = {
   notes: v.optional(v.string()),
 };
 
-/** Org do evento (para o `requirePermission`); inexistente = erro PT-BR. */
+/**
+ * Org do evento (para o `requirePermission`). Inexistente e de outra org
+ * respondem igual ("Evento não encontrado"): o erro não revela que o id existe.
+ */
 async function eventOrg(ctx: any, eventId: any) {
   const event = await ctx.db.get(eventId);
-  if (!event) fail(EVENT_NOT_FOUND);
+  if (!event || !(await isActiveMemberOf(ctx, event.organizationId))) fail(EVENT_NOT_FOUND);
   return event.organizationId;
 }
 
@@ -298,7 +315,7 @@ export const internalGetEvents = internalQuery({
       status: args.status,
       leadId: args.leadId,
       contactId: args.contactId,
-      limit: clampLimit(args.limit, 200, EVENTS_MAX_LIMIT),
+      limit: clampLimit(args.limit, EVENTS_REST_DEFAULT_LIMIT, EVENTS_REST_MAX_LIMIT),
       cursor: args.cursor,
     });
     return { events, nextCursor, hasMore, truncated };
@@ -337,10 +354,10 @@ export const internalCreateEvent = internalMutation({
 
 // Internal: Update event
 export const internalUpdateEvent = internalMutation({
-  args: { eventId: v.id("calendarEvents"), organizationId: v.optional(v.id("organizations")), ...updateFields, ...restIdentity },
+  args: { eventId: v.id("calendarEvents"), organizationId: v.id("organizations"), ...updateFields, ...restIdentity },
   returns: v.null(),
   handler: async (ctx, { eventId, organizationId, teamMemberId, permissions, ...input }) => {
-    const actor = await restActor(ctx, organizationId ?? (await eventOrg(ctx, eventId)), teamMemberId, permissions as Permissions | undefined);
+    const actor = await restActor(ctx, organizationId, teamMemberId, permissions as Permissions | undefined);
     await updateEventCore(ctx, actor, eventId, input);
     return null;
   },
@@ -348,12 +365,12 @@ export const internalUpdateEvent = internalMutation({
 
 const restEventArgs = {
   eventId: v.id("calendarEvents"),
-  organizationId: v.optional(v.id("organizations")),
+  organizationId: v.id("organizations"),
   ...restIdentity,
 };
 
-async function restEventActor(ctx: any, args: { eventId: any; organizationId?: any; teamMemberId: any; permissions?: any }) {
-  return await restActor(ctx, args.organizationId ?? (await eventOrg(ctx, args.eventId)), args.teamMemberId, args.permissions);
+async function restEventActor(ctx: any, args: { organizationId: any; teamMemberId: any; permissions?: any }) {
+  return await restActor(ctx, args.organizationId, args.teamMemberId, args.permissions);
 }
 
 // Internal: Delete event

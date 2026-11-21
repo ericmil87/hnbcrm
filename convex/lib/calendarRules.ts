@@ -24,10 +24,27 @@ export const MAX_SHORT_LENGTH = 500;
 export const MAX_COLOR_LENGTH = 40;
 export const MAX_ATTENDEES = 50;
 
-/** Teto de linhas lidas por consulta de grade e de itens devolvidos. */
+/** Teto de linhas lidas por faixa de índice numa consulta de grade. */
 export const EVENTS_SCAN_CAP = 1500;
-export const EVENTS_DEFAULT_LIMIT = 1000;
-export const EVENTS_MAX_LIMIT = 500;
+/**
+ * Itens devolvidos ao APP: a grade mostra tudo o que cabe (o corte sempre
+ * vira `truncated`). É maior que o máximo do REST de propósito: o REST
+ * pagina por cursor em páginas pequenas, o app faz uma consulta só.
+ */
+export const EVENTS_APP_LIMIT = 1000;
+export const EVENTS_REST_DEFAULT_LIMIT = 200;
+export const EVENTS_REST_MAX_LIMIT = 500;
+/** Evento mais curto que isto é "curto": a leitura recua só 1 dia para achá-lo. */
+export const SHORT_EVENT_MS = DAY_MS;
+
+/**
+ * `longStart` (= startTime) só é gravado em evento de duração > 1 dia; é o que
+ * o índice `by_organization_and_long_start` lê para achar evento longo que
+ * começou muito antes da janela sem recuar 31 dias no índice principal.
+ */
+export function longStartFor(startTime: number, endTime: number): number | undefined {
+  return endTime - startTime > SHORT_EVENT_MS ? startTime : undefined;
+}
 
 export type EventStatus = "scheduled" | "completed" | "cancelled";
 export type RecurrencePattern = "daily" | "weekly" | "biweekly" | "monthly";
@@ -214,6 +231,7 @@ export function nextOccurrenceStart(
   startTime: number,
   pattern: RecurrencePattern,
   timezone: string | null | undefined,
+  anchorDay?: number,
 ): number {
   const tz = safeTimezone(timezone);
   const p = localParts(startTime, tz);
@@ -226,7 +244,8 @@ export function nextOccurrenceStart(
       m = 1;
       y += 1;
     }
-    d = Math.min(d, daysInMonth(y, m));
+    // `anchorDay` = dia original da série: 31/01 → 28/02 → 31/03 (sem ele, deriva).
+    d = Math.min(anchorDay && anchorDay >= 1 && anchorDay <= 31 ? anchorDay : d, daysInMonth(y, m));
   } else {
     const step = pattern === "daily" ? 1 : pattern === "weekly" ? 7 : 14;
     const shifted = new Date(Date.UTC(y, m - 1, d + step));
@@ -235,4 +254,9 @@ export function nextOccurrenceStart(
     d = shifted.getUTCDate();
   }
   return localInstant(y, m, d, p.hh, p.mm, tz) + (startTime % 60_000);
+}
+
+/** Dia do mês de `startTime` no fuso (âncora da recorrência mensal). */
+export function localDayOfMonth(startTime: number, timezone: string | null | undefined): number {
+  return localParts(startTime, safeTimezone(timezone)).d;
 }

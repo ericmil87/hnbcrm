@@ -10,7 +10,8 @@ import { convexTest, TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import { Id } from "./_generated/dataModel";
 import schema from "./schema";
-import { EVENTS_SCAN_CAP, DAY_MS } from "./lib/calendarRules";
+import { EVENTS_SCAN_CAP, EVENTS_APP_LIMIT, DAY_MS, longStartFor } from "./lib/calendarRules";
+import { DELETE_DESCENDANTS_CAP } from "./lib/calendarCore";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -110,14 +111,19 @@ const base = (s: Seed, over: Record<string, any> = {}) => ({
   ...over,
 });
 
+/** `legacy: true` simula evento longo gravado antes do `longStart` (sem o campo). */
 async function insertRaw(t: TestConvex<typeof schema>, s: Seed, over: Record<string, any> = {}) {
+  const { legacy, ...rest } = over;
   return await t.run(async (ctx) => {
     const now = Date.now();
-    return await ctx.db.insert("calendarEvents", {
+    const doc: any = {
       organizationId: s.orgA, title: "Evento", eventType: "meeting", startTime: T0, endTime: T0 + HOUR,
       allDay: false, status: "scheduled", createdBy: s.adminA.memberId, createdAt: now, updatedAt: now,
-      ...over,
-    } as any);
+      ...rest,
+    };
+    const ls = legacy ? undefined : longStartFor(doc.startTime, doc.endTime);
+    if (ls !== undefined) doc.longStart = ls;
+    return await ctx.db.insert("calendarEvents", doc);
   });
 }
 
@@ -239,13 +245,82 @@ describe("isolamento entre orgs na LEITURA", () => {
 });
 
 describe("permissões por papel (categoria tasks)", () => {
-  test("sem tasks (none): nada de ler nem escrever", async () => {
+  test("sem tasks (none): queries degradam para vazio/null (o Painel não quebra); mutations lançam", async () => {
     const s = await seed(t);
-    const id = await insertRaw(t, s);
+    const id = await insertRaw(t, s, { leadId: s.leadA, contactId: s.contactA });
     const u = as(t, s.noneA);
-    expect(await errText(u.query(api.calendar.getEvents, { organizationId: s.orgA, startDate: 0, endDate: 1 }))).toMatch(/Permissão insuficiente/);
-    expect(await errText(u.query(api.calendar.getEvent, { eventId: id }))).toMatch(/Permissão insuficiente/);
+    const range = { organizationId: s.orgA, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS };
+    expect(await u.query(api.calendar.getEvents, range)).toEqual([]);
+    expect(await u.query(api.calendar.getEventsWithMeta, range)).toEqual({ items: [], truncated: false });
+    expect(await u.query(api.calendar.getEvent, { eventId: id })).toBeNull();
+    expect(await u.query(api.calendar.getEventsByLead, { leadId: s.leadA })).toEqual([]);
+    expect(await u.query(api.calendar.getEventsByContact, { contactId: s.contactA })).toEqual([]);
     expect(await errText(u.mutation(api.calendar.createEvent, base(s)))).toMatch(/Permissão insuficiente/);
+    expect(await errText(u.mutation(api.calendar.completeEvent, { eventId: id }))).toMatch(/Permissão insuficiente/);
+    // quem não é membro da org continua sem acesso (erro de auth, como em main)
+    expect(await errText(as(t, s.adminB).query(api.calendar.getEvents, range))).toMatch(/Not authorized/);
+  });
+
+  test("por lead/contato: matriz de papéis (admin e agent veem; view_own só os seus; none vazio) e de outra org nunca", async () => {
+    const s = await seed(t);
+    await insertRaw(t, s, { title: "Do admin", leadId: s.leadA, contactId: s.contactA });
+    await insertRaw(t, s, { title: "Do leitor", leadId: s.leadA, contactId: s.contactA, createdBy: s.viewerA.memberId });
+    const titles = async (u: any) => [
+      (await u.query(api.calendar.getEventsByLead, { leadId: s.leadA })).map((e: any) => e.title).sort(),
+      (await u.query(api.calendar.getEventsByContact, { contactId: s.contactA })).map((e: any) => e.title).sort(),
+    ];
+    expect(await titles(as(t, s.adminA))).toEqual([["Do admin", "Do leitor"], ["Do admin", "Do leitor"]]);
+    expect(await titles(as(t, s.agentA))).toEqual([["Do admin", "Do leitor"], ["Do admin", "Do leitor"]]);
+    expect(await titles(as(t, s.viewerA))).toEqual([["Do leitor"], ["Do leitor"]]);
+    expect(await titles(as(t, s.noneA))).toEqual([[], []]);
+    expect(await titles(as(t, s.adminB))).toEqual([[], []]);
+  });
+
+  test("canEdit é calculado no servidor para o chamador", async () => {
+    const s = await seed(t);
+    const mine = await insertRaw(t, s, { title: "Meu", createdBy: s.agentA.memberId });
+    await insertRaw(t, s, { title: "Alheio" });
+    await t.run(async (ctx) => {
+      await ctx.db.insert("tasks", { organizationId: s.orgA, title: "T", type: "task", status: "pending", priority: "low", createdBy: s.adminA.memberId, dueDate: T0, createdAt: 1, updatedAt: 1 } as any);
+    });
+    const range = { organizationId: s.orgA, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS };
+    const agentList = await as(t, s.agentA).query(api.calendar.getEvents, range);
+    const by = (list: any[]) => Object.fromEntries(list.map((e) => [e.title, e.canEdit]));
+    expect(by(agentList)).toEqual({ Meu: true, Alheio: false, T: false });
+    expect(by(await as(t, s.adminA).query(api.calendar.getEvents, range))).toMatchObject({ Meu: true, Alheio: true });
+    expect((await as(t, s.agentA).query(api.calendar.getEvent, { eventId: mine })).canEdit).toBe(true);
+    expect((await as(t, s.viewerA).query(api.calendar.getEvent, { eventId: await insertRaw(t, s, { createdBy: s.viewerA.memberId }) })).canEdit).toBe(false);
+  });
+
+  test("REST: agent não reagenda/conclui/exclui evento de colega; reagenda o seu", async () => {
+    const s = await seed(t);
+    const rest = { organizationId: s.orgA, teamMemberId: s.agentA.memberId };
+    const colleague = await insertRaw(t, s, { createdBy: s.agent2A.memberId });
+    expect(await errText(t.mutation(internal.calendar.internalRescheduleEvent, { eventId: colleague, newStartTime: T0 + HOUR, ...rest }))).toMatch(/Permissão insuficiente/);
+    expect(await errText(t.mutation(internal.calendar.internalCompleteEvent, { eventId: colleague, ...rest }))).toMatch(/Permissão insuficiente/);
+    expect(await errText(t.mutation(internal.calendar.internalCancelEvent, { eventId: colleague, ...rest }))).toMatch(/Permissão insuficiente/);
+    expect(await errText(t.mutation(internal.calendar.internalDeleteEvent, { eventId: colleague, ...rest }))).toMatch(/Permissão insuficiente/);
+    expect(await errText(t.mutation(internal.calendar.internalUpdateEvent, { eventId: colleague, title: "x", ...rest }))).toMatch(/Permissão insuficiente/);
+    const mine = await insertRaw(t, s, { createdBy: s.agentA.memberId });
+    await t.mutation(internal.calendar.internalRescheduleEvent, { eventId: mine, newStartTime: T0 + HOUR, ...rest });
+  });
+
+  test("evento inexistente e de outra org respondem igual nos caminhos por id do app", async () => {
+    const s = await seed(t);
+    const foreign = await insertRaw(t, s);
+    const gone = await insertRaw(t, s);
+    await t.run(async (ctx) => ctx.db.delete(gone));
+    const b = as(t, s.adminB);
+    for (const call of [
+      (id: any) => b.mutation(api.calendar.completeEvent, { eventId: id }),
+      (id: any) => b.mutation(api.calendar.cancelEvent, { eventId: id }),
+      (id: any) => b.mutation(api.calendar.deleteEvent, { eventId: id }),
+      (id: any) => b.mutation(api.calendar.updateEvent, { eventId: id, title: "x" }),
+      (id: any) => b.mutation(api.calendar.rescheduleEvent, { eventId: id, newStartTime: T0 }),
+    ]) {
+      expect(await errText(call(foreign))).toBe("Evento não encontrado");
+      expect(await errText(call(gone))).toBe("Evento não encontrado");
+    }
   });
 
   test("view_own: vê só os próprios, não cria, não edita", async () => {
@@ -498,13 +573,68 @@ describe("recorrência", () => {
     expect(all).toHaveLength(4);
   });
 
-  test("excluir apaga a cadeia inteira (filho, neto), não só o primeiro nível", async () => {
+  test("excluir apaga o evento e só os descendentes ainda agendados; concluído/cancelado fica sem pai pendurado", async () => {
     const s = await seed(t);
     const root = await insertRaw(t, s, { recurrence: { pattern: "daily" } });
-    const child = await insertRaw(t, s, { parentEventId: root });
-    await insertRaw(t, s, { parentEventId: child });
+    const doneChild = await insertRaw(t, s, { parentEventId: root, status: "completed", title: "feito" });
+    const schedChild = await insertRaw(t, s, { parentEventId: root, title: "agendado" });
+    const grandSched = await insertRaw(t, s, { parentEventId: schedChild, title: "neto agendado" });
+    const grandCancelled = await insertRaw(t, s, { parentEventId: schedChild, status: "cancelled", title: "neto cancelado" });
+    const behindDone = await insertRaw(t, s, { parentEventId: doneChild, title: "atrás do feito" });
+    // filho de OUTRA org apontando para a raiz: nunca é tocado
+    const foreign = await t.run(async (ctx) =>
+      ctx.db.insert("calendarEvents", {
+        organizationId: s.orgB, title: "outra org", eventType: "other", startTime: T0, endTime: T0 + 1, allDay: false,
+        status: "scheduled", createdBy: s.adminB.memberId, parentEventId: root, createdAt: 1, updatedAt: 1,
+      }),
+    );
     await as(t, s.adminA).mutation(api.calendar.deleteEvent, { eventId: root });
-    expect(await t.run(async (ctx) => (await ctx.db.query("calendarEvents").collect()).length)).toBe(0);
+    const get = (id: any) => t.run(async (ctx) => ctx.db.get(id)) as Promise<any>;
+    expect(await get(root)).toBeNull();
+    expect(await get(schedChild)).toBeNull();
+    expect(await get(grandSched)).toBeNull();
+    expect((await get(doneChild))?.parentEventId).toBeUndefined();
+    expect((await get(doneChild))?.title).toBe("feito");
+    expect((await get(grandCancelled))?.parentEventId).toBeUndefined();
+    expect((await get(behindDone))?.parentEventId).toBe(doneChild); // intocado: o pai existe
+    expect((await get(foreign))?.parentEventId).toBe(root);
+    const audit = await t.run(async (ctx) => (await ctx.db.query("auditLogs").collect()).find((a) => a.action === "delete"));
+    expect(audit?.metadata).toMatchObject({ deletedDescendants: 2, preservedDescendants: 2 });
+  });
+
+  test("cadeia acima do teto: não apaga nada (nem a raiz) e explica", async () => {
+    const s = await seed(t);
+    const root = await insertRaw(t, s, { recurrence: { pattern: "daily" } });
+    await t.run(async (ctx) => {
+      for (let i = 0; i < DELETE_DESCENDANTS_CAP + 1; i++) {
+        await ctx.db.insert("calendarEvents", {
+          organizationId: s.orgA, title: `c${i}`, eventType: "other", startTime: T0 + i, endTime: T0 + i, allDay: false,
+          status: "scheduled", createdBy: s.adminA.memberId, parentEventId: root, createdAt: 1, updatedAt: 1,
+        });
+      }
+    });
+    expect(await errText(as(t, s.adminA).mutation(api.calendar.deleteEvent, { eventId: root }))).toMatch(/ocorrências demais/);
+    expect(await t.run(async (ctx) => (await ctx.db.query("calendarEvents").collect()).length)).toBe(DELETE_DESCENDANTS_CAP + 2);
+  });
+
+  test("mensal ancorado: 31/01 → 28/02 → 31/03 (anchorDay); sem âncora (legado) segue derivando", async () => {
+    const s = await seed(t);
+    const admin = as(t, s.adminA);
+    const start = Date.parse("2026-01-31T10:00:00-03:00");
+    const id = await admin.mutation(api.calendar.createEvent, base(s, { startTime: start, endTime: start + HOUR, recurrence: { pattern: "monthly" } }));
+    expect(((await t.run(async (ctx) => ctx.db.get(id))) as any).recurrence.anchorDay).toBe(31);
+    await admin.mutation(api.calendar.completeEvent, { eventId: id });
+    const feb = await t.run(async (ctx) => (await ctx.db.query("calendarEvents").collect()).find((e) => e.parentEventId === id)!);
+    expect(feb.startTime).toBe(Date.parse("2026-02-28T10:00:00-03:00"));
+    expect(feb.recurrence?.anchorDay).toBe(31);
+    await admin.mutation(api.calendar.completeEvent, { eventId: feb._id });
+    const mar = await t.run(async (ctx) => (await ctx.db.query("calendarEvents").collect()).find((e) => e.parentEventId === feb._id)!);
+    expect(mar.startTime).toBe(Date.parse("2026-03-31T10:00:00-03:00"));
+    // legado: sem anchorDay deriva do dia atual (28)
+    const legacy = await insertRaw(t, s, { startTime: Date.parse("2026-02-28T10:00:00-03:00"), endTime: Date.parse("2026-02-28T11:00:00-03:00"), recurrence: { pattern: "monthly" } });
+    await admin.mutation(api.calendar.completeEvent, { eventId: legacy });
+    const next = await t.run(async (ctx) => (await ctx.db.query("calendarEvents").collect()).find((e) => e.parentEventId === legacy)!);
+    expect(next.startTime).toBe(Date.parse("2026-03-28T10:00:00-03:00"));
   });
 });
 
@@ -518,6 +648,89 @@ describe("getEvents: sobreposição, teto e paginação", () => {
     await insertRaw(t, s, { title: "Depois", startTime: start + 3 * DAY_MS, endTime: start + 3 * DAY_MS + HOUR });
     const list = await as(t, s.adminA).query(api.calendar.getEvents, { organizationId: s.orgA, startDate: start, endDate: start + DAY_MS, includeTasks: false });
     expect(list.map((e: any) => e.title)).toEqual(["Atravessa", "Dentro"]);
+  });
+
+  test("longStart: evento de 3 dias aparece no dia do meio (início > 1 dia antes da janela); legado sem o campo não", async () => {
+    const s = await seed(t);
+    const D0 = Date.parse("2026-06-01T10:00:00Z");
+    await insertRaw(t, s, { title: "Viagem", startTime: D0, endTime: D0 + 3 * DAY_MS });
+    await insertRaw(t, s, { title: "Viagem legada", startTime: D0, endTime: D0 + 3 * DAY_MS, legacy: true });
+    const mid = { organizationId: s.orgA, startDate: D0 + 2 * DAY_MS - 10 * HOUR, endDate: D0 + 2 * DAY_MS + 8 * HOUR, includeTasks: false };
+    const list = await as(t, s.adminA).query(api.calendar.getEvents, mid);
+    expect(list.map((e: any) => e.title)).toEqual(["Viagem"]);
+    // quem ainda tem o evento legado no dia seguinte ao início o vê (recuo de 1 dia no índice principal)
+    const day1 = { organizationId: s.orgA, startDate: D0 + 10 * HOUR, endDate: D0 + 20 * HOUR, includeTasks: false };
+    expect((await as(t, s.adminA).query(api.calendar.getEvents, day1)).map((e: any) => e.title).sort()).toEqual(["Viagem", "Viagem legada"]);
+  });
+
+  test("longStart é mantido em create, update, reschedule e recorrência", async () => {
+    const s = await seed(t);
+    const admin = as(t, s.adminA);
+    const get = async (id: any) => (await t.run(async (ctx) => ctx.db.get(id))) as any;
+    const id = await admin.mutation(api.calendar.createEvent, base(s));
+    expect((await get(id)).longStart).toBeUndefined();
+    await admin.mutation(api.calendar.updateEvent, { eventId: id, endTime: T0 + 3 * DAY_MS });
+    expect((await get(id)).longStart).toBe(T0);
+    await admin.mutation(api.calendar.rescheduleEvent, { eventId: id, newStartTime: T0 + DAY_MS });
+    expect((await get(id)).longStart).toBe(T0 + DAY_MS);
+    await admin.mutation(api.calendar.rescheduleEvent, { eventId: id, newStartTime: T0, newEndTime: T0 + HOUR });
+    expect((await get(id)).longStart).toBeUndefined();
+    const long = await admin.mutation(api.calendar.createEvent, base(s, { endTime: T0 + 2 * DAY_MS, recurrence: { pattern: "weekly" } }));
+    expect((await get(long)).longStart).toBe(T0);
+    await admin.mutation(api.calendar.completeEvent, { eventId: long });
+    const child = await t.run(async (ctx) => (await ctx.db.query("calendarEvents").collect()).find((e) => e.parentEventId === long)!);
+    expect(child.longStart).toBe(child.startTime);
+  });
+
+  test("backfill: dryRun (default) só conta; real grava longStart nos longos legados e é idempotente", async () => {
+    const s = await seed(t);
+    const a = await insertRaw(t, s, { startTime: T0, endTime: T0 + 3 * DAY_MS, legacy: true });
+    await insertRaw(t, s, { title: "curto" });
+    await insertRaw(t, s, { startTime: T0, endTime: T0 + 2 * DAY_MS }); // já tem
+    const dry: any = await t.mutation(internal.opsCalendar.internalBackfillCalendarLongStart, {});
+    expect(dry).toMatchObject({ dryRun: true, scanned: 3, wouldWrite: 1, written: 0, isDone: true, scheduledNext: false });
+    expect(((await t.run(async (ctx) => ctx.db.get(a))) as any).longStart).toBeUndefined();
+    const real: any = await t.mutation(internal.opsCalendar.internalBackfillCalendarLongStart, { dryRun: false });
+    expect(real).toMatchObject({ dryRun: false, wouldWrite: 1, written: 1 });
+    expect(((await t.run(async (ctx) => ctx.db.get(a))) as any).longStart).toBe(T0);
+    const again: any = await t.mutation(internal.opsCalendar.internalBackfillCalendarLongStart, { dryRun: false });
+    expect(again).toMatchObject({ wouldWrite: 0, written: 0 });
+    expect(JSON.stringify(real)).not.toMatch(/Evento|example/); // só contagens
+  });
+
+  test("corte em 1000: getEventsWithMeta devolve 1000 itens com truncated verdadeiro (todos os tipos contam)", async () => {
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < EVENTS_APP_LIMIT + 5; i++) {
+        await ctx.db.insert("calendarEvents", {
+          organizationId: s.orgA, title: `E${i}`, eventType: i % 2 ? "call" : "meeting", startTime: T0 + i * 1000, endTime: T0 + i * 1000 + 500,
+          allDay: false, status: "scheduled", createdBy: s.adminA.memberId, createdAt: 1, updatedAt: 1,
+        });
+      }
+    });
+    const range = { organizationId: s.orgA, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS, includeTasks: false };
+    const res = await as(t, s.adminA).query(api.calendar.getEventsWithMeta, range);
+    expect(res.items).toHaveLength(EVENTS_APP_LIMIT);
+    expect(res.truncated).toBe(true);
+    const small = await as(t, s.adminA).query(api.calendar.getEventsWithMeta, { ...range, endDate: T0 + 100 * 1000 });
+    expect(small.truncated).toBe(false);
+  });
+
+  test("REST por lead com mais de 1500 eventos: sem cursor infinito (hasMore:false, truncated:true)", async () => {
+    const s = await seed(t);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < EVENTS_SCAN_CAP + 10; i++) {
+        await ctx.db.insert("calendarEvents", {
+          organizationId: s.orgA, title: `L${i}`, eventType: "other", startTime: T0 + i * 1000, endTime: T0 + i * 1000 + 500,
+          allDay: false, status: "scheduled", leadId: s.leadA, createdBy: s.adminA.memberId, createdAt: 1, updatedAt: 1,
+        });
+      }
+    });
+    const rest = { organizationId: s.orgA, teamMemberId: s.adminA.memberId, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS, leadId: s.leadA };
+    const page: any = await t.query(internal.calendar.internalGetEvents, { ...rest, limit: 500 });
+    expect(page.hasMore).toBe(false);
+    expect(page.nextCursor).toBeNull();
+    expect(page.truncated).toBe(true);
   });
 
   test("filtros por responsável/tipo/status e por lead (índice)", async () => {

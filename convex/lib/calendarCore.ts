@@ -13,9 +13,10 @@ import { scheduleWebhookEvent } from "./webhookDispatch";
 import { safeTimezone } from "./promptDateTime";
 import type { Permissions } from "./permissions";
 import {
-  EVENTS_DEFAULT_LIMIT,
+  EVENTS_APP_LIMIT,
   EVENTS_SCAN_CAP,
   MAX_EVENT_DURATION_MS,
+  SHORT_EVENT_MS,
   assertCanTransition,
   canCreateEvent,
   canEditEvent,
@@ -25,6 +26,8 @@ import {
   clampLimit,
   dedupeIds,
   fail,
+  localDayOfMonth,
+  longStartFor,
   memberPermissions,
   nextOccurrenceStart,
   normalizeTitle,
@@ -38,6 +41,28 @@ type EventDoc = Doc<"calendarEvents">;
 type Member = Doc<"teamMembers">;
 
 export type CalendarActor = { member: Member; permissions: Permissions };
+
+/** Recorrência gravada pelo servidor: sem `lastGeneratedAt` do cliente e, na mensal, com a âncora do dia. */
+async function storedRecurrence(
+  ctx: QueryCtx | MutationCtx,
+  organizationId: Id<"organizations">,
+  recurrence: { pattern: "daily" | "weekly" | "biweekly" | "monthly"; endDate?: number } | undefined,
+  startTime: number,
+  keep?: { lastGeneratedAt?: number },
+) {
+  if (!recurrence) return undefined;
+  let anchorDay: number | undefined;
+  if (recurrence.pattern === "monthly") {
+    const org = await ctx.db.get(organizationId);
+    anchorDay = localDayOfMonth(startTime, org?.settings?.timezone);
+  }
+  return {
+    pattern: recurrence.pattern,
+    endDate: recurrence.endDate,
+    ...(keep?.lastGeneratedAt !== undefined ? { lastGeneratedAt: keep.lastGeneratedAt } : {}),
+    ...(anchorDay !== undefined ? { anchorDay } : {}),
+  };
+}
 
 export const EVENT_NOT_FOUND = "Evento não encontrado";
 const PERMISSION_DENIED = "Permissão insuficiente";
@@ -247,9 +272,10 @@ export async function createEventCore(
     meetingUrl: input.meetingUrl,
     color: input.color,
     // `lastGeneratedAt` é só do sistema: nunca vem do cliente.
-    recurrence: input.recurrence
-      ? { pattern: input.recurrence.pattern, endDate: input.recurrence.endDate }
-      : undefined,
+    recurrence: await storedRecurrence(ctx, organizationId, input.recurrence, input.startTime),
+    ...(longStartFor(input.startTime, input.endTime) !== undefined
+      ? { longStart: longStartFor(input.startTime, input.endTime) }
+      : {}),
     notes: input.notes,
     searchText: buildEventSearchText({ ...input, title }),
     createdAt: now,
@@ -279,6 +305,15 @@ export async function createEventCore(
 
 export type UpdateEventInput = Partial<Omit<CreateEventInput, "taskId">>;
 
+/** JSON com chaves ordenadas: o Convex não garante a ordem das chaves de um objeto. */
+function stable(value: unknown): string {
+  return JSON.stringify(value, (_k, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : v,
+  ) ?? "";
+}
+
 const UPDATABLE_FIELDS = [
   "title", "description", "eventType", "startTime", "endTime", "allDay", "leadId", "contactId",
   "attendees", "assignedTo", "location", "meetingUrl", "color", "recurrence", "notes",
@@ -296,21 +331,21 @@ export async function updateEventCore(
   const next: Record<string, any> = { ...input };
   if (next.title !== undefined) next.title = normalizeTitle(next.title);
   if (next.attendees !== undefined) next.attendees = dedupeIds(next.attendees);
-  if (next.recurrence !== undefined) {
-    // Preserva o carimbo do sistema; o cliente não o define.
-    next.recurrence = {
-      pattern: next.recurrence.pattern,
-      endDate: next.recurrence.endDate,
-      ...(event.recurrence?.lastGeneratedAt !== undefined
-        ? { lastGeneratedAt: event.recurrence.lastGeneratedAt }
-        : {}),
-    };
+  // Recorrência: o carimbo e a âncora do dia são do servidor; mudar o início de
+  // uma série mensal re-ancora no novo dia.
+  const recurrenceSource =
+    next.recurrence ??
+    (next.startTime !== undefined && event.recurrence?.pattern === "monthly" ? event.recurrence : undefined);
+  if (recurrenceSource) {
+    next.recurrence = await storedRecurrence(
+      ctx, event.organizationId, recurrenceSource, next.startTime ?? event.startTime, event.recurrence,
+    );
   }
 
   const changes: Record<string, any> = {};
   const before: Record<string, any> = {};
   for (const field of UPDATABLE_FIELDS) {
-    if (next[field] !== undefined && JSON.stringify(next[field]) !== JSON.stringify((event as any)[field])) {
+    if (next[field] !== undefined && stable(next[field]) !== stable((event as any)[field])) {
       changes[field] = next[field];
       before[field] = (event as any)[field];
     }
@@ -343,7 +378,12 @@ export async function updateEventCore(
   }
 
   const now = Date.now();
-  await ctx.db.patch(eventId, { ...changes, updatedAt: now });
+  const timesChanged = changes.startTime !== undefined || changes.endTime !== undefined;
+  await ctx.db.patch(eventId, {
+    ...changes,
+    ...(timesChanged ? { longStart: longStartFor(startTime, endTime) } : {}),
+    updatedAt: now,
+  });
   await writeAudit(ctx, actor.member, event, eventId, {
     action: "update", severity: "low", changes: { before, after: changes }, now,
   });
@@ -372,7 +412,11 @@ export async function rescheduleEventCore(
   const now = Date.now();
   const before = { startTime: event.startTime, endTime: event.endTime };
   const after = { startTime: newStartTime, endTime };
-  await ctx.db.patch(eventId, { ...after, updatedAt: now });
+  const reanchored =
+    event.recurrence?.pattern === "monthly"
+      ? { recurrence: await storedRecurrence(ctx, event.organizationId, event.recurrence, newStartTime, event.recurrence) }
+      : {};
+  await ctx.db.patch(eventId, { ...after, ...reanchored, longStart: longStartFor(newStartTime, endTime), updatedAt: now });
   await writeAudit(ctx, actor.member, event, eventId, {
     action: "update", severity: "low", changes: { before, after }, now,
   });
@@ -401,7 +445,7 @@ async function generateNextOccurrence(
 
   const org = await ctx.db.get(event.organizationId);
   const timezone = safeTimezone(org?.settings?.timezone);
-  const nextStart = nextOccurrenceStart(event.startTime, recurrence.pattern, timezone);
+  const nextStart = nextOccurrenceStart(event.startTime, recurrence.pattern, timezone, recurrence.anchorDay);
   if (recurrence.endDate !== undefined && nextStart > recurrence.endDate) return null;
 
   const childId = await ctx.db.insert("calendarEvents", {
@@ -411,6 +455,9 @@ async function generateNextOccurrence(
     eventType: event.eventType,
     startTime: nextStart,
     endTime: nextStart + (event.endTime - event.startTime),
+    ...(longStartFor(nextStart, nextStart + (event.endTime - event.startTime)) !== undefined
+      ? { longStart: nextStart }
+      : {}),
     allDay: event.allDay,
     status: "scheduled",
     leadId: event.leadId,
@@ -421,7 +468,11 @@ async function generateNextOccurrence(
     location: event.location,
     meetingUrl: event.meetingUrl,
     color: event.color,
-    recurrence: { pattern: recurrence.pattern, endDate: recurrence.endDate },
+    recurrence: {
+      pattern: recurrence.pattern,
+      endDate: recurrence.endDate,
+      ...(recurrence.anchorDay !== undefined ? { anchorDay: recurrence.anchorDay } : {}),
+    },
     parentEventId: event._id,
     notes: event.notes,
     searchText: event.searchText,
@@ -487,16 +538,50 @@ export async function cancelEventCore(
   });
 }
 
-const DELETE_DESCENDANTS_CAP = 500;
+/** Teto de descendentes examinados numa exclusão (a transação escreve no máximo isto). */
+export const DELETE_DESCENDANTS_CAP = 400;
 
+/**
+ * Exclui o evento e só os descendentes AINDA agendados da cadeia de recorrência.
+ * Ocorrência concluída/cancelada é histórico: fica, com `parentEventId`
+ * limpo (não aponta para documento inexistente). Se a cadeia passar do teto,
+ * nada é apagado (nem a raiz) e o erro explica.
+ */
 export async function deleteEventCore(
   ctx: MutationCtx,
   actor: CalendarActor,
   eventId: Id<"calendarEvents">,
-): Promise<void> {
+): Promise<{ deleted: number; preserved: number }> {
   const event = assertEventInOrg(await ctx.db.get(eventId), actor.member.organizationId);
   assertEditable(actor, event);
 
+  // 1) Planeja sem escrever.
+  const toDelete: Id<"calendarEvents">[] = [];
+  const toPreserve: Id<"calendarEvents">[] = [];
+  const queue: Id<"calendarEvents">[] = [eventId];
+  let examined = 0;
+  while (queue.length > 0) {
+    const parentId = queue.shift()!;
+    const children = await ctx.db
+      .query("calendarEvents")
+      .withIndex("by_parent_event", (q) => q.eq("parentEventId", parentId))
+      .take(DELETE_DESCENDANTS_CAP + 1);
+    for (const child of children) {
+      if (child.organizationId !== event.organizationId) continue; // nunca mexe em outra org
+      examined++;
+      if (examined > DELETE_DESCENDANTS_CAP) {
+        fail("Este evento recorrente tem ocorrências demais para excluir de uma vez. Cancele a recorrência ou exclua as ocorrências aos poucos.");
+      }
+      if (child.status === "scheduled") {
+        toDelete.push(child._id);
+        queue.push(child._id);
+      } else {
+        toPreserve.push(child._id);
+      }
+    }
+  }
+
+  // 2) Efeitos e escritas.
   const now = Date.now();
   await writeAudit(ctx, actor.member, event, eventId, {
     action: "delete",
@@ -508,6 +593,7 @@ export async function deleteEventCore(
         contactId: event.contactId, assignedTo: event.assignedTo,
       },
     },
+    metadata: { deletedDescendants: toDelete.length, preservedDescendants: toPreserve.length },
     now,
   });
   await scheduleWebhookEvent(ctx, {
@@ -515,24 +601,10 @@ export async function deleteEventCore(
     event: "calendar_event.deleted",
     payload: { eventId, title: event.title },
   });
-
-  // A recorrência encadeia (filho do filho): apaga a cadeia inteira, com teto.
-  const queue: Id<"calendarEvents">[] = [eventId];
-  let removed = 0;
-  while (queue.length > 0 && removed < DELETE_DESCENDANTS_CAP) {
-    const parentId = queue.shift()!;
-    const children = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_parent_event", (q) => q.eq("parentEventId", parentId))
-      .take(100);
-    for (const child of children) {
-      if (child.organizationId !== event.organizationId) continue;
-      await ctx.db.delete(child._id);
-      queue.push(child._id);
-      removed++;
-    }
-  }
+  for (const id of toPreserve) await ctx.db.patch(id, { parentEventId: undefined });
+  for (const id of toDelete) await ctx.db.delete(id);
   await ctx.db.delete(eventId);
+  return { deleted: toDelete.length, preserved: toPreserve.length };
 }
 
 // ---------------------------------------------------------------------------
@@ -618,19 +690,28 @@ function parseEventCursor(cursor: string | undefined): { start: number; ct: numb
   return { start, ct };
 }
 
-const cursorOf = (e: EventDoc) => `${e.startTime}|${e._creationTime}`;
+const cursorOf = (e: { startTime: number; _creationTime: number }) => `${e.startTime}|${e._creationTime}`;
+
+type EventKey = { startTime: number; _creationTime: number };
+const compareKeys = (a: EventKey, b: EventKey) => a.startTime - b.startTime || a._creationTime - b._creationTime;
 
 /**
  * Eventos que SOBREPÕEM [startDate, endDate] (inclui os que começaram antes e
- * terminam dentro), ordenados por (startTime, _creationTime), lidos por
- * índice com teto. `truncated` = a leitura bateu o teto (a página pode estar
- * incompleta); `hasMore`/`nextCursor` paginam de forma coerente com a ordem.
+ * terminam dentro), ordenados por (startTime, _creationTime), lidos por índice
+ * com teto. A leitura é em duas faixas: eventos curtos por
+ * `by_organization_and_start` em [startDate − 1 dia, endDate] e eventos longos
+ * (duração > 1 dia, com `longStart`) por `by_organization_and_long_start` em
+ * [startDate − 31 dias, endDate] — o widget "Hoje" não lê 32 dias.
+ *
+ * `truncated` = alguma leitura bateu o teto OU há mais itens que `limit`
+ * (`hasMore`). `nextCursor` pagina de forma coerente com a ordem; com filtro
+ * por lead/contato (índice sem ordem de início) o teto vira `truncated` sem
+ * cursor (`hasMore:false`).
  */
 export async function listEventsCore(
   ctx: QueryCtx,
   actor: CalendarActor,
   args: EventListArgs,
-  options: { includeCreator?: boolean } = {},
 ): Promise<{
   events: (Record<string, any>)[];
   nextCursor: string | null;
@@ -640,43 +721,74 @@ export async function listEventsCore(
   if (!canViewAnyEvent(actor.permissions)) deny();
   validateQueryWindow(args.startDate, args.endDate);
   const organizationId = actor.member.organizationId;
-  const limit = clampLimit(args.limit, EVENTS_DEFAULT_LIMIT, EVENTS_DEFAULT_LIMIT);
+  const limit = clampLimit(args.limit, EVENTS_APP_LIMIT, EVENTS_APP_LIMIT);
   const cursor = parseEventCursor(args.cursor);
-  const lower = Math.max(0, args.startDate - MAX_EVENT_DURATION_MS);
+  const byRelation = args.leadId !== undefined || args.contactId !== undefined;
+  const afterCursor = (e: EventKey) =>
+    !cursor || e.startTime > cursor.start || (e.startTime === cursor.start && e._creationTime > cursor.ct);
 
-  let scanned: EventDoc[];
+  // Cada fonte: linhas lidas (já cortadas no teto) e se bateu o teto.
+  const sources: { rows: EventDoc[]; capped: boolean }[] = [];
+  const read = async (rows: EventDoc[]) => {
+    sources.push({ rows: rows.slice(0, EVENTS_SCAN_CAP), capped: rows.length > EVENTS_SCAN_CAP });
+  };
   if (args.leadId) {
-    scanned = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_lead", (q) => q.eq("leadId", args.leadId))
-      .take(EVENTS_SCAN_CAP + 1);
+    await read(await ctx.db.query("calendarEvents").withIndex("by_lead", (q) => q.eq("leadId", args.leadId)).take(EVENTS_SCAN_CAP + 1));
   } else if (args.contactId) {
-    scanned = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_contact", (q) => q.eq("contactId", args.contactId))
-      .take(EVENTS_SCAN_CAP + 1);
+    await read(await ctx.db.query("calendarEvents").withIndex("by_contact", (q) => q.eq("contactId", args.contactId)).take(EVENTS_SCAN_CAP + 1));
   } else {
-    scanned = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_organization_and_start", (q) =>
-        q.eq("organizationId", organizationId)
-          .gte("startTime", cursor ? Math.max(lower, cursor.start) : lower)
-          .lte("startTime", args.endDate),
-      )
-      .take(EVENTS_SCAN_CAP + 1);
-  }
-  const truncated = scanned.length > EVENTS_SCAN_CAP;
-  scanned = scanned.slice(0, EVENTS_SCAN_CAP);
-  if (args.leadId || args.contactId) {
-    scanned.sort((a, b) => a.startTime - b.startTime || a._creationTime - b._creationTime);
+    const floor = cursor ? cursor.start : 0;
+    const shortFrom = Math.max(0, args.startDate - SHORT_EVENT_MS, floor);
+    const longFrom = Math.max(0, args.startDate - MAX_EVENT_DURATION_MS, floor);
+    await read(
+      await ctx.db
+        .query("calendarEvents")
+        .withIndex("by_organization_and_start", (q) =>
+          q.eq("organizationId", organizationId).gte("startTime", shortFrom).lte("startTime", args.endDate),
+        )
+        .take(EVENTS_SCAN_CAP + 1),
+    );
+    // Só linhas com `longStart` entram no índice de faixa numérica.
+    await read(
+      await ctx.db
+        .query("calendarEvents")
+        .withIndex("by_organization_and_long_start", (q) =>
+          q.eq("organizationId", organizationId).gte("longStart", longFrom).lte("longStart", args.endDate),
+        )
+        .take(EVENTS_SCAN_CAP + 1),
+    );
   }
 
-  const matches = scanned.filter((e) => {
+  const capped = sources.some((src) => src.capped);
+  // Horizonte seguro: antes da última linha lida de uma fonte truncada, nada falta.
+  let horizon: EventKey | null = null;
+  if (!byRelation) {
+    for (const src of sources) {
+      if (!src.capped || src.rows.length === 0) continue;
+      const last = src.rows[src.rows.length - 1];
+      if (!horizon || compareKeys(last, horizon) < 0) horizon = last;
+    }
+  }
+
+  const seen = new Set<string>();
+  let candidates: EventDoc[] = [];
+  for (const src of sources) {
+    for (const e of src.rows) {
+      if (seen.has(e._id)) continue;
+      seen.add(e._id);
+      candidates.push(e);
+    }
+  }
+  candidates.sort(compareKeys);
+  if (horizon) {
+    const h = horizon;
+    candidates = candidates.filter((e) => compareKeys(e, h) <= 0);
+  }
+
+  const matches = candidates.filter((e) => {
     if (e.organizationId !== organizationId) return false;
     if (e.endTime < args.startDate || e.startTime > args.endDate) return false;
-    if (cursor && (e.startTime < cursor.start || (e.startTime === cursor.start && e._creationTime <= cursor.ct))) {
-      return false;
-    }
+    if (!afterCursor(e)) return false;
     if (args.assignedTo && e.assignedTo !== args.assignedTo) return false;
     if (args.eventType && e.eventType !== args.eventType) return false;
     if (args.status && e.status !== args.status) return false;
@@ -690,16 +802,18 @@ export async function listEventsCore(
   let nextCursor: string | null = null;
   if (matches.length > limit) {
     page = matches.slice(0, limit);
+    // Com filtro por lead/contato e leitura cortada o conjunto não é estável: sem cursor.
+    hasMore = !(byRelation && capped);
+    nextCursor = hasMore ? cursorOf(page[page.length - 1]) : null;
+  } else if (horizon) {
+    // Teto de leitura atingido: continua a partir da última linha LIDA da fonte truncada.
     hasMore = true;
-    nextCursor = cursorOf(page[page.length - 1]);
-  } else if (truncated && scanned.length > 0) {
-    // Teto de leitura atingido: continua a partir da última linha LIDA.
-    hasMore = true;
-    nextCursor = cursorOf(scanned[scanned.length - 1]);
+    nextCursor = cursorOf(horizon);
   }
+  const truncated = capped || matches.length > limit;
 
   const refs = await loadRefs(ctx, organizationId, {
-    members: page.flatMap((e) => (options.includeCreator ? [e.assignedTo, e.createdBy] : [e.assignedTo])),
+    members: page.map((e) => e.assignedTo),
     leads: page.map((e) => e.leadId),
     contacts: page.map((e) => e.contactId),
   });
@@ -707,7 +821,7 @@ export async function listEventsCore(
     ...event,
     _source: "event" as const,
     ...attachRefs(event, refs),
-    ...(options.includeCreator ? { creator: refs.members.get(event.createdBy) ?? null } : {}),
+    canEdit: canEditEvent(actor.permissions, actor.member._id, event),
   }));
   return { events, nextCursor, hasMore, truncated };
 }
@@ -747,6 +861,7 @@ export async function listTaskItemsCore(
     endTime: task.dueDate,
     allDay: true,
     eventType: "task" as const,
+    canEdit: false, // tarefa não se edita pela agenda
     ...attachRefs(task, refs),
   }));
   return { items, truncated };
@@ -773,6 +888,7 @@ export async function getEventCore(
     ...event,
     ...attachRefs(event, refs),
     creator: refs.members.get(event.createdBy) ?? null,
+    canEdit: canEditEvent(actor.permissions, actor.member._id, event),
     attendeesResolved: attendees.length > 0 ? attendees : null,
   };
 }

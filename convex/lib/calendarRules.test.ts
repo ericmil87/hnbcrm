@@ -8,6 +8,8 @@ import {
   canEditEvent,
   canViewEvent,
   clampLimit,
+  localDayOfMonth,
+  longStartFor,
   dedupeIds,
   nextOccurrenceStart,
   normalizeTitle,
@@ -135,5 +137,22 @@ describe("recorrência no fuso da org", () => {
   it("fuso inválido cai no default sem lançar", () => {
     const start = at("2026-03-02T14:00:00-03:00");
     expect(nextOccurrenceStart(start, "daily", "Nao/Existe")).toBe(at("2026-03-03T14:00:00-03:00"));
+  });
+});
+
+describe("âncora do dia e longStart", () => {
+  const SP = "America/Sao_Paulo";
+  const at = (iso: string) => Date.parse(iso);
+  it("anchorDay mantém o dia original: 28/02 com âncora 31 vai para 31/03", () => {
+    expect(nextOccurrenceStart(at("2026-02-28T10:00:00-03:00"), "monthly", SP, 31)).toBe(at("2026-03-31T10:00:00-03:00"));
+    expect(nextOccurrenceStart(at("2026-02-28T10:00:00-03:00"), "monthly", SP)).toBe(at("2026-03-28T10:00:00-03:00"));
+    expect(nextOccurrenceStart(at("2026-03-31T10:00:00-03:00"), "monthly", SP, 31)).toBe(at("2026-04-30T10:00:00-03:00"));
+  });
+  it("localDayOfMonth usa o fuso (22h30 de SP ainda é o mesmo dia)", () => {
+    expect(localDayOfMonth(at("2026-01-31T22:30:00-03:00"), SP)).toBe(31);
+  });
+  it("longStart só para duração acima de 1 dia", () => {
+    expect(longStartFor(0, DAY_MS)).toBeUndefined();
+    expect(longStartFor(5, 5 + DAY_MS + 1)).toBe(5);
   });
 });
