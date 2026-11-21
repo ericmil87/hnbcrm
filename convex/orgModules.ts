@@ -19,6 +19,7 @@ const modulesReturn = v.object({
   metaMessaging: v.boolean(),
   telegram: v.boolean(),
   translation: v.boolean(),
+  scheduling: v.boolean(),
   demoMode: v.boolean(),
 });
 
@@ -43,6 +44,7 @@ export const setOrgModules = mutation({
       metaMessaging: v.optional(v.boolean()),
       telegram: v.optional(v.boolean()),
       translation: v.optional(v.boolean()),
+      scheduling: v.optional(v.boolean()),
     }),
   },
   returns: modulesReturn,

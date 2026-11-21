@@ -216,6 +216,28 @@ export async function deleteConversationCascade(
   // Estado efêmero da conversa (presença/lock/pacing — fase 4b).
   budget.left -= await deleteRuntime(ctx, conversationId);
 
+  // Agenda v2: ofertas da conversa (sem texto de cliente) e interpretações das mensagens do humano.
+  const schedState = await ctx.db
+    .query("schedConversationState")
+    .withIndex("by_conversation", (q) => q.eq("conversationId", conversationId))
+    .take(5);
+  for (const row of schedState) {
+    await ctx.db.delete(row._id);
+    budget.left -= 1;
+  }
+  while (budget.left > 0) {
+    const rows = await ctx.db
+      .query("schedInterpretations")
+      .withIndex("by_conversation_and_status", (q) => q.eq("conversationId", conversationId))
+      .take(Math.min(budget.left, 100));
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+      budget.left -= 1;
+    }
+  }
+  if (budget.left <= 0) return false;
+
   await ctx.db.delete(conversationId);
   budget.left -= 1;
   return true;
@@ -327,6 +349,20 @@ export async function cascadeLeadChildren(
   }
   if (budget.left <= 0) return false;
 
+  // Agenda v2: o agendamento é histórico da operação (agenda, relatório): fica, só perde o vínculo.
+  while (budget.left > 0) {
+    const page = await ctx.db
+      .query("schedAppointments")
+      .withIndex("by_lead_and_start", (q) => q.eq("leadId", leadId))
+      .take(Math.min(budget.left, 100));
+    if (page.length === 0) break;
+    for (const appointment of page) {
+      await ctx.db.patch(appointment._id, { leadId: undefined });
+      budget.left -= 1;
+    }
+  }
+  if (budget.left <= 0) return false;
+
   while (budget.left > 0) {
     const page = await ctx.db
       .query("files")
@@ -375,6 +411,20 @@ export async function cascadeContactRefs(
     if (page.length === 0) break;
     for (const event of page) {
       await ctx.db.patch(event._id, { contactId: undefined });
+      budget.left -= 1;
+    }
+  }
+  if (budget.left <= 0) return false;
+
+  // Agenda v2: o agendamento é histórico da operação (agenda, relatório): fica, só perde o vínculo.
+  while (budget.left > 0) {
+    const page = await ctx.db
+      .query("schedAppointments")
+      .withIndex("by_contact_and_start", (q) => q.eq("contactId", contactId))
+      .take(Math.min(budget.left, 100));
+    if (page.length === 0) break;
+    for (const appointment of page) {
+      await ctx.db.patch(appointment._id, { contactId: undefined });
       budget.left -= 1;
     }
   }

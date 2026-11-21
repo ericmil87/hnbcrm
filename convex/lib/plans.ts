@@ -8,7 +8,7 @@ import type { OrgModuleKey } from "./orgModules";
 
 export type PlanKey = "essencial" | "profissional" | "escala" | "empresa";
 export type BillingStatus = "trial" | "active" | "past_due" | "read_only" | "canceled" | "legacy";
-export type GatedModule = "groups" | "departments" | "translation" | "api" | "central" | "units" | "attribution";
+export type GatedModule = "groups" | "departments" | "translation" | "api" | "central" | "units" | "attribution" | "scheduling";
 
 export const PLAN_KEYS: readonly PlanKey[] = ["essencial", "profissional", "escala", "empresa"];
 export const GATED_MODULES: readonly GatedModule[] = [
@@ -19,6 +19,7 @@ export const GATED_MODULES: readonly GatedModule[] = [
   "central",
   "units",
   "attribution",
+  "scheduling",
 ];
 
 export type PlanDef = {
@@ -51,7 +52,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     campaignSends: 500,
     overageBrlCents: 49,
     overageByoBrlCents: null,
-    modules: [],
+    modules: ["scheduling"],
     groupsAddonMax: 3,
     maxExtraChannels: 2,
   },
@@ -63,7 +64,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     campaignSends: 5000,
     overageBrlCents: 49,
     overageByoBrlCents: 29,
-    modules: ["groups", "departments", "translation", "api"],
+    modules: ["groups", "departments", "translation", "api", "scheduling"],
     maxExtraChannels: 3,
   },
   escala: {
@@ -74,7 +75,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     campaignSends: 20000,
     overageBrlCents: 39,
     overageByoBrlCents: 25,
-    modules: ["groups", "departments", "translation", "api"],
+    modules: ["groups", "departments", "translation", "api", "scheduling"],
     maxExtraChannels: null,
   },
   empresa: {
@@ -87,7 +88,7 @@ export const PLANS: Record<PlanKey, PlanDef> = {
     campaignSends: 50000,
     overageBrlCents: 29,
     overageByoBrlCents: 19,
-    modules: ["groups", "departments", "translation", "api", "central", "units", "attribution"],
+    modules: ["groups", "departments", "translation", "api", "central", "units", "attribution", "scheduling"],
     maxExtraChannels: null,
   },
 };
@@ -148,6 +149,7 @@ export const MODULE_GATE: Partial<Record<OrgModuleKey, GatedModule>> = {
   units: "units",
   central: "central",
   attribution: "attribution",
+  scheduling: "scheduling",
 };
 
 /** Menor plano (na ordem do catálogo) que inclui o módulo. */

@@ -51,6 +51,15 @@ const ORG_TABLES: { table: string; index: string }[] = [
   { table: "pushSubscriptionMembers", index: "by_organization" },
   { table: "pushDeliveryStats", index: "by_organization_and_day_and_type_and_outcome_and_shard" },
   { table: "calendarEvents", index: "by_organization" },
+  // Agenda v2: `schedAllocations` sai com o agendamento (filho sem índice por org, tabela quente) e
+  // `schedConversationState` com a conversa; o resto tem índice por org.
+  { table: "schedInterpretations", index: "by_organization_and_created" },
+  { table: "schedConflicts", index: "by_organization_and_status" },
+  { table: "schedAppointments", index: "by_organization" },
+  { table: "schedExceptions", index: "by_organization" },
+  { table: "schedServices", index: "by_organization" },
+  { table: "schedResources", index: "by_organization" },
+  { table: "schedSettings", index: "by_organization" },
   { table: "savedViews", index: "by_organization" },
   { table: "onboardingProgress", index: "by_organization" },
   // Onboarding v2: filhos da sessão antes do pai (P2.3), sessão com o rascunho (P2.1).
@@ -190,6 +199,19 @@ async function purgeSome(
         for (const p of pacing) await ctx.db.delete(p._id);
         deleted += pacing.length;
         childrenLeft = pacing.length >= cap;
+      } else if (table === "schedAppointments") {
+        // Alocação = linha quente sem índice por org; ≤ 4 recursos por agendamento (teto 8 por folga).
+        const cap = childCap(8);
+        const allocs = await ctx.db.query("schedAllocations").withIndex("by_appointment", (q) => q.eq("appointmentId", row._id as unknown as Id<"schedAppointments">)).take(cap);
+        for (const a of allocs) await ctx.db.delete(a._id);
+        deleted += allocs.length;
+        childrenLeft = allocs.length >= cap;
+      } else if (table === "conversations") {
+        const cap = childCap(2);
+        const state = await ctx.db.query("schedConversationState").withIndex("by_conversation", (q) => q.eq("conversationId", row._id as unknown as Id<"conversations">)).take(cap);
+        for (const st of state) await ctx.db.delete(st._id);
+        deleted += state.length;
+        childrenLeft = state.length >= cap;
       } else if (table === "messages") {
         const cap = careful ? CAREFUL_CHILD_CAP : 5;
         const deferred = await ctx.db.query("deferredGroupMedia").withIndex("by_message", (q) => q.eq("messageId", row._id as unknown as Id<"messages">)).take(cap);

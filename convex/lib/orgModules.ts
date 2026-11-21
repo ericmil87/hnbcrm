@@ -10,7 +10,7 @@ import { ConvexError } from "convex/values";
 import { QueryCtx } from "../_generated/server";
 import { Doc, Id } from "../_generated/dataModel";
 
-export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging" | "telegram" | "translation";
+export type OrgModuleKey = "units" | "departments" | "attribution" | "central" | "metaMessaging" | "telegram" | "translation" | "scheduling";
 
 export type OrgModules = {
   units: boolean;
@@ -23,6 +23,8 @@ export type OrgModules = {
   telegram: boolean;
   /** Tradução automática no inbox. NÃO é da Central: fora de `assertAnyModule`. */
   translation: boolean;
+  /** Agendamento (agenda por recurso). NÃO é da Central: fora de `assertAnyModule`. */
+  scheduling: boolean;
   demoMode: boolean;
 };
 
@@ -34,6 +36,7 @@ export const MODULE_LABELS: Record<OrgModuleKey, string> = {
   metaMessaging: "Instagram e Messenger",
   telegram: "Telegram para a equipe",
   translation: "Tradução automática",
+  scheduling: "Agendamento",
 };
 
 /** Leitura pura do doc (serve a quem já carregou a org). */
@@ -47,6 +50,7 @@ export function modulesOf(org: Pick<Doc<"organizations">, "settings"> | null | u
     metaMessaging: m?.metaMessaging === true,
     telegram: m?.telegram === true,
     translation: m?.translation === true,
+    scheduling: m?.scheduling === true,
     demoMode: org?.settings?.demoMode === true,
   };
 }

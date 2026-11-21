@@ -108,6 +108,23 @@ describe("checks puros", () => {
     expect(g.ok === false && g.message).toContain("add-on");
   });
 
+  test("Agendamento: nos 4 planos pagos e no teste; legacy livre; modo leitura/cancelado recusa", () => {
+    for (const plan of ["essencial", "profissional", "escala", "empresa"] as const) {
+      const e = resolveEntitlements(org({ plan, status: "active" }), NOW);
+      expect(e.modules.scheduling).toBe(true);
+      expect(checkModule(e, "scheduling")).toEqual({ ok: true });
+    }
+    const trial = resolveEntitlements(org({ plan: "essencial", status: "trial", trialEndsAt: NOW + DAY }), NOW);
+    expect(checkModule(trial, "scheduling")).toEqual({ ok: true });
+    const legacy = resolveEntitlements(org({ plan: "essencial", status: "legacy" }), NOW);
+    expect(checkModule(legacy, "scheduling")).toEqual({ ok: true });
+    expect(checkModule(resolveEntitlements(org(), NOW), "scheduling")).toEqual({ ok: true });
+    for (const status of ["read_only", "canceled"] as const) {
+      const e = resolveEntitlements(org({ plan: "escala", status }), NOW);
+      expect(checkModule(e, "scheduling")).toMatchObject({ ok: false, reason: "plan" });
+    }
+  });
+
   test("checkChannelSlot pede aceite no limite", () => {
     const e = resolveEntitlements(org({ plan: "essencial", status: "active" }), NOW);
     expect(checkChannelSlot(e, 0)).toEqual({ ok: true });
