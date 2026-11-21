@@ -33,14 +33,25 @@ describe("categoria agenda", () => {
     expect(DEFAULT_PERMISSIONS.ai.agenda).toBe("edit");
   });
 
-  test("membro com permissões explícitas sem `agenda` cai no default do papel", () => {
+  test("permissões explícitas sem `agenda` derivam do `tasks` EXPLÍCITO do membro; campaigns cai no default", () => {
+    const cases: Array<[string, string]> = [["none", "none"], ["view_own", "view_own"], ["view_all", "view_all"], ["edit_own", "edit"], ["edit_all", "edit"], ["full", "edit"]];
     for (const role of ["admin", "manager", "agent", "ai"] as Role[]) {
-      const p = resolvePermissions(role, LEGACY_EXPLICIT as unknown as Permissions);
-      expect(p.agenda).toBe(DEFAULT_PERMISSIONS[role].agenda);
-      expect(p.campaigns).toBe(DEFAULT_PERMISSIONS[role].campaigns);
-      // O resto vem do que foi gravado, não do papel.
-      expect(p.leads).toBe("view_own");
+      for (const [tasks, agenda] of cases) {
+        const p = resolvePermissions(role, { ...LEGACY_EXPLICIT, tasks } as unknown as Permissions);
+        expect(p.agenda).toBe(agenda);
+        expect(p.campaigns).toBe(DEFAULT_PERMISSIONS[role].campaigns);
+        expect(p.leads).toBe("view_own");
+      }
     }
+    // atendente sem Tarefas não ganha Agenda aberta
+    expect(hasPermission(resolvePermissions("agent", { ...LEGACY_EXPLICIT, tasks: "none" } as unknown as Permissions), "agenda", "view_own")).toBe(false);
+  });
+
+  test("sem `tasks` no explícito: default do papel; sem permissões gravadas: default do papel", () => {
+    const { tasks: _t, ...semTasks } = LEGACY_EXPLICIT;
+    expect(resolvePermissions("agent", semTasks as unknown as Permissions).agenda).toBe("edit");
+    expect(resolvePermissions("admin", semTasks as unknown as Permissions).agenda).toBe("manage");
+    expect(resolvePermissions("agent", null).agenda).toBe("edit");
   });
 
   test("`agenda` explícito vence o default (inclusive none)", () => {

@@ -164,7 +164,7 @@ export function assertCanTransition(
 }
 
 // ---------------------------------------------------------------------------
-// Permissões (categoria `tasks` enquanto a Agenda v2 não traz a própria)
+// Permissões (categoria `agenda`; tarefas mescladas seguem `tasks`, ver calendarCore)
 // ---------------------------------------------------------------------------
 
 type EventOwnership = {

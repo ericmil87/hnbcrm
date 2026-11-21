@@ -55,7 +55,7 @@ export function CalendarPage() {
     setSelectedEvent,
   } = useCalendarState();
 
-  // Criar evento exige poder editar tarefas/agenda (`tasks` >= edit_own).
+  // Criar evento exige `agenda` >= edit.
   const { can } = usePermissions(organizationId);
   const canCreate = can("agenda", "edit");
 

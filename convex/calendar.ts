@@ -29,8 +29,8 @@ import {
 /**
  * Agenda (`calendarEvents`). Toda a regra vive em `lib/calendarCore.ts`; aqui
  * só se resolve o ator (app: `requirePermission`; REST/MCP: `teamMemberId` da
- * API key) e se registra a função. Permissões na categoria `agenda` (decisão
- * provisória até a Agenda v2): ver docs/architecture/calendar.md.
+ * API key) e se registra a função. Permissões na categoria `agenda` (tarefas
+ * mescladas seguem `tasks`): ver docs/architecture/calendar.md.
  */
 
 // Shared validators

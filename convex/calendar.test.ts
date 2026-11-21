@@ -59,7 +59,7 @@ async function seed(t: TestConvex<typeof schema>) {
       leads: "view_own", contacts: "view", inbox: "view_own", tasks: "view_own", reports: "none",
       team: "none", settings: "none", auditLogs: "none", apiKeys: "none", agenda: "view_all",
     });
-    // Permissões explícitas gravadas ANTES de existir `agenda`: cai no default do papel (agent = edit).
+    // Permissões explícitas gravadas ANTES de existir `agenda` (tasks: view_own): derivam de `tasks` => view_own.
     const legacyA = await mk(orgA, "Legado A", "agent", {
       leads: "view_own", contacts: "view", inbox: "view_own", tasks: "view_own", reports: "none",
       team: "none", settings: "none", auditLogs: "none", apiKeys: "none",
@@ -395,15 +395,48 @@ describe("permissões por papel (categoria agenda)", () => {
     expect(list.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("permissões explícitas gravadas SEM agenda caem no default do papel (agent = edit), não em tasks", async () => {
+  test("permissões explícitas gravadas SEM agenda derivam do tasks do membro (view_own => view_own); sem permissões gravadas = default do papel", async () => {
     const s = await seed(t);
     const u = as(t, s.legacyA); // tasks: view_own gravado, sem agenda
-    const colleague = await insertRaw(t, s, { createdBy: s.agent2A.memberId });
-    const id = await u.mutation(api.calendar.createEvent, base(s));
-    await u.mutation(api.calendar.updateEvent, { eventId: colleague, title: "ok" });
-    expect((await u.query(api.calendar.getEvent, { eventId: id })).canEdit).toBe(true);
-    const list = await u.query(api.calendar.getEvents, { organizationId: s.orgA, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS });
-    expect(list.length).toBeGreaterThanOrEqual(2);
+    const mine = await insertRaw(t, s, { createdBy: s.legacyA.memberId, title: "Meu" });
+    await insertRaw(t, s, { createdBy: s.agent2A.memberId, title: "Alheio" });
+    const range = { organizationId: s.orgA, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS };
+    expect((await u.query(api.calendar.getEvents, range)).map((e: any) => e.title)).toEqual(["Meu"]);
+    expect((await u.query(api.calendar.getEvent, { eventId: mine }))._id).toBe(mine);
+    expect(await errText(u.mutation(api.calendar.createEvent, base(s)))).toMatch(/Permissão insuficiente/);
+    // tasks: none gravado => agenda none (não ganha Agenda aberta pelo default do papel)
+    await t.run(async (ctx) => ctx.db.patch(s.legacyA.memberId, { permissions: { leads: "none", contacts: "none", inbox: "none", tasks: "none", reports: "none", team: "none", settings: "none", auditLogs: "none", apiKeys: "none" } as any }));
+    expect(await u.query(api.calendar.getEvents, range)).toEqual([]);
+    expect(await errText(u.mutation(api.calendar.createEvent, base(s)))).toMatch(/Permissão insuficiente/);
+    // sem permissões gravadas: default do papel (agent = edit)
+    expect((await as(t, s.agent2A).mutation(api.calendar.createEvent, base(s)))).toBeTruthy();
+  });
+
+  test("tarefas mescladas seguem `tasks`, não `agenda`", async () => {
+    const s = await seed(t);
+    const range = { organizationId: s.orgA, startDate: T0 - DAY_MS, endDate: T0 + DAY_MS };
+    const mkTask = (createdBy: any, title: string) => t.run(async (ctx) => {
+      await ctx.db.insert("tasks", { organizationId: s.orgA, title, type: "task", status: "pending", priority: "low", createdBy, assignedTo: createdBy, dueDate: T0, createdAt: 1, updatedAt: 1 } as any);
+    });
+    await mkTask(s.adminA.memberId, "T-admin");
+    await mkTask(s.agentA.memberId, "T-agente");
+    await insertRaw(t, s, { title: "E-admin" });
+    await insertRaw(t, s, { title: "E-agente", createdBy: s.agentA.memberId });
+    const setPerms = (m: any, tasks: string, agenda: string) => t.run(async (ctx) => ctx.db.patch(m.memberId, { permissions: { leads: "none", contacts: "none", inbox: "none", tasks, reports: "none", team: "none", settings: "none", auditLogs: "none", apiKeys: "none", agenda } as any }));
+    const split = async (m: any) => {
+      const list = await as(t, m).query(api.calendar.getEvents, range);
+      return { tasks: list.filter((e: any) => e._source === "task").map((e: any) => e.title).sort(), events: list.filter((e: any) => e._source !== "task").map((e: any) => e.title).sort() };
+    };
+    await setPerms(s.viewAllA, "none", "view_all");
+    expect(await split(s.viewAllA)).toEqual({ tasks: [], events: ["E-admin", "E-agente"] });
+    await setPerms(s.viewAllA, "view_own", "edit"); // as próprias: nenhuma tarefa dele
+    expect(await split(s.viewAllA)).toEqual({ tasks: [], events: ["E-admin", "E-agente"] });
+    await setPerms(s.agentA, "view_own", "edit");
+    expect(await split(s.agentA)).toEqual({ tasks: ["T-agente"], events: ["E-admin", "E-agente"] });
+    await setPerms(s.agentA, "view_all", "view_own");
+    expect(await split(s.agentA)).toEqual({ tasks: ["T-admin", "T-agente"], events: ["E-agente"] });
+    await setPerms(s.agentA, "full", "none");
+    expect(await split(s.agentA)).toEqual({ tasks: [], events: [] });
   });
 
   test("manage: edita compromisso de qualquer membro (admin tem manage)", async () => {
@@ -431,8 +464,33 @@ describe("permissões por papel (categoria agenda)", () => {
     const ev = await insertRaw(t, s, { createdBy: s.agentA.memberId });
     expect(await errText(t.query(internal.calendar.internalGetEvents, { ...mk("none"), startDate: T0 - DAY_MS, endDate: T0 + DAY_MS }))).toMatch(/Permissão insuficiente/);
     const all = await t.query(internal.calendar.internalGetEvents, { ...mk("view_all"), startDate: T0 - DAY_MS, endDate: T0 + DAY_MS });
-    expect(all.events.length).toBeGreaterThan(0);
-    expect(ev).toBeTruthy();
+    expect(all.events.map((e: any) => e._id)).toContain(ev);
+    expect(all.events).toHaveLength(3); // 2 criados pelas chaves edit_own/full + o alheio
+  });
+
+  test("REST por nível de agenda: view_own não lê o alheio; view_all lê e não escreve; edit escreve no alheio; none vazio/erro", async () => {
+    const s = await seed(t);
+    const keyPerms = (agenda: string) => ({ leads: "none", contacts: "none", inbox: "none", tasks: "none", reports: "none", team: "none", settings: "none", auditLogs: "none", apiKeys: "none", agenda }) as any;
+    const rest = (agenda: string) => ({ organizationId: s.orgA, teamMemberId: s.adminA.memberId, permissions: keyPerms(agenda) });
+    const win = { startDate: T0 - DAY_MS, endDate: T0 + DAY_MS };
+    const alheio = await insertRaw(t, s, { createdBy: s.agentA.memberId, title: "Alheio" });
+    const meu = await insertRaw(t, s, { createdBy: s.adminA.memberId, title: "Meu" });
+    // view_own: lê só o seu
+    expect(await t.query(internal.calendar.internalGetEvent, { eventId: alheio, ...rest("view_own") })).toBeNull();
+    expect((await t.query(internal.calendar.internalGetEvent, { eventId: meu, ...rest("view_own") }))?._id).toBe(meu);
+    expect((await t.query(internal.calendar.internalGetEvents, { ...rest("view_own"), ...win })).events.map((e: any) => e.title)).toEqual(["Meu"]);
+    // view_all: lê todos, não escreve
+    expect((await t.query(internal.calendar.internalGetEvent, { eventId: alheio, ...rest("view_all") }))?._id).toBe(alheio);
+    expect((await t.query(internal.calendar.internalGetEvents, { ...rest("view_all"), ...win })).events).toHaveLength(2);
+    expect(await errText(t.mutation(internal.calendar.internalUpdateEvent, { eventId: alheio, title: "x", ...rest("view_all") }))).toMatch(/Permissão insuficiente/);
+    expect(await errText(t.mutation(internal.calendar.internalDeleteEvent, { eventId: meu, ...rest("view_all") }))).toMatch(/Permissão insuficiente/);
+    // edit: escreve no alheio
+    await t.mutation(internal.calendar.internalUpdateEvent, { eventId: alheio, title: "Remarcado", ...rest("edit") });
+    expect((await t.run(async (ctx) => ctx.db.get(alheio)))?.title).toBe("Remarcado");
+    // none: vazio/erro
+    expect(await t.query(internal.calendar.internalGetEvent, { eventId: alheio, ...rest("none") })).toBeNull();
+    expect(await errText(t.query(internal.calendar.internalGetEvents, { ...rest("none"), ...win }))).toMatch(/Permissão insuficiente/);
+    expect(await errText(t.mutation(internal.calendar.internalCreateEvent, { ...base(s), ...rest("none") }))).toMatch(/Permissão insuficiente/);
   });
 
   test("REST: permissões da chave (view_own) negam escrita e escondem eventos alheios", async () => {

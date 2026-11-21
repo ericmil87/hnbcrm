@@ -134,7 +134,9 @@ export function resolvePermissions(
   return {
     ...explicit,
     campaigns: explicit.campaigns ?? defaults.campaigns,
-    agenda: explicit.agenda ?? defaults.agenda,
+    // Sem `agenda` gravada: deriva do `tasks` EXPLÍCITO do membro (quem teve Tarefas cortadas
+    // não ganha Agenda aberta); sem `tasks` explícito, default do papel.
+    agenda: explicit.agenda ?? agendaFromTasks(explicit.tasks) ?? defaults.agenda,
   };
 }
 
@@ -156,6 +158,12 @@ const LEGACY_TASKS_TO_AGENDA: Record<TasksLevel, AgendaLevel> = {
   edit_all: "edit",
   full: "edit",
 };
+
+/** Nível de `agenda` derivado de um nível de `tasks` (mapa conservador). */
+export function agendaFromTasks(tasks: string | undefined): AgendaLevel | undefined {
+  if (tasks === undefined) return undefined;
+  return LEGACY_TASKS_TO_AGENDA[tasks as TasksLevel] ?? "none";
+}
 
 export function completeLegacyPermissions<T extends { tasks: TasksLevel; agenda?: AgendaLevel }>(
   perms: T
