@@ -528,7 +528,9 @@ describe("resolver conflito 'sem lugar' (resolveAgendaConflict)", () => {
       const svc = (await t.run((ctx) => ctx.db.query("schedServices").collect()))[0]._id;
       const [s1b] = (await t.run((ctx) => ctx.db.query("schedResources").collect())).filter((x) => x.name === "Sala 1");
       const ana = await mkContact("Ana");
-      await bookDirect(svc, at(TUE, 9), [s1b._id], { contactId: ana });
+      const [s2b] = (await t.run((ctx) => ctx.db.query("schedResources").collect())).filter((x) => x.name === "Sala 2");
+      await bookDirect(svc, at(TUE, 16), [s1b._id], { contactId: ana });
+      await bookDirect(svc, at(TUE, 16), [s2b._id]); // a Sala 2 também está ocupada: Ana ficará sem lugar
       await as(s.admin).mutation(api.schedulingExceptions.setResourceClosure, { organizationId: s.orgId, resourceId: s1b._id, fromLocalDate: TUE, acceptAffected: true } as any);
       const p = await read(s.admin, "listAgendaPending", {});
       return { ref: p.itens.find((i: any) => i.tipo === "sem_lugar" && i.cliente === "Ana")?.ref as string };
