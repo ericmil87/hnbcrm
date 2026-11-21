@@ -318,6 +318,8 @@ describe("regressões da revisão", () => {
     pickOffers(list, 3, tz);
     const ms = performance.now() - t0;
     expect(scored.length).toBeGreaterThan(2000);
-    expect(ms).toBeLessThan(150);
+    // Sozinho roda em ~50 ms; antes da otimização levava ~930 ms. O teto é folgado porque a
+    // suíte inteira roda em paralelo e a máquina carregada já mediu 183 ms (falso alarme).
+    expect(ms).toBeLessThan(500);
   });
 });
