@@ -69,6 +69,7 @@ import {
   type ServiceRequirementLite,
   unitsFor,
 } from "./schedCandidates";
+import { notifyPendingApproval } from "./schedApprovalNotify";
 import { MAX_RESOURCES_PER_ORG, UNDO_BOOKING_WINDOW_MIN } from "./schedConstants";
 import { MAX_PARTY_COMPANIONS, MAX_PARTY_SIZE, sharedResourceIds } from "./schedParty";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
@@ -189,6 +190,8 @@ export type BookArgs = {
   notes?: string;
   idempotencyKey?: string;
   sourceMessageId?: Id<"messages">;
+  /** Campos extras da auditoria de criação (D1: `conversationId`, `offer`, `agentRunId` da tool da IA). Sem texto de cliente. */
+  auditMetadata?: Record<string, string | number | boolean>;
   now?: number;
 };
 
@@ -1325,10 +1328,18 @@ async function placeAppointment(ctx: MutationCtx, args: BookArgs, opts: PlaceOpt
 }
 
 /** Efeitos do agendamento novo (audit, activity, webhook, conflito, etapa do funil). */
+const RESERVED_AUDIT_KEYS = new Set(["via", "origin", "statusChange", "forcedRules", "messageId", "rescheduledFromId", "undo"]);
+
+function safeAuditMetadata(extra: Record<string, string | number | boolean> | undefined): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(extra ?? {})) if (!RESERVED_AUDIT_KEYS.has(k)) out[k] = v;
+  return out;
+}
+
 async function finalizeBooking(
   ctx: MutationCtx,
   placed: Extract<Placed, { kind: "placed" }>,
-  p: { actor: SchedActor; now: number; reschedule?: { previous: Doc<"schedAppointments"> } }
+  p: { actor: SchedActor; now: number; reschedule?: { previous: Doc<"schedAppointments"> }; auditMetadata?: Record<string, string | number | boolean> }
 ): Promise<void> {
   const { appointment: a, bc } = placed;
   const label = appointmentLabel(a, bc.tz);
@@ -1339,7 +1350,10 @@ async function finalizeBooking(
     severity: "medium",
     description: p.reschedule ? `Remarcou o agendamento para ${label}` : `Marcou o horário ${label}`,
     ...(p.reschedule ? { before: appointmentSnapshot(p.reschedule.previous), after: appointmentSnapshot(a) } : { after: appointmentSnapshot(a) }),
+    // Metadados extras do chamador vêm ANTES dos campos fixos e sem as chaves reservadas: nunca sobrescrevem
+    // `via`, `origin`, `statusChange`, `forcedRules` etc. (que o desfazer e a revisão leem).
     metadata: {
+      ...safeAuditMetadata(p.auditMetadata),
       forcedRules: a.forcedRules ?? [],
       statusChange: false,
       ...(a.sourceMessageId ? { messageId: a.sourceMessageId } : {}),
@@ -1362,8 +1376,11 @@ async function finalizeBooking(
     tz: bc.tz,
     previousAppointmentId: p.reschedule?.previous._id,
   });
-  // NOTIFY (D1): `appointment_pending_approval` quando status === "pending_approval" e origem IA/link;
+  // NOTIFY (D1): `appointment_pending_approval` quando status === "pending_approval" e origem IA/link.
   // (C1) `appointment_created` quando origem human_message.
+  if (a.status === "pending_approval" && (a.origin === "ai" || a.origin === "public")) {
+    await notifyPendingApproval(ctx, { appointment: a, tz: bc.tz });
+  }
   if (placed.inConflict) {
     await ctx.db.insert(
       "schedConflicts",
@@ -1430,7 +1447,7 @@ function resultOfPlaced(placed: Placed): BookResult {
 export async function bookAppointmentCore(ctx: MutationCtx, args: BookArgs): Promise<BookResult> {
   const now = args.now ?? Date.now();
   const placed = await placeAppointment(ctx, args, {}, now);
-  if (placed.kind === "placed") await finalizeBooking(ctx, placed, { actor: args.actor, now });
+  if (placed.kind === "placed") await finalizeBooking(ctx, placed, { actor: args.actor, now, auditMetadata: args.auditMetadata });
   return resultOfPlaced(placed);
 }
 

@@ -31,6 +31,7 @@ export function notificationTargetPath(type: NotificationType | string, d: Notif
     }
     case "appointment_no_outcome":
     case "appointment_conflict":
+    case "appointment_pending_approval":
       return "/app/calendario?pendencias=1";
     case "ai_followup_needs_human":
       return d.taskId ? `/app/tarefas?task=${d.taskId}` : (conversation ?? "/app/tarefas");

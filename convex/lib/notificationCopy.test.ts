@@ -240,6 +240,17 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     { title: "Mais de 200 atendimentos de ontem ainda sem desfecho", body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." },
   ],
   [
+    { type: "appointment_pending_approval", label: "quinta-feira, 26/11, às 10:00 (Sessão)" },
+    {
+      title: "A IA reservou um horário e aguarda você",
+      body: "quinta-feira, 26/11, às 10:00 (Sessão). Aprove, escolha outro horário ou recuse na fila de pendências da Agenda.",
+    },
+  ],
+  [
+    { type: "appointment_pending_approval" },
+    { title: "A IA reservou um horário e aguarda você", body: "Aprove, escolha outro horário ou recuse na fila de pendências da Agenda." },
+  ],
+  [
     { type: "plan_refunded", amountBrl: "R$ 497,00" },
     {
       title: "Reembolso solicitado",

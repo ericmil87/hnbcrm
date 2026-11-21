@@ -13,6 +13,7 @@
  *  - `parameters` não pode conter campos de escopo injetados pelo runtime.
  */
 import type { PermissionCategory } from "./permissions";
+import { SCHED_ATTENDANT_TOOLS } from "./schedAttendantTools";
 
 export interface AgentToolSpec {
   name: string;
@@ -54,6 +55,13 @@ export const INJECTED_PARAM_NAMES = [
   // resolvido no servidor contra a lista da conversa — o modelo nunca vê ids.
   "taskId",
   "followUpId",
+  // Agenda v2 (D1): as tools de horário do atendente não recebem id nenhum do modelo — o serviço vai por NOME, a data
+  // por token relativo e o horário por CÓDIGO DE OFERTA (`h4`) emitido nesta conversa. Ids de agendamento, serviço,
+  // recurso e oferta (com `appointmentId` a remarcação/cancelamento do D1b) nunca são parâmetro.
+  "appointmentId",
+  "serviceId",
+  "resourceId",
+  "offerId",
 ] as const;
 
 function schema(properties: Record<string, unknown>, required: string[]): Record<string, unknown> {
@@ -302,6 +310,9 @@ export const ATTENDANT_TOOLS: AgentToolSpec[] = [
     effect: "write",
     resultFields: ["status"],
   },
+  // Agenda v2 (D1): consultar horários e propor agendamento. Só entram na run com o módulo `scheduling` ligado, IA
+  // ativa, política `schedSettings.ai` e ao menos um serviço e um recurso (`schedulingAi.internalContextBlock`).
+  ...SCHED_ATTENDANT_TOOLS,
 ];
 
 // ── Tools do AGENTE DE GRUPO (F4, D6): a superfície mais estreita do produto. ──

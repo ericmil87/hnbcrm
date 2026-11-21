@@ -49,6 +49,7 @@ export const PUSH_TEMPLATES: Partial<Record<NotificationType, PushTemplate>> = {
   ai_followup_needs_human: TASKS,
   channel_session_lost: CHANNEL,
   appointment_conflict: TASKS, // Agenda v2 (A3c): precisa de gente resolver (normal, 24 h)
+  appointment_pending_approval: TASKS, // Agenda v2 (D1): a equipe precisa aprovar a proposta da IA
 };
 
 /** Informativos (sino/e-mail/Telegram conforme preferência) e o lead atribuído (tabela do PLANO, seção 4). */

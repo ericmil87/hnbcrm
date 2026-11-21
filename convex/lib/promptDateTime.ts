@@ -18,6 +18,8 @@ export const DEFAULT_TIMEZONE = "America/Sao_Paulo";
 
 /** Quantos dias à frente entram na régua (LLM erra aritmética de dia da semana). */
 const NEXT_DAYS = 7;
+/** Régua maior quando o módulo de agendamento está ligado (a IA cita datas até duas semanas à frente). */
+export const SCHEDULING_NEXT_DAYS = 14;
 
 /**
  * O construtor é o único validador de IANA que existe: ele lança RangeError em
@@ -91,8 +93,14 @@ function shortWeekday(value: string): string {
  *   Próximos dias: sáb 19/09, dom 20/09, seg 21/09, ter 22/09, qua 23/09, qui 24/09, sex 25/09.
  *   Esta é a sua ÚNICA fonte de data e hora: use-a para "hoje", "amanhã", ...
  */
-export function buildCurrentDateTimeBlock(now: number, timezone?: string | null): string {
+export function buildCurrentDateTimeBlock(
+  now: number,
+  timezone?: string | null,
+  /** `nextDays` (1–30): tamanho da régua. Ausente = 7 (padrão inalterado); 14 com o módulo de agendamento ligado. */
+  opts?: { nextDays?: number }
+): string {
   const tz = safeTimezone(timezone);
+  const nextDays = Math.min(30, Math.max(1, Math.floor(opts?.nextDays ?? NEXT_DAYS)));
 
   const nowParts = partsOf(
     new Intl.DateTimeFormat("pt-BR", {
@@ -121,7 +129,7 @@ export function buildCurrentDateTimeBlock(now: number, timezone?: string | null)
     month: "2-digit",
   });
   const upcoming: string[] = [];
-  for (let i = 1; i <= NEXT_DAYS; i++) {
+  for (let i = 1; i <= nextDays; i++) {
     const p = partsOf(dayFmt, new Date(Date.UTC(year, month - 1, day + i, 12)));
     upcoming.push(`${shortWeekday(p.weekday)} ${p.day}/${p.month}`);
   }

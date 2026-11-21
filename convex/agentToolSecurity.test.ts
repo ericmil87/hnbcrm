@@ -188,3 +188,44 @@ describe("superfície de tools de IA (teste de build)", () => {
     }
   });
 });
+
+// ── Agenda v2 (D1): tools de horário do atendente ──
+describe("tools de agenda do atendente (D1)", () => {
+  const sched = ATTENDANT_TOOLS.filter((t) => ["findAvailableTimes", "bookOfferedTime"].includes(t.name));
+
+  test("exatamente as duas tools do D1 (remarcar, cancelar e confirmar presença são D1b/F1)", () => {
+    expect(sched.map((t) => t.name)).toEqual(["findAvailableTimes", "bookOfferedTime"]);
+    for (const absent of ["rescheduleMyAppointment", "cancelMyAppointment", "confirmMyAttendance", "listAppointments", "getAppointment"]) {
+      expect(ALL_AGENT_TOOLS.some((t) => t.name === absent && t.audience === "attendant")).toBe(false);
+    }
+  });
+
+  test("os ids da agenda nunca são parâmetro (INJECTED_PARAM_NAMES) e a reserva só aceita o código da oferta", () => {
+    for (const name of ["appointmentId", "serviceId", "resourceId", "offerId"]) {
+      expect((INJECTED_PARAM_NAMES as readonly string[]).includes(name), name).toBe(true);
+    }
+    for (const tool of sched) {
+      const props = Object.keys((tool.parameters as { properties: Record<string, unknown> }).properties);
+      for (const injected of INJECTED_PARAM_NAMES) expect(props, `${tool.name} expõe ${injected}`).not.toContain(injected);
+    }
+    const book = sched.find((t) => t.name === "bookOfferedTime")!;
+    expect(Object.keys((book.parameters as { properties: object }).properties)).toEqual(["offer"]);
+  });
+
+  test("a leitura roda sem escrita; a reserva é de escrita (nunca destrutiva) e pede a permissão `agenda`", () => {
+    expect(sched.find((t) => t.name === "findAvailableTimes")).toMatchObject({ effect: "read", permission: { category: "agenda", level: "view_own" } });
+    expect(sched.find((t) => t.name === "bookOfferedTime")).toMatchObject({ effect: "write", permission: { category: "agenda", level: "edit" } });
+  });
+
+  test("o retorno ao modelo é só texto: nenhum campo pode carregar nome de recurso, de cliente ou id", () => {
+    for (const tool of sched) {
+      expect(tool.resultFields).toEqual(["status", "resultado", "error", "proximo_passo", "ha_mais"]);
+      const projected = projectToolResult(tool, { status: "ok", resultadoX: 1, resourceName: "Sala Rosa", contactName: "Ana", appointmentId: "x", resourceIds: ["y"], score: 40 });
+      expect(Object.keys(projected)).toEqual(["status"]);
+    }
+  });
+
+  test("não entram no agente de grupo", () => {
+    expect(GROUP_AGENT_TOOLS.some((t) => ["findAvailableTimes", "bookOfferedTime"].includes(t.name))).toBe(false);
+  });
+});

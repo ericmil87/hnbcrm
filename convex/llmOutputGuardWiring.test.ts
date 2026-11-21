@@ -71,4 +71,40 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(simGuard).toBeGreaterThan(-1);
     expect(simFormat).toBeGreaterThan(simGuard);
   });
+
+  // Agenda v2 (D1): `schedClaimGuard` — a IA não pode AFIRMAR horário marcado/confirmado sem reserva. Mesmo funil do
+  // vazamento: descarta a rodada, uma nova tentativa, depois falha; vale no runtime E no simulador.
+  test("atendente: schedClaimGuard ligado no funil (rodada, trava final e simulador), depois do guard de vazamento", () => {
+    const src = read("attendant.ts");
+    expect(/import\s*\{[^}]*\bdetectUnbackedBookingClaim\b[^}]*\}\s*from\s*["']\.\/lib\/schedClaimGuard["']/.test(src)).toBe(true);
+    // rodada (runtime e simulador) por `claimInOutgoingRound`; trava final (runtime e simulador) direto
+    expect((src.match(/\bclaimInOutgoingRound\(/g) ?? []).length).toBeGreaterThanOrEqual(3); // definição + runtime + simulador
+    expect((src.match(/\bdetectUnbackedBookingClaim\(/g) ?? []).length).toBeGreaterThanOrEqual(3); // helper + trava final + simulador
+
+    // Runtime: o guard de afirmação vem DEPOIS do de vazamento na rodada e a trava final antes da formatação por canal.
+    const runtime = src.slice(src.indexOf("export const internalProcessQueueItem"), src.indexOf("export const simulateAttendant"));
+    const leakRound = runtime.indexOf("leakInOutgoingRound(");
+    const claimRound = runtime.indexOf("claimInOutgoingRound(");
+    expect(leakRound).toBeGreaterThan(-1);
+    expect(claimRound).toBeGreaterThan(leakRound);
+    const finalLeak = runtime.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
+    const finalClaim = runtime.indexOf("detectUnbackedBookingClaim(replyText");
+    const format = runtime.indexOf("replyText = formatReplyForTransport(replyText");
+    expect(finalClaim).toBeGreaterThan(finalLeak);
+    expect(format).toBeGreaterThan(finalClaim);
+
+    // Só vale com as tools de agenda na run.
+    expect(runtime.slice(claimRound - 400, claimRound)).toMatch(/context\.sched/);
+
+    // Simulador: o guard da rodada e a trava final vêm antes da formatação devolvida.
+    const sim = src.slice(src.indexOf("export const simulateAttendant"));
+    expect(sim.indexOf("claimInOutgoingRound(")).toBeGreaterThan(sim.indexOf("leakInOutgoingRound("));
+    expect(sim.indexOf("detectUnbackedBookingClaim(reply")).toBeLessThan(sim.indexOf("formatReplyForTransport(reply, simulatedTransport)"));
+  });
+
+  test("a regra de afirmação é pura e fica fora do funil de vazamento (sem imports de servidor)", () => {
+    const guard = read("lib/schedClaimGuard.ts");
+    expect(guard).not.toMatch(/from\s+["']\.\.?\/_generated/);
+    expect(guard).not.toMatch(/Date\.now\(/);
+  });
 });
