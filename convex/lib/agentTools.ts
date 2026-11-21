@@ -14,6 +14,7 @@
  */
 import type { PermissionCategory } from "./permissions";
 import { SCHED_ATTENDANT_TOOLS } from "./schedAttendantTools";
+import { SCHED_COPILOT_READ_TOOLS, SCHED_COPILOT_WRITE_TOOLS } from "./schedCopilotTools";
 
 export interface AgentToolSpec {
   name: string;
@@ -713,6 +714,8 @@ export const COPILOT_READ_TOOLS: AgentToolSpec[] = [
     effect: "read",
     resultFields: ["segment", "businessSummary", "personaSeed", "faqSeed", "handoffSeed", "missingSteps", "status", "instruction", "url", "error"],
   },
+  // Agenda v2 (E1): só entram no turno com o módulo ligado e conforme a permissão `agenda` do membro (`schedSpecAllowed`).
+  ...SCHED_COPILOT_READ_TOOLS,
 ];
 
 // ── Tools de ESCRITA do copiloto (F2): gated + confirmação por reversibilidade.
@@ -1322,6 +1325,7 @@ export const COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
     effect: "write",
     resultFields: ["status", "message", "error", "channels", "pendingActionId", "preview", "warnings", "instruction", "url"],
   },
+  ...SCHED_COPILOT_WRITE_TOOLS,
 ];
 
 export const ALL_AGENT_TOOLS: AgentToolSpec[] = [

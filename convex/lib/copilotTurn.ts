@@ -41,6 +41,7 @@ import {
 import { ENVELOPE_SYSTEM_NOTICE, wrapUntrustedJson } from "./promptEnvelope";
 import { buildCurrentDateTimeBlock } from "./promptDateTime";
 import { addUsage, finishRunCostFields, newUsageTotals } from "./aiSpend";
+import { type SchedSessionInfo, schedPromptBlock, schedSpecAllowed } from "./schedCopilotTools";
 
 export const MAX_TOOL_CALLS_PER_TURN = 12;
 export const WALL_CLOCK_BUDGET_MS = 8 * 60 * 1000; // aborta antes do teto de 10 min da action
@@ -51,6 +52,8 @@ export type CopilotSession = {
   member: { _id: Id<"teamMembers">; name: string; role: string };
   org: { name: string; currency: string; timezone: string; industry: string | null };
   providerConfig: OrgProviderConfig | null;
+  /** Agenda v2 (E1): módulo + nível `agenda` do membro; ausente = sem tools de agenda. */
+  scheduling?: SchedSessionInfo;
 };
 
 export type CopilotTurnKind = "copilot" | "telegram_copilot";
@@ -96,6 +99,7 @@ export function buildSystemPrompt(
   session: {
     member: { name: string };
     org: { name: string; currency: string; timezone: string; industry: string | null };
+    scheduling?: SchedSessionInfo;
   },
   now: number,
   opts?: { variant?: "web" | "telegram" }
@@ -131,6 +135,7 @@ export function buildSystemPrompt(
     "(consentimento LGPD e risco do bridge) na tela de Campanhas; diga isso e",
     "aponte o link. Cancelar gera confirmação. Sugira 2+ variantes de texto,",
     "{{nome}} para personalizar e nunca proponha subir limites acima do modo seguro.",
+    ...(schedPromptBlock(session.scheduling) ? [schedPromptBlock(session.scheduling)] : []),
     format,
     ENVELOPE_SYSTEM_NOTICE,
     `Contexto da organização: nome "${session.org.name}", moeda ${session.org.currency},`,
@@ -315,7 +320,8 @@ export async function runCopilotTurn(
 
   const startedAt = Date.now();
   const systemPrompt = opts.systemPrompt ?? buildSystemPrompt(session, startedAt);
-  const allSpecs = [...COPILOT_READ_TOOLS, ...COPILOT_WRITE_TOOLS];
+  // Tool de agenda só com o módulo ligado e conforme a permissão `agenda` do membro (o executor reconfere a cada chamada).
+  const allSpecs = [...COPILOT_READ_TOOLS, ...COPILOT_WRITE_TOOLS].filter((s) => schedSpecAllowed(s, session.scheduling));
   const specs = opts.toolFilter ? allSpecs.filter(opts.toolFilter) : allSpecs;
   const allowedToolNames = new Set(specs.map((s) => s.name));
   const tools = toChatTools(specs);
@@ -539,6 +545,7 @@ export async function runCopilotTurn(
                   organizationId,
                   memberId: session.member._id,
                   now: Date.now(),
+                  threadId,
                   focusConversationId: opts.focusConversationId,
                   via: opts.toolVia,
                   turnStartedAt: startedAt,

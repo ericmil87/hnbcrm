@@ -2373,6 +2373,21 @@ async function previousStatusFromAudit(
   return null;
 }
 
+/**
+ * Leitura PURA para a prévia do Desfazer (Copiloto, E1): para que situação o agendamento voltaria, ou `null` se não
+ * há o que desfazer. Não grava nada; o desfazer de verdade é `undoAppointmentStatusCore` (que revalida tudo).
+ */
+export async function peekUndoTargetCore(
+  ctx: MutationCtx,
+  appointment: Doc<"schedAppointments">,
+  actor: SchedActor
+): Promise<SchedStatus | null> {
+  const a = await loadAppointment(ctx, appointment, actor);
+  const previous = await previousStatusFromAudit(ctx, a);
+  if (!previous || !canUndo(a.status, previous.status, actorClassOf(actor))) return null;
+  return previous.status;
+}
+
 export async function undoAppointmentStatusCore(
   ctx: MutationCtx,
   args: { appointment: Doc<"schedAppointments">; actor: SchedActor; now?: number }

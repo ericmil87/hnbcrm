@@ -25,6 +25,8 @@ import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { requireAuth, isMembershipRevoked, isActiveMemberOf } from "./lib/auth";
 import { assertAgentCan, orgAiActive } from "./lib/agentSecurity";
+import { isSchedCopilotReadTool } from "./lib/schedCopilotTools";
+import { runSchedCopilotReadTool, schedSessionInfo } from "./lib/schedCopilotOps";
 import {
   projectToolResult,
   toolSpecByName,
@@ -225,6 +227,8 @@ export const internalResolveSession = internalQuery({
         industry: org.onboardingMeta?.industry ?? null,
       },
       providerConfig: aiConfig.providerConfig ?? null,
+      // Agenda v2 (E1): módulo + nível `agenda` do membro filtram as tools de agenda do turno.
+      scheduling: schedSessionInfo(org, member),
     };
   },
 });
@@ -264,6 +268,8 @@ export const internalResolveSessionForMember = internalQuery({
         industry: org.onboardingMeta?.industry ?? null,
       },
       providerConfig: aiConfig.providerConfig ?? null,
+      // Agenda v2 (E1): módulo + nível `agenda` do membro filtram as tools de agenda do turno.
+      scheduling: schedSessionInfo(org, member),
     };
   },
 });
@@ -412,6 +418,8 @@ export const internalRunCopilotReadTool = internalQuery({
     via: v.optional(v.literal("telegram_auto")),
     // Regra do ordinal: listas numeradas (tarefas) congeladas no início do turno.
     turnStartedAt: v.optional(v.number()),
+    // Agenda v2 (E1): conversa do Copiloto; as referências curtas de agendamento/horário valem só nela.
+    threadId: v.optional(v.id("copilotThreads")),
   },
   returns: v.any(),
   handler: async (ctx, args) => {
@@ -444,6 +452,7 @@ export const internalRunCopilotReadTool = internalQuery({
       member,
       focusConversationId: args.focusConversationId,
       turnStartedAt: args.turnStartedAt,
+      threadId: args.threadId,
     });
     if ("error" in raw) return raw;
     return projectToolResult(spec, raw);
@@ -463,6 +472,7 @@ async function runReadTool(
     member: Doc<"teamMembers">;
     focusConversationId?: Id<"conversations">;
     turnStartedAt?: number;
+    threadId?: Id<"copilotThreads">;
   }
 ): Promise<Record<string, unknown>> {
   switch (name) {
@@ -507,6 +517,15 @@ async function runReadTool(
       }
       // Configuração do Atendente IA (fv2-16) — `lib/copilotConfigTools.ts`.
       if (isConfigCopilotReadTool(name)) return await runConfigCopilotReadTool(ctx, name, toolArgs, { organizationId });
+      // Agenda v2 (E1) — `lib/schedCopilotOps.ts`: reconfere módulo e permissão `agenda` do membro a cada chamada.
+      if (isSchedCopilotReadTool(name)) {
+        return await runSchedCopilotReadTool(ctx, name, toolArgs, {
+          organizationId,
+          member: scope.member,
+          now: scope.now,
+          threadId: scope.threadId,
+        });
+      }
       return { error: `Tool não implementada: ${name}` };
   }
 }
