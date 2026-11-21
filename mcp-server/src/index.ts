@@ -11,6 +11,7 @@ import { registerPipelineTools } from "./tools/pipeline.js";
 import { registerActivityTools } from "./tools/activities.js";
 import { registerTaskTools } from "./tools/tasks.js";
 import { registerCalendarTools } from "./tools/calendar.js";
+import { registerSchedulingTools } from "./tools/scheduling.js";
 import { registerNotificationTools } from "./tools/notifications.js";
 import { registerCampaignTools } from "./tools/campaigns.js";
 import { registerGroupTools } from "./tools/groups.js";
@@ -19,7 +20,7 @@ import { registerResources } from "./resources.js";
 function createServer(apiUrl: string, apiKey: string) {
   const server = new McpServer({
     name: "hnbcrm",
-    version: "0.5.0",
+    version: "0.6.0",
   });
 
   const client = new HnbCrmClient(apiUrl, apiKey);
@@ -32,6 +33,7 @@ function createServer(apiUrl: string, apiKey: string) {
   registerActivityTools(server, client);
   registerTaskTools(server, client);
   registerCalendarTools(server, client);
+  registerSchedulingTools(server, client);
   registerNotificationTools(server, client);
   registerCampaignTools(server, client);
   registerGroupTools(server, client);

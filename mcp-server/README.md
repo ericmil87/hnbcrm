@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/hnbcrm-mcp.svg)](https://www.npmjs.com/package/hnbcrm-mcp)
 
-MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **68 tools across 11 categories** to manage leads, contacts, pipeline, tasks, calendar, WhatsApp campaigns, WhatsApp groups and notification preferences via AI agents.
+MCP (Model Context Protocol) server for [HNBCRM](https://github.com/hnbcrm/hnbcrm) — the CRM where humans and AI agents work together. Provides **87 tools across 12 categories** to manage leads, contacts, pipeline, tasks, calendar, scheduling (appointments, free slots, closing resources), WhatsApp campaigns, WhatsApp groups and notification preferences via AI agents.
 
 ## Prerequisites
 
@@ -31,6 +31,12 @@ npm install -g hnbcrm-mcp
 | `HNBCRM_API_KEY` | Yes | API key generated from HNBCRM Settings |
 
 > **URL base:** use the production backend URL (e.g. `https://careful-anaconda-127.convex.site`). Integrations created before 02/10/2026 against another URL must be updated.
+
+## Scheduling note (Agenda v2, MCP server 0.6.0)
+
+19 new tools (87 in total): 17 `crm_*` scheduling tools plus `calendar_complete_event` and `calendar_cancel_event` (internal calendar events). They call `/api/v1/scheduling/*`, which applies the **same rules as the app screens**. The organization needs the optional **Scheduling** module on; reads need `agenda: view_own` (a `view_own` key only sees appointments where its member is the professional or the creator), writes need `agenda: edit`, closing the whole agenda needs `agenda: manage`. Dates are local (`YYYY-MM-DDTHH:mm` in the organization timezone); answers also carry ISO with offset and `timezone`.
+
+Rules for agents: **never invent a time** (offer and book only times returned by `crm_find_slots`); **always preview** (`crm_preview_appointment`) before `crm_book_appointment`; **`idempotencyKey` is required** to book (reuse the same key only to retry the identical request); on a **409** the tool result carries `violations` and `alternatives` (up to 3 times in the `Slot` format): offer one of them instead of retrying. `force` accepts only warning codes a human decided to accept, never capacity. `crm_close_resource` and `crm_reopen_resource` are preview-first (`mode: "preview"` by default; commit needs `acceptAffected` and `expectedAffected`). Keys of AI members can read but not write appointments.
 
 ## Contact type note ("not a customer / back to lead", MCP server 0.5.0)
 
@@ -252,7 +258,7 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | `crm_search_tasks` | Search tasks by text |
 | `crm_bulk_complete_tasks` | Batch complete multiple tasks |
 
-### Calendar (6 tools)
+### Calendar (8 tools)
 
 | Tool | Description |
 |------|-------------|
@@ -262,6 +268,30 @@ cp -r .claude/skills/hnbcrm/ ~/.openclaw/workspace/skills/hnbcrm/
 | `calendar_update_event` | Update event properties |
 | `calendar_delete_event` | Delete an event |
 | `calendar_reschedule_event` | Quickly reschedule an event |
+| `calendar_complete_event` | Mark an event as completed (recurring events generate the next one) |
+| `calendar_cancel_event` | Mark an event as cancelled |
+
+### Scheduling (17 tools)
+
+| Tool | Description |
+|------|-------------|
+| `crm_list_scheduling_services` | List the active bookable services |
+| `crm_list_scheduling_resources` | List the active people, rooms and equipment |
+| `crm_find_slots` | Free times for a service (window up to 7 days); the only valid source of times |
+| `crm_list_agenda` | Appointments of a day or range, with a stable cursor |
+| `crm_get_appointment` | One appointment with conflicts and status history |
+| `crm_list_scheduling_pending` | Proposals to approve, open conflicts, no-outcome appointments, suggestions |
+| `crm_preview_appointment` | Dry run of a booking (or reschedule); writes nothing |
+| `crm_book_appointment` | Book (idempotency key required; 409 with alternatives) |
+| `crm_reschedule_appointment` | Move an appointment atomically |
+| `crm_cancel_appointment` | Cancel an appointment |
+| `crm_set_appointment_status` | approve, reject, confirm, check_in, complete, no_show |
+| `crm_undo_appointment_status` | Undo the last status change |
+| `crm_change_appointment_resources` | Change room, professional or equipment |
+| `crm_close_resource` | Close a resource/day (or special hours, block) with a preview |
+| `crm_reopen_resource` | Reopen with a preview |
+| `crm_get_closure_run` | Progress of a batched closure |
+| `crm_resolve_conflict` | Resolve an open conflict (resource, reschedule, cancel, manual) |
 
 ### Notifications (2 tools)
 
