@@ -2694,6 +2694,8 @@ const applicationTables = {
     .index("by_organization_and_start", ["organizationId", "startTime"])
     .index("by_organization_and_long_start", ["organizationId", "longStart"])
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
+    // Agenda v2 (A3a): compromissos internos de um membro por faixa de tempo (lib/schedRead.loadWindow).
+    .index("by_organization_and_assigned_and_start", ["organizationId", "assignedTo", "startTime"])
     .index("by_organization_and_type", ["organizationId", "eventType"])
     .index("by_organization_and_status", ["organizationId", "status"])
     .index("by_lead", ["leadId"])
