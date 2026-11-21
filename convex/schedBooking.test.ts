@@ -1699,3 +1699,76 @@ describe("A3d: simular remarcação", () => {
     expect(await schedInvariantProblems(t, s.organizationId, Date.now())).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// A3d: `closeConflictsIfResolved` em cada caminho da porta
+// ---------------------------------------------------------------------------
+
+describe("A3d: a fila de conflitos só encerra quando não há mais o que resolver", () => {
+  async function queued() {
+    const s = await seedOrg();
+    const a = (await book(s, "dupla", at(10), { contactId: s.contacts[0] })).appointmentIds[0];
+    const b = (await book(s, "dupla", at(10), { contactId: s.contacts[1] })).appointmentIds[0];
+    const result = await t.run((ctx) =>
+      bookAppointmentCore(ctx as never, {
+        organizationId: s.organizationId, actor: { type: "system", via: "human_message" }, origin: "human_message",
+        serviceId: s.services.dupla, startTime: at(10), contactId: s.contacts[2], initialStatus: "scheduled",
+        conflictToQueue: true, idempotencyKey: "hm:A3d", now: NOW,
+      } as never)
+    );
+    const id = (result as { appointmentId: Id<"schedAppointments"> }).appointmentId;
+    return { s, a, b, id };
+  }
+  const conflictsOf = (id: Id<"schedAppointments">) =>
+    t.run((ctx) => ctx.db.query("schedConflicts").withIndex("by_appointment", (q) => q.eq("appointmentId", id)).collect());
+  const invariants = (s: Seed) => schedInvariantProblems(t, s.organizationId, NOW);
+
+  test("remarcar para um horário livre: o antigo sai da agenda e a linha encerra; o novo nasce alocado", async () => {
+    const { s, id } = await queued();
+    expect((await conflictsOf(id))[0].status).toBe("open");
+    expect(await invariants(s)).toEqual([]);
+    const { appointmentId: next } = await asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: id, startTime: at(14) });
+    expect((await conflictsOf(id)).map((c) => c.status)).toEqual(["resolved"]);
+    expect((await appointmentOf(next))!.resources.every((r) => r.allocated)).toBe(true);
+    expect(await conflictsOf(next)).toHaveLength(0);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("trocar recurso: recusado mantém a linha aberta; com vaga livre aloca e encerra", async () => {
+    const { s, a, id } = await queued();
+    const swap = () => asAdmin(s).mutation(api.schedulingMutations.reassignResources, { organizationId: s.organizationId, appointmentId: id, resourceIds: [s.resources.dupla] });
+    await expect(swap()).rejects.toBeTruthy();
+    expect((await conflictsOf(id))[0].status).toBe("open");
+    expect((await appointmentOf(id))!.resources.every((r) => !r.allocated)).toBe(true);
+    expect(await invariants(s)).toEqual([]);
+    await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: a });
+    await swap();
+    expect((await conflictsOf(id))[0].status).toBe("resolved");
+    expect((await appointmentOf(id))!.resources.every((r) => r.allocated)).toBe(true);
+    expect(await allocationsOf(id)).toHaveLength(1);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("cancelar encerra a linha; desfazer o cancelamento não a reabre e realoca com a vaga livre", async () => {
+    const { s, a, id } = await queued();
+    await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: id });
+    expect((await conflictsOf(id))[0].status).toBe("resolved");
+    await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: a });
+    await asAdmin(s).mutation(api.schedulingMutations.undoAppointmentStatus, { organizationId: s.organizationId, appointmentId: id });
+    expect((await conflictsOf(id)).every((c) => c.status === "resolved")).toBe(true);
+    expect((await appointmentOf(id))!.resources.every((r) => r.allocated)).toBe(true);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("falta (sai da agenda) encerra a linha; confirmar não mexe nela", async () => {
+    const { s, id } = await queued();
+    const member = (await t.run((ctx) => ctx.db.get(s.admin.memberId)))!;
+    const core = await import("./lib/schedBookingOps");
+    await t.run((ctx) => core.setAppointmentStatusCore(ctx as never, { appointment: { _id: id, organizationId: s.organizationId } as never, actor: { type: "human", member }, to: "confirmed", now: NOW }));
+    expect((await conflictsOf(id))[0].status).toBe("open");
+    await t.run((ctx) => core.setAppointmentStatusCore(ctx as never, { appointment: { _id: id, organizationId: s.organizationId } as never, actor: { type: "human", member }, to: "no_show", now: at(11) }));
+    expect((await appointmentOf(id))!.status).toBe("no_show");
+    expect((await conflictsOf(id))[0].status).toBe("resolved");
+    expect(await invariants(s)).toEqual([]);
+  });
+});

@@ -1585,7 +1585,7 @@ export async function rescheduleAppointmentCore(
     updatedAt: now,
   });
   await releaseAllocations(ctx, old._id);
-  await resolveOpenConflicts(ctx, old._id, now);
+  await closeConflictsIfResolved(ctx, old._id, now);
   await recordAppointmentAudit(ctx, {
     appointment: { ...old, status: "rescheduled" },
     action: "update",
@@ -1606,7 +1606,18 @@ export async function rescheduleAppointmentCore(
 // Cancelar
 // ---------------------------------------------------------------------------
 
-async function resolveOpenConflicts(ctx: MutationCtx, appointmentId: Id<"schedAppointments">, now: number): Promise<void> {
+/**
+ * ÚNICA função que encerra linhas ABERTAS de `schedConflicts` de um agendamento, e SÓ quando não há mais o que
+ * resolver: o agendamento saiu da agenda (cancelado, falta, remarcado) ou todos os recursos dele estão alocados.
+ * Mantém o invariante nos dois sentidos: ativo sem alocação ⇒ conflito aberto; conflito aberto ⇒ ainda há o que
+ * resolver. Chamada no fim de remarcar, trocar recurso, cancelar, status (aprovar/falta) e desfazer; lê o
+ * agendamento FRESCO (depois do patch do ato).
+ */
+async function closeConflictsIfResolved(ctx: MutationCtx, appointmentId: Id<"schedAppointments">, now: number): Promise<void> {
+  const a = await ctx.db.get(appointmentId);
+  if (!a) return;
+  const resolved = !isActiveStatus(a.status) || a.resources.every((r) => r.allocated);
+  if (!resolved) return;
   const rows = await ctx.db
     .query("schedConflicts")
     .withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId))
@@ -1671,7 +1682,7 @@ export async function cancelAppointmentCore(
   });
   const allocations = await snapshotAllocations(ctx, a._id);
   await releaseAllocations(ctx, a._id);
-  await resolveOpenConflicts(ctx, a._id, now);
+  await closeConflictsIfResolved(ctx, a._id, now);
   // Lembrete (F1): desarmar `reminder` aqui.
   const after = (await ctx.db.get(a._id))!;
   await recordAppointmentAudit(ctx, {
@@ -1739,7 +1750,7 @@ async function endSupersededAppointment(
 ): Promise<void> {
   await ctx.db.patch(old._id, { status: "rescheduled", rescheduledToId: proposal._id, outcomePendingSince: undefined, statusChangedAt: now, updatedAt: now });
   await releaseAllocations(ctx, old._id);
-  await resolveOpenConflicts(ctx, old._id, now);
+  await closeConflictsIfResolved(ctx, old._id, now);
   await ctx.db.patch(proposal._id, { rescheduledFromId: old._id, icalUid: old.icalUid ?? `${old._id}@hnbcrm`, icalSequence: (old.icalSequence ?? 0) + 1 });
   await recordAppointmentAudit(ctx, {
     appointment: { ...old, status: "rescheduled" },
@@ -1802,8 +1813,9 @@ export async function setAppointmentStatusCore(
   if (releasing) await releaseAllocations(ctx, a._id);
   if (args.to === "scheduled") {
     if (superseded) await endSupersededAppointment(ctx, a, superseded, args.actor, tz, now);
-    await resolveOpenConflicts(ctx, a._id, now);
   }
+  // Aprovar (com o recurso resolvido) e falta (sai da agenda) encerram a fila; confirmar/check-in não mexem nela.
+  await closeConflictsIfResolved(ctx, a._id, now);
   const after = (await ctx.db.get(a._id))!;
   const label = appointmentLabel(after, tz);
   await recordAppointmentAudit(ctx, {
@@ -1926,6 +1938,7 @@ export async function undoAppointmentStatusCore(
     statusChangedAt: now,
     updatedAt: now,
   });
+  if (recreated) await closeConflictsIfResolved(ctx, a._id, now);
   const after = (await ctx.db.get(a._id))!;
   const label = appointmentLabel(after, tz);
   await recordAppointmentAudit(ctx, {
@@ -2066,7 +2079,7 @@ export async function changeResourceCore(
     ...(a.needsAttention && RESOURCE_ATTENTION_CODES.includes(a.needsAttention.code) ? { needsAttention: undefined } : {}),
     updatedAt: now,
   });
-  await resolveOpenConflicts(ctx, a._id, now);
+  await closeConflictsIfResolved(ctx, a._id, now);
   const after = (await ctx.db.get(a._id))!;
   const label = appointmentLabel(after, bc.tz);
   await recordAppointmentAudit(ctx, {
