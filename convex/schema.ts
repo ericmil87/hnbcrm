@@ -4964,6 +4964,8 @@ const applicationTables = {
     suggestions: v.optional(v.array(v.object({ startTime: v.number(), resourceIds: v.array(v.id("schedResources")) }))), // ≤ 3
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()), resolvedBy: v.optional(v.id("teamMembers")),
+    // A3d: COMO foi encerrado (rescheduled, cancelled, approved, no_show, resource_changed, restored, undone, manual, dismissed_no_appointment).
+    resolution: v.optional(v.string()),
   })
     .index("by_organization_and_status_and_created", ["organizationId", "status", "createdAt"])
     // A3c: conflitos abertos de um intervalo de datas (reabrir recurso reavalia só estes). `localDate` sempre definido nas linhas do fechamento.

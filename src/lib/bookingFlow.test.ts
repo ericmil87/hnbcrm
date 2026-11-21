@@ -3,21 +3,24 @@ import { ConvexError } from "convex/values";
 import { computeDayAvailability } from "../../convex/lib/schedAvailability";
 import { scoreCandidate, DEFAULT_WEIGHTS } from "../../convex/lib/schedScore";
 import { atLocalMinutes } from "../../convex/lib/schedTime";
+import { slotTouchesAnother } from "./agendaSlots";
 import {
   EXPANDED_LIMIT,
   NEVER_FORCEABLE,
   SUGGESTED_COUNT,
   bookingReducer,
   buildBookArgs,
+  nearestSlotStart,
+  supportsGroup,
+  timeInputValue,
   buildFindSlotsArgs,
   buildRescheduleArgs,
-  bookingLabels,
   clientLabel,
   interpretPreview,
   mergeRefreshedSlots,
   submitBooking,
   undoFreshBooking,
-  ADJACENT_CODE,
+  undoRefusedText,
   canAdvance,
   chosenDurationMin,
   classifyViolations,
@@ -272,6 +275,13 @@ describe("argumentos de marcar e remarcar", () => {
     expect(preview).not.toHaveProperty("companions");
     expect(preview).not.toHaveProperty("idempotencyKey");
   });
+  it("prévia de remarcação leva rescheduleAppointmentId; marcar de verdade nunca leva", () => {
+    const manual = state({ slot: picked({ manual: true, resourceIds: [] }) });
+    const preview = buildBookArgs({ organizationId: "org", state: manual, who: {}, mode: "preview", rescheduleAppointmentId: "appt1" });
+    expect(preview?.rescheduleAppointmentId).toBe("appt1");
+    expect(buildBookArgs({ organizationId: "org", state: manual, who: {}, mode: "preview" })).not.toHaveProperty("rescheduleAppointmentId");
+    expect(buildBookArgs({ organizationId: "org", state: manual, who: {}, rescheduleAppointmentId: "appt1" })).not.toHaveProperty("rescheduleAppointmentId");
+  });
   it("só inclui os ids de quem foi informado", () => {
     const args = buildBookArgs({ organizationId: "org", state: state(), who: { conversationId: "v1" } });
     expect(args).not.toHaveProperty("contactId");
@@ -483,7 +493,7 @@ describe("erro sched_rules e proposta vencida", () => {
 describe("encostado: códigos estruturados primeiro, texto do servidor depois", () => {
   const slot = (reasons: string[], reasonCodes?: string[]) => ({ reasons, reasonCodes });
   it("reasonCodes manda quando existe", () => {
-    expect(isAdjacentSlot(slot([], [ADJACENT_CODE]))).toBe(true);
+    expect(isAdjacentSlot(slot([], ["ADJACENT"]))).toBe(true);
     expect(isAdjacentSlot(slot(["logo após outro atendimento"], ["OUTRO_CODIGO"]))).toBe(false);
   });
   it("sem códigos, cai no texto", () => {
@@ -506,6 +516,16 @@ describe("encostado: códigos estruturados primeiro, texto do servidor depois", 
     expect(isAdjacentSlot({ reasons: touching.reasons })).toBe(true);
     expect(isAdjacentSlot({ reasons: touchingBefore.reasons })).toBe(true);
     expect(isAdjacentSlot({ reasons: apart.reasons })).toBe(false);
+    // O código estruturado do servidor decide igual ao texto.
+    expect(isAdjacentSlot(touching)).toBe(true);
+    expect(isAdjacentSlot(touchingBefore)).toBe(true);
+    expect(isAdjacentSlot(apart)).toBe(false);
+    expect(touching.reasonCodes).toContain("ADJACENT");
+  });
+  it("isAdjacentSlot delega à regra única de agendaSlots", () => {
+    for (const s of [slot([], ["ADJACENT"]), slot(["logo após outro atendimento"], ["NEW_RESOURCE"]), slot(["logo antes de outro atendimento"]), slot(["no início do expediente"], ["EDGE_OF_DAY"])]) {
+      expect(isAdjacentSlot(s)).toBe(slotTouchesAnother(s));
+    }
   });
 });
 
@@ -595,19 +615,29 @@ describe("submitBooking", () => {
 });
 
 describe("desfazer a marcação recém-feita", () => {
-  it("cancela em sequência com o motivo e relata quem ficou", async () => {
-    const calls: string[] = [];
-    const cancel = async (a: { appointmentId: string; reason: string }) => {
-      calls.push(a.appointmentId);
-      expect(a.reason).toBe("Desfeito ao marcar");
-      if (a.appointmentId === "b") throw new Error("falhou");
-    };
-    const out = await undoFreshBooking(cancel as never, { organizationId: "org", appointmentIds: ["a", "b", "c"], labels: bookingLabels("Maria", 3) });
-    expect(calls).toEqual(["a", "b", "c"]);
-    expect(out.failed).toEqual(["Acompanhante 2"]);
+  it("chama undoBooking uma vez com todos os ids (grupo inteiro) e devolve ok", async () => {
+    const calls: unknown[] = [];
+    const out = await undoFreshBooking((async (a: unknown) => { calls.push(a); return { undoneIds: [], restoredIds: [] }; }) as never, { organizationId: "org", appointmentIds: ["a", "b", "c"] });
+    expect(out).toEqual({ kind: "ok" });
+    expect(calls).toEqual([{ organizationId: "org", appointmentIds: ["a", "b", "c"] }]);
   });
-  it("tudo certo: ninguém ficou", async () => {
-    expect((await undoFreshBooking((async () => null) as never, { organizationId: "o", appointmentIds: ["a"], labels: ["Maria"] })).failed).toEqual([]);
+  it("recusa do servidor vira 'refused' com a mensagem; outro erro é devolvido", async () => {
+    const refused = await undoFreshBooking((async () => { throw new ConvexError("O horário já mudou de situação."); }) as never, { organizationId: "o", appointmentIds: ["a"] });
+    expect(refused).toEqual({ kind: "refused", message: "O horário já mudou de situação." });
+    const boom = new Error("rede");
+    expect(await undoFreshBooking((async () => { throw boom; }) as never, { organizationId: "o", appointmentIds: ["a"] })).toEqual({ kind: "error", error: boom });
+    const objectData = new ConvexError({ code: "x" } as never);
+    expect((await undoFreshBooking((async () => { throw objectData; }) as never, { organizationId: "o", appointmentIds: ["a"] })).kind).toBe("error");
+  });
+  it("texto da recusa: 'Já não dá para desfazer: ...' com a inicial minúscula", () => {
+    expect(undoRefusedText("O horário anterior foi ocupado por outro agendamento.")).toBe("Já não dá para desfazer: o horário anterior foi ocupado por outro agendamento.");
+    expect(undoRefusedText("A marcação foi feita há mais de 10 minutos")).toBe("Já não dá para desfazer: a marcação foi feita há mais de 10 minutos.");
+  });
+  it("remarcar devolve o id do agendamento novo, que é o que o Desfazer desfaz", async () => {
+    const out = await submitBooking({ book: async () => ({ appointmentIds: [], duplicate: false }), reschedule: async () => ({ appointmentId: "novo" }) }, {
+      organizationId: "org", state: { ...base({ serviceId: "svc1" }), slot: picked() }, who: {}, rescheduleAppointmentId: "velho", tz: TZ, now: NOW,
+    });
+    expect(out).toEqual({ kind: "rescheduled", appointmentId: "velho", newAppointmentId: "novo" });
   });
 });
 
@@ -622,5 +652,62 @@ describe("prévia de 'Outro horário'", () => {
     expect(interpretPreview(res({ ok: false, violations: [{ code: "OUTSIDE_HOURS", severity: "warn", message: "" }] }), ctx).kind).toBe("warn");
     const blocked = interpretPreview(res({ ok: false, violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "" }], alternatives: [{ startTime: at(16), resourceIds: [] }] }), ctx);
     expect(blocked.kind).toBe("blocked");
+  });
+});
+
+describe("busca com acompanhantes (partySize)", () => {
+  const argsFor = (companions: string[]) => buildFindSlotsArgs({ organizationId: "org", state: { ...base({ serviceId: "svc1" }), companions }, tz: "America/Sao_Paulo", now: Date.UTC(2026, 10, 26, 15) });
+  it("sem acompanhante não manda partySize; cada linha de acompanhante conta (nome ou não), no máximo 4", () => {
+    expect(argsFor([])).not.toHaveProperty("partySize");
+    expect(argsFor([""])?.partySize).toBe(2);
+    expect(argsFor(["Maria", "", "Bia"])?.partySize).toBe(4);
+    expect(argsFor(["a", "b", "c", "d", "e"])?.partySize).toBe(4);
+  });
+  it("'Quantas pessoas?' antes do horário: ajusta os acompanhantes, mantém nomes e descarta o horário escolhido", () => {
+    const s0 = { ...base({ serviceId: "svc1" }), companions: ["Maria", "Bia"], slot: picked() };
+    const s1 = bookingReducer(s0, { type: "setPartySize", size: 2 });
+    expect(s1.companions).toEqual(["Maria"]);
+    expect(s1.slot).toBeNull();
+    expect(bookingReducer(s1, { type: "setPartySize", size: 4 }).companions).toEqual(["Maria", "", ""]);
+    expect(bookingReducer(s1, { type: "setPartySize", size: 1 }).companions).toEqual([]);
+    expect(bookingReducer(s1, { type: "setPartySize", size: 9 }).companions).toHaveLength(3);
+    expect(bookingReducer(s1, { type: "setPartySize", size: 0 }).companions).toHaveLength(0);
+  });
+  it("só mostra grupo quando o serviço usa sala/equipamento com capacidade acima de 1 (da lista do requisito)", () => {
+    const dual = { _id: "dual", name: "Dupla", kind: "room", capacity: 2 };
+    const simples = { _id: "s1", name: "Sala", kind: "room", capacity: 1 };
+    const pro = { _id: "p", name: "Ana", kind: "person", capacity: 3 };
+    const svc = (reqs: ServiceLike["requirements"]): ServiceLike => ({ _id: "x", name: "S", durationMin: 60, requirements: reqs });
+    expect(supportsGroup(svc([{ kind: "room" }]), [dual, simples])).toBe(true);
+    expect(supportsGroup(svc([{ kind: "room" }]), [simples])).toBe(false);
+    expect(supportsGroup(svc([{ kind: "person" }]), [pro])).toBe(false);
+    expect(supportsGroup(svc([{ kind: "room", resourceIds: ["s1"] }]), [dual, simples])).toBe(false);
+    expect(supportsGroup(svc([{ kind: "room", resourceIds: ["dual"] }]), [dual, simples])).toBe(true);
+    expect(supportsGroup(svc([{ kind: "room" }]), [{ ...dual, active: false }])).toBe(false);
+    expect(supportsGroup(undefined, [dual])).toBe(false);
+  });
+});
+
+describe("hora pedida pela Agenda", () => {
+  const tz = "America/Sao_Paulo";
+  const at = (date: string, h: number, m = 0) => atLocalMinutes(date, h * 60 + m, tz);
+  const slot = (date: string, h: number, m = 0) => ({ startTime: at(date, h, m), localDate: date });
+  it("escolhe a sugestão mais próxima; empate vai para a mais cedo", () => {
+    const list = [slot("2026-11-26", 9), slot("2026-11-26", 10), slot("2026-11-26", 12)];
+    expect(nearestSlotStart(list, { timeMin: 11 * 60 + 40, tz })).toBe(at("2026-11-26", 12));
+    expect(nearestSlotStart(list, { timeMin: 11 * 60, tz })).toBe(at("2026-11-26", 10)); // 10:00 e 12:00 a 60 min? 10:00 vence por ser a mais cedo
+    expect(nearestSlotStart(list, { timeMin: 0, tz })).toBe(at("2026-11-26", 9));
+  });
+  it("só considera o dia pedido e devolve null sem sugestão", () => {
+    const list = [slot("2026-11-25", 11), slot("2026-11-26", 15)];
+    expect(nearestSlotStart(list, { timeMin: 11 * 60, tz, date: "2026-11-26" })).toBe(at("2026-11-26", 15));
+    expect(nearestSlotStart(list, { timeMin: 11 * 60, tz, date: "2026-11-27" })).toBeNull();
+    expect(nearestSlotStart([], { timeMin: 600, tz })).toBeNull();
+  });
+  it("campo de hora: HH:mm ou vazio quando fora do dia", () => {
+    expect(timeInputValue(9 * 60 + 5)).toBe("09:05");
+    expect(timeInputValue(undefined)).toBe("");
+    expect(timeInputValue(1440)).toBe("");
+    expect(timeInputValue(-1)).toBe("");
   });
 });

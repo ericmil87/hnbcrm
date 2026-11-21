@@ -15,7 +15,6 @@ import { BOOKING_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday, type LocalDate } from "@/lib/agendaZone";
 import {
-  bookingLabels,
   bookingReducer,
   buildBookArgs,
   buildFindSlotsArgs,
@@ -27,9 +26,11 @@ import {
   mergeRefreshedSlots,
   newIdempotencyKey,
   normalizeOffered,
+  partySizeOf,
   pickedFromOffered,
   submitBooking,
   undoFreshBooking,
+  undoRefusedText,
   type BookingState,
   type BookingWho,
   type OfferedSlot,
@@ -62,6 +63,8 @@ export interface BookingSheetProps {
   reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number };
   /** Abre num dia (`YYYY-MM-DD`), ex.: "+ livre" da Agenda. */
   initialDate?: LocalDate;
+  /** Hora pedida (minutos do dia no fuso da org); só vale junto de `initialDate`: destaca a sugestão mais próxima e pré-preenche "Outro horário". */
+  initialTimeMin?: number;
   /** Sala/profissional já fixados por tipo (`room`, `person`), ex.: coluna da Agenda. */
   initialPinned?: Record<string, string>;
   /** Abrir um agendamento (o "Ver horário" do aviso de duplicado). Ausente = sem o atalho. */
@@ -121,7 +124,7 @@ function BookingSheetLoader(props: LoaderProps) {
 interface FlowProps extends LoaderProps {
   tz: string;
   services: ServiceLike[];
-  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string }>;
+  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string; capacity?: number; active?: boolean }>;
   preferredServiceId: string | null;
 }
 
@@ -151,7 +154,7 @@ function useSlotSearch(input: {
   const lastFilter = useRef<string | null>(null);
   const requestId = useRef(0);
   const onSlotStep = state.step === "slot";
-  const filterKey = JSON.stringify([state.serviceId, state.variantKey, state.dayPreset, state.otherDate, state.period, state.pinned]);
+  const filterKey = JSON.stringify([state.serviceId, state.variantKey, state.dayPreset, state.otherDate, state.period, state.pinned, partySizeOf(state)]);
 
   useEffect(() => {
     if (!onSlotStep) return;
@@ -197,10 +200,10 @@ function useSlotSearch(input: {
   return { slots, reload };
 }
 
-function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
+function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
   const bookAppointment = useMutation(api.schedulingMutations.bookAppointment);
   const rescheduleAppointment = useMutation(api.schedulingMutations.rescheduleAppointment);
-  const cancelAppointment = useMutation(api.schedulingMutations.cancelAppointment);
+  const undoBooking = useMutation(api.schedulingMutations.undoBooking);
   const previewBooking = useMutation(api.schedulingMutations.previewBooking);
   const now = useRoundedNow("minute");
   const today = zonedToday(now, tz);
@@ -225,7 +228,19 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
   const whoOk = Boolean(reschedule) || hasWho(who);
   const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin });
   const [failure, setFailure] = useState<FailureView | null>(null);
-  const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind })), [resources]);
+  const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind, capacity: r.capacity, active: r.active })), [resources]);
+
+  /** Toast "Desfazer": tudo ou nada; recusa mostra o motivo e abre o painel do horário. */
+  const runUndo = async (ids: readonly string[]) => {
+    const out = await undoFreshBooking(undoBooking, { organizationId, appointmentIds: ids });
+    if (out.kind === "ok") toast.success(t.toast.undone);
+    else if (out.kind === "refused") {
+      const first = ids[0] as Id<"schedAppointments">;
+      toast.error(undoRefusedText(out.message), {
+        action: onOpenAppointment ? { label: t.slot.openExisting, onClick: () => onOpenAppointment(first) } : undefined,
+      });
+    } else toast.error(mutationErrorMessage(out.error, t.toast.undoFailed));
+  };
 
   const submit = async (force?: string[]) => {
     if (busy) return;
@@ -239,7 +254,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
         case "invalid":
           return;
         case "rescheduled":
-          toast.success(VOCAB.scheduling.toast.rescheduled);
+          toast.success(VOCAB.scheduling.toast.rescheduled, out.newAppointmentId ? { action: { label: VOCAB.scheduling.undo, onClick: () => void runUndo([out.newAppointmentId!]) } } : undefined);
           onDone?.({ appointmentIds: [out.appointmentId], rescheduled: true });
           setFailure(null);
           onClose();
@@ -250,10 +265,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
             action: {
               label: VOCAB.scheduling.undo,
               onClick: () => {
-                void undoFreshBooking(cancelAppointment, { organizationId, appointmentIds: ids, labels: bookingLabels(clientName, ids.length) }).then(({ failed }) => {
-                  if (failed.length === 0) toast.success(t.toast.undone);
-                  else toast.error(fillVocab(t.toast.undoPartial, { quais: failed.join(", ") }));
-                });
+                void runUndo(ids);
               },
             },
           });
@@ -290,9 +302,14 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
   };
 
   const previewManual = async (startTime: number): Promise<ManualPreviewResult> => {
-    // Remarcar: a prévia contaria o próprio horário como ocupado; o servidor confere ao remarcar.
-    if (reschedule) return { kind: "ok", warnings: [], resourceNames: [] };
-    const args = buildBookArgs({ organizationId, state: { ...state, slot: { startTime, endTime: null, resourceIds: [], resourceNames: [], reasons: [], manual: true, warnings: [] } }, who, mode: "preview" });
+    // Remarcar: a prévia é a da REMARCAÇÃO (o servidor ignora as alocações do próprio agendamento).
+    const args = buildBookArgs({
+      organizationId,
+      state: { ...state, slot: { startTime, endTime: null, resourceIds: [], resourceNames: [], reasons: [], manual: true, warnings: [] } },
+      who,
+      mode: "preview",
+      rescheduleAppointmentId: reschedule?.appointmentId,
+    });
     if (!args) return { kind: "error", message: t.slot.manualInvalid };
     try {
       return interpretPreview(await previewBooking(args), { tz, now: Date.now(), durationMin });
@@ -312,6 +329,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
       slots={slots}
       clientName={clientName}
       whoOk={whoOk}
+      initialTimeMin={initialDate ? initialTimeMin : undefined}
       reschedule={reschedule ? { fromStartTime: reschedule.startTime } : null}
       busy={busy}
       failure={failure}

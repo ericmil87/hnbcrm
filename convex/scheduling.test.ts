@@ -188,6 +188,8 @@ describe("findSlots: clínica do plano", () => {
     const staff = await as(s.admin).query(api.scheduling.findSlots, findArgs({ now }));
     expect(starts(staff.slots)).toContain("09:00");
     expect(staff.slots.some((x) => x.reasons.length > 0)).toBe(true);
+    expect(staff.slots.some((x) => x.reasonCodes.length > 0)).toBe(true);
+    expect(staff.slots.every((x) => x.reasons.length === 0 || x.reasonCodes.length > 0)).toBe(true);
     const ai = await as(s.admin).query(api.scheduling.findSlots, findArgs({ now, audience: "ai", limit: undefined }));
     assertMatchesReturns(ai, sched.findSlots);
     expect(ai.earliestBookableAt).toBe(now + 120 * 60_000);
@@ -197,6 +199,7 @@ describe("findSlots: clínica do plano", () => {
       expect(sl.startTime).toBeGreaterThanOrEqual(now + 120 * 60_000);
       expect(sl.resourceNames).toEqual([]);
       expect(sl.reasons).toEqual([]);
+      expect(sl.reasonCodes).toEqual([]);
       expect(sl.score).toBe(0);
       expect(sl.resourceIds.length).toBe(2);
     }
@@ -363,6 +366,32 @@ describe("loadWindow", () => {
 });
 
 describe("grade do dia e do período", () => {
+  test("listAgendaDay: agendamento que começou no dia anterior e cruza a meia-noite aparece no dia seguinte (mesmas regras de visibilidade)", async () => {
+    const SUN = "2026-06-14";
+    const cross = await book({ start: at(SUN, 23), durationMin: 90, localDate: SUN, resources: [R(clinic.pros.bia, "Profissional", "Bia")] }); // 23:00-00:30
+    const endsAtMidnight = await book({ start: at(SUN, 23), durationMin: 60, localDate: SUN, resources: [R(clinic.pros.caio, "Profissional", "Caio")] }); // até 00:00 exato
+    const sameDay = await book({ start: at(MON, 9), resources: [R(clinic.pros.ana, "Profissional", "Ana")] });
+    const day = (p: Person, date: string) => as(p).query(api.scheduling.listAgendaDay, { organizationId: s.orgId, localDate: date });
+    const mon = await day(s.admin, MON);
+    assertMatchesReturns(mon, sched.listAgendaDay);
+    expect(mon.appointments.map((a) => a._id).sort()).toEqual([cross, sameDay].sort());
+    expect(mon.appointments.map((a) => a._id)).not.toContain(endsAtMidnight);
+    expect(mon.appointments[0]._id).toBe(cross); // em ordem de início
+    // No dia em que começou, continua aparecendo (e o que termina à meia-noite também).
+    expect((await day(s.admin, SUN)).appointments.map((a) => a._id).sort()).toEqual([cross, endsAtMidnight].sort());
+    // view_own (é a Bia): vê o dela; o de outro profissional vira ocupação anônima, nunca linha.
+    await t.run((ctx) => ctx.db.patch(cross, { createdBy: undefined }));
+    const own = await day(s.viewOwn, MON);
+    expect(own.appointments.map((a) => a._id)).toEqual([cross]);
+    const other = await book({ start: at(SUN, 23, 30), durationMin: 60, localDate: SUN, resources: [R(clinic.pros.duda, "Profissional", "Duda")] });
+    const own2 = await day(s.viewOwn, MON);
+    expect(own2.appointments.map((a) => a._id)).not.toContain(other);
+    expect(own2.busy.some((b) => b.resourceIds.includes(clinic.pros.duda))).toBe(true);
+    // Outra org e sem permissão: vazio.
+    expect((await day(s.outsider, MON)).appointments).toEqual([]);
+    expect((await day(s.none, MON)).appointments).toEqual([]);
+  });
+
   test("listAgendaDay: recursos com abertura, fechamento e agendamentos do dia", async () => {
     const { a1 } = await clinicDay();
     const res = await as(s.admin).query(api.scheduling.listAgendaDay, { organizationId: s.orgId, localDate: MON });
@@ -448,6 +477,56 @@ describe("detalhe, vínculos e pendências", () => {
     expect((await as(s.viewAll).query(api.scheduling.getAppointment, { appointmentId: a1 }))!.canEdit).toBe(false);
     await t.run((ctx) => ctx.db.delete(a1));
     expect(await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: a1 })).toBeNull();
+  });
+
+  test("getAppointment: quem marcou e o ator de cada mudança de status (auditoria); rótulos para IA, link e sistema", async () => {
+    const a = await book({ start: at(MON, 10), resources: [R(clinic.pros.ana, "Profissional", "Ana")], createdBy: s.admin.memberId, contactId: s.contactId, leadId: s.leadId });
+    const aiMemberId = await t.run((ctx) => ctx.db.insert("teamMembers", { organizationId: s.orgId, name: "Robô da Clínica", role: "ai", type: "ai", status: "active", createdAt: 1, updatedAt: 1 }));
+    const audit = (over: Record<string, unknown>) =>
+      t.run((ctx) =>
+        ctx.db.insert("auditLogs", {
+          organizationId: s.orgId, entityType: "schedAppointment", entityId: a, action: "update", actorType: "human", description: "x", severity: "low", createdAt: 10,
+          metadata: { statusChange: true }, ...over,
+        } as never)
+      );
+    await audit({ action: "create", actorId: s.admin.memberId, createdAt: 5, metadata: { statusChange: false }, changes: { after: { status: "scheduled" } } });
+    await audit({ actorId: s.agent.memberId, createdAt: 20, changes: { before: { status: "scheduled" }, after: { status: "confirmed" } } });
+    await audit({ actorType: "system", createdAt: 30, metadata: { statusChange: true, via: "public_link" }, changes: { before: { status: "confirmed" }, after: { status: "cancelled" } } });
+    await audit({ actorId: s.admin.memberId, createdAt: 40, metadata: { statusChange: true, undo: true }, changes: { before: { status: "cancelled" }, after: { status: "confirmed" } } });
+    await audit({ actorType: "ai", actorId: aiMemberId, createdAt: 50, changes: { before: { status: "confirmed" }, after: { status: "completed" } } });
+    // Auditoria de OUTRA org com o mesmo id de entidade nunca entra.
+    await audit({ organizationId: s.otherOrgId, actorId: s.outsider.memberId, createdAt: 60, changes: { before: { status: "completed" }, after: { status: "no_show" } } });
+
+    const res = await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: a });
+    assertMatchesReturns(res, sched.getAppointment);
+    expect(res!.createdByName).toBe("Admin");
+    expect(res!.statusActors).toEqual([
+      { status: "confirmed", at: 20, actorName: "Atendente" },
+      { status: "cancelled", at: 30, actorName: "Link público" },
+      { status: "confirmed", at: 40, undo: true, actorName: "Admin" },
+      { status: "completed", at: 50, actorName: "IA" },
+    ]);
+    expect(JSON.stringify(res)).not.toContain("Admin Outra");
+
+    // Quem marcou sem membro: pelo rótulo da origem; membro de IA vira "IA"; membro de outra org não vaza o nome.
+    const byAi = await book({ start: at(MON, 11), resources: [R(clinic.pros.bia, "Profissional", "Bia")], createdBy: aiMemberId });
+    const byLink = await book({ start: at(MON, 12), resources: [R(clinic.pros.caio, "Profissional", "Caio")] });
+    await t.run((ctx) => ctx.db.patch(byLink, { origin: "public" }));
+    const bySystem = await book({ start: at(MON, 14), resources: [R(clinic.pros.duda, "Profissional", "Duda")] });
+    await t.run((ctx) => ctx.db.patch(bySystem, { origin: "human_message" }));
+    const foreignCreator = await book({ start: at(MON, 15), resources: [R(clinic.pros.ana, "Profissional", "Ana")], createdBy: s.outsider.memberId });
+    const name = async (id: Id<"schedAppointments">) => (await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: id }))!.createdByName;
+    expect(await name(byAi)).toBe("IA");
+    expect(await name(byLink)).toBe("Link público");
+    expect(await name(bySystem)).toBe("Sistema");
+    expect(await name(foreignCreator)).toBe("Equipe");
+  });
+
+  test("getAppointment: sem permissão, de outra org ou módulo desligado continua null (sem nomes)", async () => {
+    const a = await book({ start: at(MON, 10), resources: [R(clinic.pros.ana, "Profissional", "Ana")], createdBy: s.admin.memberId });
+    expect(await as(s.none).query(api.scheduling.getAppointment, { appointmentId: a })).toBeNull();
+    expect(await as(s.outsider).query(api.scheduling.getAppointment, { appointmentId: a })).toBeNull();
+    expect(await as(s.viewAll).query(api.scheduling.getAppointment, { appointmentId: a })).not.toBeNull();
   });
 
   test("listForContact/Lead/Conversation: próximos ativos + últimos, mescla contato e lead, sem duplicar", async () => {
@@ -640,5 +719,90 @@ describe("contrato de returns (config)", () => {
     const prev = await as(s.admin).query(api.schedulingConfig.previewSuggestions, { organizationId: s.orgId, serviceId: clinic.serviceId, localDate: MON, now: NOW, audience: "public" });
     assertMatchesReturns(prev, schedCfg.previewSuggestions);
     expect(prev.enabled).toBe(true);
+  });
+});
+
+describe("findSlots com acompanhantes (partySize) e a regra de grupo da porta", () => {
+  const bookParty = (args: Record<string, unknown>) =>
+    as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.orgId, contactId: s.contactId, ...args } as any);
+  const coupleService = async () =>
+    await as(s.admin).mutation(api.schedulingConfig.upsertService, {
+      organizationId: s.orgId, name: "Massagem casal", durationMin: 60,
+      requirements: [{ role: "Sala", kind: "room", resourceIds: [clinic.rooms.dual] }, { role: "Profissional", kind: "person" }],
+    });
+  const search = (serviceId: Id<"schedServices">, partySize?: number) =>
+    as(s.admin).query(api.scheduling.findSlots, findArgs({ serviceId, ...(partySize ? { partySize } : {}) }));
+
+  test("tamanho do grupo é de 1 a 4 e o retorno confere com o validator", async () => {
+    for (const bad of [0, 5, 2.5, -1]) {
+      await expect(as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: bad }))).rejects.toThrow(/de 1 a 4/);
+    }
+    const ok = await as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: 2 }));
+    assertMatchesReturns(ok, sched.findSlots);
+  });
+
+  test("2 pessoas: só a sala que comporta as duas; sem partySize as salas simples também aparecem", async () => {
+    const one = await as(s.admin).query(api.scheduling.findSlots, findArgs());
+    const two = await as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: 2 }));
+    expect(two.slots.length).toBeGreaterThan(0);
+    for (const sl of two.slots) expect(sl.resourceIds).toContain(clinic.rooms.dual);
+    expect(one.slots.some((sl) => !sl.resourceIds.includes(clinic.rooms.dual))).toBe(true);
+    // 5 pessoas não existem; 3 e 4 também não cabem na sala dupla (capacidade 2).
+    expect((await as(s.admin).query(api.scheduling.findSlots, findArgs({ partySize: 3 }))).slots).toEqual([]);
+  });
+
+  test("exclusive nunca comporta mais de uma pessoa; equipamento segue a sala", async () => {
+    const exclusive = await as(s.admin).mutation(api.schedulingConfig.upsertService, {
+      organizationId: s.orgId, name: "Sala inteira", durationMin: 60,
+      requirements: [{ role: "Sala", kind: "room", resourceIds: [clinic.rooms.dual], exclusive: true }],
+    });
+    expect((await search(exclusive)).slots.length).toBeGreaterThan(0);
+    expect((await search(exclusive, 2)).slots).toEqual([]);
+  });
+
+  test("concorda com a porta: todo horário oferecido para 2 é marcável em grupo, e a sala é a mesma", async () => {
+    const svc = await coupleService();
+    const res = await search(svc, 2);
+    expect(res.slots.length).toBeGreaterThan(2);
+    // horários que não se sobrepõem (cada reserva ocupa a sala dupla com 2 unidades no bloco)
+    const picked: typeof res.slots = [];
+    for (const sl of [...res.slots].sort((a, b) => a.startTime - b.startTime)) {
+      if (picked.every((p) => sl.startTime >= p.endTime)) picked.push(sl);
+    }
+    expect(picked.length).toBeGreaterThanOrEqual(2);
+    for (const sl of picked) {
+      const done = await bookParty({ serviceId: svc, startTime: sl.startTime, resourceIds: sl.resourceIds, companions: [{ guestName: "Acompanhante" }] });
+      expect(done.appointmentIds).toHaveLength(2);
+      const docs = await t.run(async (ctx) => await Promise.all(done.appointmentIds.map((id: Id<"schedAppointments">) => ctx.db.get(id))));
+      const rooms = docs.map((d) => d!.resources.find((r) => r.role === "Sala")!.resourceId);
+      const pros = docs.map((d) => d!.resources.find((r) => r.role === "Profissional")!.resourceId);
+      expect(new Set(rooms).size).toBe(1);
+      expect(new Set(pros).size).toBe(2); // um profissional por pessoa
+    }
+    const { schedInvariantProblems } = await import("./lib/schedInvariants.test-helper");
+    expect(await schedInvariantProblems(t, s.orgId, NOW)).toEqual([]);
+  });
+
+  test("sala dupla já com 1 pessoa: a busca para 2 não oferece e a porta recusa o grupo (para 1 ainda cabe)", async () => {
+    const svc = await coupleService();
+    await book({ serviceId: svc, start: at(MON, 10), resources: [R(clinic.rooms.dual, "Sala", "Sala dupla"), R(clinic.pros.ana, "Profissional", "Ana")] });
+    expect(starts((await search(svc)).slots)).toContain("10:00");
+    expect(starts((await search(svc, 2)).slots)).not.toContain("10:00");
+    await expect(bookParty({ serviceId: svc, startTime: at(MON, 10), companions: [{ guestName: "G" }] })).rejects.toThrow();
+    const apptsBefore = await t.run((ctx) => ctx.db.query("schedAppointments").collect());
+    expect(apptsBefore).toHaveLength(1); // nada ficou pela metade
+    const { schedInvariantProblems } = await import("./lib/schedInvariants.test-helper");
+    expect(await schedInvariantProblems(t, s.orgId, NOW)).toEqual([]);
+  });
+
+  test("profissionais insuficientes: com 1 livre a busca para 2 não oferece e a porta recusa", async () => {
+    const svc = await coupleService();
+    // Ana, Bia e Caio ocupados às 11h (Duda livre); a sala dupla segue vazia.
+    for (const [pro, name] of [[clinic.pros.ana, "Ana"], [clinic.pros.bia, "Bia"], [clinic.pros.caio, "Caio"]] as const) {
+      await book({ start: at(MON, 11), resources: [R(clinic.rooms.r1, "Sala", "Sala 1"), R(pro, "Profissional", name)] });
+    }
+    expect(starts((await search(svc)).slots)).toContain("11:00");
+    expect(starts((await search(svc, 2)).slots)).not.toContain("11:00");
+    await expect(bookParty({ serviceId: svc, startTime: at(MON, 11), companions: [{ guestName: "G" }] })).rejects.toThrow();
   });
 });

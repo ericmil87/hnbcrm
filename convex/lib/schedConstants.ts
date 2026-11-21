@@ -16,6 +16,9 @@ export const OFFER_TTL_MS = 30 * 60 * 1000;
 /** Só as N últimas ofertas da conversa continuam válidas. */
 export const OFFERS_KEPT = 9;
 
+/** Janela (min) em que uma marcação recém-feita ainda pode ser DESFEITA (`undoBooking`). */
+export const UNDO_BOOKING_WINDOW_MIN = 10;
+
 export const DEFAULT_MIN_NOTICE_MIN = 120;
 export const DEFAULT_MAX_ADVANCE_DAYS = 60;
 export const DEFAULT_GRID_MIN = 30;

@@ -34,13 +34,17 @@ interface HarnessProps {
   clientName?: string;
   reschedule?: { fromStartTime?: number } | null;
   preview?: (startTime: number) => Promise<ManualPreviewResult>;
+  initialTimeMin?: number;
+  date?: string;
+  resources?: Array<{ _id: string; name: string; kind: string; capacity?: number }>;
+  pinned?: Record<string, string>;
   onOutcome?: (o: SubmitOutcome) => void;
 }
 
 /** Faz o papel do contêiner (estado do fluxo e envio), com o servidor falso; a tela é a real. */
-function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reasons: ["logo após outro atendimento"] }), slot(4)]), book, clientName = "Maria", reschedule = null, preview, onOutcome }: HarnessProps) {
+function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reasons: ["logo após outro atendimento"] }), slot(4)]), book, clientName = "Maria", reschedule = null, preview, initialTimeMin, date, resources, pinned, onOutcome }: HarnessProps) {
   const [state, dispatch] = useReducer(bookingReducer, undefined, () =>
-    initialBookingState({ services, idempotencyKey: "k1", serviceId: reschedule ? "svc1" : undefined })
+    initialBookingState({ services, idempotencyKey: "k1", serviceId: reschedule ? "svc1" : undefined, date, pinned })
   );
   const [failure, setFailure] = useState<FailureView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -62,7 +66,7 @@ function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reas
       state={state}
       dispatch={dispatch}
       services={services}
-      resources={[{ _id: "room1", name: "Sala 1", kind: "room" }, { _id: "p1", name: "Ana", kind: "person" }]}
+      resources={resources ?? [{ _id: "room1", name: "Sala 1", kind: "room" }, { _id: "p1", name: "Ana", kind: "person" }]}
       tz={TZ}
       today="2030-01-01"
       slots={slots}
@@ -79,6 +83,7 @@ function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reas
         dispatch({ type: "pickSlot", slot: pickedFromOffered(s) });
       }}
       onDismissFailure={() => setFailure(null)}
+      initialTimeMin={initialTimeMin}
       onPreviewManual={preview ?? (async () => ({ kind: "ok", warnings: [], resourceNames: [] }))}
     />
   );
@@ -101,6 +106,39 @@ describe("BookingFlowView", () => {
     expect(book.mock.calls[0][0]).toMatchObject({ serviceId: "svc1", contactId: "c1", resourceIds: ["room1"], idempotencyKey: "k1" });
     expect(book.mock.calls[0][0]).not.toHaveProperty("force");
     await waitFor(() => expect(onOutcome).toHaveBeenCalledWith({ kind: "booked", appointmentIds: ["a1"] }));
+  });
+
+  it("hora pedida pela Agenda: destaca a sugestão mais próxima e pré-preenche 'Outro horário'", () => {
+    // 09:00, 10:00 e 12:00 em São Paulo no dia 2030-01-01; pedido: 11:40 -> 12:00.
+    const at = (h: number) => Date.UTC(2030, 0, 1, h + 3, 0);
+    const slots = ready([slot(2, { startTime: at(9), endTime: at(10) }), slot(2, { startTime: at(10), endTime: at(11) }), slot(2, { startTime: at(12), endTime: at(13) })]);
+    render(<Harness services={[sessao]} slots={slots} date="2030-01-01" initialTimeMin={11 * 60 + 40} />);
+    const nearest = document.querySelectorAll('[data-nearest="true"]');
+    expect(nearest).toHaveLength(1);
+    expect(nearest[0].textContent).toContain("12:00");
+    expect((screen.getByLabelText("Hora") as HTMLInputElement).value).toBe("11:40");
+  });
+
+  it("'Quantas pessoas?' só aparece com sala de capacidade maior que 1 e escolher 2 limpa o horário", async () => {
+    const { rerender } = render(<Harness services={[sessao]} />);
+    expect(screen.queryByRole("group", { name: "Quantas pessoas?" })).toBeNull();
+    rerender(<div />);
+    render(<Harness services={[sessao]} resources={[{ _id: "dual", name: "Dupla", kind: "room", capacity: 2 }]} />);
+    await userEvent.click(screen.getByRole("button", { name: "2 pessoas" }));
+    expect(screen.getByRole("button", { name: "2 pessoas" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("sem horário com acompanhante e profissional fixo: explica o motivo", async () => {
+    render(<Harness services={[sessao]} slots={ready([])} pinned={{ person: "p1" }} resources={[{ _id: "dual", name: "Dupla", kind: "room", capacity: 2 }, { _id: "p1", name: "Ana", kind: "person" }]} />);
+    expect(screen.queryByText(/um profissional por pessoa/)).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "2 pessoas" }));
+    expect(screen.getByText(/Com acompanhante é preciso um profissional por pessoa/)).toBeInTheDocument();
+  });
+
+  it("sem hora pedida nada é destacado e o campo fica vazio", () => {
+    render(<Harness services={[sessao]} date="2030-01-01" />);
+    expect(document.querySelector('[data-nearest="true"]')).toBeNull();
+    expect(screen.queryByLabelText("Hora")).toBeNull();
   });
 
   it("serviço único já vem escolhido: 2 toques", async () => {

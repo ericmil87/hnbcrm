@@ -34,6 +34,10 @@ export const BOOKING_COPY = {
     loading: "Buscando horários…",
     failed: "Não foi possível buscar os horários.",
     unverifiable: "Não deu para conferir os horários agora. Tente de novo.",
+    partyLabel: "Quantas pessoas?",
+    partyOption: "{n} pessoas",
+    partyOne: "1 pessoa",
+    partyPinned: "Com acompanhante é preciso um profissional por pessoa. Tire o profissional fixo ou marque um por vez.",
     retry: "Tentar de novo",
     firstPossible: "Primeiro horário livre: {quando}",
     choosePeople: "Escolher sala ou profissional",
@@ -85,9 +89,8 @@ export const BOOKING_COPY = {
   toast: {
     undone: "Marcação desfeita",
     undoFailed: "Não foi possível desfazer.",
-    undoPartial: "Não foi possível desfazer: {quais} continua marcado.",
+    undoRefused: "Já não dá para desfazer: {motivo}.",
   },
-  undoReason: "Desfeito ao marcar",
 } as const;
 
 export const DETAIL_COPY = {
@@ -100,6 +103,7 @@ export const DETAIL_COPY = {
     when: "Quando",
     where: "Com quem e onde",
     origin: "Origem",
+    createdBy: "Marcado por",
     notes: "Observação",
     openConversation: "Abrir conversa",
   },
@@ -111,6 +115,7 @@ export const DETAIL_COPY = {
   history: {
     title: "Histórico",
     created: "Marcado ({origem})",
+    createdBy: "Marcado por {nome}",
     approved: "Aprovado",
     confirmed: "Cliente confirmou",
     checkedIn: "Chegou",
@@ -118,6 +123,13 @@ export const DETAIL_COPY = {
     noShow: "Faltou",
     cancelled: "Cancelado",
     reason: "Motivo: {motivo}",
+    // Com o ator que a auditoria registrou.
+    approvedBy: "Aprovado por {nome}",
+    confirmedBy: "Confirmado por {nome}",
+    checkedInBy: "Chegada registrada por {nome}",
+    completedBy: "Atendimento concluído por {nome}",
+    noShowBy: "Falta registrada por {nome}",
+    cancelledBy: "Cancelado por {nome}",
   },
   actions: {
     approve: "Aprovar proposta",

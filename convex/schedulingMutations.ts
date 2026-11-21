@@ -17,6 +17,7 @@ import {
   setAppointmentStatusCore,
   throwSchedRules,
   undoAppointmentStatusCore,
+  undoBookingCore,
 } from "./lib/schedBookingOps";
 
 /**
@@ -255,12 +256,40 @@ async function bookAsStaff(
 // Mutations públicas (agenda:edit)
 // ---------------------------------------------------------------------------
 
-/** Prévia: devolve plano, avisos, violações e alternativas SEM gravar nada. */
+/**
+ * Prévia de REMARCAÇÃO: o agendamento é carregado da org (mesma resposta para inexistente e de outra org), o serviço
+ * informado tem de ser o dele e o contato/lead/conversa/variação são os DELE (como na remarcação real). Passa pelo
+ * MESMO core (`rescheduleAppointmentCore`, `mode:"preview"`): antecedência de remarcação, proposta não remarcável,
+ * status, ator e capacidade com as alocações do próprio agendamento ignoradas. Não grava nada.
+ */
+async function previewRescheduleAs(
+  ctx: MutationCtx,
+  actor: SchedActor,
+  now: number,
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[] }
+): Promise<BookResult> {
+  await assertEntitiesInOrg(ctx, args.organizationId, { serviceId: args.serviceId, resourceIds: args.resourceIds });
+  const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
+  if (appointment.serviceId !== args.serviceId) throw new ConvexError("O serviço não é o do agendamento.");
+  return rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force, mode: "preview", now });
+}
+
+/**
+ * Prévia: devolve plano, avisos, violações e alternativas SEM gravar nada. Com `rescheduleAppointmentId`,
+ * simula a remarcação desse agendamento (ver `previewRescheduleAs`).
+ */
 export const previewBooking = mutation({
-  args: bookFields,
+  args: { ...bookFields, rescheduleAppointmentId: v.optional(v.id("schedAppointments")) },
   returns: bookResultValidator,
   handler: async (ctx, args) => {
-    const result = (await bookAsStaff(ctx, args, "preview")) as BookResult;
+    const { rescheduleAppointmentId, ...rest } = args;
+    if (rescheduleAppointmentId) {
+      const { actor, now } = await enter(ctx, args.organizationId);
+      return flatten(
+        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force })
+      );
+    }
+    const result = (await bookAsStaff(ctx, rest, "preview")) as BookResult;
     return flatten(result);
   },
 });
@@ -313,6 +342,27 @@ export const cancelAppointment = mutation({
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
     await cancelAppointmentCore(ctx, { appointment, actor, byClass: args.cancelledBy ?? "staff", reason: args.reason, now });
     return null;
+  },
+});
+
+export const undoBookingReturnValidator = v.object({
+  /** Agendamentos desfeitos (cancelados como `system`). */
+  undoneIds: v.array(v.id("schedAppointments")),
+  /** Agendamentos antigos restaurados (remarcação recém-feita desfeita). */
+  restoredIds: v.array(v.id("schedAppointments")),
+});
+
+/**
+ * Desfaz a marcação/remarcação recém-feita (toast "Desfazer"). Quem marcou ou `agenda: edit`; janela curta; tudo ou
+ * nada para grupo; sem `appointment.cancelled`, sem cancelamento tardio (ver `undoBookingCore`).
+ */
+export const undoBooking = mutation({
+  args: { organizationId: v.id("organizations"), appointmentIds: v.array(v.id("schedAppointments")) },
+  returns: undoBookingReturnValidator,
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "agenda", "view_own");
+    await assertModule(ctx, args.organizationId, "scheduling");
+    return await undoBookingCore(ctx, { organizationId: args.organizationId, appointmentIds: args.appointmentIds, actor: { type: "human", member, via: "app" }, now: Date.now() });
   },
 });
 
@@ -381,11 +431,19 @@ export const internalBookAppointment = internalMutation({
     rescheduleOfId: v.optional(v.id("schedAppointments")),
     sourceMessageId: v.optional(v.id("messages")),
     guestName: v.optional(v.string()),
+    /** Só com `mode:"preview"`: simula a remarcação desse agendamento (a IA só enxerga o da própria conversa). */
+    rescheduleAppointmentId: v.optional(v.id("schedAppointments")),
   },
   returns: bookResultValidator,
   handler: async (ctx, args) => {
-    const { actor: actorArg, ...rest } = args;
+    const { actor: actorArg, rescheduleAppointmentId, ...rest } = args;
     const { actor, now } = await enterInternal(ctx, args.organizationId, actorArg);
+    if (rescheduleAppointmentId) {
+      if (args.mode !== "preview") throw new ConvexError("Para remarcar de fato, use internalRescheduleAppointment.");
+      return flatten(
+        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force })
+      );
+    }
     await assertEntitiesInOrg(ctx, args.organizationId, rest);
     if (rest.rescheduleOfId) await loadAppointmentInOrg(ctx, args.organizationId, rest.rescheduleOfId);
     const conversationId = rest.conversationId ?? (actor.type === "ai" ? actor.conversationId : undefined);

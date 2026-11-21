@@ -87,6 +87,7 @@ export function AppointmentDetailView({
     [t.fields.service, appt.serviceName],
     [t.fields.when, longRangePhrase(appt.startTime, appt.endTime, tz)],
     ...(where ? ([[t.fields.where, where]] as Array<[string, string]>) : []),
+    ...(appt.createdByName ? ([[t.fields.createdBy, appt.createdByName]] as Array<[string, string]>) : []),
     ...(appt.notes ? ([[t.fields.notes, appt.notes]] as Array<[string, string]>) : []),
   ];
   const notice = (text: string, role: "alert" | "status") => (

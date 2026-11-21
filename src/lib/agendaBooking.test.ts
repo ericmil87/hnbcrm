@@ -3,7 +3,7 @@ import { bookingContextParts, bookingSheetExtraProps } from "./agendaBooking";
 
 describe("agendaBooking", () => {
   it("a hora ainda não vai para a folha (ponto único, hoje vazio)", () => {
-    expect(bookingSheetExtraProps(870)).toEqual({});
+    expect(bookingSheetExtraProps(870)).toEqual({ initialTimeMin: 870 });
     expect(bookingSheetExtraProps(undefined)).toEqual({});
   });
   it("contexto sem hora", () => {

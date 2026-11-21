@@ -16,14 +16,17 @@ import { ConvexError } from "convex/values";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   addLocalDays,
+  minutesLabel,
   weekdayOf,
   zonedDateKey,
+  zonedMinutes,
   zonedDateTimeLabel,
   zonedTimeLabel,
   zonedToday,
   type LocalDate,
 } from "./agendaZone";
 import { fillVocab } from "./agendaCopy";
+import { slotTouchesAnother } from "./agendaSlots";
 import { roundNow, type NowUnit } from "./roundNow";
 import { BOOKING_COPY } from "./bookingCopy";
 import { VOCAB } from "./vocab";
@@ -61,7 +64,7 @@ export interface ServiceLike {
   durationMin: number;
   active?: boolean;
   variants?: ReadonlyArray<{ key: string; name: string; durationMin: number }>;
-  requirements?: ReadonlyArray<{ kind: string }>;
+  requirements?: ReadonlyArray<{ kind: string; resourceIds?: ReadonlyArray<string> }>;
 }
 
 export interface ResourceLike {
@@ -162,6 +165,7 @@ export type BookingAction =
   | { type: "pickSlot"; slot: PickedSlot }
   | { type: "goto"; step: BookingStep }
   | { type: "back" }
+  | { type: "setPartySize"; size: number }
   | { type: "addCompanion" }
   | { type: "setCompanion"; index: number; name: string }
   | { type: "removeCompanion"; index: number }
@@ -209,6 +213,11 @@ export function bookingReducer(state: BookingState, action: BookingAction): Book
       return { ...state, step: action.step };
     case "back":
       return { ...state, step: state.step === "review" ? "slot" : "service" };
+    case "setPartySize": {
+      // Quantas pessoas (1–4) ANTES de escolher o horário: a busca já considera o grupo. Os nomes digitados ficam.
+      const size = Math.max(1, Math.min(MAX_COMPANIONS + 1, Math.trunc(action.size)));
+      return { ...resetSearch(state), companions: Array.from({ length: size - 1 }, (_, i) => state.companions[i] ?? "") };
+    }
     case "addCompanion":
       return state.companions.length >= MAX_COMPANIONS ? state : { ...state, companions: [...state.companions, ""] };
     case "setCompanion":
@@ -272,9 +281,31 @@ export interface FindSlotsArgs {
   period?: Exclude<SlotPeriod, "qualquer">;
   resourceIds?: Id<"schedResources">[];
   rescheduleAppointmentId?: Id<"schedAppointments">;
+  /** Pessoas no mesmo horário (2 a 4); ausente = 1. */
+  partySize?: number;
   audience: "staff";
   limit: number;
   now: number;
+}
+
+/** Pessoas do grupo (a principal + cada linha de acompanhante, com ou sem nome ainda), de 1 a 4. */
+export function partySizeOf(state: Pick<BookingState, "companions">): number {
+  return Math.min(1 + state.companions.length, MAX_COMPANIONS + 1);
+}
+
+/**
+ * O serviço comporta grupo? Usa sala ou equipamento com capacidade acima de 1 (da lista permitida do requisito, se
+ * houver). Profissional não conta: cada pessoa pede um profissional. Só então a tela mostra "Quantas pessoas?".
+ */
+export function supportsGroup(service: ServiceLike | undefined, resources: ReadonlyArray<ResourceLike>): boolean {
+  if (!service?.requirements) return false;
+  return service.requirements.some(
+    (req) =>
+      req.kind !== "person" &&
+      resources.some(
+        (r) => r.kind === req.kind && r.active !== false && (r.capacity ?? 1) > 1 && (!req.resourceIds || req.resourceIds.length === 0 || req.resourceIds.includes(r._id))
+      )
+  );
 }
 
 /** Argumentos de `findSlots` (chamada avulsa). `null` enquanto não há serviço escolhido. */
@@ -301,6 +332,7 @@ export function buildFindSlotsArgs(input: {
     ...(input.rescheduleAppointmentId
       ? { rescheduleAppointmentId: input.rescheduleAppointmentId as Id<"schedAppointments"> }
       : {}),
+    ...(partySizeOf(state) > 1 ? { partySize: partySizeOf(state) } : {}),
     audience: "staff",
     limit: state.expanded ? EXPANDED_LIMIT : SUGGESTED_COUNT,
     now,
@@ -341,6 +373,8 @@ export interface BookArgs {
   notes?: string;
   idempotencyKey?: string;
   companions?: Array<{ guestName: string }>;
+  /** Só na prévia: simula a REMARCAÇÃO desse agendamento (o servidor usa o contato e o serviço dele). */
+  rescheduleAppointmentId?: Id<"schedAppointments">;
 }
 
 /** Argumentos de `bookAppointment` e `previewBooking` (a prévia ignora `companions`/`idempotencyKey`). */
@@ -351,6 +385,8 @@ export function buildBookArgs(input: {
   /** Códigos de aviso aceitos (só os que a pessoa viu). */
   force?: readonly string[];
   mode?: "commit" | "preview";
+  /** Só vale com `mode: "preview"`: prévia de remarcação (as alocações do próprio agendamento não contam). */
+  rescheduleAppointmentId?: string;
 }): BookArgs | null {
   const { state, who } = input;
   if (!state.serviceId || !state.slot) return null;
@@ -371,6 +407,7 @@ export function buildBookArgs(input: {
     ...(cleanNotes(state.notes) ? { notes: cleanNotes(state.notes) } : {}),
     ...(commit ? { idempotencyKey: state.idempotencyKey } : {}),
     ...(commit && companions.length > 0 ? { companions: companions.map((guestName) => ({ guestName })) } : {}),
+    ...(!commit && input.rescheduleAppointmentId ? { rescheduleAppointmentId: input.rescheduleAppointmentId as Id<"schedAppointments"> } : {}),
   };
 }
 
@@ -428,7 +465,7 @@ export interface OfferedSlot {
   resourceNames: string[];
   score: number;
   reasons: string[];
-  /** Códigos estruturados dos motivos (formato futuro do servidor, p.ex. `ADJACENT`); vazio hoje. */
+  /** Códigos estruturados dos motivos (`ADJACENT`, `EDGE_OF_DAY`...); vazio fora da equipe. */
   reasonCodes: string[];
 }
 
@@ -502,17 +539,12 @@ export function pickedFromOffered(slot: OfferedSlot, manual = false): PickedSlot
   };
 }
 
-/** Código estruturado de "encostado em outro atendimento" (formato futuro de `reasonCodes`). */
-export const ADJACENT_CODE = "ADJACENT";
-
 /**
- * Encostado = junto de outro atendimento. ÚNICO ponto de detecção: lê primeiro `reasonCodes` (formato
- * estruturado que o servidor vai mandar) e só então cai no texto PT-BR dos motivos ("logo antes/após ...").
- * `bookingFlow.test` roda o `scoreCandidate` real do servidor por esta função: se o texto mudar, quebra.
+ * Encostado = junto de outro atendimento. Delega à ÚNICA regra (`agendaSlots.slotTouchesAnother`: código
+ * `ADJACENT` primeiro, texto PT-BR como reserva). `bookingFlow.test` roda o `scoreCandidate` real.
  */
 export function isAdjacentSlot(slot: { reasons: readonly string[]; reasonCodes?: readonly string[] }): boolean {
-  if (slot.reasonCodes && slot.reasonCodes.length > 0) return slot.reasonCodes.includes(ADJACENT_CODE);
-  return slot.reasons.some((r) => /\blogo (antes|ap[óo]s)\b/i.test(r));
+  return slotTouchesAnother(slot);
 }
 
 /** "Logo após outro atendimento · No início do expediente". */
@@ -530,6 +562,29 @@ export function splitSuggestions(slots: readonly OfferedSlot[], top = SUGGESTED_
   const suggested = slots.slice(0, top);
   const others = slots.slice(top).sort((a, b) => a.startTime - b.startTime);
   return { suggested, others };
+}
+
+/**
+ * Horário inicial pedido pela Agenda ("+ livre" numa linha de hora): a sugestão MAIS PRÓXIMA da hora (minutos do dia
+ * no fuso da org), no dia pedido (`date`, se informado). Empate: a mais cedo. `null` sem sugestão no dia.
+ */
+export function nearestSlotStart(
+  slots: ReadonlyArray<Pick<OfferedSlot, "startTime" | "localDate">>,
+  input: { timeMin: number; tz: string; date?: string | null }
+): number | null {
+  let best: { start: number; gap: number } | null = null;
+  for (const s of slots) {
+    if (input.date && s.localDate !== input.date) continue;
+    const gap = Math.abs(zonedMinutes(s.startTime, input.tz) - input.timeMin);
+    if (best === null || gap < best.gap || (gap === best.gap && s.startTime < best.start)) best = { start: s.startTime, gap };
+  }
+  return best ? best.start : null;
+}
+
+/** Valor do campo de hora ("HH:mm") para minutos do dia; fora de 0–1439 não pré-preenche. */
+export function timeInputValue(timeMin: number | undefined): string {
+  if (timeMin === undefined || !Number.isFinite(timeMin) || timeMin < 0 || timeMin >= 1440) return "";
+  return minutesLabel(timeMin);
 }
 
 // ---------------------------------------------------------------------------
@@ -700,7 +755,7 @@ export type SubmitOutcome =
   | { kind: "booked"; appointmentIds: string[] }
   /** O servidor devolveu um agendamento que já existia (mesmo serviço e horário): nada foi criado. */
   | { kind: "duplicate"; appointmentId: string | undefined }
-  | { kind: "rescheduled"; appointmentId: string }
+  | { kind: "rescheduled"; appointmentId: string; /** O agendamento NOVO (o que o "Desfazer" desfaz), quando o servidor devolveu. */ newAppointmentId?: string }
   /** Falha de regra: `blocked` = há bloqueio (sem forçar); senão só avisos. */
   | { kind: "rules"; violations: ViolationView[]; alternatives: OfferedSlot[]; blocked: boolean }
   | { kind: "error"; error: unknown };
@@ -733,8 +788,13 @@ export async function submitBooking(
         force: input.force,
       });
       if (!args) return { kind: "invalid" };
-      await deps.reschedule(args);
-      return { kind: "rescheduled", appointmentId: input.rescheduleAppointmentId };
+      const done = await deps.reschedule(args);
+      const created = typeof done === "object" && done !== null ? (done as { appointmentId?: unknown }).appointmentId : undefined;
+      return {
+        kind: "rescheduled",
+        appointmentId: input.rescheduleAppointmentId,
+        ...(typeof created === "string" ? { newAppointmentId: created } : {}),
+      };
     }
     const args = buildBookArgs({ organizationId: input.organizationId, state: input.state, who: input.who, force: input.force });
     if (!args) return { kind: "invalid" };
@@ -753,34 +813,36 @@ export async function submitBooking(
   }
 }
 
+export type UndoOutcome =
+  /** Desfeito (em grupo, o grupo inteiro; em remarcação, o horário antigo voltou). */
+  | { kind: "ok" }
+  /** O servidor recusou com um motivo claro (passou da janela, mudou de status, lugar antigo tomado...). */
+  | { kind: "refused"; message: string }
+  | { kind: "error"; error: unknown };
+
 /**
- * Desfaz a marcação RECÉM-FEITA (toast "Desfazer"). ÚNICA função que sabe como: hoje cancela como equipe com o
- * motivo "Desfeito ao marcar"; o backend vai ganhar `schedulingMutations.undoBooking({ organizationId,
- * appointmentIds })` e a troca é só aqui. Em grupo (cliente + acompanhantes) desfaz em sequência e continua se
- * um falhar; devolve os rótulos dos que ficaram marcados.
+ * Desfaz a marcação (ou remarcação) RECÉM-FEITA (toast "Desfazer"). ÚNICA função que sabe como: chama
+ * `schedulingMutations.undoBooking({ organizationId, appointmentIds })`, que é tudo ou nada (grupo inteiro) e não
+ * conta como cancelamento. Recusa do servidor (`ConvexError` com texto) vira `refused` com a mensagem; qualquer outro
+ * erro, `error`.
  */
 export async function undoFreshBooking(
-  cancel: (args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; reason: string }) => Promise<unknown>,
-  input: { organizationId: string; appointmentIds: readonly string[]; labels: readonly string[] }
-): Promise<{ failed: string[] }> {
-  const failed: string[] = [];
-  for (const [i, id] of input.appointmentIds.entries()) {
-    try {
-      await cancel({
-        organizationId: input.organizationId as Id<"organizations">,
-        appointmentId: id as Id<"schedAppointments">,
-        reason: BOOKING_COPY.undoReason,
-      });
-    } catch {
-      failed.push(input.labels[i] ?? BOOKING_COPY.review.clientFallback);
-    }
+  undo: (args: { organizationId: Id<"organizations">; appointmentIds: Id<"schedAppointments">[] }) => Promise<unknown>,
+  input: { organizationId: string; appointmentIds: readonly string[] }
+): Promise<UndoOutcome> {
+  try {
+    await undo({ organizationId: input.organizationId as Id<"organizations">, appointmentIds: input.appointmentIds as Id<"schedAppointments">[] });
+    return { kind: "ok" };
+  } catch (error) {
+    if (error instanceof ConvexError && typeof error.data === "string" && error.data.trim()) return { kind: "refused", message: error.data.trim() };
+    return { kind: "error", error };
   }
-  return { failed };
 }
 
-/** Rótulos para `undoFreshBooking`: o cliente primeiro, depois "Acompanhante 2", "Acompanhante 3"... */
-export function bookingLabels(clientName: string, count: number): string[] {
-  return Array.from({ length: count }, (_, i) => (i === 0 ? clientName : `Acompanhante ${i + 1}`));
+/** "Já não dá para desfazer: o horário já mudou de situação." (a mensagem do servidor, com a inicial minúscula). */
+export function undoRefusedText(message: string): string {
+  const text = message.trim().replace(/\.$/, "");
+  return fillVocab(BOOKING_COPY.toast.undoRefused, { motivo: text.charAt(0).toLowerCase() + text.slice(1) });
 }
 
 export type PreviewVerdict =

@@ -14,6 +14,7 @@ import type { QueryCtx } from "../_generated/server";
 import { MAX_OFFERS, MAX_SEARCH_DAYS } from "./schedConstants";
 import { computeDayAvailability, type ResourceDay } from "./schedAvailability";
 import { type Candidate, generateCandidates, type ServiceLite } from "./schedCandidates";
+import { isValidPartySize, MAX_PARTY_SIZE, MIN_PARTY_SIZE } from "./schedParty";
 import { periodWindow } from "./schedRelativeDates";
 import { applySmartMode, pickOffers, type ScoredCandidate, scoreCandidate, type SmartMode, type SmartWeights } from "./schedScore";
 import { assertSearchWindow, blockCovered, loadWindow, type WindowData } from "./schedRead";
@@ -50,6 +51,8 @@ export type SearchSlotsArgs = {
    * desligado: `searchSlots` SANITIZA por construção (`toSlot`).
    */
   reveal?: boolean;
+  /** Pessoas no mesmo horário (1–4; ausente = 1): só horários em que o grupo todo cabe (`schedParty.ts`). */
+  partySize?: number;
   /** Prévia da tela de regras: sobrepõe a configuração salva. */
   override?: { mode?: SmartMode; weights?: SmartWeights; minOffer?: number };
 };
@@ -146,6 +149,7 @@ function scoreDays(
     ignoreAppointmentId?: Id<"schedAppointments">;
     weights: SmartWeights;
     minUsefulGapMin: number;
+    partySize?: number;
   }
 ): ScoreOutcome {
   const win = input.period && input.period !== "qualquer" ? periodWindow(input.period) : null;
@@ -180,6 +184,7 @@ function scoreDays(
       earliest: input.earliest,
       latest: input.latest,
       preferredResourceIds: input.resourceIds,
+      partySize: input.partySize,
     });
     if (win) {
       cands = cands.filter((c) => {
@@ -198,6 +203,9 @@ function scoreDays(
 }
 
 export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<SearchSlotsResult> {
+  if (args.partySize !== undefined && !isValidPartySize(args.partySize)) {
+    throw new ConvexError(`O número de pessoas deve ser de ${MIN_PARTY_SIZE} a ${MAX_PARTY_SIZE}.`);
+  }
   const to = args.toLocalDate ?? args.fromLocalDate;
   assertSearchWindow(args.fromLocalDate, to);
   const limit = Math.max(1, Math.min(50, Math.trunc(args.limit ?? MAX_OFFERS)));
@@ -266,6 +274,7 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     ignoreAppointmentId: args.ignoreAppointmentId,
     weights,
     minUsefulGapMin,
+    partySize: args.partySize,
   };
 
   const resourceNames = new Map<string, string>(data.resources.map((r) => [r._id, r.name]));

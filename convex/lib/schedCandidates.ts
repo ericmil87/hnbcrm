@@ -26,6 +26,7 @@ import {
   type SchedId,
   usableIntervals,
 } from "./schedAvailability";
+import { canStaffParty, partyDemand } from "./schedParty";
 import { atLocalMinutes, dayBounds, type LocalDate, minutesOfDay } from "./schedTime";
 
 export type ServiceRequirementLite = {
@@ -88,10 +89,13 @@ function resourceFits(
   usable: Interval[],
   req: ServiceRequirementLite,
   c: Pick<Candidate, "startTime" | "endTime" | "blockStart" | "blockEnd">,
-  basis: "core" | "block"
+  basis: "core" | "block",
+  partySize = 1
 ): boolean {
   if (day.closed) return false;
-  const units = unitsFor(req, day.resource);
+  unitsFor(req, day.resource); // valida (lança para unidades inválidas)
+  // Grupo: sala/equipamento pede unidades × pessoas do MESMO recurso; profissional, as do requisito (um por pessoa).
+  const units = partyDemand(req, day.resource.capacity, partySize).unitsOnResource;
   if (units > day.resource.capacity) return false;
   if (!coveredBy(usable, c.startTime, c.endTime)) return false;
   const rows: AllocationLite[] = day.allocations;
@@ -125,12 +129,15 @@ export function generateCandidates(input: {
   preferredResourceIds?: SchedId[];
   maxPerStart?: number; // planos alternativos por início; default 3
   basis?: "core" | "block"; // default "block"
+  /** Pessoas no mesmo horário (1–4; default 1): ver `schedParty.ts` (um profissional por pessoa, mesma sala para todas). */
+  partySize?: number;
 }): Candidate[] {
   const { date, tz, service, day, earliest, latest } = input;
   const step = service.slotIntervalMin ?? input.gridMinutes;
   if (!Number.isInteger(step) || step < 1 || step > 1440) throw new Error("Passo da grade inválido.");
   const maxPerStart = Math.max(1, input.maxPerStart ?? DEFAULT_MAX_PER_START);
   const basis = input.basis ?? "block";
+  const partySize = input.partySize ?? 1;
   const durationMin = durationFor(service, input.variantKey);
   const blockMin = durationMin + service.bufferBeforeMin + service.bufferAfterMin;
   if (durationMin <= 0 || blockMin > MAX_BLOCK_MIN) return [];
@@ -166,10 +173,15 @@ export function generateCandidates(input: {
     const eligible: ResourceLite[][] = service.requirements.map((req) =>
       resources.filter((r) => {
         if (!requirementMatches(r, req)) return false;
-        return resourceFits(day.get(r._id)!, usableByResource.get(r._id)!, req, c, basis);
+        return resourceFits(day.get(r._id)!, usableByResource.get(r._id)!, req, c, basis, partySize);
       })
     );
     if (eligible.some((list) => list.length === 0)) continue;
+    // Grupo: profissionais suficientes para TODAS as pessoas ao mesmo tempo (um por pessoa, sem repetir).
+    if (partySize > 1) {
+      const staff = eligible.filter((_, i) => service.requirements[i].kind === "person").map((list) => list.map((r) => r._id));
+      if (!canStaffParty(staff, partySize)) continue;
+    }
 
     // Papel mais escasso primeiro (empate: ordem declarada); DFS com retrocesso.
     const order = service.requirements

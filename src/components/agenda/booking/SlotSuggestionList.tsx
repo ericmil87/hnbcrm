@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Clock, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
@@ -12,11 +13,17 @@ interface SlotButtonProps {
   selected: boolean;
   /** Mostra o dia (lista que cobre mais de um dia). */
   showDay: boolean;
+  /** Sugestão mais próxima da hora pedida pela Agenda: destaca e rola até ela. */
+  highlighted?: boolean;
   onPick: (slot: OfferedSlot) => void;
 }
 
 /** Um horário de um toque: hora, dia, com quem/onde e o selo "Encostado" com o motivo. */
-export function SlotButton({ slot, tz, selected, showDay, onPick }: SlotButtonProps) {
+export function SlotButton({ slot, tz, selected, showDay, highlighted = false, onPick }: SlotButtonProps) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (highlighted && typeof ref.current?.scrollIntoView === "function") ref.current.scrollIntoView({ block: "nearest" });
+  }, [highlighted]);
   const adjacent = isAdjacentSlot(slot);
   const where = joinNames(slot.resourceNames);
   const why = reasonLine(slot.reasons);
@@ -24,15 +31,18 @@ export function SlotButton({ slot, tz, selected, showDay, onPick }: SlotButtonPr
   return (
     <li>
       <button
+        ref={ref}
         type="button"
         onClick={() => onPick(slot)}
         aria-pressed={selected}
         data-adjacent={adjacent ? "true" : undefined}
+        data-nearest={highlighted ? "true" : undefined}
         className={cn(
           "flex min-h-14 w-full items-center gap-3 rounded-card border px-3 py-2 text-left transition-colors",
           "focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
           selected ? "border-brand-500 bg-brand-500/10" : "border-border bg-surface-raised hover:bg-surface-overlay",
-          adjacent && !selected && "border-brand-500/40"
+          adjacent && !selected && "border-brand-500/40",
+          highlighted && !selected && "ring-2 ring-brand-500/60"
         )}
       >
         <Clock size={16} aria-hidden="true" className="shrink-0 text-text-muted" />
@@ -60,6 +70,8 @@ interface SlotSuggestionListProps {
   others: OfferedSlot[];
   tz: string;
   selectedStart: number | null;
+  /** Início da sugestão destacada (a mais próxima da hora pedida), se houver. */
+  highlightStart?: number | null;
   onPick: (slot: OfferedSlot) => void;
   /** Há mais horários além dos mostrados e ainda não foram pedidos. */
   canExpand: boolean;
@@ -67,7 +79,7 @@ interface SlotSuggestionListProps {
 }
 
 /** Sugestões ranqueadas do servidor, depois "Outros horários" (por hora). */
-export function SlotSuggestionList({ suggested, others, tz, selectedStart, onPick, canExpand, onExpand }: SlotSuggestionListProps) {
+export function SlotSuggestionList({ suggested, others, tz, selectedStart, highlightStart = null, onPick, canExpand, onExpand }: SlotSuggestionListProps) {
   const days = new Set([...suggested, ...others].map((s) => s.localDate));
   const showDay = days.size > 1;
   const t = BOOKING_COPY.slot;
@@ -78,7 +90,7 @@ export function SlotSuggestionList({ suggested, others, tz, selectedStart, onPic
           <h3 className="text-caption font-semibold uppercase tracking-wide text-text-muted">{t.suggested}</h3>
           <ul className="space-y-2">
             {suggested.map((s) => (
-              <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={selectedStart === s.startTime} showDay={showDay} onPick={onPick} />
+              <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={selectedStart === s.startTime} highlighted={highlightStart === s.startTime} showDay={showDay} onPick={onPick} />
             ))}
           </ul>
         </section>
@@ -88,7 +100,7 @@ export function SlotSuggestionList({ suggested, others, tz, selectedStart, onPic
           <h3 className="text-caption font-semibold uppercase tracking-wide text-text-muted">{t.others}</h3>
           <ul className="space-y-2">
             {others.map((s) => (
-              <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={selectedStart === s.startTime} showDay={showDay} onPick={onPick} />
+              <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={selectedStart === s.startTime} highlighted={highlightStart === s.startTime} showDay={showDay} onPick={onPick} />
             ))}
           </ul>
         </section>

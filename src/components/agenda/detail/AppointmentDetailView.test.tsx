@@ -49,6 +49,14 @@ describe("AppointmentDetailView", () => {
     expect(screen.getByText(/Marcado \(Equipe\)/)).toBeInTheDocument();
   });
 
+  it("mostra quem marcou e o ator das mudanças de status", () => {
+    setup({}, { status: "completed", createdByName: "Link público", completedAt: NOW - 1000, statusActors: [{ status: "completed", at: NOW - 1000, actorName: "Ana" }] });
+    expect(screen.getByText("Marcado por")).toBeInTheDocument();
+    expect(screen.getAllByText("Link público").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Atendimento concluído por Ana/)).toBeInTheDocument();
+    expect(screen.getByText(/Marcado por Link público/)).toBeInTheDocument();
+  });
+
   it("confirmar dispara a ação de status", async () => {
     const { onAction } = setup();
     await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));

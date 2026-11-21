@@ -14,7 +14,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { hasPermission } from "./lib/permissions";
-import { computeDayAvailability, usableIntervals } from "./lib/schedAvailability";
+import { computeDayAvailability, MAX_BLOCK_MIN, usableIntervals } from "./lib/schedAvailability";
 import {
   type AgendaReader,
   canSeeAppointment,
@@ -29,8 +29,11 @@ import {
   appointmentDetailValidator,
   appointmentRowValidator,
   exceptionDocValidator,
+  actorLabel,
+  creatorLabelFromOrigin,
   type Slot,
   slotValidator,
+  statusActorValidator,
   toAppointmentDetail,
   toAppointmentRow,
   type AppointmentRow,
@@ -40,6 +43,8 @@ import schema from "./schema";
 
 const MAX_RANGE_DAYS = 35;
 const DAY_APPOINTMENTS_CAP = 200;
+/** Documentos lidos da faixa que antecede o dia (agendamentos que podem cruzar a meia-noite). */
+const CROSSING_READ_CAP = 100;
 const RANGE_STATUS_CAP = 800;
 const RANGE_EXCEPTIONS_CAP = 1000;
 const PENDING_CAP = 50;
@@ -167,8 +172,19 @@ export const listAgendaDay = query({
         q.eq("organizationId", args.organizationId).gte("startTime", bounds.start).lt("startTime", bounds.end)
       )
       .take(DAY_APPOINTMENTS_CAP + 1);
+    // Quem começou ANTES do dia e cruza a meia-noite: o bloco tem teto `MAX_BLOCK_MIN`, então só pode ter começado
+    // nessa faixa (mesmo índice, sem `.filter()`). Lê do mais perto da meia-noite para trás (quem cruza é quem
+    // começou mais tarde), com teto próprio; entra quem ainda não terminou à meia-noite.
+    const windowStart = bounds.start - MAX_BLOCK_MIN * MINUTE_MS;
+    const before = await ctx.db
+      .query("schedAppointments")
+      .withIndex("by_organization_and_start", (q) => q.eq("organizationId", args.organizationId).gte("startTime", windowStart).lt("startTime", bounds.start))
+      .order("desc")
+      .take(CROSSING_READ_CAP);
+    const crossing = before.filter((a) => a.endTime > bounds.start).reverse();
+    const all = [...crossing, ...rows];
     const own = await ownResourceIds(ctx, reader);
-    const page = rows.slice(0, DAY_APPOINTMENTS_CAP);
+    const page = all.slice(0, DAY_APPOINTMENTS_CAP);
     const appointments = page.filter((a) => canSeeAppointment(reader, a, own)).map(toAppointmentRow);
     const busy = reader.seesAll
       ? []
@@ -209,7 +225,7 @@ export const listAgendaDay = query({
       appointments,
       busy,
       exceptions: exceptions as Doc<"schedExceptions">[],
-      capped: rows.length > DAY_APPOINTMENTS_CAP,
+      capped: all.length > DAY_APPOINTMENTS_CAP,
     };
   },
 });
@@ -421,6 +437,10 @@ export const getAppointment = query({
         })
       ),
       canEdit: v.boolean(),
+      /** Quem marcou: nome do membro, ou "IA", "Link público", "Sistema". */
+      createdByName: v.string(),
+      /** Mudanças de status com o ator (auditoria; só as que a auditoria registrou), do mais antigo ao mais novo. */
+      statusActors: v.array(statusActorValidator),
     })
   ),
   handler: async (ctx, args) => {
@@ -434,6 +454,7 @@ export const getAppointment = query({
       .query("schedConflicts")
       .withIndex("by_appointment", (q) => q.eq("appointmentId", appt._id))
       .take(20);
+    const { createdByName, statusActors } = await resolveAppointmentActors(ctx, appt);
     return {
       appointment: toAppointmentDetail(appt),
       openConflicts: conflicts
@@ -446,9 +467,56 @@ export const getAppointment = query({
           createdAt: c.createdAt,
         })),
       canEdit: reader.canEdit,
+      createdByName,
+      statusActors,
     };
   },
 });
+
+const ACTOR_AUDIT_SCAN = 40;
+const ACTOR_MEMBER_CAP = 12;
+
+/**
+ * Nomes de quem marcou e de quem mudou o status, SÓ no detalhe (uma leitura: as últimas ações da auditoria da
+ * entidade e no máximo `ACTOR_MEMBER_CAP` membros distintos, cada um da MESMA org). Listas e grade não resolvem
+ * nome (leriam membro por linha): a grade só lê `schedAppointments`.
+ */
+async function resolveAppointmentActors(ctx: QueryCtx, appt: Doc<"schedAppointments">) {
+  const logs = await ctx.db
+    .query("auditLogs")
+    .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", appt._id))
+    .order("desc")
+    .take(ACTOR_AUDIT_SCAN);
+  const mine = logs.filter((l) => l.organizationId === appt.organizationId).reverse();
+  const members = new Map<string, { name?: string; type?: string } | null>();
+  const memberOf = async (id: Id<"teamMembers"> | undefined) => {
+    if (!id) return null;
+    if (members.has(id)) return members.get(id) ?? null;
+    if (members.size >= ACTOR_MEMBER_CAP) return null;
+    const m = await ctx.db.get(id);
+    const ok = m && m.organizationId === appt.organizationId ? { name: m.name, type: m.type } : null;
+    members.set(id, ok);
+    return ok;
+  };
+  const statusActors: Array<{ status: string; at: number; actorName?: string; undo?: boolean }> = [];
+  for (const log of mine) {
+    if (log.metadata?.statusChange !== true) continue;
+    const status = log.changes?.after?.status;
+    if (typeof status !== "string") continue;
+    const via = typeof log.metadata?.via === "string" ? log.metadata.via : undefined;
+    const actorType = log.actorType === "human" || log.actorType === "ai" || log.actorType === "system" || log.actorType === "api" ? log.actorType : undefined;
+    const hasActor = actorType !== undefined || log.actorId !== undefined;
+    statusActors.push({
+      status,
+      at: log.createdAt,
+      ...(log.metadata?.undo === true ? { undo: true } : {}),
+      ...(hasActor ? { actorName: actorLabel({ actorType, via, member: await memberOf(log.actorId) }) } : {}),
+    });
+  }
+  const creator = await memberOf(appt.createdBy);
+  const createdByName = creator ? actorLabel({ actorType: creator.type === "ai" ? "ai" : "human", member: creator }) : creatorLabelFromOrigin(appt.origin);
+  return { createdByName, statusActors };
+}
 
 const relatedValidator = v.object({
   upcoming: v.array(appointmentRowValidator),
@@ -704,7 +772,7 @@ const findSlotsReason = v.union(
 
 /** Redundância: o wrapper também corta (a própria `searchSlots` já sanitiza por construção). */
 function redact(slot: Slot, audience: "staff" | "ai" | "public"): Slot {
-  return audience === "staff" ? slot : { ...slot, resourceNames: [], reasons: [], score: 0 };
+  return audience === "staff" ? slot : { ...slot, resourceNames: [], reasons: [], reasonCodes: [], score: 0 };
 }
 
 /**
@@ -725,6 +793,8 @@ export const findSlots = query({
     period: v.optional(v.union(v.literal("manha"), v.literal("tarde"), v.literal("noite"), v.literal("qualquer"))),
     resourceIds: v.optional(v.array(v.id("schedResources"))),
     rescheduleAppointmentId: v.optional(v.id("schedAppointments")),
+    /** Pessoas no mesmo horário (1–4): só horários em que a mesma sala comporta todas e há um profissional por pessoa. */
+    partySize: v.optional(v.number()),
     audience: v.optional(v.union(v.literal("staff"), v.literal("ai"), v.literal("public"))),
     limit: v.optional(v.number()),
     now: v.number(),
@@ -774,6 +844,7 @@ export const findSlots = query({
       period: args.period,
       resourceIds: args.resourceIds,
       ignoreAppointmentId,
+      partySize: args.partySize,
       audience,
       now: args.now,
       limit: args.limit,

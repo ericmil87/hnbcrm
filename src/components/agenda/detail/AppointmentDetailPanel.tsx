@@ -161,7 +161,7 @@ function DetailBody({
   return (
     <>
       <AppointmentDetailView
-        appointment={appt}
+        appointment={{ ...appt, createdByName: data.createdByName, statusActors: data.statusActors }}
         openConflicts={data.openConflicts.length}
         tz={tz}
         now={now}

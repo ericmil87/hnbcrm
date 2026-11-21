@@ -1020,7 +1020,7 @@ describe("UNIFICAÇÃO busca × porta", () => {
     const staff = await rulesData(book(svc, at(MON, 10), [room]));
     expect(staff.alternatives.length).toBeGreaterThan(0);
     for (const a of staff.alternatives) {
-      expect(Object.keys(a).sort()).toEqual(["endTime", "label", "localDate", "reasons", "resourceIds", "resourceNames", "score", "startTime"]);
+      expect(Object.keys(a).sort()).toEqual(["endTime", "label", "localDate", "reasonCodes", "reasons", "resourceIds", "resourceNames", "score", "startTime"]);
       expect(a.resourceNames).toEqual(["Sala Secreta"]);
       expect(typeof a.label).toBe("string");
     }
@@ -1030,6 +1030,7 @@ describe("UNIFICAÇÃO busca × porta", () => {
     for (const a of ai.alternatives) {
       expect(a.resourceNames).toEqual([]);
       expect(a.reasons).toEqual([]);
+      expect(a.reasonCodes).toEqual([]);
       expect(a.score).toBe(0);
       expect(a.resourceIds.length).toBe(1);
     }

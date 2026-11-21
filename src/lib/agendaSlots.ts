@@ -1,13 +1,13 @@
 /**
  * Agenda v2: leitura de um horário oferecido (`Slot` do servidor). PURO.
  *
- * "Encostado" = o horário fica colado em outro atendimento. HOJE o servidor só descreve o motivo em texto
- * PT-BR ("logo após outro atendimento"); quando ele passar a mandar `reasonCodes` (código `ADJACENT`), a
- * função usa os códigos e o texto vira só reserva. É a ÚNICA função que decide isso no front.
+ * "Encostado" = o horário fica colado em outro atendimento. O servidor manda `reasonCodes` (código `ADJACENT`,
+ * de `SCORE_REASON_CODES`); a função usa os códigos e o texto PT-BR ("logo após outro atendimento") fica só
+ * como reserva (resposta antiga, sem códigos). É a ÚNICA função que decide isso no front.
  */
 export interface SlotReasons {
   reasons: ReadonlyArray<string>;
-  /** Formato futuro do servidor. */
+  /** Códigos estruturados do servidor (`Slot.reasonCodes`). */
   reasonCodes?: ReadonlyArray<string>;
 }
 

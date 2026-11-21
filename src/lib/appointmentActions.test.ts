@@ -75,3 +75,39 @@ describe("appointmentHistory", () => {
     expect(all[0].at).toBe(2);
   });
 });
+
+describe("appointmentHistory com quem fez (A3d)", () => {
+  it("criação com o nome de quem marcou; cai na origem quando não há nome", () => {
+    expect(appointmentHistory({ origin: "ai", createdAt: 1, createdByName: " Ana " })[0].label).toBe("Marcado por Ana");
+    expect(appointmentHistory({ origin: "ai", createdAt: 1, createdByName: "IA" })[0].label).toBe("Marcado por IA");
+    expect(appointmentHistory({ origin: "ai", createdAt: 1 })[0].label).toBe("Marcado (IA)");
+  });
+  it("cada mudança de status leva o ator da auditoria; sem ator, o texto de antes", () => {
+    const h = appointmentHistory({
+      origin: "staff", createdAt: 1, approvedAt: 2, checkedInAt: 3, completedAt: 4, cancelledAt: 5, cancelReason: "viagem",
+      statusActors: [
+        { status: "scheduled", at: 2, actorName: "Bia" },
+        { status: "completed", at: 4, actorName: "Ana" },
+        { status: "cancelled", at: 5, actorName: "Link público" },
+      ],
+    });
+    expect(h.map((e) => e.label)).toEqual([
+      "Marcado (Equipe)",
+      "Aprovado por Bia",
+      "Chegou",
+      "Atendimento concluído por Ana",
+      "Cancelado por Link público. Motivo: viagem",
+    ]);
+  });
+  it("ignora o 'Desfazer' ao procurar o ator e usa o último ato do status", () => {
+    const h = appointmentHistory({
+      origin: "staff", createdAt: 1, completedAt: 9,
+      statusActors: [
+        { status: "completed", at: 3, actorName: "Ana" },
+        { status: "completed", at: 5, actorName: "Zé", undo: true },
+        { status: "completed", at: 9, actorName: "Bia" },
+      ],
+    });
+    expect(h[1].label).toBe("Atendimento concluído por Bia");
+  });
+});

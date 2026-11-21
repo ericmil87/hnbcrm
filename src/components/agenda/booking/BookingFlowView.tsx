@@ -21,8 +21,12 @@ import {
   joinNames,
   longRangePhrase,
   longWhenPhrase,
+  nearestSlotStart,
+  partySizeOf,
   pinnableKinds,
   splitSuggestions,
+  supportsGroup,
+  timeInputValue,
   violationText,
   type BookingAction,
   type BookingState,
@@ -51,6 +55,8 @@ export interface ViewResource {
   _id: string;
   name: string;
   kind: string;
+  capacity?: number;
+  active?: boolean;
 }
 
 export interface FailureView {
@@ -86,6 +92,8 @@ export interface BookingFlowViewProps {
   onPreviewManual: (startTime: number) => Promise<ManualPreviewResult>;
   /** Abrir o agendamento que já existia (duplicado). */
   onOpenExisting?: (appointmentId: string) => void;
+  /** Hora pedida pela Agenda (minutos do dia no fuso da org; vale com o dia já aberto): destaca a sugestão mais próxima e pré-preenche "Outro horário". */
+  initialTimeMin?: number;
 }
 
 /**
@@ -217,9 +225,12 @@ function SlotStep({
   onRetry,
   onPreviewManual,
   onOpenExisting,
+  initialTimeMin,
 }: BookingFlowViewProps & { service: ServiceLike | undefined }) {
   const [showPeople, setShowPeople] = useState(Object.keys(state.pinned).length > 0);
-  const [showManual, setShowManual] = useState(false);
+  const prefill = timeInputValue(initialTimeMin);
+  const [showManual, setShowManual] = useState(prefill !== "");
+  const highlightStart = initialTimeMin !== undefined ? nearestSlotStart(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }) : null;
   const kinds = pinnableKinds(service);
   const { suggested, others } = splitSuggestions(slots.slots);
   const canChangeService = !reschedule && services.length > 1;
@@ -247,6 +258,13 @@ function SlotStep({
           min={today}
           value={state.otherDate ?? today}
           onChange={(e) => isValidLocalDate(e.target.value) && dispatch({ type: "setDay", preset: "other", date: e.target.value })}
+        />
+      )}
+      {supportsGroup(service, resources) && (
+        <FilterChips
+          ariaLabel={t.slot.partyLabel}
+          chips={[1, 2, 3, 4].map((n) => ({ id: String(n), label: n === 1 ? t.slot.partyOne : fillVocab(t.slot.partyOption, { n: String(n) }), pressed: partySizeOf(state) === n }))}
+          onToggle={(id) => dispatch({ type: "setPartySize", size: Number(id) })}
         />
       )}
       <FilterChips
@@ -299,6 +317,7 @@ function SlotStep({
           others={others}
           tz={tz}
           selectedStart={state.slot?.startTime ?? null}
+          highlightStart={highlightStart}
           onPick={onPickOffered}
           canExpand={slots.hasMore && !state.expanded}
           onExpand={() => dispatch({ type: "expand" })}
@@ -310,7 +329,13 @@ function SlotStep({
             icon={CalendarX}
             size="sm"
             title={VOCAB.scheduling.empty.slots.title}
-            description={slots.reason === "unverifiable" ? t.slot.unverifiable : VOCAB.scheduling.empty.slots.hint}
+            description={
+              slots.reason === "unverifiable"
+                ? t.slot.unverifiable
+                : partySizeOf(state) > 1 && state.pinned.person
+                  ? t.slot.partyPinned
+                  : VOCAB.scheduling.empty.slots.hint
+            }
           />
           {slots.firstPossible && (
             <Button
@@ -334,6 +359,7 @@ function SlotStep({
           tz={tz}
           today={today}
           initialDate={state.otherDate ?? today}
+          initialTime={prefill}
           clientName={clientName}
           onPreview={onPreviewManual}
           onPick={(slot) => dispatch({ type: "pickSlot", slot })}
@@ -350,6 +376,7 @@ function ManualSlotForm({
   tz,
   today,
   initialDate,
+  initialTime,
   clientName,
   onPreview,
   onPick,
@@ -359,6 +386,7 @@ function ManualSlotForm({
   tz: string;
   today: LocalDate;
   initialDate: string;
+  initialTime: string;
   clientName: string;
   onPreview: (startTime: number) => Promise<ManualPreviewResult>;
   onPick: (slot: PickedSlot) => void;
@@ -366,7 +394,7 @@ function ManualSlotForm({
   onOpenExisting?: (id: string) => void;
 }) {
   const [date, setDate] = useState<string>(initialDate);
-  const [time, setTime] = useState("");
+  const [time, setTime] = useState(initialTime);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [existing, setExisting] = useState<string | null>(null);
