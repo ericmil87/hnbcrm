@@ -181,7 +181,7 @@ export function DashboardOverview() {
       {/* 4c. Upcoming Tasks + Events Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <UpcomingTasksWidget organizationId={organizationId} />
-        <UpcomingEventsWidget organizationId={organizationId} />
+        {can("agenda", "view_own") && <UpcomingEventsWidget organizationId={organizationId} />}
       </div>
 
       {/* 5. Feature Overview Grid */}

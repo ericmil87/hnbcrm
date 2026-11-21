@@ -88,13 +88,14 @@ The last column shows whether the **default** permissions of the `ai` and `agent
 | `POST /api/v1/tasks/bulk` | `tasks: view_own` | sim |
 | `GET /api/v1/tasks/comments` | `tasks: view_own` | sim |
 | `POST /api/v1/tasks/comments/add` | `tasks: view_own` | sim |
-| `GET /api/v1/calendar/events` | `tasks: view_own` | sim |
-| `GET /api/v1/calendar/events/get` | `tasks: view_own` | sim |
-| `POST /api/v1/calendar/events/create` | `tasks: view_own` | sim |
-| `POST /api/v1/calendar/events/update` | `tasks: view_own` | sim |
-| `POST /api/v1/calendar/events/delete` | `tasks: view_own` | sim |
-| `POST /api/v1/calendar/events/reschedule` | `tasks: view_own` | sim |
-| `POST /api/v1/calendar/events/complete` | `tasks: view_own` | sim |
+| `GET /api/v1/calendar/events` | `agenda: view_own` | sim |
+| `GET /api/v1/calendar/events/get` | `agenda: view_own` | sim |
+| `POST /api/v1/calendar/events/create` | `agenda: edit` | sim |
+| `POST /api/v1/calendar/events/update` | `agenda: edit` | sim |
+| `POST /api/v1/calendar/events/delete` | `agenda: edit` | sim |
+| `POST /api/v1/calendar/events/reschedule` | `agenda: edit` | sim |
+| `POST /api/v1/calendar/events/complete` | `agenda: edit` | sim |
+| `POST /api/v1/calendar/events/cancel` | `agenda: edit` | sim |
 | `GET /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
 | `PUT /api/v1/notifications/preferences` | só API key válida (self-scoped) | sim |
 | `GET /api/v1/groups` | `inbox: view_own` | sim |

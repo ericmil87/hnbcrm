@@ -10,7 +10,7 @@ export interface EditableCalendarItem {
   status?: string | null;
 }
 
-export const CALENDAR_READONLY_NOTE = "Você só pode alterar os eventos que criou ou que estão com você.";
+export const CALENDAR_READONLY_NOTE = "Seu acesso à Agenda não permite alterar este compromisso.";
 
 /** `false` só quando o servidor disse explicitamente que não. */
 export function canEditCalendarItem(item: object | null | undefined): boolean {
