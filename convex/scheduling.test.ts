@@ -453,6 +453,56 @@ describe("detalhe, vínculos e pendências", () => {
     expect(await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: a1 })).toBeNull();
   });
 
+  test("getAppointment: quem marcou e o ator de cada mudança de status (auditoria); rótulos para IA, link e sistema", async () => {
+    const a = await book({ start: at(MON, 10), resources: [R(clinic.pros.ana, "Profissional", "Ana")], createdBy: s.admin.memberId, contactId: s.contactId, leadId: s.leadId });
+    const aiMemberId = await t.run((ctx) => ctx.db.insert("teamMembers", { organizationId: s.orgId, name: "Robô da Clínica", role: "ai", type: "ai", status: "active", createdAt: 1, updatedAt: 1 }));
+    const audit = (over: Record<string, unknown>) =>
+      t.run((ctx) =>
+        ctx.db.insert("auditLogs", {
+          organizationId: s.orgId, entityType: "schedAppointment", entityId: a, action: "update", actorType: "human", description: "x", severity: "low", createdAt: 10,
+          metadata: { statusChange: true }, ...over,
+        } as never)
+      );
+    await audit({ action: "create", actorId: s.admin.memberId, createdAt: 5, metadata: { statusChange: false }, changes: { after: { status: "scheduled" } } });
+    await audit({ actorId: s.agent.memberId, createdAt: 20, changes: { before: { status: "scheduled" }, after: { status: "confirmed" } } });
+    await audit({ actorType: "system", createdAt: 30, metadata: { statusChange: true, via: "public_link" }, changes: { before: { status: "confirmed" }, after: { status: "cancelled" } } });
+    await audit({ actorId: s.admin.memberId, createdAt: 40, metadata: { statusChange: true, undo: true }, changes: { before: { status: "cancelled" }, after: { status: "confirmed" } } });
+    await audit({ actorType: "ai", actorId: aiMemberId, createdAt: 50, changes: { before: { status: "confirmed" }, after: { status: "completed" } } });
+    // Auditoria de OUTRA org com o mesmo id de entidade nunca entra.
+    await audit({ organizationId: s.otherOrgId, actorId: s.outsider.memberId, createdAt: 60, changes: { before: { status: "completed" }, after: { status: "no_show" } } });
+
+    const res = await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: a });
+    assertMatchesReturns(res, sched.getAppointment);
+    expect(res!.createdByName).toBe("Admin");
+    expect(res!.statusActors).toEqual([
+      { status: "confirmed", at: 20, actorName: "Atendente" },
+      { status: "cancelled", at: 30, actorName: "Link público" },
+      { status: "confirmed", at: 40, undo: true, actorName: "Admin" },
+      { status: "completed", at: 50, actorName: "IA" },
+    ]);
+    expect(JSON.stringify(res)).not.toContain("Admin Outra");
+
+    // Quem marcou sem membro: pelo rótulo da origem; membro de IA vira "IA"; membro de outra org não vaza o nome.
+    const byAi = await book({ start: at(MON, 11), resources: [R(clinic.pros.bia, "Profissional", "Bia")], createdBy: aiMemberId });
+    const byLink = await book({ start: at(MON, 12), resources: [R(clinic.pros.caio, "Profissional", "Caio")] });
+    await t.run((ctx) => ctx.db.patch(byLink, { origin: "public" }));
+    const bySystem = await book({ start: at(MON, 14), resources: [R(clinic.pros.duda, "Profissional", "Duda")] });
+    await t.run((ctx) => ctx.db.patch(bySystem, { origin: "human_message" }));
+    const foreignCreator = await book({ start: at(MON, 15), resources: [R(clinic.pros.ana, "Profissional", "Ana")], createdBy: s.outsider.memberId });
+    const name = async (id: Id<"schedAppointments">) => (await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: id }))!.createdByName;
+    expect(await name(byAi)).toBe("IA");
+    expect(await name(byLink)).toBe("Link público");
+    expect(await name(bySystem)).toBe("Sistema");
+    expect(await name(foreignCreator)).toBe("Equipe");
+  });
+
+  test("getAppointment: sem permissão, de outra org ou módulo desligado continua null (sem nomes)", async () => {
+    const a = await book({ start: at(MON, 10), resources: [R(clinic.pros.ana, "Profissional", "Ana")], createdBy: s.admin.memberId });
+    expect(await as(s.none).query(api.scheduling.getAppointment, { appointmentId: a })).toBeNull();
+    expect(await as(s.outsider).query(api.scheduling.getAppointment, { appointmentId: a })).toBeNull();
+    expect(await as(s.viewAll).query(api.scheduling.getAppointment, { appointmentId: a })).not.toBeNull();
+  });
+
   test("listForContact/Lead/Conversation: próximos ativos + últimos, mescla contato e lead, sem duplicar", async () => {
     const base = { resources: [R(clinic.pros.ana, "Profissional", "Ana")] };
     const fut1 = await book({ ...base, start: NOW + 2 * 24 * HOUR, contactId: s.contactId, leadId: s.leadId, localDate: "2026-06-14" });

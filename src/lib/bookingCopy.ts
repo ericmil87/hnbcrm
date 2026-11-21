@@ -100,6 +100,7 @@ export const DETAIL_COPY = {
     when: "Quando",
     where: "Com quem e onde",
     origin: "Origem",
+    createdBy: "Marcado por",
     notes: "Observação",
     openConversation: "Abrir conversa",
   },
@@ -111,6 +112,7 @@ export const DETAIL_COPY = {
   history: {
     title: "Histórico",
     created: "Marcado ({origem})",
+    createdBy: "Marcado por {nome}",
     approved: "Aprovado",
     confirmed: "Cliente confirmou",
     checkedIn: "Chegou",
@@ -118,6 +120,13 @@ export const DETAIL_COPY = {
     noShow: "Faltou",
     cancelled: "Cancelado",
     reason: "Motivo: {motivo}",
+    // Com o ator que a auditoria registrou.
+    approvedBy: "Aprovado por {nome}",
+    confirmedBy: "Confirmado por {nome}",
+    checkedInBy: "Chegada registrada por {nome}",
+    completedBy: "Atendimento concluído por {nome}",
+    noShowBy: "Falta registrada por {nome}",
+    cancelledBy: "Cancelado por {nome}",
   },
   actions: {
     approve: "Aprovar proposta",

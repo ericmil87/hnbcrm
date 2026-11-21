@@ -67,6 +67,46 @@ export function toAppointmentDetail(doc: Doc<"schedAppointments">): AppointmentR
   return pickDefined(doc, [...ROW_KEYS, "notes"]) as AppointmentRow & { notes?: string };
 }
 
+// --- quem fez (rótulo do ator, só para a equipe) ---
+export const ACTOR_LABELS = { ai: "IA", publicLink: "Link público", system: "Sistema", api: "API", team: "Equipe" } as const;
+
+/**
+ * Rótulo curto de quem fez um ato: o nome do membro humano; "IA" para a IA (qualquer nome que o membro tenha);
+ * "Link público" e "Sistema" para quem não é membro; "API" para chave sem membro; "Equipe" quando o membro humano
+ * não existe mais. PURO.
+ */
+export function actorLabel(input: {
+  actorType?: "human" | "ai" | "system" | "api";
+  via?: string;
+  member?: { name?: string; type?: string } | null;
+}): string {
+  if (input.actorType === "ai" || input.member?.type === "ai") return ACTOR_LABELS.ai;
+  if (input.actorType === "system") return input.via === "public_link" ? ACTOR_LABELS.publicLink : ACTOR_LABELS.system;
+  const name = input.member?.name?.trim();
+  if (name) return name;
+  return input.actorType === "api" ? ACTOR_LABELS.api : ACTOR_LABELS.team;
+}
+
+/** Quem marcou quando não há membro (`createdBy` ausente): pela origem do agendamento. */
+export function creatorLabelFromOrigin(origin: Doc<"schedAppointments">["origin"]): string {
+  if (origin === "public") return ACTOR_LABELS.publicLink;
+  if (origin === "ai" || origin === "waitlist") return ACTOR_LABELS.ai;
+  if (origin === "api") return ACTOR_LABELS.api;
+  if (origin === "staff") return ACTOR_LABELS.team;
+  return ACTOR_LABELS.system;
+}
+
+/**
+ * Uma mudança de status com o ator que a fez (lida da auditoria). `undo: true` = foi um "Desfazer" (o status é o
+ * restaurado); `actorName` ausente = a auditoria não tem ator.
+ */
+export const statusActorValidator = v.object({
+  status: v.string(),
+  at: v.number(),
+  actorName: v.optional(v.string()),
+  undo: v.optional(v.boolean()),
+});
+
 // --- horários oferecidos ---
 export const slotValidator = v.object({
   startTime: v.number(),

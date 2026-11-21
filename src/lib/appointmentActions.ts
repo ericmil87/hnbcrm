@@ -111,6 +111,10 @@ export interface HistoryInput {
   cancelledAt?: number;
   cancelReason?: string;
   lateCancel?: boolean;
+  /** Quem marcou (`getAppointment.createdByName`: membro, "IA", "Link público" ou "Sistema"). */
+  createdByName?: string;
+  /** Mudanças de status com o ator (`getAppointment.statusActors`, da auditoria). */
+  statusActors?: ReadonlyArray<{ status: string; at: number; actorName?: string; undo?: boolean }>;
 }
 
 export interface HistoryEvent {
@@ -118,18 +122,32 @@ export interface HistoryEvent {
   label: string;
 }
 
+/** Nome do ator da ÚLTIMA mudança para `status` (ignora "Desfazer": o status restaurado não foi uma ação nova). */
+function actorOfStatus(a: HistoryInput, status: string): string | undefined {
+  const hit = (a.statusActors ?? []).filter((x) => x.status === status && !x.undo && x.actorName);
+  return hit.length > 0 ? hit[hit.length - 1].actorName : undefined;
+}
+
 /** Histórico curto, do mais antigo ao mais novo, a partir dos carimbos do agendamento (no máximo 6). */
 export function appointmentHistory(a: HistoryInput): HistoryEvent[] {
   const h = DETAIL_COPY.history;
-  const events: HistoryEvent[] = [{ at: a.createdAt, label: fillVocab(h.created, { origem: originLabel(a.origin) }) }];
-  if (a.approvedAt) events.push({ at: a.approvedAt, label: h.approved });
-  if (a.clientConfirmedAt) events.push({ at: a.clientConfirmedAt, label: h.confirmed });
-  if (a.checkedInAt) events.push({ at: a.checkedInAt, label: h.checkedIn });
-  if (a.completedAt) events.push({ at: a.completedAt, label: h.completed });
-  if (a.noShowAt) events.push({ at: a.noShowAt, label: h.noShow });
+  const by = (status: string, plain: string, withActor: string) => {
+    const nome = actorOfStatus(a, status);
+    return nome ? fillVocab(withActor, { nome }) : plain;
+  };
+  const creator = a.createdByName?.trim();
+  const events: HistoryEvent[] = [
+    { at: a.createdAt, label: creator ? fillVocab(h.createdBy, { nome: creator }) : fillVocab(h.created, { origem: originLabel(a.origin) }) },
+  ];
+  if (a.approvedAt) events.push({ at: a.approvedAt, label: by("scheduled", h.approved, h.approvedBy) });
+  if (a.clientConfirmedAt) events.push({ at: a.clientConfirmedAt, label: by("confirmed", h.confirmed, h.confirmedBy) });
+  if (a.checkedInAt) events.push({ at: a.checkedInAt, label: by("checked_in", h.checkedIn, h.checkedInBy) });
+  if (a.completedAt) events.push({ at: a.completedAt, label: by("completed", h.completed, h.completedBy) });
+  if (a.noShowAt) events.push({ at: a.noShowAt, label: by("no_show", h.noShow, h.noShowBy) });
   if (a.cancelledAt) {
     const reason = a.cancelReason?.trim();
-    events.push({ at: a.cancelledAt, label: reason ? `${h.cancelled}. ${fillVocab(h.reason, { motivo: reason })}` : h.cancelled });
+    const head = by("cancelled", h.cancelled, h.cancelledBy);
+    events.push({ at: a.cancelledAt, label: reason ? `${head}. ${fillVocab(h.reason, { motivo: reason })}` : head });
   }
   return events.sort((x, y) => x.at - y.at).slice(-6);
 }

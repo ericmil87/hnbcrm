@@ -29,8 +29,11 @@ import {
   appointmentDetailValidator,
   appointmentRowValidator,
   exceptionDocValidator,
+  actorLabel,
+  creatorLabelFromOrigin,
   type Slot,
   slotValidator,
+  statusActorValidator,
   toAppointmentDetail,
   toAppointmentRow,
   type AppointmentRow,
@@ -421,6 +424,10 @@ export const getAppointment = query({
         })
       ),
       canEdit: v.boolean(),
+      /** Quem marcou: nome do membro, ou "IA", "Link público", "Sistema". */
+      createdByName: v.string(),
+      /** Mudanças de status com o ator (auditoria; só as que a auditoria registrou), do mais antigo ao mais novo. */
+      statusActors: v.array(statusActorValidator),
     })
   ),
   handler: async (ctx, args) => {
@@ -434,6 +441,7 @@ export const getAppointment = query({
       .query("schedConflicts")
       .withIndex("by_appointment", (q) => q.eq("appointmentId", appt._id))
       .take(20);
+    const { createdByName, statusActors } = await resolveAppointmentActors(ctx, appt);
     return {
       appointment: toAppointmentDetail(appt),
       openConflicts: conflicts
@@ -446,9 +454,56 @@ export const getAppointment = query({
           createdAt: c.createdAt,
         })),
       canEdit: reader.canEdit,
+      createdByName,
+      statusActors,
     };
   },
 });
+
+const ACTOR_AUDIT_SCAN = 40;
+const ACTOR_MEMBER_CAP = 12;
+
+/**
+ * Nomes de quem marcou e de quem mudou o status, SÓ no detalhe (uma leitura: as últimas ações da auditoria da
+ * entidade e no máximo `ACTOR_MEMBER_CAP` membros distintos, cada um da MESMA org). Listas e grade não resolvem
+ * nome (leriam membro por linha): a grade só lê `schedAppointments`.
+ */
+async function resolveAppointmentActors(ctx: QueryCtx, appt: Doc<"schedAppointments">) {
+  const logs = await ctx.db
+    .query("auditLogs")
+    .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", appt._id))
+    .order("desc")
+    .take(ACTOR_AUDIT_SCAN);
+  const mine = logs.filter((l) => l.organizationId === appt.organizationId).reverse();
+  const members = new Map<string, { name?: string; type?: string } | null>();
+  const memberOf = async (id: Id<"teamMembers"> | undefined) => {
+    if (!id) return null;
+    if (members.has(id)) return members.get(id) ?? null;
+    if (members.size >= ACTOR_MEMBER_CAP) return null;
+    const m = await ctx.db.get(id);
+    const ok = m && m.organizationId === appt.organizationId ? { name: m.name, type: m.type } : null;
+    members.set(id, ok);
+    return ok;
+  };
+  const statusActors: Array<{ status: string; at: number; actorName?: string; undo?: boolean }> = [];
+  for (const log of mine) {
+    if (log.metadata?.statusChange !== true) continue;
+    const status = log.changes?.after?.status;
+    if (typeof status !== "string") continue;
+    const via = typeof log.metadata?.via === "string" ? log.metadata.via : undefined;
+    const actorType = log.actorType === "human" || log.actorType === "ai" || log.actorType === "system" || log.actorType === "api" ? log.actorType : undefined;
+    const hasActor = actorType !== undefined || log.actorId !== undefined;
+    statusActors.push({
+      status,
+      at: log.createdAt,
+      ...(log.metadata?.undo === true ? { undo: true } : {}),
+      ...(hasActor ? { actorName: actorLabel({ actorType, via, member: await memberOf(log.actorId) }) } : {}),
+    });
+  }
+  const creator = await memberOf(appt.createdBy);
+  const createdByName = creator ? actorLabel({ actorType: creator.type === "ai" ? "ai" : "human", member: creator }) : creatorLabelFromOrigin(appt.origin);
+  return { createdByName, statusActors };
+}
 
 const relatedValidator = v.object({
   upcoming: v.array(appointmentRowValidator),
