@@ -41,6 +41,7 @@ paths:
 - `routerPermissions`: every REST route has a `ROUTE_PERMISSIONS` entry and a permission gate (fail-closed).
 - `webhookDispatchPort`: webhooks scheduled only through `lib/webhookDispatch`.
 - `leadStageMovePort`: `leads.stageId` changes only inside `lib/leadStageMove` (exceptions listed in the test with a reason).
+- `schedulingPort`: `schedAppointments`/`schedAllocations` are written only inside `lib/schedBookingOps.ts` (exceptions listed in the test with a reason).
 - `llmOutputGuardWiring`: attendant, group posts and group agent import `detectLeakedModelMarkup`.
 - `agentToolSecurity`: AI tools never expose denylisted functions, secret-like result fields or injected scope params.
 - `agentTextsPort`: agent `systemPrompt`/`knowledge` accessed only through the texts store.

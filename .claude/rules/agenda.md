@@ -6,6 +6,8 @@ paths:
   - "convex/exports.ts"
   - "convex/lib/leadCascade.ts"
   - "convex/lib/sched*.ts"
+  - "convex/schedulingPort.test.ts"
+  - "convex/schedBooking.test.ts"
   - "convex/schedFoundation.test.ts"
   - "src/components/agenda/**"
 ---
@@ -26,3 +28,8 @@ Leia `docs/architecture/agenda.md` antes de mexer. Tabelas `sched*`; `calendarEv
 - Contato apagado: agendamento perde `contactId`, `contactName`, `guestName`, `notes`, `cancelReason` (`cascadeContactRefs`). Import/restauração reconstrói as alocações pela porta (ficam fora do backup).
 - O `convex-test` NÃO valida `returns` (o runtime recusa campo a mais). Todo validator de retorno de `scheduling*` precisa de teste que compare as chaves devolvidas com o validator, ou ser construído da mesma fonte; módulos novos: `modulesValidatorsParity.test.ts`.
 - Nome de índice lista todos os campos (`by_organization_and_status_and_created`).
+- **Escrita em `schedAppointments`/`schedAllocations` só em `lib/schedBookingOps.ts`** (guard `schedulingPort.test.ts`: insert, `"schedAllocations"` e `patch/replace/delete` com a tabela citada, fora da lista com motivo). Só `assertCapacityAndAllocate` lê a faixa de capacidade e insere alocação; depende de `L = MAX_BLOCK_MIN` fixo, da leitura na MESMA mutation e do `.collect()` da faixa `[bs − L, be)`. Nunca decida disponibilidade com dado de query, argumento ou oferta: leia dentro da mutation.
+- Marcar = `bookAppointmentCore`/`bookPartyCore`; remarcar/cancelar/status/desfazer/trocar sala = os cores irmãos. Nunca crie `schedAppointments` nem libere alocação por outro caminho. `force` só para a classe `staff` e só para `warn`; capacidade ninguém força (exceto `conflictToQueue`, origem `human_message`). IA e link: `pending_approval` por padrão, sem nome de recurso/terceiro na mensagem.
+- Um relógio por ato: a mutation lê `Date.now()` uma vez e passa `now` ao core. Todo ato escreve `auditLogs` (com `metadata.statusChange` quando muda status; é o que o desfazer lê), `activities` só com lead, webhook só por `scheduleWebhookEvent`; etapa do funil só por `moveLeadToStageCore` e sem derrubar o ato. Não crie tipo de notificação fora das 5 pontas (`NOTIFY:` marca o ponto de chamada).
+- Teste de mutation de agenda: `ConvexError.data` chega como string JSON no `convex-test`; compare as chaves devolvidas com o validator (ver `matchesValidator` em `schedBooking.test.ts`).
+
