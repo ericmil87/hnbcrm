@@ -16,6 +16,8 @@ interface CalendarHeaderProps {
   onNavigateNext: () => void;
   onGoToToday: () => void;
   onCreateEvent: () => void;
+  /** Esconde "Novo evento" para quem não pode criar. */
+  canCreate: boolean;
   teamMembers: Array<{ _id: string; name: string }>;
   selectedMemberId: string | null;
   selectedEventTypes: CalendarEventType[];
@@ -31,6 +33,7 @@ export function CalendarHeader({
   onNavigateNext,
   onGoToToday,
   onCreateEvent,
+  canCreate,
   teamMembers,
   selectedMemberId,
   selectedEventTypes,
@@ -119,10 +122,12 @@ export function CalendarHeader({
             onMemberChange={onMemberChange}
             onEventTypesChange={onEventTypesChange}
           />
-          <Button onClick={onCreateEvent} size="sm" className="hidden md:flex">
-            <Plus size={16} />
-            Novo evento
-          </Button>
+          {canCreate && (
+            <Button onClick={onCreateEvent} size="sm" className="hidden md:flex">
+              <Plus size={16} />
+              Novo evento
+            </Button>
+          )}
         </div>
       </div>
 

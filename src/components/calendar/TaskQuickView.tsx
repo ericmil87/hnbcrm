@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { TAB_ROUTES } from "@/lib/routes";
 import { formatDate, formatTime } from "@/lib/format";
+import { mutationErrorMessage } from "@/lib/errors";
 
 interface TaskQuickViewProps {
   open: boolean;
@@ -88,7 +89,7 @@ export function TaskQuickView({ open, onClose, taskId }: TaskQuickViewProps) {
       toast.success("Tarefa concluída");
       onClose();
     } catch (error) {
-      toast.error("Não foi possível concluir a tarefa.");
+      toast.error(mutationErrorMessage(error, "Não foi possível concluir a tarefa."));
       console.error(error);
     }
   };
@@ -103,7 +104,7 @@ export function TaskQuickView({ open, onClose, taskId }: TaskQuickViewProps) {
       toast.success("Tarefa cancelada");
       onClose();
     } catch (error) {
-      toast.error("Não foi possível cancelar a tarefa.");
+      toast.error(mutationErrorMessage(error, "Não foi possível cancelar a tarefa."));
       console.error(error);
     }
   };
@@ -116,7 +117,7 @@ export function TaskQuickView({ open, onClose, taskId }: TaskQuickViewProps) {
       setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
-      toast.error("Não foi possível excluir a tarefa.");
+      toast.error(mutationErrorMessage(error, "Não foi possível excluir a tarefa."));
       console.error(error);
     }
   };
