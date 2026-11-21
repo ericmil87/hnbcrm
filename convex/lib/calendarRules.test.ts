@@ -18,7 +18,7 @@ import {
   validateRecurrence,
 } from "./calendarRules";
 
-const withTasks = (tasks: Permissions["tasks"]): Permissions => ({ ...DEFAULT_PERMISSIONS.agent, tasks });
+const withAgenda = (agenda: Permissions["agenda"]): Permissions => ({ ...DEFAULT_PERMISSIONS.agent, agenda });
 const msg = (fn: () => void) => {
   try {
     fn();
@@ -79,33 +79,33 @@ describe("transições de status", () => {
   });
 });
 
-describe("permissões da agenda (categoria tasks)", () => {
+describe("permissões da agenda (categoria agenda)", () => {
   const ev = { createdBy: "m1", assignedTo: "m2", attendees: ["m3"] };
-  it("view_own vê só os seus (criador, responsável, participante); view_all vê todos", () => {
-    const own = withTasks("view_own");
+  it("view_own vê só os seus (criador, responsável, participante); view_all e acima veem todos", () => {
+    const own = withAgenda("view_own");
     expect(canViewEvent(own, "m1", ev)).toBe(true);
     expect(canViewEvent(own, "m2", ev)).toBe(true);
     expect(canViewEvent(own, "m3", ev)).toBe(true);
     expect(canViewEvent(own, "m9", ev)).toBe(false);
-    expect(canViewEvent(withTasks("view_all"), "m9", ev)).toBe(true);
-    expect(canViewEvent(withTasks("none"), "m1", ev)).toBe(false);
+    for (const l of ["view_all", "edit", "manage"] as const) expect(canViewEvent(withAgenda(l), "m9", ev)).toBe(true);
+    expect(canViewEvent(withAgenda("none"), "m1", ev)).toBe(false);
   });
-  it("criar exige edit_own; editar de outro exige edit_all", () => {
-    expect(canCreateEvent(withTasks("view_all"))).toBe(false);
-    expect(canCreateEvent(withTasks("edit_own"))).toBe(true);
-    expect(canEditEvent(withTasks("edit_own"), "m1", ev)).toBe(true);
-    expect(canEditEvent(withTasks("edit_own"), "m2", ev)).toBe(true);
-    expect(canEditEvent(withTasks("edit_own"), "m3", ev)).toBe(false); // participante não edita
-    expect(canEditEvent(withTasks("edit_own"), "m9", ev)).toBe(false);
-    expect(canEditEvent(withTasks("edit_all"), "m9", ev)).toBe(true);
-    expect(canEditEvent(withTasks("view_all"), "m1", ev)).toBe(false);
+  it("criar e alterar (qualquer compromisso) exigem edit; view_all e abaixo nunca escrevem", () => {
+    for (const l of ["none", "view_own", "view_all"] as const) {
+      expect(canCreateEvent(withAgenda(l))).toBe(false);
+      expect(canEditEvent(withAgenda(l), "m1", ev)).toBe(false); // nem o próprio
+    }
+    for (const l of ["edit", "manage"] as const) {
+      expect(canCreateEvent(withAgenda(l))).toBe(true);
+      for (const who of ["m1", "m2", "m3", "m9"]) expect(canEditEvent(withAgenda(l), who, ev)).toBe(true);
+    }
   });
-  it("papéis padrão: admin/manager editam todos; agent/ai só os seus", () => {
-    expect(canEditEvent(DEFAULT_PERMISSIONS.admin, "x", ev)).toBe(true);
-    expect(canEditEvent(DEFAULT_PERMISSIONS.manager, "x", ev)).toBe(true);
-    expect(canEditEvent(DEFAULT_PERMISSIONS.agent, "x", ev)).toBe(false);
-    expect(canEditEvent(DEFAULT_PERMISSIONS.ai, "m1", ev)).toBe(true);
-    expect(canViewEvent(DEFAULT_PERMISSIONS.agent, "x", ev)).toBe(true);
+  it("papéis padrão: todos editam qualquer compromisso; tasks não influencia", () => {
+    for (const r of ["admin", "manager", "agent", "ai"] as const) {
+      expect(canEditEvent(DEFAULT_PERMISSIONS[r], "x", ev)).toBe(true);
+      expect(canViewEvent(DEFAULT_PERMISSIONS[r], "x", ev)).toBe(true);
+    }
+    expect(canCreateEvent({ ...DEFAULT_PERMISSIONS.agent, tasks: "none" })).toBe(true);
   });
 });
 

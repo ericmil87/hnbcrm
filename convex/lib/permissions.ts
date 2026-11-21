@@ -134,8 +134,56 @@ export function resolvePermissions(
   return {
     ...explicit,
     campaigns: explicit.campaigns ?? defaults.campaigns,
-    agenda: explicit.agenda ?? defaults.agenda,
+    // Sem `agenda` gravada: deriva do `tasks` EXPLÍCITO do membro (quem teve Tarefas cortadas
+    // não ganha Agenda aberta); sem `tasks` explícito, default do papel.
+    // Quem já configura a organização (`settings: manage`) e tinha edição em Tarefas também
+    // configura a Agenda: sem isso um admin com permissões personalizadas não conseguiria
+    // ligar nem ajustar o módulo.
+    agenda:
+      explicit.agenda ??
+      promoteAgendaForSettingsManager(agendaFromTasks(explicit.tasks), explicit.settings) ??
+      defaults.agenda,
   };
+}
+
+/**
+ * Chave de API LEGADA: permissões gravadas antes da categoria `agenda` existir
+ * não têm a chave, e `hasPermission` trata ausente como negado (a integração
+ * perderia o calendário que tinha via `tasks`). Mapa explícito e conservador,
+ * derivado do nível de `tasks` DA PRÓPRIA CHAVE (nunca acima do que ele dava,
+ * e nunca `manage`, que é configuração):
+ * none→none, view_own→view_own, view_all→view_all,
+ * edit_own/edit_all/full→edit (escrever no calendário pelo REST continua possível).
+ * Idempotente: quem já tem `agenda` volta igual (mesmo objeto).
+ */
+const LEGACY_TASKS_TO_AGENDA: Record<TasksLevel, AgendaLevel> = {
+  none: "none",
+  view_own: "view_own",
+  view_all: "view_all",
+  edit_own: "edit",
+  edit_all: "edit",
+  full: "edit",
+};
+
+/** Nível de `agenda` derivado de um nível de `tasks` (mapa conservador). */
+/** `edit` derivado + `settings: manage` gravado = `manage`. Nunca promove abaixo de `edit`. */
+export function promoteAgendaForSettingsManager(
+  derived: AgendaLevel | undefined,
+  settings: string | undefined
+): AgendaLevel | undefined {
+  return derived === "edit" && settings === "manage" ? "manage" : derived;
+}
+
+export function agendaFromTasks(tasks: string | undefined): AgendaLevel | undefined {
+  if (tasks === undefined) return undefined;
+  return LEGACY_TASKS_TO_AGENDA[tasks as TasksLevel] ?? "none";
+}
+
+export function completeLegacyPermissions<T extends { tasks: TasksLevel; agenda?: AgendaLevel }>(
+  perms: T
+): T & { agenda: AgendaLevel } {
+  if (perms.agenda !== undefined) return perms as T & { agenda: AgendaLevel };
+  return { ...perms, agenda: LEGACY_TASKS_TO_AGENDA[perms.tasks] ?? "none" };
 }
 
 /**

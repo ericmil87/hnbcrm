@@ -58,7 +58,7 @@ export const NAV_ITEMS: ReadonlyArray<NavItemDef> = [
   { id: "board", label: VOCAB.funnel.nav, title: VOCAB.funnel.title, icon: Kanban, group: "atendimento", permission: { category: "leads", level: "view_own" }, mobile: "primary" },
   { id: "contacts", label: VOCAB.contact.nav, title: VOCAB.contact.nav, icon: Contact2, group: "atendimento", permission: { category: "contacts", level: "view" }, mobile: "more" },
   { id: "tasks", label: VOCAB.tasks.nav, title: VOCAB.tasks.title, icon: CheckSquare, group: "organizacao", permission: { category: "tasks", level: "view_own" }, mobile: "more" },
-  { id: "calendar", label: VOCAB.agenda.nav, title: VOCAB.agenda.title, icon: CalendarDays, group: "organizacao", permission: { category: "tasks", level: "view_own" }, mobile: "more" },
+  { id: "calendar", label: VOCAB.agenda.nav, title: VOCAB.agenda.title, icon: CalendarDays, group: "organizacao", permission: { category: "agenda", level: "view_own" }, mobile: "more" },
   { id: "campaigns", label: VOCAB.campaigns.nav, title: VOCAB.campaigns.title, icon: Megaphone, group: "divulgacao", permission: { category: "campaigns", level: "view" }, badge: "pausedCampaigns", mobile: "more" },
   { id: "groups", label: VOCAB.groups.nav, title: VOCAB.groups.title, icon: Users2, group: "divulgacao", permission: { category: "inbox", level: "view_own" }, mobile: "more" },
   { id: "forms", label: VOCAB.forms.nav, title: VOCAB.forms.title, icon: FileText, group: "divulgacao", permission: { category: "settings", level: "manage" }, mobile: "more" },

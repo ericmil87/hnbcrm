@@ -11,7 +11,7 @@ import { batchGet } from "./batchGet";
 import { buildAuditDescription } from "./auditDescription";
 import { scheduleWebhookEvent } from "./webhookDispatch";
 import { safeTimezone } from "./promptDateTime";
-import type { Permissions } from "./permissions";
+import { hasPermission, type Permissions } from "./permissions";
 import {
   EVENTS_APP_LIMIT,
   EVENTS_SCAN_CAP,
@@ -832,7 +832,10 @@ export async function listTaskItemsCore(
   actor: CalendarActor,
   args: { startDate: number; endDate: number; assignedTo?: Id<"teamMembers"> },
 ): Promise<{ items: Record<string, any>[]; truncated: boolean }> {
+  // Tarefas mescladas obedecem a `tasks` (não a `agenda`): ver a agenda não revela tarefa
+  // que o membro não poderia ver na tela de Tarefas. A visão da agenda em si exige `agenda`.
   if (!canViewAnyEvent(actor.permissions)) deny();
+  if (!hasPermission(actor.permissions, "tasks", "view_own")) return { items: [], truncated: false };
   validateQueryWindow(args.startDate, args.endDate);
   const organizationId = actor.member.organizationId;
   const rows = await ctx.db
@@ -844,7 +847,7 @@ export async function listTaskItemsCore(
     )
     .take(EVENTS_SCAN_CAP + 1);
   const truncated = rows.length > EVENTS_SCAN_CAP;
-  const seeAll = canViewAllEvents(actor.permissions);
+  const seeAll = hasPermission(actor.permissions, "tasks", "view_all");
   const tasks = rows.slice(0, EVENTS_SCAN_CAP).filter((t) => {
     if (args.assignedTo && t.assignedTo !== args.assignedTo) return false;
     return seeAll || t.assignedTo === actor.member._id || t.createdBy === actor.member._id;

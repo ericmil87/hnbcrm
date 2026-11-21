@@ -135,6 +135,7 @@ describe("validade dos pares categoria:nível", () => {
     "auditLogs",
     "apiKeys",
     "campaigns",
+    "agenda",
   ];
 
   test("toda categoria usada existe em lib/permissions", () => {
@@ -181,6 +182,22 @@ describe("sanidade dos mapeamentos-chave", () => {
       category: "leads",
       level: "edit_own",
     });
+  });
+
+  test("rotas de compromissos internos usam a categoria agenda: leitura view_own, escrita edit", () => {
+    const rotas = Object.keys(ROUTE_PERMISSIONS).filter((k) => k.includes("/api/v1/calendar/events"));
+    expect(rotas).toHaveLength(8);
+    for (const key of rotas) {
+      expect(ROUTE_PERMISSIONS[key], key).toEqual({
+        category: "agenda",
+        level: key.startsWith("GET ") ? "view_own" : "edit",
+      });
+    }
+  });
+
+  test("authenticateApiKey completa a chave legada (sem agenda) antes de qualquer checagem", () => {
+    const bloco = ROUTER_SOURCE.slice(ROUTER_SOURCE.indexOf("async function authenticateApiKey"));
+    expect(bloco.slice(0, 1500)).toContain("completeLegacyPermissions(apiKeyRecord.permissions)");
   });
 
   test("apagar lead exige leads:full, como leads.deleteLead", () => {

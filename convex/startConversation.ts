@@ -41,7 +41,7 @@ import { Doc, Id } from "./_generated/dataModel";
 import { isMembershipRevoked, requireAuth, requirePermission } from "./lib/auth";
 import { assertOutboundAllowed } from "./lib/readOnly";
 import { permissionsValidator } from "./schema";
-import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { completeLegacyPermissions, hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
 import { configProvider } from "./channelConfigs";
 import { getOrCreateConversation } from "./conversations";
 import { findOrCreateContactByPhone, findContactsByPhoneCandidates } from "./lib/inboundRouting";
@@ -113,7 +113,7 @@ async function resolveStartActor(
   }
   const perms = memberPermissions(member);
   // Chave antiga pode não ter `campaigns`: hasPermission trata ausente como "none".
-  const keyPerms = actor.keyPermissions as Permissions | undefined;
+  const keyPerms = actor.keyPermissions ? (completeLegacyPermissions(actor.keyPermissions) as Permissions) : undefined;
   const can = (c: keyof Permissions, l: string) =>
     hasPermission(perms, c, l) && (keyPerms === undefined || hasPermission(keyPerms, c, l));
   if (!can("inbox", "reply")) throw new Error("Permissão insuficiente");
