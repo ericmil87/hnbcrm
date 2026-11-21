@@ -4,7 +4,14 @@
  * Puro (sem imports de servidor), serve também ao front.
  */
 import type { Doc, Id } from "../_generated/dataModel";
-import { DEFAULT_GRID_MIN, DEFAULT_MAX_ADVANCE_DAYS, DEFAULT_MIN_NOTICE_MIN } from "./schedConstants";
+import {
+  DEFAULT_GRID_MIN,
+  DEFAULT_MAX_ADVANCE_DAYS,
+  DEFAULT_MIN_NOTICE_MIN,
+  DEFAULT_OUTCOME_GRACE_MIN,
+  DEFAULT_OUTCOME_NOTICE_HOUR,
+  OUTCOME_GRACE_MIN_LIMITS,
+} from "./schedConstants";
 
 export type SchedSmartMode = "off" | "rank" | "restrict";
 export type SchedAiBookMode = "off" | "propose" | "auto";
@@ -68,8 +75,15 @@ export type ResolvedSchedSettings = {
     mentionService: boolean;
     template: string | undefined;
   };
+  /** Pendência "sem desfecho" (A4). */
+  outcome: { graceMin: number; noticeHour: number };
   templateKey: string | undefined;
 };
+
+function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
 
 /** Doc ausente (`null`/`undefined`) = todos os padrões. */
 export function resolveSchedSettings(
@@ -112,6 +126,10 @@ export function resolveSchedSettings(
       hoursBefore: rem?.hoursBefore,
       mentionService: rem?.mentionService ?? false,
       template: rem?.template,
+    },
+    outcome: {
+      graceMin: clampInt(doc?.outcome?.graceMin, OUTCOME_GRACE_MIN_LIMITS.min, OUTCOME_GRACE_MIN_LIMITS.max, DEFAULT_OUTCOME_GRACE_MIN),
+      noticeHour: clampInt(doc?.outcome?.noticeHour, 0, 23, DEFAULT_OUTCOME_NOTICE_HOUR),
     },
     templateKey: doc?.templateKey,
   };

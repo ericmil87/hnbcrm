@@ -107,4 +107,9 @@ crons.daily(
 crons.interval("platform sentinel probes", { minutes: 15 }, internal.platformSentinel.internalProbeTick, {});
 crons.interval("platform sentinel scan", { minutes: 30 }, internal.platformSentinel.internalScanTick, {});
 
+// Agenda v2 (A4): pendência "sem desfecho". De hora em hora: marca `outcomePendingSince` nos agendamentos
+// ativos que já acabaram (só pela porta; NUNCA muda status) e, na hora local configurada (8h), avisa a
+// equipe 1x por dia local. Só orgs com o módulo `scheduling`; paginado por cursor; `cronsDisabled()` dentro.
+crons.interval("scheduling outcome pending", { hours: 1 }, internal.schedulingJobs.internalOutcomePendingTick, {});
+
 export default crons;

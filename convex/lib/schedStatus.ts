@@ -42,6 +42,8 @@ export const ACTIVE_STATUSES: readonly SchedStatus[] = [
   "checked_in",
   "completed",
 ];
+/** Estados em que o atendimento já devia ter acontecido e falta o desfecho (job "sem desfecho", A4). */
+export const AWAITING_OUTCOME_STATUSES = ["scheduled", "confirmed", "checked_in"] as const satisfies readonly SchedStatus[];
 export const TERMINAL_STATUSES: readonly SchedStatus[] = ["cancelled", "no_show", "rescheduled"];
 /** Estados com os quais um agendamento nasce. */
 export const INITIAL_STATUSES: readonly SchedStatus[] = ["pending_approval", "scheduled"];

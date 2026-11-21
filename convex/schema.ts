@@ -919,7 +919,10 @@ const applicationTables = {
     })),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_slug", ["slug"]),
+  })
+    .index("by_slug", ["slug"])
+    // Agenda v2 (A4): o job horário lê só as orgs com o módulo ligado (campo aninhado; zero orgs = zero leituras).
+    .index("by_scheduling_module", ["settings.modules.scheduling"]),
 
   // Team Members (humans and AI agents)
   teamMembers: defineTable({
@@ -2537,7 +2540,9 @@ const applicationTables = {
       v.literal("plan_change_scheduled"),
       v.literal("plan_cancel_scheduled"),
       v.literal("plan_canceled"),
-      v.literal("plan_refunded")
+      v.literal("plan_refunded"),
+      // Agenda v2 (A4) — resumo diário: atendimentos de ontem ainda sem desfecho (equipe com `agenda:edit`+).
+      v.literal("appointment_no_outcome")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2774,6 +2779,8 @@ const applicationTables = {
     aiSpendAlert: v.optional(v.boolean()),
     // Billing B4 — avisos de plano (franquia, excedente, teste); sino + e-mail `planAlert`.
     planAlert: v.optional(v.boolean()),
+    // Agenda v2 (A4) — resumo diário "sem desfecho" (sino; sem e-mail).
+    agendaActivity: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
@@ -4789,6 +4796,10 @@ const applicationTables = {
       template: v.optional(v.string()),
     })),
     templateKey: v.optional(v.string()),          // modelo aplicado no onboarding do módulo
+    outcome: v.optional(v.object({                // pendência "sem desfecho" (A4)
+      graceMin: v.optional(v.number()),           // folga após o fim antes de marcar; ausente = 120
+      noticeHour: v.optional(v.number()),         // hora local (0..23) do aviso diário; ausente = 8
+    })),
     updatedBy: v.optional(v.id("teamMembers")),
     updatedAt: v.number(),
   }).index("by_organization", ["organizationId"]),
@@ -4928,6 +4939,14 @@ const applicationTables = {
   })
     .index("by_resource_and_start", ["resourceId", "blockStart"])
     .index("by_appointment", ["appointmentId"]),
+
+  // Estado pequeno dos jobs da agenda, 1 linha por org (fora do doc da org para não invalidar as
+  // queries reativas que a leem). Derivado/efêmero: fora do backup, apagado na purga.
+  schedJobState: defineTable({
+    organizationId: v.id("organizations"),
+    lastOutcomeNoticeDate: v.optional(v.string()), // data local ("AAAA-MM-DD") do último aviso "sem desfecho", mesmo com N = 0
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
 
   schedConflicts: defineTable({
     organizationId: v.id("organizations"),

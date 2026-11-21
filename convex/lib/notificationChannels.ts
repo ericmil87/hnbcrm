@@ -166,6 +166,8 @@ async function maybeScheduleTelegram(
   if (args.type === "new_message" && !link.prefs.relayAssignedConversations) return;
   const org = await ctx.db.get(args.organizationId);
   if (!modulesOf(org).telegram) return;
+  // Org de demonstração: o resumo diário da agenda fica só no sino.
+  if (args.type === "appointment_no_outcome" && modulesOf(org).demoMode) return;
   // C1: política única — preferência por canal, pausa (`pausedUntil` + `mutedUntil` legado
   // do `/pausar`) e silêncio.
   const decision = shouldDeliver({
