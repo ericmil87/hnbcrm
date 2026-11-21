@@ -10,7 +10,8 @@ import { cn } from "@/lib/utils";
 import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { EVENT_TYPE_LABELS, RECURRENCE_OPTIONS } from "./constants";
 import { toast } from "sonner";
-import { formatLocalTime, localDateKey, parseLocalDateTime } from "@/lib/agendaDates";
+import { formatLocalTime, localDateKey, addDays, parseLocalDateTime } from "@/lib/agendaDates";
+import { buildEventTimes, endDateFieldValue } from "@/lib/agendaForm";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
@@ -54,6 +55,8 @@ export function CalendarEventModal({
   const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  // "" = termina no mesmo dia do início; só preenchido quando o evento atravessa dias.
+  const [endDate, setEndDate] = useState("");
   const [allDay, setAllDay] = useState(false);
   const [description, setDescription] = useState("");
   const [leadId, setLeadId] = useState<string>("");
@@ -74,6 +77,7 @@ export function CalendarEventModal({
     setStartDate("");
     setStartTime("");
     setEndTime("");
+    setEndDate("");
     setAllDay(false);
     setDescription("");
     setLeadId("");
@@ -122,6 +126,7 @@ export function CalendarEventModal({
     setNotes(existingEvent.notes || "");
     // Data/hora no fuso LOCAL (toISOString devolveria a data UTC e deslocaria o dia).
     setStartDate(localDateKey(existingEvent.startTime));
+    setEndDate(endDateFieldValue(existingEvent.startTime, existingEvent.endTime));
     if (!existingEvent.allDay) {
       setStartTime(formatLocalTime(existingEvent.startTime));
       setEndTime(formatLocalTime(existingEvent.endTime));
@@ -137,25 +142,21 @@ export function CalendarEventModal({
 
     setIsSubmitting(true);
     try {
-      const startTimestamp = parseLocalDateTime(startDate, allDay ? "00:00" : startTime);
-      const endTimestamp = allDay
-        ? parseLocalDateTime(startDate, "23:59") // 23:59:59.999 abaixo
-        : parseLocalDateTime(startDate, endTime);
-      if (startTimestamp === null || endTimestamp === null) {
-        toast.error("Informe uma data e um horário válidos.");
-        return;
-      }
-      const endFinal = allDay ? endTimestamp + 59_999 : endTimestamp;
-      if (endFinal <= startTimestamp) {
-        toast.error("O horário de fim deve ser depois do início.");
+      const times = buildEventTimes({ startDate, startTime, endDate, endTime, allDay });
+      if (!times.ok) {
+        toast.error(
+          times.error === "end_before_start"
+            ? "O fim deve ser depois do início."
+            : "Informe uma data e um horário válidos."
+        );
         return;
       }
 
       const eventData = {
         title: title.trim(),
         eventType: eventType as "call" | "meeting" | "follow_up" | "demo" | "task" | "reminder" | "other",
-        startTime: startTimestamp,
-        endTime: endFinal,
+        startTime: times.startTime,
+        endTime: times.endTime,
         allDay,
         description: description.trim() || undefined,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
@@ -257,6 +258,39 @@ export function CalendarEventModal({
             </>
           )}
         </div>
+
+        {/* Data de término: só quando o evento atravessa dias */}
+        {endDate !== "" ? (
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <Input
+                label="Data de término"
+                type="date"
+                value={endDate}
+                min={startDate || undefined}
+                onChange={(e) => setEndDate(e.target.value)}
+                required
+              />
+            </div>
+            <Button type="button" variant="secondary" onClick={() => setEndDate("")}>
+              Mesmo dia
+            </Button>
+          </div>
+        ) : (
+          startDate !== "" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const start = parseLocalDateTime(startDate);
+                if (start !== null) setEndDate(localDateKey(addDays(start, 1)));
+              }}
+            >
+              Terminar em outro dia
+            </Button>
+          )
+        )}
 
         {/* All Day Toggle */}
         <Checkbox

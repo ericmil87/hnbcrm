@@ -8,7 +8,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 - **Evento salvo no dia escolhido.** Antes o evento era gravado um dia antes e cada "Editar > Atualizar" o empurrava mais um dia. Agora data e hora seguem o horário do seu aparelho.
 - **Filtro por vários tipos, cabeçalho do mês e navegação.** Com dois ou mais tipos marcados todos aparecem; os dias da semana do mês batem com a grade (começa na segunda); avançar ou voltar mês não pula de mês em dia 31 e a última linha do mês mostra os eventos.
-- **Eventos no mesmo horário lado a lado**, eventos de madrugada, de noite, que passam da meia-noite ou de vários dias aparecem na grade. O formulário "Novo evento" abre limpo e avisa se o fim é antes do início. Navegar não pisca mais a tela e os botões da agenda têm 44 px.
+- **Eventos no mesmo horário lado a lado** (até 3 colunas e um "+N" que abre a lista), eventos de madrugada ou de noite e os que passam da meia-noite aparecem na grade. O formulário "Novo evento" abre limpo, aceita fim depois da meia-noite e "Data de término", e avisa se o fim é antes do início. Navegar não pisca mais a tela e os botões da agenda têm 44 px. Evento de vários dias aparece por inteiro só depois da correção do servidor.
 
 ### Contatos que não são clientes ("Não é cliente" / "Virar lead")
 

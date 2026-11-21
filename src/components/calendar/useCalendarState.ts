@@ -5,6 +5,7 @@ import {
   defaultCalendarView,
   formatDateParam,
   parseCalendarParams,
+  parseDateParam,
   type CalendarView,
 } from "@/lib/calendarParams";
 import { addDays, addMonthsClamped, visibleRange } from "@/lib/agendaDates";
@@ -17,7 +18,10 @@ import { addDays, addMonthsClamped, visibleRange } from "@/lib/agendaDates";
 export function useCalendarState() {
   const [searchParams, setSearchParams] = useSearchParams();
   const isMobile = useMediaQuery("(max-width: 767px)");
-  const { view, date, event: eventParam } = parseCalendarParams(searchParams, defaultCalendarView(isMobile));
+  const { view, event: eventParam } = parseCalendarParams(searchParams, defaultCalendarView(isMobile));
+  // `parseCalendarParams` devolve um Date novo a cada render: memoiza pela string do parâmetro.
+  const dateParam = searchParams.get("date");
+  const date = useMemo(() => parseDateParam(dateParam), [dateParam]);
   // Sem `?date=`, a Agenda abre em "agora" (fixado na montagem).
   const [fallbackDate] = useState(() => new Date());
   const currentDate = useMemo(() => date ?? fallbackDate, [date, fallbackDate]);

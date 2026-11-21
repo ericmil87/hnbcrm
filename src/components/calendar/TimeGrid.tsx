@@ -3,8 +3,10 @@ import { useDroppable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { HOUR_HEIGHT_PX } from "./constants";
 import { isSameDay, localDateKey } from "@/lib/agendaDates";
-import { clipToDay, gridHourRange, layoutOverlaps, MIN_EVENT_MINUTES } from "@/lib/agendaLayout";
+import { capClusterColumns, clipToDay, gridHourRange, layoutOverlaps, MIN_EVENT_MINUTES } from "@/lib/agendaLayout";
 import { EventBlock } from "./EventBlock";
+import { Modal } from "../ui/Modal";
+import { formatTime } from "@/lib/format";
 
 interface TimeGridEvent {
   _id: string;
@@ -33,6 +35,21 @@ interface PlacedEvent {
   columns: number;
 }
 
+/** Chip "+N" de um cluster com mais colunas que o limite visível. */
+interface PlacedOverflow {
+  key: string;
+  events: TimeGridEvent[];
+  startMin: number;
+  endMin: number;
+  column: number;
+  columns: number;
+}
+
+interface ColumnLayout {
+  placed: PlacedEvent[];
+  overflow: PlacedOverflow[];
+}
+
 export function TimeGrid({
   date,
   events,
@@ -53,9 +70,11 @@ export function TimeGrid({
 
   // Por coluna (dia): recorta cada evento ao dia (cruza a meia-noite / vários dias)
   // e reparte colunas entre os que se sobrepõem.
+  const [overflowList, setOverflowList] = useState<PlacedOverflow | null>(null);
+
   const { placedByColumn, range } = useMemo(() => {
     const segments: Array<{ startMin: number; endMin: number }> = [];
-    const placed = columnDates.map((colDate) => {
+    const placed: ColumnLayout[] = columnDates.map((colDate) => {
       const inputs: Array<{ id: string; startMin: number; endMin: number }> = [];
       const byId = new Map<string, TimeGridEvent>();
       for (const event of events) {
@@ -65,13 +84,24 @@ export function TimeGrid({
         inputs.push({ id: event._id, ...seg });
         byId.set(event._id, event);
       }
-      return layoutOverlaps(inputs).map<PlacedEvent>((l) => ({
-        event: byId.get(l.id)!,
-        startMin: l.startMin,
-        endMin: l.endMin,
-        column: l.column,
-        columns: l.columns,
-      }));
+      const { visible, overflow } = capClusterColumns(layoutOverlaps(inputs));
+      return {
+        placed: visible.map<PlacedEvent>((l) => ({
+          event: byId.get(l.id)!,
+          startMin: l.startMin,
+          endMin: l.endMin,
+          column: l.column,
+          columns: l.columns,
+        })),
+        overflow: overflow.map<PlacedOverflow>((o) => ({
+          key: `${localDateKey(colDate)}-${o.clusterId}`,
+          events: o.hiddenIds.map((id) => byId.get(id)!),
+          startMin: o.startMin,
+          endMin: o.endMin,
+          column: o.column,
+          columns: o.columns,
+        })),
+      } satisfies ColumnLayout;
     });
     return { placedByColumn: placed, range: gridHourRange(segments) };
   }, [columnDates, events]);
@@ -108,7 +138,8 @@ export function TimeGrid({
             key={localDateKey(colDate)}
             date={colDate}
             hours={hours}
-            placed={placedByColumn[colIndex]}
+            layout={placedByColumn[colIndex]}
+            onOverflowClick={setOverflowList}
             gridStartMin={gridStartMin}
             pxPerMin={pxPerMin}
             onEventClick={onEventClick}
@@ -119,6 +150,30 @@ export function TimeGrid({
           />
         ))}
       </div>
+
+      <Modal
+        open={overflowList !== null}
+        onClose={() => setOverflowList(null)}
+        title="Eventos no mesmo horário"
+      >
+        <ul className="space-y-2">
+          {overflowList?.events.map((event) => (
+            <li key={event._id}>
+              <button
+                type="button"
+                onClick={() => {
+                  setOverflowList(null);
+                  onEventClick(event._id, event._source || "event");
+                }}
+                className="flex w-full min-h-[44px] items-center gap-3 rounded-field border border-border bg-surface-raised px-3 text-left text-sm text-text-primary hover:bg-surface-overlay"
+              >
+                <span className="tabular-nums text-text-muted">{formatTime(event.startTime)}</span>
+                <span className="min-w-0 flex-1 truncate">{event.title}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Modal>
     </div>
   );
 }
@@ -126,7 +181,8 @@ export function TimeGrid({
 interface TimeGridColumnProps {
   date: Date;
   hours: number[];
-  placed: PlacedEvent[];
+  layout: ColumnLayout;
+  onOverflowClick: (overflow: PlacedOverflow) => void;
   gridStartMin: number;
   pxPerMin: number;
   onEventClick: (eventId: string, source: "event" | "task") => void;
@@ -139,7 +195,8 @@ interface TimeGridColumnProps {
 function TimeGridColumn({
   date,
   hours,
-  placed,
+  layout,
+  onOverflowClick,
   gridStartMin,
   pxPerMin,
   onEventClick,
@@ -149,6 +206,7 @@ function TimeGridColumn({
   compact,
 }: TimeGridColumnProps) {
   const pad = compact ? 1 : 4;
+  const gridHeight = hours.length * HOUR_HEIGHT_PX;
   return (
     <div className="flex-1 relative min-w-0 border-r border-border last:border-r-0">
       {hours.map((hour) => (
@@ -160,9 +218,13 @@ function TimeGridColumn({
 
       {/* Event blocks */}
       <div className="absolute inset-0 pointer-events-none">
-        {placed.map(({ event, startMin, endMin, column, columns }) => {
+        {layout.placed.map(({ event, startMin, endMin, column, columns }) => {
           const top = (startMin - gridStartMin) * pxPerMin;
-          const height = Math.max((endMin - startMin) * pxPerMin, MIN_EVENT_MINUTES * pxPerMin);
+          // Altura mínima de 30 min, sem passar do fim da grade.
+          const height = Math.min(
+            Math.max((endMin - startMin) * pxPerMin, MIN_EVENT_MINUTES * pxPerMin),
+            Math.max(gridHeight - top, 1)
+          );
           const widthPct = 100 / columns;
           return (
             <div
@@ -185,6 +247,32 @@ function TimeGridColumn({
           );
         })}
       </div>
+
+      {layout.overflow.map((o) => {
+        const top = (o.startMin - gridStartMin) * pxPerMin;
+        const height = Math.min(
+          Math.max((o.endMin - o.startMin) * pxPerMin, MIN_EVENT_MINUTES * pxPerMin),
+          Math.max(gridHeight - top, 1)
+        );
+        const widthPct = 100 / o.columns;
+        return (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => onOverflowClick(o)}
+            className="absolute z-[5] flex items-start justify-center rounded-sm border border-border bg-surface-overlay pt-1 text-caption font-medium text-text-secondary hover:bg-surface-sunken"
+            style={{
+              top,
+              height,
+              left: `calc(${o.column * widthPct}% + ${pad}px)`,
+              width: `calc(${widthPct}% - ${pad * 2}px)`,
+            }}
+            aria-label={`Mais ${o.events.length} eventos neste horário`}
+          >
+            +{o.events.length}
+          </button>
+        );
+      })}
 
       {/* Current time indicator */}
       {isToday && currentTimePosition !== null && (

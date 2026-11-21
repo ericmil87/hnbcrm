@@ -126,6 +126,25 @@ describe("agendaDates e horário de verão (New York)", () => {
     process.env.TZ = "America/New_York";
   });
 
+  it("somar um dia mantém o relógio no dia da virada (23h reais) e o dia tem 23h", () => {
+    // 08/03/2026 02:00 não existe em New York.
+    const before = new Date(2026, 2, 7, 12, 0);
+    const after = addDays(before, 1);
+    expect(after.getHours()).toBe(12);
+    expect(after.getTime() - before.getTime()).toBe(23 * 3_600_000);
+    const dayStart = new Date(2026, 2, 8, 0, 0).getTime();
+    const nextStart = new Date(2026, 2, 9, 0, 0).getTime();
+    expect(nextStart - dayStart).toBe(23 * 3_600_000);
+    // evento que atravessa o buraco das 02:00 pertence ao dia
+    const s = new Date(2026, 2, 8, 1, 30).getTime();
+    const e = new Date(2026, 2, 8, 4, 0).getTime();
+    expect(overlapsDay(s, e, new Date(2026, 2, 8, 12))).toBe(true);
+    expect(overlapsDay(s, e, new Date(2026, 2, 9, 12))).toBe(false);
+    expect(visibleRange("day", new Date(2026, 2, 8, 12)).endDate - dayStart).toBe(23 * 3_600_000 - 1);
+    // fim da virada de outono (01/11/2026, 25h): o dia seguinte continua certo
+    expect(localDateKey(addDays(new Date(2026, 10, 1, 12), 1))).toBe("2026-11-02");
+  });
+
   it("dia de virada tem 23h mas a semana e o mês continuam certos", () => {
     // 08/03/2026: início do horário de verão nos EUA.
     const week = weekDays(new Date(2026, 2, 8, 12));
@@ -142,5 +161,15 @@ describe("orderWeekdayLabels", () => {
   it("começa na segunda por padrão e respeita o domingo", () => {
     expect(orderWeekdayLabels(labels)).toEqual(["Seg", "Ter", "Qua", "Qui", "Sex", "Sab", "Dom"]);
     expect(orderWeekdayLabels(labels, 0)).toEqual(labels);
+  });
+});
+
+describe("dia sem meia-noite (Sao_Paulo, 04/11/2018)", () => {
+  it("startOfDay cai à 01:00 e a janela do dia continua no mesmo dia", () => {
+    process.env.TZ = "America/Sao_Paulo";
+    const r = visibleRange("day", new Date(2018, 10, 4, 12));
+    expect(localDateKey(r.startDate)).toBe("2018-11-04");
+    expect(new Date(r.startDate).getHours()).toBe(1);
+    expect(localDateKey(r.endDate)).toBe("2018-11-04");
   });
 });

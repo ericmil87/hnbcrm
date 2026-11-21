@@ -1,7 +1,7 @@
 import { useDraggable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { EVENT_TYPE_COLORS } from "./constants";
-import { formatLocalTime } from "@/lib/agendaDates";
+import { formatTime } from "@/lib/format";
 import { Avatar } from "../ui/Avatar";
 
 interface EventBlockProps {
@@ -30,7 +30,7 @@ export function EventBlock({ event, onClick, compact, dragKey }: EventBlockProps
   const startDate = new Date(event.startTime);
   const isTask = event._source === "task";
 
-  const timeString = formatLocalTime(startDate);
+  const timeString = formatTime(startDate);
 
   return (
     <div
