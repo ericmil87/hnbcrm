@@ -286,6 +286,7 @@ import type * as lib_readOnly from "../lib/readOnly.js";
 import type * as lib_refund from "../lib/refund.js";
 import type * as lib_safeFetch from "../lib/safeFetch.js";
 import type * as lib_safeFetchNode from "../lib/safeFetchNode.js";
+import type * as lib_schedConfirmParser from "../lib/schedConfirmParser.js";
 import type * as lib_searchFold from "../lib/searchFold.js";
 import type * as lib_searchText from "../lib/searchText.js";
 import type * as lib_secretCrypto from "../lib/secretCrypto.js";
@@ -695,6 +696,7 @@ declare const fullApi: ApiFromModules<{
   "lib/refund": typeof lib_refund;
   "lib/safeFetch": typeof lib_safeFetch;
   "lib/safeFetchNode": typeof lib_safeFetchNode;
+  "lib/schedConfirmParser": typeof lib_schedConfirmParser;
   "lib/searchFold": typeof lib_searchFold;
   "lib/searchText": typeof lib_searchText;
   "lib/secretCrypto": typeof lib_secretCrypto;
