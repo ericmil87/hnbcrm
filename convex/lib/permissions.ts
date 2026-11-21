@@ -136,7 +136,13 @@ export function resolvePermissions(
     campaigns: explicit.campaigns ?? defaults.campaigns,
     // Sem `agenda` gravada: deriva do `tasks` EXPLÍCITO do membro (quem teve Tarefas cortadas
     // não ganha Agenda aberta); sem `tasks` explícito, default do papel.
-    agenda: explicit.agenda ?? agendaFromTasks(explicit.tasks) ?? defaults.agenda,
+    // Quem já configura a organização (`settings: manage`) e tinha edição em Tarefas também
+    // configura a Agenda: sem isso um admin com permissões personalizadas não conseguiria
+    // ligar nem ajustar o módulo.
+    agenda:
+      explicit.agenda ??
+      promoteAgendaForSettingsManager(agendaFromTasks(explicit.tasks), explicit.settings) ??
+      defaults.agenda,
   };
 }
 
@@ -160,6 +166,14 @@ const LEGACY_TASKS_TO_AGENDA: Record<TasksLevel, AgendaLevel> = {
 };
 
 /** Nível de `agenda` derivado de um nível de `tasks` (mapa conservador). */
+/** `edit` derivado + `settings: manage` gravado = `manage`. Nunca promove abaixo de `edit`. */
+export function promoteAgendaForSettingsManager(
+  derived: AgendaLevel | undefined,
+  settings: string | undefined
+): AgendaLevel | undefined {
+  return derived === "edit" && settings === "manage" ? "manage" : derived;
+}
+
 export function agendaFromTasks(tasks: string | undefined): AgendaLevel | undefined {
   if (tasks === undefined) return undefined;
   return LEGACY_TASKS_TO_AGENDA[tasks as TasksLevel] ?? "none";

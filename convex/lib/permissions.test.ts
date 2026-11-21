@@ -104,3 +104,18 @@ describe("completeLegacyPermissions (chave de API legada sem agenda)", () => {
     expect(completeLegacyPermissions({ ...base, tasks: "xyz" } as any).agenda).toBe("none");
   });
 });
+
+describe("agenda derivada para quem configura a organização", () => {
+  test("edit derivado + settings manage vira manage; abaixo de edit não promove", async () => {
+    const { promoteAgendaForSettingsManager, resolvePermissions, DEFAULT_PERMISSIONS } = await import("./permissions");
+    expect(promoteAgendaForSettingsManager("edit", "manage")).toBe("manage");
+    expect(promoteAgendaForSettingsManager("edit", "view")).toBe("edit");
+    expect(promoteAgendaForSettingsManager("view_all", "manage")).toBe("view_all");
+    expect(promoteAgendaForSettingsManager("none", "manage")).toBe("none");
+    expect(promoteAgendaForSettingsManager(undefined, "manage")).toBeUndefined();
+    const { agenda: _a, campaigns: _c, ...gravadas } = DEFAULT_PERMISSIONS.admin;
+    expect(resolvePermissions("admin", gravadas).agenda).toBe("manage");
+    expect(resolvePermissions("admin", { ...gravadas, settings: "view" }).agenda).toBe("edit");
+    expect(resolvePermissions("admin", { ...gravadas, tasks: "none" }).agenda).toBe("none");
+  });
+});
