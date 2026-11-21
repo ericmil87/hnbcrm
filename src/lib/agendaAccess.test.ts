@@ -7,6 +7,7 @@ import {
   canConfigureScheduling,
   enableCardState,
   isSchedulingOn,
+  schedulingLockedNotice,
 } from "./agendaAccess";
 
 const canFor = (role: Role, explicit?: Parameters<typeof resolvePermissions>[1]) => {
@@ -55,5 +56,17 @@ describe("módulo + permissão", () => {
     expect(enableCardState(on, canFor("admin"))).toBe("hidden");
     expect(enableCardState(off, canFor("agent"))).toBe("hidden");
     expect(enableCardState(off, canFor("agent", { agenda: "manage" } as never))).toBe("locked");
+  });
+});
+
+describe("schedulingLockedNotice", () => {
+  const services = { id: "agenda-services", group: "agenda", label: "Serviços" };
+  it("módulo desligado e quem gerencia: pede para ligar", () => {
+    expect(schedulingLockedNotice(services, off, canFor("admin"))).toBe("Ligue o agendamento para abrir «Serviços».");
+  });
+  it("outros motivos seguem como falta de permissão", () => {
+    expect(schedulingLockedNotice(services, on, canFor("admin"))).toBeNull();
+    expect(schedulingLockedNotice(services, off, canFor("agent"))).toBeNull();
+    expect(schedulingLockedNotice({ id: "ai", group: "atendente", label: "Visão geral" }, off, canFor("admin"))).toBeNull();
   });
 });

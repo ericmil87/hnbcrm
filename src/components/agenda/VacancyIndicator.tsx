@@ -17,7 +17,11 @@ export function VacancyIndicator({ used, capacity, className }: VacancyIndicator
       title={v.a11y}
       className={cn(
         "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
-        v.full ? "bg-semantic-warning/10 text-semantic-warning" : "bg-surface-overlay text-text-secondary",
+        v.over
+          ? "bg-semantic-error/10 text-semantic-error"
+          : v.full
+            ? "bg-semantic-warning/10 text-semantic-warning"
+            : "bg-surface-overlay text-text-secondary",
         className
       )}
     >

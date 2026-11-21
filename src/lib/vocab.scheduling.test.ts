@@ -2,12 +2,17 @@ import { describe, expect, it } from "vitest";
 import { VOCAB, findBannedTerm, vocabLabels } from "./vocab";
 import { APPOINTMENT_STATUSES } from "./agendaTypes";
 import { fillVocab } from "./agendaCopy";
+import { RULE_CODES } from "../../convex/lib/schedRules";
 
 const labels = vocabLabels(VOCAB.scheduling);
 
 describe("VOCAB.scheduling", () => {
   it("nunca usa o verbo Agendar (já significa programar o envio de uma mensagem)", () => {
     for (const label of labels) expect(label, label).not.toMatch(/\bagend(ar|e|ou|amos)\b/i);
+  });
+
+  it("tem rótulo para cada código de regra do servidor", () => {
+    expect(Object.keys(VOCAB.scheduling.rules).sort()).toEqual([...RULE_CODES].sort());
   });
 
   it("verbo e substantivo do plano", () => {

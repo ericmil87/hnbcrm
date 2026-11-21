@@ -62,6 +62,13 @@ describe("VacancyIndicator", () => {
     rerender(<VacancyIndicator used={2} capacity={2} />);
     expect(screen.getByRole("img").className).toContain("semantic-warning");
   });
+
+  it("acima da capacidade: 2/1 em tom de erro e rótulo acessível", () => {
+    render(<VacancyIndicator used={2} capacity={1} />);
+    const el = screen.getByRole("img", { name: "2 de 1 vaga: acima da capacidade" });
+    expect(el).toHaveTextContent("2/1");
+    expect(el.className).toContain("semantic-error");
+  });
 });
 
 describe("SchedulingEnableCardView", () => {

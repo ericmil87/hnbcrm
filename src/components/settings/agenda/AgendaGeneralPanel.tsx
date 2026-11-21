@@ -34,7 +34,7 @@ export function AgendaGeneralPanel({ organizationId }: SettingsPanelProps) {
       icon={<CalendarClock size={20} aria-hidden="true" />}
       actions={can("settings", "manage") ? <SchedulingDisableButton organizationId={organizationId} /> : undefined}
     >
-      <p className="text-sm text-text-secondary">{VOCAB.scheduling.enable.offHint}</p>
+      {null}
     </SectionCard>
   );
 }

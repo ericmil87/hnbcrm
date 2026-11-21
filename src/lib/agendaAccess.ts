@@ -1,5 +1,6 @@
 import type { PermissionCategory } from "../../convex/lib/permissions";
 import type { OrgModules } from "@/hooks/useOrgModules";
+import { VOCAB } from "./vocab";
 
 type Can = (category: PermissionCategory, level: string) => boolean;
 
@@ -53,4 +54,17 @@ export function canConfigureScheduling(modules: Pick<OrgModules, "scheduling">, 
 export function enableCardState(modules: Pick<OrgModules, "scheduling">, can: Can): "hidden" | "locked" | "ready" {
   if (isSchedulingOn(modules) || !can("agenda", "manage")) return "hidden";
   return can("settings", "manage") ? "ready" : "locked";
+}
+
+/**
+ * Deep link `?secao=agenda-*` recusado porque o módulo está desligado (e a pessoa gerencia a agenda):
+ * devolve o aviso "Ligue o agendamento…"; `null` quando o motivo é outro (permissão).
+ */
+export function schedulingLockedNotice(
+  requested: { id: string; group: string; label: string },
+  modules: Pick<OrgModules, "scheduling">,
+  can: Can
+): string | null {
+  if (requested.group !== "agenda" || isSchedulingOn(modules) || !can("agenda", "manage")) return null;
+  return VOCAB.scheduling.enable.needsModule.replace("{painel}", requested.label);
 }

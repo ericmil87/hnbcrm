@@ -256,7 +256,8 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     label: VOCAB.scheduling.settings.general.label,
     description: VOCAB.scheduling.settings.general.description,
     icon: CalendarRange,
-    keywords: ["agenda", "agendamento", "hora marcada", "marcar horário", "ativar", "ligar", "módulo", "fuso", "funil", "modelo", "clínica", "salão"],
+    // Só termos de ativação: os de fuso/funil/modelo entram com o painel que os implementa (B1).
+    keywords: ["agenda", "agendamento", "hora marcada", "marcar horário", "ativar", "clínica", "salão", "barbearia", "consultório"],
     permission: manage("agenda"),
     Component: lazy(() => import("./agenda/AgendaGeneralPanel").then((m) => ({ default: m.AgendaGeneralPanel }))),
   },

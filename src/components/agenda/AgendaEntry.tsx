@@ -8,22 +8,27 @@ import { isSchedulingOn } from "@/lib/agendaAccess";
 
 const AgendaPage = lazy(() => import("./views/AgendaPage").then((m) => ({ default: m.AgendaPage })));
 
+/** Mesmo fallback de página do app (`LazyRoute` em `appRoutes.tsx`). */
+function PageSpinner() {
+  return (
+    <div className="flex h-screen supports-[height:100dvh]:h-[100dvh] items-center justify-center">
+      <Spinner size="lg" />
+    </div>
+  );
+}
+
 /**
- * Elemento da rota `/app/calendario`. Módulo `scheduling` desligado (ou ainda carregando) = a página de
- * compromissos de sempre, sem nenhum código novo no caminho. Ligado = `views/AgendaPage` (carregado sob demanda).
+ * Elemento da rota `/app/calendario`. Enquanto os módulos carregam: spinner de página (nunca a página antiga
+ * para depois trocar). Módulo `scheduling` desligado = a página de compromissos de sempre, sem código novo no
+ * caminho. Ligado = `views/AgendaPage` (carregado sob demanda).
  */
 export function AgendaEntry() {
   const { organizationId } = useOutletContext<AppOutletContext>();
-  const { modules } = useOrgModules(organizationId);
+  const { modules, isLoading } = useOrgModules(organizationId);
+  if (isLoading) return <PageSpinner />;
   if (!isSchedulingOn(modules)) return <CalendarPage />;
   return (
-    <Suspense
-      fallback={
-        <div className="flex justify-center py-16">
-          <Spinner size="lg" />
-        </div>
-      }
-    >
+    <Suspense fallback={<PageSpinner />}>
       <AgendaPage />
     </Suspense>
   );

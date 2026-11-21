@@ -10,17 +10,20 @@ import {
   vacancyOf,
 } from "./agendaStatus";
 import { APPOINTMENT_ORIGINS, APPOINTMENT_STATUSES } from "./agendaTypes";
+import { ACTIVE_STATUSES, ALL_STATUSES, TERMINAL_STATUSES } from "../../convex/lib/schedStatus";
 
 describe("status", () => {
-  it("todo status do schema tem meta, e só eles", () => {
-    expect(Object.keys(APPOINTMENT_STATUS_META).sort()).toEqual([...APPOINTMENT_STATUSES].sort());
-  });
-
-  it("ativos são os que ocupam horário (plano §2.4)", () => {
-    const active = APPOINTMENT_STATUSES.filter((s) => APPOINTMENT_STATUS_META[s].active);
-    expect(active).toEqual(["pending_approval", "scheduled", "confirmed", "checked_in", "completed"]);
-    expect(isActiveStatus("no_show")).toBe(false);
-    expect(isActiveStatus("cancelled")).toBe(false);
+    it("paridade com o SERVIDOR: lista, ativos e terminais vêm de convex/lib/schedStatus", () => {
+    expect([...APPOINTMENT_STATUSES]).toEqual([...ALL_STATUSES]);
+    expect(Object.keys(APPOINTMENT_STATUS_META).sort()).toEqual([...ALL_STATUSES].sort());
+    for (const s of ALL_STATUSES) {
+      expect(APPOINTMENT_STATUS_META[s].active, s).toBe(ACTIVE_STATUSES.includes(s));
+      expect(APPOINTMENT_STATUS_META[s].terminal, s).toBe(TERMINAL_STATUSES.includes(s));
+    }
+    expect(isActiveStatus("completed")).toBe(true);
+    expect(APPOINTMENT_STATUS_META.completed.terminal).toBe(false);
+    expect(APPOINTMENT_STATUS_META.completed.final).toBe(true);
+    expect(APPOINTMENT_STATUS_META.confirmed.final).toBe(false);
   });
 
   it("só aguardando aprovação é tracejado", () => {
@@ -63,7 +66,9 @@ describe("vacancyOf", () => {
     expect(vacancyOf(1, 2)).toMatchObject({ label: "1/2", full: false, a11y: "1 de 2 vagas ocupadas" });
     expect(vacancyOf(2, 2)).toMatchObject({ label: "2/2", full: true });
     expect(vacancyOf(0, 1)).toMatchObject({ label: "0/1", full: false, a11y: "0 de 1 vaga ocupada" });
-    expect(vacancyOf(5, 2).label).toBe("2/2");
+    expect(vacancyOf(5, 2)).toMatchObject({ label: "5/2", over: true });
+    expect(vacancyOf(2, 1)).toMatchObject({ label: "2/1", over: true, full: true, a11y: "2 de 1 vaga: acima da capacidade" });
+    expect(vacancyOf(1, 1).over).toBe(false);
     expect(vacancyOf(-1, 2).label).toBe("0/2");
     expect(vacancyOf(1, 0).label).toBe("1/1");
     expect(vacancyOf(NaN, NaN).label).toBe("0/1");

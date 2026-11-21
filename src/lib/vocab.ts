@@ -1,3 +1,5 @@
+import type { RuleCode } from "../../convex/lib/schedRules";
+
 /**
  * Glossário da interface (PT-BR). Fonte única para rótulos de menu, títulos de
  * página e estados vazios. Só rótulos: rotas, ids, enums e nomes de função não
@@ -116,7 +118,7 @@ export const VOCAB = {
     vacancy: { label: "vagas", full: "Cheio" },
     settings: {
       group: "Agenda",
-      general: { label: "Agendamento", description: "Ligar o agendamento, fuso e etapas do funil" },
+      general: { label: "Agendamento", description: "Ligar o agendamento por sala e profissional" },
       services: { label: "Serviços", description: "O que o cliente marca: duração, intervalos e quem pode marcar" },
       resources: { label: "Salas e profissionais", description: "Capacidade, horário semanal e membros da equipe" },
       closures: { label: "Feriados e fechamentos", description: "Dias fechados e horários especiais, da organização ou de um recurso" },
@@ -130,7 +132,12 @@ export const VOCAB = {
       cta: "Ativar",
       ctaWizard: "Configurar em 3 passos",
       off: "Desligar agendamento",
-      offHint: "Os agendamentos já marcados ficam guardados. A agenda volta a mostrar só compromissos e tarefas.",
+      offTitle: "Desligar agendamento?",
+      offHint: "Os agendamentos ficam guardados, nada é apagado. A agenda volta a mostrar só compromissos e tarefas, e a IA deixa de consultar e marcar horários.",
+      offReadOnly: "Com a conta em modo leitura, você não vai conseguir ligar de novo até renovar o plano.",
+      offConfirm: "Desligar",
+      readOnlyWarning: "A conta está em modo leitura: o servidor deve recusar a ativação até o plano ser renovado.",
+      needsModule: "Ligue o agendamento para abrir «{painel}».",
       on: "Agendamento ligado",
       onToast: "Agendamento ligado",
       offToast: "Agendamento desligado",
@@ -169,7 +176,12 @@ export const VOCAB = {
       MAX_ADVANCE: "Além do prazo máximo de antecedência",
       OFF_GRID: "Fora dos horários do serviço",
       PAST_START: "Horário no passado",
-    },
+      SERVICE_NOT_AI_BOOKABLE: "Serviço que a IA não marca",
+      CLIENT_CANNOT_CANCEL: "Este serviço não pode ser cancelado pelo cliente",
+      CLIENT_CANNOT_RESCHEDULE: "Este serviço não pode ser remarcado pelo cliente",
+      RESCHEDULE_NOTICE: "Antecedência mínima para remarcar não respeitada",
+      AI_DAILY_LIMIT: "Limite diário de marcações da IA atingido",
+    } satisfies Record<RuleCode, string>,
     aiProposal: "A IA reservou {quando} e aguarda você.",
     createdFromMessage: "Marquei {quando} a partir da sua mensagem.",
     oneTapSuggestion: "Marcar {nome} {quando}?",

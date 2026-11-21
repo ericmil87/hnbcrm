@@ -6,18 +6,11 @@
  * Fonte dos enums: `convex/schema.ts` e plano da Agenda v2 §2.1.
  */
 import type { Id } from "../../convex/_generated/dataModel";
+import { ALL_STATUSES, type SchedStatus } from "../../convex/lib/schedStatus";
 
-export const APPOINTMENT_STATUSES = [
-  "pending_approval",
-  "scheduled",
-  "confirmed",
-  "checked_in",
-  "completed",
-  "no_show",
-  "cancelled",
-  "rescheduled",
-] as const;
-export type AppointmentStatus = (typeof APPOINTMENT_STATUSES)[number];
+/** Fonte única: `convex/lib/schedStatus.ts` (arquivo puro). */
+export const APPOINTMENT_STATUSES: readonly SchedStatus[] = ALL_STATUSES;
+export type AppointmentStatus = SchedStatus;
 
 export const APPOINTMENT_ORIGINS = ["staff", "ai", "public", "api", "human_message", "waitlist", "import"] as const;
 export type AppointmentOrigin = (typeof APPOINTMENT_ORIGINS)[number];

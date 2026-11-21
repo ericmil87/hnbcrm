@@ -5,6 +5,8 @@ import { CalendarClock, CalendarPlus, DoorOpen, Sparkles } from "lucide-react";
 import { api } from "../../../convex/_generated/api";
 import type { Id } from "../../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { useAccountReadOnly } from "@/hooks/useAccountReadOnly";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { mutationErrorMessage } from "@/lib/errors";
 import { VOCAB } from "@/lib/vocab";
@@ -15,6 +17,8 @@ export interface SchedulingEnableCardViewProps {
   busy?: boolean;
   /** Mensagem do servidor da última tentativa recusada (gate de plano, modo leitura...). */
   error?: string | null;
+  /** Conta em modo leitura: avisa ANTES do clique (o servidor recusa ligar). */
+  readOnly?: boolean;
   onActivate: () => void;
 }
 
@@ -25,7 +29,7 @@ const BULLETS = [
 ] as const;
 
 /** Cartão "Atende com hora marcada?" com o botão Ativar. Apresentacional; o container liga a mutation. */
-export function SchedulingEnableCardView({ state, busy = false, error, onActivate }: SchedulingEnableCardViewProps) {
+export function SchedulingEnableCardView({ state, busy = false, error, readOnly = false, onActivate }: SchedulingEnableCardViewProps) {
   return (
     <SectionCard
       title={VOCAB.scheduling.enable.title}
@@ -40,6 +44,11 @@ export function SchedulingEnableCardView({ state, busy = false, error, onActivat
           </li>
         ))}
       </ul>
+      {readOnly && state === "ready" && (
+        <p role="status" className="mb-3 rounded-card border border-semantic-warning/30 bg-semantic-warning/5 p-3 text-sm text-semantic-warning">
+          {VOCAB.scheduling.enable.readOnlyWarning}
+        </p>
+      )}
       {error && (
         <p role="alert" className="mb-3 rounded-card border border-semantic-error/30 bg-semantic-error/5 p-3 text-sm text-semantic-error">
           {error}
@@ -62,6 +71,7 @@ export function SchedulingEnableCardView({ state, busy = false, error, onActivat
  */
 export function SchedulingEnableCard({ organizationId, state }: { organizationId: Id<"organizations">; state: "ready" | "locked" }) {
   const setOrgModules = useMutation(api.orgModules.setOrgModules);
+  const readOnly = useAccountReadOnly(organizationId);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -80,13 +90,20 @@ export function SchedulingEnableCard({ organizationId, state }: { organizationId
     }
   };
 
-  return <SchedulingEnableCardView state={state} busy={busy} error={error} onActivate={() => void activate()} />;
+  return <SchedulingEnableCardView state={state} busy={busy} error={error} readOnly={readOnly} onActivate={() => void activate()} />;
 }
 
-/** Desligar o módulo (quem liga pode desligar): os agendamentos ficam guardados. */
+/** Texto do diálogo de desligar; com a conta em modo leitura avisa que não dá para religar. */
+export function disableDialogText(readOnly: boolean): string {
+  return readOnly ? `${VOCAB.scheduling.enable.offHint} ${VOCAB.scheduling.enable.offReadOnly}` : VOCAB.scheduling.enable.offHint;
+}
+
+/** Desligar o módulo (quem liga pode desligar), sempre atrás de confirmação. */
 export function SchedulingDisableButton({ organizationId }: { organizationId: Id<"organizations"> }) {
   const setOrgModules = useMutation(api.orgModules.setOrgModules);
+  const readOnly = useAccountReadOnly(organizationId);
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
 
   const disable = async () => {
     setBusy(true);
@@ -101,8 +118,19 @@ export function SchedulingDisableButton({ organizationId }: { organizationId: Id
   };
 
   return (
-    <Button variant="secondary" loading={busy} onClick={() => void disable()}>
-      {VOCAB.scheduling.enable.off}
-    </Button>
+    <>
+      <Button variant="secondary" loading={busy} onClick={() => setOpen(true)}>
+        {VOCAB.scheduling.enable.off}
+      </Button>
+      <ConfirmDialog
+        open={open}
+        onClose={() => setOpen(false)}
+        onConfirm={() => void disable()}
+        title={VOCAB.scheduling.enable.offTitle}
+        description={disableDialogText(readOnly)}
+        confirmLabel={VOCAB.scheduling.enable.offConfirm}
+        variant="danger"
+      />
+    </>
   );
 }
