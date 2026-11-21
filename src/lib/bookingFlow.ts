@@ -735,7 +735,7 @@ export type SubmitOutcome =
   | { kind: "booked"; appointmentIds: string[] }
   /** O servidor devolveu um agendamento que já existia (mesmo serviço e horário): nada foi criado. */
   | { kind: "duplicate"; appointmentId: string | undefined }
-  | { kind: "rescheduled"; appointmentId: string }
+  | { kind: "rescheduled"; appointmentId: string; /** O agendamento NOVO (o que o "Desfazer" desfaz), quando o servidor devolveu. */ newAppointmentId?: string }
   /** Falha de regra: `blocked` = há bloqueio (sem forçar); senão só avisos. */
   | { kind: "rules"; violations: ViolationView[]; alternatives: OfferedSlot[]; blocked: boolean }
   | { kind: "error"; error: unknown };
@@ -768,8 +768,13 @@ export async function submitBooking(
         force: input.force,
       });
       if (!args) return { kind: "invalid" };
-      await deps.reschedule(args);
-      return { kind: "rescheduled", appointmentId: input.rescheduleAppointmentId };
+      const done = await deps.reschedule(args);
+      const created = typeof done === "object" && done !== null ? (done as { appointmentId?: unknown }).appointmentId : undefined;
+      return {
+        kind: "rescheduled",
+        appointmentId: input.rescheduleAppointmentId,
+        ...(typeof created === "string" ? { newAppointmentId: created } : {}),
+      };
     }
     const args = buildBookArgs({ organizationId: input.organizationId, state: input.state, who: input.who, force: input.force });
     if (!args) return { kind: "invalid" };
@@ -788,34 +793,36 @@ export async function submitBooking(
   }
 }
 
+export type UndoOutcome =
+  /** Desfeito (em grupo, o grupo inteiro; em remarcação, o horário antigo voltou). */
+  | { kind: "ok" }
+  /** O servidor recusou com um motivo claro (passou da janela, mudou de status, lugar antigo tomado...). */
+  | { kind: "refused"; message: string }
+  | { kind: "error"; error: unknown };
+
 /**
- * Desfaz a marcação RECÉM-FEITA (toast "Desfazer"). ÚNICA função que sabe como: hoje cancela como equipe com o
- * motivo "Desfeito ao marcar"; o backend vai ganhar `schedulingMutations.undoBooking({ organizationId,
- * appointmentIds })` e a troca é só aqui. Em grupo (cliente + acompanhantes) desfaz em sequência e continua se
- * um falhar; devolve os rótulos dos que ficaram marcados.
+ * Desfaz a marcação (ou remarcação) RECÉM-FEITA (toast "Desfazer"). ÚNICA função que sabe como: chama
+ * `schedulingMutations.undoBooking({ organizationId, appointmentIds })`, que é tudo ou nada (grupo inteiro) e não
+ * conta como cancelamento. Recusa do servidor (`ConvexError` com texto) vira `refused` com a mensagem; qualquer outro
+ * erro, `error`.
  */
 export async function undoFreshBooking(
-  cancel: (args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; reason: string }) => Promise<unknown>,
-  input: { organizationId: string; appointmentIds: readonly string[]; labels: readonly string[] }
-): Promise<{ failed: string[] }> {
-  const failed: string[] = [];
-  for (const [i, id] of input.appointmentIds.entries()) {
-    try {
-      await cancel({
-        organizationId: input.organizationId as Id<"organizations">,
-        appointmentId: id as Id<"schedAppointments">,
-        reason: BOOKING_COPY.undoReason,
-      });
-    } catch {
-      failed.push(input.labels[i] ?? BOOKING_COPY.review.clientFallback);
-    }
+  undo: (args: { organizationId: Id<"organizations">; appointmentIds: Id<"schedAppointments">[] }) => Promise<unknown>,
+  input: { organizationId: string; appointmentIds: readonly string[] }
+): Promise<UndoOutcome> {
+  try {
+    await undo({ organizationId: input.organizationId as Id<"organizations">, appointmentIds: input.appointmentIds as Id<"schedAppointments">[] });
+    return { kind: "ok" };
+  } catch (error) {
+    if (error instanceof ConvexError && typeof error.data === "string" && error.data.trim()) return { kind: "refused", message: error.data.trim() };
+    return { kind: "error", error };
   }
-  return { failed };
 }
 
-/** Rótulos para `undoFreshBooking`: o cliente primeiro, depois "Acompanhante 2", "Acompanhante 3"... */
-export function bookingLabels(clientName: string, count: number): string[] {
-  return Array.from({ length: count }, (_, i) => (i === 0 ? clientName : `Acompanhante ${i + 1}`));
+/** "Já não dá para desfazer: o horário já mudou de situação." (a mensagem do servidor, com a inicial minúscula). */
+export function undoRefusedText(message: string): string {
+  const text = message.trim().replace(/\.$/, "");
+  return fillVocab(BOOKING_COPY.toast.undoRefused, { motivo: text.charAt(0).toLowerCase() + text.slice(1) });
 }
 
 export type PreviewVerdict =

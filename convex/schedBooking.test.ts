@@ -1729,6 +1729,7 @@ describe("A3d: a fila de conflitos só encerra quando não há mais o que resolv
     expect(await invariants(s)).toEqual([]);
     const { appointmentId: next } = await asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: id, startTime: at(14) });
     expect((await conflictsOf(id)).map((c) => c.status)).toEqual(["resolved"]);
+    expect(await conflictsOf(id)).toMatchObject([{ resolvedBy: s.admin.memberId, resolution: "rescheduled" }]);
     expect((await appointmentOf(next))!.resources.every((r) => r.allocated)).toBe(true);
     expect(await conflictsOf(next)).toHaveLength(0);
     expect(await invariants(s)).toEqual([]);
@@ -1744,6 +1745,7 @@ describe("A3d: a fila de conflitos só encerra quando não há mais o que resolv
     await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: a });
     await swap();
     expect((await conflictsOf(id))[0].status).toBe("resolved");
+    expect((await conflictsOf(id))[0]).toMatchObject({ resolvedBy: s.admin.memberId, resolution: "resource_changed" });
     expect((await appointmentOf(id))!.resources.every((r) => r.allocated)).toBe(true);
     expect(await allocationsOf(id)).toHaveLength(1);
     expect(await invariants(s)).toEqual([]);
@@ -1752,7 +1754,7 @@ describe("A3d: a fila de conflitos só encerra quando não há mais o que resolv
   test("cancelar encerra a linha; desfazer o cancelamento não a reabre e realoca com a vaga livre", async () => {
     const { s, a, id } = await queued();
     await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: id });
-    expect((await conflictsOf(id))[0].status).toBe("resolved");
+    expect((await conflictsOf(id))[0]).toMatchObject({ status: "resolved", resolvedBy: s.admin.memberId, resolution: "cancelled" });
     await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: a });
     await asAdmin(s).mutation(api.schedulingMutations.undoAppointmentStatus, { organizationId: s.organizationId, appointmentId: id });
     expect((await conflictsOf(id)).every((c) => c.status === "resolved")).toBe(true);
@@ -1768,7 +1770,189 @@ describe("A3d: a fila de conflitos só encerra quando não há mais o que resolv
     expect((await conflictsOf(id))[0].status).toBe("open");
     await t.run((ctx) => core.setAppointmentStatusCore(ctx as never, { appointment: { _id: id, organizationId: s.organizationId } as never, actor: { type: "human", member }, to: "no_show", now: at(11) }));
     expect((await appointmentOf(id))!.status).toBe("no_show");
-    expect((await conflictsOf(id))[0].status).toBe("resolved");
+    expect((await conflictsOf(id))[0]).toMatchObject({ status: "resolved", resolution: "no_show", resolvedBy: s.admin.memberId });
     expect(await invariants(s)).toEqual([]);
+  });
+
+  test("conflito órfão (agendamento apagado): só a dispensa manual passa, auditada; as outras vias recusam", async () => {
+    const { s, id } = await queued();
+    await t.run((ctx) => ctx.db.delete(id));
+    const [conflict] = await conflictsOf(id);
+    const m = asAdmin(s).mutation;
+    const base = { organizationId: s.organizationId, conflictId: conflict._id };
+    await expect(m(api.schedulingExceptions.resolveConflict, { ...base, action: { type: "cancel" } })).rejects.toThrow(/dispense o conflito/);
+    await expect(m(api.schedulingExceptions.resolveConflict, { ...base, action: { type: "reschedule", startTime: at(14) } })).rejects.toThrow(/dispense o conflito/);
+    expect((await conflictsOf(id))[0].status).toBe("open");
+    await m(api.schedulingExceptions.resolveConflict, { ...base, action: { type: "manual", note: "agendamento apagado" } });
+    expect((await conflictsOf(id))[0]).toMatchObject({ status: "dismissed", resolution: "dismissed_no_appointment", resolvedBy: s.admin.memberId });
+    const audit = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_entity", (q) => q.eq("entityType", "schedConflict").eq("entityId", conflict._id)).collect());
+    expect(audit).toHaveLength(1);
+    expect(audit[0].metadata).toMatchObject({ orphan: true, action: "manual" });
+    // Outra org não vê nem dispensa o conflito alheio.
+    const f = await seedForeign();
+    await expect(as(f.userId).mutation(api.schedulingExceptions.resolveConflict, { organizationId: f.organizationId, conflictId: conflict._id, action: { type: "manual" } })).rejects.toThrow("Conflito não encontrado");
+  });
+
+  test("resolver pela tela (manual) num conflito normal grava quem e como", async () => {
+    const { s, id } = await queued();
+    const [conflict] = await conflictsOf(id);
+    await asAdmin(s).mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.organizationId, conflictId: conflict._id, action: { type: "manual" } });
+    expect((await conflictsOf(id))[0]).toMatchObject({ status: "resolved", resolution: "manual", resolvedBy: s.admin.memberId });
+    expect(await invariants(s)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A3d: desfazer a marcação recém-feita (`undoBooking`)
+// ---------------------------------------------------------------------------
+
+describe("A3d: undoBooking", () => {
+  const undo = (s: Seed, appointmentIds: Id<"schedAppointments">[], as_ = asAdmin(s)) =>
+    as_.mutation(api.schedulingMutations.undoBooking, { organizationId: s.organizationId, appointmentIds } as never);
+  const scheduledEvents = () =>
+    t.run(async (ctx) => (await ctx.db.system.query("_scheduled_functions").collect()).map((f) => (f.args[0] as { event?: string } | undefined)?.event).filter((e): e is string => !!e));
+  const seedWebhook = (s: Seed) =>
+    t.run((ctx) => ctx.db.insert("webhooks", { organizationId: s.organizationId, name: "h", url: "https://example.test/h", events: ["*"], secret: "segredo-de-teste", isActive: true, createdAt: NOW }));
+  const invariants = (s: Seed) => schedInvariantProblems(t, s.organizationId, Date.now());
+
+  test("marcação recém-feita: cancela como system, libera a vaga, sem cancelamento tardio nem appointment.cancelled", async () => {
+    const s = await seedOrg();
+    await t.run((ctx) => ctx.db.patch(s.services.solo, { lateCancelWindowMin: 60 * 24 * 30 }));
+    await seedWebhook(s);
+    const a = (await book(s, "solo", at(10), { leadId: s.leadId })).appointmentIds[0];
+    const res = await undo(s, [a]);
+    assertMatchesReturns(res, M.undoBooking);
+    expect(res).toEqual({ undoneIds: [a], restoredIds: [] });
+    const doc = (await appointmentOf(a))!;
+    expect(doc).toMatchObject({ status: "cancelled", cancelledByClass: "system", cancelReason: "Desfeito ao marcar" });
+    expect(doc.lateCancel).toBeUndefined();
+    expect(await allocationsOf(a)).toHaveLength(0);
+    const events = await scheduledEvents();
+    expect(events).toContain("appointment.undone");
+    expect(events).not.toContain("appointment.cancelled");
+    const audit = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", a)).collect());
+    expect(audit.find((l) => l.metadata?.outcome === "undone")).toMatchObject({ action: "update", actorId: s.admin.memberId, metadata: { outcome: "undone", byClass: "system", lateCancel: false } });
+    const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect());
+    expect(acts.some((x) => /Marcação desfeita/.test(x.content ?? ""))).toBe(true);
+    // A vaga voltou: marcar de novo no mesmo horário funciona.
+    await book(s, "solo", at(10), { contactId: s.contacts[1] });
+    // O "Desfazer" genérico não reinstala o que foi desfeito.
+    await expect(asAdmin(s).mutation(api.schedulingMutations.undoAppointmentStatus, { organizationId: s.organizationId, appointmentId: a })).rejects.toThrow(/Não há o que desfazer/);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("passou da janela ou mudou de status: recusa e nada muda", async () => {
+    const s = await seedOrg();
+    const a = (await book(s, "solo", at(10))).appointmentIds[0];
+    const b = (await book(s, "solo", at(14), { contactId: s.contacts[1] })).appointmentIds[0];
+    await asAdmin(s).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.organizationId, appointmentId: b, to: "confirmed" });
+    vi.setSystemTime(NOW + 5 * 60_000);
+    const before = await counts();
+    await expect(undo(s, [b])).rejects.toThrow(/mudou de situação/);
+    vi.setSystemTime(NOW + 11 * 60_000);
+    await expect(undo(s, [a])).rejects.toThrow(/mais de 10 minutos/);
+    expect(await counts()).toEqual(before);
+    expect((await appointmentOf(a))!.status).toBe("scheduled");
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("proposta aprovada deixa de ser desfazível; proposta pendente ainda é", async () => {
+    const s = await seedOrg();
+    const prop = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(10), contactId: s.contacts[0],
+      actor: { type: "human", memberId: s.admin.memberId, via: "rest" }, origin: "api", initialStatus: "pending_approval",
+    });
+    const id = prop.appointmentId!;
+    vi.setSystemTime(NOW + 60_000);
+    await asAdmin(s).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.organizationId, appointmentId: id, to: "scheduled" });
+    await expect(undo(s, [id])).rejects.toThrow(/mudou de situação/);
+    const other = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(14), contactId: s.contacts[1],
+      actor: { type: "human", memberId: s.admin.memberId, via: "rest" }, origin: "api", initialStatus: "pending_approval",
+    });
+    await undo(s, [other.appointmentId!]);
+    expect((await appointmentOf(other.appointmentId!))!.status).toBe("cancelled");
+  });
+
+  test("grupo: o grupo inteiro ou nada", async () => {
+    const s = await seedOrg();
+    const ids = (await book(s, "dupla", at(10), { companions: [{ guestName: "Acompanhante" }] })).appointmentIds;
+    expect(ids).toHaveLength(2);
+    const before = await counts();
+    await expect(undo(s, [ids[0]])).rejects.toThrow(/grupo precisa ser desfeita inteira/);
+    await expect(undo(s, [ids[1]])).rejects.toThrow(/grupo precisa ser desfeita inteira/);
+    const solo = (await book(s, "solo", at(14), { contactId: s.contacts[1] })).appointmentIds[0];
+    await expect(undo(s, [ids[0], solo])).rejects.toThrow(/mesmo grupo/);
+    expect(await counts()).toEqual({ ...before, schedAppointments: before.schedAppointments + 1, schedAllocations: before.schedAllocations + 1, auditLogs: before.auditLogs + 1, activities: before.activities, leads: before.leads, _scheduled_functions: before._scheduled_functions });
+    const res = await undo(s, [ids[1], ids[0]]);
+    expect(res.undoneIds.sort()).toEqual([...ids].sort());
+    expect(await allocationsOf(ids[0])).toHaveLength(0);
+    expect(await allocationsOf(ids[1])).toHaveLength(0);
+    expect((await Promise.all(ids.map(appointmentOf))).map((d) => d!.status)).toEqual(["cancelled", "cancelled"]);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("remarcação recém-feita: restaura o antigo (com o status que tinha) pela checagem de capacidade", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10), { leadId: s.leadId })).appointmentIds[0];
+    await asAdmin(s).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.organizationId, appointmentId: old, to: "confirmed" });
+    vi.setSystemTime(NOW + 60_000);
+    const { appointmentId: next } = await asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: old, startTime: at(14) });
+    vi.setSystemTime(NOW + 2 * 60_000);
+    const res = await undo(s, [next]);
+    assertMatchesReturns(res, M.undoBooking);
+    expect(res).toEqual({ undoneIds: [next], restoredIds: [old] });
+    const [o, n] = [(await appointmentOf(old))!, (await appointmentOf(next))!];
+    expect(o.status).toBe("confirmed"); // volta com o status que tinha antes de remarcar
+    expect(o.rescheduledToId).toBeUndefined();
+    expect(o.resources.every((r) => r.allocated)).toBe(true);
+    expect(n.status).toBe("cancelled");
+    expect(await allocationsOf(old)).toHaveLength(1);
+    expect(await allocationsOf(next)).toHaveLength(0);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("remarcação: se o lugar antigo foi tomado, recusa com mensagem clara e nada muda", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10))).appointmentIds[0];
+    const { appointmentId: next } = await asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: old, startTime: at(14) });
+    await book(s, "solo", at(10), { contactId: s.contacts[1] }); // toma o lugar antigo
+    const before = await counts();
+    await expect(undo(s, [next])).rejects.toThrow(/anterior foi ocupado/);
+    expect(await counts()).toEqual(before);
+    expect((await appointmentOf(next))!.status).toBe("scheduled");
+    expect((await appointmentOf(old))!.status).toBe("rescheduled");
+    expect(await allocationsOf(next)).toHaveLength(1);
+    expect(await invariants(s)).toEqual([]);
+  });
+
+  test("RBAC, org, módulo e entradas: mesma resposta de 'não encontrado'", async () => {
+    const s = await seedOrg();
+    const f = await seedForeign();
+    const a = (await book(s, "solo", at(10))).appointmentIds[0];
+    await expect(undo(s, [a], as(s.none.userId))).rejects.toThrow(/Permissão insuficiente/);
+    await expect(undo(s, [a], as(s.viewAll.userId))).rejects.toThrow("Agendamento não encontrado");
+    await expect(
+      as(f.userId).mutation(api.schedulingMutations.undoBooking, { organizationId: f.organizationId, appointmentIds: [a] })
+    ).rejects.toThrow("Agendamento não encontrado");
+    await expect(undo(s, [f.appointmentId])).rejects.toThrow("Agendamento não encontrado");
+    await expect(undo(s, [])).rejects.toThrow(/de 1 a 4/);
+    await expect(undo(s, [a, a, a, a, a].map((x) => x))).resolves.toBeTruthy(); // ids repetidos valem um só
+    expect((await appointmentOf(a))!.status).toBe("cancelled");
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(s.organizationId))!;
+      await ctx.db.patch(s.organizationId, { settings: { ...org.settings, modules: { scheduling: false } } });
+    });
+    await expect(undo(s, [a])).rejects.toThrow(/Módulo não habilitado/);
+  });
+
+  test("quem marcou (criador) com permissão de leitura não precisa de edit; sem ser o criador não passa", async () => {
+    const s = await seedOrg();
+    const a = (await book(s, "solo", at(10))).appointmentIds[0];
+    await t.run((ctx) => ctx.db.patch(a, { createdBy: s.viewOwn.memberId }));
+    await undo(s, [a], as(s.viewOwn.userId));
+    expect((await appointmentOf(a))!.status).toBe("cancelled");
+    const b = (await book(s, "solo", at(14), { contactId: s.contacts[1] })).appointmentIds[0];
+    await expect(undo(s, [b], as(s.viewOwn.userId))).rejects.toThrow("Agendamento não encontrado");
   });
 });

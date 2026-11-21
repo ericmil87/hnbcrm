@@ -14,12 +14,12 @@ import {
   timeInputValue,
   buildFindSlotsArgs,
   buildRescheduleArgs,
-  bookingLabels,
   clientLabel,
   interpretPreview,
   mergeRefreshedSlots,
   submitBooking,
   undoFreshBooking,
+  undoRefusedText,
   canAdvance,
   chosenDurationMin,
   classifyViolations,
@@ -614,19 +614,29 @@ describe("submitBooking", () => {
 });
 
 describe("desfazer a marcação recém-feita", () => {
-  it("cancela em sequência com o motivo e relata quem ficou", async () => {
-    const calls: string[] = [];
-    const cancel = async (a: { appointmentId: string; reason: string }) => {
-      calls.push(a.appointmentId);
-      expect(a.reason).toBe("Desfeito ao marcar");
-      if (a.appointmentId === "b") throw new Error("falhou");
-    };
-    const out = await undoFreshBooking(cancel as never, { organizationId: "org", appointmentIds: ["a", "b", "c"], labels: bookingLabels("Maria", 3) });
-    expect(calls).toEqual(["a", "b", "c"]);
-    expect(out.failed).toEqual(["Acompanhante 2"]);
+  it("chama undoBooking uma vez com todos os ids (grupo inteiro) e devolve ok", async () => {
+    const calls: unknown[] = [];
+    const out = await undoFreshBooking((async (a: unknown) => { calls.push(a); return { undoneIds: [], restoredIds: [] }; }) as never, { organizationId: "org", appointmentIds: ["a", "b", "c"] });
+    expect(out).toEqual({ kind: "ok" });
+    expect(calls).toEqual([{ organizationId: "org", appointmentIds: ["a", "b", "c"] }]);
   });
-  it("tudo certo: ninguém ficou", async () => {
-    expect((await undoFreshBooking((async () => null) as never, { organizationId: "o", appointmentIds: ["a"], labels: ["Maria"] })).failed).toEqual([]);
+  it("recusa do servidor vira 'refused' com a mensagem; outro erro é devolvido", async () => {
+    const refused = await undoFreshBooking((async () => { throw new ConvexError("O horário já mudou de situação."); }) as never, { organizationId: "o", appointmentIds: ["a"] });
+    expect(refused).toEqual({ kind: "refused", message: "O horário já mudou de situação." });
+    const boom = new Error("rede");
+    expect(await undoFreshBooking((async () => { throw boom; }) as never, { organizationId: "o", appointmentIds: ["a"] })).toEqual({ kind: "error", error: boom });
+    const objectData = new ConvexError({ code: "x" } as never);
+    expect((await undoFreshBooking((async () => { throw objectData; }) as never, { organizationId: "o", appointmentIds: ["a"] })).kind).toBe("error");
+  });
+  it("texto da recusa: 'Já não dá para desfazer: ...' com a inicial minúscula", () => {
+    expect(undoRefusedText("O horário anterior foi ocupado por outro agendamento.")).toBe("Já não dá para desfazer: o horário anterior foi ocupado por outro agendamento.");
+    expect(undoRefusedText("A marcação foi feita há mais de 10 minutos")).toBe("Já não dá para desfazer: a marcação foi feita há mais de 10 minutos.");
+  });
+  it("remarcar devolve o id do agendamento novo, que é o que o Desfazer desfaz", async () => {
+    const out = await submitBooking({ book: async () => ({ appointmentIds: [], duplicate: false }), reschedule: async () => ({ appointmentId: "novo" }) }, {
+      organizationId: "org", state: { ...base({ serviceId: "svc1" }), slot: picked() }, who: {}, rescheduleAppointmentId: "velho", tz: TZ, now: NOW,
+    });
+    expect(out).toEqual({ kind: "rescheduled", appointmentId: "velho", newAppointmentId: "novo" });
   });
 });
 

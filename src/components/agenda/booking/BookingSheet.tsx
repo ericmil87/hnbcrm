@@ -15,7 +15,6 @@ import { BOOKING_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday, type LocalDate } from "@/lib/agendaZone";
 import {
-  bookingLabels,
   bookingReducer,
   buildBookArgs,
   buildFindSlotsArgs,
@@ -31,6 +30,7 @@ import {
   pickedFromOffered,
   submitBooking,
   undoFreshBooking,
+  undoRefusedText,
   type BookingState,
   type BookingWho,
   type OfferedSlot,
@@ -203,7 +203,7 @@ function useSlotSearch(input: {
 function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
   const bookAppointment = useMutation(api.schedulingMutations.bookAppointment);
   const rescheduleAppointment = useMutation(api.schedulingMutations.rescheduleAppointment);
-  const cancelAppointment = useMutation(api.schedulingMutations.cancelAppointment);
+  const undoBooking = useMutation(api.schedulingMutations.undoBooking);
   const previewBooking = useMutation(api.schedulingMutations.previewBooking);
   const now = useRoundedNow("minute");
   const today = zonedToday(now, tz);
@@ -230,6 +230,18 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
   const [failure, setFailure] = useState<FailureView | null>(null);
   const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind })), [resources]);
 
+  /** Toast "Desfazer": tudo ou nada; recusa mostra o motivo e abre o painel do horário. */
+  const runUndo = async (ids: readonly string[]) => {
+    const out = await undoFreshBooking(undoBooking, { organizationId, appointmentIds: ids });
+    if (out.kind === "ok") toast.success(t.toast.undone);
+    else if (out.kind === "refused") {
+      const first = ids[0] as Id<"schedAppointments">;
+      toast.error(undoRefusedText(out.message), {
+        action: onOpenAppointment ? { label: t.slot.openExisting, onClick: () => onOpenAppointment(first) } : undefined,
+      });
+    } else toast.error(mutationErrorMessage(out.error, t.toast.undoFailed));
+  };
+
   const submit = async (force?: string[]) => {
     if (busy) return;
     setBusy(true);
@@ -242,7 +254,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
         case "invalid":
           return;
         case "rescheduled":
-          toast.success(VOCAB.scheduling.toast.rescheduled);
+          toast.success(VOCAB.scheduling.toast.rescheduled, out.newAppointmentId ? { action: { label: VOCAB.scheduling.undo, onClick: () => void runUndo([out.newAppointmentId!]) } } : undefined);
           onDone?.({ appointmentIds: [out.appointmentId], rescheduled: true });
           setFailure(null);
           onClose();
@@ -253,10 +265,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
             action: {
               label: VOCAB.scheduling.undo,
               onClick: () => {
-                void undoFreshBooking(cancelAppointment, { organizationId, appointmentIds: ids, labels: bookingLabels(clientName, ids.length) }).then(({ failed }) => {
-                  if (failed.length === 0) toast.success(t.toast.undone);
-                  else toast.error(fillVocab(t.toast.undoPartial, { quais: failed.join(", ") }));
-                });
+                void runUndo(ids);
               },
             },
           });

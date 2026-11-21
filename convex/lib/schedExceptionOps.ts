@@ -1083,6 +1083,8 @@ export type ResolveConflictAction =
   | { type: "cancel"; reason?: string }
   | { type: "manual"; note?: string };
 
+const RESOLUTION_OF = { resource: "resource_changed", reschedule: "rescheduled", cancel: "cancelled", manual: "manual" } as const;
+
 /** Quatro vias: escolher recurso, remarcar, cancelar (tudo pela porta) ou marcar como resolvido à mão. Auditado. */
 export async function resolveConflictCore(
   ctx: MutationCtx,
@@ -1092,8 +1094,28 @@ export async function resolveConflictCore(
   if (!conflict || conflict.organizationId !== args.conflict.organizationId) fail("Conflito não encontrado");
   if (conflict.status !== "open") fail("Esse conflito já foi resolvido.");
   const appointment = await loadAppointmentOfOrg(ctx, conflict.organizationId, conflict.appointmentId);
-  if (!appointment) fail("Agendamento não encontrado");
   const act = args.action;
+  if (!appointment) {
+    // Conflito órfão (o agendamento foi apagado): só dá para DISPENSAR (ação manual); as demais precisam do agendamento.
+    if (act.type !== "manual") fail("Esse agendamento não existe mais: dispense o conflito.");
+    const memberId = actorMemberId(args.actor);
+    await ctx.db.patch(conflict._id, { status: "dismissed", resolvedAt: args.now, resolution: "dismissed_no_appointment", ...(memberId ? { resolvedBy: memberId } : {}) });
+    const note = cleanReason(act.note);
+    await ctx.db.insert("auditLogs", {
+      organizationId: conflict.organizationId,
+      entityType: "schedConflict",
+      entityId: conflict._id,
+      action: "update",
+      ...(memberId ? { actorId: memberId } : {}),
+      actorType: recordActorTypeOf(args.actor),
+      changes: { before: { status: "open", kind: conflict.kind }, after: { status: "dismissed" } },
+      metadata: { via: actorVia(args.actor), action: "manual", orphan: true, appointmentId: conflict.appointmentId, ...(note ? { note } : {}) },
+      description: "Dispensou um conflito de agenda sem agendamento",
+      severity: "medium",
+      createdAt: args.now,
+    });
+    return { ok: true };
+  }
   if (act.type === "resource") {
     const ids = appointment.resources.map((r) => r.resourceId);
     let finalIds: Id<"schedResources">[];
@@ -1118,9 +1140,13 @@ export async function resolveConflictCore(
   const memberId = actorMemberId(args.actor);
   const fresh = await ctx.db.get(conflict._id);
   if (fresh && fresh.status === "open") {
-    await ctx.db.patch(conflict._id, { status: "resolved", resolvedAt: args.now, ...(memberId ? { resolvedBy: memberId } : {}) });
-  } else if (fresh && memberId && fresh.resolvedBy === undefined) {
-    await ctx.db.patch(conflict._id, { resolvedBy: memberId });
+    await ctx.db.patch(conflict._id, { status: "resolved", resolvedAt: args.now, resolution: RESOLUTION_OF[act.type], ...(memberId ? { resolvedBy: memberId } : {}) });
+  } else if (fresh && (fresh.resolvedBy === undefined || fresh.resolution === undefined)) {
+    // Encerrada pelo ato da porta (remarcar, cancelar, trocar recurso): completa o que faltar.
+    await ctx.db.patch(conflict._id, {
+      ...(memberId && fresh.resolvedBy === undefined ? { resolvedBy: memberId } : {}),
+      ...(fresh.resolution === undefined ? { resolution: RESOLUTION_OF[act.type] } : {}),
+    });
   }
   const note = act.type === "manual" ? cleanReason(act.note) : undefined;
   const forced = (act.type === "resource" || act.type === "reschedule") && act.force && act.force.length > 0 ? act.force : undefined;

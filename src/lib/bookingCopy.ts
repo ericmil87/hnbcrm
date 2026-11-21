@@ -85,9 +85,8 @@ export const BOOKING_COPY = {
   toast: {
     undone: "Marcação desfeita",
     undoFailed: "Não foi possível desfazer.",
-    undoPartial: "Não foi possível desfazer: {quais} continua marcado.",
+    undoRefused: "Já não dá para desfazer: {motivo}.",
   },
-  undoReason: "Desfeito ao marcar",
 } as const;
 
 export const DETAIL_COPY = {

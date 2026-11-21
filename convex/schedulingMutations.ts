@@ -17,6 +17,7 @@ import {
   setAppointmentStatusCore,
   throwSchedRules,
   undoAppointmentStatusCore,
+  undoBookingCore,
 } from "./lib/schedBookingOps";
 
 /**
@@ -341,6 +342,27 @@ export const cancelAppointment = mutation({
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
     await cancelAppointmentCore(ctx, { appointment, actor, byClass: args.cancelledBy ?? "staff", reason: args.reason, now });
     return null;
+  },
+});
+
+export const undoBookingReturnValidator = v.object({
+  /** Agendamentos desfeitos (cancelados como `system`). */
+  undoneIds: v.array(v.id("schedAppointments")),
+  /** Agendamentos antigos restaurados (remarcação recém-feita desfeita). */
+  restoredIds: v.array(v.id("schedAppointments")),
+});
+
+/**
+ * Desfaz a marcação/remarcação recém-feita (toast "Desfazer"). Quem marcou ou `agenda: edit`; janela curta; tudo ou
+ * nada para grupo; sem `appointment.cancelled`, sem cancelamento tardio (ver `undoBookingCore`).
+ */
+export const undoBooking = mutation({
+  args: { organizationId: v.id("organizations"), appointmentIds: v.array(v.id("schedAppointments")) },
+  returns: undoBookingReturnValidator,
+  handler: async (ctx, args) => {
+    const member = await requirePermission(ctx, args.organizationId, "agenda", "view_own");
+    await assertModule(ctx, args.organizationId, "scheduling");
+    return await undoBookingCore(ctx, { organizationId: args.organizationId, appointmentIds: args.appointmentIds, actor: { type: "human", member, via: "app" }, now: Date.now() });
   },
 });
 

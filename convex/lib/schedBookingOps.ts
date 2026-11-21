@@ -69,8 +69,9 @@ import {
   type ServiceRequirementLite,
   unitsFor,
 } from "./schedCandidates";
-import { MAX_RESOURCES_PER_ORG } from "./schedConstants";
-import { MAX_PARTY_COMPANIONS, sharedResourceIds } from "./schedParty";
+import { MAX_RESOURCES_PER_ORG, UNDO_BOOKING_WINDOW_MIN } from "./schedConstants";
+import { MAX_PARTY_COMPANIONS, MAX_PARTY_SIZE, sharedResourceIds } from "./schedParty";
+import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
 import {
   type AppointmentWebhookEvent,
   actorClassOf,
@@ -1598,7 +1599,7 @@ export async function rescheduleAppointmentCore(
     updatedAt: now,
   });
   await releaseAllocations(ctx, old._id);
-  await closeConflictsIfResolved(ctx, old._id, now);
+  await closeConflictsIfResolved(ctx, old._id, now, { actor: args.actor, resolution: "rescheduled" });
   await recordAppointmentAudit(ctx, {
     appointment: { ...old, status: "rescheduled" },
     action: "update",
@@ -1626,7 +1627,12 @@ export async function rescheduleAppointmentCore(
  * resolver. Chamada no fim de remarcar, trocar recurso, cancelar, status (aprovar/falta) e desfazer; lê o
  * agendamento FRESCO (depois do patch do ato).
  */
-async function closeConflictsIfResolved(ctx: MutationCtx, appointmentId: Id<"schedAppointments">, now: number): Promise<void> {
+async function closeConflictsIfResolved(
+  ctx: MutationCtx,
+  appointmentId: Id<"schedAppointments">,
+  now: number,
+  by: { actor: SchedActor; resolution: string }
+): Promise<void> {
   const a = await ctx.db.get(appointmentId);
   if (!a) return;
   const resolved = !isActiveStatus(a.status) || a.resources.every((r) => r.allocated);
@@ -1636,7 +1642,10 @@ async function closeConflictsIfResolved(ctx: MutationCtx, appointmentId: Id<"sch
     .withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId))
     .take(10);
   for (const row of rows) {
-    if (row.status === "open") await ctx.db.patch(row._id, { status: "resolved", resolvedAt: now });
+    if (row.status !== "open") continue;
+    const memberId = actorMemberId(by.actor);
+    // `resolvedBy` = quem resolveu (membro; ausente para sistema); `resolution` = como (rescheduled, cancelled, approved, ...).
+    await ctx.db.patch(row._id, { status: "resolved", resolvedAt: now, resolution: by.resolution, ...(memberId ? { resolvedBy: memberId } : {}) });
   }
 }
 
@@ -1695,7 +1704,7 @@ export async function cancelAppointmentCore(
   });
   const allocations = await snapshotAllocations(ctx, a._id);
   await releaseAllocations(ctx, a._id);
-  await closeConflictsIfResolved(ctx, a._id, now);
+  await closeConflictsIfResolved(ctx, a._id, now, { actor: args.actor, resolution: "cancelled" });
   // Lembrete (F1): desarmar `reminder` aqui.
   const after = (await ctx.db.get(a._id))!;
   await recordAppointmentAudit(ctx, {
@@ -1713,6 +1722,162 @@ export async function cancelAppointmentCore(
   await emitAppointmentWebhook(ctx, { event: "appointment.cancelled", appointment: after, tz });
   // NOTIFY (D1b): `appointment_changed_by_client` quando byClass é client/ai.
   return { lateCancel };
+}
+
+// ---------------------------------------------------------------------------
+// Desfazer a marcação recém-feita (toast "Desfazer" depois de marcar/remarcar)
+// ---------------------------------------------------------------------------
+
+const UNDO_BOOKING_REASON = "Desfeito ao marcar";
+
+/** Status em que o agendamento nasce e do qual `undoBooking` ainda pode desfazer. */
+function isFreshUndoable(a: Doc<"schedAppointments">, now: number): string | null {
+  if (now - a.createdAt > UNDO_BOOKING_WINDOW_MIN * MINUTE_MS) {
+    return `A marcação foi feita há mais de ${UNDO_BOOKING_WINDOW_MIN} minutos.`;
+  }
+  const untouched = a.statusChangedAt <= a.createdAt && a.approvedAt === undefined && a.clientConfirmedAt === undefined;
+  if ((a.status !== "pending_approval" && a.status !== "scheduled") || !untouched) return "O horário já mudou de situação.";
+  return null;
+}
+
+/** Status que o agendamento antigo tinha antes de a remarcação o encerrar (lido da auditoria; padrão `scheduled`). */
+async function statusBeforeReschedule(ctx: MutationCtx, old: Doc<"schedAppointments">, newId: Id<"schedAppointments">): Promise<"pending_approval" | "scheduled" | "confirmed"> {
+  const logs = await ctx.db
+    .query("auditLogs")
+    .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", old._id))
+    .order("desc")
+    .take(UNDO_AUDIT_SCAN);
+  for (const log of logs) {
+    if (log.organizationId !== old.organizationId || log.metadata?.statusChange !== true || log.metadata?.rescheduledToId !== newId) continue;
+    const before = log.changes?.before?.status;
+    if (before === "pending_approval" || before === "scheduled" || before === "confirmed") return before;
+  }
+  return "scheduled";
+}
+
+/**
+ * Desfaz a marcação (ou remarcação) RECÉM-FEITA, tudo ou nada. Diferente de cancelar: classe `system`, janela curta
+ * (`UNDO_BOOKING_WINDOW_MIN`), nunca é cancelamento tardio, não dispara `appointment.cancelled` (dispara
+ * `appointment.undone`) e, numa remarcação, RESTAURA o agendamento antigo pela checagem de capacidade de sempre.
+ *
+ * Quem pode: quem marcou, ou quem tem `agenda: edit`. Só agendamento ainda em `pending_approval`/`scheduled` e sem
+ * nenhuma mudança de status depois de criado. Grupo (`partyKey`): os ids têm de ser o grupo inteiro. Qualquer
+ * recusa lança ANTES ou, no caso do lugar antigo tomado, derruba a transação: nada fica pela metade.
+ * A auditoria leva `metadata.outcome: "undone"` e `undo: true` (o "Desfazer" genérico não reinstala o que foi desfeito).
+ */
+export async function undoBookingCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; appointmentIds: Id<"schedAppointments">[]; actor: SchedActor; now?: number }
+): Promise<{ undoneIds: Id<"schedAppointments">[]; restoredIds: Id<"schedAppointments">[] }> {
+  const now = args.now ?? Date.now();
+  const { actor } = args;
+  if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
+  const ids = [...new Set(args.appointmentIds)];
+  if (ids.length < 1 || ids.length > MAX_PARTY_SIZE) fail(`Informe de 1 a ${MAX_PARTY_SIZE} agendamentos.`);
+  const org = assertOrgModule(await ctx.db.get(args.organizationId));
+  const tz = orgTimezone(org);
+  const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
+  const canEdit = hasPermission(permissions, "agenda", "edit");
+
+  const docs: Doc<"schedAppointments">[] = [];
+  for (const id of ids) {
+    const a = await ctx.db.get(id);
+    if (!a || a.organizationId !== args.organizationId) fail("Agendamento não encontrado");
+    if (!canEdit && a.createdBy !== actor.member._id) fail("Agendamento não encontrado");
+    docs.push(a);
+  }
+  const refusal = (reason: string): never => fail(reason);
+  for (const a of docs) {
+    const why = isFreshUndoable(a, now);
+    if (why) refusal(why);
+  }
+  // Grupo: todos ou nenhum. Os irmãos ativos do mesmo início e grupo têm de ser exatamente os ids recebidos.
+  const partyKeys = new Set(docs.map((a) => a.partyKey ?? ""));
+  if (partyKeys.size > 1) refusal("Estes horários não são do mesmo grupo.");
+  const [partyKey] = [...partyKeys];
+  if (partyKey) {
+    const siblings = await ctx.db
+      .query("schedAppointments")
+      .withIndex("by_organization_and_start", (q) => q.eq("organizationId", args.organizationId).eq("startTime", docs[0].startTime))
+      .take(50);
+    const group = siblings.filter((x) => x.partyKey === partyKey && isActiveStatus(x.status));
+    if (group.length !== docs.length || group.some((x) => !ids.includes(x._id))) refusal("A marcação em grupo precisa ser desfeita inteira.");
+  } else if (docs.length > 1) {
+    refusal("Estes horários não são do mesmo grupo.");
+  }
+  // Remarcação: o antigo precisa continuar como ficou (encerrado por ESTA remarcação).
+  const olds = new Map<Id<"schedAppointments">, Doc<"schedAppointments">>();
+  for (const a of docs) {
+    if (!a.rescheduledFromId) continue;
+    const old = await ctx.db.get(a.rescheduledFromId);
+    if (!old || old.organizationId !== a.organizationId || old.status !== "rescheduled" || old.rescheduledToId !== a._id) {
+      refusal("O horário anterior já não pode ser restaurado.");
+    }
+    olds.set(a._id, old!);
+  }
+
+  // 1) Cancela as marcações novas e libera a vaga (antes de restaurar: o lugar antigo pode encostar no novo).
+  for (const a of docs) {
+    const snapshot = await snapshotAllocations(ctx, a._id);
+    await ctx.db.patch(a._id, {
+      status: "cancelled",
+      cancelledAt: now,
+      cancelledByClass: "system",
+      cancelReason: UNDO_BOOKING_REASON,
+      statusChangedAt: now,
+      updatedAt: now,
+      outcomePendingSince: undefined,
+    });
+    await releaseAllocations(ctx, a._id);
+    await closeConflictsIfResolved(ctx, a._id, now, { actor, resolution: "undone" });
+    const after = (await ctx.db.get(a._id))!;
+    const label = appointmentLabel(after, tz);
+    await recordAppointmentAudit(ctx, {
+      appointment: after,
+      action: "update",
+      actor,
+      severity: "medium",
+      description: `Desfez a marcação ${label}`,
+      before: { ...appointmentSnapshot(a), allocations: snapshot },
+      after: { status: "cancelled" },
+      metadata: { statusChange: true, outcome: "undone", undo: true, byClass: "system", lateCancel: false, ...(a.rescheduledFromId ? { restoredAppointmentId: a.rescheduledFromId } : {}) },
+      now,
+    });
+    await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Marcação desfeita: ${label}`, actor, now });
+    await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz, previousAppointmentId: a.rescheduledFromId });
+  }
+
+  // 2) Restaura os antigos pela MESMA checagem de capacidade; vaga tomada = recusa e a transação inteira desfaz.
+  const restoredIds: Id<"schedAppointments">[] = [];
+  for (const [, old] of olds) {
+    const failure = await recreateAllocations(ctx, old, actor, now, undefined);
+    if (failure) refusal("O horário anterior foi ocupado por outro agendamento ou o recurso dele não está mais disponível.");
+    const previous = await statusBeforeReschedule(ctx, old, old.rescheduledToId!);
+    await ctx.db.patch(old._id, {
+      status: previous,
+      rescheduledToId: undefined,
+      resources: old.resources.map((r) => ({ ...r, allocated: true })),
+      needsAttention: undefined,
+      statusChangedAt: now,
+      updatedAt: now,
+    });
+    const restored = (await ctx.db.get(old._id))!;
+    const label = appointmentLabel(restored, tz);
+    await recordAppointmentAudit(ctx, {
+      appointment: restored,
+      action: "update",
+      actor,
+      severity: "medium",
+      description: `Restaurou o horário ${label}`,
+      before: { status: "rescheduled" },
+      after: { status: previous },
+      metadata: { statusChange: true, outcome: "undone", undo: true },
+      now,
+    });
+    await recordAppointmentActivity(ctx, { appointment: restored, type: "appointment_changed", content: `Horário restaurado: ${label}`, actor, now });
+    restoredIds.push(old._id);
+  }
+  return { undoneIds: docs.map((a) => a._id), restoredIds };
 }
 
 // ---------------------------------------------------------------------------
@@ -1763,7 +1928,7 @@ async function endSupersededAppointment(
 ): Promise<void> {
   await ctx.db.patch(old._id, { status: "rescheduled", rescheduledToId: proposal._id, outcomePendingSince: undefined, statusChangedAt: now, updatedAt: now });
   await releaseAllocations(ctx, old._id);
-  await closeConflictsIfResolved(ctx, old._id, now);
+  await closeConflictsIfResolved(ctx, old._id, now, { actor, resolution: "rescheduled" });
   await ctx.db.patch(proposal._id, { rescheduledFromId: old._id, icalUid: old.icalUid ?? `${old._id}@hnbcrm`, icalSequence: (old.icalSequence ?? 0) + 1 });
   await recordAppointmentAudit(ctx, {
     appointment: { ...old, status: "rescheduled" },
@@ -1828,7 +1993,7 @@ export async function setAppointmentStatusCore(
     if (superseded) await endSupersededAppointment(ctx, a, superseded, args.actor, tz, now);
   }
   // Aprovar (com o recurso resolvido) e falta (sai da agenda) encerram a fila; confirmar/check-in não mexem nela.
-  await closeConflictsIfResolved(ctx, a._id, now);
+  await closeConflictsIfResolved(ctx, a._id, now, { actor: args.actor, resolution: args.to === "scheduled" ? "approved" : args.to === "no_show" ? "no_show" : "status" });
   const after = (await ctx.db.get(a._id))!;
   const label = appointmentLabel(after, tz);
   await recordAppointmentAudit(ctx, {
@@ -1951,7 +2116,7 @@ export async function undoAppointmentStatusCore(
     statusChangedAt: now,
     updatedAt: now,
   });
-  if (recreated) await closeConflictsIfResolved(ctx, a._id, now);
+  if (recreated) await closeConflictsIfResolved(ctx, a._id, now, { actor: args.actor, resolution: "restored" });
   const after = (await ctx.db.get(a._id))!;
   const label = appointmentLabel(after, tz);
   await recordAppointmentAudit(ctx, {
@@ -2092,7 +2257,7 @@ export async function changeResourceCore(
     ...(a.needsAttention && RESOURCE_ATTENTION_CODES.includes(a.needsAttention.code) ? { needsAttention: undefined } : {}),
     updatedAt: now,
   });
-  await closeConflictsIfResolved(ctx, a._id, now);
+  await closeConflictsIfResolved(ctx, a._id, now, { actor: args.actor, resolution: "resource_changed" });
   const after = (await ctx.db.get(a._id))!;
   const label = appointmentLabel(after, bc.tz);
   await recordAppointmentAudit(ctx, {

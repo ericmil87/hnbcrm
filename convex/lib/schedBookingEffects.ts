@@ -147,7 +147,9 @@ export type AppointmentWebhookEvent =
   | "appointment.cancelled"
   | "appointment.completed"
   | "appointment.no_show"
-  | "appointment.needs_attention";
+  | "appointment.needs_attention"
+  /** Marcação recém-feita desfeita (`undoBooking`): NÃO é cancelamento, nem entra na conta de cancelamento tardio. */
+  | "appointment.undone";
 
 /** Payload do §3.8: sem telefone, e-mail nem notas. */
 export async function emitAppointmentWebhook(
