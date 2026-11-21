@@ -228,6 +228,18 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     },
   ],
   [
+    { type: "appointment_no_outcome", count: 3 },
+    { title: "3 atendimentos de ontem ainda sem desfecho", body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." },
+  ],
+  [
+    { type: "appointment_no_outcome", count: 1 },
+    { title: "1 atendimento de ontem ainda sem desfecho", body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." },
+  ],
+  [
+    { type: "appointment_no_outcome", count: 200, capped: true },
+    { title: "Mais de 200 atendimentos de ontem ainda sem desfecho", body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." },
+  ],
+  [
     { type: "plan_refunded", amountBrl: "R$ 497,00" },
     {
       title: "Reembolso solicitado",

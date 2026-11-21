@@ -72,6 +72,10 @@ describe("resolvido", () => {
 });
 
 describe("notificationHref", () => {
+  it("appointment_no_outcome abre a fila de pendências da agenda", () => {
+    expect(notificationHref(n({ type: "appointment_no_outcome" }))).toBe("/app/calendario?pendencias=1");
+  });
+
   it("lead_assigned abre o lead", () => {
     expect(notificationHref(n({ type: "lead_assigned", leadId: "L1" }))).toBe("/app/pipeline?lead=L1");
     expect(notificationHref(n({ type: "lead_assigned", leadId: null, data: { leadId: "L2" } }))).toBe("/app/pipeline?lead=L2");

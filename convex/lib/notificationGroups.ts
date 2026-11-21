@@ -49,6 +49,7 @@ export const NOTIFICATION_TYPE_GROUP: Record<string, NotificationGroup> = {
   plan_cancel_scheduled: "sistema",
   plan_canceled: "sistema",
   plan_refunded: "sistema",
+  appointment_no_outcome: "atendimento",
 };
 
 /** Grupo do tipo; tipo desconhecido (versão futura) cai em "sistema". */

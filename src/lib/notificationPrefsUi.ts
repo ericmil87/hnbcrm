@@ -72,6 +72,7 @@ export const FLAG_COPY: Record<
   channelSessionLost: { label: "Canal desconectado", desc: "Quando um canal conectado perde a conexão" },
   aiSpendAlert: { label: "Gasto de IA do mês", desc: "Para administradores: perto do teto mensal ou ao atingi-lo" },
   planAlert: { label: "Avisos do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
+  agendaActivity: { label: "Agenda: atendimentos sem desfecho", desc: "Resumo diário, para quem gerencia a agenda, dos atendimentos do dia anterior que ainda não foram concluídos, cancelados ou marcados como falta" },
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 
