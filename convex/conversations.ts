@@ -1753,7 +1753,7 @@ export const sendMessage = mutation({
     }
 
     // Agenda v2 (C1): confirmação de horário escrita por um HUMANO (gancho; custo zero sem pré-filtro positivo).
-    await maybeScheduleConfirmationInterpretation(ctx, { organizationId: conversation.organizationId, conversationId: args.conversationId, messageId, content: args.content, contentType: args.contentType, sentAt: now, now, isInternal: args.isInternal, senderIsAi: userMember.type === "ai", isGroup: conversation.kind === "group", contactRelation: conversation.contactRelation });
+    await maybeScheduleConfirmationInterpretation(ctx, { organizationId: conversation.organizationId, conversationId: args.conversationId, messageId, content: args.content, contentType: args.contentType, sentAt: now, now, isInternal: args.isInternal, senderIsAi: userMember.type === "ai", isGroup: conversation.kind === "group", contactRelation: conversation.contactRelation, previous: { direction: conversation.lastMessageDirection, preview: conversation.lastMessagePreview, at: conversation.lastMessagePreviewAt ?? conversation.lastMessageAt } });
 
     // Nota de voz do TIME (ou da IA) também é transcrita: o atendente e os
     // colegas leem o que foi dito em vez de "[áudio enviado]". Mesmo gate do
@@ -2778,7 +2778,7 @@ export const internalReceiveDeviceMessage = internalMutation({
     await scheduleMessageTranslation(ctx, { messageId, role: "inbound" });
 
     // Agenda v2 (C1): "Ok, confirmado quinta 10h" digitado no celular (gancho; histórico importado e mensagem velha são ignorados).
-    await maybeScheduleConfirmationInterpretation(ctx, { organizationId: args.organizationId, conversationId, messageId, content: args.content, contentType: args.contentType, sentAt, now, contactRelation: conversation.contactRelation, importedFromHistory: args.metadata?.importedFromHistory === true });
+    await maybeScheduleConfirmationInterpretation(ctx, { organizationId: args.organizationId, conversationId, messageId, content: args.content, contentType: args.contentType, sentAt, now, contactRelation: conversation.contactRelation, importedFromHistory: args.metadata?.importedFromHistory === true, previous: { direction: conversation.lastMessageDirection, preview: conversation.lastMessagePreview, at: conversation.lastMessagePreviewAt ?? conversation.lastMessageAt } });
 
     return messageId;
   },

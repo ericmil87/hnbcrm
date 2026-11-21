@@ -113,22 +113,71 @@ export function prepHumanOffer(text: string): string {
 /** O cliente quer marcar PARA SI (lista de permissão). */
 const INTENT_RE =
   /\b(pode ser|podem ser|consegue|conseguem|tem vaga|tem vagas|tem horario|tem algum horario|tem disponibilidade|tem como|da pra|da para|seria possivel|(quero|queria|gostaria de|preciso de|preciso|vou querer) (de )?(marcar|agendar|reservar|uma consulta|um horario|uma sessao|um atendimento)|marca(r)? (pra|para) mim|agenda(r)? (pra|para) mim|posso ir|posso comparecer|me encaixa|me encaixar|pode me encaixar|prefiro|pode me atender|podem me atender)\b/;
-/** Assunto que não é "marcar atendimento para mim" (terceiros, entrega, funcionamento, pagamento, evento). */
+/** Parentesco, terceiros, bichos: o horário não é do cliente. */
+const THIRD_PARTY_RE =
+  /\b(mae|pai|filh[oa]s?|marido|esposo|esposa|mulher|sogr[oa]|vo|vovo|vovos|avo|avos|neto|neta|irma|irmao|primo|prima|tio|tia|sobrin\w+|menino|menina|crianca|bebe|namorad[oa]|amig[oa]|colega|cunhad[oa]|genro|nora|vizinh[oa]|cachorro|cachorra|gato|gata|pet|cadela|aqui e (o|a)|uso o (whats|zap|whatsapp))\b/;
+/** Assunto que não é "marcar atendimento para mim" (entrega, funcionamento, pagamento, evento, trabalho). */
 const SUBJECT_DENY_RE =
-  /\b(entreg\w*|motoboy|entregador|retirar|retirada|buscar|instalar|instalacao|tecnico|visita|mae|pai|filh[oa]s?|marido|esposa|mulher|irma|irmao|neto|neta|sobrinh[oa]|namorad[oa]|amig[oa]|vizinh[oa]|abrem|abre|abertos?|funcionando|funcionam|atendem|recebem|palestra|evento|pix|pagamento|comprovante|fica pronto|ficam prontos|pronto|apresentar|apresentacao|catalogo|reuniao|representante|mercadoria|encomenda|equipe|funcionari[oa])\b/;
+  /\b(entreg\w*|motoboy|entregador|retirar|retirada|buscar|instalar|instalacao|tecnico|visita|abrem|abre|abertos?|funcionando|funcionam|atendem|recebem|palestra|evento|pix|pagamento|pagar|parcela|comprovante|fica pronto|ficam prontos|pronto|apresentar|apresentacao|catalogo|reuniao|representante|mercadoria|encomenda|equipe|funcionari[oa]|entrevista|emprego|vaga de|contrato|assinar|resultado|devolucao|troca|call|conserto|vistoria|orcamento)\b/;
+/** Mudança de ideia dentro da mesma mensagem. */
+const SELF_CHANGE_RE = /\b(nao|melhor|na verdade|ou entao|ou melhor|ops)\b|\.\.\./;
 /** Texto de comando dentro da mensagem do cliente (injeção): nunca sustenta criação sozinha. */
 const INJECTION_RE = /\b(ignore|ignorem|instru\w*|system|crm data|prompt|responda|concord\w*|assistente|modelo|json)\b/;
 const ACCEPT_RE = /\b(pode ser|pode|sim|ok|okay|fechado|combinado|perfeito|beleza|blz|topo|quero|essa|esse|bora|vamos|isso|certo)\b/;
 const NEGATION_RE = /\b(nao|nunca|infelizmente|mas|so consigo|talvez)\b/;
-/** O humano recusou/ negou depois ("não tenho vaga", "já está ocupado"). */
-const REFUSAL_RE = /\b(nao|infelizmente|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem vagas|indisponivel|ja tem|ja esta|ja foi|cheio|cheia|desculp\w*|impossivel)\b/;
+/** O humano recusou/negou depois ("não tenho vaga", "já está ocupado", "a Dra. está de férias"). */
+const REFUSAL_RE = /\b(nao|infelizmente|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem vagas|indisponivel|ja tem|ja esta|ja foi|cheio|cheia|desculp\w*|impossivel|ferias|folga|viajando|viagem|doente|atestado|cancelad[oa]|(estamos|esta|ficamos) fechad[oa]s?)\b/;
 const MAX_CLIENT_INTENT_CHARS = 240;
+/** "pra/pro/para" seguido destas palavras é só data/hora ("pra segunda", "para as 10"). */
+const PRA_WHEN_RE = /\b(pra|pro|para)\s+(?:o |a |as |os |dia )?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|depois|semana|manha|tarde|noite|esse|essa|este|esta|proxima|proximo|\d)/g;
+const TIME_TOKEN_RE = /\d{1,2}\s?(?:h|hs|horas)(?:\s?\d{2})?\b|\d{1,2}:\d{2}\b/g;
+/** Palavras que podem vir DEPOIS do horário sem mudar o assunto. */
+const TRAILING_FILLER = new Set([
+  "pode", "ser", "da", "serve", "tem", "vaga", "tudo", "bem", "ne", "ok", "por", "favor", "pf", "obrigado", "obrigada", "valeu", "tambem", "mesmo", "entao", "ta", "certo",
+  "ai", "ai", "pra", "mim", "pode", "consegue", "conseguem", "voces", "vc", "vcs", "ne", "oi", "ola", "e", "ou", "a", "as", "o", "os", "de", "do", "da", "no", "na", "em", "um", "uma", "hein", "kkk",
+]);
 
-export function clientBookingIntent(text: string): boolean {
+/**
+ * O cliente quer marcar PARA SI, para um serviço do negócio. Recusa (conservador): terceiro ou parentesco, "pra <alguém/algo>"
+ * que não seja data/hora, finalidade depois do horário que não seja um serviço ativo, mudança de ideia na mesma mensagem,
+ * assunto de entrega/funcionamento/pagamento/trabalho e texto de comando.
+ */
+export function clientBookingIntent(text: string, serviceNames: ReadonlyArray<string> = []): boolean {
   if (text.length > MAX_CLIENT_INTENT_CHARS) return false;
   const f = foldText(text);
-  return INTENT_RE.test(f) && !SUBJECT_DENY_RE.test(f) && !INJECTION_RE.test(f);
+  if (!INTENT_RE.test(f)) return false;
+  if (THIRD_PARTY_RE.test(f) || SUBJECT_DENY_RE.test(f) || INJECTION_RE.test(f) || SELF_CHANGE_RE.test(text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return false;
+  const services = serviceNames.map((n) => foldText(n)).filter((n) => n.length >= 3);
+  const mentionsService = (s: string) => services.some((n) => new RegExp(`(?<![a-z0-9])${escapeRe(n)}s?(?![a-z0-9])`).test(s));
+  // "pra <algo>" que não é dia/hora nem "pra mim": finalidade ou outra pessoa.
+  const withoutPra = f.replace(/\b(pra|para) mim\b/g, " ").replace(PRA_WHEN_RE, " ");
+  const pra = /\b(pra|pro|para)\s+(\w+)/.exec(withoutPra);
+  if (pra && !mentionsService(withoutPra.slice(pra.index))) return false;
+  // Finalidade depois do horário.
+  const lowered = text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  let last = -1;
+  let m: RegExpExecArray | null;
+  const re = new RegExp(TIME_TOKEN_RE.source, "g");
+  while ((m = re.exec(lowered)) !== null) last = m.index + m[0].length;
+  if (last >= 0) {
+    const rest = foldText(lowered.slice(last));
+    const extra = rest.split(" ").filter((w) => w.length > 0 && !TRAILING_FILLER.has(w));
+    if (extra.length > 0 && !mentionsService(rest)) return false;
+  }
+  return true;
 }
+/** Parentesco/terceiro em qualquer trecho (contexto da conversa). */
+const DAY_HOUR_MARK_RE = /\d{1,2}\s?(?:h|hs|horas)\b|\d{1,2}:\d{2}|\b\d{1,2}\/\d{1,2}\b|\b(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|seg|ter|qua|qui|sex|sab|dom)\b/;
+/**
+ * Resposta curta ("ok", "👍"): só vale olhar a conversa se a mensagem ANTERIOR (já em memória na mutation de envio:
+ * `conversations.lastMessage*`) é do cliente, recente e cita dia ou hora. Barato: sem leitura.
+ */
+export function previousLooksLikeProposal(prev: { direction?: string; preview?: string; at?: number } | undefined, now: number): boolean {
+  if (!prev || prev.direction !== "inbound" || !prev.preview || prev.at === undefined) return false;
+  if (now - prev.at > PROPOSAL_TTL_MS || prev.at > now) return false;
+  return DAY_HOUR_MARK_RE.test(foldText(prev.preview));
+}
+export const mentionsThirdParty = (text: string): boolean => THIRD_PARTY_RE.test(foldText(text));
 export const looksInjected = (text: string): boolean => INJECTION_RE.test(foldText(text));
 /** A resposta do cliente aceita a oferta que veio antes ("pode ser", "sim", "quero"). */
 export const clientAccepts = (text: string): boolean => {
@@ -138,7 +187,7 @@ export const clientAccepts = (text: string): boolean => {
 export const humanRefuses = (text: string): boolean => REFUSAL_RE.test(foldText(text));
 /** Palavras-chave de correção ("ops", "corrigindo", "na verdade", "não vai dar"): usadas só para olhar a conversa. */
 export const CORRECTION_RE = /\b(ops|corrigindo|correcao|na verdade|errei|errado|desconsidere|mudou|remarc\w*|troca\w*)\b/;
-const CHANGE_RE = /\b(nao|melhor|entao|mudou|troc\w*)\b/;
+const CHANGE_RE = /\b(melhor|entao|mudou|troc\w*)\b|\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b[^.?!]{0,20}\bnao\b/;
 const HOUR_RE = /\b\d{1,2}\s?(h|hs|horas)\b|\b\d{1,2}:\d{2}\b/;
 export const hasCorrectionWords = (text: string): boolean => CORRECTION_RE.test(foldText(text));
 /**
@@ -196,6 +245,8 @@ export function collectProposals(args: {
   stored?: StoredProposalLite;
   now: number;
   tz: string;
+  /** Nomes dos serviços ativos: só uma finalidade que seja um deles não derruba a criação automática. */
+  serviceNames?: ReadonlyArray<string>;
 }): ProposalCollection & { strict: ProposalCandidate[] } {
   const idx = args.messages.findIndex((m) => m._id === args.currentId);
   const before = idx >= 0 ? args.messages.slice(idx + 1) : args.messages.filter((m) => m.createdAt < args.currentAt);
@@ -213,6 +264,11 @@ export function collectProposals(args: {
   const refusals = before.filter((m) => m.direction === "outbound" && m.senderType === "human" && humanRefuses(textOfMessage(m))).map((m) => m.createdAt);
   const refusedAfter = (at: number) => refusals.some((r) => r > at);
 
+  // Parentesco/terceiro nas últimas mensagens do cliente ("meu filho pode ir… e eu, pode ser?"): não sustenta criação sozinha.
+  const thirdPartyContext = before
+    .filter((m) => m.direction === "inbound" && m.senderType === "contact" && fresh(m.createdAt))
+    .slice(0, 3)
+    .some((m) => mentionsThirdParty(textOfMessage(m)));
   let clientSeen = 0;
   let humanSeen = 0;
   let lastClientDone = false;
@@ -230,7 +286,7 @@ export function collectProposals(args: {
       const asCandidates = ms.map((x): ProposalCandidate => ({ localDate: x.localDate, timeMin: x.timeMin, by: "cliente", at: m.createdAt }));
       candidates.push(...asCandidates);
       if (isLast && asCandidates.length === 1 && !injected) lastClient = asCandidates[0];
-      if (isLast && asCandidates.length === 1 && clientBookingIntent(text) && !refusedAfter(m.createdAt)) strict.push({ ...asCandidates[0], strict: true });
+      if (isLast && asCandidates.length === 1 && !thirdPartyContext && clientBookingIntent(text, args.serviceNames) && !refusedAfter(m.createdAt)) strict.push({ ...asCandidates[0], strict: true });
     } else if (m.direction === "outbound" && m.senderType === "human") {
       if (humanSeen >= INTERPRET_HUMAN_MESSAGES) continue;
       humanSeen++;

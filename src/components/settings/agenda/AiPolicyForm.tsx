@@ -27,13 +27,15 @@ const LEVELS = (verb: string): Array<{ value: AiLevel; title: string; hint: stri
 ];
 
 const CONFIRM: Array<{ value: HumanConfirmMode; title: string; hint: string }> = [
-  { value: "auto", title: "Marcar sozinho", hint: "Quando você confirma um horário na conversa, o sistema marca." },
-  { value: "suggest", title: "Só sugerir", hint: "O sistema mostra a sugestão e você toca para marcar." },
+  { value: "suggest", title: "Só sugerir (recomendado)", hint: "O sistema mostra a sugestão e você toca para marcar." },
+  { value: "auto", title: "Marcar sozinho quando tiver certeza (experimental)", hint: "Experimental: pode marcar errado. Você é avisado e tem 24 h para Desfazer." },
   { value: "off", title: "Desligado", hint: "O sistema não interpreta suas mensagens." },
 ];
 
 const INTERPRET_EXPLAIN =
-  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e marca para você. Na dúvida, ele só sugere: nunca marca por conta própria sem ter certeza.";
+  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e sugere a marcação: você toca para marcar. Nada é marcado sozinho, a menos que você ligue a opção experimental.";
+const AUTO_RISK =
+  "Marcar sozinho é experimental: o sistema pode marcar errado (por exemplo, um horário que não era de atendimento). Você é avisado a cada marcação e pode desfazer em até 24 horas; nada é enviado ao cliente.";
 
 /** Política da IA por ação, com AVISO + ACEITE ao escolher "marca sozinha". Controlado, sem Convex. */
 export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant = "panel", ackNote }: AiPolicyFormProps) {
@@ -65,7 +67,7 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
         </div>
         <Switch
           checked={value.humanConfirmMode !== "off"}
-          onCheckedChange={(on) => set({ humanConfirmMode: on ? "auto" : "off" })}
+          onCheckedChange={(on) => set({ humanConfirmMode: on ? "suggest" : "off" })}
           label="Interpretar minhas confirmações pelo WhatsApp"
           hideLabel
           disabled={disabled}
@@ -76,6 +78,11 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
         <p className="text-sm font-medium text-text-primary">Interpretar minhas confirmações pelo WhatsApp</p>
         <p className="text-sm text-text-muted">{INTERPRET_EXPLAIN}</p>
         <ChoiceCards label="Interpretar minhas confirmações pelo WhatsApp" options={CONFIRM} value={value.humanConfirmMode} disabled={disabled} onChange={(humanConfirmMode) => set({ humanConfirmMode })} />
+        {value.humanConfirmMode === "auto" && (
+          <p role="note" className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 text-sm text-text-primary">
+            {AUTO_RISK}
+          </p>
+        )}
       </div>
     );
 

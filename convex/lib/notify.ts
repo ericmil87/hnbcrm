@@ -195,6 +195,8 @@ export async function createNotification(
     channel?: string;
     actorId?: Id<"teamMembers">;
     coalesce?: CoalesceOptions;
+    /** Só o sino: sem push nem Telegram (aviso de baixa certeza, ex.: sugestão sem intenção reconhecida). */
+    bellOnly?: boolean;
     /** E1: e-mail de reserva (+10/+30 min, só se ainda não lido). Ignorado num patch. */
     email?: EmailFallback;
   }
@@ -308,6 +310,7 @@ export async function createNotification(
     prefs,
     isPatch: false,
     email: args.email,
+    bellOnly: args.bellOnly,
   });
   // O relógio do renotify só começa quando o push de fato saiu do servidor.
   if (co && pushScheduled) {

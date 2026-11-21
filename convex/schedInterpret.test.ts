@@ -19,7 +19,14 @@ import { schedInvariantProblems } from "./lib/schedInvariants.test-helper";
 import * as SI from "./schedulingInterpret";
 import * as sched from "./scheduling";
 import { MAIN, OWN100, ROUND1, ROUND2 } from "../src/test/schedConfirmParserTables";
+import * as parserModule from "./lib/schedConfirmParser";
 import { parseConfirmation } from "./lib/schedConfirmParser";
+
+// Pass-through: permite fazer o gancho REAL falhar (`mockImplementationOnce`) nos testes de robustez.
+vi.mock("./lib/schedConfirmParser", async (importOriginal) => {
+  const m = await importOriginal<typeof import("./lib/schedConfirmParser")>();
+  return { ...m, prefilterConfirmation: vi.fn(m.prefilterConfirmation) };
+});
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -182,12 +189,15 @@ const as = (p: Person) => t.withIdentity({ subject: `${p.userId}|s1` });
 let extSeq = 0;
 /** Mensagem do CLIENTE já gravada (direto no banco; nada agenda). */
 async function clientSays(s: Seed, text: string, atMs: number, conversationId = s.conversationId): Promise<Id<"messages">> {
-  return await t.run((ctx) =>
-    ctx.db.insert("messages", {
+  return await t.run(async (ctx) => {
+    const id = await ctx.db.insert("messages", {
       organizationId: s.organizationId, conversationId, leadId: conversationId === s.conversationId ? s.leadId : s.otherLeadId,
       direction: "inbound", senderType: "contact", content: text, contentType: "text", isInternal: false, createdAt: atMs,
-    })
-  );
+    });
+    // Como o app real: o resumo da conversa (que o gancho lê sem custo) acompanha a última mensagem.
+    await ctx.db.patch(conversationId, { lastMessageAt: atMs, lastMessageId: id, lastMessagePreview: text.slice(0, 100), lastMessageDirection: "inbound", lastMessagePreviewAt: atMs });
+    return id;
+  });
 }
 
 /** Mensagem do HUMANO digitada no celular (gancho do ingest do aparelho). */
@@ -395,6 +405,14 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
     return row;
   }
 
+  /** Sem proposta coincidente na conversa: nada é sugerido (a linha fica `ignored` com o motivo, para medir). */
+  async function expectIgnored(s: Seed, reason: string) {
+    expect(await appointments(s)).toHaveLength(0);
+    expect(await onlyRow(s)).toMatchObject({ decision: "ignored", status: "done", reason });
+    expect(await notificationsOf(s, "appointment_suggestion")).toHaveLength(0);
+    expect(await notificationsOf(s, "appointment_created")).toHaveLength(0);
+  }
+
   test("sem IA ligada: nunca cria sozinho, só propõe (e não chama modelo)", async () => {
     const s = await seedOrg({ ai: false });
     const llm = stubLlm(GOOD);
@@ -418,22 +436,22 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
     expect(llmCalls(llm)).toHaveLength(0);
   });
 
-  test("sem proposta aberta (o cliente não citou o horário): propõe com `sem_proposta`", async () => {
+  test("sem proposta aberta (o cliente não citou o horário): não sugere nada (`ignored` com `sem_proposta`)", async () => {
     const s = await seedOrg({ ai: true });
     const llm = stubLlm(GOOD);
     await humanOnPhone(s, CONFIRM);
     await drain();
-    await expectProposal(s, "sem_proposta");
+    await expectIgnored(s, "sem_proposta");
     expect(llmCalls(llm)).toHaveLength(0);
   });
 
-  test("a proposta aberta é de OUTRO dia/hora: propõe com `sem_proposta_coincidente`", async () => {
+  test("a proposta aberta é de OUTRO dia/hora: não sugere nada (`ignored` com `sem_proposta_coincidente`)", async () => {
     const s = await seedOrg({ ai: true });
     const llm = stubLlm(GOOD);
     await clientSays(s, "Pode ser terça às 14h?", NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
     await drain();
-    await expectProposal(s, "sem_proposta_coincidente");
+    await expectIgnored(s, "sem_proposta_coincidente");
     expect(llmCalls(llm)).toHaveLength(0);
   });
 
@@ -443,7 +461,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
     await clientSays(s, CLIENT_ASKS, NOW - 49 * HOUR);
     await humanOnPhone(s, CONFIRM);
     await drain();
-    await expectProposal(s, "sem_proposta");
+    await expectIgnored(s, "sem_proposta");
   });
 
   test("oferta da IA gravada em `schedConversationState` vale como proposta aberta, desde que o cliente a aceite depois", async () => {
@@ -1296,6 +1314,153 @@ const FALSE_POSITIVES: Array<[string, Step[], string, SeedOpts?]> = [
   ["A33b o cliente falou de outro assunto DEPOIS da proposta", [c("Pode ser segunda 10h?", 40), c("Aliás, vocês aceitam cartão?", 30)], "Confirmado segunda 10h"],
 ];
 
+async function clientAudio(s: Seed, transcript: string, atMs: number) {
+  return await t.run((ctx) =>
+    ctx.db.insert("messages", {
+      organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "inbound", senderType: "contact", content: "[áudio]",
+      transcriptText: transcript, contentType: "audio", isInternal: false, createdAt: atMs,
+    })
+  );
+}
+
+/** Rodada 2 da revisão (34 conversas novas): assunto que não é atendimento, outra pessoa, mudança de ideia. */
+const NEW_ADVERSARIAL: Array<[string, Step[], string, { audio?: boolean }?]> = [
+  ["N01 marcar a entrega", [c("Quero marcar a entrega pra segunda 10h")], "Confirmado segunda 10h"],
+  ["N02 visita do técnico", [c("Pode marcar a visita do técnico segunda 10h?")], "Confirmado segunda 10h"],
+  ["N03 encaixar minha mãe", [c("Consegue encaixar minha mãe segunda 10h?")], "Confirmado segunda 10h"],
+  ["N04 vaga pra filha", [c("Tem vaga pra minha filha segunda 10h?")], "Confirmado segunda 10h"],
+  ["N05 esposo", [c("Consegue encaixar meu esposo segunda 10h?")], "Confirmado segunda 10h"],
+  ["N06 sogra", [c("Tem vaga pra minha sogra segunda 10h?")], "Confirmado segunda 10h"],
+  ["N07 menino", [c("Pode ser segunda 10h pro meu menino?")], "Confirmado segunda 10h"],
+  ["N08 vó", [c("Dá pra segunda 10h pra minha vó?")], "Confirmado segunda 10h"],
+  ["N09 nome de terceiro", [c("Pode ser segunda 10h pro Pedro?")], "Confirmado segunda 10h"],
+  ["N10 pet", [c("Consegue segunda 10h pro meu cachorro?")], "Confirmado segunda 10h"],
+  ["N11 intenção numa, terceiro noutra", [c("Pode ser segunda 10h?", 40), c("Ah, é pra minha mãe", 30)], "Confirmado segunda 10h"],
+  ["N12 outra pessoa no mesmo whats", [c("Oi, aqui é o Marcos, uso o whats da Ana. Pode ser segunda 10h?")], "Confirmado segunda 10h"],
+  ["N13 muda de ideia na mesma mensagem", [c("Pode ser segunda 10h... não, melhor terça")], "Confirmado segunda 10h"],
+  ["N14 penúltima do filho, última dela", [c("Meu filho pode ir segunda 10h?", 40), c("E eu, pode ser segunda 10h também?", 30)], "Confirmado segunda 10h"],
+  ["N15 condição: se o exame sair", [c("Pode ser segunda 10h?")], "Confirmado segunda 10h se o exame sair"],
+  ["N16 condição: só falta o pix", [c("Pode ser segunda 10h?")], "Confirmado segunda 10h, só falta o pix"],
+  ["N17 pré-confirmado", [c("Pode ser segunda 10h?")], "Pré-confirmado segunda 10h"],
+  ["N18 confirmado com interrogação", [c("Pode ser segunda 10h?")], "Confirmado segunda 10h?"],
+  ["N19 áudio: pegar o carro", [c("oi pode ser segunda 10h ai eu passo pra pegar o carro", 30)], "Confirmado segunda 10h", { audio: true }],
+  ["N20 áudio sem pontuação: mãe", [c("oi tudo bem pode ser segunda 10h pra minha mae fazer o exame", 30)], "Confirmado segunda 10h", { audio: true }],
+  ["N21 entrevista de emprego", [c("Pode ser segunda 10h a entrevista?")], "Confirmado segunda 10h"],
+  ["N22 vaga de emprego", [c("Tem horário segunda 10h pra conversar sobre a vaga de emprego?")], "Confirmado segunda 10h"],
+  ["N23 pegar resultado", [c("Consegue segunda 10h pra eu pegar o resultado?")], "Confirmado segunda 10h"],
+  ["N24 devolução", [c("Dá pra segunda 10h fazer a devolução?")], "Confirmado segunda 10h"],
+  ["N25 troca do produto", [c("Pode ser segunda 10h a troca do produto?")], "Confirmado segunda 10h"],
+  ["N26 assinar contrato", [c("Pode ser segunda 10h pra assinar o contrato?")], "Confirmado segunda 10h"],
+  ["N27 posso ir pagar", [c("Posso ir segunda 10h pagar a parcela?")], "Confirmado segunda 10h"],
+  ["N28 call comercial", [c("Pode ser segunda 10h a call com o pessoal do marketing?")], "Confirmado segunda 10h"],
+  ["N29 sobrino", [c("pode ser segunda 10h pro meu sobrino?")], "Confirmado segunda 10h"],
+  ["N30 conserto", [c("Consegue segunda 10h pra eu deixar a bike pro conserto?")], "Confirmado segunda 10h"],
+  ["N31 vir até o cliente", [c("Você consegue vir aqui segunda 10h ver o vazamento?")], "Confirmado segunda 10h"],
+  ["N32 humano recusa sem palavra-chave óbvia", [c("Pode ser segunda 10h?", 60), h("Segunda 10h a Dra. Paula está de férias", 50), c("Ah entendi", 40)], "Confirmado segunda 10h"],
+  ["N33 stories", [c("Consegue segunda 10h? Vi que vc posta stories nesse horário kkk")], "Confirmado segunda 10h"],
+  ["N34 vistoria", [c("Prefiro segunda 10h pra fazer a vistoria do apartamento")], "Confirmado segunda 10h"],
+];
+
+describe("revisão adversarial, rodada 2: 34 conversas novas, modelo concordando, zero criação nos dois modos", () => {
+  for (const mode of ["auto", "default"] as const) {
+    for (const [name, steps, final, extra] of NEW_ADVERSARIAL) {
+      test(`[${mode}] ${name}`, async () => {
+        const s = await seedOrg({ ai: true, mode });
+        stubAgree();
+        for (const st of steps) {
+          if (st.who === "c") {
+            if (extra?.audio) await clientAudio(s, st.text, NOW - st.ago * MIN);
+            else await clientSays(s, st.text, NOW - st.ago * MIN);
+          } else await humanPrior(s, st.text, NOW - st.ago * MIN);
+        }
+        await humanOnPhone(s, final);
+        await drain();
+        await expectNothingActed(s);
+      });
+    }
+  }
+});
+
+/** Sugestão INDEVIDA = qualquer sugestão aberta numa conversa adversarial; "com push" = a que não é só-sino (`proposta_sem_intencao`). */
+describe("ruído das sugestões no padrão (revisão, rodada 2)", () => {
+  test("sem proposta coincidente nada é sugerido; sem intenção reconhecida é só sino; taxa nas 70 conversas adversariais", async () => {
+    let total = 0;
+    let suggested = 0;
+    let withPush = 0;
+    const offenders: string[] = [];
+    const all: Array<[string, Step[], string, SeedOpts?, boolean?]> = [
+      ...FALSE_POSITIVES.filter(([, , , o]) => !o || (o.ai !== false && o.mode === undefined && o.modules === undefined && o.relation === undefined && o.services === undefined)).map(([n, st, f]) => [n, st, f, undefined, false] as [string, Step[], string, SeedOpts?, boolean?]),
+      ...NEW_ADVERSARIAL.map(([n, st, f, x]) => [n, st, f, undefined, x?.audio === true] as [string, Step[], string, SeedOpts?, boolean?]),
+    ];
+    for (const [name, steps, final, , audio] of all) {
+      t = convexTest(schema, modules);
+      const s = await seedOrg({ ai: true, mode: "default" });
+      stubAgree();
+      for (const st of steps) {
+        if (st.who === "c") {
+          if (audio) await clientAudio(s, st.text, NOW - st.ago * MIN);
+          else await clientSays(s, st.text, NOW - st.ago * MIN);
+        } else await humanPrior(s, st.text, NOW - st.ago * MIN);
+      }
+      await humanOnPhone(s, final);
+      await drain();
+      total++;
+      const open = (await interpretations(s)).filter((r) => r.decision === "proposed" && r.status === "open");
+      if (open.length > 0) {
+        suggested++;
+        // Push = sugestão com os avisos completos. O servidor marca "só sino" pelo `bellOnly`; aqui conferimos pelas notificações
+        // gravadas (sem aparelho vinculado não há push para contar): a sugestão FORTE é a que tem intenção e forma fechada.
+        const loud = (await notificationsOf(s, "appointment_suggestion")).some((n) => n.data?.bellOnly !== true);
+        if (loud) {
+          withPush++;
+          offenders.push(name);
+        }
+      }
+    }
+    // O revisor mediu 61 de 65 (94%) com push antes; agora só sugere com proposta coincidente.
+    expect(total).toBeGreaterThanOrEqual(65);
+    // Toda sugestão que sobra tem proposta coincidente (a conversa foi montada assim) e SEM intenção reconhecida: só sino.
+    expect(offenders).toEqual([]);
+    expect(withPush).toBe(0);
+  }, 120_000);
+
+  test("as que não têm proposta coincidente ficam `ignored` com o motivo, sem aviso nenhum", async () => {
+    for (const [name, steps, final] of FALSE_POSITIVES.filter(([n]) => ["A04", "A05", "A11", "A12", "A13", "A14", "A15", "A20", "A23", "A31", "A32"].some((k) => n.startsWith(k + " ")))) {
+      t = convexTest(schema, modules);
+      const s = await seedOrg({ ai: true, mode: "default" });
+      stubAgree();
+      for (const st of steps) {
+        if (st.who === "c") await clientSays(s, st.text, NOW - st.ago * MIN);
+        else await humanPrior(s, st.text, NOW - st.ago * MIN);
+      }
+      await humanOnPhone(s, final);
+      await drain();
+      const rows = await interpretations(s);
+      expect(rows.filter((r) => r.decision === "proposed"), name).toEqual([]);
+      expect(await notificationsOf(s, "appointment_suggestion"), name).toHaveLength(0);
+    }
+  });
+
+  test("proposta coincidente SEM intenção reconhecida: sugestão só no sino (sem push nem Telegram)", async () => {
+    const s = await seedOrg({ ai: true, mode: "default" });
+    await t.run((ctx) => ctx.db.insert("telegramLinks", { organizationId: s.organizationId, teamMemberId: s.admin.memberId, status: "active", prefs: { relayAssignedConversations: true } } as never).catch(() => null));
+    await clientSays(s, "segunda 10h?", NOW - 30 * MIN); // sem intenção de marcar
+    await humanOnPhone(s, "Confirmado segunda 10h");
+    await drain();
+    expect(await onlyRow(s)).toMatchObject({ decision: "proposed", reason: "proposta_sem_intencao" });
+    const n = await notificationsOf(s, "appointment_suggestion");
+    expect(n).toHaveLength(1);
+    const jobs = await scheduledNames();
+    expect(jobs.filter((x) => /push|telegram/i.test(x))).toEqual([]);
+    // Com intenção reconhecida: aviso completo (a mesma checagem não vale sem aparelho vinculado; o motivo muda).
+    const s2 = await seedOrg({ ai: true, mode: "default" });
+    await clientSays(s2, CLIENT_ASKS, NOW - 30 * MIN);
+    await humanOnPhone(s2, CONFIRM);
+    await drain();
+    expect((await onlyRow(s2)).reason).toBe("modo_sugerir");
+  });
+});
+
 describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem aprovado, nos dois modos", () => {
   for (const mode of ["auto", "default"] as const) {
     for (const [name, steps, final, opts] of FALSE_POSITIVES) {
@@ -1316,7 +1481,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
     await drain();
     await expectNothingActed(s);
     const row = await onlyRow(s);
-    expect(row).toMatchObject({ decision: "proposed", reason: "horario_passado" });
+    expect(row).toMatchObject({ decision: "ignored", reason: "horario_passado" });
     // Também no modo padrão.
     const s2 = await seedOrg({ ai: true, now: NOW + 6 * HOUR, mode: "default" });
     await clientSays(s2, "Hoje 10h tem?", NOW + 6 * HOUR - 10 * MIN);
@@ -1504,8 +1669,9 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
     await drain();
     const rows = await interpretations(s2);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ parsed: { localDate: "2026-06-16", timeMin: 600 }, decision: "proposed" });
-    expect(await appointments(s2)).toHaveLength(0); // o texto novo (terça) não tem proposta do cliente: sugestão
+    // O texto NOVO (terça) é o que foi lido; como o cliente propôs segunda, não há proposta coincidente: nada é sugerido.
+    expect(rows[0]).toMatchObject({ parsed: { localDate: "2026-06-16", timeMin: 600 }, decision: "ignored", reason: "sem_proposta_coincidente" });
+    expect(await appointments(s2)).toHaveLength(0);
     // Rede de proteção na decisão: texto editado depois de a linha nascer é descartado.
     t = convexTest(schema, modules);
     const s3 = await seedOrg({ ai: true });
@@ -1620,20 +1786,32 @@ describe("caminho feliz: sugestão PREENCHIDA e correta (modo padrão)", () => {
     expect(created).toEqual(["B01", "B03", "B04", "B08"]);
   });
 
-  test("resposta curta 'ok' só passa pelo gancho e vira sugestão com uma proposta clara do cliente; sem ela, nenhuma linha", async () => {
+  test("resposta curta ('ok', '👍'): o gancho decide sem leitura; só segue se a mensagem de ANTES é do cliente, recente e cita dia/hora", async () => {
     const s = await seedOrg({ ai: true, mode: "default" });
+    await humanOnPhone(s, "ok"); // nada antes
+    expect(await interpretJobs()).toEqual([]);
+    await clientSays(s, "segunda 10h", NOW - 5 * MIN);
     await humanOnPhone(s, "ok");
     expect(await interpretJobs()).toHaveLength(1);
     await drain();
-    expect(await interpretations(s)).toEqual([]); // sem proposta do cliente: nem linha
-    await clientSays(s, "segunda 10h", NOW - 5 * MIN);
+    expect(await onlyRow(s)).toMatchObject({ decision: "proposed", reason: "proposta_sem_intencao", parsed: { localDate: "2026-06-15", timeMin: 600 } });
+    // "segunda 10h" sem intenção de marcar: só o sino (sem push nem Telegram).
+    expect((await notificationsOf(s, "appointment_suggestion")).length).toBeGreaterThan(0);
+  });
+
+  test("as 7 respostas curtas comuns, sem proposta antes, não agendam NADA (zero funções, zero linhas)", async () => {
+    const s = await seedOrg({ ai: true, mode: "default" });
+    await clientSays(s, "Vocês fazem limpeza de pele?", NOW - 5 * MIN);
+    for (const txt of ["ok", "Sim", "👍", "beleza", "Perfeito", "Certo", "Não, abrimos às 8h"]) await humanOnPhone(s, txt);
+    expect(await scheduledNames()).not.toContain("schedulingInterpret:internalStart");
+    expect(await interpretJobs()).toEqual([]);
+    await drain();
+    expect(await interpretations(s)).toEqual([]);
+    // Mesmo com a proposta, se a ÚLTIMA mensagem foi do próprio humano, não olha.
+    await clientSays(s, "segunda 10h", NOW - 4 * MIN);
+    await humanOnPhone(s, "um minuto");
     await humanOnPhone(s, "ok");
-    await drain();
-    expect(await onlyRow(s)).toMatchObject({ decision: "proposed", reason: "modo_sugerir", parsed: { localDate: "2026-06-15", timeMin: 600 } });
-    // Um 👍 também.
-    await humanOnPhone(s, "👍");
-    await drain();
-    expect((await interpretations(s)).length).toBeGreaterThanOrEqual(1);
+    expect(await interpretJobs()).toEqual([]);
   });
 });
 
@@ -1658,6 +1836,27 @@ describe("robustez", () => {
     // Leitura que lança também (org inexistente no argumento): idem.
     const out2 = await t.run((ctx) => maybeScheduleConfirmationInterpretation({ ...ctx, db: { get: async () => { throw new Error("db"); } } } as never, { organizationId: s.organizationId, conversationId: s.conversationId, messageId, content: CONFIRM, sentAt: NOW, now: NOW }));
     expect(out2).toBe(false);
+  });
+
+  test("caminho REAL: exceção dentro do gancho não derruba o envio pelo app nem a mensagem do celular", async () => {
+    const s = await seedOrg({ ai: true });
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = () => vi.mocked(parserModule.prefilterConfirmation).mockImplementationOnce(() => { throw new Error("falha no gancho"); });
+    // App: sendMessage devolve o id e a mensagem fica gravada.
+    boom();
+    const sent = await as(s.admin).mutation(api.conversations.sendMessage, { conversationId: s.conversationId, content: CONFIRM });
+    expect((await t.run((ctx) => ctx.db.get(sent)))?.content).toBe(CONFIRM);
+    // Celular: o ingest grava e responde (o bridge NÃO reentrega em laço).
+    boom();
+    const device = await humanOnPhone(s, "Fechado, segunda 10h");
+    expect(device).not.toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(device!)))?.content).toBe("Fechado, segunda 10h");
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(await interpretJobs()).toEqual([]);
+    spy.mockRestore();
+    // Sem a falha, o mesmo envio agenda normalmente.
+    await humanOnPhone(s, "Fechado, segunda 10h");
+    expect(await interpretJobs()).toHaveLength(1);
   });
 
   test("desfazer a criação devolve o lead à etapa de antes (só se ainda está na etapa que esta marcação deu)", async () => {

@@ -61,6 +61,7 @@ import {
   hasCorrectionWords,
   isWeakReply,
   looksLikeCorrection,
+  previousLooksLikeProposal,
   prepClientText,
   INTERPRET_CONTEXT_MESSAGES,
   INTERPRET_MAX_AGE_MS,
@@ -111,6 +112,8 @@ export type InterpretHookArgs = {
   contactRelation?: ContactRelation | null;
   /** A importação de histórico usa o mesmo ingest do aparelho: ignorada. */
   importedFromHistory?: boolean;
+  /** A última mensagem ANTES desta (`conversations.lastMessage*`, já carregada pela mutation de envio; sem leitura extra). */
+  previous?: { direction?: string; preview?: string; at?: number };
 };
 
 /**
@@ -140,7 +143,14 @@ async function scheduleInterpretationIfWorthIt(ctx: MutationCtx, args: Interpret
   if (text.trim().length === 0 || text.length > CONFIRM_MAX_CHARS) return false;
   if (args.now - args.sentAt > INTERPRET_MAX_AGE_MS) return false;
   if (args.contactRelation && isOffBusiness(args.contactRelation)) return false;
-  if (!prefilterConfirmation(text).pass && !isWeakReply(text) && !looksLikeCorrection(text)) return false;
+  // Só dia/hora sem NENHUM ato ("Não, abrimos às 8h") nunca confirma nada: o pré-filtro passa, mas sem sinal de ato não segue.
+  const pre = prefilterConfirmation(text);
+  const hasAct = pre.pass && pre.signals.some((x) => x.startsWith("ato:"));
+  if (!hasAct && !looksLikeCorrection(text)) {
+    // Resposta curta ("ok", "sim", "👍"): a mais comum de todas. Decide aqui, sem leitura: só segue se a mensagem de ANTES
+    // é do cliente, recente e cita dia ou hora.
+    if (!isWeakReply(text) || !previousLooksLikeProposal(args.previous, args.now)) return false;
+  }
   const org = await ctx.db.get(args.organizationId);
   if (!org || !modulesOf(org).scheduling) return false;
   if (outboundBlockedFor(org, args.now)) return false;
@@ -374,7 +384,7 @@ type SuggestKind = "confirmou" | "remarcou" | "cancelou" | "aprovar" | "substitu
 async function notifySuggestion(
   ctx: MutationCtx,
   c: Case,
-  p: { interpretationId: Id<"schedInterpretations">; act: string; parsed: Parsed; reason?: string; fromStart?: number }
+  p: { interpretationId: Id<"schedInterpretations">; act: string; parsed: Parsed; reason?: string; fromStart?: number; bellOnly?: boolean }
 ): Promise<void> {
   const kind: SuggestKind =
     p.reason === "aprovar_pendente" ? "aprovar" : p.reason === "substituir_pendente" ? "substituir" : p.reason === "correcao" ? "correcao" : p.act === "remarcou" ? "remarcou" : p.act === "cancelou" ? "cancelou" : "confirmou";
@@ -391,7 +401,9 @@ async function notifySuggestion(
         ...(p.fromStart !== undefined ? { fromLabel: whenLabelOfStart(p.fromStart, c.tz) } : {}),
       }),
       conversationId: c.conversation._id,
-      data: { interpretationId: p.interpretationId, source: "human_message", act: p.act, ...(p.reason ? { reason: p.reason } : {}) },
+      // Sugestão sem intenção de marcar reconhecida: só o sino (sem push nem Telegram).
+      ...(p.bellOnly ? { bellOnly: true } : {}),
+      data: { interpretationId: p.interpretationId, source: "human_message", act: p.act, ...(p.reason ? { reason: p.reason } : {}), ...(p.bellOnly ? { bellOnly: true } : {}) },
     });
   }
 }
@@ -401,12 +413,12 @@ async function propose(
   ctx: MutationCtx,
   c: Case,
   existing: Doc<"schedInterpretations"> | null,
-  p: { act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"]; fromStart?: number }
+  p: { act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"]; fromStart?: number; bellOnly?: boolean }
 ): Promise<Id<"schedInterpretations">> {
-  const { fromStart, ...rowPart } = p;
+  const { fromStart, bellOnly, ...rowPart } = p;
   const id = await writeRow(ctx, c, existing, { ...rowPart, decision: "proposed", status: "open" });
   await supersedeOlderOpen(ctx, c, p.act, id);
-  await notifySuggestion(ctx, c, { interpretationId: id, act: p.act, parsed: p.parsed, reason: p.reason, fromStart });
+  await notifySuggestion(ctx, c, { interpretationId: id, act: p.act, parsed: p.parsed, reason: p.reason, fromStart, bellOnly });
   return id;
 }
 
@@ -446,7 +458,7 @@ export type StartResult = { status: "skipped" | "duplicate" | "final" | "pending
 
 type Plan =
   | { kind: "final"; row: RowFinal }
-  | { kind: "propose"; act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"]; fromStart?: number }
+  | { kind: "propose"; act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"]; fromStart?: number; bellOnly?: boolean }
   | { kind: "llm"; row: RowFinal };
 
 /** "Já marcado" (nada novo). O pendente de aprovação NÃO entra: a confirmação do humano pode aprová-lo. */
@@ -540,6 +552,7 @@ export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messa
     stored: owned?.proposal ? { localDate: owned.proposal.localDate, timeMin: owned.proposal.timeMin, serviceId: owned.proposal.serviceId, at: owned.proposal.at } : undefined,
     now: c.now,
     tz: c.tz,
+    serviceNames: c.services.map((s) => s.name),
   });
   // "ok", "sim", "👍": só interessam com uma proposta clara do cliente logo antes; senão nem linha se grava.
   if (!passes && !recent && collection.lastClient === undefined) return { status: "skipped", reason: "sem_proposta" };
@@ -672,9 +685,17 @@ async function planInterpretation(
   // Sem dia nem hora não há o que sugerir ("ok, confirmado" sobre qualquer coisa).
   if (!hasDate && !hasTime) return ignored("sem_dia_ou_hora");
 
+  // Palavra de passado ("hoje 10h" às 15h): não há horário a comparar.
+  if (pastWord) return ignored("horario_passado", parsed);
+
   const strictFind = findMatchingProposal(p, collection, c.now, true);
   const looseFind = strictFind.match ? strictFind : findMatchingProposal(p, collection, c.now, false);
   const matched: ProposalCandidate | undefined = strictFind.match;
+  // SÓ SUGERE quando existe proposta coincidente na conversa (mesmo dia e hora: do cliente, oferta do humano/IA escolhida
+  // pelo cliente). Sem ela a mensagem fica `ignored` com o motivo (medimos, sem avisar ninguém).
+  if (looseFind.match === undefined) {
+    return ignored(strictFind.reason === "sem_proposta" ? "sem_proposta" : "sem_proposta_coincidente", parsed);
+  }
   const service = resolveServiceForConversation({
     activeServices: c.services.map((s) => ({ _id: s._id, name: s.name })),
     parserServiceId: p.serviceId,
@@ -685,10 +706,15 @@ async function planInterpretation(
   });
   const checks: Checks = { ...base, proposal: matched !== undefined, service: service.ok };
   const withService: Parsed = compact({ ...parsed, serviceId: (service.serviceId ?? parsed.serviceId) as Id<"schedServices"> | undefined });
-  const suggest = (reason: string): Plan => ({ kind: "propose", act: "confirmou", parsed: withService, checks, reason });
+  // Intenção de marcar reconhecida (última mensagem do cliente com intenção, ou oferta da IA aceita) = sugestão com aviso
+  // completo; sem intenção = só o sino.
+  const intentOk = collection.strict.some((x) => x.localDate === p.localDate && x.timeMin === p.timeMin);
+  // Push só para confirmação FORTE: intenção do cliente reconhecida e mensagem do humano na forma fechada (não "pré-confirmado",
+  // "só falta o pix", texto com cauda ou data distante). O resto vai só para o sino.
+  const strong = intentOk && p.level === "completo" && !p.negatives.includes("data_distante");
+  const suggest = (reason: string): Plan => ({ kind: "propose", act: "confirmou", parsed: withService, checks, reason, bellOnly: !strong });
 
-  if (!auto) return suggest(pastWord ? "horario_passado" : "modo_sugerir");
-  if (pastWord && (!hasDate || !hasTime)) return suggest("horario_passado");
+  if (!auto) return suggest(intentOk ? "modo_sugerir" : "proposta_sem_intencao");
   if (!base.parser) {
     if (p.form === "resposta_curta") return suggest("resposta_curta");
     if (!(p.fromMessage.localDate !== undefined && p.fromMessage.timeMin !== undefined)) return suggest("sem_dia_ou_hora");
