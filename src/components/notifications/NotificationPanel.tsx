@@ -114,6 +114,8 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   plan_refunded: Gauge,
   // B2 — lead atribuído a você.
   lead_assigned: UserCheck,
+  // Agenda v2 (A3c)
+  appointment_conflict: CalendarX,
   // Agenda v2 (A4) — resumo diário de atendimentos sem desfecho.
   appointment_no_outcome: ClipboardCheck,
 };

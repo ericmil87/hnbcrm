@@ -45,6 +45,7 @@ const ALLOC_NAME_ALLOWED: Record<string, string> = {
  */
 const ALLOC_NAME_READ_ONLY: Record<string, string> = {
   "lib/schedRead.ts": "A3a: leitura de disponibilidade por faixa (só leitura; nunca escreve)",
+  "lib/schedInvariants.test-helper.ts": "A3c: helper de TESTE que lê alocações para conferir invariantes (só leitura; nunca escreve)",
 };
 
 /** Regra 3: quem pode citar `"schedAppointments"` com patch/replace/delete no mesmo arquivo. */
@@ -172,6 +173,15 @@ describe("porta única de reserva", () => {
     expect(fnStart).toBeGreaterThan(0);
     expect(inserts[0].index!).toBeGreaterThan(fnStart);
     expect(inserts[0].index!).toBeLessThan(nextFn);
+  });
+
+  test("A3c: lib/schedExceptionOps.ts escreve só em schedExceptions/schedConflicts: não cita as tabelas quentes (tudo pela porta)", () => {
+    // Sem exceção na lista (regras 1–3 já o reprovariam); este teste fixa a intenção e o motivo: fechar recurso
+    // realoca/libera vaga por `planClosureRelocation`/`relocateAllocationCore`/`releaseAllocationForConflictCore`.
+    const src = stripComments(readFileSync(path.join(CONVEX_DIR, "lib/schedExceptionOps.ts"), "utf8"));
+    expect(ALLOC_NAME_RE.test(src)).toBe(false);
+    expect(APPT_NAME_RE.test(src)).toBe(false);
+    expect(findPortViolations(readFileSync(path.join(CONVEX_DIR, "lib/schedExceptionOps.ts"), "utf8"), "lib/schedExceptionOps.ts")).toEqual([]);
   });
 
   test("toda exceção vigente aponta para um arquivo que existe", () => {

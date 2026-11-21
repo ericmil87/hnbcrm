@@ -100,6 +100,17 @@ import {
   isActiveStatus,
   type SchedStatus,
 } from "./schedStatus";
+import {
+  blockCovered,
+  effectiveAllocationUnits,
+  exceptionsUnverifiedOn,
+  loadWindow,
+  memberResourcesOf,
+  readExceptionsRange,
+  readInternalEventsOfMembers,
+  type WindowData,
+} from "./schedRead";
+import { type Slot, toSlot } from "./schedViews";
 import { assertValidTimezone, dayBounds, localDateOf, type LocalDate } from "./schedTime";
 
 export type { SchedActor } from "./schedBookingEffects";
@@ -108,12 +119,9 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 const MAX_EPOCH_MS = 4_102_444_800_000;
-const MAX_EXCEPTIONS_PER_DAY = 300;
 const MAX_ALTERNATIVES = 3;
 const MAX_ALT_RESOURCES = 12;
 const MAX_PARTY_COMPANIONS = 3;
-const INTERNAL_EVENT_LOOKBACK_MS = 12 * HOUR_MS;
-const INTERNAL_EVENT_CAP = 300;
 const CONTACT_WINDOW_CAP = 50;
 const CONTACT_FUTURE_CAP = 10;
 const NOTES_MAX = 500;
@@ -132,6 +140,8 @@ const RESOURCE_CODES: readonly RuleCode[] = [
   "RESOURCE_BLOCKED",
   "INTERNAL_EVENT_OVERLAP",
 ];
+/** `needsAttention.code` que a troca de recurso resolve. */
+const RESOURCE_ATTENTION_CODES: readonly string[] = ["capacity_conflict", "resource_closed", "resource_removed", "no_resource"];
 /** "Trocar sala" só reavalia o que é do recurso; tempo e contato não mudam. */
 const REASSIGN_CODES: readonly RuleCode[] = [...RESOURCE_CODES, "WRONG_ORG_OR_INACTIVE"];
 
@@ -139,7 +149,8 @@ const REASSIGN_CODES: readonly RuleCode[] = [...RESOURCE_CODES, "WRONG_ORG_OR_IN
 // Tipos públicos
 // ---------------------------------------------------------------------------
 
-export type Alternative = { startTime: number; resourceIds: Id<"schedResources">[] };
+/** Alternativa de horário: MESMO formato `Slot` da busca (`lib/schedViews`), sanitizado pela audiência do ator. */
+export type Alternative = Slot;
 export type BookFailure = { ok: false; violations: Violation[]; alternatives: Alternative[] };
 export type BookPlanItem = { role: string; resourceId: Id<"schedResources">; units: number; resourceName?: string };
 export type BookResult =
@@ -320,7 +331,7 @@ async function readCapacityRows(
     blockEnd: r.blockEnd,
     coreStart: r.coreStart,
     coreEnd: r.coreEnd,
-    units: r.exclusive ? Math.max(r.units, resource.capacity) : r.units,
+    units: effectiveAllocationUnits(r, resource.capacity),
   }));
   return rowsInCapacityWindow(normalized, blockStart, blockEnd).filter(
     (r) => ignoreAppointmentId === undefined || r.appointmentId !== ignoreAppointmentId
@@ -607,52 +618,57 @@ async function resolveRequestedPlan(
 // ---------------------------------------------------------------------------
 
 type InternalEvent = { teamMemberId: Id<"teamMembers">; start: number; end: number };
+type InternalEventRead = { events: InternalEvent[]; unverified: Set<string> };
 
 type WindowReads = {
+  /** Exceções do dia (banco + hipotéticas da prévia de fechamento). */
   exceptions: ExceptionLite[];
+  /** Exceções que ainda não existem (só a prévia de fechamento): entram também na visão do dia das alternativas. */
+  hypothetical: ExceptionLite[];
+  /** O dia não foi lido por inteiro (teto): FAIL-CLOSED, vira violação (IA/link bloqueiam; equipe pode forçar). */
+  exceptionsUnverified: boolean;
   contactOverlaps: Interval[];
   contactActiveSameService: number;
   aiBookingsToday: number;
-  internalEvents: () => Promise<InternalEventRead>;
+  /** Compromissos internos dos membros dos `resources` (mesmo leitor da busca, por índice de membro e tempo). */
+  internalEvents: (resources: Resource[]) => Promise<InternalEventRead>;
 };
 
-async function readExceptions(ctx: MutationCtx, organizationId: Id<"organizations">, localDate: LocalDate): Promise<ExceptionLite[]> {
-  const rows = await ctx.db
-    .query("schedExceptions")
-    .withIndex("by_organization_and_date", (q) => q.eq("organizationId", organizationId).eq("localDate", localDate))
-    .take(MAX_EXCEPTIONS_PER_DAY + 1);
-  // Fail-closed: fechamento além do teto ficaria invisível.
-  if (rows.length > MAX_EXCEPTIONS_PER_DAY) fail("Há exceções demais nesse dia para marcar com segurança. Revise os fechamentos.");
-  return rows;
+/** Exceções do dia pelo leitor COMPARTILHADO com a busca (teto 500; acima disso o dia é "não verificável"). */
+async function readExceptions(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  localDate: LocalDate,
+  hypothetical: ExceptionLite[] = []
+): Promise<Pick<WindowReads, "exceptions" | "hypothetical" | "exceptionsUnverified">> {
+  const read = await readExceptionsRange(ctx, organizationId, localDate, localDate);
+  return {
+    exceptions: [...read.rows, ...hypothetical.filter((e) => e.localDate === localDate)],
+    hypothetical,
+    exceptionsUnverified: exceptionsUnverifiedOn(read.completeBefore, localDate),
+  };
 }
 
-type InternalEventRead = { events: InternalEvent[]; truncated: boolean };
-
-/**
- * Compromissos internos na janela. Do mais recente para o mais antigo: se estourar o teto, o que
- * fica de fora é o que começa MAIS CEDO (o mais longe do bloco), e `truncated` vira aviso ("não foi
- * possível verificar"), nunca "livre" em silêncio.
- */
-async function readInternalEvents(ctx: MutationCtx, organizationId: Id<"organizations">, from: number, to: number): Promise<InternalEventRead> {
-  const rows = await ctx.db
-    .query("calendarEvents")
-    .withIndex("by_organization_and_start", (q) => q.eq("organizationId", organizationId).gte("startTime", from).lt("startTime", to))
-    .order("desc")
-    .take(INTERNAL_EVENT_CAP + 1);
-  const events: InternalEvent[] = [];
-  for (const e of rows.slice(0, INTERNAL_EVENT_CAP)) {
-    if (e.status !== "scheduled" || e.allDay || !e.assignedTo) continue;
-    events.push({ teamMemberId: e.assignedTo, start: e.startTime, end: e.endTime });
-  }
-  return { events, truncated: rows.length > INTERNAL_EVENT_CAP };
+/** Leitor memoizado de compromissos internos do bloco (chave = membros consultados). */
+function internalEventsReader(ctx: MutationCtx, organizationId: Id<"organizations">, from: number, to: number): WindowReads["internalEvents"] {
+  const cache = new Map<string, Promise<InternalEventRead>>();
+  return (resources) => {
+    const members = memberResourcesOf(resources);
+    if (members.size === 0) return Promise.resolve({ events: [], unverified: new Set<string>() });
+    const key = [...members.keys()].sort().join("|");
+    let hit = cache.get(key);
+    if (!hit) {
+      hit = readInternalEventsOfMembers(ctx, organizationId, { start: from, end: to }, members).then((r) => ({
+        events: r.events,
+        unverified: new Set<string>(r.unverified),
+      }));
+      cache.set(key, hit);
+    }
+    return hit;
+  };
 }
 
-const NO_EVENTS: InternalEventRead = { events: [], truncated: false };
-
-function lazy<T>(fn: () => Promise<T>): () => Promise<T> {
-  let p: Promise<T> | undefined;
-  return () => (p ??= fn());
-}
+const NO_EVENTS: InternalEventRead = { events: [], unverified: new Set<string>() };
 
 async function readContactReads(
   ctx: MutationCtx,
@@ -702,14 +718,14 @@ async function readContactReads(
 async function loadWindowReads(
   ctx: MutationCtx,
   bc: BookingContext,
-  p: { origin: SchedOrigin; now: number; startTime: number; endTime: number; blockStart: number; blockEnd: number; ignoreAppointmentId?: Id<"schedAppointments"> }
+  p: { origin: SchedOrigin; now: number; startTime: number; endTime: number; blockStart: number; blockEnd: number; ignoreAppointmentId?: Id<"schedAppointments">; hypothetical?: ExceptionLite[] }
 ): Promise<WindowReads> {
-  const exceptions = await readExceptions(ctx, bc.org._id, localDateOf(p.startTime, bc.tz));
+  const exceptions = await readExceptions(ctx, bc.org._id, localDateOf(p.startTime, bc.tz), p.hypothetical);
   const contact = await readContactReads(ctx, bc, p);
   return {
-    exceptions,
+    ...exceptions,
     ...contact,
-    internalEvents: lazy(() => readInternalEvents(ctx, bc.org._id, p.blockStart - INTERNAL_EVENT_LOOKBACK_MS, p.blockEnd)),
+    internalEvents: internalEventsReader(ctx, bc.org._id, p.blockStart, p.blockEnd),
   };
 }
 
@@ -746,8 +762,7 @@ async function evaluatePlan(
     }
     allocations.push(...rows);
   }
-  const needsEvents = resources.some((r) => r.teamMemberId !== undefined);
-  const eventRead = needsEvents ? await p.reads.internalEvents() : NO_EVENTS;
+  const eventRead = await p.reads.internalEvents(resources);
   const days = computeDayAvailability({
     date: localDateOf(timing.startTime, bc.tz),
     tz: bc.tz,
@@ -779,8 +794,13 @@ async function evaluatePlan(
     aiBookingsTodayForContact: p.reads.aiBookingsToday,
     existingStartTime: p.existingStartTime,
   });
-  if (eventRead.truncated && !violations.some((v) => v.code === "INTERNAL_EVENT_OVERLAP")) {
+  // FAIL-CLOSED (mesma política da busca): o que não foi lido por inteiro nunca vira "livre".
+  if (resources.some((r) => eventRead.unverified.has(r._id)) && !violations.some((v) => v.code === "INTERNAL_EVENT_OVERLAP")) {
     const unverifiable = violationFor("INTERNAL_EVENT_OVERLAP", p.origin, "Não foi possível verificar os compromissos internos nesse horário (agenda interna muito cheia).");
+    if (unverifiable) violations.push(unverifiable);
+  }
+  if (p.reads.exceptionsUnverified && !violations.some((v) => v.code === "RESOURCE_CLOSED")) {
+    const unverifiable = violationFor("RESOURCE_CLOSED", p.origin, "Não foi possível verificar os fechamentos desse dia (exceções demais).");
     if (unverifiable) violations.push(unverifiable);
   }
   return violations;
@@ -790,9 +810,21 @@ async function evaluatePlan(
 // Fallback de recurso e alternativas (caminho de falha)
 // ---------------------------------------------------------------------------
 
-type DayView = { day: ReturnType<typeof computeDayAvailability>; pool: Resource[] };
+type DayView = {
+  day: ReturnType<typeof computeDayAvailability>;
+  pool: Resource[];
+  /** Leitura FAIL-CLOSED (mesma da busca): candidato cujo bloco sai do que foi lido NÃO é oferecido. */
+  coverage: Pick<WindowData, "coverage">;
+  /** O dia das exceções não foi lido por inteiro: nenhum candidato. */
+  dateUnverified: boolean;
+  names: Map<string, string>;
+};
 
-/** Dia dos recursos candidatos (≤ 12) para gerar plano alternativo e horários alternativos. */
+/**
+ * Dia dos recursos candidatos (≤ 12) para plano alternativo e horários alternativos. Lê pelo MESMO
+ * `loadWindow` da busca (mesmos tetos, `exclusive` normalizado, compromissos internos por membro e
+ * fail-closed): só caminho de falha, e o resultado é dica, quem decide é `assertCapacityAndAllocate`.
+ */
 async function loadDayView(
   ctx: MutationCtx,
   rb: ResourceBook,
@@ -806,27 +838,34 @@ async function loadDayView(
     .sort((a, b) => (preferred.has(a._id) ? 0 : 1) - (preferred.has(b._id) ? 0 : 1) || bySortOrder(a, b))
     .slice(0, MAX_ALT_RESOURCES);
   const date = localDateOf(p.startTime, bc.tz);
-  const bounds = dayBounds(date, bc.tz);
-  const allocations: AllocationLite[] = [];
-  for (const r of eligible) {
-    allocations.push(...(await readCapacityRows(ctx, r, bounds.start, bounds.end, p.ignoreAppointmentId)));
-  }
-  const events = eligible.some((r) => r.teamMemberId !== undefined)
-    ? (await readInternalEvents(ctx, bc.org._id, bounds.start - INTERNAL_EVENT_LOOKBACK_MS, bounds.end)).events
-    : [];
+  const data = await loadWindow(ctx, {
+    organizationId: bc.org._id,
+    fromLocalDate: date,
+    toLocalDate: date,
+    resourceIds: eligible.map((r) => r._id),
+  });
+  const bad = new Set<string>(data.unverifiedResourceIds);
+  const usable = eligible.filter((r) => !bad.has(r._id));
   const day = computeDayAvailability({
     date,
     tz: bc.tz,
-    resources: eligible,
-    exceptions: reads.exceptions,
-    allocations,
-    internalEvents: events,
+    resources: usable,
+    exceptions: [...data.exceptions, ...reads.hypothetical.filter((e) => e.localDate === date)],
+    allocations: data.allocations,
+    internalEvents: data.internalEvents,
     ignoreAppointmentId: p.ignoreAppointmentId,
   });
-  return { day, pool: eligible };
+  return {
+    day,
+    pool: usable,
+    coverage: { coverage: data.coverage },
+    dateUnverified: exceptionsUnverifiedOn(data.exceptionsCompleteBefore, date),
+    names: new Map(eligible.map((r) => [r._id as string, r.name])),
+  };
 }
 
 function candidatesOf(bc: BookingContext, view: DayView, p: { startTime: number; earliest: number; latest: number; basis: "core" | "block"; maxPerStart: number; variantKey?: string; preferred: Id<"schedResources">[] }): Candidate[] {
+  if (view.dateUnverified) return [];
   return generateCandidates({
     date: localDateOf(p.startTime, bc.tz),
     tz: bc.tz,
@@ -839,7 +878,7 @@ function candidatesOf(bc: BookingContext, view: DayView, p: { startTime: number;
     preferredResourceIds: p.preferred,
     maxPerStart: p.maxPerStart,
     basis: p.basis,
-  });
+  }).filter((c) => c.plan.every((x) => blockCovered(view.coverage, x.resourceId, c.blockStart, c.blockEnd)));
 }
 
 /** Outro plano para o MESMO início (primeiro que couber, por preferência e `sortOrder`). */
@@ -892,7 +931,8 @@ function computeAlternatives(
     .sort((a, b) => Math.abs(a.startTime - p.startTime) - Math.abs(b.startTime - p.startTime) || a.startTime - b.startTime)
     .slice(0, MAX_ALTERNATIVES)
     .sort((a, b) => a.startTime - b.startTime);
-  return picked.map((c) => ({ startTime: c.startTime, resourceIds: c.plan.map((x) => x.resourceId as Id<"schedResources">) }));
+  // Formato ÚNICO `Slot` da busca; IA e link nunca recebem nome de recurso, motivo nem pontuação (`reveal:false`).
+  return picked.map((c) => toSlot(c, { now: p.now, tz: bc.tz, resourceNames: view.names, reveal: staff }));
 }
 
 // ---------------------------------------------------------------------------
@@ -1333,7 +1373,7 @@ async function finalizeBooking(
         status: "open" as const,
         resourceId: placed.conflictResourceId,
         localDate: a.localDate,
-        suggestions: placed.suggestions.length > 0 ? placed.suggestions : undefined,
+        suggestions: placed.suggestions.length > 0 ? placed.suggestions.map((x) => ({ startTime: x.startTime, resourceIds: x.resourceIds })) : undefined,
         createdAt: p.now,
       })
     );
@@ -1730,6 +1770,12 @@ export async function setAppointmentStatusCore(
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   const memberId = actorMemberId(args.actor);
+  // Invariante "ativo sem alocação => conflito aberto": quem está sem sala/profissional (fila de conflitos) não é aprovado
+  // por cima do conflito; a equipe resolve primeiro (trocar recurso, remarcar, cancelar ou marcar como resolvido).
+  // Exceção: o operador já resolveu "por fora" (marca `no_resource`): aprova e segue "sem sala/profissional definido".
+  if (args.to === "scheduled" && a.resources.some((r) => !r.allocated) && a.needsAttention?.code !== "no_resource") {
+    fail("Resolva o conflito de sala/profissional antes de aprovar este agendamento.");
+  }
   const superseded = args.to === "scheduled" && a.rescheduleOfId ? await assertProposalApprovable(ctx, a, now) : null;
   const releasing = allocationEffect(a.status, args.to) === "delete";
   const allocations = releasing ? await snapshotAllocations(ctx, a._id) : undefined;
@@ -1948,7 +1994,7 @@ async function recreateAllocations(
   if (!service) return failure;
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const bc: BookingContext = { org, tz: orgTimezone(org), settings: await loadSettings(ctx, a.organizationId), service, contact: null };
-  const reads: WindowReads = { exceptions: await readExceptions(ctx, a.organizationId, a.localDate), contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0, internalEvents: async () => NO_EVENTS };
+  const reads: WindowReads = { ...(await readExceptions(ctx, a.organizationId, a.localDate)), contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0, internalEvents: async () => NO_EVENTS };
   const view = await loadDayView(ctx, rb, bc, reads, { startTime: a.startTime, preferred: items.map((i) => i.resource._id), ignoreAppointmentId: a._id });
   failure.alternatives = computeAlternatives(bc, view, { origin, now, startTime: a.startTime, variantKey: a.variantKey, current: items.map((i) => i.resource._id) });
   return failure;
@@ -1977,9 +2023,9 @@ export async function changeResourceCore(
   if (!requested.ok) return { ok: false, violations: problemViolations(requested.problems, origin), alternatives: [] };
   const timing: Timing = { startTime: a.startTime, endTime: a.endTime, blockStart: a.blockStart, blockEnd: a.blockEnd };
   const reads: WindowReads = {
-    exceptions: await readExceptions(ctx, a.organizationId, a.localDate),
+    ...(await readExceptions(ctx, a.organizationId, a.localDate)),
     contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0,
-    internalEvents: lazy(() => readInternalEvents(ctx, a.organizationId, a.blockStart - INTERNAL_EVENT_LOOKBACK_MS, a.blockEnd)),
+    internalEvents: internalEventsReader(ctx, a.organizationId, a.blockStart, a.blockEnd),
   };
   const violations = (
     await evaluatePlan(ctx, { bc, reads, rowsCache: new Map(), origin, action: "book", now, timing, items: requested.items, ignoreAppointmentId: a._id })
@@ -2013,7 +2059,7 @@ export async function changeResourceCore(
     resources: requested.items.map((i) => ({ resourceId: i.resource._id, role: i.role, name: i.resource.name, allocated: true })),
     ...(forced.length > 0 ? { forcedRules: forced } : {}),
     ...(fitIn ? { kind: "fit_in" as const } : {}),
-    ...(a.needsAttention?.code === "capacity_conflict" ? { needsAttention: undefined } : {}),
+    ...(a.needsAttention && RESOURCE_ATTENTION_CODES.includes(a.needsAttention.code) ? { needsAttention: undefined } : {}),
     updatedAt: now,
   });
   await resolveOpenConflicts(ctx, a._id, now);
@@ -2036,3 +2082,273 @@ export async function changeResourceCore(
 
 /** Nome do plano (§2.7). */
 export const reassignAppointmentResourcesCore = changeResourceCore;
+
+// ---------------------------------------------------------------------------
+// A3c: fechar recurso no dia / recurso removido (realocação e fila de conflitos)
+//
+// Estas funções são a PORTA das escritas que o fechamento provoca em agendamento e alocação
+// (`lib/schedExceptionOps.ts` não toca nessas tabelas: guard `schedulingPort.test.ts`).
+//  - `planClosureRelocation`: SOMENTE LEITURA. Decide, com as mesmas regras e a mesma leitura de
+//    `changeResourceCore`, se o GRUPO (casal/`partyKey` marcado junto, ou um agendamento só) cabe INTEIRO em
+//    UM outro recurso equivalente no MESMO horário. `hypothetical` = exceções que a prévia ainda não gravou;
+//    `overlay` = ocupação que as realocações anteriores da prévia teriam criado. No commit os dois vão vazios
+//    (o banco já tem tudo): a prévia e o resultado real usam a MESMA função. Com `relocate:false` (recurso
+//    PESSOA, org inteira ou tipo, recurso removido) nunca realoca; `wantEquivalents` devolve até 2 recursos
+//    equivalentes livres no mesmo horário como SUGESTÃO para a equipe.
+//  - `relocateAllocationCore`: troca só a alocação do recurso fechado, por `assertCapacityAndAllocate`.
+//  - `releaseAllocationForConflictCore`: retira a alocação dos recursos e marca o agendamento (NADA é
+//    cancelado, o status não muda, nenhuma mensagem sai; webhook `appointment.needs_attention`); quem chama
+//    abre a linha em `schedConflicts`.
+//  `checked_in` fica de fora de `MOVABLE_STATUSES` de propósito: quem já está em atendimento não é mexido.
+// ---------------------------------------------------------------------------
+
+export type AppointmentDoc = Doc<"schedAppointments">;
+export type AppointmentId = Id<"schedAppointments">;
+export type ClosureKind = "resource_closed" | "resource_removed";
+/** Só estes estados seguram vaga e ainda podem ser movidos (em andamento/concluído/terminal ficam como estão). */
+export const MOVABLE_STATUSES: readonly SchedStatus[] = ["pending_approval", "scheduled", "confirmed"];
+
+export type ClosureMemberPlan = {
+  appointment: AppointmentDoc;
+  toResource: Resource;
+  req: ServiceRequirementLite;
+  units: number;
+  exclusive: boolean;
+  overlayRow: AllocationLite;
+};
+export type EquivalentSlot = { startTime: number; endTime: number; resourceIds: Id<"schedResources">[] };
+export type ClosureGroupPlan =
+  | { outcome: "reallocated"; toResource: Resource; members: ClosureMemberPlan[] }
+  | { outcome: "conflict"; appointments: AppointmentDoc[]; equivalents: EquivalentSlot[] }
+  | { outcome: "skip" };
+
+export async function planClosureRelocation(
+  ctx: MutationCtx,
+  args: {
+    appointmentIds: AppointmentId[];
+    organizationId: Id<"organizations">;
+    closedResourceId: Id<"schedResources">;
+    relocate: boolean;
+    wantEquivalents?: boolean;
+    hypothetical?: ExceptionLite[];
+    overlay?: AllocationLite[];
+    rb?: ResourceBook;
+    now: number;
+  }
+): Promise<ClosureGroupPlan> {
+  const appointments: AppointmentDoc[] = [];
+  for (const id of args.appointmentIds) {
+    const a = await ctx.db.get(id);
+    if (!a || a.organizationId !== args.organizationId || !MOVABLE_STATUSES.includes(a.status) || a.endTime <= args.now) continue;
+    if (!a.resources.some((r) => r.resourceId === args.closedResourceId && r.allocated)) continue; // já processado (idempotência)
+    appointments.push(a);
+  }
+  if (appointments.length === 0) return { outcome: "skip" };
+  const first = appointments[0];
+  const conflict = (equivalents: EquivalentSlot[] = []): ClosureGroupPlan => ({ outcome: "conflict", appointments, equivalents });
+  if (!args.relocate && !args.wantEquivalents) return conflict();
+  // todos do grupo no MESMO horário (quem difere já foi separado por quem chama)
+  if (appointments.some((a) => a.startTime !== first.startTime || a.endTime !== first.endTime || a.blockStart !== first.blockStart || a.blockEnd !== first.blockEnd)) return conflict();
+  const org = assertOrgModule(await ctx.db.get(first.organizationId));
+  const rb = args.rb ?? newResourceBook(first.organizationId);
+  const reqs: ServiceRequirementLite[] = [];
+  let bc: BookingContext | null = null;
+  for (const a of appointments) {
+    const loaded = await loadContext(ctx, { organizationId: a.organizationId, serviceId: a.serviceId }, org, "staff");
+    if (!loaded.ok) return conflict();
+    bc ??= loaded.bc;
+    const entry = a.resources.find((r) => r.resourceId === args.closedResourceId && r.allocated)!;
+    const req = loaded.bc.service.requirements.find((r) => r.role === entry.role);
+    if (!req) return conflict();
+    reqs.push(req);
+  }
+  const bookingContext = bc!;
+  const inPlan = new Set<string>(appointments.flatMap((a) => a.resources.map((r) => r.resourceId)));
+  const pool = (await loadPool(ctx, rb)).filter((r) => r.active && !inPlan.has(r._id) && reqs.every((req) => requirementMatches(r, req))).sort(bySortOrder);
+  const timing: Timing = { startTime: first.startTime, endTime: first.endTime, blockStart: first.blockStart, blockEnd: first.blockEnd };
+  const reads: WindowReads = {
+    ...(await readExceptions(ctx, first.organizationId, first.localDate, args.hypothetical)),
+    contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0,
+    internalEvents: internalEventsReader(ctx, first.organizationId, first.blockStart, first.blockEnd),
+  };
+  const overlay = args.overlay ?? [];
+  const ids = new Set<string>(appointments.map((a) => a._id));
+  const equivalents: EquivalentSlot[] = [];
+  for (const cand of pool) {
+    const items = reqs.map((req) => toPlanItem(req, cand));
+    const total = items.reduce((sum, i) => sum + i.units, 0);
+    const rowsCache: RowsCache = new Map();
+    const dbRows = await readCapacityRows(ctx, cand, first.blockStart, first.blockEnd);
+    rowsCache.set(cand._id, [
+      ...dbRows.filter((r) => !ids.has(r.appointmentId)),
+      ...overlay.filter((o) => o.resourceId === cand._id && !ids.has(o.appointmentId)),
+    ]);
+    const violations = (
+      await evaluatePlan(ctx, {
+        bc: bookingContext, reads, rowsCache, origin: "staff", action: "book", now: args.now, timing,
+        items: [{ ...items[0], units: total }], ignoreAppointmentId: first._id,
+      })
+    ).filter((v) => REASSIGN_CODES.includes(v.code));
+    if (violations.length > 0) continue;
+    if (!args.relocate) {
+      equivalents.push({
+        startTime: first.startTime,
+        endTime: first.endTime,
+        resourceIds: first.resources.map((r) => (r.resourceId === args.closedResourceId ? cand._id : r.resourceId)),
+      });
+      if (equivalents.length >= 2) break;
+      continue;
+    }
+    return {
+      outcome: "reallocated",
+      toResource: cand,
+      members: appointments.map((a, i) => ({
+        appointment: a,
+        toResource: cand,
+        req: reqs[i],
+        units: items[i].units,
+        exclusive: items[i].exclusive,
+        overlayRow: {
+          appointmentId: a._id, resourceId: cand._id, blockStart: a.blockStart, blockEnd: a.blockEnd, coreStart: a.startTime, coreEnd: a.endTime,
+          units: items[i].exclusive ? cand.capacity : items[i].units,
+        },
+      })),
+    };
+  }
+  return conflict(equivalents);
+}
+
+async function deleteAllocationRowsOfResources(ctx: MutationCtx, appointmentId: AppointmentId, resourceIds: readonly Id<"schedResources">[]): Promise<void> {
+  const rows = await ctx.db.query("schedAllocations").withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId)).take(50);
+  for (const row of rows) if (resourceIds.includes(row.resourceId)) await ctx.db.delete(row._id);
+}
+
+/** Troca SÓ a alocação do recurso fechado pelo equivalente decidido por `planClosureRelocation`. `false` = a capacidade mudou no meio (vira conflito). */
+export async function relocateAllocationCore(
+  ctx: MutationCtx,
+  args: { plan: ClosureMemberPlan; closedResourceId: Id<"schedResources">; actor: SchedActor; reason: string; now: number }
+): Promise<boolean> {
+  const a = args.plan.appointment;
+  const alloc = await assertCapacityAndAllocate(ctx, {
+    appointmentId: a._id,
+    organizationId: a.organizationId,
+    plan: [{ role: args.plan.req.role, resource: args.plan.toResource, units: args.plan.units, exclusive: args.plan.exclusive }],
+    blockStart: a.blockStart,
+    blockEnd: a.blockEnd,
+    coreStart: a.startTime,
+    coreEnd: a.endTime,
+  });
+  if (!alloc.ok) return false;
+  await deleteAllocationRowsOfResources(ctx, a._id, [args.closedResourceId]);
+  const resources = a.resources.map((r) =>
+    r.resourceId === args.closedResourceId && r.allocated
+      ? { resourceId: args.plan.toResource._id, role: r.role, name: args.plan.toResource.name, allocated: true }
+      : r
+  );
+  await ctx.db.patch(a._id, { resources, updatedAt: args.now });
+  const after = (await ctx.db.get(a._id))!;
+  const org = assertOrgModule(await ctx.db.get(a.organizationId));
+  const tz = orgTimezone(org);
+  const label = appointmentLabel(after, tz);
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor: args.actor,
+    severity: "medium",
+    description: `Realocou ${label} para outro recurso (${args.reason})`,
+    before: appointmentSnapshot(a),
+    after: appointmentSnapshot(after),
+    metadata: { statusChange: false, closure: true, fromResourceId: args.closedResourceId, toResourceId: args.plan.toResource._id },
+    now: args.now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Recurso realocado: ${label}`, actor: args.actor, now: args.now });
+  return true;
+}
+
+/** Retira a alocação dos recursos e marca o agendamento em conflito. NADA é cancelado; status e mensagens ao cliente não mudam. */
+export async function releaseAllocationForConflictCore(
+  ctx: MutationCtx,
+  args: { appointment: AppointmentDoc; resourceIds: Id<"schedResources">[]; kind: ClosureKind; actor: SchedActor; now: number; error?: string }
+): Promise<{ released: boolean }> {
+  const a = await ctx.db.get(args.appointment._id);
+  if (!a || a.organizationId !== args.appointment.organizationId) return { released: false };
+  const closed = new Set<string>(args.resourceIds);
+  if (!a.resources.some((r) => closed.has(r.resourceId) && r.allocated)) return { released: false };
+  await deleteAllocationRowsOfResources(ctx, a._id, args.resourceIds);
+  await ctx.db.patch(a._id, {
+    resources: a.resources.map((r) => (closed.has(r.resourceId) ? { ...r, allocated: false } : r)),
+    needsAttention: { code: args.kind, at: args.now },
+    updatedAt: args.now,
+  });
+  const after = (await ctx.db.get(a._id))!;
+  const org = assertOrgModule(await ctx.db.get(a.organizationId));
+  const tz = orgTimezone(org);
+  const label = appointmentLabel(after, tz);
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor: args.actor,
+    severity: "medium",
+    description: `Agendamento ${label} ficou sem recurso (${args.kind === "resource_closed" ? "recurso fechado" : "recurso removido"}): na fila de conflitos`,
+    before: appointmentSnapshot(a),
+    after: appointmentSnapshot(after),
+    metadata: { statusChange: false, closure: true, conflict: args.kind, resourceIds: args.resourceIds, ...(args.error ? { error: args.error.slice(0, 200) } : {}) },
+    now: args.now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Precisa de novo recurso: ${label}`, actor: args.actor, now: args.now });
+  // Webhook `appointment.needs_attention`: o agendamento perdeu o recurso (ver docs/architecture/agenda.md).
+  await emitAppointmentWebhook(ctx, { event: "appointment.needs_attention", appointment: after, tz });
+  return { released: true };
+}
+
+/** O lugar original (mesmo recurso, mesmo horário) voltou a caber? Só leitura; alimenta a oferta de resolver depois de reabrir. */
+export async function canRestoreOriginalPlacement(
+  ctx: MutationCtx,
+  args: { appointmentId: AppointmentId; organizationId: Id<"organizations">; resourceId: Id<"schedResources">; now: number }
+): Promise<{ ok: boolean; resourceIds: Id<"schedResources">[]; startTime: number } | null> {
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId || !MOVABLE_STATUSES.includes(a.status) || a.endTime <= args.now) return null;
+  const entry = a.resources.find((r) => r.resourceId === args.resourceId && !r.allocated);
+  if (!entry) return null;
+  const org = assertOrgModule(await ctx.db.get(a.organizationId));
+  const loaded = await loadContext(ctx, { organizationId: a.organizationId, serviceId: a.serviceId }, org, "staff");
+  if (!loaded.ok) return null;
+  const bc = loaded.bc;
+  const req = bc.service.requirements.find((r) => r.role === entry.role);
+  const rb = newResourceBook(a.organizationId);
+  const resource = await getResource(ctx, rb, args.resourceId);
+  if (!req || !resource || !resource.active || !requirementMatches(resource, req)) return null;
+  const timing: Timing = { startTime: a.startTime, endTime: a.endTime, blockStart: a.blockStart, blockEnd: a.blockEnd };
+  const reads: WindowReads = {
+    ...(await readExceptions(ctx, a.organizationId, a.localDate)),
+    contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0,
+    internalEvents: internalEventsReader(ctx, a.organizationId, a.blockStart, a.blockEnd),
+  };
+  const violations = (
+    await evaluatePlan(ctx, { bc, reads, rowsCache: new Map(), origin: "staff", action: "book", now: args.now, timing, items: [toPlanItem(req, resource)], ignoreAppointmentId: a._id })
+  ).filter((v) => REASSIGN_CODES.includes(v.code));
+  return { ok: violations.length === 0, resourceIds: a.resources.map((r) => r.resourceId), startTime: a.startTime };
+}
+
+/** Limpa o aviso de atenção (resolução manual de conflito) e, se ainda há recurso sem alocação, marca `no_resource` para a grade. */
+export async function settleManualConflictCore(ctx: MutationCtx, args: { appointmentId: AppointmentId; organizationId: Id<"organizations">; now: number }): Promise<void> {
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId) return;
+  if (a.resources.some((r) => !r.allocated)) {
+    // Decisão do operador: o agendamento segue ATIVO sem alocação (não ocupa capacidade); a grade mostra "sem sala/profissional definido".
+    await ctx.db.patch(a._id, { needsAttention: { code: "no_resource", at: args.now }, updatedAt: args.now });
+  } else if (a.needsAttention && RESOURCE_ATTENTION_CODES.includes(a.needsAttention.code)) {
+    await ctx.db.patch(a._id, { needsAttention: undefined, updatedAt: args.now });
+  }
+}
+
+/** Carrega o agendamento da org (resposta única para inexistente e de outra org). */
+export async function loadAppointmentOfOrg(ctx: MutationCtx, organizationId: Id<"organizations">, appointmentId: AppointmentId): Promise<AppointmentDoc | null> {
+  const a = await ctx.db.get(appointmentId);
+  return a && a.organizationId === organizationId ? a : null;
+}
+
+export function newClosureResourceBook(orgId: Id<"organizations">): ResourceBook {
+  return newResourceBook(orgId);
+}
+export type { ResourceBook };

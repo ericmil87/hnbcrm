@@ -32,6 +32,8 @@ import {
   MAX_RESOURCES_PER_ORG,
   MAX_SERVICES_PER_ORG,
 } from "./schedConstants";
+import { modulesOf } from "./orgModules";
+import { openRemovedResourceConflictsCore } from "./schedExceptionOps";
 import { countFutureAppointmentsOfService, effectiveAllocationUnits, hasFutureActiveAppointment, listFutureAllocations } from "./schedRead";
 import { assertValidTimezone, localDateOf } from "./schedTime";
 import { type SchedTemplateDraft, isSchedTemplateKey } from "./schedTemplates";
@@ -693,7 +695,37 @@ export async function setResourceActiveCore(
     metadata: { futureAppointments, acceptFuture: args.acceptFuture === true },
     now: args.now,
   });
+  // A3c: os futuros do recurso arquivado perdem a alocação e viram conflito `resource_removed` (nada é cancelado).
+  if (!args.active && futureAppointments > 0) {
+    await openRemovedResourceConflictsCore(ctx, {
+      organizationId: args.organizationId,
+      resourceId: res._id,
+      actor: { type: "human", member: args.member, via: "app" },
+      now: args.now,
+    });
+  }
   return { changed: true, futureAppointments, servicesAffected };
+}
+
+/**
+ * Membro removido da equipe: o recurso-pessoa dele fica inativo (pelo MESMO `setResourceActiveCore` do arquivar) e os
+ * futuros viram conflito `resource_removed`. Chamado por `teamMembers.removeTeamMember` (ponto único). Sem o módulo
+ * ligado nada acontece.
+ */
+export async function deactivatePersonResourcesForMemberCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; memberId: Id<"teamMembers">; actor: Doc<"teamMembers">; now: number }
+): Promise<{ resources: number }> {
+  const org = await ctx.db.get(args.organizationId);
+  if (!org || !modulesOf(org).scheduling) return { resources: 0 };
+  const rows = await ctx.db.query("schedResources").withIndex("by_team_member", (q) => q.eq("teamMemberId", args.memberId)).take(20);
+  let resources = 0;
+  for (const r of rows) {
+    if (r.organizationId !== args.organizationId || !r.active) continue;
+    await setResourceActiveCore(ctx, { organizationId: args.organizationId, member: args.actor, resourceId: r._id, active: false, acceptFuture: true, now: args.now });
+    resources++;
+  }
+  return { resources };
 }
 
 // ---------------------------------------------------------------------------

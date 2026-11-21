@@ -1487,7 +1487,7 @@ describe("revisão: compromissos internos (teto de leitura)", () => {
       }
     });
 
-  test("agenda interna acima do teto: o corte nunca descarta o que sobrepõe o bloco", async () => {
+  test("agenda interna acima do teto: nunca vira 'livre' (unificado com a busca: aviso 'não foi possível verificar')", async () => {
     const s = await seedOrg();
     await seedEvents(s, 305, 120); // madrugada de segunda: longe do bloco das 10h
     await t.run((ctx) =>
@@ -1498,7 +1498,8 @@ describe("revisão: compromissos internos (teto de leitura)", () => {
     );
     const err = await rulesError(book(s, "solo", at(10)));
     const v = err.violations.find((x) => x.code === "INTERNAL_EVENT_OVERLAP");
-    expect(v?.message).toMatch(/compromisso interno nesse horário/);
+    expect(v?.severity).toBe("warn");
+    expect(v?.message).toMatch(/Não foi possível verificar os compromissos internos/);
   });
 
   test("agenda interna acima do teto sem sobreposição visível: vira aviso 'não foi possível verificar', nunca livre em silêncio", async () => {

@@ -188,6 +188,169 @@ export function assertSearchWindow(from: LocalDate, to: LocalDate): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Leitores compartilhados (UNIFICAÇÃO busca × porta de reserva)
+//
+// `loadWindow` (busca) e a porta de reserva (`schedBookingOps`, dentro da própria mutation) leem
+// exceções, alocações e compromissos internos PELOS MESMOS leitores abaixo, com os mesmos tetos, a mesma
+// normalização (`effectiveAllocationUnits`) e a mesma política FAIL-CLOSED: teto estourado nunca vira
+// "livre" (busca: não oferece; porta: IA/link bloqueiam, equipe recebe aviso forçável). A única leitura
+// da porta que NÃO usa teto é a faixa de capacidade de `assertCapacityAndAllocate` (`.collect()`): é a
+// leitura autoritativa e completa contra marcação dupla.
+// ---------------------------------------------------------------------------
+
+/** Exceções de `[from, to]` (1 faixa de índice por org e data, ordem crescente). Teto: `MAX_EXCEPTIONS_PER_WINDOW`. */
+export async function readExceptionsRange(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  from: LocalDate,
+  to: LocalDate
+): Promise<{ rows: Doc<"schedExceptions">[]; completeBefore: LocalDate | null }> {
+  const rows = await ctx.db
+    .query("schedExceptions")
+    .withIndex("by_organization_and_date", (q) => q.eq("organizationId", organizationId).gte("localDate", from).lte("localDate", to))
+    .take(MAX_EXCEPTIONS_PER_WINDOW + 1);
+  if (rows.length > MAX_EXCEPTIONS_PER_WINDOW) {
+    // Dias com data `>=` `completeBefore` NÃO são verificáveis (podem ter exceção que ficou de fora).
+    return { rows: rows.slice(0, MAX_EXCEPTIONS_PER_WINDOW), completeBefore: rows[MAX_EXCEPTIONS_PER_WINDOW - 1].localDate };
+  }
+  return { rows, completeBefore: null };
+}
+
+/**
+ * Agendamentos da org com início em `[from, to)`, em ordem crescente (índice por início, teto `limit`). `more` = há
+ * mais depois do teto. Usado pelo fechamento da org/tipo (1 documento por agendamento, sem ler alocações).
+ */
+export async function readAppointmentsStartingBetween(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  from: number,
+  to: number,
+  limit: number
+): Promise<{ rows: Doc<"schedAppointments">[]; more: boolean }> {
+  const rows = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_organization_and_start", (q) => q.eq("organizationId", organizationId).gte("startTime", from).lt("startTime", to))
+    .take(limit + 1);
+  return { rows: rows.slice(0, limit), more: rows.length > limit };
+}
+
+/** `true` se o dia não foi lido por inteiro por `readExceptionsRange` (fail-closed). */
+export function exceptionsUnverifiedOn(completeBefore: LocalDate | null, date: LocalDate): boolean {
+  return completeBefore !== null && date >= completeBefore;
+}
+
+/**
+ * Alocações do recurso que podem tocar `[window.start, window.end)`: margem `[início − L, início)` em ordem
+ * DECRESCENTE (teto 200) + janela (teto 300), `units` já normalizado. `coverage` só existe quando um teto
+ * estourou: o bloco consultado precisa caber em `[from, to]` (`blockCovered`).
+ */
+export async function readResourceAllocations(
+  ctx: ReadCtx,
+  resource: Pick<Doc<"schedResources">, "_id" | "capacity">,
+  window: { start: number; end: number }
+): Promise<{ allocations: Doc<"schedAllocations">[]; coverage: AllocationCoverage | null }> {
+  const lookback = MAX_BLOCK_MIN * MINUTE_MS;
+  //   A) margem em ORDEM DECRESCENTE: as mais próximas da janela primeiro; as que terminam antes da janela
+  //      são lidas e descartadas, mas não gastam o teto da janela.   B) janela em ordem crescente.
+  const margin = await ctx.db
+    .query("schedAllocations")
+    .withIndex("by_resource_and_start", (q) =>
+      q.eq("resourceId", resource._id).gte("blockStart", window.start - lookback).lt("blockStart", window.start)
+    )
+    .order("desc")
+    .take(MAX_MARGIN_ALLOCATIONS_PER_RESOURCE + 1);
+  const inside = await ctx.db
+    .query("schedAllocations")
+    .withIndex("by_resource_and_start", (q) => q.eq("resourceId", resource._id).gte("blockStart", window.start).lt("blockStart", window.end))
+    .take(MAX_ALLOCATIONS_PER_RESOURCE + 1);
+  let from = -Infinity;
+  let to = Infinity;
+  if (margin.length > MAX_MARGIN_ALLOCATIONS_PER_RESOURCE) {
+    // Linhas mais antigas que a mais antiga lida podem se estender até ela + L.
+    from = margin[MAX_MARGIN_ALLOCATIONS_PER_RESOURCE - 1].blockStart + lookback;
+  }
+  if (inside.length > MAX_ALLOCATIONS_PER_RESOURCE) {
+    // Linhas não lidas começam em `to` ou depois.
+    to = inside[MAX_ALLOCATIONS_PER_RESOURCE - 1].blockStart;
+  }
+  const allocations: Doc<"schedAllocations">[] = [];
+  for (const row of [...margin.slice(0, MAX_MARGIN_ALLOCATIONS_PER_RESOURCE), ...inside.slice(0, MAX_ALLOCATIONS_PER_RESOURCE)]) {
+    if (row.blockEnd <= window.start) continue;
+    allocations.push({ ...row, units: effectiveAllocationUnits(row, resource.capacity) });
+  }
+  return { allocations, coverage: from !== -Infinity || to !== Infinity ? { from, to } : null };
+}
+
+/**
+ * Compromissos internos `scheduled`, com horário, dos membros ligados a recurso-pessoa (`memberResources`:
+ * membro → recursos dele). Índice por membro e tempo (curtos ≤ 1 dia recuam 1 dia) + 1 faixa de eventos
+ * longos. Estourou o teto: os recursos do membro (ou todos, se foi a faixa de longos) ficam em `unverified`.
+ * Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
+ */
+export async function readInternalEventsOfMembers(
+  ctx: ReadCtx,
+  organizationId: Id<"organizations">,
+  window: { start: number; end: number },
+  memberResources: MemberResources
+): Promise<{ events: InternalEventLite[]; unverified: Id<"schedResources">[]; truncated: boolean }> {
+  const events: InternalEventLite[] = [];
+  const unverified = new Set<Id<"schedResources">>();
+  if (memberResources.size === 0) return { events, unverified: [], truncated: false };
+  let truncated = false;
+  const seen = new Set<string>();
+  const take = (ev: Doc<"calendarEvents">) => {
+    if (seen.has(ev._id)) return;
+    seen.add(ev._id);
+    if (ev.status !== "scheduled" || ev.allDay || ev.assignedTo === undefined) return;
+    if (!memberResources.has(ev.assignedTo) || ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
+    events.push({ teamMemberId: ev.assignedTo, start: ev.startTime, end: ev.endTime });
+  };
+  for (const [memberId, ids] of memberResources) {
+    const rows = await ctx.db
+      .query("calendarEvents")
+      .withIndex("by_organization_and_assigned_and_start", (q) =>
+        q
+          .eq("organizationId", organizationId)
+          .eq("assignedTo", memberId as Id<"teamMembers">)
+          .gte("startTime", window.start - SHORT_EVENT_MS)
+          .lt("startTime", window.end)
+      )
+      .take(MAX_INTERNAL_EVENTS_PER_MEMBER + 1);
+    if (rows.length > MAX_INTERNAL_EVENTS_PER_MEMBER) {
+      truncated = true;
+      for (const id of ids) unverified.add(id);
+    }
+    rows.slice(0, MAX_INTERNAL_EVENTS_PER_MEMBER).forEach(take);
+  }
+  const longRows = await ctx.db
+    .query("calendarEvents")
+    .withIndex("by_organization_and_long_start", (q) =>
+      q.eq("organizationId", organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS).lt("longStart", window.end)
+    )
+    .take(MAX_LONG_EVENTS + 1);
+  if (longRows.length > MAX_LONG_EVENTS) {
+    truncated = true;
+    for (const ids of memberResources.values()) for (const id of ids) unverified.add(id);
+  }
+  longRows.slice(0, MAX_LONG_EVENTS).forEach(take);
+  return { events, unverified: [...unverified], truncated };
+}
+
+export type MemberResources = ReadonlyMap<string, Array<Id<"schedResources">>>;
+
+/** Membro → recursos dele (só recursos com `teamMemberId`). */
+export function memberResourcesOf(resources: ReadonlyArray<Pick<Doc<"schedResources">, "_id" | "teamMemberId">>): Map<string, Id<"schedResources">[]> {
+  const out = new Map<string, Id<"schedResources">[]>();
+  for (const r of resources) {
+    if (r.teamMemberId === undefined) continue;
+    const list = out.get(r.teamMemberId);
+    if (list) list.push(r._id);
+    else out.set(r.teamMemberId, [r._id]);
+  }
+  return out;
+}
+
 export async function loadWindow(ctx: ReadCtx, args: LoadWindowArgs): Promise<WindowData> {
   assertSearchWindow(args.fromLocalDate, args.toLocalDate);
   const org = await ctx.db.get(args.organizationId);
@@ -216,123 +379,37 @@ export async function loadWindow(ctx: ReadCtx, args: LoadWindowArgs): Promise<Wi
     .filter((r) => r.active && (only === null || only.has(r._id)))
     .sort((a, b) => a.sortOrder - b.sortOrder || (a._id < b._id ? -1 : 1));
   const resourceSet = new Set<string>(resources.map((r) => r._id));
-  const capacityOf = new Map<string, number>(resources.map((r) => [r._id, r.capacity]));
 
-  // --- exceções (1 faixa por data, ordem crescente de data)
-  const exceptionRows = await ctx.db
-    .query("schedExceptions")
-    .withIndex("by_organization_and_date", (q) =>
-      q.eq("organizationId", args.organizationId).gte("localDate", args.fromLocalDate).lte("localDate", args.toLocalDate)
-    )
-    .take(MAX_EXCEPTIONS_PER_WINDOW + 1);
-  let exceptionsCompleteBefore: LocalDate | null = null;
-  if (exceptionRows.length > MAX_EXCEPTIONS_PER_WINDOW) {
-    truncated = true;
-    exceptionsCompleteBefore = exceptionRows[MAX_EXCEPTIONS_PER_WINDOW - 1].localDate;
-  }
-  const exceptions = exceptionRows
-    .slice(0, MAX_EXCEPTIONS_PER_WINDOW)
-    .filter((e) => e.resourceId === undefined || resourceSet.has(e.resourceId));
+  // --- exceções (leitor compartilhado)
+  const exRead = await readExceptionsRange(ctx, args.organizationId, args.fromLocalDate, args.toLocalDate);
+  if (exRead.completeBefore !== null) truncated = true;
+  const exceptions = exRead.rows.filter((e) => e.resourceId === undefined || resourceSet.has(e.resourceId));
 
-  // --- alocações: duas faixas por recurso, cada uma com o seu teto, para que o teto valha sobre o que importa.
-  //   A) margem `[início − L, início)` em ORDEM DECRESCENTE: as mais próximas da janela primeiro; as que
-  //      terminam antes da janela são lidas e descartadas, mas não gastam o teto da janela.
-  //   B) janela `[início, fim)` em ordem crescente.
-  const lookback = MAX_BLOCK_MIN * MINUTE_MS;
+  // --- alocações (leitor compartilhado), um recurso por vez em paralelo
   const coverage: Record<string, AllocationCoverage> = {};
   const allocations: Doc<"schedAllocations">[] = [];
-  const perResource = await Promise.all(
-    resources.map(async (r) => {
-      const margin = await ctx.db
-        .query("schedAllocations")
-        .withIndex("by_resource_and_start", (q) =>
-          q.eq("resourceId", r._id).gte("blockStart", window.start - lookback).lt("blockStart", window.start)
-        )
-        .order("desc")
-        .take(MAX_MARGIN_ALLOCATIONS_PER_RESOURCE + 1);
-      const inside = await ctx.db
-        .query("schedAllocations")
-        .withIndex("by_resource_and_start", (q) =>
-          q.eq("resourceId", r._id).gte("blockStart", window.start).lt("blockStart", window.end)
-        )
-        .take(MAX_ALLOCATIONS_PER_RESOURCE + 1);
-      return { r, margin, inside };
-    })
-  );
-  for (const { r, margin, inside } of perResource) {
-    let from = -Infinity;
-    let to = Infinity;
-    if (margin.length > MAX_MARGIN_ALLOCATIONS_PER_RESOURCE) {
+  const perResource = await Promise.all(resources.map(async (r) => ({ r, read: await readResourceAllocations(ctx, r, window) })));
+  for (const { r, read } of perResource) {
+    if (read.coverage) {
       truncated = true;
-      // Linhas mais antigas que a mais antiga lida podem se estender até ela + L.
-      from = margin[MAX_MARGIN_ALLOCATIONS_PER_RESOURCE - 1].blockStart + lookback;
+      coverage[r._id] = read.coverage;
     }
-    if (inside.length > MAX_ALLOCATIONS_PER_RESOURCE) {
-      truncated = true;
-      // Linhas não lidas começam em `to` ou depois.
-      to = inside[MAX_ALLOCATIONS_PER_RESOURCE - 1].blockStart;
-    }
-    if (from !== -Infinity || to !== Infinity) coverage[r._id] = { from, to };
-    for (const row of [...margin.slice(0, MAX_MARGIN_ALLOCATIONS_PER_RESOURCE), ...inside.slice(0, MAX_ALLOCATIONS_PER_RESOURCE)]) {
-      if (row.blockEnd <= window.start) continue;
-      allocations.push({ ...row, units: effectiveAllocationUnits(row, capacityOf.get(r._id) ?? row.units) });
-    }
+    allocations.push(...read.allocations);
   }
 
-  // --- compromissos internos: só de membros ligados a recurso-pessoa (índice por membro e tempo).
-  //   Curtos (≤ 1 dia) começam até 1 dia antes da janela; longos (> 1 dia, `longStart`) pela faixa própria.
-  //   Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
-  const internalEvents: InternalEventLite[] = [];
-  const unverified = new Set<Id<"schedResources">>();
-  const memberResources = new Map<string, Id<"schedResources">[]>();
-  for (const r of resources) {
-    if (r.teamMemberId === undefined) continue;
-    const list = memberResources.get(r.teamMemberId);
-    if (list) list.push(r._id);
-    else memberResources.set(r.teamMemberId, [r._id]);
-  }
-  if (args.includeInternalEvents !== false && memberResources.size > 0) {
-    const seen = new Set<string>();
-    const take = (ev: Doc<"calendarEvents">) => {
-      if (seen.has(ev._id)) return;
-      seen.add(ev._id);
-      if (ev.status !== "scheduled" || ev.allDay || ev.assignedTo === undefined) return;
-      if (!memberResources.has(ev.assignedTo) || ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
-      internalEvents.push({ teamMemberId: ev.assignedTo, start: ev.startTime, end: ev.endTime });
-    };
-    for (const [memberId, ids] of memberResources) {
-      const rows = await ctx.db
-        .query("calendarEvents")
-        .withIndex("by_organization_and_assigned_and_start", (q) =>
-          q
-            .eq("organizationId", args.organizationId)
-            .eq("assignedTo", memberId as Id<"teamMembers">)
-            .gte("startTime", window.start - SHORT_EVENT_MS)
-            .lt("startTime", window.end)
-        )
-        .take(MAX_INTERNAL_EVENTS_PER_MEMBER + 1);
-      if (rows.length > MAX_INTERNAL_EVENTS_PER_MEMBER) {
-        truncated = true;
-        for (const id of ids) unverified.add(id);
-      }
-      rows.slice(0, MAX_INTERNAL_EVENTS_PER_MEMBER).forEach(take);
-    }
-    const longRows = await ctx.db
-      .query("calendarEvents")
-      .withIndex("by_organization_and_long_start", (q) =>
-        q.eq("organizationId", args.organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS).lt("longStart", window.end)
-      )
-      .take(MAX_LONG_EVENTS + 1);
-    if (longRows.length > MAX_LONG_EVENTS) {
-      truncated = true;
-      for (const ids of memberResources.values()) for (const id of ids) unverified.add(id);
-    }
-    longRows.slice(0, MAX_LONG_EVENTS).forEach(take);
+  // --- compromissos internos (leitor compartilhado)
+  let internalEvents: InternalEventLite[] = [];
+  let unverifiedResourceIds: Id<"schedResources">[] = [];
+  if (args.includeInternalEvents !== false) {
+    const ev = await readInternalEventsOfMembers(ctx, args.organizationId, window, memberResourcesOf(resources));
+    internalEvents = ev.events;
+    unverifiedResourceIds = ev.unverified;
+    if (ev.truncated) truncated = true;
   }
 
   return {
     org, tz, settings, window, resources, exceptions, allocations, internalEvents, truncated,
-    coverage, unverifiedResourceIds: [...unverified], exceptionsCompleteBefore,
+    coverage, unverifiedResourceIds, exceptionsCompleteBefore: exRead.completeBefore,
   };
 }
 

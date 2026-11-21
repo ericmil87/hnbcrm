@@ -265,6 +265,27 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     { type: "lead_assigned", leadTitle: "Ana Souza", actorName: "Bruno" },
     { title: "Bruno atribuiu o lead Ana Souza a você" },
   ],
+  [
+    { type: "appointment_conflict", kind: "resource_closed", count: 3, resourceName: "Sala 1", dateLabel: "15/06" },
+    {
+      title: "3 agendamentos precisam de novo lugar",
+      body: "Sala 1 fechou em 15/06. Nada foi cancelado nem avisado ao cliente: escolha outro recurso ou horário na fila de pendências da Agenda.",
+    },
+  ],
+  [
+    { type: "appointment_conflict", kind: "resource_closed", count: 4, resourceName: "Sala 1", dateLabel: "15/06", problem: "failed" },
+    {
+      title: "O fechamento não terminou por inteiro",
+      body: "Sala 1 fechou em 15/06, mas o tratamento dos agendamentos parou antes do fim (4 já foram para a fila de pendências). Confira a Agenda e, se preciso, repita o fechamento.",
+    },
+  ],
+  [
+    { type: "appointment_conflict", kind: "resource_removed", count: 1 },
+    {
+      title: "1 agendamento precisa de novo lugar",
+      body: "Um recurso saiu da agenda. Nada foi cancelado nem avisado ao cliente: escolha outro recurso ou horário na fila de pendências da Agenda.",
+    },
+  ],
 ];
 
 describe("notificationCopy — golden por tipo (PT-BR)", () => {
