@@ -6,8 +6,7 @@
  * "Marca sozinha" só vale com o ACEITE auditado no servidor (`updateSettings({ aiAutoAck: true })`):
  * a tela avisa, pede o aceite e não trava depois (filosofia do produto: avisar, não bloquear).
  */
-import type { Id } from "../../convex/_generated/dataModel";
-import { DEFAULT_MIN_OFFER, DEFAULT_SMART_WEIGHTS, type SchedSmartWeights } from "../../convex/lib/schedSettingsDefaults";
+import { DEFAULT_SMART_WEIGHTS, type SchedSmartWeights } from "../../convex/lib/schedSettingsDefaults";
 import type { SettingsView } from "../../convex/lib/schedViews";
 import { addLocalDays, type LocalDate } from "./agendaZone";
 import { parseIntField, type FormErrors } from "./agendaConfigForms";
@@ -191,7 +190,3 @@ export function previewDraftArgs(f: AutomationForm): PreviewArgs {
     ...(errors.minOffer ? {} : { minOffer: Number(f.minOffer) }),
   };
 }
-
-export const DEFAULT_MIN_OFFER_FORM = String(DEFAULT_MIN_OFFER);
-
-export type AutomationServiceId = Id<"schedServices">;
