@@ -82,7 +82,10 @@ export type CopyInput =
   | { type: "plan_cancel_scheduled"; endsAt: string }
   | { type: "plan_canceled" }
   | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean }
-  | { type: "appointment_no_outcome"; count: number; capped?: boolean };
+  | { type: "appointment_no_outcome"; count: number; capped?: boolean }
+  // Agenda v2 (C1): `whenLabel` já vem no formato "qui, 27/11 às 10:00" (fuso da org).
+  | { type: "appointment_created"; contactName?: string; whenLabel: string; inConflict?: boolean }
+  | { type: "appointment_suggestion"; kind: "confirmou" | "remarcou" | "cancelou"; contactName?: string; whenLabel?: string };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -513,6 +516,28 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
           : `${n} atendimentos de ontem ainda sem desfecho`;
       return { title, body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." };
     }
+    case "appointment_created": {
+      const when = entity(input.whenLabel, "o horário");
+      return {
+        title: `Marquei ${contactLabel(input.contactName)} para ${when} a partir da sua confirmação`,
+        body: input.inConflict
+          ? "O horário já estava ocupado: foi para a fila de conflitos da Agenda. Se não era isso, abra a conversa e toque em Desfazer."
+          : "Se não era isso, abra a conversa e toque em Desfazer.",
+      };
+    }
+    case "appointment_suggestion": {
+      const who = contactLabel(input.contactName);
+      if (input.kind === "remarcou") {
+        return { title: `Parece que você remarcou ${who}`, body: `${input.whenLabel ? `Novo horário: ${entity(input.whenLabel, "")}. ` : ""}Toque para aplicar na Agenda.` };
+      }
+      if (input.kind === "cancelou") {
+        return { title: `Parece que você cancelou ${who}`, body: "Toque para cancelar também na Agenda." };
+      }
+      return {
+        title: "Parece uma confirmação de horário",
+        body: input.whenLabel ? `Marcar ${who} ${entity(input.whenLabel, "")}? Toque para marcar.` : `Marcar ${who}? Toque para escolher dia e hora.`,
+      };
+    }
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -574,4 +599,6 @@ export const COPY_TYPES = [
   "plan_refunded",
   "appointment_conflict",
   "appointment_no_outcome",
+  "appointment_created",
+  "appointment_suggestion",
 ] as const satisfies readonly CopyInput["type"][];

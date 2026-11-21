@@ -51,6 +51,8 @@ export const NOTIFICATION_TYPE_GROUP: Record<string, NotificationGroup> = {
   plan_refunded: "sistema",
   appointment_conflict: "atendimento", // Agenda v2 (A3c)
   appointment_no_outcome: "atendimento",
+  appointment_created: "atendimento", // Agenda v2 (C1)
+  appointment_suggestion: "atendimento",
 };
 
 /** Grupo do tipo; tipo desconhecido (versão futura) cai em "sistema". */

@@ -240,6 +240,33 @@ const golden: Array<[CopyInput, { title: string; body?: string }]> = [
     { title: "Mais de 200 atendimentos de ontem ainda sem desfecho", body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." },
   ],
   [
+    { type: "appointment_created", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00" },
+    { title: "Marquei Ana Souza para qui, 27/11 às 10:00 a partir da sua confirmação", body: "Se não era isso, abra a conversa e toque em Desfazer." },
+  ],
+  [
+    { type: "appointment_created", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00", inConflict: true },
+    {
+      title: "Marquei Ana Souza para qui, 27/11 às 10:00 a partir da sua confirmação",
+      body: "O horário já estava ocupado: foi para a fila de conflitos da Agenda. Se não era isso, abra a conversa e toque em Desfazer.",
+    },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "confirmou", contactName: "Ana Souza", whenLabel: "qui, 27/11 às 10:00" },
+    { title: "Parece uma confirmação de horário", body: "Marcar Ana Souza qui, 27/11 às 10:00? Toque para marcar." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "confirmou", contactName: "+55 11 91234-5678" },
+    { title: "Parece uma confirmação de horário", body: "Marcar Contato? Toque para escolher dia e hora." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "remarcou", contactName: "Ana Souza", whenLabel: "sex, 28/11 às 14:30" },
+    { title: "Parece que você remarcou Ana Souza", body: "Novo horário: sex, 28/11 às 14:30. Toque para aplicar na Agenda." },
+  ],
+  [
+    { type: "appointment_suggestion", kind: "cancelou", contactName: "Ana Souza" },
+    { title: "Parece que você cancelou Ana Souza", body: "Toque para cancelar também na Agenda." },
+  ],
+  [
     { type: "plan_refunded", amountBrl: "R$ 497,00" },
     {
       title: "Reembolso solicitado",

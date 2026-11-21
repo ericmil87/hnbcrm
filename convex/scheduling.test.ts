@@ -569,7 +569,7 @@ describe("detalhe, vínculos e pendências", () => {
         organizationId: s.orgId, conversationId: s.conversationId, messageId: (await ctx.db.insert("messages", {
           organizationId: s.orgId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound", content: "x", contentType: "text", senderType: "human", isInternal: false, createdAt: 1,
         })),
-        act: "confirmou", parsed: { localDate: MON, timeMin: 600 }, checks: { parser: true }, decision: "proposed", status: "open", createdAt: 10,
+        act: "confirmou", parsed: { localDate: MON, timeMin: 600 }, checks: { parser: true }, decision: "proposed", status: "open", createdAt: NOW - HOUR,
       });
     });
     const q = (p: Person) => as(p).query(api.scheduling.listPending, { organizationId: s.orgId, now: NOW });

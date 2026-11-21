@@ -2544,7 +2544,10 @@ const applicationTables = {
       // Agenda v2 (A3c) — agendamento ficou sem recurso (fechamento/remoção): fila de conflitos. `data.closureKey`.
       v.literal("appointment_conflict"),
       // Agenda v2 (A4) — resumo diário: atendimentos de ontem ainda sem desfecho (equipe com `agenda:edit`+).
-      v.literal("appointment_no_outcome")
+      v.literal("appointment_no_outcome"),
+      // Agenda v2 (C1) — criação automática pela mensagem do humano / proposta de 1 toque.
+      v.literal("appointment_created"),
+      v.literal("appointment_suggestion")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2785,6 +2788,8 @@ const applicationTables = {
     agendaConflict: v.optional(v.boolean()),
     // Agenda v2 (A4) — resumo diário "sem desfecho" (sino; sem e-mail).
     agendaActivity: v.optional(v.boolean()),
+    // Agenda v2 (C1) — proposta de 1 toque da confirmação do humano (sino + push + Telegram).
+    agendaApproval: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
@@ -3256,7 +3261,9 @@ const applicationTables = {
       // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
       v.literal("onboarding"),
       // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
-      v.literal("tts")
+      v.literal("tts"),
+      // Agenda v2 (C1): segunda leitura (classificador) da confirmação que o humano mandou.
+      v.literal("sched_interpret")
     ),
     status: v.union(
       v.literal("running"),
@@ -5027,17 +5034,29 @@ const applicationTables = {
     messageId: v.id("messages"),
     act: v.string(),                              // confirmou|propos|remarcou|cancelou|informativo|nenhum
     parsed: v.object({ localDate: v.optional(v.string()), timeMin: v.optional(v.number()), serviceId: v.optional(v.id("schedServices")) }),
-    checks: v.object({ parser: v.boolean(), llm: v.optional(v.boolean()), agree: v.optional(v.boolean()) }),
+    checks: v.object({
+      parser: v.boolean(), llm: v.optional(v.boolean()), agree: v.optional(v.boolean()),
+      // C1: demais condições do §8.1 (proposta coincidente; serviço inequívoco).
+      proposal: v.optional(v.boolean()), service: v.optional(v.boolean()),
+    }),
+    // C1: `pending` = aguardando a segunda leitura (LLM); nunca aparece na fila da equipe.
     decision: v.union(v.literal("created"), v.literal("approved_existing"), v.literal("confirmed_existing"),
-                      v.literal("proposed"), v.literal("proposal_saved"), v.literal("ignored")),
-    status: v.union(v.literal("open"), v.literal("accepted"), v.literal("dismissed"), v.literal("expired"), v.literal("done")),
+                      v.literal("proposed"), v.literal("proposal_saved"), v.literal("ignored"), v.literal("pending")),
+    status: v.union(v.literal("open"), v.literal("accepted"), v.literal("dismissed"), v.literal("expired"), v.literal("done"), v.literal("pending")),
+    // Criado: o agendamento novo. Proposta de remarcar/cancelar: o agendamento-alvo (quando único).
     appointmentId: v.optional(v.id("schedAppointments")),
-    outcome: v.optional(v.union(v.literal("kept"), v.literal("edited"), v.literal("undone"))),
+    outcome: v.optional(v.union(v.literal("kept"), v.literal("edited"), v.literal("undone"), v.literal("accepted"), v.literal("dismissed"))),
+    // C1: por que NÃO criou sozinho (código curto, sem texto de mensagem).
+    reason: v.optional(v.string()),
+    answeredBy: v.optional(v.id("teamMembers")),
+    answeredAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_message", ["messageId"])
     .index("by_conversation_and_status", ["conversationId", "status"])
-    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+    .index("by_organization_and_created", ["organizationId", "createdAt"])
+    // C1: a lista geral de sugestões abertas não pode se perder entre as linhas `ignored`/`done` (a org com muita conversa).
+    .index("by_organization_and_status_and_created", ["organizationId", "status", "createdAt"]),
 };
 
 export default defineSchema({

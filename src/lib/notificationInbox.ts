@@ -134,6 +134,9 @@ export function notificationHref(n: InboxNotification): string | null {
       return notificationTargetPath(n.type, {});
     case "appointment_no_outcome":
       return notificationTargetPath(n.type, {});
+    // Agenda v2 (C1): "Marquei … a partir da sua confirmação" (sem push) abre a conversa de origem.
+    case "appointment_created":
+      return notificationTargetPath(n.type, { conversationId: n.conversationId });
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;

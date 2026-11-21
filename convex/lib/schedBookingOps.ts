@@ -69,7 +69,7 @@ import {
   type ServiceRequirementLite,
   unitsFor,
 } from "./schedCandidates";
-import { MAX_RESOURCES_PER_ORG, UNDO_BOOKING_WINDOW_MIN } from "./schedConstants";
+import { MAX_RESOURCES_PER_ORG, UNDO_BOOKING_WINDOW_MIN, UNDO_HUMAN_CONFIRM_WINDOW_MIN } from "./schedConstants";
 import { MAX_PARTY_COMPANIONS, MAX_PARTY_SIZE, sharedResourceIds } from "./schedParty";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
 import {
@@ -1968,6 +1968,70 @@ export async function undoBookingCore(
     restoredIds.push(old._id);
   }
   return { undoneIds: docs.map((a) => a._id), restoredIds };
+}
+
+// ---------------------------------------------------------------------------
+// Desfazer a criação automática pela mensagem do humano (C1)
+// ---------------------------------------------------------------------------
+
+const UNDO_HUMAN_CONFIRM_REASON = "Desfeito: não era uma confirmação";
+
+/**
+ * Desfaz o agendamento que o sistema criou sozinho a partir da confirmação do humano pelo WhatsApp. Via própria (não
+ * é `undoBookingCore`: aqui a origem é `human_message` e a janela é de `UNDO_HUMAN_CONFIRM_WINDOW_MIN`, 24 h): quem
+ * tem `agenda: edit`; só agendamento de origem `human_message` ainda `scheduled` e sem nenhuma mudança depois de
+ * criado; cancela com classe `system` (nunca é cancelamento tardio), libera a vaga, fecha a linha de conflito (se a
+ * criação foi para a fila), não manda nada ao cliente e emite `appointment.undone` (não `appointment.cancelled`: quem
+ * integra já recebeu `created`). A auditoria leva `metadata.outcome:"undone"` e `undo:true` (o "Desfazer" genérico
+ * não reinstala o que foi desfeito). Quem chama marca a interpretação como `undone`.
+ */
+export async function undoHumanConfirmBookingCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; actor: SchedActor; now?: number }
+): Promise<{ appointmentId: Id<"schedAppointments">; sourceMessageId: Id<"messages"> }> {
+  const now = args.now ?? Date.now();
+  const { actor } = args;
+  if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
+  const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
+  if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  const org = assertOrgModule(await ctx.db.get(args.organizationId));
+  const tz = orgTimezone(org);
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId) fail("Agendamento não encontrado");
+  const appt = a!;
+  if (appt.origin !== "human_message" || !appt.sourceMessageId) fail("Só o horário marcado a partir da sua confirmação se desfaz aqui.");
+  if (now - appt.createdAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A marcação foi feita há mais de 24 horas: use Cancelar.");
+  const untouched = appt.statusChangedAt <= appt.createdAt && appt.approvedAt === undefined && appt.clientConfirmedAt === undefined;
+  if (appt.status !== "scheduled" || !untouched) fail("O horário já mudou de situação: use Cancelar.");
+
+  const snapshot = await snapshotAllocations(ctx, appt._id);
+  await ctx.db.patch(appt._id, {
+    status: "cancelled",
+    cancelledAt: now,
+    cancelledByClass: "system",
+    cancelReason: UNDO_HUMAN_CONFIRM_REASON,
+    statusChangedAt: now,
+    updatedAt: now,
+    outcomePendingSince: undefined,
+  });
+  await releaseAllocations(ctx, appt._id);
+  await closeConflictsIfResolved(ctx, appt._id, now, { actor, resolution: "undone" });
+  const after = (await ctx.db.get(appt._id))!;
+  const label = appointmentLabel(after, tz);
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor,
+    severity: "medium",
+    description: `Desfez a marcação feita pela confirmação do WhatsApp ${label}`,
+    before: { ...appointmentSnapshot(appt), allocations: snapshot },
+    after: { status: "cancelled" },
+    metadata: { statusChange: true, outcome: "undone", undo: true, byClass: "system", lateCancel: false, messageId: appt.sourceMessageId },
+    now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Marcação desfeita: ${label}`, actor, now });
+  await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz });
+  return { appointmentId: appt._id, sourceMessageId: appt.sourceMessageId! };
 }
 
 // ---------------------------------------------------------------------------
