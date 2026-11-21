@@ -210,6 +210,10 @@ export async function moveFunnelStage(
     });
     return "moved";
   } catch {
+    // PREMISSA (travada por teste em schedBooking.test.ts, "etapa inválida não deixa escrita parcial"):
+    // `moveLeadToStageCore` valida etapa/funil/org ANTES de qualquer escrita, então uma exceção aqui
+    // não deixa patch, auditoria, atividade nem webhook pela metade. Se o núcleo passar a escrever
+    // antes de validar, o teste falha e este catch precisa virar savepoint ou pré-validação.
     return "failed";
   }
 }

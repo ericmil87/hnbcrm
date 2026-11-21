@@ -120,6 +120,7 @@ const GUEST_NAME_MAX = 80;
 const REASON_MAX = 200;
 const UNDO_AUDIT_SCAN = 20;
 const UNAVAILABLE = "Esse horário não está disponível.";
+const IDEMPOTENCY_REUSED = "Esta chave de idempotência já foi usada com outros dados.";
 
 /** Códigos que dependem do RECURSO escolhido: trocar de recurso pode resolver. */
 const RESOURCE_CODES: readonly RuleCode[] = [
@@ -229,25 +230,19 @@ function blockOrAlways(code: RuleCode, origin: SchedOrigin, message: string, det
   return violationFor(code, origin, message, detail) ?? { code, severity: "block", message: UNAVAILABLE };
 }
 
-/** O ator manda: IA nunca vira `staff` (não força) e o link público nunca vira `staff`. */
-function effectiveOrigin(actor: SchedActor, origin: SchedOrigin): SchedOrigin {
-  const cls = originClass(origin);
-  if (actor.type === "ai" && cls === "staff") return "ai";
-  if (actor.type === "system" && actor.via === "public_link" && cls === "staff") return "public";
-  return origin;
-}
-
-/** Origem combina com o ator (defesa dentro da porta; as mutations também fixam). */
+/** Lista FECHADA de origens por ator: o link público só nasce `public`, a IA só `ai`, etc. */
 function assertActorOrigin(actor: SchedActor, origin: SchedOrigin): void {
-  const allowed: Record<SchedActor["type"], SchedOrigin[]> = {
-    human: ["staff", "api", "import"],
-    ai: ["ai", "waitlist"],
-    system: ["human_message", "public", "waitlist", "import"],
-  };
-  if (!allowed[actor.type].includes(origin)) fail("Origem do agendamento incompatível com quem está marcando.");
-  if (actor.type === "system" && actor.via === "human_message" && origin !== "human_message") {
-    fail("Origem do agendamento incompatível com quem está marcando.");
-  }
+  const allowed: SchedOrigin[] =
+    actor.type === "human"
+      ? ["staff", "api", "import"]
+      : actor.type === "ai"
+        ? ["ai"]
+        : actor.via === "public_link"
+          ? ["public"]
+          : actor.via === "human_message"
+            ? ["human_message"]
+            : ["waitlist", "import"];
+  if (!allowed.includes(origin)) fail("Origem do agendamento incompatível com quem está marcando.");
 }
 
 function assertOrgModule(org: Doc<"organizations"> | null): Doc<"organizations"> {
@@ -268,10 +263,32 @@ async function loadSettings(ctx: MutationCtx, organizationId: Id<"organizations"
   return resolveSchedSettings(doc);
 }
 
-async function loadAppointment(ctx: MutationCtx, appointment: Doc<"schedAppointments">): Promise<Doc<"schedAppointments">> {
+/**
+ * Recarrega o agendamento (estado fresco). A IA só age em agendamento da PRÓPRIA conversa: contato (e
+ * lead, quando há) do agendamento têm de ser os da conversa do ator; senão, "não encontrado".
+ */
+async function loadAppointment(
+  ctx: MutationCtx,
+  appointment: Doc<"schedAppointments">,
+  actor?: SchedActor
+): Promise<Doc<"schedAppointments">> {
   const fresh = await ctx.db.get(appointment._id);
   if (!fresh || fresh.organizationId !== appointment.organizationId) fail("Agendamento não encontrado");
+  if (actor?.type === "ai" && !(await belongsToConversation(ctx, fresh, actor.conversationId))) fail("Agendamento não encontrado");
   return fresh;
+}
+
+async function belongsToConversation(
+  ctx: MutationCtx,
+  a: Doc<"schedAppointments">,
+  conversationId: Id<"conversations">
+): Promise<boolean> {
+  const conv = await ctx.db.get(conversationId);
+  if (!conv || conv.organizationId !== a.organizationId || !conv.leadId) return false;
+  const lead = await ctx.db.get(conv.leadId);
+  if (!lead || lead.organizationId !== a.organizationId || !lead.contactId) return false;
+  if (a.contactId !== lead.contactId) return false;
+  return a.leadId === undefined || a.leadId === lead._id;
 }
 
 // ---------------------------------------------------------------------------
@@ -315,6 +332,17 @@ async function deleteAllocationRows(ctx: MutationCtx, appointmentId: Id<"schedAp
     .withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId))
     .take(50);
   for (const row of rows) await ctx.db.delete(row._id);
+}
+
+export type AllocationSnapshot = { resourceId: string; role: string; units: number; exclusive: boolean };
+
+/** Retrato das linhas de alocação (ids, papel, unidades, exclusividade): o desfazer recria EXATAMENTE isto. */
+async function snapshotAllocations(ctx: MutationCtx, appointmentId: Id<"schedAppointments">): Promise<AllocationSnapshot[]> {
+  const rows = await ctx.db
+    .query("schedAllocations")
+    .withIndex("by_appointment", (q) => q.eq("appointmentId", appointmentId))
+    .take(50);
+  return rows.map((r) => ({ resourceId: r.resourceId, role: r.role, units: r.units, exclusive: r.exclusive === true }));
 }
 
 /** Libera a vaga do agendamento (cancelar, falta, remarcar). */
@@ -584,7 +612,7 @@ type WindowReads = {
   contactOverlaps: Interval[];
   contactActiveSameService: number;
   aiBookingsToday: number;
-  internalEvents: () => Promise<InternalEvent[]>;
+  internalEvents: () => Promise<InternalEventRead>;
 };
 
 async function readExceptions(ctx: MutationCtx, organizationId: Id<"organizations">, localDate: LocalDate): Promise<ExceptionLite[]> {
@@ -597,18 +625,28 @@ async function readExceptions(ctx: MutationCtx, organizationId: Id<"organization
   return rows;
 }
 
-async function readInternalEvents(ctx: MutationCtx, organizationId: Id<"organizations">, from: number, to: number): Promise<InternalEvent[]> {
+type InternalEventRead = { events: InternalEvent[]; truncated: boolean };
+
+/**
+ * Compromissos internos na janela. Do mais recente para o mais antigo: se estourar o teto, o que
+ * fica de fora é o que começa MAIS CEDO (o mais longe do bloco), e `truncated` vira aviso ("não foi
+ * possível verificar"), nunca "livre" em silêncio.
+ */
+async function readInternalEvents(ctx: MutationCtx, organizationId: Id<"organizations">, from: number, to: number): Promise<InternalEventRead> {
   const rows = await ctx.db
     .query("calendarEvents")
     .withIndex("by_organization_and_start", (q) => q.eq("organizationId", organizationId).gte("startTime", from).lt("startTime", to))
-    .take(INTERNAL_EVENT_CAP);
-  const out: InternalEvent[] = [];
-  for (const e of rows) {
+    .order("desc")
+    .take(INTERNAL_EVENT_CAP + 1);
+  const events: InternalEvent[] = [];
+  for (const e of rows.slice(0, INTERNAL_EVENT_CAP)) {
     if (e.status !== "scheduled" || e.allDay || !e.assignedTo) continue;
-    out.push({ teamMemberId: e.assignedTo, start: e.startTime, end: e.endTime });
+    events.push({ teamMemberId: e.assignedTo, start: e.startTime, end: e.endTime });
   }
-  return out;
+  return { events, truncated: rows.length > INTERNAL_EVENT_CAP };
 }
+
+const NO_EVENTS: InternalEventRead = { events: [], truncated: false };
 
 function lazy<T>(fn: () => Promise<T>): () => Promise<T> {
   let p: Promise<T> | undefined;
@@ -708,17 +746,17 @@ async function evaluatePlan(
     allocations.push(...rows);
   }
   const needsEvents = resources.some((r) => r.teamMemberId !== undefined);
-  const internalEvents = needsEvents ? await p.reads.internalEvents() : [];
+  const eventRead = needsEvents ? await p.reads.internalEvents() : NO_EVENTS;
   const days = computeDayAvailability({
     date: localDateOf(timing.startTime, bc.tz),
     tz: bc.tz,
     resources,
     exceptions: p.reads.exceptions,
     allocations,
-    internalEvents,
+    internalEvents: eventRead.events,
     ignoreAppointmentId: p.ignoreAppointmentId,
   });
-  return evaluateRules({
+  const violations = evaluateRules({
     origin: p.origin,
     action: p.action,
     now: p.now,
@@ -740,6 +778,11 @@ async function evaluatePlan(
     aiBookingsTodayForContact: p.reads.aiBookingsToday,
     existingStartTime: p.existingStartTime,
   });
+  if (eventRead.truncated && !violations.some((v) => v.code === "INTERNAL_EVENT_OVERLAP")) {
+    const unverifiable = violationFor("INTERNAL_EVENT_OVERLAP", p.origin, "Não foi possível verificar os compromissos internos nesse horário (agenda interna muito cheia).");
+    if (unverifiable) violations.push(unverifiable);
+  }
+  return violations;
 }
 
 // ---------------------------------------------------------------------------
@@ -768,7 +811,7 @@ async function loadDayView(
     allocations.push(...(await readCapacityRows(ctx, r, bounds.start, bounds.end, p.ignoreAppointmentId)));
   }
   const events = eligible.some((r) => r.teamMemberId !== undefined)
-    ? await readInternalEvents(ctx, bc.org._id, bounds.start - INTERNAL_EVENT_LOOKBACK_MS, bounds.end)
+    ? (await readInternalEvents(ctx, bc.org._id, bounds.start - INTERNAL_EVENT_LOOKBACK_MS, bounds.end)).events
     : [];
   const day = computeDayAvailability({
     date,
@@ -865,7 +908,7 @@ function validateBookInputs(args: BookArgs, now: number): void {
   if (args.idempotencyKey !== undefined && (args.idempotencyKey.length < 1 || args.idempotencyKey.length > 160)) {
     fail("Chave de idempotência inválida.");
   }
-  if (args.conflictToQueue && args.origin !== "human_message") {
+  if (args.conflictToQueue && !(args.actor.type === "system" && args.actor.via === "human_message")) {
     fail("A fila de conflitos só vale para a criação a partir da mensagem do humano.");
   }
   if (args.rescheduleOfId && args.initialStatus === "scheduled") {
@@ -873,14 +916,39 @@ function validateBookInputs(args: BookArgs, now: number): void {
   }
 }
 
-/** Estado inicial: a IA e o link nunca se aprovam sozinhos (só `auto` com aceite). */
-function decideInitialStatus(args: BookArgs, origin: SchedOrigin, settings: ResolvedSchedSettings): "pending_approval" | "scheduled" {
+/** A IA já teve um atendimento concluído com este contato? (índice por contato, com teto) */
+async function hasCompletedVisit(ctx: MutationCtx, bc: BookingContext): Promise<boolean> {
+  const contactId = bc.contactId;
+  if (!contactId) return false;
+  const rows = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_contact_and_start", (q) => q.eq("contactId", contactId))
+    .order("desc")
+    .take(50);
+  return rows.some((r) => r.organizationId === bc.org._id && r.status === "completed");
+}
+
+/**
+ * Estado inicial. IA e link nunca se aprovam sozinhos: link = sempre `pending_approval`; IA só em
+ * `auto` com aceite, e mesmo assim primeira visita (`firstVisitNeedsApproval`) e qualquer aviso
+ * continuam `pending_approval`, qualquer que seja o `initialStatus` pedido.
+ */
+async function decideInitialStatus(
+  ctx: MutationCtx,
+  args: BookArgs,
+  origin: SchedOrigin,
+  bc: BookingContext,
+  violations: Violation[]
+): Promise<"pending_approval" | "scheduled"> {
   if (args.rescheduleOfId) return "pending_approval";
   const cls = originClass(origin);
   if (cls === "staff") return args.initialStatus ?? "scheduled";
   if (cls === "public") return "pending_approval";
-  const autoAllowed = settings.ai.book === "auto" && settings.ai.autoAck !== undefined;
-  return args.initialStatus === "scheduled" && autoAllowed ? "scheduled" : "pending_approval";
+  const ai = bc.settings.ai;
+  if (args.initialStatus !== "scheduled" || ai.book !== "auto" || ai.autoAck === undefined) return "pending_approval";
+  if (violations.some((v) => v.severity === "warn")) return "pending_approval";
+  if (ai.firstVisitNeedsApproval && !(await hasCompletedVisit(ctx, bc))) return "pending_approval";
+  return "scheduled";
 }
 
 type Placed =
@@ -1103,6 +1171,21 @@ async function insertAndAllocate(
   return { ok: true, appointmentId, skipped: alloc.skipped };
 }
 
+/** O agendamento que a proposta substitui: mesma org, ainda remarcável, MESMO contato (e lead) e MESMO serviço. */
+async function isValidRescheduleTarget(
+  ctx: MutationCtx,
+  oldId: Id<"schedAppointments">,
+  serviceId: Id<"schedServices">,
+  bc: BookingContext
+): Promise<boolean> {
+  const old = await ctx.db.get(oldId);
+  if (!old || old.organizationId !== bc.org._id) return false;
+  if (old.status !== "pending_approval" && old.status !== "scheduled" && old.status !== "confirmed") return false;
+  if (old.serviceId !== serviceId || old.rescheduleOfId !== undefined) return false;
+  if (old.contactId === undefined || old.contactId !== bc.contactId) return false;
+  return bc.leadId === undefined || old.leadId === undefined || old.leadId === bc.leadId;
+}
+
 /** Passos 1–4 do §2.7: ator/origem, org e módulo, idempotência, contexto, duplicata, duração e plano pedido. */
 async function prepareAttempt(
   ctx: MutationCtx,
@@ -1111,7 +1194,7 @@ async function prepareAttempt(
   now: number
 ): Promise<{ done: Placed } | { att: Attempt }> {
   assertActorOrigin(args.actor, args.origin);
-  const origin = effectiveOrigin(args.actor, args.origin);
+  const origin = args.origin;
   validateBookInputs(args, now);
   const preview = args.mode === "preview";
   const org = assertOrgModule(await ctx.db.get(args.organizationId));
@@ -1122,7 +1205,13 @@ async function prepareAttempt(
       .withIndex("by_organization_and_idempotency", (q) => q.eq("organizationId", args.organizationId).eq("idempotencyKey", key))
       .first();
     if (hit) {
-      if (hit.serviceId !== args.serviceId || hit.startTime !== args.startTime) fail("Esta chave de idempotência já foi usada com outros dados.");
+      const sameData =
+        hit.serviceId === args.serviceId &&
+        hit.startTime === args.startTime &&
+        (args.contactId === undefined || hit.contactId === args.contactId) &&
+        (args.leadId === undefined || hit.leadId === args.leadId) &&
+        (args.conversationId === undefined || hit.conversationId === args.conversationId);
+      if (!sameData) fail(IDEMPOTENCY_REUSED);
       return { done: { kind: "existing", appointment: hit, duplicate: false } };
     }
   }
@@ -1130,6 +1219,10 @@ async function prepareAttempt(
   if (!loaded.ok) return { done: { kind: "failed", failure: { ok: false, violations: problemViolations(loaded.problems, origin), alternatives: [] } } };
   const bc = loaded.bc;
   if (originClass(origin) === "ai" && bc.settings.ai.book === "off") fail("A marcação pela IA está desligada nesta organização.");
+  if (args.rescheduleOfId && !(await isValidRescheduleTarget(ctx, args.rescheduleOfId, args.serviceId, bc))) {
+    // Mesma resposta de "não encontrado": o bloqueio é duro e não revela o agendamento alheio.
+    return { done: { kind: "failed", failure: { ok: false, violations: problemViolations(["contact"], origin), alternatives: [] } } };
+  }
   if (!opts.skipDedupe) {
     const dup = await findDuplicate(ctx, bc, args.startTime);
     if (dup) {
@@ -1168,7 +1261,7 @@ async function placeAppointment(ctx: MutationCtx, args: BookArgs, opts: PlaceOpt
   const warnings = sel.violations.filter((v) => sel.resolution.forced.includes(v.code));
   if (args.mode === "preview") return { kind: "preview", plan: planPreview(att.items, att.origin), warnings };
 
-  const status = opts.forceStatus ?? decideInitialStatus(args, att.origin, att.bc.settings);
+  const status = opts.forceStatus ?? (await decideInitialStatus(ctx, args, att.origin, att.bc, sel.violations));
   const placed = await insertAndAllocate(att, sel, status);
   if (!placed.ok) {
     return failWith(att, [blockOrAlways("CAPACITY_EXCEEDED", att.origin, "A capacidade do recurso já foi atingida nesse horário.", { resourceId: placed.resourceId })]);
@@ -1357,7 +1450,7 @@ export async function bookPartyCore(
 function originForActor(actor: SchedActor): SchedOrigin {
   if (actor.type === "ai") return "ai";
   if (actor.type === "human") return actor.via === "rest" || actor.via === "mcp" ? "api" : "staff";
-  return actor.via === "human_message" ? "human_message" : actor.via === "public_link" ? "public" : "staff";
+  return actor.via === "human_message" ? "human_message" : actor.via === "public_link" ? "public" : "import";
 }
 
 function statusError(reason: "not_allowed" | "actor_not_allowed" | "no_show_before_start"): never {
@@ -1387,7 +1480,7 @@ export async function rescheduleAppointmentCore(
   }
 ): Promise<BookResult> {
   const now = args.now ?? Date.now();
-  const old = await loadAppointment(ctx, args.appointment);
+  const old = await loadAppointment(ctx, args.appointment, args.actor);
   if (args.idempotencyKey) {
     // Repetir o pedido (mesma chave) devolve o novo agendamento, mesmo com o antigo já `rescheduled`.
     const key = args.idempotencyKey;
@@ -1395,8 +1488,12 @@ export async function rescheduleAppointmentCore(
       .query("schedAppointments")
       .withIndex("by_organization_and_idempotency", (q) => q.eq("organizationId", old.organizationId).eq("idempotencyKey", key))
       .first();
-    if (hit) return resultOfPlaced({ kind: "existing", appointment: hit, duplicate: false });
+    if (hit) {
+      if (hit.rescheduledFromId !== old._id) fail(IDEMPOTENCY_REUSED);
+      return resultOfPlaced({ kind: "existing", appointment: hit, duplicate: false });
+    }
   }
+  if (old.rescheduleOfId) fail("Aprove ou recuse a proposta antes de mudar o horário.");
   const check = checkTransition(old.status, "rescheduled", actorClassOf(args.actor), now, old.startTime);
   if (!check.ok) return statusError(check.reason);
   if (args.startTime === old.startTime) fail("O novo horário é igual ao atual.");
@@ -1444,6 +1541,17 @@ export async function rescheduleAppointmentCore(
   });
   await releaseAllocations(ctx, old._id);
   await resolveOpenConflicts(ctx, old._id, now);
+  await recordAppointmentAudit(ctx, {
+    appointment: { ...old, status: "rescheduled" },
+    action: "update",
+    actor: args.actor,
+    severity: "medium",
+    description: `Remarcou o horário ${appointmentLabel(old, placed.bc.tz)}`,
+    before: { status: old.status },
+    after: { status: "rescheduled" },
+    metadata: { statusChange: true, rescheduledToId: placed.appointment._id },
+    now,
+  });
   const created = (await ctx.db.get(placed.appointment._id))!;
   await finalizeBooking(ctx, { ...placed, appointment: created }, { actor: args.actor, now, reschedule: { previous: old } });
   return resultOfPlaced({ ...placed, appointment: created });
@@ -1481,7 +1589,7 @@ export async function cancelAppointmentCore(
 ): Promise<{ lateCancel: boolean }> {
   const now = args.now ?? Date.now();
   assertCancelClass(args.actor, args.byClass);
-  const a = await loadAppointment(ctx, args.appointment);
+  const a = await loadAppointment(ctx, args.appointment, args.actor);
   // "system" (Desfazer da criação automática) cancela como a equipe; o aviso fica por conta de quem chama.
   const machineClass = args.byClass === "system" ? "staff" : args.byClass;
   const check = checkTransition(a.status, "cancelled", machineClass, now, a.startTime);
@@ -1516,6 +1624,7 @@ export async function cancelAppointmentCore(
       updatedAt: now,
     })
   );
+  const allocations = await snapshotAllocations(ctx, a._id);
   await releaseAllocations(ctx, a._id);
   await resolveOpenConflicts(ctx, a._id, now);
   // Lembrete (F1): desarmar `reminder` aqui.
@@ -1526,7 +1635,7 @@ export async function cancelAppointmentCore(
     actor: args.actor,
     severity: "medium",
     description: `Cancelou o horário ${appointmentLabel(after, tz)}`,
-    before: appointmentSnapshot(a),
+    before: { ...appointmentSnapshot(a), allocations },
     after: { status: "cancelled" },
     metadata: { statusChange: true, byClass: args.byClass, lateCancel },
     now,
@@ -1558,18 +1667,31 @@ const STATUS_WORD: Record<StatusTarget, string> = {
   no_show: "Registrou a falta de",
 };
 
-/** Proposta de remarcação aprovada: o antigo termina como `rescheduled` na mesma mutation. */
+const PROPOSAL_STALE = "Esta proposta não vale mais: o horário original já mudou. Recuse a proposta e marque de novo.";
+const PROPOSAL_EXPIRED = "Esta proposta venceu: o horário proposto já passou. Recuse a proposta e marque de novo.";
+
+/**
+ * Antes de aprovar uma proposta de remarcação: o horário proposto ainda é futuro e o agendamento
+ * original ainda pode ser encerrado (ativo, não iniciado). Senão RECUSA (a proposta segue pendente
+ * para a equipe recusar) em vez de deixar dois agendamentos ativos sobrepostos.
+ */
+async function assertProposalApprovable(ctx: MutationCtx, proposal: Doc<"schedAppointments">, now: number): Promise<Doc<"schedAppointments">> {
+  if (proposal.startTime < now) fail(PROPOSAL_EXPIRED);
+  const old = proposal.rescheduleOfId ? await ctx.db.get(proposal.rescheduleOfId) : null;
+  const endable = old && old.organizationId === proposal.organizationId && (old.status === "scheduled" || old.status === "confirmed" || old.status === "pending_approval");
+  if (!old || !endable || old.startTime <= now) fail(PROPOSAL_STALE);
+  return old;
+}
+
+/** Proposta de remarcação aprovada: o antigo termina como `rescheduled` na mesma mutation (com os efeitos do §3.8). */
 async function endSupersededAppointment(
   ctx: MutationCtx,
   proposal: Doc<"schedAppointments">,
+  old: Doc<"schedAppointments">,
   actor: SchedActor,
   tz: string,
   now: number
 ): Promise<void> {
-  if (!proposal.rescheduleOfId) return;
-  const old = await ctx.db.get(proposal.rescheduleOfId);
-  if (!old || old.organizationId !== proposal.organizationId) return;
-  if (old.status !== "scheduled" && old.status !== "confirmed" && old.status !== "pending_approval") return;
   await ctx.db.patch(old._id, { status: "rescheduled", rescheduledToId: proposal._id, outcomePendingSince: undefined, statusChangedAt: now, updatedAt: now });
   await releaseAllocations(ctx, old._id);
   await resolveOpenConflicts(ctx, old._id, now);
@@ -1585,6 +1707,15 @@ async function endSupersededAppointment(
     metadata: { statusChange: true, rescheduledToId: proposal._id },
     now,
   });
+  const next = (await ctx.db.get(proposal._id))!;
+  await recordAppointmentActivity(ctx, {
+    appointment: next,
+    type: "appointment_changed",
+    content: `Horário remarcado: ${appointmentLabel(old, tz)} para ${appointmentLabel(next, tz)}`,
+    actor,
+    now,
+  });
+  await emitAppointmentWebhook(ctx, { event: "appointment.rescheduled", appointment: next, tz, previousAppointmentId: old._id });
 }
 
 export async function setAppointmentStatusCore(
@@ -1592,12 +1723,15 @@ export async function setAppointmentStatusCore(
   args: { appointment: Doc<"schedAppointments">; actor: SchedActor; to: StatusTarget; now?: number }
 ): Promise<void> {
   const now = args.now ?? Date.now();
-  const a = await loadAppointment(ctx, args.appointment);
+  const a = await loadAppointment(ctx, args.appointment, args.actor);
   const check = checkTransition(a.status, args.to, actorClassOf(args.actor), now, a.startTime);
   if (!check.ok) return statusError(check.reason);
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   const memberId = actorMemberId(args.actor);
+  const superseded = args.to === "scheduled" && a.rescheduleOfId ? await assertProposalApprovable(ctx, a, now) : null;
+  const releasing = allocationEffect(a.status, args.to) === "delete";
+  const allocations = releasing ? await snapshotAllocations(ctx, a._id) : undefined;
   const stamps: Record<string, unknown> = {};
   if (args.to === "scheduled") {
     stamps.approvedAt = now;
@@ -1614,9 +1748,9 @@ export async function setAppointmentStatusCore(
     statusChangedAt: now,
     updatedAt: now,
   });
-  if (allocationEffect(a.status, args.to) === "delete") await releaseAllocations(ctx, a._id);
+  if (releasing) await releaseAllocations(ctx, a._id);
   if (args.to === "scheduled") {
-    await endSupersededAppointment(ctx, a, args.actor, tz, now);
+    if (superseded) await endSupersededAppointment(ctx, a, superseded, args.actor, tz, now);
     await resolveOpenConflicts(ctx, a._id, now);
   }
   const after = (await ctx.db.get(a._id))!;
@@ -1627,7 +1761,7 @@ export async function setAppointmentStatusCore(
     actor: args.actor,
     severity: args.to === "no_show" ? "medium" : "low",
     description: `${STATUS_WORD[args.to]} ${label}`,
-    before: { status: a.status },
+    before: { status: a.status, ...(allocations ? { allocations } : {}) },
     after: { status: args.to },
     metadata: { statusChange: true },
     now,
@@ -1660,8 +1794,11 @@ const CLEAR_ON_UNDO: Record<string, Array<keyof Doc<"schedAppointments">>> = {
 };
 const RANK: Partial<Record<SchedStatus, number>> = { scheduled: 1, confirmed: 2, checked_in: 3, completed: 4 };
 
-/** Último estado anterior gravado pela auditoria de status (ignora os próprios desfazeres). */
-async function previousStatusFromAudit(ctx: MutationCtx, a: Doc<"schedAppointments">): Promise<SchedStatus | null> {
+/** Último estado anterior gravado pela auditoria de status (ignora os próprios desfazeres), com o retrato das alocações. */
+async function previousStatusFromAudit(
+  ctx: MutationCtx,
+  a: Doc<"schedAppointments">
+): Promise<{ status: SchedStatus; allocations?: AllocationSnapshot[] } | null> {
   const logs = await ctx.db
     .query("auditLogs")
     .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", a._id))
@@ -1670,8 +1807,10 @@ async function previousStatusFromAudit(ctx: MutationCtx, a: Doc<"schedAppointmen
   for (const log of logs) {
     if (log.organizationId !== a.organizationId || log.metadata?.statusChange !== true || log.metadata?.undo === true) continue;
     if (log.changes?.after?.status !== a.status) continue;
-    const before = log.changes?.before?.status;
-    return typeof before === "string" ? (before as SchedStatus) : null;
+    const before = log.changes?.before;
+    if (typeof before?.status !== "string") return null;
+    const allocations = Array.isArray(before.allocations) ? (before.allocations as AllocationSnapshot[]) : undefined;
+    return { status: before.status as SchedStatus, allocations };
   }
   return null;
 }
@@ -1681,13 +1820,14 @@ export async function undoAppointmentStatusCore(
   args: { appointment: Doc<"schedAppointments">; actor: SchedActor; now?: number }
 ): Promise<{ ok: true; restoredTo: SchedStatus } | BookFailure> {
   const now = args.now ?? Date.now();
-  const a = await loadAppointment(ctx, args.appointment);
-  const target = await previousStatusFromAudit(ctx, a);
-  if (!target || !canUndo(a.status, target, actorClassOf(args.actor))) fail("Não há o que desfazer neste agendamento.");
+  const a = await loadAppointment(ctx, args.appointment, args.actor);
+  const previous = await previousStatusFromAudit(ctx, a);
+  const target = previous?.status;
+  if (!previous || !target || !canUndo(a.status, target, actorClassOf(args.actor))) fail("Não há o que desfazer neste agendamento.");
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   if (allocationEffect(a.status, target) === "recreate") {
-    const failure = await recreateAllocations(ctx, a, args.actor, now);
+    const failure = await recreateAllocations(ctx, a, args.actor, now, previous.allocations);
     if (failure) return failure;
   }
   const clear: Record<string, undefined> = {};
@@ -1731,7 +1871,8 @@ async function recreateAllocations(
   ctx: MutationCtx,
   a: Doc<"schedAppointments">,
   actor: SchedActor,
-  now: number
+  now: number,
+  snapshot?: AllocationSnapshot[]
 ): Promise<BookFailure | null> {
   const rb = newResourceBook(a.organizationId);
   const service = await ctx.db.get(a.serviceId);
@@ -1739,21 +1880,31 @@ async function recreateAllocations(
   let invalid = false;
   for (const r of a.resources) {
     const resource = await getResource(ctx, rb, r.resourceId);
-    const req = service?.requirements.find((x) => x.role === r.role) ?? { role: r.role, kind: resource?.kind ?? "room" };
     if (!resource || !resource.active) {
       invalid = true;
       continue;
     }
-    items.push(toPlanItem(req as ServiceRequirementLite, resource));
+    // Unidades e exclusividade do RETRATO gravado ao liberar a vaga; sem retrato, o requisito atual do serviço.
+    const snap = snapshot?.find((x) => x.resourceId === r.resourceId && x.role === r.role);
+    const base = service?.requirements.find((x) => x.role === r.role) ?? { role: r.role, kind: resource.kind };
+    const req: ServiceRequirementLite = snap ? { ...base, units: snap.units, exclusive: snap.exclusive } : base;
+    items.push(toPlanItem(req, resource));
   }
   const origin = originForActor(actor);
+  if (invalid) {
+    return {
+      ok: false,
+      violations: [blockOrAlways("WRONG_ORG_OR_INACTIVE", origin, "Um dos recursos deste agendamento foi desativado ou removido; não dá para desfazer. Marque um novo horário.", { entity: "resource" })],
+      alternatives: [],
+    };
+  }
   const taken = (): BookFailure => ({
     ok: false,
     violations: [blockOrAlways("CAPACITY_EXCEEDED", origin, "Esse horário já foi ocupado por outro agendamento; não dá para desfazer.")],
     alternatives: [],
   });
   const result =
-    invalid || items.length === 0
+    items.length === 0
       ? null
       : await assertCapacityAndAllocate(ctx, {
           appointmentId: a._id,
@@ -1770,7 +1921,7 @@ async function recreateAllocations(
   if (!service) return failure;
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const bc: BookingContext = { org, tz: orgTimezone(org), settings: await loadSettings(ctx, a.organizationId), service, contact: null };
-  const reads: WindowReads = { exceptions: await readExceptions(ctx, a.organizationId, a.localDate), contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0, internalEvents: async () => [] };
+  const reads: WindowReads = { exceptions: await readExceptions(ctx, a.organizationId, a.localDate), contactOverlaps: [], contactActiveSameService: 0, aiBookingsToday: 0, internalEvents: async () => NO_EVENTS };
   const view = await loadDayView(ctx, rb, bc, reads, { startTime: a.startTime, preferred: items.map((i) => i.resource._id), ignoreAppointmentId: a._id });
   failure.alternatives = computeAlternatives(bc, view, { origin, now, startTime: a.startTime, variantKey: a.variantKey, current: items.map((i) => i.resource._id) });
   return failure;
@@ -1785,11 +1936,11 @@ export async function changeResourceCore(
   args: { appointment: Doc<"schedAppointments">; actor: SchedActor; resourceIds: Id<"schedResources">[]; force?: string[]; now?: number }
 ): Promise<BookResult> {
   const now = args.now ?? Date.now();
-  const a = await loadAppointment(ctx, args.appointment);
+  const a = await loadAppointment(ctx, args.appointment, args.actor);
   if (a.status !== "pending_approval" && a.status !== "scheduled" && a.status !== "confirmed" && a.status !== "checked_in") {
     fail("Só dá para trocar o recurso de um agendamento em andamento.");
   }
-  const origin = effectiveOrigin(args.actor, originForActor(args.actor));
+  const origin = originForActor(args.actor);
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const loaded = await loadContext(ctx, { organizationId: a.organizationId, serviceId: a.serviceId }, org, origin);
   if (!loaded.ok) return { ok: false, violations: problemViolations(loaded.problems, origin), alternatives: [] };

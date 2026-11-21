@@ -14,8 +14,10 @@
  * conta é escrever. Arquivo que só tipa a tabela e escreve em OUTRA tabela precisa entrar na lista
  * com o motivo (preferimos listar a afrouxar o padrão).
  *
- * `FUTURE_*` reserva arquivos que os PRs seguintes criam (A3a leitura, A3c exceções, A4 jobs, J1
- * ops): não precisam existir hoje, mas já estão autorizados com o motivo.
+ * Comentários são ignorados (`//` e bloco); crases contam como aspas (template literal).
+ * LIMITE da heurística: nome de tabela montado em runtime (`"sched" + "Allocations"`) ou alias de
+ * tipo importado de outro arquivo (`type A = Doc<…>` re-exportado) escapa; a revisão cobre isso.
+ * Não há exceção reservada para arquivos que ainda não existem (A3c, A4, J1 incluem a sua).
  */
 import { describe, expect, test } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -36,10 +38,13 @@ const ALLOC_NAME_ALLOWED: Record<string, string> = {
   "opsPurge.ts": "purga da org apaga as alocações do agendamento por by_appointment (delete puro, sem insert)",
   "lib/exportSanitize.ts": "lista EXCLUDED_BACKUP_TABLES (só o nome, nenhum acesso à tabela)",
 };
-const ALLOC_NAME_FUTURE: Record<string, string> = {
+/**
+ * A3a (PR de leitura de disponibilidade) cita a tabela só para LER por faixa: autorizado a CITAR
+ * (regra 2), nunca a escrever (não entra nas regras 1 e 3). Os demais arquivos futuros (A3c, A4, J1)
+ * NÃO são reservados aqui: cada PR inclui a sua exceção, com justificativa, e a revisão a vê.
+ */
+const ALLOC_NAME_READ_ONLY: Record<string, string> = {
   "lib/schedRead.ts": "A3a: leitura de disponibilidade por faixa (só leitura; nunca escreve)",
-  "lib/schedExceptionOps.ts": "A3c: realocação ao fechar recurso, pela checagem da porta",
-  "opsScheduling.ts": "J1: varredura de capacidade e reconstrução de alocações (dryRun)",
 };
 
 /** Regra 3: quem pode citar `"schedAppointments"` com patch/replace/delete no mesmo arquivo. */
@@ -47,31 +52,31 @@ const APPT_WRITE_ALLOWED: Record<string, string> = {
   [PORT]: "a porta única de reserva",
   "lib/leadCascade.ts": "excluir lead/contato zera leadId/contactId/contactName/guestName/notes/cancelReason do agendamento (LGPD), mantendo o histórico",
   "opsPurge.ts": "purga da org apaga os agendamentos (delete puro)",
-  "exports.ts": "só LÊ os agendamentos para o backup (BACKUP_TABLES); os .patch do arquivo são de exportJobs/leads, nenhum em sched*",
+  "exports.ts": "hoje só LÊ os agendamentos (BACKUP_TABLES, internalCollectPage); os .patch do arquivo são de exportJobs, nenhum em sched*. Escrever em sched* aqui reprova na revisão",
 };
-const APPT_WRITE_FUTURE: Record<string, string> = {
-  "lib/schedExceptionOps.ts": "A3c: realocar/marcar conflito ao fechar recurso (chama a checagem da porta)",
-  "schedulingJobs.ts": "A4/F1: só outcomePendingSince e reminder (nunca status nem alocação)",
-  "opsScheduling.ts": "J1: reconstrução de alocações e varredura (dryRun)",
-};
-
 const INSERT_RE = /\.insert\(\s*["'`]sched(?:Appointments|Allocations)["'`]/;
-// Só aspas simples/duplas: comentários citam a tabela entre crases e não são acesso.
-const ALLOC_NAME_RE = /["']schedAllocations["']/;
-const APPT_NAME_RE = /["']schedAppointments["']/;
+const ALLOC_NAME_RE = /["'`]schedAllocations["'`]/;
+const APPT_NAME_RE = /["'`]schedAppointments["'`]/;
 const WRITE_CALL_RE = /\.(?:patch|replace|delete)\s*\(/;
 
 type Violation = { file: string; rule: 1 | 2 | 3; snippet: string };
+
+/** Troca comentários por espaços (preserva as linhas); `//` precisa vir no começo ou depois de espaço (não corta URL). */
+export function stripComments(src: string): string {
+  const blank = (m: string) => m.replace(/[^\n]/g, " ");
+  return src.replace(/\/\*[\s\S]*?\*\//g, blank).replace(/(^|\s)\/\/[^\n]*/g, (m, lead: string) => lead + " ".repeat(m.length - lead.length));
+}
 
 function lineOf(src: string, idx: number): number {
   return src.slice(0, idx).split("\n").length;
 }
 
-export function findPortViolations(src: string, file: string): Violation[] {
+export function findPortViolations(rawSrc: string, file: string): Violation[] {
+  const src = stripComments(rawSrc);
   const out: Violation[] = [];
   const allowedInsert = file in INSERT_ALLOWED;
-  const allowedAlloc = file in ALLOC_NAME_ALLOWED || file in ALLOC_NAME_FUTURE;
-  const allowedWrite = file in APPT_WRITE_ALLOWED || file in APPT_WRITE_FUTURE;
+  const allowedAlloc = file in ALLOC_NAME_ALLOWED || file in ALLOC_NAME_READ_ONLY;
+  const allowedWrite = file in APPT_WRITE_ALLOWED;
   const insert = INSERT_RE.exec(src);
   if (insert && !allowedInsert) out.push({ file, rule: 1, snippet: `L${lineOf(src, insert.index)}: ${insert[0]}` });
   const alloc = ALLOC_NAME_RE.exec(src);
@@ -116,6 +121,19 @@ describe("heurística (auto-teste com arquivo de exemplo em memória)", () => {
   test("não acusa arquivo que só tipa a tabela, nem patch em arquivo sem a tabela", () => {
     expect(findPortViolations(`const id = v.id("schedAppointments"); const d = await ctx.db.get(x);`, "x.ts")).toEqual([]);
     expect(findPortViolations(`await ctx.db.patch(lead._id, { title })`, "x.ts")).toEqual([]);
+  });
+
+  test("pega crase (template literal) e ignora comentário", () => {
+    expect(findPortViolations("const t = `schedAllocations`;", "x.ts").map((v) => v.rule)).toContain(2);
+    expect(findPortViolations("await ctx.db.insert(`schedAppointments`, d)", "x.ts").map((v) => v.rule)).toContain(1);
+    expect(findPortViolations("// usa `schedAllocations` só em comentário\n/* e `schedAppointments` .patch( aqui */\nconst x = 1;", "x.ts")).toEqual([]);
+    expect(findPortViolations('const url = "https://x.test/y"; ctx.db.patch(a, b); v.id("schedAppointments")', "x.ts").map((v) => v.rule)).toContain(3);
+  });
+
+  test("lib/schedRead.ts pode CITAR a tabela, mas não escrever", () => {
+    expect(findPortViolations(`ctx.db.query("schedAllocations")`, "lib/schedRead.ts")).toEqual([]);
+    expect(findPortViolations(`ctx.db.insert("schedAllocations", r)`, "lib/schedRead.ts").map((v) => v.rule)).toEqual([1]);
+    expect(findPortViolations(`const a = "schedAppointments"; ctx.db.patch(x, y)`, "lib/schedRead.ts").map((v) => v.rule)).toEqual([3]);
   });
 
   test("a porta e as exceções listadas passam", () => {

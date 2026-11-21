@@ -11,6 +11,7 @@ import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { DEFAULT_PERMISSIONS } from "./lib/permissions";
+import { peakUnits } from "./lib/schedAvailability";
 import { bookAppointmentCore, bookPartyCore } from "./lib/schedBookingOps";
 import * as M from "./schedulingMutations";
 
@@ -22,14 +23,38 @@ const at = (h: number, m = 0, day = 15) => Date.UTC(2026, 5, day, h + 3, m);
 
 let t: TestConvex<typeof schema>;
 
+const seededOrgs: Id<"organizations">[] = [];
+
 beforeEach(() => {
+  seededOrgs.length = 0;
   vi.useFakeTimers();
   vi.setSystemTime(NOW);
   t = convexTest(schema, modules);
 });
-afterEach(() => {
+afterEach(async () => {
+  // Todo teste de reserva termina provando que nenhum recurso passou da capacidade (pico no núcleo).
+  for (const orgId of seededOrgs) await assertNoOvercapacity(orgId);
   vi.useRealTimers();
 });
+
+/** Varre as alocações de cada recurso da org e confere pico <= capacidade (linha exclusiva vale a capacidade inteira). */
+async function assertNoOvercapacity(organizationId: Id<"organizations">) {
+  const problems = await t.run(async (ctx) => {
+    const out: string[] = [];
+    const resources = await ctx.db.query("schedResources").withIndex("by_organization", (q) => q.eq("organizationId", organizationId)).collect();
+    for (const r of resources) {
+      const rows = await ctx.db.query("schedAllocations").withIndex("by_resource_and_start", (q) => q.eq("resourceId", r._id)).collect();
+      const lite = rows.map((x) => ({ ...x, units: x.exclusive ? Math.max(x.units, r.capacity) : x.units }));
+      if (lite.length === 0) continue;
+      const from = Math.min(...lite.map((x) => x.coreStart));
+      const to = Math.max(...lite.map((x) => x.coreEnd));
+      const peak = peakUnits(lite, from, to, "core");
+      if (peak > r.capacity) out.push(`${r.name}: pico ${peak} > capacidade ${r.capacity}`);
+    }
+    return out;
+  });
+  expect(problems).toEqual([]);
+}
 
 // ---------------------------------------------------------------------------
 // Semeadura (direto no banco: serviços, recursos e configuração)
@@ -113,6 +138,7 @@ async function seedOrg(opts: { scheduling?: boolean } = {}) {
       longo: await mkService("Longo", [{ role: "Profissional", kind: "person", resourceIds: [p1] }], { durationMin: 470, bufferBeforeMin: 10, bufferAfterMin: 10 }),
       duasSalas: await mkService("Duas salas", [{ role: "Sala A", kind: "room" }, { role: "Sala B", kind: "room" }]),
     };
+    seededOrgs.push(organizationId);
     return {
       organizationId, admin, agent, none, viewOwn, viewAll, aiMemberId, boardId, stageId, scheduledStageId, otherBoardStageId,
       contacts, personalContactId, leadId, conversationId, resources: { p1, p2, sala1, sala2, dupla }, services,
@@ -912,10 +938,55 @@ describe("origem IA e link público", () => {
     const propose = await aiBook(s, { initialStatus: "scheduled" });
     expect(propose.status).toBe("pending_approval");
     await t.run((ctx) =>
-      ctx.db.insert("schedSettings", { organizationId: s.organizationId, ai: { book: "auto", autoAck: { by: s.admin.memberId, at: NOW } }, updatedAt: NOW })
+      ctx.db.insert("schedSettings", { organizationId: s.organizationId, ai: { book: "auto", autoAck: { by: s.admin.memberId, at: NOW }, firstVisitNeedsApproval: false }, updatedAt: NOW })
     );
     const auto = await aiBook(s, { serviceId: s.services.dupla, startTime: at(14), initialStatus: "scheduled" });
     expect(auto.status).toBe("scheduled");
+  });
+
+  test("firstVisitNeedsApproval é aplicado NA PORTA: primeira visita fica pending_approval mesmo em auto", async () => {
+    const s = await seedOrg();
+    await t.run((ctx) => ctx.db.insert("schedSettings", { organizationId: s.organizationId, ai: { book: "auto", autoAck: { by: s.admin.memberId, at: NOW } }, updatedAt: NOW }));
+    const first = await aiBook(s, { initialStatus: "scheduled" });
+    expect(first.status).toBe("pending_approval");
+    // Com um atendimento concluído antes, o contato deixa de ser primeira visita.
+    await t.run((ctx) =>
+      ctx.db.insert("schedAppointments", {
+        organizationId: s.organizationId, serviceId: s.services.solo, serviceName: "Consulta", kind: "normal", startTime: at(10, 0, 8), endTime: at(11, 0, 8),
+        blockStart: at(10, 0, 8), blockEnd: at(11, 0, 8), localDate: "2026-06-08", status: "completed", origin: "staff", contactId: s.contacts[0], resources: [],
+        statusChangedAt: NOW, createdAt: NOW, updatedAt: NOW,
+      })
+    );
+    const returning = await aiBook(s, { serviceId: s.services.dupla, startTime: at(14), initialStatus: "scheduled" });
+    expect(returning.status).toBe("scheduled");
+  });
+
+  test("link público nunca nasce scheduled, nem com ai.book auto; origem fora da lista do ator é recusada", async () => {
+    const s = await seedOrg();
+    await t.run((ctx) => ctx.db.insert("schedSettings", { organizationId: s.organizationId, ai: { book: "auto", autoAck: { by: s.admin.memberId, at: NOW }, firstVisitNeedsApproval: false }, updatedAt: NOW }));
+    const base = { organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(10), contactId: s.contacts[1], initialStatus: "scheduled" as const };
+    const pub = await t.mutation(internal.schedulingMutations.internalBookAppointment, { ...base, actor: { type: "system", via: "public_link" }, origin: "public" });
+    expect(pub.status).toBe("pending_approval");
+    const bad = (origin: string, actor: unknown) =>
+      t.mutation(internal.schedulingMutations.internalBookAppointment, { ...base, startTime: at(15), actor, origin } as never);
+    await expect(bad("waitlist", { type: "system", via: "public_link" })).rejects.toThrow(/incompatível/);
+    await expect(bad("staff", { type: "system", via: "public_link" })).rejects.toThrow(/incompatível/);
+    await expect(bad("staff", { type: "system", via: "human_message" })).rejects.toThrow(/incompatível/);
+    await expect(bad("ai", { type: "system", via: "job" })).rejects.toThrow(/incompatível/);
+    await expect(bad("waitlist", aiActor(s))).rejects.toThrow(/incompatível/);
+    await expect(bad("staff", aiActor(s))).rejects.toThrow(/incompatível/);
+    await expect(bad("human_message", { type: "human", memberId: s.admin.memberId })).rejects.toThrow(/incompatível/);
+  });
+
+  test("conflictToQueue só com ator de sistema via human_message", async () => {
+    const s = await seedOrg();
+    await expect(aiBook(s, { conflictToQueue: true })).rejects.toThrow(/fila de conflitos/);
+    await expect(
+      t.mutation(internal.schedulingMutations.internalBookAppointment, {
+        organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(10), contactId: s.contacts[0],
+        actor: { type: "human", memberId: s.admin.memberId }, origin: "staff", conflictToQueue: true,
+      })
+    ).rejects.toThrow(/fila de conflitos/);
   });
 
   test("IA com marcação desligada, contato fora do comercial e origem incompatível são recusados", async () => {
@@ -1246,5 +1317,292 @@ describe("o que cada mutation devolve bate com o validator de retorno", () => {
   test("o auxiliar detecta campo a mais e campo obrigatório ausente (controle negativo)", () => {
     expect(matchesValidator(M.rescheduleReturnValidator, { appointmentId: "x", extra: 1 })).not.toEqual([]);
     expect(matchesValidator(M.bookReturnValidator, { appointmentIds: [] })).not.toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisão adversarial (PR #177): regressões das sondagens
+// ---------------------------------------------------------------------------
+
+describe("revisão: proposta de remarcação (rescheduleOfId)", () => {
+  const aiActorOf = (s: Seed) => ({ type: "ai" as const, memberId: s.aiMemberId, conversationId: s.conversationId });
+  const propose = (s: Seed, oldId: Id<"schedAppointments">, startTime: number, extra: Record<string, unknown> = {}) =>
+    t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.organizationId, serviceId: s.services.solo, startTime, contactId: s.contacts[0], actor: aiActorOf(s), origin: "ai", rescheduleOfId: oldId, ...extra,
+    } as never);
+  const setStatus = (s: Seed, id: Id<"schedAppointments">, to: string) =>
+    asAdmin(s).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.organizationId, appointmentId: id, to } as never);
+  const p1Rows = (s: Seed) => t.run(async (ctx) => (await ctx.db.query("schedAllocations").collect()).filter((r) => r.resourceId === s.resources.p1));
+
+  test("B1: rescheduleOfId de OUTRO contato é recusado (bloqueio duro, resposta genérica) e nada muda", async () => {
+    const s = await seedOrg();
+    const bia = (await book(s, "solo", at(10), { contactId: s.contacts[1] })).appointmentIds[0];
+    const r = await propose(s, bia, at(10), { contactId: undefined });
+    expect(r.ok).toBe(false);
+    expect(r.violations.map((v) => v.code)).toEqual(["WRONG_ORG_OR_INACTIVE"]);
+    expect(r.violations[0].severity).toBe("block");
+    expect(r.violations[0].message).toBe("Esse horário não está disponível.");
+    expect(await p1Rows(s)).toHaveLength(1);
+    expect((await appointmentOf(bia))!.status).toBe("scheduled");
+    expect(await allAppointments()).toHaveLength(1);
+  });
+
+  test("B1: a equipe também não pode apontar para agendamento de outro contato, de outro serviço, concluído ou já remarcado", async () => {
+    const s = await seedOrg();
+    const staff = { type: "human" as const, memberId: s.admin.memberId };
+    const call = (oldId: Id<"schedAppointments">, extra: Record<string, unknown> = {}) =>
+      t.mutation(internal.schedulingMutations.internalBookAppointment, {
+        organizationId: s.organizationId, serviceId: s.services.solo, startTime: at(15), contactId: s.contacts[0], actor: staff, origin: "staff", rescheduleOfId: oldId, ...extra,
+      } as never);
+    const bia = (await book(s, "solo", at(10), { contactId: s.contacts[1] })).appointmentIds[0];
+    const ana = (await book(s, "solo", at(11))).appointmentIds[0];
+    expect((await call(bia)).ok).toBe(false); // outro contato
+    expect((await call(ana, { serviceId: s.services.dupla })).ok).toBe(false); // outro serviço
+    await setStatus(s, ana, "completed");
+    expect((await call(ana)).ok).toBe(false); // concluído
+    const f = await seedForeign();
+    await expect(call(f.appointmentId)).rejects.toThrow("Agendamento não encontrado"); // de outra org
+    expect((await appointmentOf(f.appointmentId))!.status).toBe("scheduled");
+  });
+
+  test("D1: aprovar proposta com o antigo já em check-in é RECUSADO e a proposta segue pendente", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10), { leadId: s.leadId })).appointmentIds[0];
+    const prop = await propose(s, old, at(10, 30));
+    await setStatus(s, old, "checked_in");
+    await expect(setStatus(s, prop.appointmentId!, "scheduled")).rejects.toThrow(/não vale mais: o horário original já mudou/);
+    expect((await appointmentOf(prop.appointmentId!))!.status).toBe("pending_approval");
+    expect((await appointmentOf(old))!.status).toBe("checked_in");
+    // A equipe recusa (cancela) a proposta e a vaga dela some.
+    await asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: prop.appointmentId! });
+    expect(await allocationsOf(prop.appointmentId!)).toHaveLength(0);
+  });
+
+  test("D1: duas propostas para o mesmo antigo: só a primeira aprovada vale, a segunda é recusada", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10))).appointmentIds[0];
+    const a = await propose(s, old, at(14));
+    // A IA tem teto de 1 ativo por serviço; a segunda proposta vem da equipe.
+    const b = await propose(s, old, at(15), { actor: { type: "human", memberId: s.admin.memberId }, origin: "staff" });
+    expect(b.appointmentId).toBeDefined();
+    await setStatus(s, a.appointmentId!, "scheduled");
+    await expect(setStatus(s, b.appointmentId!, "scheduled")).rejects.toThrow(/não vale mais/);
+    expect((await allAppointments()).filter((x) => x.status === "scheduled")).toHaveLength(1);
+  });
+
+  test("D1b: aprovar proposta cujo horário já passou é recusado como vencida", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10))).appointmentIds[0];
+    const prop = await propose(s, old, at(14));
+    vi.setSystemTime(at(16));
+    await expect(setStatus(s, prop.appointmentId!, "scheduled")).rejects.toThrow(/proposta venceu/);
+    expect((await appointmentOf(old))!.status).toBe("scheduled");
+    expect((await appointmentOf(prop.appointmentId!))!.status).toBe("pending_approval");
+  });
+
+  test("D2: remarcar uma proposta é recusado (aprove ou recuse antes)", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10))).appointmentIds[0];
+    const prop = await propose(s, old, at(14));
+    await expect(
+      asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: prop.appointmentId!, startTime: at(15) })
+    ).rejects.toThrow(/Aprove ou recuse a proposta/);
+    expect((await allAppointments()).filter((a) => a.contactId === s.contacts[0] && a.status !== "cancelled")).toHaveLength(2);
+  });
+
+  test("D4: aprovar proposta audita o antigo, registra atividade no lead e emite appointment.rescheduled com previousAppointmentId", async () => {
+    const s = await seedOrg();
+    await t.run((ctx) => ctx.db.insert("webhooks", { organizationId: s.organizationId, name: "h", url: "https://example.test/h", events: ["*"], secret: "segredo-de-teste", isActive: true, createdAt: NOW }));
+    const old = (await book(s, "solo", at(10), { leadId: s.leadId })).appointmentIds[0];
+    const prop = await propose(s, old, at(14));
+    await setStatus(s, prop.appointmentId!, "scheduled");
+    const oldAudit = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", old)).collect());
+    const last = oldAudit.at(-1)!;
+    expect(last.metadata).toMatchObject({ statusChange: true, rescheduledToId: prop.appointmentId });
+    expect(last.changes).toMatchObject({ before: { status: "scheduled" }, after: { status: "rescheduled" } });
+    const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_lead", (q) => q.eq("leadId", s.leadId)).collect());
+    expect(acts.some((a) => a.type === "appointment_changed" && /remarcado/i.test(a.content ?? ""))).toBe(true);
+    const fns = await t.run(async (ctx) => (await ctx.db.system.query("_scheduled_functions").collect()).map((f) => f.args[0] as { event?: string; payload?: { previousAppointmentId?: string } }));
+    const resched = fns.find((f) => f.event === "appointment.rescheduled");
+    expect(resched?.payload?.previousAppointmentId).toBe(old);
+  });
+
+  test("D4: remarcar direto também audita o agendamento antigo (statusChange, antes/depois)", async () => {
+    const s = await seedOrg();
+    const old = (await book(s, "solo", at(10))).appointmentIds[0];
+    await asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: old, startTime: at(11) });
+    const logs = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", old)).collect());
+    const last = logs.at(-1)!;
+    expect(last).toMatchObject({ action: "update", severity: "medium" });
+    expect(last.metadata?.statusChange).toBe(true);
+    expect(last.changes).toMatchObject({ before: { status: "scheduled" }, after: { status: "rescheduled" } });
+  });
+
+  test("D3: chave de idempotência de OUTRO agendamento não vale para remarcar nem para reservar com outros dados", async () => {
+    const s = await seedOrg();
+    const ana = (await book(s, "solo", at(10))).appointmentIds[0];
+    const bia = (await book(s, "solo", at(14), { contactId: s.contacts[1], idempotencyKey: "rest:1" })).appointmentIds[0];
+    await expect(
+      asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: ana, startTime: at(11), idempotencyKey: "rest:1" })
+    ).rejects.toThrow("Esta chave de idempotência já foi usada com outros dados.");
+    expect((await appointmentOf(ana))!.status).toBe("scheduled");
+    await expect(book(s, "solo", at(14), { contactId: s.contacts[2], idempotencyKey: "rest:1" })).rejects.toThrow("Esta chave de idempotência já foi usada com outros dados.");
+    expect(bia).toBeDefined();
+    expect(await allAppointments()).toHaveLength(2);
+  });
+});
+
+describe("revisão: IA presa à conversa do ator (D7)", () => {
+  const ai = (s: Seed) => ({ type: "ai" as const, memberId: s.aiMemberId, conversationId: s.conversationId });
+  test("cancelar, remarcar, mudar status e trocar recurso de agendamento de OUTRO contato dão 'não encontrado'", async () => {
+    const s = await seedOrg();
+    const bia = (await book(s, "solo", at(10), { contactId: s.contacts[1] })).appointmentIds[0];
+    const org = s.organizationId;
+    const calls = [
+      () => t.mutation(internal.schedulingMutations.internalCancelAppointment, { organizationId: org, appointmentId: bia, actor: ai(s), byClass: "ai" }),
+      () => t.mutation(internal.schedulingMutations.internalRescheduleAppointment, { organizationId: org, appointmentId: bia, actor: ai(s), startTime: at(14) }),
+      () => t.mutation(internal.schedulingMutations.internalSetAppointmentStatus, { organizationId: org, appointmentId: bia, actor: ai(s), to: "confirmed" }),
+      () => t.mutation(internal.schedulingMutations.internalReassignResources, { organizationId: org, appointmentId: bia, actor: ai(s), resourceIds: [s.resources.p1] }),
+    ];
+    for (const call of calls) await expect(call()).rejects.toThrow("Agendamento não encontrado");
+    expect((await appointmentOf(bia))!.status).toBe("scheduled");
+  });
+
+  test("o agendamento da PRÓPRIA conversa a IA cancela normalmente", async () => {
+    const s = await seedOrg();
+    const own = (await book(s, "solo", at(10), { leadId: s.leadId })).appointmentIds[0];
+    await t.mutation(internal.schedulingMutations.internalCancelAppointment, { organizationId: s.organizationId, appointmentId: own, actor: ai(s), byClass: "ai" });
+    expect(await appointmentOf(own)).toMatchObject({ status: "cancelled", cancelledByClass: "ai" });
+  });
+});
+
+describe("revisão: compromissos internos (teto de leitura)", () => {
+  const seedEvents = (s: Seed, n: number, startMin: number) =>
+    t.run(async (ctx) => {
+      for (let i = 0; i < n; i++) {
+        await ctx.db.insert("calendarEvents", {
+          organizationId: s.organizationId, title: `e${i}`, eventType: "meeting", startTime: at(0, startMin + (i % 5)), endTime: at(0, startMin + (i % 5) + 5),
+          allDay: false, status: "scheduled", createdBy: s.admin.memberId, assignedTo: s.admin.memberId, createdAt: NOW, updatedAt: NOW,
+        });
+      }
+    });
+
+  test("agenda interna acima do teto: o corte nunca descarta o que sobrepõe o bloco", async () => {
+    const s = await seedOrg();
+    await seedEvents(s, 305, 120); // madrugada de segunda: longe do bloco das 10h
+    await t.run((ctx) =>
+      ctx.db.insert("calendarEvents", {
+        organizationId: s.organizationId, title: "sobrepõe", eventType: "meeting", startTime: at(10, 15), endTime: at(10, 45),
+        allDay: false, status: "scheduled", createdBy: s.admin.memberId, assignedTo: s.admin.memberId, createdAt: NOW, updatedAt: NOW,
+      })
+    );
+    const err = await rulesError(book(s, "solo", at(10)));
+    const v = err.violations.find((x) => x.code === "INTERNAL_EVENT_OVERLAP");
+    expect(v?.message).toMatch(/compromisso interno nesse horário/);
+  });
+
+  test("agenda interna acima do teto sem sobreposição visível: vira aviso 'não foi possível verificar', nunca livre em silêncio", async () => {
+    const s = await seedOrg();
+    await seedEvents(s, 305, 120);
+    const err = await rulesError(book(s, "solo", at(10)));
+    const v = err.violations.find((x) => x.code === "INTERNAL_EVENT_OVERLAP");
+    expect(v?.severity).toBe("warn");
+    expect(v?.message).toMatch(/Não foi possível verificar/);
+    const ok = await book(s, "solo", at(10), { force: ["INTERNAL_EVENT_OVERLAP"] });
+    expect(ok.appointmentIds).toHaveLength(1);
+  });
+});
+
+describe("revisão: desfazer preserva o retrato e explica o recurso inativo", () => {
+  const undo = (s: Seed, id: Id<"schedAppointments">) => asAdmin(s).mutation(api.schedulingMutations.undoAppointmentStatus, { organizationId: s.organizationId, appointmentId: id });
+  const cancel = (s: Seed, id: Id<"schedAppointments">) => asAdmin(s).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.organizationId, appointmentId: id });
+
+  test("recurso inativo: mensagem diz isso (não 'horário ocupado')", async () => {
+    const s = await seedOrg();
+    const id = (await book(s, "solo", at(10))).appointmentIds[0];
+    await cancel(s, id);
+    await t.run((ctx) => ctx.db.patch(s.resources.p1, { active: false }));
+    const err = await rulesError(undo(s, id));
+    expect(err.violations[0].code).toBe("WRONG_ORG_OR_INACTIVE");
+    expect(err.violations[0].message).toMatch(/desativado ou removido/);
+    expect((await appointmentOf(id))!.status).toBe("cancelled");
+  });
+
+  test("exclusividade e unidades vêm do retrato gravado ao cancelar, não do serviço atual", async () => {
+    const s = await seedOrg();
+    const ex = (await book(s, "exclusiva", at(10))).appointmentIds[0];
+    await cancel(s, ex);
+    await t.run((ctx) => ctx.db.patch(s.services.exclusiva, { requirements: [{ role: "Sala", kind: "room", resourceIds: [s.resources.dupla] }] }));
+    await undo(s, ex);
+    expect((await allocationsOf(ex))[0]).toMatchObject({ units: 2, exclusive: true });
+    // Outro caso: unidades 1 gravadas; o serviço passa a exigir 2.
+    const one = (await book(s, "dupla", at(14))).appointmentIds[0];
+    await cancel(s, one);
+    await t.run((ctx) => ctx.db.patch(s.services.dupla, { requirements: [{ role: "Sala", kind: "room", resourceIds: [s.resources.dupla], units: 2 }] }));
+    await undo(s, one);
+    expect((await allocationsOf(one))[0].units).toBe(1);
+  });
+
+  test("falta também grava o retrato para o desfazer", async () => {
+    const s = await seedOrg();
+    const id = (await book(s, "exclusiva", at(10))).appointmentIds[0];
+    vi.setSystemTime(at(10, 30));
+    await asAdmin(s).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.organizationId, appointmentId: id, to: "no_show" });
+    await undo(s, id);
+    expect((await allocationsOf(id))[0]).toMatchObject({ units: 2, exclusive: true });
+  });
+});
+
+describe("revisão: conflictToQueue com dois recursos", () => {
+  test("terapeuta livre é alocado, sala cheia fica de fora e ninguém passa da capacidade", async () => {
+    const s = await seedOrg();
+    const { p1, sala1, sala2 } = s.resources;
+    await book(s, "duasSalas", at(10), { resourceIds: [sala1, sala2] }); // as duas salas ocupadas
+    const result = await t.run((ctx) =>
+      bookAppointmentCore(ctx as never, {
+        organizationId: s.organizationId, actor: { type: "system", via: "human_message" }, origin: "human_message", serviceId: s.services.sessao,
+        startTime: at(10), contactId: s.contacts[2], initialStatus: "scheduled", conflictToQueue: true, idempotencyKey: "hm:9", resourceIds: [p1, sala1], now: NOW,
+      } as never)
+    );
+    expect(result).toMatchObject({ ok: true, inConflict: true });
+    const id = (result as { appointmentId: Id<"schedAppointments"> }).appointmentId;
+    const appt = (await appointmentOf(id))!;
+    expect(appt.resources.map((r) => [r.role, r.allocated])).toEqual([["Terapeuta", true], ["Sala", false]]);
+    expect((await allocationsOf(id)).map((r) => r.resourceId)).toEqual([p1]);
+    const conflict = (await t.run((ctx) => ctx.db.query("schedConflicts").withIndex("by_appointment", (q) => q.eq("appointmentId", id)).collect()))[0];
+    expect(conflict).toMatchObject({ kind: "human_confirm", status: "open", resourceId: sala1 });
+  });
+});
+
+describe("revisão: etapa inválida não deixa escrita parcial (premissa do catch de moveFunnelStage)", () => {
+  test("etapa de outro funil: nenhum move, atividade stage_change nem webhook de etapa", async () => {
+    const s = await seedOrg();
+    await t.run((ctx) => ctx.db.insert("webhooks", { organizationId: s.organizationId, name: "h", url: "https://example.test/h", events: ["*"], secret: "segredo-de-teste", isActive: true, createdAt: NOW }));
+    await t.run((ctx) => ctx.db.insert("schedSettings", { organizationId: s.organizationId, funnel: { onScheduledStageId: s.otherBoardStageId }, updatedAt: NOW }));
+    await book(s, "solo", at(10), { leadId: s.leadId });
+    const lead = (await t.run((ctx) => ctx.db.get(s.leadId)))!;
+    expect(lead.stageId).toBe(s.stageId);
+    expect(lead.stageEnteredAt).toBeUndefined();
+    const logs = await t.run((ctx) => ctx.db.query("auditLogs").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect());
+    expect(logs.filter((l) => l.action === "move")).toHaveLength(0);
+    const acts = await t.run((ctx) => ctx.db.query("activities").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).collect());
+    expect(acts.filter((a) => a.type === "stage_change")).toHaveLength(0);
+    const events = await t.run(async (ctx) => (await ctx.db.system.query("_scheduled_functions").collect()).map((f) => (f.args[0] as { event?: string }).event));
+    expect(events).not.toContain("lead.stage_changed");
+  });
+});
+
+describe("revisão: códigos de violação onde só se conferia 'falhou'", () => {
+  test("criação automática fora do expediente falha por OUTSIDE_HOURS e nada é gravado", async () => {
+    const s = await seedOrg();
+    const result = await t.run((ctx) =>
+      bookAppointmentCore(ctx as never, {
+        organizationId: s.organizationId, actor: { type: "system", via: "human_message" }, origin: "human_message", serviceId: s.services.dupla,
+        startTime: at(19), contactId: s.contacts[2], initialStatus: "scheduled", conflictToQueue: true, idempotencyKey: "hm:1", now: NOW,
+      } as never)
+    );
+    expect(result).toMatchObject({ ok: false });
+    expect((result as { violations: Array<{ code: string }> }).violations.map((v) => v.code)).toEqual(["OUTSIDE_HOURS"]);
+    expect(await allAppointments()).toHaveLength(0);
   });
 });
