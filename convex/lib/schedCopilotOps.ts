@@ -806,8 +806,18 @@ async function previewClosure(ctx: MutationCtx, args: Record<string, unknown>, e
     throw e;
   }
   if (mode === "reopen") {
-    if (result.removed === 0) return toolErr(result.reason === "covered_by_org_closure" ? "Esse dia está fechado pela agenda inteira, não por este recurso." : `${target} não está fechado em ${dates.echo}.`);
-    const preview = `Reabrir ${target} em ${dates.echo}: remove ${result.removed} fechamento(s). Não desfaz realocações já feitas${result.affected > 0 ? `; ${result.affected} agendamento(s) fora do expediente voltam a ser avaliados` : ""}.`;
+    // A prévia da porta não conta fechamentos (só o commit remove): conto aqui, pelo mesmo índice do dia.
+    const dayRows = await ctx.db
+      .query("schedExceptions")
+      .withIndex("by_organization_and_date", (q) => q.eq("organizationId", env.sc.organizationId).eq("localDate", dates.from))
+      .take(200);
+    const closed = dayRows.filter((e) => e.mode === "closed");
+    const mine = closed.filter((e) => (resource ? e.resourceId === resource._id : e.resourceId === undefined && e.resourceKind === undefined));
+    if (mine.length === 0) {
+      const orgWide = resource && closed.some((e) => e.resourceId === undefined && e.resourceKind === undefined);
+      return toolErr(orgWide ? "Esse dia está fechado pela agenda inteira, não por este recurso." : `${target} não está fechado em ${dates.echo}.`);
+    }
+    const preview = `Reabrir ${target} em ${dates.echo}: remove ${mine.length} fechamento(s). Não desfaz realocações já feitas${result.affected > 0 ? `; ${result.affected} agendamento(s) fora do expediente voltam a ser avaliados` : ""}.`;
     return await savePending(ctx, env.sc, env.now, "reopenResourceDay", { kind: "reopen", ...(resource ? { resourceId: resource._id } : {}), wholeAgenda: whole, localDate: dates.from, expectedAffected: result.affected }, preview);
   }
   const lines = result.items.slice(0, 8).map((i) => {

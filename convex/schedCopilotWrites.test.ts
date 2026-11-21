@@ -390,3 +390,163 @@ describe("remarcar, cancelar, aprovar, situação e desfazer", () => {
     expect((await write(s.admin, "approveAppointment", { ref }, b)).error).toMatch(/não encontrado/);
   });
 });
+
+describe("fechar e reabrir sala/profissional (closeResourceDay / reopenResourceDay)", () => {
+  async function twoRoomsBusy() {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const maria = await mkContact("Maria");
+    const joana = await mkContact("Joana");
+    await bookDirect(svc, at(MON, 10), [s1], { contactId: maria }); // cabe na Sala 2
+    await bookDirect(svc, at(MON, 15), [s1], { contactId: joana });
+    await bookDirect(svc, at(MON, 15), [s2]); // Joana não tem para onde ir
+    return { s1, s2, svc };
+  }
+  const closure = () => t.run((ctx) => ctx.db.query("schedExceptions").collect());
+
+  test("a prévia mostra o impacto real e não grava nada; confirmar manda expectedAffected e o resultado é o previsto", async () => {
+    const { s1 } = await twoRoomsBusy();
+    const before = await counts();
+    const r = await write(s.admin, "closeResourceDay", { resourceName: "Sala 1", date: "segunda", reason: "obra" });
+    expect(r.status).toBe("confirmacao_necessaria");
+    expect(r.preview).toMatch(/^Fechar Sala 1 em seg, 15\/06\/2026 \(obra\)\. Afeta 2 agendamento\(s\): 1 mudam de sala, 1 ficam sem lugar \(profissional nunca é trocado sozinho\)\./);
+    expect(r.preview).toMatch(/10:00 Maria → Sala 2/);
+    expect(r.preview).toMatch(/15:00 Joana fica sem lugar/);
+    expect(r.preview).toMatch(/Nada é cancelado nem enviado ao cliente\.$/);
+    expect(await counts()).toEqual({ ...before, pendingActions: before.pendingActions + 1 });
+    expect(await closure()).toHaveLength(0);
+    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ kind: "close", resourceId: s1, expectedAffected: 2, localDate: MON });
+
+    const out = await confirm(s.admin, r.pendingActionId);
+    expect(out).toBeNull();
+    const ex = await closure();
+    expect(ex).toHaveLength(1);
+    expect(ex[0]).toMatchObject({ resourceId: s1, localDate: MON, mode: "closed", source: "manual" });
+    const appts = await apptList();
+    expect(appts.every((a) => a.status === "scheduled")).toBe(true); // nada cancelado
+    expect((await t.run((ctx) => ctx.db.query("schedConflicts").collect())).filter((c) => c.status === "open")).toHaveLength(1);
+    expect((await counts()).messages).toBe(0);
+    const log = await t.run(async (ctx) => (await ctx.db.query("auditLogs").collect()).find((l) => l.entityType === "schedException" && l.action === "create"));
+    expect(log).toMatchObject({ actorType: "human", actorId: s.admin.memberId });
+  });
+
+  test("a situação mudou depois da prévia (outro agendamento entrou): confirmar recusa e nada é fechado", async () => {
+    const { s1, svc } = await twoRoomsBusy();
+    const r = await write(s.admin, "closeResourceDay", { resourceName: "Sala 1", date: "segunda" });
+    await bookDirect(svc, at(MON, 12), [s1]);
+    await expect(confirm(s.admin, r.pendingActionId)).rejects.toThrow();
+    expect(await closure()).toHaveLength(0);
+  });
+
+  test("0 afetados; profissional (pessoa); recurso inexistente ou ambíguo; data passada", async () => {
+    await twoRoomsBusy();
+    const p1 = await mkRes("Dra. Ana", { kind: "person" }, 3);
+    const none = await write(s.admin, "closeResourceDay", { resourceName: "Dra. Ana", date: "terça" });
+    expect(none.preview).toBe("Fechar Dra. Ana em ter, 16/06/2026. Nenhum agendamento é afetado. Nada é cancelado nem enviado ao cliente.");
+    await confirm(s.admin, none.pendingActionId);
+    expect((await closure())[0]).toMatchObject({ resourceId: p1, localDate: TUE });
+    expect((await write(s.admin, "closeResourceDay", { resourceName: "Sala", date: "terça" })).error).toMatch(/Mais de um recurso/);
+    expect((await write(s.admin, "closeResourceDay", { resourceName: "Zeus", date: "terça" })).error).toMatch(/Recurso não encontrado/);
+    expect((await write(s.admin, "closeResourceDay", { resourceName: "Sala 1", date: "ontem" })).error).toMatch(/já passou/);
+    expect((await write(s.admin, "closeResourceDay", { date: "terça" })).error).toMatch(/Falta o recurso/);
+  });
+
+  test("fechar a agenda INTEIRA exige `manage`: o gerente (edit) é recusado, o admin consegue", async () => {
+    await twoRoomsBusy();
+    const mthread = await t.run((ctx) => ctx.db.insert("copilotThreads", { organizationId: s.orgId, memberId: s.manager.memberId, createdAt: NOW, updatedAt: NOW }));
+    const denied = await write(s.manager, "closeResourceDay", { wholeAgenda: true, date: "terça" }, mthread);
+    expect(denied.error).toMatch(/exige permissão de gestão da agenda/);
+    expect((await counts()).pendingActions).toBe(0);
+    const ok = await write(s.admin, "closeResourceDay", { wholeAgenda: true, date: "terça" });
+    expect(ok.preview).toMatch(/^Fechar a agenda inteira em ter, 16\/06\/2026\./);
+    // rebaixar o admin entre a prévia e o clique: a confirmação recusa
+    await t.run((ctx) => ctx.db.patch(s.admin.memberId, { role: "manager" }));
+    await expect(confirm(s.admin, ok.pendingActionId)).rejects.toThrow(/permissão/);
+    expect(await closure()).toHaveLength(0);
+  });
+
+  test("reabrir: prévia do que será removido; confirmar remove; reabrir o que não está fechado é erro claro", async () => {
+    const { s1 } = await twoRoomsBusy();
+    const c = await write(s.admin, "closeResourceDay", { resourceName: "Sala 1", date: "terça" });
+    await confirm(s.admin, c.pendingActionId);
+    const r = await write(s.admin, "reopenResourceDay", { resourceName: "Sala 1", date: "terça" });
+    expect(r.preview).toMatch(/^Reabrir Sala 1 em ter, 16\/06\/2026: remove 1 fechamento\(s\)\./);
+    expect(await closure()).toHaveLength(1); // prévia não remove
+    await confirm(s.admin, r.pendingActionId);
+    expect(await closure()).toHaveLength(0);
+    expect((await write(s.admin, "reopenResourceDay", { resourceName: "Sala 1", date: "terça" })).error).toMatch(/não está fechado/);
+    void s1;
+  });
+
+  test("outra org: o recurso de outra org não é achado pelo nome, e o membro de fora é recusado", async () => {
+    await twoRoomsBusy();
+    await t.run((ctx) => ctx.db.insert("schedResources", { organizationId: s.otherOrgId, kind: "room", name: "Sala Alheia", capacity: 1, weekly, tags: [], sortOrder: 0, active: true, createdAt: 1, updatedAt: 1 } as any));
+    expect((await write(s.admin, "closeResourceDay", { resourceName: "Sala Alheia", date: "terça" })).error).toMatch(/Recurso não encontrado/);
+    await expect(write(s.outsider, "closeResourceDay", { resourceName: "Sala 1", date: "terça" })).rejects.toThrow(/não pertence/);
+  });
+});
+
+describe("resolver conflito 'sem lugar' (resolveAgendaConflict)", () => {
+  async function conflicted() {
+    const s1 = await mkRes("Sala 1");
+    const s2 = await mkRes("Sala 2", {}, 1);
+    const svc = await mkSvc();
+    const joana = await mkContact("Joana");
+    await bookDirect(svc, at(MON, 15), [s1], { contactId: joana });
+    await bookDirect(svc, at(MON, 15), [s2]);
+    await as(s.admin).mutation(api.schedulingExceptions.setResourceClosure, { organizationId: s.orgId, resourceId: s1, fromLocalDate: MON, acceptAffected: true } as any);
+    const pending = await read(s.admin, "listAgendaPending", {});
+    const item = pending.itens.find((i: any) => i.tipo === "sem_lugar");
+    return { s1, s2, svc, ref: item.ref as string, item };
+  }
+
+  test("a lista de pendências traz o sem lugar com referência; trocar de sala por nome: prévia, confirmar, fila esvaziada", async () => {
+    const { s1, ref, item } = await conflicted();
+    expect(item).toMatchObject({ tipo: "sem_lugar", cliente: "Joana", motivo: "recurso fechado" });
+    // a Sala 2 está ocupada às 15:00 e a Sala 1 fechada: reabrir a Sala 1 resolve por troca de recurso
+    await as(s.admin).mutation(api.schedulingExceptions.removeResourceClosure, { organizationId: s.orgId, resourceId: s1, fromLocalDate: MON } as any);
+    const r = await write(s.admin, "resolveAgendaConflict", { ref, action: "reassign", resourceName: "Sala 1" });
+    expect(r.status).toBe("confirmacao_necessaria");
+    expect(r.preview).toMatch(/trocando o recurso que saiu por Sala 1/);
+    await confirm(s.admin, r.pendingActionId);
+    const [a] = (await apptList()).filter((x) => x.contactName === "Joana");
+    expect(a.resources[0]).toMatchObject({ resourceId: s1, allocated: true });
+    expect((await t.run((ctx) => ctx.db.query("schedConflicts").collect())).every((c) => c.status !== "open")).toBe(true);
+  });
+
+  test("remarcar para outro horário (oferta) resolve e usa os avisos da prévia; cancelar resolve", async () => {
+    const { ref } = await conflicted();
+    const found = await read(s.admin, "findFreeTimes", { serviceName: "Sessão", date: "terça", limit: 8 });
+    const r = await write(s.admin, "resolveAgendaConflict", { ref, action: "reschedule", offer: found.itens[0].ref });
+    expect(r.preview).toMatch(/remarcando para ter, 16\/06\/2026/);
+    await confirm(s.admin, r.pendingActionId);
+    expect((await apptList()).find((x) => x.contactName === "Joana" && x.status === "rescheduled")).toBeTruthy();
+
+    // segundo conflito, resolvido por cancelamento
+    const { ref: ref2 } = await (async () => {
+      const svc = (await t.run((ctx) => ctx.db.query("schedServices").collect()))[0]._id;
+      const [s1b] = (await t.run((ctx) => ctx.db.query("schedResources").collect())).filter((x) => x.name === "Sala 1");
+      const ana = await mkContact("Ana");
+      await bookDirect(svc, at(TUE, 9), [s1b._id], { contactId: ana });
+      await as(s.admin).mutation(api.schedulingExceptions.setResourceClosure, { organizationId: s.orgId, resourceId: s1b._id, fromLocalDate: TUE, acceptAffected: true } as any);
+      const p = await read(s.admin, "listAgendaPending", {});
+      return { ref: p.itens.find((i: any) => i.tipo === "sem_lugar" && i.cliente === "Ana")?.ref as string };
+    })();
+    expect(ref2).toBeTruthy();
+    const c = await write(s.admin, "resolveAgendaConflict", { ref: ref2, action: "cancel", reason: "cliente desistiu" });
+    expect(c.preview).toMatch(/cancelando Ana/);
+    await confirm(s.admin, c.pendingActionId);
+    expect((await apptList()).find((x) => x.contactName === "Ana")?.status).toBe("cancelled");
+  });
+
+  test("agendamento sem conflito, ação inválida e sugestão inexistente são erros claros", async () => {
+    const { ref } = await conflicted();
+    expect((await write(s.admin, "resolveAgendaConflict", { ref, action: "magica" })).error).toMatch(/Ação inválida/);
+    expect((await write(s.admin, "resolveAgendaConflict", { ref, action: "useSuggestion", suggestion: 9 })).error).toMatch(/Sugestão inexistente/);
+    const day = await read(s.admin, "getAgendaDay", { date: MON });
+    const other = day.itens.find((i: any) => i.cliente !== "Joana");
+    expect((await write(s.admin, "resolveAgendaConflict", { ref: other.ref, action: "cancel" })).error).toMatch(/não está sem lugar/);
+    expect((await counts()).pendingActions).toBe(0);
+  });
+});
