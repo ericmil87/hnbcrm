@@ -343,3 +343,167 @@ describe("4. proposta comum vencida", () => {
     expect((await apptOf(old))!.status).toBe("cancelled");
   });
 });
+
+describe("3b. dia inteiro: busca e porta concordam em qualquer convenção de gravação", () => {
+  const D = (d: number) => `2026-06-${String(d).padStart(2, "0")}`;
+  const weeklyWeek = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 }));
+
+  /** Dias (entre `days`) sem horário na busca x dias em que a porta avisa `INTERNAL_EVENT_OVERLAP` às 14h. */
+  async function blockedDays(tz: string, days: string[], now: number) {
+    const pessoa = await mkRes("Dra. Ana", { kind: "person", teamMemberId: s.viewAll.memberId, weekly: weeklyWeek });
+    const svc = await mkSvc({ requirements: [{ role: "Profissional", kind: "person" }] });
+    const found = await as(s.agent).query(api.scheduling.findSlots, {
+      organizationId: s.orgId, serviceId: svc, fromLocalDate: days[0], toLocalDate: days[days.length - 1], resourceIds: [pessoa], limit: 200, now,
+    } as any);
+    const withSlots = new Set<string>(found.slots.map((x: any) => new Date(x.startTime).toISOString() && days.find((d) => x.startTime >= atLocalMinutes(d, 0, tz) && x.startTime < atLocalMinutes(d, 1440, tz))!));
+    const bySearch = days.filter((d) => !withSlots.has(d));
+    const byDoor: string[] = [];
+    for (const d of days) {
+      try {
+        await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.orgId, serviceId: svc, startTime: atLocalMinutes(d, 14 * 60, tz), resourceIds: [pessoa] } as any);
+      } catch (e: any) {
+        const data = typeof e?.data === "string" ? JSON.parse(e.data) : e?.data;
+        if ((data?.violations ?? []).some((v: any) => v.code === "INTERNAL_EVENT_OVERLAP")) byDoor.push(d);
+      }
+    }
+    return { bySearch, byDoor };
+  }
+  const put = (startTime: number, endTime: number) =>
+    t.run(async (ctx) => {
+      const { longStartFor } = await import("./lib/calendarRules");
+      await ctx.db.insert("calendarEvents", {
+        organizationId: s.orgId, title: "Folga", eventType: "other", startTime, endTime, allDay: true, status: "scheduled",
+        assignedTo: s.viewAll.memberId, createdBy: s.manager.memberId, createdAt: 1, updatedAt: 1,
+        ...(longStartFor(startTime, endTime) !== undefined ? { longStart: longStartFor(startTime, endTime) } : {}),
+      } as any);
+    });
+  const week = [D(17), D(18), D(19)];
+
+  test.each([
+    ["fuso da org (00:00–23:59:59.999 local)", () => [at(D(18), 0), at(D(19), 0) - 1]],
+    ["UTC (00:00Z–24:00Z)", () => [Date.UTC(2026, 5, 18), Date.UTC(2026, 5, 19)]],
+    ["UTC com fim 23:59:59.999Z", () => [Date.UTC(2026, 5, 18), Date.UTC(2026, 5, 19) - 1]],
+    ["navegador a leste (Tóquio)", () => [Date.UTC(2026, 5, 17, 15), Date.UTC(2026, 5, 18, 15) - 1]],
+    ["navegador a oeste (Honolulu)", () => [Date.UTC(2026, 5, 18, 10), Date.UTC(2026, 5, 19, 10) - 1]],
+  ])("1 dia gravado em %s bloqueia SÓ a quinta, na busca e na porta", async (_n, times) => {
+    const [a, b] = times();
+    await put(a, b);
+    const r = await blockedDays(TZ, week, NOW);
+    expect(r.bySearch).toEqual([D(18)]);
+    expect(r.byDoor).toEqual([D(18)]);
+  });
+
+  test("evento de 3 dias bloqueia os 3; o dia anterior e o seguinte seguem livres", async () => {
+    await put(at(D(18), 0), at(D(20), 0) + 24 * 3_600_000 - 1);
+    const r = await blockedDays(TZ, [D(17), D(18), D(19), D(20), D(21)], NOW);
+    expect(r.byDoor).toEqual(r.bySearch);
+    expect(r.bySearch).toEqual([D(18), D(19), D(20)]);
+  });
+
+  test("fuso com horário de verão no dia da virada (Nova York, 08/03/2026)", async () => {
+    const tz = "America/New_York";
+    await t.run((ctx) => ctx.db.patch(s.orgId, { settings: { timezone: tz, currency: "BRL", modules: { scheduling: true } } } as any));
+    const now = Date.UTC(2026, 2, 2, 15);
+    vi.setSystemTime(new Date(now));
+    // gravado no fuso da org: 00:00 EST de domingo até 23:59:59.999 EDT (23h de dia)
+    await put(atLocalMinutes("2026-03-08", 0, tz), atLocalMinutes("2026-03-09", 0, tz) - 1);
+    const r = await blockedDays(tz, ["2026-03-07", "2026-03-08", "2026-03-09"], now);
+    expect(r.bySearch).toEqual(["2026-03-08"]);
+    expect(r.byDoor).toEqual(["2026-03-08"]);
+  });
+});
+
+describe("5. reauditoria: atendimento em andamento, verificador, desfazer vencida, sugestões", () => {
+  const weeklyAll = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 }));
+  const upsert = (id: Id<"schedResources">, extra: Record<string, unknown>) =>
+    as(s.admin).mutation(api.schedulingConfig.upsertResource, { organizationId: s.orgId, resourceId: id, ...extra } as any);
+  const tick = () => vi.advanceTimersByTime(1000);
+
+  test("capacidade reduzida com 2 já em andamento: ninguém em atendimento é mexido, a prévia conta, a linha fica marcada e o verificador isenta", async () => {
+    const dupla = await mkRes("Sala dupla", { capacity: 2, weekly: weeklyAll });
+    const svc = await mkSvc();
+    const a = await bookId(svc, at(MON, 10), [dupla]);
+    tick();
+    const b = await bookId(svc, at(MON, 10), [dupla]);
+    tick();
+    const c = await bookId(svc, at(MON, 14), [dupla]);
+    tick();
+    const d = await bookId(svc, at(MON, 14), [dupla]);
+    const now = at(MON, 10, 30);
+    vi.setSystemTime(new Date(now));
+    const warn = await upsert(dupla, { capacity: 1 });
+    assertMatchesReturns(warn, C.upsertResource);
+    expect(warn).toMatchObject({ saved: false, futureWithoutSpot: 1, inServiceKept: 2 });
+    const done = await upsert(dupla, { capacity: 1, acceptFuture: true });
+    expect(done).toMatchObject({ saved: true, futureWithoutSpot: 1, inServiceKept: 2 });
+    await drain();
+    expect(await allocOf(a)).toHaveLength(1);
+    expect(await allocOf(b)).toHaveLength(1);
+    expect((await allocOf(a))[0].capacityGrandfatheredAt).toBe(now);
+    expect((await allocOf(c))[0].capacityGrandfatheredAt).toBeUndefined();
+    expect(await allocOf(d)).toHaveLength(0);
+    // o verificador isenta só quem já tinha começado: o excesso de c/d (futuros) NÃO seria isento
+    expect(await schedInvariantProblems(t, s.orgId, Date.now())).toEqual([]);
+  });
+
+  test("o verificador só aceita proposal_expired em pending_approval", async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const svc = await mkSvc();
+    const id = await t.run((ctx) =>
+      ctx.db.insert("schedAppointments", {
+        organizationId: s.orgId, serviceId: svc, serviceName: "Sessão", kind: "normal", startTime: at(TUE, 10), endTime: at(TUE, 11), blockStart: at(TUE, 10), blockEnd: at(TUE, 11),
+        localDate: TUE, status: "scheduled", origin: "staff", resources: [{ resourceId: sala, role: "Sala", name: "Sala 1", allocated: false }],
+        needsAttention: { code: "proposal_expired", at: 1 }, statusChangedAt: 1, createdAt: 1, updatedAt: 1,
+      } as any)
+    );
+    expect((await schedInvariantProblems(t, s.orgId, Date.now())).join()).toContain("SEM-ALOCACAO-SEM-CONFLITO");
+    await t.run(async (ctx) => ctx.db.patch(id, { status: "pending_approval" }));
+    expect(await schedInvariantProblems(t, s.orgId, Date.now())).toEqual([]);
+    await t.run(async (ctx) => ctx.db.delete(id));
+  });
+
+  test("desfazer a recusa de proposta VENCIDA é recusado; antes do horário desfaz", async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const svc = await mkSvc();
+    const mk = async (start: number, contact: Id<"contacts">) => {
+      const r = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+        organizationId: s.orgId, serviceId: svc, startTime: start, contactId: contact, resourceIds: [sala],
+        actor: { type: "system", via: "public_link" }, origin: "public",
+      } as any);
+      return r.appointmentId as Id<"schedAppointments">;
+    };
+    const c2 = await t.run((ctx) => ctx.db.insert("contacts", { organizationId: s.orgId, firstName: "B", tags: [], createdAt: 1, updatedAt: 1 }));
+    const early = await mk(at(MON, 15), s.contactId);
+    const late = await mk(at(MON, 11), c2 as Id<"contacts">);
+    const cancel = (id: Id<"schedAppointments">) => as(s.manager).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.orgId, appointmentId: id });
+    const undo = (id: Id<"schedAppointments">) => as(s.manager).mutation(api.schedulingMutations.undoAppointmentStatus, { organizationId: s.orgId, appointmentId: id });
+    await cancel(early);
+    await cancel(late);
+    vi.setSystemTime(new Date(at(MON, 12)));
+    await expect(undo(late)).rejects.toThrow(/já passou/);
+    expect((await apptOf(late))!.status).toBe("cancelled");
+    expect(await allocOf(late)).toHaveLength(0);
+    expect(await undo(early)).toMatchObject({ restoredTo: "pending_approval" });
+    expect(await allocOf(early)).toHaveLength(1);
+  });
+
+  test("capacidade aumentada de volta: conflitos `capacity` ganham o lugar original como 1ª sugestão; ninguém é realocado", async () => {
+    const dupla = await mkRes("Sala dupla", { capacity: 2, weekly: weeklyAll });
+    const svc = await mkSvc();
+    await bookId(svc, at(MON, 10), [dupla]);
+    tick();
+    const y = await bookId(svc, at(MON, 10), [dupla]);
+    await upsert(dupla, { capacity: 1, acceptFuture: true });
+    await drain();
+    const open = () => conflicts().then((l) => l.find((x) => x.appointmentId === y)!);
+    expect((await open()).suggestions ?? []).toHaveLength(0);
+    await upsert(dupla, { capacity: 2 });
+    const c = await open();
+    expect(c.status).toBe("open");
+    expect(c.suggestions?.[0]).toEqual({ startTime: at(MON, 10), resourceIds: [dupla] });
+    expect(await allocOf(y)).toHaveLength(0);
+    // a sugestão resolve pela fila (escolher o recurso)
+    await as(s.agent).mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.orgId, conflictId: c._id, action: { type: "resource", resourceIds: [dupla] } });
+    expect(await allocOf(y)).toHaveLength(1);
+  });
+});

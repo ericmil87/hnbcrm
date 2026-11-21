@@ -288,6 +288,23 @@ export async function readResourceAllocations(
  * longos. Estourou o teto: os recursos do membro (ou todos, se foi a faixa de longos) ficam em `unverified`.
  * Dia inteiro vale o dia local inteiro (fuso da org). Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
  */
+/** Folga da consulta por índice: o dia inteiro expandido pode começar até 12h antes e terminar até 12h depois do gravado. */
+const ALL_DAY_SLACK_MS = 24 * 60 * 60 * 1000;
+const HALF_DAY_MS = 12 * 60 * 60 * 1000;
+
+/**
+ * Intervalo que um compromisso de DIA INTEIRO ocupa: do início do primeiro ao fim do último dia LOCAL (fuso da org).
+ * Ancorado pelo CENTRO do dia (`início + 12h` até `fim − 12h`), então vale para quem gravou à meia-noite local
+ * (00:00–23:59:59.999), em UTC (00:00Z–24:00Z) ou em outro fuso (navegador a leste/oeste). Busca e porta usam ESTA conta.
+ */
+export function allDaySpan(ev: Pick<Doc<"calendarEvents">, "startTime" | "endTime">, tz: string | null): { start: number; end: number } {
+  if (tz === null) return { start: ev.startTime, end: Math.max(ev.endTime, ev.startTime + 1) };
+  const first = localDateOf(ev.startTime + HALF_DAY_MS, tz);
+  const lastRaw = localDateOf(ev.endTime - HALF_DAY_MS, tz);
+  const last = lastRaw < first ? first : lastRaw;
+  return { start: dayBounds(first, tz).start, end: dayBounds(last, tz).end };
+}
+
 export async function readInternalEventsOfMembers(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
@@ -311,7 +328,7 @@ export async function readInternalEventsOfMembers(
       allDayRows.push(ev);
       return;
     }
-    if (ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
+    if (ev.endTime <= window.start || ev.startTime >= window.end || ev.endTime <= ev.startTime) return;
     events.push({ teamMemberId: ev.assignedTo, start: ev.startTime, end: ev.endTime });
   };
   for (const [memberId, ids] of memberResources) {
@@ -321,8 +338,8 @@ export async function readInternalEventsOfMembers(
         q
           .eq("organizationId", organizationId)
           .eq("assignedTo", memberId as Id<"teamMembers">)
-          .gte("startTime", window.start - SHORT_EVENT_MS)
-          .lt("startTime", window.end)
+          .gte("startTime", window.start - SHORT_EVENT_MS - ALL_DAY_SLACK_MS)
+          .lt("startTime", window.end + ALL_DAY_SLACK_MS)
       )
       .take(MAX_INTERNAL_EVENTS_PER_MEMBER + 1);
     if (rows.length > MAX_INTERNAL_EVENTS_PER_MEMBER) {
@@ -334,7 +351,7 @@ export async function readInternalEventsOfMembers(
   const longRows = await ctx.db
     .query("calendarEvents")
     .withIndex("by_organization_and_long_start", (q) =>
-      q.eq("organizationId", organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS).lt("longStart", window.end)
+      q.eq("organizationId", organizationId).gte("longStart", window.start - MAX_EVENT_DURATION_MS - ALL_DAY_SLACK_MS).lt("longStart", window.end + ALL_DAY_SLACK_MS)
     )
     .take(MAX_LONG_EVENTS + 1);
   if (longRows.length > MAX_LONG_EVENTS) {
@@ -351,16 +368,9 @@ export async function readInternalEventsOfMembers(
       tz = null;
     }
     for (const ev of allDayRows) {
-      let start = ev.startTime;
-      let end = Math.max(ev.endTime, ev.startTime + 1);
-      if (tz !== null) {
-        const first = localDateOf(ev.startTime, tz);
-        const last = localDateOf(Math.max(ev.startTime, ev.endTime - 1), tz);
-        start = dayBounds(first, tz).start;
-        end = dayBounds(last, tz).end;
-      }
-      if (end <= window.start) continue;
-      events.push({ teamMemberId: ev.assignedTo!, start, end });
+      const span = allDaySpan(ev, tz);
+      if (span.end <= window.start || span.start >= window.end) continue;
+      events.push({ teamMemberId: ev.assignedTo!, start: span.start, end: span.end });
     }
   }
   return { events, unverified: [...unverified], truncated };

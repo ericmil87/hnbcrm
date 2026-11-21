@@ -4940,6 +4940,9 @@ const applicationTables = {
     coreStart: v.number(), coreEnd: v.number(),   // sem folgas (capacidade dura)
     units: v.number(),
     exclusive: v.optional(v.boolean()),           // true = ocupa o recurso inteiro mesmo se a capacidade subir depois
+    // A3e: gravada só pela porta quando a capacidade do recurso foi REDUZIDA com esta linha já em andamento (núcleo começou
+    // antes da mudança) e ela não foi solta: o excesso de quem já começou é tolerado até acabar (o verificador a isenta).
+    capacityGrandfatheredAt: v.optional(v.number()),
   })
     .index("by_resource_and_start", ["resourceId", "blockStart"])
     .index("by_appointment", ["appointmentId"]),

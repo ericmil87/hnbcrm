@@ -33,7 +33,7 @@ import {
   MAX_SERVICES_PER_ORG,
 } from "./schedConstants";
 import { modulesOf } from "./orgModules";
-import { openCapacityExcessConflictsCore, openRemovedResourceConflictsCore, previewCapacityExcessCore } from "./schedExceptionOps";
+import { openCapacityExcessConflictsCore, openRemovedResourceConflictsCore, previewCapacityExcessCore, suggestRestoredPlacementsForCapacityCore } from "./schedExceptionOps";
 import { countFutureAppointmentsOfService, effectiveAllocationUnits, hasFutureActiveAppointment, listFutureAllocations } from "./schedRead";
 import { assertValidTimezone, localDateOf } from "./schedTime";
 import { type SchedTemplateDraft, isSchedTemplateKey } from "./schedTemplates";
@@ -529,6 +529,8 @@ export type UpsertResourceResult = {
   overCapacityBy: number;
   /** Agendamentos futuros que ficam (ou ficaram, com aceite) SEM LUGAR por causa da capacidade nova: o excedente vai para a fila "sem lugar" (mais antigos mantêm a vaga). "Pelo menos" se `capped`. */
   futureWithoutSpot: number;
+  /** Atendimentos JÁ em andamento que seguem acima da capacidade nova: não são mexidos (ficam até acabar). */
+  inServiceKept: number;
   /** A leitura dos futuros estourou o teto: os números são "pelo menos". */
   capped: boolean;
 };
@@ -582,6 +584,7 @@ export async function upsertResourceCore(
   let futureOutsideHours = 0;
   let overCapacityBy = 0;
   let futureWithoutSpot = 0;
+  let inServiceKept = 0;
   let capped = false;
   if (existing) {
     const weeklyKey = (w: Array<{ weekday: number; startMin: number; endMin: number }>) =>
@@ -609,11 +612,12 @@ export async function upsertResourceCore(
           overCapacityBy = Math.max(0, peak - f.capacity);
           const excess = await previewCapacityExcessCore(ctx, { organizationId, resource: { ...existing, capacity: f.capacity }, now });
           futureWithoutSpot = excess.appointments;
+          inServiceKept = excess.inService;
           if (excess.capped) capped = true;
         }
       }
-      if ((futureOutsideHours > 0 || overCapacityBy > 0 || futureWithoutSpot > 0) && args.acceptFuture !== true) {
-        return { saved: false, resourceId: existing._id, futureOutsideHours, overCapacityBy, futureWithoutSpot, capped };
+      if ((futureOutsideHours > 0 || overCapacityBy > 0 || futureWithoutSpot > 0 || inServiceKept > 0) && args.acceptFuture !== true) {
+        return { saved: false, resourceId: existing._id, futureOutsideHours, overCapacityBy, futureWithoutSpot, inServiceKept, capped };
       }
     }
   }
@@ -646,15 +650,19 @@ export async function upsertResourceCore(
       before: existing ? auditSnapshot(existing) : undefined,
       after: auditSnapshot(await ctx.db.get(id)),
       description: `${existing ? "Editou" : "Criou"} ${f.name} na Agenda`,
-      metadata: existing ? { futureOutsideHours, overCapacityBy, futureWithoutSpot, acceptFuture: args.acceptFuture === true } : undefined,
+      metadata: existing ? { futureOutsideHours, overCapacityBy, futureWithoutSpot, inServiceKept, acceptFuture: args.acceptFuture === true } : undefined,
       now,
     });
   }
   // A3e: capacidade reduzida com aceite: o excedente perde a vaga e vira conflito `capacity` (pela porta; nada é cancelado).
-  if (existing && futureWithoutSpot > 0) {
+  if (existing && (futureWithoutSpot > 0 || inServiceKept > 0)) {
     await openCapacityExcessConflictsCore(ctx, { organizationId, resourceId: id, actor: { type: "human", member, via: "app" }, now });
   }
-  return { saved: true, resourceId: id, futureOutsideHours, overCapacityBy, futureWithoutSpot, capped };
+  // Capacidade subiu: os conflitos `capacity` abertos ganham o lugar original como 1ª sugestão (ninguém é realocado sozinho).
+  if (existing && f.capacity > existing.capacity) {
+    await suggestRestoredPlacementsForCapacityCore(ctx, { organizationId, resourceId: id, now });
+  }
+  return { saved: true, resourceId: id, futureOutsideHours, overCapacityBy, futureWithoutSpot, inServiceKept, capped };
 }
 
 export async function setResourceActiveCore(
