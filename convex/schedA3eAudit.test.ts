@@ -271,3 +271,75 @@ describe("3. compromisso de DIA INTEIRO do profissional", () => {
     expect((await find(svc, pessoa, FRI)).slots.filter((x: any) => x.startTime < at(SAT, 0))).toHaveLength(0);
   });
 });
+
+describe("4. proposta comum vencida", () => {
+  const weeklyAll = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 }));
+  const propose = async (svc: Id<"schedServices">, sala: Id<"schedResources">, start: number, contactId = s.contactId) => {
+    const r = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.orgId, serviceId: svc, startTime: start, contactId, resourceIds: [sala],
+      actor: { type: "system", via: "public_link" }, origin: "public",
+    } as any);
+    expect(r.ok).toBe(true);
+    expect(r.status).toBe("pending_approval");
+    return r.appointmentId as Id<"schedAppointments">;
+  };
+  const tickJob = async (now: number) => {
+    await t.mutation(internal.schedulingJobs.internalOutcomePendingOrg, { organizationId: s.orgId, now });
+    await drain();
+  };
+  const setStatus = (id: Id<"schedAppointments">, to: string) =>
+    as(s.manager).mutation(api.schedulingMutations.setAppointmentStatus, { organizationId: s.orgId, appointmentId: id, to } as any);
+  const cancel = (id: Id<"schedAppointments">) => as(s.manager).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.orgId, appointmentId: id });
+
+  test("aprovar proposta comum depois do horário é recusado (nada muda)", async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const svc = await mkSvc();
+    const p = await propose(svc, sala, at(MON, 14));
+    vi.setSystemTime(new Date(at(MON, 17)));
+    await expect(setStatus(p, "scheduled")).rejects.toThrow(/venceu/);
+    const a = await apptOf(p);
+    expect(a).toMatchObject({ status: "pending_approval" });
+    expect(a!.approvedAt).toBeUndefined();
+    // a equipe pode recusar (cancelar) a proposta vencida
+    await cancel(p);
+    expect((await apptOf(p))!.status).toBe("cancelled");
+  });
+
+  test("antes do horário aprova normalmente", async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const svc = await mkSvc();
+    const p = await propose(svc, sala, at(MON, 14));
+    vi.setSystemTime(new Date(at(MON, 13)));
+    await setStatus(p, "scheduled");
+    expect((await apptOf(p))!.status).toBe("scheduled");
+  });
+
+  test("job diário marca vencida e solta a alocação, sem cancelar; é idempotente e não toca o que não venceu", async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const svc = await mkSvc();
+    const old = await propose(svc, sala, at(MON, 14));
+    const future = await propose(svc, sala, at(TUE, 14), (await t.run((ctx) => ctx.db.insert("contacts", { organizationId: s.orgId, firstName: "Outro", tags: [], createdAt: 1, updatedAt: 1 }))) as Id<"contacts">);
+    const normal = await bookId(svc, at(MON, 10), [sala]);
+    expect(await allocOf(old)).toHaveLength(1);
+    const now = at(MON, 17);
+    vi.setSystemTime(new Date(now));
+    await tickJob(now);
+    const a = await apptOf(old);
+    expect(a).toMatchObject({ status: "pending_approval", needsAttention: { code: "proposal_expired", at: now } });
+    expect(a!.resources.every((r) => !r.allocated)).toBe(true);
+    expect(await allocOf(old)).toHaveLength(0);
+    expect((await apptOf(future))!.needsAttention).toBeUndefined();
+    expect(await allocOf(future)).toHaveLength(1);
+    expect((await apptOf(normal))!.status).toBe("scheduled");
+    const logs = await t.run((ctx) => ctx.db.query("auditLogs").collect());
+    expect(logs.filter((l) => l.entityId === old && l.metadata?.proposalExpired === true)).toHaveLength(1);
+    // idempotente
+    await tickJob(now + 60_000);
+    expect((await apptOf(old))!.needsAttention!.at).toBe(now);
+    expect((await t.run((ctx) => ctx.db.query("auditLogs").collect())).filter((l) => l.entityId === old && l.metadata?.proposalExpired === true)).toHaveLength(1);
+    // aprovar continua recusado; cancelar fecha o ciclo
+    await expect(setStatus(old, "scheduled")).rejects.toThrow(/venceu/);
+    await cancel(old);
+    expect((await apptOf(old))!.status).toBe("cancelled");
+  });
+});

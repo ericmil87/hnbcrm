@@ -2050,6 +2050,8 @@ export async function setAppointmentStatusCore(
   const a = await loadAppointment(ctx, args.appointment, args.actor);
   const check = checkTransition(a.status, args.to, actorClassOf(args.actor), now, a.startTime);
   if (!check.ok) return statusError(check.reason);
+  // A3e: proposta comum (não só a de remarcação) vencida não é aprovada: o horário já passou (a equipe recusa/cancela).
+  if (args.to === "scheduled" && a.status === "pending_approval" && a.startTime < now) fail(PROPOSAL_EXPIRED);
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   const memberId = actorMemberId(args.actor);
@@ -2135,6 +2137,50 @@ export async function markOutcomePendingCore(
   if (a.outcomePendingSince !== undefined) return false;
   if (a.endTime > args.now - Math.max(0, args.graceMs)) return false;
   await ctx.db.patch(a._id, { outcomePendingSince: args.now });
+  return true;
+}
+
+/** Marca de atenção da proposta que venceu sem decisão (`needsAttention.code`); a fila mostra "vencida". */
+export const PROPOSAL_EXPIRED_CODE = "proposal_expired";
+
+/**
+ * Job diário: proposta `pending_approval` cujo horário JÁ PASSOU vence. NÃO cancela e não muda o status (a equipe
+ * recusa/cancela): grava a marca `needsAttention: proposal_expired`, solta a alocação (o horário passou: não segura
+ * mais capacidade) e registra auditoria + atividade + webhook `appointment.needs_attention`. Sem alocação o
+ * invariante se sustenta pela marca (o verificador aceita `proposal_expired` ao lado de conflito aberto e `no_resource`).
+ * Idempotente: já marcada devolve `false`.
+ */
+export async function expireProposalCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; now: number }
+): Promise<boolean> {
+  const a = await ctx.db.get(args.appointmentId);
+  if (!a || a.organizationId !== args.organizationId) return false;
+  if (a.status !== "pending_approval" || a.startTime >= args.now || a.needsAttention?.code === PROPOSAL_EXPIRED_CODE) return false;
+  await releaseAllocations(ctx, a._id);
+  await ctx.db.patch(a._id, {
+    resources: a.resources.map((r) => ({ ...r, allocated: false })),
+    needsAttention: { code: PROPOSAL_EXPIRED_CODE, at: args.now },
+    updatedAt: args.now,
+  });
+  const after = (await ctx.db.get(a._id))!;
+  const org = assertOrgModule(await ctx.db.get(a.organizationId));
+  const tz = orgTimezone(org);
+  const label = appointmentLabel(after, tz);
+  const actor: SchedActor = { type: "system", via: "job" };
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor,
+    severity: "low",
+    description: `Proposta ${label} venceu sem decisão: horário passou, vaga liberada (recuse ou cancele)`,
+    before: appointmentSnapshot(a),
+    after: appointmentSnapshot(after),
+    metadata: { statusChange: false, proposalExpired: true },
+    now: args.now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Proposta vencida: ${label}`, actor, now: args.now });
+  await emitAppointmentWebhook(ctx, { event: "appointment.needs_attention", appointment: after, tz });
   return true;
 }
 
