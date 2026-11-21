@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { Id } from "../../../convex/_generated/dataModel";
@@ -10,6 +10,11 @@ import { cn } from "@/lib/utils";
 import { assignableMembers, memberLabel } from "@/lib/teamMembers";
 import { EVENT_TYPE_LABELS, RECURRENCE_OPTIONS } from "./constants";
 import { toast } from "sonner";
+import { mutationErrorMessage } from "@/lib/errors";
+import { formatLocalTime, localDateKey, addDays, parseLocalDateTime } from "@/lib/agendaDates";
+import { buildEventTimes, endDateFieldValue } from "@/lib/agendaForm";
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
 
 interface CalendarEventModalProps {
   open: boolean;
@@ -37,9 +42,10 @@ export function CalendarEventModal({
     eventId ? { eventId: eventId as Id<"calendarEvents"> } : "skip"
   );
 
-  const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
-  const leads = useQuery(api.leads.getLeads, { organizationId });
-  const contacts = useQuery(api.contacts.getContacts, { organizationId });
+  // Modal fechado não assina nada pesado (até 200 leads e todos os contatos).
+  const teamMembers = useQuery(api.teamMembers.getTeamMembers, open ? { organizationId } : "skip");
+  const leads = useQuery(api.leads.getLeads, open ? { organizationId } : "skip");
+  const contacts = useQuery(api.contacts.getContacts, open ? { organizationId } : "skip");
 
   const createEvent = useMutation(api.calendar.createEvent);
   const updateEvent = useMutation(api.calendar.updateEvent);
@@ -50,6 +56,8 @@ export function CalendarEventModal({
   const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("");
   const [endTime, setEndTime] = useState("");
+  // "" = termina no mesmo dia do início; só preenchido quando o evento atravessa dias.
+  const [endDate, setEndDate] = useState("");
   const [allDay, setAllDay] = useState(false);
   const [description, setDescription] = useState("");
   const [leadId, setLeadId] = useState<string>("");
@@ -62,40 +70,69 @@ export function CalendarEventModal({
   const [notes, setNotes] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Initialize form with existing event or initial values
-  useEffect(() => {
-    if (existingEvent && isEdit) {
-      setTitle(existingEvent.title);
-      setEventType(existingEvent.eventType);
-      setAllDay(existingEvent.allDay || false);
-      setDescription(existingEvent.description || "");
-      setLeadId(existingEvent.leadId || "");
-      setContactId(existingEvent.contactId || "");
-      setAssignedTo(existingEvent.assignedTo || "");
-      setAttendees(existingEvent.attendees || []);
-      setLocation(existingEvent.location || "");
-      setMeetingUrl(existingEvent.meetingUrl || "");
-      setRecurrence(existingEvent.recurrence?.pattern || "none");
-      setNotes(existingEvent.notes || "");
+  const filledFor = useRef<string | null>(null);
 
-      const start = new Date(existingEvent.startTime);
-      setStartDate(start.toISOString().split("T")[0]);
-      if (!existingEvent.allDay) {
-        setStartTime(`${start.getHours().toString().padStart(2, "0")}:${start.getMinutes().toString().padStart(2, "0")}`);
-        const end = new Date(existingEvent.endTime);
-        setEndTime(`${end.getHours().toString().padStart(2, "0")}:${end.getMinutes().toString().padStart(2, "0")}`);
-      }
-    } else if (!isEdit && initialDate) {
-      // New event with initial date/time
-      setStartDate(initialDate.toISOString().split("T")[0]);
+  const resetForm = () => {
+    setTitle("");
+    setEventType("meeting");
+    setStartDate("");
+    setStartTime("");
+    setEndTime("");
+    setEndDate("");
+    setAllDay(false);
+    setDescription("");
+    setLeadId("");
+    setContactId("");
+    setAssignedTo("");
+    setAttendees([]);
+    setLocation("");
+    setMeetingUrl("");
+    setRecurrence("none");
+    setNotes("");
+  };
+
+  // Ao abrir ou trocar de evento: zera tudo e aplica data/hora iniciais (novo evento).
+  useEffect(() => {
+    filledFor.current = null;
+    if (!open) return;
+    resetForm();
+    if (!eventId) {
+      setStartDate(localDateKey(initialDate ?? new Date()));
       if (initialHour !== undefined && initialMinute !== undefined) {
-        setStartTime(`${initialHour.toString().padStart(2, "0")}:${initialMinute.toString().padStart(2, "0")}`);
-        // Default to 1-hour duration
-        const endHour = initialHour + 1;
-        setEndTime(`${endHour.toString().padStart(2, "0")}:${initialMinute.toString().padStart(2, "0")}`);
+        setStartTime(`${pad2(initialHour)}:${pad2(initialMinute)}`);
+        // Duração padrão de 1 h (limitada a 23:59 para não cruzar o dia).
+        const endMinutes = Math.min(initialHour * 60 + initialMinute + 60, 23 * 60 + 59);
+        setEndTime(`${pad2(Math.floor(endMinutes / 60))}:${pad2(endMinutes % 60)}`);
       }
     }
-  }, [existingEvent, isEdit, initialDate, initialHour, initialMinute]);
+  }, [open, eventId, initialDate, initialHour, initialMinute]);
+
+  // Edição: preenche UMA vez por abertura quando o evento chega (não sobrescreve o que a
+  // pessoa digitou se o evento mudar no servidor).
+  useEffect(() => {
+    if (!open || !eventId || !existingEvent || existingEvent._id !== eventId) return;
+    if (filledFor.current === eventId) return;
+    filledFor.current = eventId;
+    setTitle(existingEvent.title);
+    setEventType(existingEvent.eventType);
+    setAllDay(existingEvent.allDay || false);
+    setDescription(existingEvent.description || "");
+    setLeadId(existingEvent.leadId || "");
+    setContactId(existingEvent.contactId || "");
+    setAssignedTo(existingEvent.assignedTo || "");
+    setAttendees(existingEvent.attendees || []);
+    setLocation(existingEvent.location || "");
+    setMeetingUrl(existingEvent.meetingUrl || "");
+    setRecurrence(existingEvent.recurrence?.pattern || "none");
+    setNotes(existingEvent.notes || "");
+    // Data/hora no fuso LOCAL (toISOString devolveria a data UTC e deslocaria o dia).
+    setStartDate(localDateKey(existingEvent.startTime));
+    setEndDate(endDateFieldValue(existingEvent.startTime, existingEvent.endTime));
+    if (!existingEvent.allDay) {
+      setStartTime(formatLocalTime(existingEvent.startTime));
+      setEndTime(formatLocalTime(existingEvent.endTime));
+    }
+  }, [open, eventId, existingEvent]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,32 +143,21 @@ export function CalendarEventModal({
 
     setIsSubmitting(true);
     try {
-      let startTimestamp: number;
-      let endTimestamp: number;
-
-      if (allDay) {
-        const start = new Date(startDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(startDate);
-        end.setHours(23, 59, 59, 999);
-        startTimestamp = start.getTime();
-        endTimestamp = end.getTime();
-      } else {
-        const [startHour, startMin] = startTime.split(":").map(Number);
-        const [endHour, endMin] = endTime.split(":").map(Number);
-        const start = new Date(startDate);
-        start.setHours(startHour, startMin, 0, 0);
-        const end = new Date(startDate);
-        end.setHours(endHour, endMin, 0, 0);
-        startTimestamp = start.getTime();
-        endTimestamp = end.getTime();
+      const times = buildEventTimes({ startDate, startTime, endDate, endTime, allDay });
+      if (!times.ok) {
+        toast.error(
+          times.error === "end_before_start"
+            ? "O fim deve ser depois do início."
+            : "Informe uma data e um horário válidos."
+        );
+        return;
       }
 
       const eventData = {
         title: title.trim(),
         eventType: eventType as "call" | "meeting" | "follow_up" | "demo" | "task" | "reminder" | "other",
-        startTime: startTimestamp,
-        endTime: endTimestamp,
+        startTime: times.startTime,
+        endTime: times.endTime,
         allDay,
         description: description.trim() || undefined,
         leadId: leadId ? (leadId as Id<"leads">) : undefined,
@@ -154,7 +180,7 @@ export function CalendarEventModal({
 
       onClose();
     } catch (error) {
-      toast.error("Não foi possível salvar o evento.");
+      toast.error(mutationErrorMessage(error, "Não foi possível salvar o evento."));
       console.error(error);
     } finally {
       setIsSubmitting(false);
@@ -170,7 +196,7 @@ export function CalendarEventModal({
   };
 
   return (
-    <Modal open={open} onClose={onClose} title={isEdit ? "Editar Evento" : "Novo Evento"}>
+    <Modal open={open} onClose={onClose} title={isEdit ? "Editar evento" : "Novo evento"}>
       <form onSubmit={handleSubmit} className="space-y-4">
         {/* Title */}
         <Input
@@ -193,7 +219,7 @@ export function CalendarEventModal({
                 type="button"
                 onClick={() => setEventType(type)}
                 className={cn(
-                  "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                  "px-3 min-h-[44px] rounded-full text-xs font-medium transition-colors",
                   eventType === type
                     ? "bg-brand-600 text-white"
                     : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-overlay"
@@ -217,14 +243,14 @@ export function CalendarEventModal({
           {!allDay && (
             <>
               <Input
-                label="Horário Início"
+                label="Horário de início"
                 type="time"
                 value={startTime}
                 onChange={(e) => setStartTime(e.target.value)}
                 required
               />
               <Input
-                label="Horário Fim"
+                label="Horário de fim"
                 type="time"
                 value={endTime}
                 onChange={(e) => setEndTime(e.target.value)}
@@ -234,11 +260,44 @@ export function CalendarEventModal({
           )}
         </div>
 
+        {/* Data de término: só quando o evento atravessa dias */}
+        {endDate !== "" ? (
+          <div className="flex items-end gap-3">
+            <div className="flex-1">
+              <Input
+                label="Data de término"
+                type="date"
+                value={endDate}
+                min={startDate || undefined}
+                onChange={(e) => setEndDate(e.target.value)}
+                required
+              />
+            </div>
+            <Button type="button" variant="secondary" onClick={() => setEndDate("")}>
+              Mesmo dia
+            </Button>
+          </div>
+        ) : (
+          startDate !== "" && (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const start = parseLocalDateTime(startDate);
+                if (start !== null) setEndDate(localDateKey(addDays(start, 1)));
+              }}
+            >
+              Terminar em outro dia
+            </Button>
+          )
+        )}
+
         {/* All Day Toggle */}
         <Checkbox
           checked={allDay}
           onChange={(e) => setAllDay(e.target.checked)}
-          label={<span className="text-text-primary">Dia Inteiro</span>}
+          label={<span className="text-text-primary">Dia inteiro</span>}
         />
 
         {/* Description */}
@@ -259,7 +318,7 @@ export function CalendarEventModal({
         {leads && leads.length > 0 && (
           <div>
             <label className="block text-[13px] font-medium text-text-secondary mb-1.5">
-              Lead Vinculado
+              Lead vinculado
             </label>
             <select
               value={leadId}
@@ -331,7 +390,7 @@ export function CalendarEventModal({
                   type="button"
                   onClick={() => toggleAttendee(member._id)}
                   className={cn(
-                    "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                    "px-3 min-h-[44px] rounded-full text-xs font-medium transition-colors",
                     attendees.includes(member._id)
                       ? "bg-brand-600 text-white"
                       : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-overlay"
@@ -354,7 +413,7 @@ export function CalendarEventModal({
 
         {/* Meeting URL */}
         <Input
-          label="Link da Reunião"
+          label="Link da reunião"
           type="url"
           placeholder="https://..."
           value={meetingUrl}

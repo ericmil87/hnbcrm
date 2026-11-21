@@ -41,7 +41,7 @@ export function CalendarFilters({
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={cn(
-          "flex items-center gap-2 px-2 md:px-3 py-2 rounded-full text-sm font-medium transition-colors min-h-[36px] md:min-h-[44px]",
+          "flex items-center gap-2 px-2 md:px-3 py-2 rounded-full text-sm font-medium transition-colors min-h-[44px] min-w-[44px] justify-center",
           hasFilters
             ? "bg-brand-500/10 text-brand-500 border border-brand-500"
             : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-overlay"
@@ -87,7 +87,7 @@ export function CalendarFilters({
             {/* Event type filter */}
             <div>
               <label className="block text-sm font-medium text-text-primary mb-2">
-                Tipo de Evento
+                Tipo de evento
               </label>
               <div className="flex flex-wrap gap-2">
                 {EVENT_TYPES.map((type) => (
@@ -95,7 +95,7 @@ export function CalendarFilters({
                     key={type}
                     onClick={() => toggleEventType(type)}
                     className={cn(
-                      "px-3 py-1.5 rounded-full text-xs font-medium transition-colors",
+                      "px-3 min-h-[44px] rounded-full text-xs font-medium transition-colors",
                       selectedEventTypes.includes(type)
                         ? "bg-brand-600 text-white"
                         : "bg-surface-raised text-text-secondary border border-border hover:bg-surface-sunken"
@@ -116,7 +116,7 @@ export function CalendarFilters({
                 className="w-full"
               >
                 <X size={16} />
-                Limpar Filtros
+                Limpar filtros
               </Button>
             )}
           </div>
