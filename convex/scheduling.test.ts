@@ -345,7 +345,11 @@ describe("loadWindow", () => {
     await mkEvent({ assignedTo: s.none.memberId });
     await mkEvent({ assignedTo: undefined });
     const data = await t.run((ctx) => loadWindow(ctx, { organizationId: s.orgId, fromLocalDate: MON, toLocalDate: MON }));
-    expect(data.internalEvents).toEqual([{ teamMemberId: s.admin.memberId, start: at(MON, 14), end: at(MON, 15) }]);
+    // A3e: dia inteiro vale o dia local inteiro (o `allDay` com 14h–15h cobre a segunda-feira toda)
+    expect(data.internalEvents).toEqual([
+      { teamMemberId: s.admin.memberId, start: at(MON, 14), end: at(MON, 15) },
+      { teamMemberId: s.admin.memberId, start: at(MON, 0), end: at("2026-06-16", 0) },
+    ]);
     const none = await t.run((ctx) => loadWindow(ctx, { organizationId: s.orgId, fromLocalDate: MON, toLocalDate: MON, includeInternalEvents: false }));
     expect(none.internalEvents).toEqual([]);
     // teto de alocações por recurso

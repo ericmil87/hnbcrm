@@ -29,7 +29,7 @@ import { MAX_EVENT_DURATION_MS, SHORT_EVENT_MS } from "./calendarRules";
 import { MAX_BLOCK_MIN, MAX_SEARCH_DAYS } from "./schedConstants";
 import { type ResolvedSchedSettings, resolveSchedSettings } from "./schedSettingsDefaults";
 import { ACTIVE_STATUSES } from "./schedStatus";
-import { assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type LocalDate } from "./schedTime";
+import { assertValidTimezone, dayBounds, diffLocalDays, isValidLocalDate, type LocalDate, localDateOf } from "./schedTime";
 
 type ReadCtx = { db: QueryCtx["db"] };
 
@@ -286,7 +286,7 @@ export async function readResourceAllocations(
  * Compromissos internos `scheduled`, com horário, dos membros ligados a recurso-pessoa (`memberResources`:
  * membro → recursos dele). Índice por membro e tempo (curtos ≤ 1 dia recuam 1 dia) + 1 faixa de eventos
  * longos. Estourou o teto: os recursos do membro (ou todos, se foi a faixa de longos) ficam em `unverified`.
- * Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
+ * Dia inteiro vale o dia local inteiro (fuso da org). Fora de propósito: evento em que o membro é só `attendee` (sem índice; a regra do plano usa `assignedTo`).
  */
 export async function readInternalEventsOfMembers(
   ctx: ReadCtx,
@@ -299,11 +299,19 @@ export async function readInternalEventsOfMembers(
   if (memberResources.size === 0) return { events, unverified: [], truncated: false };
   let truncated = false;
   const seen = new Set<string>();
+  // Só `scheduled` conta (cancelado/concluído não bloqueia). Dia inteiro (`allDay`) vale o(s) dia(s) LOCAL(IS) inteiro(s) no
+  // fuso da org (evento de vários dias cobre todos); o fuso só é lido se aparecer um desses.
+  const allDayRows: Doc<"calendarEvents">[] = [];
   const take = (ev: Doc<"calendarEvents">) => {
     if (seen.has(ev._id)) return;
     seen.add(ev._id);
-    if (ev.status !== "scheduled" || ev.allDay || ev.assignedTo === undefined) return;
-    if (!memberResources.has(ev.assignedTo) || ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
+    if (ev.status !== "scheduled" || ev.assignedTo === undefined) return;
+    if (!memberResources.has(ev.assignedTo)) return;
+    if (ev.allDay) {
+      allDayRows.push(ev);
+      return;
+    }
+    if (ev.endTime <= window.start || ev.endTime <= ev.startTime) return;
     events.push({ teamMemberId: ev.assignedTo, start: ev.startTime, end: ev.endTime });
   };
   for (const [memberId, ids] of memberResources) {
@@ -334,6 +342,27 @@ export async function readInternalEventsOfMembers(
     for (const ids of memberResources.values()) for (const id of ids) unverified.add(id);
   }
   longRows.slice(0, MAX_LONG_EVENTS).forEach(take);
+  if (allDayRows.length > 0) {
+    const org = await ctx.db.get(organizationId);
+    let tz: string | null = null;
+    try {
+      tz = org ? assertValidTimezone(org.settings.timezone) : null;
+    } catch {
+      tz = null;
+    }
+    for (const ev of allDayRows) {
+      let start = ev.startTime;
+      let end = Math.max(ev.endTime, ev.startTime + 1);
+      if (tz !== null) {
+        const first = localDateOf(ev.startTime, tz);
+        const last = localDateOf(Math.max(ev.startTime, ev.endTime - 1), tz);
+        start = dayBounds(first, tz).start;
+        end = dayBounds(last, tz).end;
+      }
+      if (end <= window.start) continue;
+      events.push({ teamMemberId: ev.assignedTo!, start, end });
+    }
+  }
   return { events, unverified: [...unverified], truncated };
 }
 

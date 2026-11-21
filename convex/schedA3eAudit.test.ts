@@ -210,3 +210,64 @@ describe("2. reduzir a capacidade com aceite solta o excedente", () => {
     expect(await conflicts()).toHaveLength(0);
   });
 });
+
+describe("3. compromisso de DIA INTEIRO do profissional", () => {
+  const THU = "2026-06-18";
+  const FRI = "2026-06-19";
+  const SAT = "2026-06-20";
+  const weeklyAll = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 }));
+  const setup = async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const pessoa = await mkRes("Dra. Ana", { kind: "person", teamMemberId: s.viewAll.memberId, weekly: weeklyAll }, 1);
+    const svc = await mkSvc({ requirements: [{ role: "Sala", kind: "room" }, { role: "Profissional", kind: "person" }] });
+    return { sala, pessoa, svc };
+  };
+  const folga = (over: Record<string, unknown> = {}) =>
+    as(s.manager).mutation(api.calendar.createEvent, { organizationId: s.orgId, title: "Folga", eventType: "other", startTime: at(THU, 0), endTime: at(FRI, 0) - 1, allDay: true, assignedTo: s.viewAll.memberId, ...over } as any);
+  const find = (svc: Id<"schedServices">, pessoa: Id<"schedResources">, from: string, to?: string) =>
+    as(s.agent).query(api.scheduling.findSlots, { organizationId: s.orgId, serviceId: svc, fromLocalDate: from, ...(to ? { toLocalDate: to } : {}), resourceIds: [pessoa], limit: 50, now: NOW } as any);
+
+  test("findSlots não oferece o dia; a equipe recebe aviso forçável; o link público é bloqueado", async () => {
+    const { sala, pessoa, svc } = await setup();
+    const before = await find(svc, pessoa, THU);
+    expect(before.slots.filter((x: any) => x.startTime < at(FRI, 0)).length).toBeGreaterThan(0);
+    await folga();
+    const day = await find(svc, pessoa, THU);
+    expect(day.slots.filter((x: any) => x.startTime < at(FRI, 0))).toHaveLength(0);
+    // a sexta segue livre (o evento cobre só a quinta)
+    expect((await find(svc, pessoa, FRI)).slots.length).toBeGreaterThan(0);
+    // equipe: aviso forçável
+    let err: any;
+    try {
+      await book(svc, at(THU, 10), [sala, pessoa]);
+    } catch (e: any) {
+      err = e;
+    }
+    const data = typeof err?.data === "string" ? JSON.parse(err.data) : err?.data;
+    expect(data?.violations?.map((v: any) => `${v.code}:${v.severity}`)).toContain("INTERNAL_EVENT_OVERLAP:warn");
+    const forced = await book(svc, at(THU, 10), [sala, pessoa], { force: ["INTERNAL_EVENT_OVERLAP"] });
+    expect(forced.appointmentIds).toHaveLength(1);
+    // link público: bloqueio
+    const pub = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.orgId, serviceId: svc, startTime: at(THU, 14), contactId: s.contactId, resourceIds: [sala, pessoa],
+      actor: { type: "system", via: "public_link" }, origin: "public",
+    } as any);
+    expect(pub.ok).toBe(false);
+    expect((pub.violations ?? []).map((v: any) => `${v.code}:${v.severity}`)).toContain("INTERNAL_EVENT_OVERLAP:block");
+  });
+
+  test("evento de vários dias cobre todos; cancelado/concluído e responsável diferente não contam; fim exato à meia-noite não invade o dia seguinte", async () => {
+    const { pessoa, svc } = await setup();
+    const ferias = await folga({ title: "Férias", startTime: at(THU, 0), endTime: at(FRI, 23, 59) });
+    const free = await find(svc, pessoa, THU, SAT);
+    expect(free.slots.filter((x: any) => x.startTime < at(SAT, 0))).toHaveLength(0);
+    await as(s.manager).mutation(api.calendar.cancelEvent, { eventId: ferias } as any);
+    expect((await find(svc, pessoa, THU)).slots.length).toBeGreaterThan(0);
+    // outro responsável: não bloqueia o profissional
+    await folga({ assignedTo: s.manager.memberId });
+    expect((await find(svc, pessoa, THU)).slots.length).toBeGreaterThan(0);
+    // terminando exatamente na virada (exclusivo) cobre só a quinta
+    await folga({ startTime: at(FRI, 0), endTime: at(SAT, 0) });
+    expect((await find(svc, pessoa, FRI)).slots.filter((x: any) => x.startTime < at(SAT, 0))).toHaveLength(0);
+  });
+});
