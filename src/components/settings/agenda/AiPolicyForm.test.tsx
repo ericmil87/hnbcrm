@@ -54,6 +54,22 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" }));
     expect(onChange).toHaveBeenLastCalledWith({ ...base(), humanConfirmMode: "off" });
   });
+  it("assistente sem IA ativa: só o interruptor, a explicação e o atalho", () => {
+    const onChange = vi.fn();
+    const onOpenAiSettings = vi.fn();
+    render(<AiPolicyForm variant="wizard" aiActive={false} value={base()} onChange={onChange} onOpenAiSettings={onOpenAiSettings} />);
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.getByText(/Sem a IA ativa ele só sugere/)).toBeInTheDocument();
+    expect(screen.getByText("As opções de como a IA participa da agenda aparecem quando a IA da organização estiver ativa.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), humanConfirmMode: "off" });
+    fireEvent.click(screen.getByRole("button", { name: "Configurar a IA" }));
+    expect(onOpenAiSettings).toHaveBeenCalled();
+  });
+  it("o painel de Configurações não muda com aiActive", () => {
+    render(<AiPolicyForm aiActive={false} value={base()} onChange={() => {}} />);
+    expect(screen.getAllByRole("radio").length).toBeGreaterThan(3);
+  });
   it("mostra quem aceitou", () => {
     render(<AiPolicyForm value={base(true)} onChange={() => {}} ackNote='Ana aceitou o aviso do "marca sozinha" em 01/01/2026.' />);
     expect(screen.getByText(/Ana aceitou/)).toBeInTheDocument();

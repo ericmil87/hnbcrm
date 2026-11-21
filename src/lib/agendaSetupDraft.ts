@@ -200,3 +200,13 @@ export function setupSummary(f: SetupForm): string[] {
   lines.push(plural(f.services.length, "serviço", "serviços"));
   return lines;
 }
+
+/**
+ * Há edição pendente no assistente? Compara o formulário atual com o que o modelo trouxe (`initial`) e a escolha
+ * da IA com a padrão. Sem formulário carregado ainda, só a IA conta. Fechar com isto pede confirmação.
+ */
+export function isSetupDirty(initial: SetupForm | null, current: SetupForm | null, ai: unknown, defaultAi: unknown): boolean {
+  if (JSON.stringify(ai) !== JSON.stringify(defaultAi)) return true;
+  if (!initial || !current) return false;
+  return JSON.stringify(initial) !== JSON.stringify(current);
+}

@@ -98,3 +98,85 @@ describe("AgendaSetupWizardView", () => {
     expect(screen.getByRole("button", { name: "Continuar" })).toBeDisabled();
   });
 });
+
+describe("AgendaSetupWizardView: fechar com edição pendente", () => {
+  it("sem edição fecha direto", () => {
+    const onClose = vi.fn();
+    render(<AgendaSetupWizardView {...base({ onClose })} />);
+    fireEvent.click(screen.getByRole("button", { name: "Agora não" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it("com edição pergunta: continuar não fecha, descartar fecha (também pelo X do cabeçalho)", () => {
+    const onClose = vi.fn();
+    render(<AgendaSetupWizardView {...base({ onClose })} />);
+    next();
+    fireEvent.change(screen.getByDisplayValue("Sala dupla"), { target: { value: "Sala do casal" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Fechar" })[0]);
+    expect(screen.getByText("Descartar o que você ajustou?")).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar ajustando" }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getAllByRole("button", { name: "Fechar" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Descartar e sair" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it("mudar a escolha da IA também conta como edição", () => {
+    const onClose = vi.fn();
+    render(<AgendaSetupWizardView {...base({ onClose })} />);
+    next();
+    next();
+    fireEvent.click(screen.getByRole("radio", { name: /Não mexe na agenda/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Voltar" }));
+    fireEvent.click(screen.getByRole("button", { name: "Agora não" }));
+    expect(onClose).not.toHaveBeenCalled();
+    expect(screen.getByText("Descartar o que você ajustou?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Continuar ajustando" }));
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Agora não" }));
+    fireEvent.click(screen.getByRole("button", { name: "Descartar e sair" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+  it("depois de criada (aviso parcial) fecha sem perguntar", () => {
+    const onClose = vi.fn();
+    render(<AgendaSetupWizardView {...base({ onClose, partialNotice: "Sua agenda foi criada, mas..." })} />);
+    next();
+    fireEvent.change(screen.getByDisplayValue("Sala dupla"), { target: { value: "Outra" } });
+    next();
+    fireEvent.click(screen.getAllByRole("button", { name: "Fechar" })[0]);
+    expect(screen.queryByText("Descartar o que você ajustou?")).toBeNull();
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("AgendaSetupWizardView: passo da IA sem IA ativa", () => {
+  it("só o interruptor das confirmações, a explicação e o atalho; sem as opções da IA", () => {
+    const onOpenAiSettings = vi.fn();
+    render(<AgendaSetupWizardView {...base({ aiActive: false, onOpenAiSettings })} />);
+    next();
+    next();
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
+    expect(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" })).toBeChecked();
+    expect(screen.getByText(/As opções de como a IA participa da agenda aparecem quando a IA da organização estiver ativa/)).toBeInTheDocument();
+    expect(screen.getByText(/Sem a IA ativa ele só sugere/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Configurar a IA" }));
+    expect(onOpenAiSettings).toHaveBeenCalledTimes(1);
+  });
+  it("o atalho com edição pendente pergunta antes de sair", () => {
+    const onOpenAiSettings = vi.fn();
+    render(<AgendaSetupWizardView {...base({ aiActive: false, onOpenAiSettings })} />);
+    next();
+    fireEvent.change(screen.getByDisplayValue("Sala dupla"), { target: { value: "Sala do casal" } });
+    next();
+    fireEvent.click(screen.getByRole("button", { name: "Configurar a IA" }));
+    expect(onOpenAiSettings).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Descartar e sair" }));
+    expect(onOpenAiSettings).toHaveBeenCalledTimes(1);
+  });
+  it("com IA ativa (ou ainda carregando) mostra as três opções", () => {
+    render(<AgendaSetupWizardView {...base({ aiActive: true })} />);
+    next();
+    next();
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+  });
+});
