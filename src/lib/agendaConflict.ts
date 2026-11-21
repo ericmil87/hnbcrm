@@ -2,6 +2,7 @@
  * Agenda v2 (B3): regras PURAS da resolução de conflito (fila "Sem lugar"). O conflito vem de `listPending`
  * (`kind`, `resourceId?`, `suggestions?: {startTime, resourceIds}[]`); a ação vai para `resolveConflict`.
  */
+import { ConvexError } from "convex/values";
 import { fillVocab } from "./agendaCopy";
 import { VIEWS_COPY } from "./agendaViewsCopy";
 import type { ResourceKind } from "./agendaTypes";
@@ -85,4 +86,19 @@ export function isManualNoPlace(a: { needsAttention?: { code: string } | undefin
 /** Aprovar com recurso não alocado é recusado pelo servidor, exceto com a marca `no_resource`. */
 export function mustResolveBeforeApprove(a: { resources: ReadonlyArray<{ allocated: boolean }>; needsAttention?: { code: string } | undefined }): boolean {
   return a.resources.some((r) => !r.allocated) && !isManualNoPlace(a);
+}
+
+/**
+ * Mensagens das violações de um erro `sched_rules` (`ConvexError({ code, violations: [{ message }] })`), ou
+ * `null` para qualquer outro erro. Leitor mínimo: importar `parseSchedRulesError` de `bookingFlow` criava um
+ * chunk compartilhado que fazia o painel do Lead crescer.
+ */
+export function rulesErrorMessage(error: unknown): string | null {
+  if (!(error instanceof ConvexError)) return null;
+  const data: unknown = error.data;
+  if (!data || typeof data !== "object" || (data as { code?: unknown }).code !== "sched_rules") return null;
+  const list = (data as { violations?: unknown }).violations;
+  if (!Array.isArray(list)) return null;
+  const messages = list.map((v) => (v && typeof (v as { message?: unknown }).message === "string" ? (v as { message: string }).message : "")).filter(Boolean);
+  return messages.length > 0 ? messages.join(" ") : null;
 }

@@ -5,6 +5,7 @@ import { Modal } from "@/components/ui/Modal";
 import {
   cancelAction,
   manualAction,
+  rulesErrorMessage,
   replacementCandidates,
   suggestionRows,
   type ConflictAction,
@@ -13,7 +14,6 @@ import {
 import { pendingRowInfo } from "@/lib/agendaPending";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import { mutationErrorMessage } from "@/lib/errors";
-import { parseSchedRulesError } from "@/lib/bookingFlow";
 import { ConflictResolverView } from "./ConflictResolverView";
 import type { PendingConflict } from "./PendingQueueView";
 import { useClosureApi } from "./useResourceClosure";
@@ -45,8 +45,7 @@ export function ConflictResolverSheet({ organizationId, conflict, resources, tz,
       toast.success(t.toast.resolved);
       onClose();
     } catch (e) {
-      const rules = parseSchedRulesError(e);
-      toast.error(rules && rules.violations.length > 0 ? rules.violations.map((v) => v.message).join(" ") : mutationErrorMessage(e, t.toast.failed));
+      toast.error(rulesErrorMessage(e) ?? mutationErrorMessage(e, t.toast.failed));
     } finally {
       setBusy(false);
     }

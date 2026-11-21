@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CalendarClock, Hand, Undo2, XCircle } from "lucide-react";
+import { CalendarClock, CheckCheck, Undo2, XCircle } from "lucide-react";
 import { AppointmentOriginBadge } from "@/components/agenda/AppointmentOriginBadge";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Textarea";
@@ -127,7 +127,7 @@ export function ConflictResolverView(p: ConflictResolverViewProps) {
           }}
           className={optionClass}
         >
-          <Hand size={16} className="shrink-0 text-text-muted" aria-hidden="true" />
+          <CheckCheck size={16} className="shrink-0 text-text-muted" aria-hidden="true" />
           {t.manual}
         </button>
         <button

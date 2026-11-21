@@ -1,5 +1,6 @@
+import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
-import { cancelAction, conflictKindText, isManualNoPlace, manualAction, mustResolveBeforeApprove, replacementCandidates, suggestionRows, type ResourceLite } from "./agendaConflict";
+import { cancelAction, conflictKindText, rulesErrorMessage, isManualNoPlace, manualAction, mustResolveBeforeApprove, replacementCandidates, suggestionRows, type ResourceLite } from "./agendaConflict";
 
 const resources: ResourceLite[] = [
   { _id: "s1", kind: "room", name: "Sala 1" },
@@ -53,5 +54,15 @@ describe("ações", () => {
   it("texto do tipo de conflito", () => {
     expect(conflictKindText("resource_closed")).toBe("A sala ou o profissional fechou");
     expect(conflictKindText("x")).toBe("");
+  });
+});
+
+describe("erro de regra", () => {
+  it("junta as mensagens das violações; outro erro devolve null", () => {
+    const err = new ConvexError({ code: "sched_rules", violations: [{ message: "Sala 2 já está cheia." }, { message: "Fora do horário." }], alternatives: [] });
+    expect(rulesErrorMessage(err)).toBe("Sala 2 já está cheia. Fora do horário.");
+    expect(rulesErrorMessage(new ConvexError("texto"))).toBeNull();
+    expect(rulesErrorMessage(new ConvexError({ code: "sched_rules", violations: [] }))).toBeNull();
+    expect(rulesErrorMessage(new Error("x"))).toBeNull();
   });
 });
