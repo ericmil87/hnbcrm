@@ -45,10 +45,20 @@ const stateOf = (conversationId: Id<"conversations">) =>
   t.run((ctx) => ctx.db.query("schedConversationState").withIndex("by_conversation", (q) => q.eq("conversationId", conversationId)).first());
 const handoffs = () => t.run((ctx) => ctx.db.query("handoffs").collect());
 
-/** Busca segunda 15/06 e devolve os códigos emitidos. O cliente "responde" depois (1 min). */
+/** O cliente VIU as ofertas: a mensagem que as contém saiu (commit/aprovação grava `shownAt`; aqui direto). */
+async function markShownNow(who: Who) {
+  await t.run(async (ctx) => {
+    const st = await ctx.db.query("schedConversationState").withIndex("by_conversation", (q) => q.eq("conversationId", who.conversationId)).first();
+    if (st) await ctx.db.patch(st._id, { offers: st.offers.map((o) => (o.shownAt === undefined ? { ...o, shownAt: Date.now() } : o)) });
+  });
+}
+
+/** Busca segunda 15/06, a resposta com as ofertas SAI (shownAt) e o cliente "responde" 1 min depois. */
 async function offeredAndAnswered(s: AiSeed, who: Who, args: Record<string, unknown> = { service: "Consulta", dateRef: "2026-06-15" }) {
   const out = await find(s, who, args);
   const codes = [...(out.result.resultado ?? "").matchAll(/^(h\d+) — /gm)].map((m) => m[1]);
+  vi.setSystemTime(Date.now() + 1_000);
+  await markShownNow(who);
   vi.setSystemTime(Date.now() + 60_000);
   await customerSpoke(t, who.conversationId, Date.now());
   return { out, codes };
@@ -72,7 +82,7 @@ describe("findAvailableTimes", () => {
     const st = await stateOf(s.ana.conversationId);
     expect(st?.offers.map((o) => o.code)).toEqual(offers.map((l) => l.split(" ")[0]));
     expect(st?.offerSeq).toBe(offers.length);
-    expect(out.control.offeredLabels).toHaveLength(offers.length);
+    expect(out.control.offeredTimes).toHaveLength(offers.length);
   });
 
   test("período e eco: 'tarde' só devolve horários entre 12:00 e 18:00 e aparece no eco", async () => {
@@ -170,21 +180,26 @@ describe("findAvailableTimes", () => {
 });
 
 describe("tools ausentes quando a org não permite (executor reconfere)", () => {
-  const cases: Array<[string, Parameters<typeof seedAiAgenda>[1]]> = [
-    ["módulo desligado", { scheduling: false }],
-    ["IA da org desligada", { aiEnabled: false }],
-    ["ai.consult desligado", { ai: { consult: false } }],
-    ["sem serviço liberado", { noService: true }],
-    ["sem recurso ativo", { noResource: true }],
-    ["contato 'não é cliente'", { relation: "personal" }],
+  const cases: Array<[string, Parameters<typeof seedAiAgenda>[1], "null" | "sem tools"]> = [
+    ["módulo desligado", { scheduling: false }, "null"],
+    ["IA da org desligada", { aiEnabled: false }, "sem tools"],
+    ["ai.consult desligado", { ai: { consult: false } }, "sem tools"],
+    ["sem serviço liberado", { noService: true }, "sem tools"],
+    ["sem recurso ativo", { noResource: true }, "sem tools"],
+    ["contato 'não é cliente'", { relation: "personal" }, "sem tools"],
   ];
-  test.each(cases)("%s: contexto nulo e find/book recusam sem gravar", async (_label, opts) => {
+  test.each(cases)("%s: sem as tools (módulo desligado = contexto nulo; com o módulo o contexto só alimenta o guard) e find/book recusam sem gravar", async (_label, opts, expected) => {
     const s = await seedAiAgenda(t, opts);
     const ctxBlock = await t.query(internal.schedulingAi.internalContextBlock, {
       organizationId: s.organizationId, agentMemberId: s.agentId, conversationId: s.ana.conversationId, now: Date.now(),
     });
     assertMatchesReturns(ctxBlock, ai.internalContextBlock);
-    expect(ctxBlock).toBeNull();
+    if (expected === "null") expect(ctxBlock).toBeNull();
+    else {
+      expect(ctxBlock?.tools).toEqual({ find: false, book: false });
+      expect(ctxBlock?.services).toEqual([]);
+      expect(ctxBlock?.offers).toEqual([]);
+    }
     const f = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15" });
     expect(f.result.error).toBe("agenda_desligada");
     const b = await book(s, s.ana, "h1");
@@ -234,7 +249,7 @@ describe("contexto do prompt", () => {
       { name: "Massagem casal", durationMin: 60 },
     ]);
     expect(c.upcoming).toEqual([]);
-    expect(c.contactHas).toBe("none");
+    expect(c.offers).toEqual([]);
     expect(c.timezone).toBe("America/Sao_Paulo");
   });
 
@@ -264,7 +279,7 @@ describe("contexto do prompt", () => {
     expect(c.upcoming).toHaveLength(1);
     expect(c.upcoming[0]).toMatchObject({ ref: "a1", serviceName: "Consulta", status: "pending_approval" });
     expect(c.upcoming[0].label).toMatch(/^segunda-feira, 15\/06, às \d{2}:\d{2}$/);
-    expect(c.contactHas).toBe("pending_only");
+    expect(c.upcoming[0].startTime).toBeGreaterThan(Date.now());
     // outro contato não vê o horário da Ana
     const bia = (await t.query(internal.schedulingAi.internalContextBlock, {
       organizationId: s.organizationId, agentMemberId: s.agentId, conversationId: s.bia.conversationId, now: Date.now(),
@@ -279,7 +294,8 @@ describe("bookOfferedTime", () => {
     const { codes } = await offeredAndAnswered(s, s.ana);
     const out = await book(s, s.ana, codes[0]);
     expect(out.result.status).toBe("reservado_aguardando_equipe");
-    expect(out.result.resultado).toMatch(/^Pedido registrado: segunda-feira, 15\/06, às \d{2}:\d{2}, aguardando confirmação da equipe\.$/);
+    expect(out.result.resultado).toMatch(/^Pedido registrado para segunda-feira, 15\/06, às \d{2}:\d{2}, aguardando confirmação da equipe\.$/);
+    expect(out.result.proximo_passo).toContain(out.result.resultado!); // a frase canônica que o modelo deve usar
     expect(out.control.booked).toBe("pending");
     const [appt] = await appointments();
     expect(appt).toMatchObject({
@@ -427,6 +443,8 @@ describe("bookOfferedTime", () => {
     expect(t1.result.error).toBe("horario_tomado");
     expect(t1.control.handoff).toBe(false);
     const fresh = [...(t1.result.resultado ?? "").matchAll(/^(h\d+) — /gm)].map((m) => m[1]);
+    vi.setSystemTime(Date.now() + 1_000);
+    await markShownNow(s.bia);
     vi.setSystemTime(Date.now() + 60_000);
     await customerSpoke(t, s.bia.conversationId, Date.now());
     await occupyByStaff(s.bia.conversationId, fresh[0]);

@@ -2,27 +2,41 @@
  * Agenda v2 (D1) — regra do output guard: a resposta da IA ao cliente não pode AFIRMAR um horário "marcado",
  * "confirmado", "agendado" ou "reservado" sem que o servidor tenha de fato registrado isso (plano §3.6).
  *
- * PURO (sem `ctx`, sem relógio). É a rede de proteção do que o modelo diz; a verdade vem do estado:
- *  - `bookedThisTurn`: resultado de `bookOfferedTime` NESTE turno (`pending` = pedido registrado, aguarda a equipe;
- *    `scheduled` = marcado de fato);
- *  - `contactHas`: agendamentos futuros do contato (lidos antes do turno);
- *  - `offeredLabels`: horários que o servidor devolveu neste turno (busca ou reserva) e os já marcados do contato.
+ * PURO (sem `ctx`, sem relógio próprio). A regra gira em torno dos HORÁRIOS citados, não só dos verbos (lista de verbos
+ * nunca converge): cada menção de dia/hora na resposta (`extractDateTimeMentions`, o extrator do parser de confirmação)
+ * é comparada com o que o servidor sabe:
+ *  - E = agendamentos EXISTENTES do contato (com status: marcado × aguardando a equipe);
+ *  - R = reserva feita NESTA rodada (com status; a prévia do modo sugestão conta como oferta, não como reserva);
+ *  - O = ofertas vigentes (já mostradas ao cliente) e as emitidas neste turno.
  *
- * Três violações:
- *  - `claim_without_booking`: afirma marcação, e nem neste turno nem antes houve agendamento;
- *  - `confirmed_but_pending`: diz "confirmado/marcado" quando só existe pedido aguardando a equipe;
- *  - `time_not_offered`: cita dia + hora como disponível ou marcado e esse horário nunca foi devolvido pelo servidor.
+ * Regras:
+ *  1. Horário citado que não está em E ∪ R ∪ O = inventado → `time_not_offered` (vale também em pergunta);
+ *  2. horário só em O (ofertado, não reservado): a resposta só pode OFERECER ou PERGUNTAR; qualquer marcador
+ *     assertivo de fechamento (léxico amplo) → `claim_without_booking`;
+ *  3. horário em R/E aguardando a equipe: só pode dizer que o pedido foi REGISTRADO e aguarda confirmação; fechamento
+ *     definitivo → `confirmed_but_pending`;
+ *  4. horário em R/E marcado: livre;
+ *  5. fechamento SEM horário ("Prontinho! Seu horário está confirmado") só passa com R marcado nesta rodada ou com
+ *     exatamente UM agendamento marcado em E; com pendente → `confirmed_but_pending`; sem nada → `claim_without_booking`.
  *
- * Falso positivo custa caro (a rodada é descartada e refeita), então a regra só olha frases AFIRMATIVAS: perguntas,
- * ofertas de horário, condicionais ("se der", "assim que a equipe confirmar"), negações, promessa futura ("vou
- * marcar"), citação do cliente ("você pediu…", texto entre aspas) e "confirmo o recebimento do comprovante" ficam
- * de fora. Detalhe e lista de casos: `schedClaimGuard.test.ts`.
+ * NÃO barra: pergunta, citação do cliente ("você pediu…", texto entre aspas), negação, condicional ("assim que a
+ * equipe confirmar"), promessa futura, horário de funcionamento, indisponibilidade ("quinta às 17h está ocupado"),
+ * pagamento "confirmado", "horários marcados no site". Corpus de casos: `schedClaimGuard.test.ts`.
  */
+import { extractDateTimeMentions } from "./schedConfirmParser";
+import { localDateOf, minutesOfDay } from "./schedTime";
 
+export type KnownTime = { localDate: string; timeMin: number };
+export type KnownBooking = KnownTime & { status: "pending" | "scheduled" };
 export type ClaimState = {
-  bookedThisTurn: "none" | "pending" | "scheduled";
-  contactHas: "none" | "pending_only" | "scheduled";
-  offeredLabels: string[];
+  now: number;
+  tz: string;
+  /** E: agendamentos existentes do contato. */
+  existing: KnownBooking[];
+  /** R: reserva feita nesta rodada (pending = pedido registrado; scheduled = marcado). */
+  booked: KnownBooking[];
+  /** O: ofertas vigentes + emitidas neste turno + prévia do modo sugestão. */
+  offered: KnownTime[];
 };
 export type ClaimViolation = {
   kind: "claim_without_booking" | "confirmed_but_pending" | "time_not_offered";
@@ -31,6 +45,10 @@ export type ClaimViolation = {
 };
 
 const EVIDENCE_MAX = 80;
+
+export function knownTime(startTime: number, tz: string): KnownTime {
+  return { localDate: localDateOf(startTime, tz), timeMin: minutesOfDay(startTime, tz) };
+}
 
 function norm(s: string): string {
   return s
@@ -49,197 +67,214 @@ function sentencesOf(text: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// Marcas de horário
+// Léxico de fechamento
 // ---------------------------------------------------------------------------
 
-const HOUR_RES: RegExp[] = [
-  /\b(\d{1,2})\s*(?:h|hs|hrs?|horas?)\s*(\d{2})?\b/g,
-  /\b(\d{1,2}):(\d{2})\b/g,
-  /\bas\s+(\d{1,2})(?!\s*(?:pessoas?|dias?|vezes|anos?|min|reais|%|\/))\b/g,
+type Level = "strong" | "closer" | "soft";
+type Marker = { re: RegExp; level: Level; needsMention?: boolean; readback?: boolean };
+
+const DAYS = "segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje";
+/**
+ * `strong`: fecha o horário (marcado, confirmado, "te espero"…). `closer`: palavra de fechamento ("prontinho",
+ * "combinado") que só conta com horário ou assunto de agenda na mensagem. `soft`: registro/reserva ("reservei",
+ * "pedido registrado"), aceitável só como pedido AGUARDANDO a equipe. `needsMention`: só conta com horário citado.
+ * `readback`: pode aparecer no read-back que as instruções pedem ("anotado: segunda às 08:00. Posso registrar?").
+ */
+const MARKERS: Marker[] = [
+  { re: /\bmarcad(?:[oa]s?|inh[oa]s?|issim[oa]s?)\b(?!\s+como\b)/g, level: "strong" },
+  { re: /\bagendad(?:[oa]s?|inh[oa]s?|issim[oa]s?)\b/g, level: "strong" },
+  { re: /\bconfirmad(?:[oa]s?|inh[oa]s?|issim[oa]s?)\b/g, level: "strong" },
+  { re: /\bgarantid[oa]s?\b|\bgaranti(?:i|mos)\b/g, level: "strong" },
+  { re: /\b(?:marquei|agendei|marcamos|agendamos|confirmei|encaixei|separei|coloquei|incluí|inclui|adicionei)\b/g, level: "strong" },
+  { re: /\bconfirm(?:o|amos)\s+(?:(?:o|a|os|as|seu|sua|seus|suas)\s+)*(?:horario|agendamento|consulta|sessao|atendimento|reserva|marcacao|visita)s?\b/g, level: "strong" },
+  { re: /\b(?:fica|ficou)\s+(?:para|pra)\b/g, level: "strong" },
+  { re: /\bfica\s+(?:entao\s+)?(?:na\s+|no\s+|a\s+)?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g, level: "strong", needsMention: true },
+  { re: /\b(?:esta|estao|ficou|ficaram)\s+(?:tudo\s+)?certo\b|\btudo certo\b/g, level: "strong" },
+  { re: /\bpode vir\b/g, level: "strong" },
+  { re: /\bte (?:espero|vejo|aguardo|aguardamos)\b|\bnos vemos\b|\bate (?:la|logo|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/g, level: "strong" },
+  { re: /✅|✔/g, level: "strong" },
+  { re: /\bja esta na agenda\b|\bna agenda (?:de|para|pra|do dia)\b/g, level: "strong" },
+  { re: /\bsua (?:consulta|sessao|vaga|reserva|visita|avaliacao) e\b|\bvoce sera atendid[oa]\b/g, level: "strong" },
+  { re: /\be (?:seu|sua)\b/g, level: "strong", needsMention: true },
+  { re: /\bprontinho\b|\bpronto\b|\bfeito(?=\s*[!,:;]|\s*$)|\bcertinho\b/g, level: "closer", readback: true },
+  { re: /\bcombinad[oa]\b|\bfechad[oa]\b|\banotad[oa]\b|\banotei\b/g, level: "closer", readback: true },
+  { re: /\breservad(?:[oa]s?|inh[oa]s?)\b|\breservei\b|\breservamos\b/g, level: "soft" },
+  { re: /\bregistrad[oa]s?\b|\bregistrei\b|\bregistramos\b/g, level: "soft" },
 ];
-const WEEKDAY_FULL: Array<[RegExp, number]> = [
-  [/\bdomingo\b/, 0],
-  [/\bsegunda(?:-feira)?\b/, 1],
-  [/\bterca(?:-feira)?\b/, 2],
-  [/\bquarta(?:-feira)?\b/, 3],
-  [/\bquinta(?:-feira)?\b/, 4],
-  [/\bsexta(?:-feira)?\b/, 5],
-  [/\bsabado\b/, 6],
-];
-/** Rótulos do servidor também usam a forma curta ("qui, 27/11/2026"). */
-const WEEKDAY_SHORT: Array<[RegExp, number]> = [
-  [/\bdom\b/, 0],
-  [/\bseg\b/, 1],
-  [/\bter\b/, 2],
-  [/\bqua\b/, 3],
-  [/\bqui\b/, 4],
-  [/\bsex\b/, 5],
-  [/\bsab\b/, 6],
-];
-const DATE_RE = /\b(\d{1,2})\/(\d{1,2})(?:\/\d{2,4})?\b/g;
-const RELATIVE_DAY_RE = /\b(hoje|amanha|depois de amanha)\b/;
 
-const pad2 = (n: number | string) => String(n).padStart(2, "0");
-
-function hoursIn(n: string): string[] {
-  const out = new Set<string>();
-  for (const re of HOUR_RES) {
-    re.lastIndex = 0;
-    for (const m of n.matchAll(re)) {
-      const h = Number(m[1]);
-      const min = m[2] ? Number(m[2]) : 0;
-      if (h >= 0 && h <= 23 && min >= 0 && min <= 59) out.add(`${pad2(h)}:${pad2(min)}`);
-    }
-  }
-  return [...out];
-}
-
-function datesIn(n: string): string[] {
-  const out = new Set<string>();
-  DATE_RE.lastIndex = 0;
-  for (const m of n.matchAll(DATE_RE)) {
-    const d = Number(m[1]);
-    const mo = Number(m[2]);
-    if (d >= 1 && d <= 31 && mo >= 1 && mo <= 12) out.add(`${pad2(d)}/${pad2(mo)}`);
-  }
-  return [...out];
-}
-
-function weekdaysIn(n: string, table: Array<[RegExp, number]>): number[] {
-  return table.filter(([re]) => re.test(n)).map(([, i]) => i);
-}
-
-function hasDayMark(n: string): boolean {
-  return datesIn(n).length > 0 || weekdaysIn(n, WEEKDAY_FULL).length > 0 || RELATIVE_DAY_RE.test(n);
-}
-function hasHourMark(n: string): boolean {
-  return hoursIn(n).length > 0 || /\bmeio[- ]dia\b/.test(n);
-}
-const hasTimeMark = (n: string) => hasHourMark(n) || hasDayMark(n);
-
-// ---------------------------------------------------------------------------
-// Verbos de afirmação
-// ---------------------------------------------------------------------------
-
-/** Afirmações de marcação (formas do próprio domínio: dispensam marca de horário). */
-const BOOKING_STRONG = /\b(?:marcad[oa]s?(?!\s+como\b)|agendad[oa]s?|marquei|agendei|marcamos|agendamos)\b/g;
-/** Confirmação/reserva: só valem como afirmação de horário junto de marca de dia ou hora. */
-const CONFIRM_STRONG = /\b(?:confirmad[oa]s?|confirmei|confirm(?:o|amos)\s+(?:(?:o|a|os|as|seu|sua|seus|suas)\s+)*(?:horario|agendamento|consulta|sessao|atendimento|reserva|marcacao|visita)s?)\b/g;
-const RESERVE_SOFT = /\b(?:reservad[oa]s?|reservei|reservamos|ficou para|fica para|te espero|te aguardo|te aguardamos|nos vemos)\b/g;
-
-/** Antes do verbo, dentro da mesma oração: negação, condição, pergunta, promessa futura, desejo. */
+/** Antes do marcador, na mesma oração: negação, condição, pergunta, promessa futura, desejo, modal. */
 const HEDGE_BEFORE =
-  /\b(?:nao|nem|nunca|ainda nao|sem|vou|vamos|vai|posso|podemos|pode|preciso|precisa|quero|quer|queria|queira|gostaria|deseja|para|pra|assim que|quando|se|caso|ate que|ate|antes de|depois que|apos|talvez|como|sera|seria|estara|so)\b/;
+  /\b(?:nao|nem|nunca|ainda nao|sem|vou|vamos|vai|posso|podemos|pode|podem|deve|devem|preciso|precisa|quero|quer|queria|queira|gostaria|deseja|para (?:deixar|ficar|ser|estar|ver|saber)|pra (?:deixar|ficar|ser|estar|ver|saber)|assim que|quando|se|caso|ate que|antes de|depois que|apos|talvez|como|sera|seria|estara|so|nenhum|nenhuma)\b/;
 /** Condição que abre a frase vale até o fim dela, mesmo depois de vírgula: "Se der certo, fica marcado". */
 const CONDITION_OPENER = /\b(?:se|caso|assim que|quando|ate que|depois que|desde que)\b/;
-/** Frases que narram o que o CLIENTE disse (citação) ou pedem dado: nunca são afirmação. */
-const CUSTOMER_CITATION = /^(?:voce|vc|o senhor|a senhora)\s+(?:disse|falou|pediu|mencionou|escreveu|quer|queria|informou|perguntou)\b/;
-/** Para `time_not_offered`: a frase oferece, indica ou marca um horário. */
-const OFFERING_CUE = /\b(?:tenho|temos|disponivel|disponiveis|vaga|vagas|livre|livres|opcao|opcoes|encaixo|consigo|posso (?:te )?(?:oferecer|marcar)|horario)\b/;
-const UNAVAILABLE_CUE = /\b(?:nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem horario|nao consigo|nao da|ja passou)\b/;
-const PENDING_QUALIFIER = /\b(?:aguard\w*|pendente|pedido|solicit\w*|registrad[oa]|equipe)\b/;
+/** Frases que narram o que o CLIENTE disse: nunca são afirmação nem horário inventado. */
+const CUSTOMER_CITATION = /^(?:voce|vc|o senhor|a senhora)\s+(?:disse|falou|pediu|mencionou|escreveu|quer|queria|informou|perguntou|prefere|escolheu)\b/;
+const UNAVAILABLE_CUE = /\b(?:nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem horario|nao consigo|nao da|ja passou|nao esta livre|nao esta disponivel)\b/;
+const BUSINESS_CUE = /\b(?:fecha|fechamos|fechado ate|abre|abrimos|aberto|abertos|aberta|funciona|funcionamos|funcionamento|atendemos|expediente|horario de atendimento)\b/;
+const PAYMENT_CUE = /\b(?:pagamento|pix|comprovante|boleto|cartao|transferencia|compra|cadastro|recebimento|fatura|cobranca|valor)\b/;
+const SCHEDULE_NOUN = /\b(?:horario|horarios|consulta|sessao|atendimento|vaga|agendamento|reserva|marcacao|avaliacao|visita)\b/;
+/** "os horários marcados no site podem estar desatualizados": o plural genérico não é afirmação sobre ESTE cliente. */
+const GENERIC_PLURAL = /\b(?:horarios|agendamentos|consultas|sessoes|atendimentos|vagas)\s+(?:ja\s+)?(?:marcad|agendad|reservad|confirmad)/;
+const PENDING_QUALIFIER = /\b(?:aguard\w*|pendente|pedido|solicit\w*|equipe)\b/;
+/** Última frase pede a confirmação do cliente: a anterior é um read-back, não um fechamento. */
+const CONFIRM_QUESTION = /\b(?:posso (?:registrar|reservar|marcar|seguir|confirmar|anotar|fechar|prosseguir)|podemos (?:registrar|reservar|marcar|seguir|fechar)|confirma\b|esta certo|certo\b|correto\b|pode ser\b|ok\b|fechamos|e isso|e esse|e essa|quer que eu (?:registre|reserve|marque|anote)|devo (?:registrar|reservar|marcar|seguir))/;
 
-type Claim = { kind: "strong" | "confirm" | "soft"; index: number };
+/** "…, tá?", "…, certo?": pergunta-eco; o que vem antes continua sendo afirmação. */
+const TAG_QUESTION = /,\s*(?:ta|tá|ne|né|certo|ok|combinado|beleza|tudo bem)\s*\?\s*$/i;
 
-function claimsIn(n: string): Claim[] {
-  const out: Claim[] = [];
-  const scan = (re: RegExp, kind: Claim["kind"]) => {
-    re.lastIndex = 0;
-    for (const m of n.matchAll(re)) {
-      if (!isHedged(n, m.index ?? 0)) out.push({ kind, index: m.index ?? 0 });
-    }
-  };
-  scan(BOOKING_STRONG, "strong");
-  scan(CONFIRM_STRONG, "confirm");
-  scan(RESERVE_SOFT, "soft");
-  return out;
-}
+type Hit = { level: Level; needsMention: boolean; readback: boolean };
 
-/** Oração que antecede o verbo (até a última vírgula/ponto e vírgula/dois-pontos), últimas ~6 palavras. */
 function isHedged(sentence: string, at: number): boolean {
   const before = sentence.slice(0, at);
   if (CONDITION_OPENER.test(before)) return true;
   const clause = before.split(/[,;:()—]/).pop() ?? "";
-  const words = clause.trim().split(/\s+/).slice(-6).join(" ");
-  return HEDGE_BEFORE.test(words);
+  return HEDGE_BEFORE.test(clause.trim().split(/\s+/).slice(-6).join(" "));
+}
+
+function markersIn(n: string): Hit[] {
+  const out: Hit[] = [];
+  for (const m of MARKERS) {
+    m.re.lastIndex = 0;
+    for (const found of n.matchAll(m.re)) {
+      if (isHedged(n, found.index ?? 0)) continue;
+      // "cadastro confirmado", "pagamento confirmado": o assunto do marcador não é horário.
+      const near = (n.slice(0, found.index ?? 0).split(/[,;:()\u2014]/).pop() ?? "").trim().split(/\s+/).slice(-5).join(" ");
+      if (PAYMENT_CUE.test(near)) continue;
+      out.push({ level: m.level, needsMention: m.needsMention === true, readback: m.readback === true });
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// Horários oferecidos (rótulos do servidor)
+// Horários citados × horários conhecidos
 // ---------------------------------------------------------------------------
 
-type OfferedKey = { hhmm: string[]; dates: string[]; weekdays: number[] };
+type Mention = { localDate?: string; timeMin?: number };
+type Match = "inventado" | "oferta" | "pendente" | "marcado";
 
-function parseOffered(label: string): OfferedKey {
-  const n = norm(label);
-  return {
-    hhmm: hoursIn(n),
-    dates: datesIn(n),
-    weekdays: [...new Set([...weekdaysIn(n, WEEKDAY_FULL), ...weekdaysIn(n, WEEKDAY_SHORT)])],
-  };
+const same = (k: KnownTime, m: { localDate?: string; timeMin: number }) =>
+  k.timeMin === m.timeMin && (m.localDate === undefined || k.localDate === m.localDate);
+
+/** Prioridade: reserva desta rodada > agendamento existente > oferta. */
+function classify(m: { localDate?: string; timeMin: number }, st: ClaimState): Match {
+  const r = st.booked.filter((k) => same(k, m));
+  const e = st.existing.filter((k) => same(k, m));
+  const hit = r.length > 0 ? r : e;
+  if (hit.length > 0) return hit.some((k) => k.status === "scheduled") ? "marcado" : "pendente";
+  if (st.offered.some((k) => same(k, m))) return "oferta";
+  return "inventado";
 }
 
-function isOffered(sentenceN: string, offered: OfferedKey[]): boolean {
-  const hours = hoursIn(sentenceN);
-  const dates = datesIn(sentenceN);
-  const days = weekdaysIn(sentenceN, WEEKDAY_FULL);
-  const relative = RELATIVE_DAY_RE.test(sentenceN);
-  if (hours.length === 0) return true;
-  return hours.every((h) =>
-    offered.some((o) => {
-      if (!o.hhmm.includes(h)) return false;
-      if (dates.length === 0 && days.length === 0) return true;
-      if (dates.some((d) => o.dates.includes(d))) return true;
-      if (days.some((d) => o.weekdays.includes(d))) return true;
-      // Sem data nem dia da semana cruzáveis: "hoje/amanhã" não dá para conferir sem relógio; confia no horário.
-      return relative && dates.length === 0 && days.length === 0;
-    })
-  );
+/**
+ * O extrator foi feito para mensagens do HUMANO/cliente: "tenho", "consigo", "posso" + verbo de agenda viram "ocupado" ou
+ * "intenção" e derrubam o trecho. Na boca da IA são ofertas ("tenho quinta às 15h"); troca-se o verbo por um neutro.
+ */
+const OFFER_VERBS = /\b(?:tenho|temos|consigo|conseguimos|posso|podemos|encaixo|encaixamos)\b/gi;
+
+/**
+ * Texto da IA preparado para o extrator: verbos de oferta neutros e SEM vírgula entre dia/data e a hora ("quinta-feira,
+ * 26/11, às 10:00" → "quinta-feira 26/11 às 10:00"; com a vírgula o extrator separa em "dia" e "hora solta").
+ */
+export function neutralizeForMentions(sentence: string): string {
+  return sentence
+    .replace(OFFER_VERBS, "há vaga")
+    .replace(/(\d{4}|\d{1,2}\/\d{1,2}|feira|s[aá]bado|domingo|segunda|ter[cç]a|quarta|quinta|sexta),\s+(?=\d|[àa]s\b)/gi, "$1 ");
+}
+
+function mentionsOf(sentence: string, st: ClaimState): Mention[] {
+  try {
+    return extractDateTimeMentions(neutralizeForMentions(sentence), { now: st.now, tz: st.tz });
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Detector
 // ---------------------------------------------------------------------------
 
-export function detectUnbackedBookingClaim(text: string, ctx: ClaimState): ClaimViolation | null {
+export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimViolation | null {
   if (typeof text !== "string" || !text.trim()) return null;
   const sentences = sentencesOf(text);
+  const isQuestion = (raw: string) => /\?\s*$/.test(raw) && !TAG_QUESTION.test(raw);
+  const asserted = sentences.filter((raw) => !isQuestion(raw) && !CUSTOMER_CITATION.test(norm(raw)));
   const whole = norm(sentences.join(" "));
-  const textHasTimeMark = hasTimeMark(whole);
-  const effective: "none" | "pending" | "scheduled" =
-    ctx.bookedThisTurn !== "none"
-      ? ctx.bookedThisTurn
-      : ctx.contactHas === "scheduled"
-        ? "scheduled"
-        : ctx.contactHas === "pending_only"
-          ? "pending"
-          : "none";
-  const offered = ctx.offeredLabels.map(parseOffered);
+  const last = sentences[sentences.length - 1] ?? "";
+  const endsWithConfirmQuestion = /\?\s*$/.test(last) && CONFIRM_QUESTION.test(norm(last));
   const pendingQualified = PENDING_QUALIFIER.test(whole);
+  const messageNoun = SCHEDULE_NOUN.test(whole);
 
-  const assertive = sentences.filter((raw) => !/\?\s*$/.test(raw) && !CUSTOMER_CITATION.test(norm(raw)));
-  // Uma afirmação em qualquer frase ("Marcado!") vale para o dia e hora citados nas outras ("Quinta, 26/11, às 15h.").
-  const messageClaims = assertive.some((raw) => claimsIn(norm(raw)).some((c) => c.kind === "strong" || textHasTimeMark));
-
-  for (const raw of assertive) {
+  // Menções com hora de cada frase (o extrator já descarta negação, faixa "das X às Y", passado e limite).
+  const perSentence = sentences.map((raw) => {
     const n = norm(raw);
+    const skip = CUSTOMER_CITATION.test(n) || UNAVAILABLE_CUE.test(n) || BUSINESS_CUE.test(n);
+    const body = TAG_QUESTION.test(raw) ? raw.replace(TAG_QUESTION, ".") : raw;
+    return { raw, n: norm(body), skip, mentions: skip ? [] : mentionsOf(body, st), question: isQuestion(raw) };
+  });
+  const messageHasMention = perSentence.some((s) => s.mentions.length > 0);
 
-    const claims = claimsIn(n).filter((c) => c.kind === "strong" || textHasTimeMark);
-    const evidence = raw.slice(0, EVIDENCE_MAX);
-    if (claims.length > 0) {
-      if (effective === "none") return { kind: "claim_without_booking", evidence };
-      if (effective === "pending") {
-        const hard = claims.some((c) => c.kind === "strong" || c.kind === "confirm");
-        if (hard) return { kind: "confirmed_but_pending", evidence };
-        if (!pendingQualified) return { kind: "confirmed_but_pending", evidence };
+  // 1. Horário inventado: dia+hora ou hora solta que o servidor nunca devolveu.
+  for (const s of perSentence) {
+    for (const m of s.mentions) {
+      if (m.timeMin === undefined) continue;
+      if (classify({ localDate: m.localDate, timeMin: m.timeMin }, st) === "inventado") {
+        return { kind: "time_not_offered", evidence: s.raw.slice(0, EVIDENCE_MAX) };
       }
     }
+  }
 
-    // Dia + hora citados como disponíveis ou marcados e que o servidor nunca devolveu.
-    if (hasDayMark(n) && hoursIn(n).length > 0 && !UNAVAILABLE_CUE.test(n)) {
-      const asserting = messageClaims || OFFERING_CUE.test(n);
-      if (asserting && !isOffered(n, offered)) return { kind: "time_not_offered", evidence };
+  // Menções da mensagem inteira (para o marcador de uma frase que cita o horário em outra).
+  const messageMatches = perSentence.flatMap((s) =>
+    s.mentions.filter((m) => m.timeMin !== undefined).map((m) => classify({ localDate: m.localDate, timeMin: m.timeMin! }, st))
+  );
+
+  // E sem horário citado: o agendamento marcado do contato é único?
+  const scheduledExisting = st.existing.filter((k) => k.status === "scheduled");
+  const bookedScheduled = st.booked.some((k) => k.status === "scheduled");
+  const bookedPending = st.booked.some((k) => k.status === "pending");
+  const pendingExisting = st.existing.some((k) => k.status === "pending");
+
+  for (const s of perSentence) {
+    if (s.question) continue;
+    if (!asserted.includes(s.raw)) continue;
+    if (GENERIC_PLURAL.test(s.n)) continue;
+    if (UNAVAILABLE_CUE.test(s.n)) continue;
+    const hits = markersIn(s.n).filter((h) => {
+      if (h.level === "closer" && !(messageHasMention || messageNoun)) return false;
+      if (h.needsMention && !messageHasMention) return false;
+      if (h.readback && endsWithConfirmQuestion) return false;
+      return true;
+    });
+    if (hits.length === 0) continue;
+    const evidence = s.raw.slice(0, EVIDENCE_MAX);
+
+    const own = s.mentions.filter((m) => m.timeMin !== undefined).map((m) => classify({ localDate: m.localDate, timeMin: m.timeMin! }, st));
+    const matches = own.length > 0 ? own : messageMatches;
+    if (matches.length > 0) {
+      if (matches.includes("oferta")) return { kind: "claim_without_booking", evidence };
+      if (matches.includes("pendente")) {
+        // `strong` aqui = strong ou closer; closer com a mensagem já qualificada ("a equipe confirma") passa.
+        const definitive = hits.some((h) => h.level === "strong") || (hits.some((h) => h.level === "closer") && !pendingQualified);
+        if (definitive || !pendingQualified) return { kind: "confirmed_but_pending", evidence };
+      }
+      continue; // marcado
     }
+
+    // Fechamento SEM horário citado.
+    if (bookedScheduled) continue;
+    if (bookedPending) {
+      const definitive = hits.some((h) => h.level === "strong") || (hits.some((h) => h.level === "closer") && !pendingQualified);
+      if (definitive || !pendingQualified) return { kind: "confirmed_but_pending", evidence };
+      continue;
+    }
+    if (scheduledExisting.length === 1) continue;
+    if (scheduledExisting.length === 0 && pendingExisting) {
+      const definitive = hits.some((h) => h.level === "strong") || (hits.some((h) => h.level === "closer") && !pendingQualified);
+      if (definitive || !pendingQualified) return { kind: "confirmed_but_pending", evidence };
+      continue;
+    }
+    return { kind: "claim_without_booking", evidence };
   }
   return null;
 }
@@ -248,10 +283,10 @@ export function detectUnbackedBookingClaim(text: string, ctx: ClaimState): Claim
 export function claimNudge(kind: ClaimViolation["kind"]): string {
   switch (kind) {
     case "claim_without_booking":
-      return "Sua resposta anterior foi DESCARTADA: ela afirmava um horário marcado, confirmado ou reservado, mas nada foi registrado neste atendimento. Se o cliente já escolheu um horário que você ofereceu, use bookOfferedTime (sozinha, numa rodada própria); senão ofereça horários com findAvailableTimes ou diga que a equipe confirma. Não afirme marcação sem o resultado da ferramenta.";
+      return "Sua resposta anterior foi DESCARTADA: ela afirmava um horário marcado, confirmado, reservado ou registrado, mas nada foi registrado para esse horário. Se o cliente já escolheu um horário que você ofereceu, use bookOfferedTime (sozinha, numa rodada própria); senão ofereça horários com findAvailableTimes, ou repita o horário e PERGUNTE se pode registrar. Não afirme marcação sem o resultado da ferramenta.";
     case "confirmed_but_pending":
-      return 'Sua resposta anterior foi DESCARTADA: ela dizia "confirmado/marcado", mas o horário só foi REGISTRADO e aguarda a confirmação da equipe. Diga apenas que o pedido foi registrado e que a equipe confirma em breve.';
+      return 'Sua resposta anterior foi DESCARTADA: ela dizia "confirmado/marcado/garantido", mas o horário só foi REGISTRADO e aguarda a confirmação da equipe. Use a frase canônica do resultado da ferramenta: pedido registrado, aguardando a confirmação da equipe.';
     case "time_not_offered":
-      return "Sua resposta anterior foi DESCARTADA: ela citava um dia e hora que o sistema não devolveu. Cite somente os horários retornados por findAvailableTimes neste atendimento (ou consulte de novo).";
+      return "Sua resposta anterior foi DESCARTADA: ela citava um dia e hora que o sistema não devolveu. Cite somente os horários retornados por findAvailableTimes (ou listados em ofertas_vigentes / horarios_do_cliente), ou consulte de novo.";
   }
 }

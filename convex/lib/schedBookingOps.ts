@@ -1328,6 +1328,14 @@ async function placeAppointment(ctx: MutationCtx, args: BookArgs, opts: PlaceOpt
 }
 
 /** Efeitos do agendamento novo (audit, activity, webhook, conflito, etapa do funil). */
+const RESERVED_AUDIT_KEYS = new Set(["via", "origin", "statusChange", "forcedRules", "messageId", "rescheduledFromId", "undo"]);
+
+function safeAuditMetadata(extra: Record<string, string | number | boolean> | undefined): Record<string, string | number | boolean> {
+  const out: Record<string, string | number | boolean> = {};
+  for (const [k, v] of Object.entries(extra ?? {})) if (!RESERVED_AUDIT_KEYS.has(k)) out[k] = v;
+  return out;
+}
+
 async function finalizeBooking(
   ctx: MutationCtx,
   placed: Extract<Placed, { kind: "placed" }>,
@@ -1342,12 +1350,14 @@ async function finalizeBooking(
     severity: "medium",
     description: p.reschedule ? `Remarcou o agendamento para ${label}` : `Marcou o horário ${label}`,
     ...(p.reschedule ? { before: appointmentSnapshot(p.reschedule.previous), after: appointmentSnapshot(a) } : { after: appointmentSnapshot(a) }),
+    // Metadados extras do chamador vêm ANTES dos campos fixos e sem as chaves reservadas: nunca sobrescrevem
+    // `via`, `origin`, `statusChange`, `forcedRules` etc. (que o desfazer e a revisão leem).
     metadata: {
+      ...safeAuditMetadata(p.auditMetadata),
       forcedRules: a.forcedRules ?? [],
       statusChange: false,
       ...(a.sourceMessageId ? { messageId: a.sourceMessageId } : {}),
       ...(p.reschedule ? { rescheduledFromId: p.reschedule.previous._id } : {}),
-      ...(p.auditMetadata ?? {}),
     },
     now: p.now,
   });

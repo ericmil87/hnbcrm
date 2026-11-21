@@ -95,6 +95,29 @@ function stubModel(script: LlmTurn[]): Model {
 const toolResults = (body: { messages: Array<{ role: string; content: string }> }) =>
   body.messages.filter((m) => m.role === "tool").map((m) => JSON.parse(m.content) as Record<string, unknown>);
 
+/**
+ * Ofertas VIGENTES que a requisição traz (`ofertas_vigentes` do envelope). O "modelo" só usa códigos que estão AQUI: o
+ * teste falha se o roteiro usar um código ausente da requisição (um modelo real não tem outra fonte além da requisição).
+ */
+const offersInRequest = (req: Req): Array<{ code: string; horario: string }> => {
+  const out: Array<{ code: string; horario: string }> = [];
+  for (const m of req.messages) {
+    if (m.role !== "user" || typeof m.content !== "string") continue;
+    for (const x of m.content.matchAll(/"codigo":\s*"(h\d+)",\s*"horario":\s*"([^"]+)"/g)) out.push({ code: x[1], horario: x[2] });
+  }
+  return out;
+};
+let lastCode = "";
+/** Reserva a primeira oferta vigente da requisição (o cliente escolheu "o primeiro"/"o das 8"). */
+const bookFirst: LlmTurn = (req) => {
+  const offers = offersInRequest(req);
+  if (offers.length === 0) throw new Error("o roteiro usou um código que NÃO está na requisição (ofertas_vigentes vazio)");
+  lastCode = offers[0].code;
+  return book(lastCode);
+};
+/** Repete o código que ele mesmo acabou de usar (a mesma reserva, outra tentativa). */
+const bookAgain: LlmTurn = () => book(lastCode);
+
 /** Os horários que a última busca devolveu (sem o código): é o que o modelo cita ao cliente. */
 const offeredTexts = (req: Req): string[] => {
   const results = toolResults(req);
@@ -109,9 +132,9 @@ const offering = (n = 3): LlmTurn => (req) => reply(`Tenho ${offeredTexts(req).s
 /** Confirmação certa conforme o resultado da reserva (pending × scheduled). */
 const afterBooking: LlmTurn = (req) => {
   const result = String(toolResults(req).at(-1)?.resultado ?? "");
-  const pending = /Pedido (?:registrado|já estava registrado): (.+?), aguardando/.exec(result);
+  const pending = /(?:Pedido registrado|O pedido já estava registrado) para (.+?), aguardando/.exec(result);
   if (pending) return reply(`Pedido registrado para ${pending[1]}. A equipe confirma em breve.`);
-  const done = /(?:Marcado|Já estava marcado): (.+)\./.exec(result);
+  const done = /(?:Marcado|Já estava marcado) para (.+)\./.exec(result);
   if (done) return reply(`Pronto, marcado para ${done[1]}!`);
   return reply("Vou conferir com a equipe e já retorno.");
 };
@@ -172,7 +195,7 @@ describe("fluxo feliz: consulta, escolha do cliente e proposta", () => {
     const m = stubModel([
       find("Consulta", "2026-06-15"),
       offering(),
-      book("h1"),
+      bookFirst,
       afterBooking,
     ]);
     await turn(s, s.ana, "Oi, quero marcar uma consulta na segunda");
@@ -248,7 +271,7 @@ describe("o guard barra afirmação sem reserva", () => {
     const m = stubModel([
       find("Consulta", "2026-06-15"),
       offering(),
-      book("h1"),
+      bookFirst,
       reply("Seu horário está confirmado para segunda às 08:00!"),
       afterBooking,
     ]);
@@ -270,7 +293,7 @@ describe("o guard barra afirmação sem reserva", () => {
     const m = stubModel([
       find("Consulta", "2026-06-15"),
       offering(),
-      book("h1"),
+      bookFirst,
       afterBooking,
     ]);
     await turn(s, s.ana, "Quero consulta segunda");
@@ -432,9 +455,9 @@ describe("regra da rodada e tetos", () => {
     const m = stubModel([
       find("Consulta", "2026-06-15"),
       offering(),
-      book("h1"),
+      bookFirst,
       afterBooking,
-      book("h1"),
+      bookAgain,
       afterBooking,
     ]);
     await turn(s, s.ana, "Quero consulta segunda");
@@ -457,10 +480,10 @@ describe("duas conversas, um horário", () => {
       find("Consulta", "2026-06-15"),
       offering(),
       // Ana escolhe e reserva
-      book("h1"),
+      bookFirst,
       afterBooking,
       // Bia escolhe o mesmo: tomado
-      book("h1"),
+      bookFirst,
       (req) => reply(`Esse horário acabou de ser ocupado. Tenho ${offeredTexts(req).join(" ou ")}. Qual prefere?`),
     ]);
     await turn(s, s.ana, "Quero consulta segunda");
@@ -550,69 +573,227 @@ describe("as tools só existem quando o servidor permite", () => {
   });
 });
 
-describe("modo sugestão (rascunho) — quando a tool roda", () => {
-  test("política propose: a reserva roda NA HORA (estado interno pending_approval) e o texto vira rascunho", async () => {
-    const s = await seedAiAgenda(t, { mode: "suggest" });
+const asAdmin = (s: AiSeed) => t.withIdentity({ subject: `${s.adminUserId}|s1` });
+const approve = (s: AiSeed, draftId: Id<"messages">, actionIndexes?: number[]) =>
+  asAdmin(s).mutation(api.attendant.acceptAiDraft, { draftMessageId: draftId, ...(actionIndexes ? { actionIndexes } : {}) });
+const pendingDraft = async (who: Who) =>
+  (await drafts(who)).find((d) => (d.metadata?.aiDraft as { status?: string })?.status === "pending")!;
+const stateOffers = (who: Who) =>
+  t.run(async (ctx) => (await ctx.db.query("schedConversationState").withIndex("by_conversation", (q) => q.eq("conversationId", who.conversationId)).first())?.offers ?? []);
+
+describe("modo sugestão (rascunho): a reserva nunca grava antes do humano aprovar", () => {
+  const SUGGEST_PROPOSE = { mode: "suggest" as const };
+
+  test("propose: vira ação proposta; aprovar o rascunho COM a ação grava pending_approval e só então a mensagem sai", async () => {
+    const s = await seedAiAgenda(t, SUGGEST_PROPOSE);
     stubModel([
       find("Consulta", "2026-06-15"),
       offering(),
-      book("h1"),
-      afterBooking,
+      bookFirst,
+      (req) => reply(`Vou registrar o pedido de ${offersInRequest(req).length > 0 ? "um dos horários" : "um horário"} e a equipe confirma.`),
     ]);
     await turn(s, s.ana, "Quero consulta segunda");
-    await turn(s, s.ana, "Pode ser o das 8");
+    expect(await outbound(s.ana)).toHaveLength(0); // rascunho: nada saiu
+    expect(await stateOffers(s.ana)).toSatisfy((o: Array<{ shownAt?: number }>) => o.every((x) => x.shownAt === undefined)); // cliente nunca viu
+    await approve(s, (await drafts(s.ana))[0]._id); // a oferta SAI: agora o cliente viu
+    expect((await stateOffers(s.ana)).some((o) => o.shownAt !== undefined)).toBe(true);
+    await turn(s, s.ana, "Pode ser o primeiro");
+    expect(await appointments()).toHaveLength(0); // proposta, não reserva
+    const pending = await pendingDraft(s.ana);
+    const actions = (pending.metadata!.aiDraft as { proposedActions: Array<{ name: string; label: string }> }).proposedActions;
+    expect(actions.map((a) => a.name)).toEqual(["bookOfferedTime"]);
+    await approve(s, pending._id, [0]);
     const appts = await appointments();
     expect(appts).toHaveLength(1);
-    expect(appts[0].status).toBe("pending_approval");
-    expect(await outbound(s.ana)).toHaveLength(0); // nada saiu para o cliente
-    expect((await drafts(s.ana)).length).toBeGreaterThan(0);
+    expect(appts[0]).toMatchObject({ status: "pending_approval", origin: "ai", conversationId: s.ana.conversationId });
+    expect(await outbound(s.ana)).toHaveLength(2);
   });
 
-  test("política auto (aceita): a reserva vira AÇÃO PROPOSTA no rascunho e só roda quando o humano aprova", async () => {
+  test("P4: rascunho com a reserva DESCARTADO não deixa agendamento órfão ocupando a vaga", async () => {
+    const s = await seedAiAgenda(t, SUGGEST_PROPOSE);
+    stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, reply("Vou registrar o pedido e a equipe confirma.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await approve(s, (await drafts(s.ana))[0]._id);
+    await turn(s, s.ana, "Pode ser o primeiro");
+    await asAdmin(s).mutation(api.attendant.discardAiDraft, { draftMessageId: (await pendingDraft(s.ana))._id });
+    expect(await appointments()).toHaveLength(0);
+    expect(await pendingNotifications()).toHaveLength(0);
+    expect(await outbound(s.ana)).toHaveLength(1); // só a oferta aprovada
+  });
+
+  test("P4b: rascunho da oferta NÃO aprovado e o cliente insiste ('e aí?'): a oferta que ele nunca viu não é reservável", async () => {
+    const s = await seedAiAgenda(t, SUGGEST_PROPOSE);
+    const m = stubModel([find("Consulta", "2026-06-15"), offering(), book("h1"), reply("Vou conferir com a equipe e já retorno.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await turn(s, s.ana, "e aí? tem horário?");
+    expect(lastToolResult(m).error).toBe("aguarde_resposta_do_cliente");
+    expect(await appointments()).toHaveLength(0);
+    // e o prompt do turno 2 NÃO lista a oferta que ninguém viu
+    expect(offersInRequest(m.calls().at(-2)!)).toEqual([]);
+  });
+
+  test("P5: aprovação do rascunho 31 min depois: a reserva falha, a mensagem NÃO sai e o erro vai para a tela", async () => {
     const s = await seedAiAgenda(t, { mode: "suggest", ai: { book: "auto", firstVisitNeedsApproval: false } });
     await t.run(async (ctx) => {
       const doc = (await ctx.db.query("schedSettings").first())!;
       await ctx.db.patch(doc._id, { ai: { ...doc.ai, autoAck: { by: s.adminId, at: Date.now() } } });
     });
+    stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, reply("Perfeito, vou registrar e a equipe confirma o horário.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await approve(s, (await drafts(s.ana))[0]._id);
+    await turn(s, s.ana, "Pode ser o primeiro");
+    const pending = await pendingDraft(s.ana);
+    const before = (await outbound(s.ana)).length;
+    vi.setSystemTime(Date.now() + 31 * 60_000);
+    await expect(approve(s, pending._id, [0])).rejects.toThrow(/venceu/);
+    expect((await outbound(s.ana)).length).toBe(before); // a mensagem que promete o registro não saiu
+    expect(await appointments()).toHaveLength(0);
+    expect((await pendingDraft(s.ana))._id).toBe(pending._id); // continua pendente: gerar outra resposta
+  });
+
+  test("auto (aceita): aprovar em tempo grava scheduled e a mensagem sai", async () => {
+    const s = await seedAiAgenda(t, { mode: "suggest", ai: { book: "auto", firstVisitNeedsApproval: false } });
+    await t.run(async (ctx) => {
+      const doc = (await ctx.db.query("schedSettings").first())!;
+      await ctx.db.patch(doc._id, { ai: { ...doc.ai, autoAck: { by: s.adminId, at: Date.now() } } });
+    });
+    const m = stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, reply("Vou deixar reservado e a equipe confirma em seguida.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await approve(s, (await drafts(s.ana))[0]._id);
+    await turn(s, s.ana, "Pode ser o primeiro");
+    expect(toolResults(m.calls().at(-1)!).at(-1)!.status).toBe("proposto_para_aprovacao_humana");
+    expect(await appointments()).toHaveLength(0);
+    await approve(s, (await pendingDraft(s.ana))._id, [0]);
+    const appts = await appointments();
+    expect(appts).toHaveLength(1);
+    expect(appts[0].status).toBe("scheduled");
+  });
+});
+
+describe("ofertas vigentes: o modelo só usa o que a requisição traz (P1, P1b, P2)", () => {
+  test("P1: no turno 2 as ofertas MOSTRADAS chegam em ofertas_vigentes (código + horário por extenso) e a reserva usa só esses códigos", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, afterBooking]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    expect(offersInRequest(m.calls()[0])).toEqual([]);
+    await turn(s, s.ana, "Pode ser o das 8");
+    const seen = offersInRequest(m.calls()[2]);
+    expect(seen.length).toBeGreaterThan(0);
+    for (const o of seen) expect(o.horario).toMatch(/^segunda-feira, 15\/06, às \d{2}:\d{2}$/);
+    expect(m.calls()[2].messages[0].content).toContain("ofertas_vigentes");
+    expect(m.calls()[2].messages[0].content).toContain("PERGUNTE qual horário");
+    expect((await appointments())).toHaveLength(1);
+  });
+
+  test("P1b: modelo que ignora as ofertas, consulta de novo e reserva o código novo: aguarde_resposta_do_cliente, nada gravado", async () => {
+    const s = await seedAiAgenda(t);
     const m = stubModel([
       find("Consulta", "2026-06-15"),
       offering(),
-      book("h1"),
-      reply("Vou deixar reservado e a equipe confirma em seguida."),
+      find("Consulta", "2026-06-15"),
+      (req) => book(String(toolResults(req).at(-1)!.resultado).match(/^(h\d+) — /m)![1]),
+      reply("Tenho outras opções; me diga qual horário prefere."),
     ]);
     await turn(s, s.ana, "Quero consulta segunda");
-    // aprova o 1º rascunho (só texto)
-    const first = (await drafts(s.ana))[0];
-    await t.withIdentity({ subject: `${s.adminUserId}|s1` }).mutation(api.attendant.acceptAiDraft, { draftMessageId: first._id });
     await turn(s, s.ana, "Pode ser o das 8");
-    expect(toolResults(m.calls().at(-1)!).at(-1)!.status).toBe("proposto_para_aprovacao_humana");
-    expect(await appointments()).toHaveLength(0); // ainda nada gravado
-    const pending = (await drafts(s.ana)).find((d) => (d.metadata?.aiDraft as { status?: string })?.status === "pending")!;
-    const actions = (pending.metadata!.aiDraft as { proposedActions: Array<{ name: string; label: string }> }).proposedActions;
-    expect(actions.map((a) => a.name)).toEqual(["bookOfferedTime"]);
-    expect(actions[0].label).toMatch(/^Reservar o horário oferecido: segunda-feira, 15\/06, às \d{2}:\d{2}/);
-    // o humano aprova o rascunho COM a ação: agora a porta roda
-    await t.withIdentity({ subject: `${s.adminUserId}|s1` }).mutation(api.attendant.acceptAiDraft, {
-      draftMessageId: pending._id,
-      actionIndexes: [0],
+    expect(toolResults(m.calls().at(-1)!).at(-1)!.error).toBe("aguarde_resposta_do_cliente");
+    expect(await appointments()).toHaveLength(0);
+  });
+
+  test("P2: ofertas de um turno que FALHOU no guard (cliente nunca viu) não valem, nem no prompt nem na reserva", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([
+      find("Consulta", "2026-06-15"),
+      reply("Marcado! Segunda às 08:00."),
+      reply("Agendado para segunda às 08:00, te espero."),
+      book("h2"),
+      reply("Vou conferir com a equipe e já retorno."),
+    ]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    expect(await outbound(s.ana)).toHaveLength(0);
+    await t.run(async (ctx) => { for (const i of await ctx.db.query("aiReplyQueue").collect()) await ctx.db.delete(i._id); });
+    await turn(s, s.ana, "oi? alguém?");
+    expect(offersInRequest(m.calls().at(-2)!)).toEqual([]);
+    expect(toolResults(m.calls().at(-1)!).at(-1)!.error).toBe("aguarde_resposta_do_cliente");
+    expect(await appointments()).toHaveLength(0);
+  });
+
+  test("só as ofertas CITADAS na mensagem enviada viram mostradas (o resto do lote não vale)", async () => {
+    const s = await seedAiAgenda(t);
+    stubModel([find("Consulta", "2026-06-15"), offering(1)]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    const offers = await stateOffers(s.ana);
+    expect(offers.filter((o) => o.shownAt !== undefined)).toHaveLength(1);
+    expect(offers.length).toBeGreaterThan(1);
+  });
+
+  test("escolha ambígua: o modelo pergunta qual (read-back com a oferta em O passa no guard) e só reserva depois do 'sim'", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([
+      find("Consulta", "2026-06-15"),
+      offering(),
+      (req) => reply(`O horário de ${offersInRequest(req)[0].horario} então. Posso registrar?`),
+      bookFirst,
+      afterBooking,
+    ]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await turn(s, s.ana, "pode ser");
+    expect(await appointments()).toHaveLength(0);
+    expect((await outbound(s.ana)).at(-1)!.content).toMatch(/Posso registrar\?$/);
+    await turn(s, s.ana, "sim");
+    expect(await appointments()).toHaveLength(1);
+    expect(toolResults(m.calls().at(-1)!).at(-1)!.status).toBe("reservado_aguardando_equipe");
+  });
+});
+
+describe("guard em torno dos horários (P3) e tools fora da run", () => {
+  test("P3: contato que JÁ tem um horário marcado: 'ficou marcada' para um horário NOVO só ofertado é barrado", async () => {
+    const s = await seedAiAgenda(t);
+    const r = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.organizationId, serviceId: s.services.consulta, startTime: Date.UTC(2026, 5, 30, 18), contactId: s.ana.contactId,
+      actor: { type: "human", memberId: s.adminId }, origin: "staff",
     });
-    const appts = await appointments();
-    expect(appts).toHaveLength(1);
-    expect(appts[0]).toMatchObject({ status: "scheduled", origin: "ai", conversationId: s.ana.conversationId });
-    const done = await t.run((ctx) => ctx.db.get(pending._id as Id<"messages">));
-    const applied = (done!.metadata!.aiDraft as { appliedActions: Array<{ ok: boolean }> }).appliedActions;
-    expect(applied).toEqual([expect.objectContaining({ ok: true })]);
+    expect(r.ok).toBe(true);
+    stubModel([
+      find("Consulta", "2026-06-15"),
+      (req) => reply(`Prontinho, sua consulta ficou marcada para ${offeredTexts(req)[0]}!`),
+      offering(),
+    ]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    const out = (await outbound(s.ana)).map((x) => x.content);
+    expect(out).toHaveLength(1);
+    expect(out[0]).not.toMatch(/ficou marcada/);
+    expect((await appointments()).filter((a) => a.origin === "ai")).toHaveLength(0);
+  });
+
+  test("tool de reserva chamada sem ter sido oferecida na run (ai.book desligado): o executor recusa", async () => {
+    const s = await seedAiAgenda(t, { ai: { book: "off" } });
+    const m = stubModel([find("Consulta", "2026-06-15"), offering(), book("h1"), reply("Vou chamar a equipe para confirmar.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await turn(s, s.ana, "o primeiro");
+    expect(toolResults(m.calls().at(-1)!).at(-1)!.error).toBe("ferramenta_indisponivel");
+    expect(await appointments()).toHaveLength(0);
+  });
+
+  test("com o módulo ligado mas SEM as tools (ai.consult desligado) o guard segue ligado: 'marcado!' não sai", async () => {
+    const s = await seedAiAgenda(t, { ai: { consult: false } });
+    stubModel([reply("Pronto, seu horário está confirmado!"), reply("Vou chamar a equipe para ver o horário.")]);
+    await turn(s, s.ana, "Quero marcar");
+    expect((await outbound(s.ana)).map((x) => x.content)).toEqual(["Vou chamar a equipe para ver o horário."]);
   });
 });
 
 describe("simulador do atendente espelha as tools (sem gravar nada)", () => {
-  const sim = (s: AiSeed, transcript: Array<{ role: "customer" | "agent"; content: string }>) =>
-    t.withIdentity({ subject: `${s.adminUserId}|s1` }).action(api.attendant.simulateAttendant, {
+  type SimState = { offerSeq: number; offers: Array<{ code: string; batch: number; serviceId: Id<"schedServices">; startTime: number; issuedAt: number; expiresAt: number; shownAt?: number }> };
+  type SimOut = { reply: string | null; actions: string[]; error: string | null; schedState?: SimState };
+  const sim = (s: AiSeed, transcript: Array<{ role: "customer" | "agent"; content: string }>, extra: { schedState?: SimState; now?: number } = {}) =>
+    asAdmin(s).action(api.attendant.simulateAttendant, {
       organizationId: s.organizationId,
       agentMemberId: s.agentId,
       transcript,
-      simulatedNow: AI_NOW,
-    });
+      simulatedNow: extra.now ?? AI_NOW,
+      ...(extra.schedState ? { schedState: extra.schedState } : {}),
+    }) as Promise<SimOut>;
 
   test("a busca lê a agenda real com o relógio simulado e a resposta cita só o que veio", async () => {
     const s = await seedAiAgenda(t);
@@ -622,6 +803,7 @@ describe("simulador do atendente espelha as tools (sem gravar nada)", () => {
     expect(toolNames(m)).toEqual(expect.arrayContaining(["findAvailableTimes", "bookOfferedTime"]));
     expect(res.actions.some((a) => a.startsWith("Consultou horários livres"))).toBe(true);
     expect(res.reply).toMatch(/^Tenho segunda-feira, 15\/06, às \d{2}:\d{2}/);
+    expect(res.schedState!.offers.some((o) => o.shownAt !== undefined)).toBe(true); // a resposta "saiu"
     expect(await appointments()).toHaveLength(0);
     expect(await t.run((ctx) => ctx.db.query("schedConversationState").collect())).toHaveLength(0);
   });
@@ -634,22 +816,27 @@ describe("simulador do atendente espelha as tools (sem gravar nada)", () => {
     expect(res.error).toContain("produção descartaria");
   });
 
-  test("reserva: nunca grava; com fala anterior da IA presume o aceite do cliente; sem ela, aguarda a resposta", async () => {
+  test("sem presumir nada: reserva só com a oferta MOSTRADA na fala anterior (estado reenviado) e o cliente falando depois", async () => {
     const s = await seedAiAgenda(t);
-    stubModel([find("Consulta", "2026-06-15"), book("h1"), afterBooking]);
-    const answered = await sim(s, [
-      { role: "customer", content: "Quero consulta segunda" },
-      { role: "agent", content: "Tenho segunda de manhã. Qual horário prefere?" },
-      { role: "customer", content: "O primeiro" },
-    ]);
+    stubModel([find("Consulta", "2026-06-15"), offering()]);
+    const first = await sim(s, [{ role: "customer", content: "Quero consulta segunda" }]);
+    // sem o estado: a reserva por um código chutado não vale
+    stubModel([book("h1"), reply("Vou conferir com a equipe.")]);
+    const blind = await sim(s, [{ role: "customer", content: "o primeiro" }], { now: AI_NOW + 60_000 });
+    expect(blind.actions.some((a) => a.startsWith("Simulou a reserva"))).toBe(false);
+    // com o estado e a fala depois: vale (e nada é gravado)
+    const m = stubModel([bookFirst, (req) => reply(`Vou registrar o pedido de ${offersInRequest(req)[0].horario} e a equipe confirma.`)]);
+    const answered = await sim(
+      s,
+      [{ role: "customer", content: "Quero consulta segunda" }, { role: "agent", content: first.reply! }, { role: "customer", content: "o primeiro" }],
+      { schedState: first.schedState, now: AI_NOW + 60_000 }
+    );
     expect(answered.error).toBeNull();
     expect(answered.actions.some((a) => a.startsWith("Simulou a reserva"))).toBe(true);
-    expect(answered.reply).toMatch(/^Pedido registrado para segunda-feira, 15\/06/);
+    expect(offersInRequest(m.calls()[0]).length).toBeGreaterThan(0);
     expect(await appointments()).toHaveLength(0);
-
-    stubModel([find("Consulta", "2026-06-15"), book("h1"), offering()]);
-    const unanswered = await sim(s, [{ role: "customer", content: "Quero consulta segunda" }]);
-    expect(unanswered.actions.some((a) => a.startsWith("Simulou a reserva"))).toBe(false);
-    expect(await appointments()).toHaveLength(0);
+    // mesma fala no mesmo instante em que a oferta foi mostrada: o cliente ainda não respondeu
+    stubModel([bookFirst, reply("Vou conferir com a equipe.")]);
+    await expect(sim(s, [{ role: "customer", content: "o primeiro" }], { schedState: first.schedState, now: AI_NOW })).resolves.toBeDefined();
   });
 });

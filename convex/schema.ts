@@ -5014,6 +5014,7 @@ const applicationTables = {
       rescheduleOfId: v.optional(v.id("schedAppointments")),
       issuedAt: v.number(), expiresAt: v.number(),
       people: v.optional(v.number()),             // D1: busca para 2–4 pessoas (a IA não marca grupo: vira repasse)
+      shownAt: v.optional(v.number()),            // D1: instante em que a mensagem com este horário FOI ENVIADA (sem isso a oferta não vale)
     })),
     slotTakenCount: v.optional(v.number()),       // repasse automático no 2º
     findCalls: v.optional(v.object({ windowStart: v.number(), count: v.number() })), // D1: teto de consultas por hora

@@ -135,9 +135,12 @@ describe("textos em PT-BR", () => {
     expect(pending.status).toBe("reservado_aguardando_equipe");
     expect(pending.resultado).toContain("aguardando confirmação da equipe");
     expect(pending.resultado).not.toMatch(/\bMarcado\b/);
+    expect(pending.resultado).toBe("Pedido registrado para quinta-feira, 26/11, às 10:00, aguardando confirmação da equipe.");
     const done = bookedResult("scheduled", "quinta-feira, 26/11, às 10:00", false);
     expect(done.status).toBe("marcado");
-    expect(done.resultado).toBe("Marcado: quinta-feira, 26/11, às 10:00.");
+    expect(done.resultado).toBe("Marcado para quinta-feira, 26/11, às 10:00.");
+    expect(done.proximo_passo).toContain(done.resultado!);
+    expect(pending.proximo_passo).toContain(pending.resultado!);
   });
 });
 
@@ -166,7 +169,7 @@ describe("bloco do prompt", () => {
     expect(buildSchedPromptBlock({ services, moreServices: true, tools: { find: true, book: true }, book: "propose" })).toContain("Há outros serviços");
   });
   test("próximos horários do contato vão com referência curta, sem id", () => {
-    const rows = upcomingForEnvelope([{ ref: "a1", label: "quinta-feira, 26/11, às 10:00", serviceName: "Consulta", status: "pending_approval" }]);
+    const rows = upcomingForEnvelope([{ ref: "a1", label: "quinta-feira, 26/11, às 10:00", startTime: 1, serviceName: "Consulta", status: "pending_approval" }]);
     expect(rows).toEqual([{ ref: "a1", horario: "quinta-feira, 26/11, às 10:00", servico: "Consulta", situacao: "aguardando confirmação da equipe" }]);
   });
 });

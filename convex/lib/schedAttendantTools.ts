@@ -293,25 +293,27 @@ export type BookedKind = "pending" | "scheduled";
 
 export function bookedResult(kind: BookedKind, slotText: string, duplicate: boolean): ToolText {
   if (kind === "scheduled") {
+    const phrase = `${duplicate ? "Já estava marcado" : "Marcado"} para ${slotText}.`;
     return {
       status: "marcado",
-      resultado: `${duplicate ? "Já estava marcado" : "Marcado"}: ${slotText}.`,
-      proximo_passo: "Confirme ao cliente o dia e a hora. Pode dizer que está marcado.",
+      resultado: phrase,
+      proximo_passo: `Responda ao cliente com esta frase, sem mudar dia nem hora: "${phrase}"`,
     };
   }
+  const phrase = `${duplicate ? "O pedido já estava registrado" : "Pedido registrado"} para ${slotText}, aguardando confirmação da equipe.`;
   return {
     status: "reservado_aguardando_equipe",
-    resultado: `${duplicate ? "O pedido já estava registrado" : "Pedido registrado"}: ${slotText}, aguardando confirmação da equipe.`,
-    proximo_passo:
-      'Diga ao cliente que o pedido de horário foi registrado e que a equipe confirma em breve. NUNCA diga "confirmado", "marcado" ou "agendado".',
+    resultado: phrase,
+    proximo_passo: `Responda ao cliente com esta frase, sem mudar dia nem hora: "${phrase}" NUNCA diga "confirmado", "marcado", "agendado" ou "garantido".`,
   };
 }
 
+/** Modo sugestão: nada foi gravado; a reserva só nasce quando o humano aprovar o rascunho. */
 export function proposedResult(slotText: string): ToolText {
   return {
     status: "proposto_para_aprovacao_humana",
-    resultado: `Reserva de ${slotText} proposta; ela só vale quando a equipe aprovar a sua resposta.`,
-    proximo_passo: 'Diga ao cliente que a equipe confirma o horário. NUNCA diga "confirmado", "marcado" ou "agendado".',
+    resultado: `Reserva de ${slotText} proposta; só vale quando a equipe aprovar a sua resposta.`,
+    proximo_passo: `Diga ao cliente que vai registrar o pedido de ${slotText} e que a equipe confirma. NUNCA diga "registrado", "confirmado", "marcado", "agendado" ou "garantido".`,
   };
 }
 
@@ -320,7 +322,7 @@ export function proposedResult(slotText: string): ToolText {
 // ---------------------------------------------------------------------------
 
 export type SchedPromptService = { name: string; durationMin: number; priceLabel?: string };
-export type SchedUpcoming = { ref: string; label: string; serviceName: string; status: "pending_approval" | "scheduled" | "confirmed" };
+export type SchedUpcoming = { ref: string; label: string; startTime: number; serviceName: string; status: "pending_approval" | "scheduled" | "confirmed" };
 
 export const UPCOMING_STATUS_LABEL: Record<SchedUpcoming["status"], string> = {
   pending_approval: "aguardando confirmação da equipe",
@@ -354,16 +356,16 @@ export function buildSchedPromptBlock(input: {
   book: "propose" | "auto";
 }): string {
   const lines = [
-    "MARCAÇÃO DE HORÁRIOS: você NÃO sabe a agenda de memória. Nunca cite, prometa nem invente um horário que não tenha vindo de findAvailableTimes NESTE turno.",
+    "MARCAÇÃO DE HORÁRIOS: você NÃO sabe a agenda de memória. Nunca cite, prometa nem invente um horário que não tenha vindo de findAvailableTimes, de ofertas_vigentes ou de horarios_do_cliente.",
     buildServicesBlock(input.services, input.moreServices),
     `Para oferecer horários, chame findAvailableTimes SOZINHA (service pelo nome exato, dateRef pela régua "Próximos dias") e espere o resultado; ofereça no máximo ${MAX_OFFERS}, citando dia da semana, data e hora, e NUNCA mostre o código (h1, h2…) ao cliente.`,
   ];
   if (input.tools.book) {
     lines.push(
-      "Quando o cliente escolher um horário, repita o dia e a hora e peça a confirmação explícita; só depois da resposta dele use bookOfferedTime com o código da oferta, SOZINHA, numa rodada própria (nunca junto da consulta).",
+      'No bloco de dados, "ofertas_vigentes" traz os horários que você JÁ mostrou ao cliente, cada um com o seu código. Quando o cliente escolher um deles, repita o dia e a hora e peça a confirmação explícita; só depois da resposta dele use bookOfferedTime com o código da oferta que corresponde ao que ele escolheu, SOZINHA, numa rodada própria (nunca junto da consulta). Se a escolha for ambígua ("o primeiro", "pode ser", "qualquer um"), PERGUNTE qual horário ele quer em vez de escolher por ele; nunca use um código que não esteja em ofertas_vigentes (se não houver, consulte os horários de novo e espere a resposta).',
       input.book === "auto"
-        ? 'Leia o resultado de bookOfferedTime: só diga "marcado" quando o status for "marcado"; se for "reservado_aguardando_equipe", diga que o pedido foi registrado e a equipe confirma.'
-        : 'Neste negócio a equipe aprova cada horário: depois de bookOfferedTime diga que o pedido foi registrado e que a equipe confirma em breve. NUNCA diga "confirmado", "marcado" ou "agendado".'
+        ? 'Depois de bookOfferedTime responda com a frase do resultado, sem mudar dia nem hora: só diga "marcado" quando o status for "marcado"; se for "reservado_aguardando_equipe", diga que o pedido foi registrado e a equipe confirma.'
+        : 'Neste negócio a equipe aprova cada horário: depois de bookOfferedTime responda com a frase do resultado (pedido registrado, aguardando a confirmação da equipe), sem mudar dia nem hora. NUNCA diga "confirmado", "marcado", "agendado" ou "garantido".'
     );
   }
   lines.push(
@@ -374,6 +376,13 @@ export function buildSchedPromptBlock(input: {
 }
 
 /** Linhas dos próximos horários DESTE contato (vão no envelope de dados, referência curta a1, a2…). */
+export type SchedCurrentOffer = { code: string; label: string; startTime: number };
+
+/** Ofertas vigentes (já MOSTRADAS ao cliente) para o envelope: o modelo só pode usar estes códigos. */
+export function offersForEnvelope(offers: readonly SchedCurrentOffer[]): Array<{ codigo: string; horario: string }> {
+  return offers.map((o) => ({ codigo: o.code, horario: o.label }));
+}
+
 export function upcomingForEnvelope(upcoming: readonly SchedUpcoming[]): Array<{ ref: string; horario: string; servico: string; situacao: string }> {
   return upcoming.map((u) => ({ ref: u.ref, horario: u.label, servico: u.serviceName, situacao: UPCOMING_STATUS_LABEL[u.status] }));
 }

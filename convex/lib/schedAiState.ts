@@ -8,7 +8,9 @@
  */
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import type { OffersState } from "./schedOffers";
+import { markShown, type OffersState } from "./schedOffers";
+import { offersShownInText } from "./schedOfferShown";
+import { assertValidTimezone } from "./schedTime";
 
 type StateDoc = Doc<"schedConversationState">;
 
@@ -53,4 +55,38 @@ export async function saveConversationState(
     ...(patch.findCalls ? { findCalls: patch.findCalls } : {}),
     updatedAt: now,
   });
+}
+
+/**
+ * Registra que o cliente VIU as ofertas citadas em `text`: chamada SÓ quando a mensagem sai de fato (commit da resposta
+ * do atendente em autopilot, aprovação do rascunho). Grava `shownAt = now` nas ofertas ainda não mostradas cujo dia e
+ * hora aparecem no texto (`offersShownInText`). Turno que falhou e rascunho descartado nunca passam por aqui, então suas
+ * ofertas nunca valem. Custo para quem não usa agenda: 1 leitura indexada (`by_conversation`).
+ */
+export async function markOffersShownFromText(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; conversationId: Id<"conversations">; text: string; now: number }
+): Promise<number> {
+  const state = await loadConversationState(ctx, args.conversationId);
+  if (!state || state.organizationId !== args.organizationId) return 0;
+  const pending = state.offers.filter((o) => o.shownAt === undefined && args.now < o.expiresAt);
+  if (pending.length === 0) return 0;
+  const org = await ctx.db.get(args.organizationId);
+  if (!org) return 0;
+  let tz = "America/Sao_Paulo";
+  try {
+    tz = assertValidTimezone(org.settings.timezone);
+  } catch {
+    // fuso inválido: segue no padrão do produto
+  }
+  const shown = offersShownInText(offersStateOf(state), args.text, { now: args.now, tz });
+  if (shown.size === 0) return 0;
+  await saveConversationState(ctx, {
+    organizationId: args.organizationId,
+    conversationId: args.conversationId,
+    existing: state,
+    patch: { offers: markShown(offersStateOf(state), shown, args.now) },
+    now: args.now,
+  });
+  return shown.size;
 }

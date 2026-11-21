@@ -18,7 +18,7 @@
  * ≤ 101 serviços, ≤ 101 recursos, estado da conversa) + `searchSlots` (`loadWindow`: ≈ 40–60 documentos para 1 dia,
  * 80–250 para 7 dias; + uma segunda janela de até 7 dias só quando a pedida veio vazia). `bookOfferedTime` = acesso +
  * estado + 1 leitura por idempotência + a leitura da porta (≈ 15–25 documentos; até 45 com fallback). O contexto do
- * prompt (`schedContextCore`) lê o acesso + até 30 agendamentos do contato. Nada disso assina (mutation/query avulsa).
+ * prompt (`schedContextCore`) lê o acesso + o estado da conversa + até 100 linhas de agendamento do contato (lotes de 20). Nada disso assina (mutation/query avulsa).
  */
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
@@ -44,6 +44,7 @@ import {
   parseBookArgs,
   parseFindArgs,
   proposedResult,
+  type SchedCurrentOffer,
   type SchedPromptService,
   type SchedUpcoming,
   serviceListText,
@@ -53,7 +54,7 @@ import {
 import { loadConversationState, offersStateOf, saveConversationState } from "./schedAiState";
 import { type Alternative, bookAppointmentCore } from "./schedBookingOps";
 import { MAX_RESOURCES_PER_ORG, MAX_SERVICES_PER_ORG } from "./schedConstants";
-import { consumeOffer, invalidateOffers, issueOffers, type OfferPick, type OfferRecord, resolveOffer } from "./schedOffers";
+import { consumeOffer, currentOffers, invalidateOffers, issueOffers, type OfferPick, type OfferRecord, resolveOffer } from "./schedOffers";
 import { resolveDateRef } from "./schedRelativeDates";
 import { searchSlots } from "./schedSearch";
 import { resolveSchedSettings, type ResolvedSchedSettings } from "./schedSettingsDefaults";
@@ -66,9 +67,11 @@ type ReadCtx = { db: QueryCtx["db"] };
 export type SchedToolOutcome = {
   result: ToolText;
   control: {
-    /** Horários devolvidos neste ato (busca, reserva, alternativas): alimentam o `schedClaimGuard`. */
-    offeredLabels: string[];
+    /** Horários (início, ms) devolvidos neste ato (busca, reserva, alternativas, prévia): alimentam o `schedClaimGuard`. */
+    offeredTimes: number[];
     booked?: "pending" | "scheduled";
+    /** Início do agendamento reservado neste ato (com `booked`). */
+    bookedStartTime?: number;
     /** Um repasse para humano foi criado (ou já existia): a resposta do turno pode sair mesmo assim. */
     handoff: boolean;
     /** Só na prévia (`mode:"preview"`): o horário em texto, para o rótulo da ação proposta no rascunho. */
@@ -78,7 +81,7 @@ export type SchedToolOutcome = {
 
 const outcome = (result: ToolText, extra: Partial<SchedToolOutcome["control"]> = {}): SchedToolOutcome => ({
   result,
-  control: { offeredLabels: [], handoff: false, ...extra },
+  control: { offeredTimes: [], handoff: false, ...extra },
 });
 
 // ---------------------------------------------------------------------------
@@ -207,16 +210,17 @@ export type SchedRunContext = {
   book: "propose" | "auto";
   services: SchedPromptService[];
   moreServices: boolean;
+  /** Próximos agendamentos ativos do contato (até 10; o prompt mostra 3). Alimentam o `schedClaimGuard` (E). */
   upcoming: SchedUpcoming[];
-  contactHas: "none" | "pending_only" | "scheduled";
-  /** Rótulos dos horários já marcados do contato (entram no `offeredLabels` do guard). */
-  upcomingLabels: string[];
+  /** Ofertas VIGENTES da conversa: já MOSTRADAS ao cliente (`shownAt`) e não vencidas. Só estes códigos valem. */
+  offers: SchedCurrentOffer[];
   timezone: string;
 };
 
 const UPCOMING_STATUSES = ["pending_approval", "scheduled", "confirmed"] as const;
-const UPCOMING_READ = 30;
-const UPCOMING_SHOWN = 3;
+const UPCOMING_PAGE_SIZE = 20;
+const UPCOMING_PAGES = 5;
+const UPCOMING_SHOWN = 10;
 
 function priceLabel(cents: number | undefined, currency: string): string | undefined {
   if (cents === undefined || !Number.isFinite(cents) || cents < 0) return undefined;
@@ -224,51 +228,100 @@ function priceLabel(cents: number | undefined, currency: string): string | undef
   return currency === "BRL" ? `R$ ${value}` : `${currency} ${value}`;
 }
 
-/** Próximos agendamentos ativos do contato (leitura por `by_contact_and_start`, teto 30, só da mesma org). */
+/**
+ * Próximos agendamentos ativos do contato. O índice por contato não filtra status: lê em lotes de 20 por início
+ * (até 5 lotes = 100 linhas) e para ao juntar `limit`; cancelados/remarcados no meio não escondem os seguintes.
+ */
 export async function loadUpcomingOfContact(
   ctx: ReadCtx,
   args: { organizationId: Id<"organizations">; contactId: Id<"contacts">; now: number; tz: string; limit?: number }
 ): Promise<SchedUpcoming[]> {
-  const rows = await ctx.db
-    .query("schedAppointments")
-    .withIndex("by_contact_and_start", (q) => q.eq("contactId", args.contactId).gte("startTime", args.now))
-    .take(UPCOMING_READ);
-  const active = rows.filter(
-    (r) => r.organizationId === args.organizationId && (UPCOMING_STATUSES as readonly string[]).includes(r.status)
-  );
-  return active.slice(0, args.limit ?? UPCOMING_SHOWN).map((r, i) => ({
+  const limit = args.limit ?? UPCOMING_SHOWN;
+  const active: Doc<"schedAppointments">[] = [];
+  const seen = new Set<string>();
+  let from = args.now;
+  let inclusive = true;
+  for (let page = 0; page < UPCOMING_PAGES && active.length < limit; page++) {
+    const rows = await ctx.db
+      .query("schedAppointments")
+      .withIndex("by_contact_and_start", (q) =>
+        inclusive ? q.eq("contactId", args.contactId).gte("startTime", from) : q.eq("contactId", args.contactId).gt("startTime", from)
+      )
+      .take(UPCOMING_PAGE_SIZE);
+    for (const r of rows) {
+      if (seen.has(r._id)) continue;
+      seen.add(r._id);
+      if (r.organizationId === args.organizationId && (UPCOMING_STATUSES as readonly string[]).includes(r.status)) active.push(r);
+    }
+    if (rows.length < UPCOMING_PAGE_SIZE) break;
+    from = rows[rows.length - 1].startTime;
+    inclusive = false;
+  }
+  return active.slice(0, limit).map((r, i) => ({
     ref: `a${i + 1}`,
     label: formatSlotText(r.startTime, args.now, args.tz),
+    startTime: r.startTime,
     serviceName: r.serviceName,
     status: r.status as SchedUpcoming["status"],
   }));
 }
 
-export function contactHasOf(upcoming: readonly SchedUpcoming[]): SchedRunContext["contactHas"] {
-  if (upcoming.some((u) => u.status === "scheduled" || u.status === "confirmed")) return "scheduled";
-  return upcoming.length > 0 ? "pending_only" : "none";
+/** Contato da conversa 1:1 (sem exigir IA, serviço nem recurso): o guard de afirmação precisa dos agendamentos dele. */
+async function contactOfConversation(
+  ctx: ReadCtx,
+  org: Doc<"organizations">,
+  conversationId: Id<"conversations"> | undefined
+): Promise<Doc<"contacts"> | null> {
+  if (!conversationId) return null;
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation || conversation.organizationId !== org._id || conversation.kind === "group") return null;
+  const lead = await getLeadRef(ctx.db, conversation.leadId);
+  if (!lead || lead.organizationId !== org._id || !lead.contactId) return null;
+  const contact = await ctx.db.get(lead.contactId);
+  return contact && contact.organizationId === org._id ? contact : null;
 }
 
-/** `null` = as tools de agenda NÃO entram nesta run. Mesmas condições do executor (`loadSchedAiAccess`). */
+/**
+ * `null` = módulo `scheduling` desligado (nada de agenda na run). Com o módulo ligado SEMPRE devolve o contexto: as
+ * `tools` dizem se existem nesta run (mesmas condições do executor, `loadSchedAiAccess`), e `upcoming`/`offers` alimentam o
+ * output guard (que fica LIGADO com o módulo, mesmo sem as tools) e o envelope do prompt.
+ */
 export async function schedContextCore(
   ctx: ReadCtx,
   args: { organizationId: Id<"organizations">; agentMemberId: Id<"teamMembers">; conversationId?: Id<"conversations">; now: number }
 ): Promise<SchedRunContext | null> {
+  const org = await ctx.db.get(args.organizationId);
+  if (!org || !modulesOf(org).scheduling) return null;
   const access = await loadSchedAiAccess(ctx, { ...args, need: "consult" });
-  if (!access.ok) return null;
+  const contact = access.ok ? access.contact : await contactOfConversation(ctx, org, args.conversationId);
+  let tz = "America/Sao_Paulo";
+  try {
+    tz = assertValidTimezone(org.settings.timezone);
+  } catch {
+    // fuso inválido: o guard e o prompt seguem no padrão do produto
+  }
+  const upcoming = contact ? await loadUpcomingOfContact(ctx, { organizationId: org._id, contactId: contact._id, now: args.now, tz }) : [];
+  let offers: SchedCurrentOffer[] = [];
+  if (access.ok && args.conversationId) {
+    const state = await loadConversationState(ctx, args.conversationId);
+    offers = currentOffers(offersStateOf(state), args.now).map((o) => ({
+      code: o.code,
+      label: formatSlotText(o.startTime, args.now, tz),
+      startTime: o.startTime,
+    }));
+  }
+  if (!access.ok) {
+    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz };
+  }
   const listed = access.services.slice(0, MAX_SERVICES_IN_PROMPT);
-  const upcoming = access.contact
-    ? await loadUpcomingOfContact(ctx, { organizationId: access.org._id, contactId: access.contact._id, now: args.now, tz: access.tz })
-    : [];
-  const currency = access.org.settings.currency;
+  const currency = org.settings.currency;
   return {
     tools: { find: true, book: access.canBook },
     book: access.bookPolicy,
-    services: listed.map((s) => ({ name: s.name, durationMin: s.durationMin, ...(priceLabel(s.priceCents, currency) ? { priceLabel: priceLabel(s.priceCents, currency) } : {}) })),
+    services: listed.map((sv) => ({ name: sv.name, durationMin: sv.durationMin, ...(priceLabel(sv.priceCents, currency) ? { priceLabel: priceLabel(sv.priceCents, currency) } : {}) })),
     moreServices: access.services.length > MAX_SERVICES_IN_PROMPT,
     upcoming,
-    contactHas: contactHasOf(upcoming),
-    upcomingLabels: upcoming.map((u) => u.label),
+    offers,
     timezone: access.tz,
   };
 }
@@ -417,7 +470,7 @@ export async function findAvailableTimesCore(
   const lines = issued.issued.map((o) => formatOfferLine(o.code, o.startTime, now, searched.tz));
   return outcome(
     findSlotsResult({ echo: searched.echo, period: parsed.args.period, people: parsed.args.people, lines, hasMore: searched.hasMore }),
-    { offeredLabels: issued.issued.map((o) => formatSlotText(o.startTime, now, searched.tz)) }
+    { offeredTimes: issued.issued.map((o) => o.startTime) }
   );
 }
 
@@ -469,9 +522,11 @@ export async function bookOfferedTimeCore(
     mode: "commit" | "preview";
     approvedBy?: Id<"teamMembers">;
     agentRunId?: string;
+    /** Relógio do chamador (a aprovação do rascunho lê UMA vez e passa adiante). */
+    now?: number;
   }
 ): Promise<SchedToolOutcome> {
-  const now = Date.now();
+  const now = args.now ?? Date.now();
   const access = await loadSchedAiAccess(ctx, { ...args, need: "book" });
   if (!access.ok) return accessError(access.reason);
   const conversation = access.conversation!;
@@ -490,7 +545,7 @@ export async function bookOfferedTimeCore(
   if (existing && existing.conversationId === args.conversationId && (ACTIVE_BOOKED as readonly string[]).includes(existing.status)) {
     const slotText = formatSlotText(existing.startTime, now, access.tz);
     const kind = existing.status === "pending_approval" ? "pending" : "scheduled";
-    return outcome(bookedResult(kind, slotText, true), { booked: kind, offeredLabels: [slotText] });
+    return outcome(bookedResult(kind, slotText, true), { booked: kind, bookedStartTime: existing.startTime, offeredTimes: [existing.startTime] });
   }
 
   const state = await loadConversationState(ctx, args.conversationId);
@@ -534,7 +589,7 @@ export async function bookOfferedTimeCore(
   if (result.ok) {
     if ("preview" in result) {
       const slotText = formatSlotText(offer.startTime, now, access.tz);
-      return outcome(proposedResult(slotText), { slotText });
+      return outcome(proposedResult(slotText), { slotText, offeredTimes: [offer.startTime] });
     }
     const slotText = formatSlotText(offer.startTime, now, access.tz);
     const kind = result.status === "pending_approval" ? "pending" : "scheduled";
@@ -542,10 +597,11 @@ export async function bookOfferedTimeCore(
       organizationId: args.organizationId,
       conversationId: args.conversationId,
       existing: state,
-      patch: { offers: consumeOffer(offers, code) },
+      // Reserva fechada: o contador de "horário tomado" recomeça (o repasse é para quem perdeu 2 horários SEGUIDOS).
+      patch: { offers: consumeOffer(offers, code), slotTakenCount: 0 },
       now,
     });
-    return outcome(bookedResult(kind, slotText, result.duplicate), { booked: kind, offeredLabels: [slotText] });
+    return outcome(bookedResult(kind, slotText, result.duplicate), { booked: kind, bookedStartTime: offer.startTime, offeredTimes: [offer.startTime] });
   }
 
   const codes = new Set(result.violations.map((x) => x.code as string));
@@ -564,7 +620,7 @@ export async function bookOfferedTimeCore(
         "ja_tem_marcado",
         `Este cliente já tem horário${list ? `: ${list}` : " ativo nesse período"}. Não reserve outro; se ele quer trocar, chame requestHandoff para a equipe remarcar.`
       ),
-      { offeredLabels: upcoming.map((u) => u.label) }
+      { offeredTimes: upcoming.map((u) => u.startTime) }
     );
   }
   if ([...codes].some((c) => TAKEN_CODES.has(c))) {
@@ -604,7 +660,6 @@ async function slotTaken(
     now,
   });
   const lines = next.issued.map((o) => formatOfferLine(o.code, o.startTime, now, access.tz));
-  const labels = next.issued.map((o) => formatSlotText(o.startTime, now, access.tz));
   if (takenCount >= 2) {
     const handoff = await openHandoff(ctx, access, args.conversationId, "Horário tomado duas vezes na conversa", "Dois horários escolhidos pelo cliente foram tomados antes da reserva. A equipe precisa assumir.");
     return outcome(
@@ -623,7 +678,7 @@ async function slotTaken(
           ? "Diga que esse horário acabou de ser ocupado, ofereça as alternativas (sem o código) e espere o cliente escolher; só então reserve."
           : "Diga que esse horário acabou de ser ocupado e consulte outra data com findAvailableTimes.",
     },
-    { offeredLabels: labels }
+    { offeredTimes: next.issued.map((o) => o.startTime) }
   );
 }
 
@@ -641,8 +696,9 @@ export const toolTextValidator = v.object({
 export const schedToolOutcomeValidator = v.object({
   result: toolTextValidator,
   control: v.object({
-    offeredLabels: v.array(v.string()),
+    offeredTimes: v.array(v.number()),
     booked: v.optional(v.union(v.literal("pending"), v.literal("scheduled"))),
+    bookedStartTime: v.optional(v.number()),
     handoff: v.boolean(),
     slotText: v.optional(v.string()),
   }),
@@ -658,12 +714,12 @@ export const schedContextValidator = v.union(
       v.object({
         ref: v.string(),
         label: v.string(),
+        startTime: v.number(),
         serviceName: v.string(),
         status: v.union(v.literal("pending_approval"), v.literal("scheduled"), v.literal("confirmed")),
       })
     ),
-    contactHas: v.union(v.literal("none"), v.literal("pending_only"), v.literal("scheduled")),
-    upcomingLabels: v.array(v.string()),
+    offers: v.array(v.object({ code: v.string(), label: v.string(), startTime: v.number() })),
     timezone: v.string(),
   })
 );

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { consumeOffer, invalidateOffers, issueOffers, type OfferPick, type OffersState, resolveOffer } from "./schedOffers";
+import { consumeOffer, currentOffers, invalidateOffers, issueOffers, markShown, type OfferPick, type OffersState, resolveOffer } from "./schedOffers";
 
 const MIN = 60_000;
 const T0 = 1_800_000_000_000;
 const empty: OffersState = { offerSeq: 0, offers: [] };
+/** Marca todas as ofertas como mostradas ao cliente em `at`. */
+const shown = (s: OffersState, at: number): OffersState => ({ ...s, offers: s.offers.map((o) => ({ ...o, shownAt: at })) });
 const pick = (n: number, over: Partial<OfferPick> = {}): OfferPick => ({
   serviceId: "s1", startTime: T0 + n * 60 * MIN, resourceIds: ["r1"], ...over,
 });
@@ -42,7 +44,7 @@ describe("issueOffers", () => {
 });
 
 describe("resolveOffer", () => {
-  const { state } = issueOffers(empty, [pick(1), pick(2)], T0);
+  const state = shown(issueOffers(empty, [pick(1), pick(2)], T0).state, T0);
   const reply = T0 + MIN; // cliente respondeu depois da emissão
 
   it("aceita oferta emitida antes da última mensagem do cliente e ainda válida", () => {
@@ -69,10 +71,35 @@ describe("resolveOffer", () => {
     expect(resolveOffer(state, "h1", T0 + 2 * MIN, undefined)).toEqual({ ok: false, error: "sem_resposta_do_cliente" });
   });
   it("lote novo emitido depois da resposta do cliente exige nova resposta", () => {
-    const second = issueOffers(state, [pick(3)], T0 + 5 * MIN).state;
+    const second = shown(issueOffers(state, [pick(3)], T0 + 5 * MIN).state, T0 + 5 * MIN);
     expect(resolveOffer(second, "h3", T0 + 6 * MIN, T0 + 4 * MIN)).toEqual({ ok: false, error: "sem_resposta_do_cliente" });
     expect(resolveOffer(second, "h3", T0 + 7 * MIN, T0 + 6 * MIN).ok).toBe(true);
     expect(resolveOffer(second, "h1", T0 + 7 * MIN, T0 + 6 * MIN).ok).toBe(true); // lote antigo ainda vale até ser invalidado
+  });
+});
+
+describe("oferta MOSTRADA (shownAt)", () => {
+  const issued = issueOffers(empty, [pick(1), pick(2)], T0).state;
+  it("sem shownAt a oferta nunca vale, mesmo com o cliente falando depois (turno falho, rascunho não aprovado)", () => {
+    expect(resolveOffer(issued, "h1", T0 + 9 * MIN, T0 + 5 * MIN)).toEqual({ ok: false, error: "sem_resposta_do_cliente" });
+  });
+  it("shownAt precisa ser ANTES da última mensagem do cliente", () => {
+    const s = shown(issued, T0 + 3 * MIN);
+    expect(resolveOffer(s, "h1", T0 + 9 * MIN, T0 + 3 * MIN).ok).toBe(false);
+    expect(resolveOffer(s, "h1", T0 + 9 * MIN, T0 + 4 * MIN).ok).toBe(true);
+  });
+  it("markShown marca só os códigos pedidos, uma vez (não regrava) e não muta", () => {
+    const a = markShown(issued, new Set(["h2"]), T0 + MIN);
+    expect(a.offers.map((o) => o.shownAt)).toEqual([undefined, T0 + MIN]);
+    const b = markShown(a, new Set(["h1", "h2"]), T0 + 5 * MIN);
+    expect(b.offers.map((o) => o.shownAt)).toEqual([T0 + 5 * MIN, T0 + MIN]);
+    expect(issued.offers.every((o) => o.shownAt === undefined)).toBe(true);
+    expect(markShown(issued, new Set(), T0)).toBe(issued);
+  });
+  it("currentOffers: só as mostradas e não vencidas", () => {
+    const s = markShown(issued, new Set(["h1"]), T0 + MIN);
+    expect(currentOffers(s, T0 + 2 * MIN).map((o) => o.code)).toEqual(["h1"]);
+    expect(currentOffers(s, T0 + 31 * MIN)).toEqual([]);
   });
 });
 
@@ -113,7 +140,7 @@ describe("teto, consumo e validação (regressão da revisão)", () => {
     expect(() => issueOffers(empty, [pick(1)], T0, { ttlMs: 0 })).toThrow();
   });
   it("resolveOffer não consome; consumeOffer remove só o código usado e preserva offerSeq", () => {
-    const { state } = issueOffers(empty, [pick(1), pick(2), pick(3)], T0);
+    const state = shown(issueOffers(empty, [pick(1), pick(2), pick(3)], T0).state, T0);
     const reply = T0 + MIN;
     expect(resolveOffer(state, "h2", T0 + 2 * MIN, reply).ok).toBe(true);
     expect(resolveOffer(state, "h2", T0 + 2 * MIN, reply).ok).toBe(true); // ainda vale
