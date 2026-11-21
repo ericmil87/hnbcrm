@@ -8,7 +8,7 @@
  */
 
 export type FutureAccept =
-  | { type: "resourceEdit"; name: string; futureOutsideHours: number; overCapacityBy: number; futureWithoutSpot: number; capped: boolean }
+  | { type: "resourceEdit"; name: string; futureOutsideHours: number; overCapacityBy: number; futureWithoutSpot: number; inServiceKept: number; capped: boolean }
   | { type: "resourceArchive"; name: string; futureAppointments: number; servicesAffected: string[] }
   | { type: "serviceArchive"; name: string; futureAppointments: number; capped: boolean };
 
@@ -63,6 +63,13 @@ export function futureAcceptCopy(a: FutureAccept): FutureAcceptCopy {
     } else {
       lines.push(nothingCancelled);
     }
+    if (a.inServiceKept > 0) {
+      lines.push(
+        a.inServiceKept === 1
+          ? "1 atendimento em andamento continua até terminar."
+          : `${a.inServiceKept} atendimentos em andamento continuam até terminar.`
+      );
+    }
     return { title: "Isto afeta horários já marcados", lines, confirm: "Salvar mesmo assim" };
   }
   if (a.type === "resourceArchive") {
@@ -88,7 +95,7 @@ export function futureAcceptCopy(a: FutureAccept): FutureAcceptCopy {
 /** Mensagens de `upsertResource` que pedem aceite. */
 export function resourceEditAccept(
   name: string,
-  r: { saved: boolean; futureOutsideHours: number; overCapacityBy: number; futureWithoutSpot: number; capped: boolean }
+  r: { saved: boolean; futureOutsideHours: number; overCapacityBy: number; futureWithoutSpot: number; inServiceKept: number; capped: boolean }
 ): FutureAccept | null {
   if (r.saved) return null;
   return {
@@ -97,6 +104,7 @@ export function resourceEditAccept(
     futureOutsideHours: r.futureOutsideHours,
     overCapacityBy: r.overCapacityBy,
     futureWithoutSpot: r.futureWithoutSpot,
+    inServiceKept: r.inServiceKept,
     capped: r.capped,
   };
 }
