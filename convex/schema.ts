@@ -890,8 +890,6 @@ const applicationTables = {
     billing: v.optional(orgBillingValidator),
     // C1: carimbo "AAAA-MM-DD" (data local da org) do último resumo diário enviado.
     lastDailyDigestDate: v.optional(v.string()),
-    // Agenda v2 (A4): data local do último aviso diário "sem desfecho" (carimbo; vale mesmo com N = 0).
-    lastSchedOutcomeNoticeDate: v.optional(v.string()),
     onboardingMeta: v.optional(v.object({
       industry: v.optional(v.string()),
       companySize: v.optional(v.string()),
@@ -921,7 +919,10 @@ const applicationTables = {
     })),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_slug", ["slug"]),
+  })
+    .index("by_slug", ["slug"])
+    // Agenda v2 (A4): o job horário lê só as orgs com o módulo ligado (campo aninhado; zero orgs = zero leituras).
+    .index("by_scheduling_module", ["settings.modules.scheduling"]),
 
   // Team Members (humans and AI agents)
   teamMembers: defineTable({
@@ -4938,6 +4939,14 @@ const applicationTables = {
   })
     .index("by_resource_and_start", ["resourceId", "blockStart"])
     .index("by_appointment", ["appointmentId"]),
+
+  // Estado pequeno dos jobs da agenda, 1 linha por org (fora do doc da org para não invalidar as
+  // queries reativas que a leem). Derivado/efêmero: fora do backup, apagado na purga.
+  schedJobState: defineTable({
+    organizationId: v.id("organizations"),
+    lastOutcomeNoticeDate: v.optional(v.string()), // data local ("AAAA-MM-DD") do último aviso "sem desfecho", mesmo com N = 0
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
 
   schedConflicts: defineTable({
     organizationId: v.id("organizations"),

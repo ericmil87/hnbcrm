@@ -10,6 +10,9 @@ import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { DEFAULT_PERMISSIONS } from "./lib/permissions";
 import { PREF_DEFAULTS } from "./lib/notificationPrefs";
+import * as config from "./schedulingConfig";
+import { resolveSchedSettings } from "./lib/schedSettingsDefaults";
+import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -99,6 +102,11 @@ const allocCount = (id: Id<"schedAppointments">) =>
 const notices = (memberId: Id<"teamMembers">) =>
   t.run((ctx) => ctx.db.query("notifications").withIndex("by_member_and_created", (q) => q.eq("memberId", memberId)).collect());
 
+const stampOf = (s: Seed) =>
+  t.run(async (ctx) => (await ctx.db.query("schedJobState").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).first())?.lastOutcomeNoticeDate);
+const scheduledNames = () =>
+  t.run(async (ctx) => (await ctx.db.system.query("_scheduled_functions").collect()).map((f) => f.name));
+
 async function runTick() {
   await t.mutation(internal.schedulingJobs.internalOutcomePendingTick, {});
   await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -173,7 +181,7 @@ describe("marca de pendência", () => {
     const ids: Id<"schedAppointments">[] = [];
     for (let i = 0; i < 130; i++) ids.push(await seedAppt(s, "scheduled", at(0, 0, 15) + i * 60_000, at(0, 0, 15) + i * 60_000 + 30 * 60_000));
     // Uma única execução da mutation de org lê no máximo 100 linhas e agenda a continuação.
-    await t.mutation(internal.schedulingJobs.internalOutcomePendingOrg, { organizationId: s.organizationId, now: NOW, statusIndex: 0, cursor: null }); // scheduled
+    await t.mutation(internal.schedulingJobs.internalOutcomePendingOrg, { organizationId: s.organizationId, now: NOW }); // scheduled
     const afterOne = await t.run(async (ctx) => (await ctx.db.query("schedAppointments").collect()).filter((a) => a.outcomePendingSince !== undefined).length);
     expect(afterOne).toBe(100);
     await t.finishAllScheduledFunctions(vi.runAllTimers);
@@ -184,7 +192,7 @@ describe("marca de pendência", () => {
   test("isolamento entre orgs: a marca só vai para a org processada, com folga própria", async () => {
     const a = await seedOrg({ settings: { outcome: { graceMin: 24 * 60 } } });
     const b = await seedOrg();
-    const apptA = await seedAppt(a, "confirmed", at(10));
+    const apptA = await seedAppt(a, "confirmed", at(21), at(22)); // acabou há 10,5 h; a folga de A é 12 h (24 h é limitada a 720 min)
     const apptB = await seedAppt(b, "confirmed", at(10));
     await runTick();
     expect((await getAppt(apptA))!.outcomePendingSince).toBeUndefined(); // folga de 24 h na org A
@@ -241,7 +249,7 @@ describe("aviso diário agrupado", () => {
     expect(adminNotices[0].type).toBe("appointment_no_outcome");
     expect(adminNotices[0].title).toBe("3 atendimentos de ontem ainda sem desfecho");
     expect(adminNotices[0].data).toMatchObject({ localDate: "2026-06-15", count: 3 });
-    expect(adminNotices[0].coalesceKey).toBe("appointment_no_outcome:2026-06-16");
+    expect(adminNotices[0].coalesceKey).toBeUndefined(); // sem agrupamento: o carimbo diário é a idempotência
     expect(await notices(s.agent.memberId)).toHaveLength(1); // agente tem agenda:edit por padrão
     for (const m of [s.viewAll, s.none, s.removed, s.pending]) expect(await notices(m.memberId)).toHaveLength(0);
     expect(await notices(s.ai)).toHaveLength(0);
@@ -252,8 +260,7 @@ describe("aviso diário agrupado", () => {
     vi.setSystemTime(Date.UTC(2026, 5, 16, 22, 0));
     await runTick();
     expect(await notices(s.admin.memberId)).toHaveLength(1);
-    const org = await t.run((ctx) => ctx.db.get(s.organizationId));
-    expect(org!.lastSchedOutcomeNoticeDate).toBe("2026-06-16");
+    expect(await stampOf(s)).toBe("2026-06-16");
   });
 
   test("N = 0: nenhuma notificação (e o dia fica carimbado)", async () => {
@@ -261,8 +268,7 @@ describe("aviso diário agrupado", () => {
     await seedAppt(s, "completed", at(10));
     await runTick();
     expect(await t.run((ctx) => ctx.db.query("notifications").collect())).toEqual([]);
-    const org = await t.run((ctx) => ctx.db.get(s.organizationId));
-    expect(org!.lastSchedOutcomeNoticeDate).toBe("2026-06-16");
+    expect(await stampOf(s)).toBe("2026-06-16");
   });
 
   test("dia seguinte avisa de novo (fuso da org: virou o dia local)", async () => {
@@ -325,10 +331,114 @@ describe("aviso diário agrupado", () => {
   test("internalOutcomePendingNotice devolve exatamente as chaves do validator", async () => {
     const s = await seedOrg();
     await seedAppt(s, "confirmed", at(10));
-    await t.mutation(internal.schedulingJobs.internalOutcomePendingOrg, { organizationId: s.organizationId, now: NOW, statusIndex: 0, cursor: null });
+    await t.mutation(internal.schedulingJobs.internalOutcomePendingOrg, { organizationId: s.organizationId, now: NOW });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     const again = await t.mutation(internal.schedulingJobs.internalOutcomePendingNotice, { organizationId: s.organizationId, now: NOW });
     expect(Object.keys(again).sort()).toEqual(["count", "notified", "skipped"]);
     expect(again.skipped).toBe(true); // o aviso do dia já saiu pela cadeia
+  });
+});
+
+describe("custo e janelas", () => {
+  test("o tick só agenda orgs com o módulo ligado (índice aninhado); zero orgs = nada agendado", async () => {
+    const off = await seedOrg({ scheduling: false });
+    await seedAppt(off, "confirmed", at(10));
+    await t.mutation(internal.schedulingJobs.internalOutcomePendingTick, {});
+    expect(await scheduledNames()).toEqual([]);
+    const on = await seedOrg();
+    await t.mutation(internal.schedulingJobs.internalOutcomePendingTick, {});
+    expect(await scheduledNames()).toEqual(["schedulingJobs:internalOutcomePendingOrg"]);
+    void on;
+  });
+
+  test("passada horária olha só 1 dia atrás da folga; a de 14 dias roda junto do aviso", async () => {
+    const s = await seedOrg();
+    const old = await seedAppt(s, "confirmed", at(10, 0, 12)); // 4 dias atrás, nunca marcado
+    const yesterday = await seedAppt(s, "confirmed", at(10));
+    vi.setSystemTime(Date.UTC(2026, 5, 16, 10, 30)); // 07:30 locais: antes do aviso
+    await runTick();
+    expect((await getAppt(yesterday))!.outcomePendingSince).toBeDefined();
+    expect((await getAppt(old))!.outcomePendingSince).toBeUndefined();
+    vi.setSystemTime(NOW); // 08:30: passada diária
+    await runTick();
+    expect((await getAppt(old))!.outcomePendingSince).toBe(NOW);
+  });
+
+  test("mudança de fuso para um dia local anterior não gera segundo aviso", async () => {
+    const s = await seedOrg();
+    await seedAppt(s, "confirmed", at(10));
+    await runTick();
+    expect(await notices(s.admin.memberId)).toHaveLength(1);
+    expect(await stampOf(s)).toBe("2026-06-16");
+    // O fuso passa a Honolulu (UTC-10) e o relógio local da org volta para 15/06 19:00: carimbo (16/06) >= hoje.
+    await t.run(async (ctx) => {
+      const org = await ctx.db.get(s.organizationId);
+      await ctx.db.patch(s.organizationId, { settings: { ...org!.settings, timezone: "Pacific/Honolulu" } });
+    });
+    await seedAppt(s, "confirmed", Date.UTC(2026, 5, 14, 15, 0), Date.UTC(2026, 5, 14, 16, 0), { outcomePendingSince: NOW }); // ontem em Honolulu
+    vi.setSystemTime(Date.UTC(2026, 5, 16, 5, 0));
+    await runTick();
+    expect(await notices(s.admin.memberId)).toHaveLength(1);
+    // Dia local seguinte de verdade (17/06 08:30 em Honolulu): avisa de novo.
+    await seedAppt(s, "scheduled", Date.UTC(2026, 5, 16, 20, 0), Date.UTC(2026, 5, 16, 21, 0), { outcomePendingSince: NOW });
+    vi.setSystemTime(Date.UTC(2026, 5, 17, 18, 30));
+    await runTick();
+    expect(await notices(s.admin.memberId)).toHaveLength(2);
+  });
+
+  test("org de demonstração: o aviso não vai ao Telegram; org normal vai", async () => {
+    const mk = async (demo: boolean) => {
+      const s = await seedOrg();
+      await t.run(async (ctx) => {
+        const org = await ctx.db.get(s.organizationId);
+        await ctx.db.patch(s.organizationId, { settings: { ...org!.settings, ...(demo ? { demoMode: true } : {}), modules: { scheduling: true, telegram: true } } });
+        const now = Date.now();
+        await ctx.db.insert("telegramLinks", {
+          organizationId: s.organizationId, teamMemberId: s.admin.memberId, userId: s.admin.userId, chatId: 1, telegramUserId: 1, status: "active",
+          prefs: { relayAssignedConversations: true, mediaInbound: true },
+          assistant: { mode: "suggest", suggestOnEvents: false, autoSendDelaySeconds: 15, autoAllowed: { instructAi: true, createTask: true, moveStage: true, acceptHandoff: true, replyCustomer: false } },
+          reports: { enabled: false, morningHour: 8, eveningHour: 18 }, linkedAt: now, lastSeenAt: now,
+        } as never);
+      });
+      await seedAppt(s, "confirmed", at(10), at(11), { outcomePendingSince: NOW - HOUR });
+      await t.mutation(internal.schedulingJobs.internalOutcomePendingNotice, { organizationId: s.organizationId, now: NOW });
+      return s;
+    };
+    const demo = await mk(true);
+    expect(await notices(demo.admin.memberId)).toHaveLength(1); // sino sim
+    expect(await scheduledNames()).not.toContain("telegram:internalDeliverNotification");
+    await mk(false);
+    expect(await scheduledNames()).toContain("telegram:internalDeliverNotification");
+  });
+});
+
+describe("configuração: folga e hora do aviso", () => {
+  const asAdmin = (s: Seed) => t.withIdentity({ subject: `${s.admin.userId}|s1` });
+  const update = (s: Seed, patch: Record<string, unknown>) =>
+    asAdmin(s).mutation(api.schedulingConfig.updateSettings, { organizationId: s.organizationId, patch } as never);
+
+  test("valida limites, grava e devolve na leitura; salvar outro grupo preserva `outcome`", async () => {
+    const s = await seedOrg();
+    await expect(update(s, { outcome: { graceMin: 29 } })).rejects.toThrow(/entre 30 e 720/);
+    await expect(update(s, { outcome: { graceMin: 721 } })).rejects.toThrow(/entre 30 e 720/);
+    await expect(update(s, { outcome: { noticeHour: 24 } })).rejects.toThrow(/entre 0 e 23/);
+    await expect(update(s, { outcome: { noticeHour: 7.5 } })).rejects.toThrow(/entre 0 e 23/);
+    await update(s, { outcome: { graceMin: 180, noticeHour: 9 } });
+    await update(s, { gridMinutes: 15 }); // o replace do salvamento não pode apagar `outcome`
+    const doc = await t.run((ctx) => ctx.db.query("schedSettings").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).first());
+    expect(doc!.outcome).toEqual({ graceMin: 180, noticeHour: 9 });
+    const cfg = await asAdmin(s).query(api.schedulingConfig.getConfig, { organizationId: s.organizationId, closuresFrom: "2026-01-01" });
+    assertMatchesReturns(cfg, config.getConfig);
+    expect(cfg!.settings.outcome).toEqual({ graceMin: 180, noticeHour: 9 });
+    await update(s, { outcome: { graceMin: null } }); // volta ao padrão
+    const doc2 = await t.run((ctx) => ctx.db.query("schedSettings").withIndex("by_organization", (q) => q.eq("organizationId", s.organizationId)).first());
+    expect(doc2!.outcome).toEqual({ noticeHour: 9 });
+  });
+
+  test("resolveSchedSettings limita valores fora da faixa gravados direto", () => {
+    const base = { outcome: { graceMin: 5, noticeHour: 99 } } as Doc<"schedSettings">;
+    expect(resolveSchedSettings(base).outcome).toEqual({ graceMin: 30, noticeHour: 23 });
+    expect(resolveSchedSettings({ outcome: { graceMin: 9999 } } as Doc<"schedSettings">).outcome.graceMin).toBe(720);
+    expect(resolveSchedSettings(null).outcome).toEqual({ graceMin: 120, noticeHour: 8 });
   });
 });

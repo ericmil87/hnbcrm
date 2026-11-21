@@ -10,6 +10,7 @@ import {
   DEFAULT_MIN_NOTICE_MIN,
   DEFAULT_OUTCOME_GRACE_MIN,
   DEFAULT_OUTCOME_NOTICE_HOUR,
+  OUTCOME_GRACE_MIN_LIMITS,
 } from "./schedConstants";
 
 export type SchedSmartMode = "off" | "rank" | "restrict";
@@ -79,6 +80,11 @@ export type ResolvedSchedSettings = {
   templateKey: string | undefined;
 };
 
+function clampInt(value: number | undefined, min: number, max: number, fallback: number): number {
+  if (value === undefined || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
 /** Doc ausente (`null`/`undefined`) = todos os padrões. */
 export function resolveSchedSettings(
   doc: Doc<"schedSettings"> | null | undefined,
@@ -122,8 +128,8 @@ export function resolveSchedSettings(
       template: rem?.template,
     },
     outcome: {
-      graceMin: doc?.outcome?.graceMin ?? DEFAULT_OUTCOME_GRACE_MIN,
-      noticeHour: doc?.outcome?.noticeHour ?? DEFAULT_OUTCOME_NOTICE_HOUR,
+      graceMin: clampInt(doc?.outcome?.graceMin, OUTCOME_GRACE_MIN_LIMITS.min, OUTCOME_GRACE_MIN_LIMITS.max, DEFAULT_OUTCOME_GRACE_MIN),
+      noticeHour: clampInt(doc?.outcome?.noticeHour, 0, 23, DEFAULT_OUTCOME_NOTICE_HOUR),
     },
     templateKey: doc?.templateKey,
   };

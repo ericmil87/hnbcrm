@@ -23,6 +23,8 @@ export const DEFAULT_GRID_MIN = 30;
 /** Pendência "sem desfecho" (A4): folga após o fim, hora local do aviso diário, janela de leitura e tetos. */
 export const DEFAULT_OUTCOME_GRACE_MIN = 120;
 export const DEFAULT_OUTCOME_NOTICE_HOUR = 8;
+/** Limites da folga configurável (min). */
+export const OUTCOME_GRACE_MIN_LIMITS = { min: 30, max: 720 } as const;
 /** O job só olha agendamentos que começaram nos últimos N dias (o mais antigo já foi marcado quando estava na janela). */
 export const OUTCOME_LOOKBACK_DAYS = 14;
 /** Linhas lidas por página do job, e teto da contagem do aviso diário. */

@@ -147,6 +147,7 @@ export const settingsViewValidator = v.object({
       onNoShowStageId: v.optional(v.id("stages")),
     })
   ),
+  outcome: v.optional(v.object({ graceMin: v.number(), noticeHour: v.number() })),
   reminders: v.optional(
     v.object({
       enabled: v.boolean(),
@@ -185,6 +186,7 @@ export function toSettingsView(s: ResolvedSchedSettings, includeAutomation: bool
     ai: compact({ ...s.ai, autoAck: s.ai.autoAck ? { by: s.ai.autoAck.by as Id<"teamMembers">, at: s.ai.autoAck.at } : undefined }),
     humanConfirm: compact({ ...s.humanConfirm }),
     funnel: compact({ ...s.funnel }),
+    outcome: { graceMin: s.outcome.graceMin, noticeHour: s.outcome.noticeHour },
     reminders: compact({ ...s.reminders }),
   });
 }
