@@ -21,6 +21,7 @@ import { cancelCampaignHandler } from "../campaigns";
 import { confirmGroupPendingAction, isGroupPendingTool } from "./groupCopilotTools";
 import { executeConfigPendingAction, isConfigPendingTool } from "./copilotConfigTools";
 import { executeAttendantPendingAction, isAttendantPendingTool } from "./copilotAttendantTools";
+import { executeSchedPendingAction, isSchedPendingTool } from "./schedCopilotOps";
 
 export type PendingActionOutcome = { ok: true; message: string };
 
@@ -108,6 +109,13 @@ export async function confirmPendingActionCore(
       if (isConfigPendingTool(pending.tool)) {
         const outcome = await executeConfigPendingAction(ctx, pending, member, via);
         if (!outcome.ok) throw new ConvexError(outcome.message);
+        message = outcome.message;
+        break;
+      }
+      // Agenda v2 (E1): remarcar, cancelar, aprovar, situação, desfazer, fechar/reabrir e conflito. Reconfere módulo,
+      // org e permissão `agenda` AGORA e executa SÓ o plano mostrado na prévia, pelas portas (ator = o membro).
+      if (isSchedPendingTool(pending.tool)) {
+        const outcome = await executeSchedPendingAction(ctx, pending, member, via, now);
         message = outcome.message;
         break;
       }

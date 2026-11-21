@@ -25,8 +25,8 @@ import { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { requireAuth, isMembershipRevoked, isActiveMemberOf } from "./lib/auth";
 import { assertAgentCan, orgAiActive } from "./lib/agentSecurity";
-import { isSchedCopilotReadTool } from "./lib/schedCopilotTools";
-import { runSchedCopilotReadTool, schedSessionInfo } from "./lib/schedCopilotOps";
+import { isSchedCopilotReadTool, isSchedCopilotWriteTool } from "./lib/schedCopilotTools";
+import { runSchedCopilotReadTool, runSchedCopilotWriteTool, schedSessionInfo } from "./lib/schedCopilotOps";
 import {
   projectToolResult,
   toolSpecByName,
@@ -2012,6 +2012,15 @@ async function runWriteTool(
           threadId: scope.threadId,
           pendingActionTtlMs: PENDING_ACTION_TTL_MS,
           via: scope.via,
+        });
+      }
+      // Agenda v2 (E1) — SEMPRE em duas fases (`lib/schedCopilotOps.ts`): só monta a prévia e grava `pendingActions`.
+      if (isSchedCopilotWriteTool(name)) {
+        return await runSchedCopilotWriteTool(ctx, name, toolArgs, {
+          organizationId,
+          member,
+          threadId: scope.threadId,
+          pendingActionTtlMs: PENDING_ACTION_TTL_MS,
         });
       }
       return { error: `Tool não implementada: ${name}` };
