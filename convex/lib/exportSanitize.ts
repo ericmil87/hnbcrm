@@ -19,6 +19,12 @@
 
 /** Tabelas que NUNCA entram no backup completo (seção 7 do plano). */
 export const EXCLUDED_BACKUP_TABLES: readonly string[] = [
+  // Agenda v2: ocupação (derivada dos agendamentos), conflitos abertos, ofertas por conversa (30 min)
+  // e registro de interpretação de mensagem (sem texto). Recomputáveis ou efêmeros.
+  "schedAllocations",
+  "schedConflicts",
+  "schedConversationState",
+  "schedInterpretations",
   "apiKeys",
   "orgSecrets",
   // Descriptor CIFRADO da mídia de grupo não baixada (carrega o `MediaKey`).

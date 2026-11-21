@@ -1,0 +1,35 @@
+# Agenda v2 (módulo `scheduling`, tabelas `sched*`)
+
+> Agenda de agendamentos de cliente por recurso (salas, profissionais, equipamentos). Convive com a agenda interna de compromissos (`calendarEvents`, ver `calendar.md`), que NÃO muda de tabela. Plano de origem: `temp/agenda-v2/10-PLANO-IMPLEMENTACAO.md` (local, não versionado). Cada PR da v2 acrescenta aqui o parágrafo da sua parte.
+
+## Estado atual (PR A1, fundação)
+
+Só dados, módulo, plano e permissão. Nenhuma função do motor existe ainda (vêm em A2, A3a, A3b…). Org que não liga o módulo lê tudo desligado e nada muda.
+
+- **Nomes.** Módulo `scheduling` (`OrgModuleKey`, `GatedModule`); categoria de permissão `agenda`; prefixo de tabela `sched` (não colide com `scheduledMessages`); arquivos `convex/scheduling*.ts` e libs `convex/lib/sched*.ts`; componentes `src/components/agenda/`. UI: "Marcar horário" / "Agendamento" ("Agendar" já é programar envio de mensagem).
+- **Tabelas** (`convex/schema.ts`, todas novas, aditivas): `schedSettings` (1 doc por org, opcional), `schedResources`, `schedServices`, `schedExceptions` (fechamento/horário especial/extra/bloqueio por DATA local), `schedAppointments`, `schedAllocations` (tabela quente: só agendamento ATIVO tem linha), `schedConflicts`, `schedConversationState` (ofertas por conversa, fora do doc quente `conversations`), `schedInterpretations` (nunca guarda texto). Validadores exportados do schema: `schedOrigin`, `schedStatus`, `smartMode`, `minuteInterval`. Lista de espera (`schedWaitlist`) e links públicos (`schedPublicLinks`) nascem nas fases G e H.
+- **Literais novos em tabelas existentes:** `orgModulesValidator.scheduling`, `permissionsValidator.agenda`, `activities.type` `appointment_booked|appointment_changed|appointment_completed`. Os tipos de `notifications.type` do plano (§3.7) NÃO entram no A1: `notificationTypesParity.test` exige as 5 pontas juntas (cópia, ícone do sino, flag de preferência, push, Telegram), então cada tipo entra no PR que primeiro o usa.
+- **Constantes** (`convex/lib/schedConstants.ts`) e **padrões de configuração** (`convex/lib/schedSettingsDefaults.ts`, `resolveSchedSettings(doc | null)`): quem lê a configuração SEMPRE passa por ela; o doc `schedSettings` ausente = padrões.
+
+## Módulo e plano
+
+Gate de plano em `PLANS[*].modules` (os 4 planos pagos, teste incluído por usar o Profissional; `legacy`/sem billing = livre) e `MODULE_GATE.scheduling`. `setOrgModulesCore` (`lib/orgModulesOps.ts`) chama `checkModule` SÓ na transição desligado → ligado de `scheduling`: reenviar `true` com o módulo já ligado e desligar nunca recusam. Conta em modo leitura, cancelada ou com teste vencido tem `modules` zerado e recusa ligar ("modo leitura"). Os outros módulos seguem sem checar o plano ao ligar (decisão pendente do dono). Ligar exige `settings:manage` e gera `auditLogs` (antes/depois com `scheduling`). `scheduling` fica fora de `assertAnyModule` (não acende a Central).
+
+## Permissão `agenda`
+
+Hierarquia `none < view_own < view_all < edit < manage`. Defaults: `admin: manage`, `manager: edit`, `agent: edit`, `ai: edit` (hoje qualquer membro cria compromisso; restringir é escolha da org; a autonomia da IA vem de `schedSettings.ai`, não daqui). O campo é `v.optional` em `permissionsValidator` e `resolvePermissions` completa `agenda` (como `campaigns`) com o default do papel: membro com permissões explícitas gravadas antes da categoria existir NÃO fica sem acesso. **Exceção conhecida, comportamento inalterado no A1:** chave de API usa `apiKeyRecord.permissions ?? resolvePermissions(...)` (`router.ts`, `startConversation.ts`) sem completar; uma chave legada com permissões gravadas e sem `agenda` é NEGADA (fail-closed) em qualquer rota que passe a exigir `agenda`. O PR A1b (rotas de calendário passando a `agenda`) precisa decidir: completar com o default do papel nesses dois pontos ou exigir regravar a chave. `PermissionsEditor` itera `CATEGORY_LABELS`, então a categoria já aparece ali; as rotas de calendário passam a usá-la no PR A1b.
+
+## Purga, backup, cascata
+
+- Purga da org (`opsPurge.ts`): todas as tabelas novas. `schedAllocations` sai junto do agendamento (`by_appointment`; não tem índice por org de propósito, é a tabela quente) e `schedConversationState` junto da conversa (`by_conversation`).
+- Backup (`exports.ts`): `schedSettings`, `schedResources`, `schedServices`, `schedExceptions`, `schedAppointments`. Ficam em `EXCLUDED_BACKUP_TABLES` (derivados/efêmeros): `schedAllocations`, `schedConflicts`, `schedConversationState`, `schedInterpretations`. O `internalCollectPage` pagina só por `by_organization`; por isso `schedAppointments` e `schedExceptions` têm esse índice além do de data/início.
+- Excluir lead/contato (`lib/leadCascade.ts`): o agendamento FICA (histórico da operação) e perde `leadId`/`contactId` (índices `by_lead_and_start`/`by_contact_and_start`), como `calendarEvents`. Excluir a conversa apaga `schedConversationState` e `schedInterpretations` dela. `schedAppointments.conversationId` pode ficar apontando para conversa apagada (não há índice; toda leitura trata `null`).
+
+## Invariantes
+
+- **Bloco máximo.** Duração (inclusive variantes) + folga antes + folga depois ≤ `MAX_BLOCK_MIN` (480). Toda escrita de serviço e toda alocação RECUSA bloco maior. `MAX_BLOCK_MIN` é a janela `L` lida na checagem de capacidade (busca por `blockStart` em `[start - L, end)`): uma alocação maior fica invisível para a checagem e fura a capacidade.
+- **Exclusiva.** `schedAllocations.exclusive` (opcional) guarda que a alocação ocupa o recurso inteiro, para continuar valendo se a capacidade do recurso aumentar depois.
+- **Índices por valor opcional.** Exceção da org inteira (`resourceId` ausente) só se consulta por `by_organization_and_date`. Nunca consultar `by_resource_and_date`, `by_lead_and_start`, `by_contact_and_start` ou `by_team_member` com valor `undefined`: leria documentos de outras orgs.
+- **Contato apagado = sem dado pessoal.** A cascata do CONTATO (`cascadeContactRefs`) zera `contactId`, `contactName`, `guestName`, `notes` e `cancelReason` do agendamento; a do LEAD só zera `leadId` (o contato continua existindo, o nome fica). `contacts.deleteContact` (contato sem lead) agenda a mesma cascata (`leads.internalCascadeDeleteLeads`), o que também limpa `contactId` de tarefas, compromissos e arquivos.
+- **Restauração.** Alocações ficam fora do backup de propósito: qualquer import/restauração de agendamentos reconstrói as alocações pela porta de reserva. A op de reconstrução/varredura (`internalRebuildAllocations`, `dryRun` default true) é do PR J1/A3b; aqui só registrada.
+- **`returns` não é validado pelo `convex-test`.** O runtime recusa campo a mais num `v.object`. Validator de retorno que enumera módulos tem guard em `convex/modulesValidatorsParity.test.ts` (chaves = `GATED_MODULES`/`MODULE_LABELS`); todo validator de retorno de `scheduling*` é exercitado por teste que compara as chaves devolvidas com o validator ou é construído da mesma fonte.

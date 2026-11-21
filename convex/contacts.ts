@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api";
 import { searchContactsByText } from "./lib/contactTextSearch";
 import { deleteFileRow } from "./lib/storageUsage";
 import { deleteBlobIfUnreferenced } from "./lib/fileRefs";
@@ -522,6 +523,12 @@ export const deleteContact = mutation({
     // LGPD: foto do WhatsApp (linha lateral + arquivo + blob) e foto manual.
     await deleteContactAvatarArtifacts(ctx, contact);
     await ctx.db.delete(args.contactId);
+    // Referências do contato (tarefas, compromissos, agendamentos, arquivos) pela mesma cascata do lead.
+    await ctx.scheduler.runAfter(0, internal.leads.internalCascadeDeleteLeads, {
+      organizationId: contact.organizationId,
+      leadIds: [],
+      contactIds: [args.contactId],
+    });
     return null;
   },
 });

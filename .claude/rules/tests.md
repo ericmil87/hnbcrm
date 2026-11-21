@@ -27,6 +27,9 @@ paths:
 ## E-mail
 - The Resend component is NOT registered in tests, so `sendTransactionalEmail` always returns `false`. `toBe(false)` proves nothing for an opt-out. Prove it with `vi.spyOn(console, "error")` and a valid address: the "falha ao enfileirar" log appears only when the send was attempted (`convex/alertEmails.test.ts`). Always `mockRestore()` in `finally`.
 
+## Gotchas
+- `convex-test` does not validate `returns`; the real runtime rejects extra fields in a `v.object`. For any return validator that enumerates keys (modules, permissions), add a pure test comparing validator keys to the source of truth (example `convex/modulesValidatorsParity.test.ts`).
+
 ## Do not change
 - `convex/groupMediaPolicy.test.ts` "fetch do sob demanda tem timeout menor que a trava" keeps `{ retry: 2 }` and its timings; it is load-sensitive.
 - Fixtures must be short and obviously fake (`sk-test-...`, `fake-hmac-secret-...`); `secretScan` fails the build on real-looking tokens. Bridge fixtures in `convex/__fixtures__/` are real or marked synthetic in the JSON; keep that marking.

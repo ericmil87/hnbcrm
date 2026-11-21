@@ -14,7 +14,8 @@ export type PermissionCategory =
   | "settings"
   | "auditLogs"
   | "apiKeys"
-  | "campaigns";
+  | "campaigns"
+  | "agenda";
 
 // Level definitions per category
 export type LeadsLevel = "none" | "view_own" | "view_all" | "edit_own" | "edit_all" | "full";
@@ -27,6 +28,7 @@ export type SettingsLevel = "none" | "view" | "manage";
 export type AuditLogsLevel = "none" | "view";
 export type ApiKeysLevel = "none" | "view" | "manage";
 export type CampaignsLevel = "none" | "view" | "manage" | "full";
+export type AgendaLevel = "none" | "view_own" | "view_all" | "edit" | "manage";
 
 export interface Permissions {
   leads: LeadsLevel;
@@ -39,6 +41,7 @@ export interface Permissions {
   auditLogs: AuditLogsLevel;
   apiKeys: ApiKeysLevel;
   campaigns: CampaignsLevel;
+  agenda: AgendaLevel;
 }
 
 export type Role = "admin" | "manager" | "agent" | "ai";
@@ -56,6 +59,8 @@ const LEVEL_HIERARCHIES: Record<PermissionCategory, string[]> = {
   apiKeys: ["none", "view", "manage"],
   // manage = criar/editar/pausar; full = lançar, cancelar, excluir, override de tetos
   campaigns: ["none", "view", "manage", "full"],
+  // Agenda: compromissos internos e agendamentos. manage = serviços, recursos, regras e política da IA.
+  agenda: ["none", "view_own", "view_all", "edit", "manage"],
 };
 
 // Default permissions per role
@@ -71,6 +76,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "view",
     apiKeys: "manage",
     campaigns: "full",
+    agenda: "manage",
   },
   manager: {
     leads: "edit_all",
@@ -83,6 +89,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "view",
     apiKeys: "manage",
     campaigns: "manage",
+    agenda: "edit",
   },
   agent: {
     leads: "edit_own",
@@ -95,6 +102,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "none",
     apiKeys: "none",
     campaigns: "view",
+    agenda: "edit",
   },
   ai: {
     leads: "edit_own",
@@ -107,6 +115,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "none",
     apiKeys: "none",
     campaigns: "view",
+    agenda: "edit",
   },
 };
 
@@ -116,13 +125,17 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
  */
 export function resolvePermissions(
   role: Role,
-  explicit?: (Partial<Permissions> & Omit<Permissions, "campaigns">) | null
+  explicit?: (Partial<Permissions> & Omit<Permissions, "campaigns" | "agenda">) | null
 ): Permissions {
   const defaults = DEFAULT_PERMISSIONS[role];
   if (!explicit) return defaults;
   // Categorias criadas depois de o membro ter permissões explícitas gravadas
   // (ex.: campaigns) caem no default do role em vez de "undefined" (= negado).
-  return { ...explicit, campaigns: explicit.campaigns ?? defaults.campaigns };
+  return {
+    ...explicit,
+    campaigns: explicit.campaigns ?? defaults.campaigns,
+    agenda: explicit.agenda ?? defaults.agenda,
+  };
 }
 
 /**
@@ -160,6 +173,7 @@ export const CATEGORY_LABELS: Record<PermissionCategory, string> = {
   auditLogs: "Auditoria",
   apiKeys: "Chaves API",
   campaigns: "Campanhas",
+  agenda: "Agenda",
 };
 
 // PT-BR labels for levels
