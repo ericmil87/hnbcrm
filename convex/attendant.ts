@@ -2940,6 +2940,8 @@ export const internalCommitAiReply = internalMutation({
     needsDisclosure: v.boolean(),
     disclosure: v.string(),
     allowPendingHandoff: v.boolean(), // a própria run pediu handoff neste turno
+    // Agenda v2 (D1): módulo `scheduling` ligado (o claim já sabe). Desligado = o commit NÃO lê o estado de ofertas.
+    schedulingOn: v.optional(v.boolean()),
     humanInitiated: v.optional(v.boolean()), // turno pedido por humano (return_to_ai)
     // v0.64 — flyer da agenda externa: linha de `files` já preparada pela
     // action (sem messageId); o texto vira a LEGENDA.
@@ -3178,12 +3180,15 @@ export const internalCommitAiReply = internalMutation({
     await scheduleMessageTranslation(ctx, { messageId, role: "display", conversation });
     // Agenda v2 (D1): a mensagem SAIU, então o cliente viu os horários que ela cita (`shownAt`): só a partir daqui as
     // ofertas valem. Turno que falhou e rascunho não aprovado nunca chegam aqui.
-    await markOffersShownFromText(ctx, {
-      organizationId: conversation.organizationId,
-      conversationId: conversation._id,
-      text: `${text}\n${args.textAfterVoice ?? ""}`,
-      now,
-    });
+    // Só com o módulo ligado (`args.schedulingOn`, vindo do claim): módulo desligado = zero leitura a mais.
+    if (args.schedulingOn === true) {
+      await markOffersShownFromText(ctx, {
+        organizationId: conversation.organizationId,
+        conversationId: conversation._id,
+        text: `${text}\n${args.textAfterVoice ?? ""}`,
+        now,
+      });
+    }
     if (queueItem?.followUpId) {
       const followUp = await ctx.db.get(queueItem.followUpId);
       if (followUp) {
@@ -3255,6 +3260,8 @@ export const internalCommitAiSuggestion = internalMutation({
     runId: v.string(),
     agentRunId: v.id("agentRuns"),
     text: v.string(),
+    // Agenda v2 (D1): módulo ligado (gravado no rascunho; a aprovação só marca ofertas como mostradas se for `true`).
+    schedulingOn: v.optional(v.boolean()),
     proposedActions: v.array(
       v.object({ name: v.string(), argsJson: v.string(), label: v.string() })
     ),
@@ -3354,6 +3361,7 @@ export const internalCommitAiSuggestion = internalMutation({
           status: "pending",
           agentRunId: args.agentRunId,
           proposedActions: args.proposedActions,
+          ...(args.schedulingOn === true ? { schedulingOn: true } : {}),
           ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
           ...(args.instruction ? { instruction: args.instruction } : {}),
           ...(args.instructedBy ? { instructedBy: args.instructedBy } : {}),
@@ -4823,6 +4831,7 @@ export const internalProcessQueueItem = internalAction({
           ? await ctx.runMutation(internal.attendant.internalCommitAiSuggestion, {
               ...commitArgsBase,
               proposedActions,
+              ...(context.schedulingOn === true ? { schedulingOn: true } : {}),
               // Loop de coaching: o commit tolera a pausa (humano pediu) e faz
               // o supersede transacional do rascunho de origem (TOCTOU).
               ...(context.humanInitiated ? { humanInstructed: true } : {}),
@@ -4836,6 +4845,7 @@ export const internalProcessQueueItem = internalAction({
               ...voiceCommitArgs,
               runStartedAt: context.runStartedAt,
               allowPendingHandoff: handoffRequestedThisRun,
+              ...(context.schedulingOn === true ? { schedulingOn: true } : {}),
               ...(context.humanInitiated ? { humanInitiated: true } : {}),
             });
 
@@ -5178,12 +5188,15 @@ export async function acceptAiDraftCore(
   // Tradução automática (D6): tradução de exibição da resposta aprovada.
   await scheduleMessageTranslation(ctx, { messageId, role: "display", conversation });
   // Agenda v2 (D1): a mensagem aprovada SAIU (texto final, possivelmente editado): o cliente viu os horários citados.
-  await markOffersShownFromText(ctx, {
-    organizationId: conversation.organizationId,
-    conversationId: conversation._id,
-    text: finalText,
-    now,
-  });
+  // Só se o módulo estava ligado quando o rascunho foi gerado (`aiDraft.schedulingOn`): sem leitura a mais com o módulo desligado.
+  if ((aiDraft as { schedulingOn?: boolean }).schedulingOn === true) {
+    await markOffersShownFromText(ctx, {
+      organizationId: conversation.organizationId,
+      conversationId: conversation._id,
+      text: finalText,
+      now,
+    });
+  }
 
   // Executa as ações aprovadas (best-effort por ação: falha vira relato no
   // metadata, nunca desfaz o envio). Só ações ESTRUTURADAS e aprováveis.

@@ -94,7 +94,7 @@ function messageSeenByModel(body: { messages: Array<{ role: string; content: str
 
 const WEEKDAYS = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 480, endMin: 1080 }));
 
-type SeedOpts = { ai?: boolean; /** Ausente = "auto" nestes testes (o padrão REAL é "suggest": `"default"` deixa o campo ausente). */
+type SeedOpts = { ai?: boolean; /** Ausente (ou "default") = o padrão REAL do produto: campo `humanConfirm.mode` ausente, que é "só sugerir". Quem quer criar sozinho passa `mode: "auto"` EXPLÍCITO. */
   mode?: "auto" | "suggest" | "off" | "default"; modules?: boolean; services?: 1 | 2; defaultService?: boolean; relation?: "personal"; now?: number };
 type Seed = Awaited<ReturnType<typeof seedOrg>>;
 type Person = { userId: Id<"users">; memberId: Id<"teamMembers"> };
@@ -145,7 +145,7 @@ async function seedOrg(opts: SeedOpts = {}) {
     const scheduledStageId = await mkStage("Agendado", 1);
     await ctx.db.insert("schedSettings", {
       organizationId,
-      humanConfirm: { ...(opts.mode === "default" ? {} : { mode: opts.mode ?? "auto" }) },
+      humanConfirm: { ...(opts.mode === undefined || opts.mode === "default" ? {} : { mode: opts.mode }) },
       funnel: { onScheduledStageId: scheduledStageId },
       updatedAt: now,
     });
@@ -179,7 +179,7 @@ async function seedOrg(opts: SeedOpts = {}) {
     const retorno = opts.services === 2 ? await mkService("Retorno") : undefined;
     if (opts.defaultService && retorno) {
       const doc = (await ctx.db.query("schedSettings").withIndex("by_organization", (q) => q.eq("organizationId", organizationId)).first())!;
-      await ctx.db.patch(doc._id, { humanConfirm: { ...(opts.mode === "default" ? {} : { mode: opts.mode ?? "auto" }), defaultServiceId: consulta } });
+      await ctx.db.patch(doc._id, { humanConfirm: { ...(opts.mode === undefined || opts.mode === "default" ? {} : { mode: opts.mode }), defaultServiceId: consulta } });
     }
     return { organizationId, otherOrgId, admin, editor, viewAll, viewOwn, none, outsider, contactId, otherContactId, leadId, otherLeadId, conversationId, otherConversationId, p1, consulta, retorno, scheduledStageId, stageId };
   });
@@ -237,7 +237,7 @@ const scheduledNames = () => t.run(async (ctx) => (await ctx.db.system.query("_s
 const interpretJobs = async () => (await scheduledNames()).filter((n) => n.includes("schedulingInterpret"));
 
 /** Cenário feliz: o cliente propôs segunda 10h, o humano confirma pelo celular, IA ligada e o modelo concorda. */
-async function happy(opts: SeedOpts = { ai: true }, reply: Verdict | string | ((b: never) => Response) = GOOD) {
+async function happy(opts: SeedOpts = { ai: true, mode: "auto" }, reply: Verdict | string | ((b: never) => Response) = GOOD) {
   const s = await seedOrg(opts);
   const llm = stubLlm(reply as never);
   await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
@@ -299,7 +299,7 @@ describe("criar sozinho (§8.1)", () => {
   });
 
   test("pelo app (sendMessage) o gancho também cria; o remetente recebe o aviso", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await as(s.admin).mutation(api.conversations.sendMessage, { conversationId: s.conversationId, content: CONFIRM });
@@ -336,7 +336,7 @@ describe("criar sozinho (§8.1)", () => {
   });
 
   test("conflito de horário na criação automática: cria, vai para a fila de conflitos e a ocupação não passa da capacidade", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(10), contactId: s.otherContactId, idempotencyKey: "pre-1" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
@@ -357,7 +357,7 @@ describe("criar sozinho (§8.1)", () => {
   });
 
   test("o contato já marcado para esse horário: nada novo (`confirmed_existing`), sem chamar o modelo", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(10), contactId: s.contactId, idempotencyKey: "pre-2" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
@@ -371,7 +371,7 @@ describe("criar sozinho (§8.1)", () => {
   });
 
   test("o contato tem UM pendente de aprovação nesse horário: a confirmação do humano o aprova (sem criar outro)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     // Pendente do contato (como a IA ou o link criariam): inserido pela porta com ator de sistema do link.
     const pend = await t.run((ctx) =>
@@ -415,7 +415,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   }
 
   test("sem IA ligada: nunca cria sozinho, só propõe (e não chama modelo)", async () => {
-    const s = await seedOrg({ ai: false });
+    const s = await seedOrg({ ai: false, mode: "auto" });
     const llm = stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -438,7 +438,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("sem proposta aberta (o cliente não citou o horário): não sugere nada (`ignored` com `sem_proposta`)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     await humanOnPhone(s, CONFIRM);
     await drain();
@@ -447,7 +447,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("a proposta aberta é de OUTRO dia/hora: não sugere nada (`ignored` com `sem_proposta_coincidente`)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     await clientSays(s, "Pode ser terça às 14h?", NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -457,7 +457,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("a proposta do cliente tem mais de 48 h: não vale", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 49 * HOUR);
     await humanOnPhone(s, CONFIRM);
@@ -466,7 +466,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("oferta da IA gravada em `schedConversationState` vale como proposta aberta, desde que o cliente a aceite depois", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await t.run((ctx) =>
       ctx.db.insert("schedConversationState", {
@@ -483,7 +483,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("oferta anterior do próprio humano só PREENCHE a sugestão: nunca cria sozinha", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     await t.run((ctx) =>
       ctx.db.insert("messages", {
@@ -498,7 +498,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("serviço ambíguo (dois serviços, nenhum citado, sem padrão): propõe sem criar", async () => {
-    const s = await seedOrg({ ai: true, services: 2 });
+    const s = await seedOrg({ ai: true, services: 2 , mode: "auto" });
     const llm = stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -509,7 +509,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("dois serviços citados na conversa: ambíguo, mesmo com serviço padrão configurado", async () => {
-    const s = await seedOrg({ ai: true, services: 2, defaultService: true });
+    const s = await seedOrg({ ai: true, services: 2, defaultService: true , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s, "Quero Consulta ou Retorno, pode ser segunda às 10h?", NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -518,7 +518,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("serviço citado na conversa desempata (dois serviços ativos)", async () => {
-    const s = await seedOrg({ ai: true, services: 2 });
+    const s = await seedOrg({ ai: true, services: 2 , mode: "auto" });
     stubLlm({ ...GOOD, servico: "Retorno" });
     await clientSays(s, "Queria marcar o Retorno, pode ser segunda às 10h?", NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -529,13 +529,13 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("serviço padrão configurado resolve a ambiguidade; se o modelo cita OUTRO serviço, diverge e propõe", async () => {
-    const s = await seedOrg({ ai: true, services: 2, defaultService: true });
+    const s = await seedOrg({ ai: true, services: 2, defaultService: true , mode: "auto" });
     stubLlm({ ...GOOD, servico: "Retorno" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
     await drain();
     await expectProposal(s, "ia_divergente");
-    const s2 = await seedOrg({ ai: true, services: 2, defaultService: true });
+    const s2 = await seedOrg({ ai: true, services: 2, defaultService: true , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s2, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s2, CONFIRM);
@@ -546,20 +546,20 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   test("dia/hora que o modelo leu diferem do parser: `ia_divergente`", async () => {
     for (const verdict of [{ ...GOOD, dia: "2026-06-16" }, { ...GOOD, hora: "11:00" }, { ...GOOD, dia: "nenhum" }, { ...GOOD, hora: "nenhuma" }, { ...GOOD, ato: "propos" }]) {
       t = convexTest(schema, modules);
-      const { s } = await happy({ ai: true }, verdict);
+      const { s } = await happy({ ai: true, mode: "auto" }, verdict);
       await expectProposal(s, "ia_divergente");
     }
   });
 
   test("evidência que NÃO é substring da mensagem: `ia_evidencia_invalida`", async () => {
-    const { s } = await happy({ ai: true }, { ...GOOD, evidencia: "frase que não está na mensagem" });
+    const { s } = await happy({ ai: true, mode: "auto" }, { ...GOOD, evidencia: "frase que não está na mensagem" });
     await expectProposal(s, "ia_evidencia_invalida");
   });
 
   test("resposta fora do schema (dia fora do enum, hora malformada, serviço inexistente, JSON ruim): `ia_resposta_invalida`", async () => {
     for (const reply of [{ ...GOOD, dia: "2026-07-30" }, { ...GOOD, hora: "10h" }, { ...GOOD, servico: "Massagem" }, { ...GOOD, ato: "talvez" }, "isto não é JSON", '{"ato":"confirmou"}']) {
       t = convexTest(schema, modules);
-      const { s } = await happy({ ai: true }, reply);
+      const { s } = await happy({ ai: true, mode: "auto" }, reply);
       await expectProposal(s, "ia_resposta_invalida");
     }
   });
@@ -567,7 +567,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   test("modelo fora do ar (500) ou tempo esgotado: `ia_indisponivel` (vira proposta, sem criar)", async () => {
     for (const reply of [() => new Response("boom", { status: 500 }), () => { throw Object.assign(new Error("timeout"), { name: "TimeoutError" }); }]) {
       t = convexTest(schema, modules);
-      const { s } = await happy({ ai: true }, reply as never);
+      const { s } = await happy({ ai: true, mode: "auto" }, reply as never);
       await expectProposal(s, "ia_indisponivel");
       const runs = await t.run((ctx) => ctx.db.query("agentRuns").collect());
       expect(runs.every((r) => r.kind === "sched_interpret")).toBe(true);
@@ -575,7 +575,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("a rede de segurança: sem resposta do modelo a mensagem vira proposta (nunca fica pendente)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     const messageId = (await t.run((ctx) =>
@@ -596,7 +596,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("data além de 30 dias ou além da janela do modelo (14 dias): propõe", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     await clientSays(s, "Pode ser dia 20 de julho às 10h?", NOW - 30 * MIN);
     await humanOnPhone(s, "Ok, confirmado dia 20/07 10h");
@@ -609,7 +609,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("OUTSIDE_HOURS (fora do expediente) ou recurso fechado: o modelo concorda, a porta recusa e vira proposta com o código da regra", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm({ ...GOOD, hora: "19:00", evidencia: "confirmado segunda 19h" });
     await clientSays(s, "Pode ser segunda às 19h?", NOW - 30 * MIN);
     await humanOnPhone(s, "Ok, confirmado segunda 19h");
@@ -626,7 +626,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
     ];
     for (const [text, reason] of cases) {
       t = convexTest(schema, modules);
-      const s = await seedOrg({ ai: true });
+      const s = await seedOrg({ ai: true , mode: "auto" });
       const llm = stubLlm(GOOD);
       await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
       await humanOnPhone(s, text);
@@ -638,7 +638,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("resposta curta com proposta do PRÓPRIO humano (e não do cliente) não confirma nada", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     await t.run((ctx) =>
       ctx.db.insert("messages", {
@@ -655,7 +655,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("a resposta curta só conta com a ÚLTIMA mensagem do cliente: se ela não cita o horário, não pré-preenche", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await clientSays(s, "Obrigada!", NOW - 10 * MIN);
@@ -666,7 +666,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("remarcou e cancelou NUNCA agem sozinhos: proposta de 1 toque apontando o agendamento do contato", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const llm = stubLlm(GOOD);
     const { appointmentIds } = await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(14), contactId: s.contactId, idempotencyKey: "pre-3" });
     await humanOnPhone(s, "Remarcado para terça 14h");
@@ -683,7 +683,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("remarcou/cancelou sem agendamento do contato: ignora (nada a aplicar)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     await humanOnPhone(s, "Cancelei sua consulta de segunda");
     await drain();
     expect(await onlyRow(s)).toMatchObject({ decision: "ignored", reason: "sem_agendamento" });
@@ -691,7 +691,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
   });
 
   test("propos grava a proposta do humano na conversa (48 h) e a resposta do cliente vira confirmação reavaliada", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     const first = await humanOnPhone(s, "Agendado pra segunda 10h?"); // pergunta: não passa do pré-filtro, só vira menção
     await drain();
@@ -714,7 +714,7 @@ describe("faltando uma condição vira proposta com o motivo certo", () => {
 
 describe("gancho", () => {
   test("pré-filtro negativo e mensagens que não são do caminho: nada é agendado, nenhuma linha", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     const before = (await scheduledNames()).length;
     await humanOnPhone(s, "Atendemos de segunda a sexta das 8h às 18h");
@@ -731,7 +731,7 @@ describe("gancho", () => {
   });
 
   test("mensagem com mais de 10 minutos (histórico importado usa o mesmo ingest) é ignorada", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM, { at: NOW - 11 * MIN });
     await humanOnPhone(s, CONFIRM, { at: NOW - 3 * 24 * HOUR });
@@ -743,7 +743,7 @@ describe("gancho", () => {
   });
 
   test("mesmo se o job rodar tarde, mensagem velha não é interpretada", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const messageId = await t.run((ctx) =>
       ctx.db.insert("messages", {
         organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound", senderType: "human", content: CONFIRM, contentType: "text", isInternal: false, createdAt: NOW - 20 * MIN,
@@ -754,7 +754,7 @@ describe("gancho", () => {
   });
 
   test("IA, sistema, campanha, nota interna, grupo e cliente nunca são interpretados", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const insert = (extra: Partial<Doc<"messages">>) =>
       t.run((ctx) =>
         ctx.db.insert("messages", {
@@ -788,7 +788,7 @@ describe("gancho", () => {
   });
 
   test("contato 'não é cliente' (fora do comercial) é ignorado, no gancho e no início", async () => {
-    const s = await seedOrg({ ai: true, relation: "personal" });
+    const s = await seedOrg({ ai: true, relation: "personal" , mode: "auto" });
     stubLlm(GOOD);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -814,7 +814,7 @@ describe("gancho", () => {
       expect(await interpretJobs()).toEqual([]);
       expect(await interpretations(s)).toEqual([]);
     }
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     await t.run((ctx) => ctx.db.patch(s.organizationId, { billing: { plan: "profissional", status: "read_only", updatedAt: 1 } }));
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
@@ -826,7 +826,7 @@ describe("gancho", () => {
   });
 
   test("pré-filtro positivo agenda UM job (`internalStart`) e mais nada", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     await humanOnPhone(s, CONFIRM);
     const names = await interpretJobs();
     expect(names).toHaveLength(1);
@@ -835,7 +835,7 @@ describe("gancho", () => {
   });
 
   test("mensagem editada ou apagada no aparelho só descarta a proposta aberta; o agendamento criado não é tocado", async () => {
-    const s = await seedOrg({ ai: false });
+    const s = await seedOrg({ ai: false, mode: "auto" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     const messageId = (await humanOnPhone(s, CONFIRM, {}))!;
     await drain();
@@ -859,7 +859,7 @@ describe("gancho", () => {
 // ---------------------------------------------------------------------------
 
 describe("sugestão de 1 toque", () => {
-  async function suggestion(opts: SeedOpts = { ai: false }) {
+  async function suggestion(opts: SeedOpts = { ai: false, mode: "auto" }) {
     const s = await seedOrg(opts);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     const messageId = (await humanOnPhone(s, CONFIRM))!;
@@ -937,7 +937,7 @@ describe("sugestão de 1 toque", () => {
   });
 
   test("remarcou: aceitar remarca o agendamento do contato; cancelou: aceitar cancela", async () => {
-    const s = await seedOrg({ ai: false });
+    const s = await seedOrg({ ai: false, mode: "auto" });
     const { appointmentIds } = await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(14), contactId: s.contactId, idempotencyKey: "pre-4" });
     await humanOnPhone(s, "Remarcado para terça 14h");
     await drain();
@@ -957,7 +957,7 @@ describe("sugestão de 1 toque", () => {
   });
 
   test("remarcou: não aplica a agendamento de OUTRO cliente", async () => {
-    const s = await seedOrg({ ai: false });
+    const s = await seedOrg({ ai: false, mode: "auto" });
     const { appointmentIds } = await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(14), contactId: s.otherContactId, idempotencyKey: "pre-5" });
     const mine = await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(15), contactId: s.contactId, idempotencyKey: "pre-6" });
     void mine;
@@ -1016,7 +1016,7 @@ describe("sugestão de 1 toque", () => {
   });
 
   test("uma sugestão nova do mesmo ato na conversa envelhece a anterior", async () => {
-    const s = await seedOrg({ ai: false });
+    const s = await seedOrg({ ai: false, mode: "auto" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
     await drain();
@@ -1057,7 +1057,7 @@ describe("desfazer a criação automática", () => {
   });
 
   test("a criação que foi para a fila de conflitos: desfazer fecha a linha do conflito", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(10), contactId: s.otherContactId, idempotencyKey: "pre-7" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
@@ -1126,7 +1126,7 @@ describe("LGPD e contratos", () => {
     const ctxOut = await t.query(internal.schedulingInterpret.internalClassifierContext, { messageId, now: NOW });
     assertMatchesReturns(ctxOut, SI.internalClassifierContext);
     // Remetente de uma sugestão e propostas: formatos do `listPending.suggestions` também conferem (ver teste de leituras).
-    const s2 = await seedOrg({ ai: false });
+    const s2 = await seedOrg({ ai: false, mode: "auto" });
     await clientSays(s2, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s2, CONFIRM);
     await drain();
@@ -1136,7 +1136,7 @@ describe("LGPD e contratos", () => {
   });
 
   test("isolamento entre orgs: uma sugestão/aviso nunca vai para membro de outra org", async () => {
-    const a = await seedOrg({ ai: false });
+    const a = await seedOrg({ ai: false, mode: "auto" });
     await clientSays(a, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(a, CONFIRM);
     await drain();
@@ -1164,7 +1164,7 @@ describe("fumaça com as tabelas do parser", () => {
     for (const withProposal of [false, true]) {
       t = convexTest(schema, modules);
       vi.setSystemTime(SAT);
-      const s = await seedOrg({ ai: true, now: SAT });
+      const s = await seedOrg({ ai: true, now: SAT , mode: "auto" });
       // O adversário: um modelo que concorda em tudo com o que o parser leu (pior caso do classificador).
       stubLlm((body) => {
         const text = messageSeenByModel(body);
@@ -1191,7 +1191,7 @@ describe("fumaça com as tabelas do parser", () => {
     const ctxPhrases = ROUND2.CASES.filter((c) => c.cls === "ctx" && c.now === undefined && c.tz === undefined).map((c) => c.t);
     expect(ctxPhrases.length).toBeGreaterThanOrEqual(30);
     vi.setSystemTime(SAT);
-    const s = await seedOrg({ ai: true, now: SAT });
+    const s = await seedOrg({ ai: true, now: SAT , mode: "auto" });
     const llm = stubLlm((body) => {
       const text = messageSeenByModel(body);
       const p = parseConfirmation(text, { now: SAT, tz: "America/Sao_Paulo" });
@@ -1211,7 +1211,7 @@ describe("fumaça com as tabelas do parser", () => {
 
   test("controle positivo da fumaça: a mesma estrutura, com uma confirmação verdadeira, CRIA", async () => {
     vi.setSystemTime(SAT);
-    const s = await seedOrg({ ai: true, now: SAT });
+    const s = await seedOrg({ ai: true, now: SAT , mode: "auto" });
     stubLlm((body) =>
       chatResponse(JSON.stringify({ ato: "confirmou", dia: "2026-11-26", hora: "10:00", servico: "nenhum", evidencia: messageSeenByModel(body).slice(0, 12) }))
     );
@@ -1475,7 +1475,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
 
   test("A34 'Confirmado hoje 10h' às 15h: o motivo é `horario_passado`", async () => {
     vi.setSystemTime(NOW + 6 * HOUR);
-    const s = await seedOrg({ ai: true, now: NOW + 6 * HOUR });
+    const s = await seedOrg({ ai: true, now: NOW + 6 * HOUR , mode: "auto" });
     stubAgree();
     await clientSays(s, "Hoje 10h tem?", NOW + 6 * HOUR - 10 * MIN);
     await humanOnPhone(s, "Confirmado hoje 10h");
@@ -1492,7 +1492,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
   });
 
   test("A35/A36 a mesma confirmação repetida ou em duas vias nunca duplica o agendamento (auto)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     await clientSays(s, "Pode ser segunda 10h?", NOW - 30 * MIN);
     await humanOnPhone(s, "Ok, confirmado segunda 10h");
@@ -1516,7 +1516,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
       ["Recebeu meu comprovante do pagamento?", "Recebido, confirmado!"],
     ]) {
       t = convexTest(schema, modules);
-      const s = await seedOrg({ ai: true });
+      const s = await seedOrg({ ai: true , mode: "auto" });
       stubAgree();
       await pendingAppt(s, 16, 14);
       await clientSays(s, client, NOW - 5 * MIN);
@@ -1544,7 +1544,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
     expect(await onlyRow(d)).toMatchObject({ decision: "proposed", reason: "aprovar_pendente" });
     // auto: aprova, avisa, desfaz
     t = convexTest(schema, modules);
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     const pend = (await pendingAppt(s, 16, 14)) as { appointmentId: Id<"schedAppointments"> };
     await humanOnPhone(s, "Ok, confirmado terça 14h");
@@ -1592,7 +1592,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
   });
 
   test("A37 confirma e logo corrige: a correção NUNCA age sozinha; vira sugestão de remarcar apontando para o agendamento", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     await clientSays(s, "Pode ser segunda às 10h?", NOW - 30 * MIN);
     await humanOnPhone(s, "Ok, confirmado segunda 10h");
@@ -1629,7 +1629,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
   });
 
   test("mensagem que só parece correção, sem marcação ou sugestão recente: nenhuma linha", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     await humanOnPhone(s, "Ops, terça 10h então");
     await drain();
     // Sem o que corrigir: no máximo uma linha `ignored`/proposta de confirmação comum; nada de remarcar nem criar.
@@ -1638,7 +1638,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
   });
 
   test("A38 mensagem editada enquanto a linha está `pending`: a leitura antiga é descartada e refeita com o texto novo", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     await clientSays(s, "Pode ser segunda às 10h ou terça às 10h?", NOW - 30 * MIN);
     await clientSays(s, "terça pode ser", NOW - 25 * MIN);
@@ -1651,7 +1651,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
     expect(await t.mutation(internal.schedulingInterpret.internalStart, { messageId })).toMatchObject({ status: "final" });
     // O caso `pending` real: a segunda leitura ainda não voltou.
     t = convexTest(schema, modules);
-    const s2 = await seedOrg({ ai: true });
+    const s2 = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     await clientSays(s2, "Pode ser segunda às 10h?", NOW - 30 * MIN);
     const mid = await t.run((ctx) =>
@@ -1675,7 +1675,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
     expect(await appointments(s2)).toHaveLength(0);
     // Rede de proteção na decisão: texto editado depois de a linha nascer é descartado.
     t = convexTest(schema, modules);
-    const s3 = await seedOrg({ ai: true });
+    const s3 = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     await clientSays(s3, "Pode ser segunda às 10h?", NOW - 30 * MIN);
     const m3 = await t.run((ctx) =>
@@ -1689,7 +1689,7 @@ describe("revisão adversarial: o modelo concorda com tudo e NADA é criado nem 
   });
 
   test("mensagem apagada enquanto a linha está `pending`: a linha é descartada e nada é refeito", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubAgree();
     await clientSays(s, "Pode ser segunda às 10h?", NOW - 30 * MIN);
     const mid = await t.run((ctx) =>
@@ -1770,7 +1770,7 @@ describe("caminho feliz: sugestão PREENCHIDA e correta (modo padrão)", () => {
     const created: string[] = [];
     for (const [name, steps, final] of HAPPY) {
       t = convexTest(schema, modules);
-      const s = await seedOrg({ ai: true });
+      const s = await seedOrg({ ai: true , mode: "auto" });
       stubAgree();
       for (const st of steps) {
         if (st.who === "c") await clientSays(s, st.text, NOW - st.ago * MIN);
@@ -1822,7 +1822,7 @@ describe("caminho feliz: sugestão PREENCHIDA e correta (modo padrão)", () => {
 
 describe("robustez", () => {
   test("exceção no agendador NÃO derruba o envio: o gancho registra e segue (app e celular)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const messageId = await t.run((ctx) =>
       ctx.db.insert("messages", { organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound", senderType: "human", content: CONFIRM, contentType: "text", isInternal: false, createdAt: NOW })
@@ -1840,7 +1840,7 @@ describe("robustez", () => {
   });
 
   test("caminho REAL: exceção dentro do gancho não derruba o envio pelo app nem a mensagem do celular", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const boom = () => vi.mocked(parserModule.prefilterConfirmation).mockImplementationOnce(() => { throw new Error("falha no gancho"); });
     // App: sendMessage devolve o id e a mensagem fica gravada.
@@ -1930,7 +1930,7 @@ describe("D1 × C1: ofertas e pedidos da IA com a confirmação do humano pelo c
   });
 
   test("(1) oferta da IA NUNCA mostrada ao cliente não vale como proposta (nem com o cliente falando depois)", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await offerState(s, false);
     await clientSays(s, "Pode ser, quero essa", NOW - 30 * MIN);
@@ -1941,7 +1941,7 @@ describe("D1 × C1: ofertas e pedidos da IA com a confirmação do humano pelo c
   });
 
   test("(1) a IA já registrou pending_approval nesse horário: a mensagem do humano APROVA esse pedido, sem segundo agendamento", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     const aiId = await seedAi(s);
     await offerState(s, true);
@@ -1963,7 +1963,7 @@ describe("D1 × C1: ofertas e pedidos da IA com a confirmação do humano pelo c
   });
 
   test("(2) mensagem enviada pela IA nunca passa pelo gancho (nem pelo app) e não gera job de interpretação", async () => {
-    const s = await seedOrg({ ai: true });
+    const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     const aiId = await seedAi(s);
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
@@ -1983,7 +1983,7 @@ describe("D1 × C1: ofertas e pedidos da IA com a confirmação do humano pelo c
   });
 
   test("(3) agendamento criado pela confirmação do humano passa a existir em E como marcado: o guard deixa a IA citá-lo e ainda barra horário novo", async () => {
-    const { s } = await happy({ ai: true });
+    const { s } = await happy({ ai: true, mode: "auto" });
     const appts = await appointments(s);
     expect(appts).toHaveLength(1);
     expect(appts[0]).toMatchObject({ origin: "human_message", status: "scheduled" });
@@ -1999,5 +1999,31 @@ describe("D1 × C1: ofertas e pedidos da IA com a confirmação do humano pelo c
     };
     expect(detectUnbackedBookingClaim("Seu horário de segunda, 15/06, às 10:00 está confirmado.", st)).toBeNull();
     expect(detectUnbackedBookingClaim("Seu horário de segunda, 15/06, às 11:00 está confirmado.", st)?.kind).toBe("time_not_offered");
+  });
+
+  test("(substituir) pedido pendente da IA em 10h e o humano confirma OUTRO horário (14h): ao aceitar, o antigo vira `rescheduled` e o novo nasce `scheduled` (quem aceitou é da equipe)", async () => {
+    const s = await seedOrg({ ai: true, mode: "default" });
+    stubLlm({ ...GOOD, hora: "14:00", evidencia: "confirmado segunda 14h" });
+    const aiId = await seedAi(s);
+    const member = (await t.run((ctx) => ctx.db.get(aiId)))!;
+    const pend = await t.run((ctx) =>
+      bookAppointmentCore(ctx as never, {
+        organizationId: s.organizationId, actor: { type: "ai", member, conversationId: s.conversationId }, origin: "ai", serviceId: s.consulta, startTime: at(10),
+        contactId: s.contactId, leadId: s.leadId, conversationId: s.conversationId, now: NOW,
+      } as never)
+    );
+    expect(pend).toMatchObject({ ok: true, status: "pending_approval" });
+    await clientSays(s, "Pode ser segunda às 14h?", NOW - 30 * MIN);
+    await humanOnPhone(s, "Ok, confirmado segunda 14h");
+    await drain();
+    const row = (await interpretations(s)).find((r) => r.status === "open")!;
+    expect(row.reason).toBe("substituir_pendente");
+    await as(s.admin).mutation(api.schedulingInterpret.answerSuggestion, { organizationId: s.organizationId, interpretationId: row._id, accept: true });
+    const all = await appointments(s);
+    const byHour = (h: number) => all.find((a) => a.startTime === at(h))!;
+    expect(byHour(10).status).toBe("rescheduled");
+    expect(byHour(14).status).toBe("scheduled");
+    expect(all.filter((a) => a.status !== "rescheduled")).toHaveLength(1);
+    expect(await schedInvariantProblems(t, s.organizationId, Date.now())).toEqual([]);
   });
 });

@@ -12,18 +12,21 @@
  */
 import type { OffersState } from "./schedOffers";
 import { localDateOf, minutesOfDay } from "./schedTime";
-import { dayMatches, extractAiTimes, norm, splitSentences, todayOf } from "./schedTimeText";
+import { dayMatches, extractAiTimes, norm, todayOf } from "./schedTimeText";
 
 const NOT_AN_OFFER = /\b(?:nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|nao consigo|nao esta livre|nao esta disponivel|ja passou)\b/;
+
+/** Funcionamento da casa ("atendemos das 8 às 18h"): a faixa não é oferta, mesmo com o início sendo lido. */
+const BUSINESS = /\b(?:atendemos|funcionamos|funcionamento|expediente|abrimos|abre|fecha|fechamos|aberto|abertos|horario de atendimento)\b/;
 
 export function offersShownInText(state: OffersState, text: string, ctx: { now: number; tz: string }): Set<string> {
   const out = new Set<string>();
   if (!text.trim() || state.offers.length === 0) return out;
   const today = todayOf(ctx.now, ctx.tz);
-  // Frases de indisponibilidade não oferecem nada: saem do texto antes de ler as horas (o dia carregado continua valendo).
-  const parts = splitSentences(text);
-  const kept = parts.map((p) => (NOT_AN_OFFER.test(norm(p.raw)) ? " ".repeat(p.raw.length) : p.raw) + p.term).join("");
-  const mentions = extractAiTimes(kept);
+  // A negação recorta só a ORAÇÃO ("oito e meia não tenho, mas tenho 8h…" mostra 8h); o dia carregado continua valendo.
+  const clauses = norm(text).split(/[.!?;\n]+|\b(?:mas|porem|so que)\b/);
+  const dropped = new Set(clauses.map((c, i) => (NOT_AN_OFFER.test(c) || BUSINESS.test(c) ? i : -1)).filter((i) => i >= 0));
+  const mentions = extractAiTimes(text, { keepRangeStart: true }).filter((m) => !dropped.has(m.clause));
   const allSameDay = new Set(state.offers.map((o) => localDateOf(o.startTime, ctx.tz))).size === 1;
   for (const o of state.offers) {
     if (o.shownAt !== undefined) continue;

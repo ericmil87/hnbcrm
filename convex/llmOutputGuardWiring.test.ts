@@ -108,4 +108,18 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(guard).not.toMatch(/from\s+["']\.\.?\/_generated/);
     expect(guard).not.toMatch(/Date\.now\(/);
   });
+
+  // Agenda v2 (D1): com o módulo de agenda DESLIGADO, commit e aprovação não leem nada a mais (marcar ofertas como mostradas).
+  test("markOffersShownFromText só roda com o módulo ligado (commit: arg do claim; aprovação: aiDraft.schedulingOn)", () => {
+    const src = read("attendant.ts");
+    expect(src).toMatch(/if \(args\.schedulingOn === true\) \{\s*await markOffersShownFromText\(/);
+    expect(src).toMatch(/\(aiDraft as \{ schedulingOn\?: boolean \}\)\.schedulingOn === true\) \{\s*await markOffersShownFromText\(/);
+    expect((src.match(/markOffersShownFromText\(/g) ?? []).length).toBe(2);
+    expect(src).toMatch(/\.\.\.\(context\.schedulingOn === true \? \{ schedulingOn: true \} : \{\}\)/);
+  });
+
+  test("o prompt manda remarcar/cancelar para repasse e o guard barra a afirmação de remarcação (`reschedule_claim`)", () => {
+    expect(read("lib/schedAttendantTools.ts")).toMatch(/REMARCAR ou CANCELAR[^"']*requestHandoff/);
+    expect(read("lib/schedClaimGuard.ts")).toContain('"reschedule_claim"');
+  });
 });

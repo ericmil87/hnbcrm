@@ -74,3 +74,42 @@ describe("formatos comuns de oferta (o casador não herda os bloqueios do extrat
     expect([...offersShownInText(o, "Segunda tenho às 12h30.", { now: NOW, tz: TZ })]).toEqual(["h1"]);
   });
 });
+
+// 26 formatos da rodada CEGA do revisor (A = segunda 08:00, 09:00, 17:00; Bs = sábado 13/06 10:30, segunda 08:00 e 14:00) ---
+const mkOffers = (times: number[]) => issueOffers({ offerSeq: 0, offers: [] }, times.map((startTime) => ({ serviceId: "s", startTime, resourceIds: [] })), NOW).state;
+const A = mkOffers([at(15, 8), at(15, 9), at(15, 17)]);
+const Bs = mkOffers([at(13, 10, 30), at(15, 8), at(15, 14)]);
+const F26: Array<[string, typeof A, string[]]> = [
+  ["1) Segunda 15/06 às 08:00\n2) Segunda 15/06 às 09:00\n3) Segunda 15/06 às 17:00", A, ["h1", "h2", "h3"]],
+  ["*Segunda, 15/06*\n• *08:00*\n• *09:00*\n• *17:00*", A, ["h1", "h2", "h3"]],
+  ["Segunda-feira (15/06):\n🕗 08h00\n🕘 09h00\n🕔 17h00", A, ["h1", "h2", "h3"]],
+  ["Tenho segunda às 8H, 9H e 17H.", A, ["h1", "h2", "h3"]],
+  ["Na segunda: das 8 às 9 ou às 17h.", A, ["h1", "h3"]],
+  ["Segunda tenho oito horas, nove horas ou cinco da tarde.", A, ["h1", "h2", "h3"]],
+  ["Segunda: 8:00 | 9:00 | 17:00", A, ["h1", "h2", "h3"]],
+  ["Para segunda (15) tenho 08:00, 09:00 e 17:00.", A, ["h1", "h2", "h3"]],
+  ["1️⃣ 08:00\n2️⃣ 09:00\n3️⃣ 17:00\nTodos na segunda.", A, ["h1", "h2", "h3"]],
+  ["Segunda às oito, nove ou cinco da tarde.", A, ["h1", "h2", "h3"]],
+  ["Segunda: 8, 9 ou 17h.", A, ["h1", "h2", "h3"]],
+  ["Seg 15/06 - 08:00, 09:00, 17:00", A, ["h1", "h2", "h3"]],
+  ["Tenho segunda às 8h. Também às 9h. E às 17h.", A, ["h1", "h2", "h3"]],
+  ["Na segunda dá pra ser às 8h, às 9h ou no fim do dia, às 17h. Na terça não tenho.", A, ["h1", "h2", "h3"]],
+  ["Segunda, 15 de junho: 08:00, 09:00 ou 17:00.", A, ["h1", "h2", "h3"]],
+  ["Segunda: oito e meia não tenho, mas tenho 8h, 9h e 17h.", A, ["h1", "h2", "h3"]],
+  ["Amanhã às 10h30, ou segunda às 8h e às 14h.", Bs, ["h1", "h2", "h3"]],
+  ["Tenho amanhã (sábado) 10:30; segunda 08:00 ou 14:00.", Bs, ["h1", "h2", "h3"]],
+  ["1) sábado 13/06 – 10h30\n2) segunda 15/06 – 8h\n3) segunda 15/06 – 14h", Bs, ["h1", "h2", "h3"]],
+  ["Amanhã 10:30. Segunda 8:00 ou 14:00.", Bs, ["h1", "h2", "h3"]],
+  ["Sábado 13/06 às 10h30 ou segunda às duas da tarde.", Bs, ["h1", "h3"]],
+  ["Amanhã de manhã, 10h30, ou segunda às 8h ou 14h.", Bs, ["h1", "h2", "h3"]],
+  ["Tenho segunda às 8h e às 14h, e amanhã às 10h30.", Bs, ["h1", "h2", "h3"]],
+  ["**Amanhã** – 10:30\n**Segunda** – 08:00 / 14:00", Bs, ["h1", "h2", "h3"]],
+  ["Para amanhã, dez e meia; para segunda, oito ou duas da tarde.", Bs, ["h1", "h2", "h3"]],
+  ["Segunda às 10h30 ou amanhã às 8h.", Bs, []],
+];
+
+describe("26 formatos cegos de oferta mostrada", () => {
+  test.each(F26.map((x, i) => [i + 1, ...x] as const))("%i) %s", (_i, text, st, expected) => {
+    expect([...offersShownInText(st, text, { now: NOW, tz: TZ })].sort()).toEqual(expected);
+  });
+});

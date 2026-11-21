@@ -1681,7 +1681,10 @@ export async function rescheduleAppointmentCore(
       ignoreAppointmentId: old._id,
       action: "reschedule",
       existingStartTime: old.startTime,
-      forceStatus: old.status === "pending_approval" ? "pending_approval" : "scheduled",
+      // Pedido pendente do contato trocado por quem age é da EQUIPE (aceite de "substituir?" por membro com `agenda: edit`,
+      // tela, API): o novo nasce `scheduled` (avisos/`force` normais) e o antigo encerra na mesma transação. Ator IA/sistema
+      // mantém o estado do antigo (proposta aguardando aprovação).
+      forceStatus: old.status === "pending_approval" && actorClassOf(args.actor) !== "staff" ? "pending_approval" : "scheduled",
     },
     now
   );

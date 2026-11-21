@@ -27,6 +27,8 @@ export type TimeMention = {
   day?: DayRef;
   /** Índice da frase (linha/`.!?;`) em que a hora aparece. */
   sentence: number;
+  /** Índice da ORAÇÃO (frase partida também por "mas/porém"): recorte da negação ("oito e meia não tenho, mas tenho 8h…"). */
+  clause: number;
 };
 
 export function norm(s: string): string {
@@ -46,10 +48,16 @@ const WEEKDAY_RES: Array<[RegExp, number]> = [
   [/\bsabado\b/g, 6],
 ];
 
+/** Horas por extenso, 1 a 23 (não há "às um"/"às dois": a hora é "uma"/"duas"). Mais longas primeiro na alternação. */
 const NUM_WORDS: Record<string, number> = {
-  zero: 0, uma: 1, um: 1, duas: 2, dois: 2, tres: 3, quatro: 4, cinco: 5, seis: 6, sete: 7, oito: 8, nove: 9, dez: 10, onze: 11, doze: 12,
+  "vinte e tres": 23, "vinte e duas": 22, "vinte e uma": 21, vinte: 20, dezenove: 19, dezoito: 18, dezessete: 17, dezesseis: 16, quinze: 15,
+  quatorze: 14, catorze: 14, treze: 13, doze: 12, onze: 11, dez: 10, nove: 9, oito: 8, sete: 7, seis: 6, cinco: 5, quatro: 4, tres: 3, duas: 2, uma: 1,
 };
 const WORD_ALT = Object.keys(NUM_WORDS).join("|");
+/** Hora por extenso SEM "às": só com dia/substantivo de agenda antes ou continuando uma lista de horas. */
+const NOUN_CONTEXT = /\b(?:vaga|vagas|horario|horarios|consulta|sessao|atendimento|agenda|agendamento|disponivel|livre)\b/;
+const DURATION_CUE = /\b(?:dura|duracao|leva|demora|tempo|valor|custa|cerca de|uns|umas|mais de|menos de|apenas|ate|depois|antes|apos)\b|r\$/;
+const NEXT_NOUN_EXCLUDE = /^\s*(?:pessoas?|sessoes|sessao|minutos?|min\b|dias?|vezes|anos?|reais|real\b|consultas?|pacientes?|vagas?|opcoes|horarios|semanas?|meses|mes\b|exames?|parcelas?)/;
 
 type Tok = { at: number; end: number } & (
   | { kind: "time"; timeMin: number }
@@ -58,11 +66,13 @@ type Tok = { at: number; end: number } & (
 );
 
 /** Troca por espaços (preserva posições) o que NÃO é horário oferecido: faixas e limites. */
-function maskNonOffers(n: string): string {
+function maskNonOffers(n: string, keepRangeStart: boolean): string {
   const blank = (m: string) => " ".repeat(m.length);
+  // Faixa "das X às Y": some inteira (guard) ou deixa só o INÍCIO como hora ("às X"; marcação de ofertas mostradas).
+  const range = (m: string, start: string) => (keepRangeStart ? `as ${start}`.padEnd(m.length, " ") : blank(m));
   return n
-    .replace(/\b(?:das|de)\s+\d{1,2}(?::\d{2}|h\d{0,2}|hs)?[ \t]*(?:as|a|ate|-)[ \t]*\d{1,2}(?::\d{2}|h\d{0,2}|hs)?/g, blank)
-    .replace(/\b\d{1,2}(?::\d{2}|h\d{0,2}|hs)[ \t]*(?:as|a|ate|-)[ \t]*\d{1,2}(?::\d{2}|h\d{0,2}|hs)\b/g, blank)
+    .replace(/\b(?:das|de)\s+(\d{1,2}(?::\d{2}|h\d{0,2}|hs)?)[ \t]*(?:as|a|ate|-)[ \t]*\d{1,2}(?::\d{2}|h\d{0,2}|hs)?/g, (m, a) => range(m, a))
+    .replace(/\b(\d{1,2}(?::\d{2}|h\d{0,2}|hs))[ \t]*(?:as|a|ate|-)[ \t]*\d{1,2}(?::\d{2}|h\d{0,2}|hs)\b/g, (m, a) => (keepRangeStart ? a.padEnd(m.length, " ") : blank(m)))
     .replace(/\b(?:ate|depois|antes|apos|a partir)\s+(?:d?as?|do|da)?\s*\d{1,2}(?::\d{2}|h\d{0,2}|hs)?/g, blank)
     .replace(/\b(?:domingos|segundas|tercas|quartas|quintas|sextas|sabados)\b/g, blank);
 }
@@ -98,12 +108,45 @@ function pushTimes(n: string, out: Tok[]): void {
     const h = Number(m[1]);
     if (h < 24) add(m, periodShift(h, ` da ${m[2]}`) * 60);
   }
-  // por extenso: "às oito", "às cinco da tarde", "às oito e meia", "às dez e quinze"
-  const wordRe = new RegExp(`\\b(?:as|pras|pra as|para as|a)\\s+(${WORD_ALT})(?:\\s+e\\s+(meia|quinze|trinta|quarenta e cinco|quarenta))?\\b(?!\\s*(?:minutos?|min|pessoas?|dias?|vezes|anos?|reais))`, "g");
+  // por extenso COM "às": "às oito", "às cinco da tarde", "às oito e meia", "às dez e quinze", "às dez em ponto"
+  const extraOf = (x: string | undefined) => (x === "meia" || x === "trinta" ? 30 : x === "quinze" ? 15 : x === "quarenta e cinco" ? 45 : x === "quarenta" ? 40 : 0);
+  const tail = "(?:\\s+e\\s+(meia|quinze|trinta|quarenta e cinco|quarenta))?(?:\\s+(?:em ponto|horas?))?";
+  const wordRe = new RegExp(`\\b(?:as|pras|pra as|para as|a)\\s+(${WORD_ALT})${tail}\\b(?!\\s*(?:minutos?|min|pessoas?|dias?|vezes|anos?|reais))`, "g");
   for (const m of n.matchAll(wordRe)) {
-    const h = NUM_WORDS[m[1]];
-    const extra = m[2] === "meia" || m[2] === "trinta" ? 30 : m[2] === "quinze" ? 15 : m[2] === "quarenta e cinco" ? 45 : m[2] === "quarenta" ? 40 : 0;
-    add(m, periodShift(h, n.slice((m.index ?? 0) + m[0].length)) * 60 + extra);
+    add(m, periodShift(NUM_WORDS[m[1]], n.slice((m.index ?? 0) + m[0].length)) * 60 + extraOf(m[2]));
+  }
+  // SEM "às": "quinta dez e meia", "sexta oito em ponto", "segunda oito horas, nove horas ou cinco da tarde"
+  const bare = new RegExp(`\\b(${WORD_ALT})${tail}\\b`, "g");
+  const dayRe = /\b(?:domingo|segunda|terca|quarta|quinta|sexta|sabado|hoje|amanha|dia\s+\d{1,2}|\d{1,2}\/\d{1,2})(?:-feira)?\b/g;
+  for (const m of n.matchAll(bare)) {
+    const at = m.index ?? 0;
+    const end = at + m[0].length;
+    if (out.some((t) => t.kind === "time" && t.at <= at && at < t.end)) continue; // já lida com "às"
+    if (NEXT_NOUN_EXCLUDE.test(n.slice(end))) continue;
+    const sentStart = Math.max(n.lastIndexOf(".", at), n.lastIndexOf("!", at), n.lastIndexOf("?", at), n.lastIndexOf("\n", at), n.lastIndexOf(";", at)) + 1;
+    const window = n.slice(Math.max(sentStart, at - 40), at);
+    if (DURATION_CUE.test(window)) continue;
+    const prevWord = /(?:^|\s)(\w+)\s*$/.exec(window)?.[1];
+    if (prevWord && /^(?:de|em|por|com|para|pra|a|o|e|que|sao|faz|ha|faltam|falta|ja)$/.test(prevWord) && !/^e$/.test(prevWord)) continue;
+    const prevTime = [...out].reverse().find((t) => t.kind === "time" && t.end <= at);
+    const continuation = prevTime !== undefined && /^[\s,;]*(?:ou|e)?[\s,;]*$/.test(n.slice(prevTime.end, at)) && n.slice(prevTime.end, at).length <= 6;
+    const dayBefore = [...window.matchAll(dayRe)].length > 0;
+    const nounBefore = NOUN_CONTEXT.test(window);
+    if (!(continuation || dayBefore || nounBefore)) continue;
+    const w = m[1];
+    // "uma"/"duas" soltas são artigo/quantidade ("uma vaga", "duas opções"): só com período, "em ponto" ou minutos.
+    if ((w === "uma" || w === "duas") && m[0] === w && !/^\s+da\s+(?:tarde|manha|noite)/.test(n.slice(end))) continue;
+    add(m, periodShift(NUM_WORDS[w], n.slice(end)) * 60 + extraOf(m[2]));
+  }
+  // lista numérica com a unidade só no fim: "Segunda: 8, 9 ou 17h" (o "h" vale para a lista inteira)
+  for (const m of n.matchAll(/(?<![\d/:])\b((?:\d{1,2}\s*(?:,|;|ou|e)\s*)+)(\d{1,2})\s*(?:h|hs|hrs)(?!\d)\b/g)) {
+    const nums = [...m[1].matchAll(/\d{1,2}/g)];
+    if (nums.some((x) => Number(x[0]) > 23)) continue;
+    for (const x of nums) {
+      const pos = (m.index ?? 0) + (x.index ?? 0);
+      if (out.some((t) => t.kind === "time" && t.at === pos)) continue;
+      out.push({ kind: "time", at: pos, end: pos + x[0].length, timeMin: Number(x[0]) * 60 });
+    }
   }
   // meio-dia, meia-noite (com "e meia")
   for (const m of n.matchAll(/\bmeio[- ]dia(?:\s+e\s+(meia|quinze))?\b/g)) add(m, 720 + (m[1] === "meia" ? 30 : m[1] === "quinze" ? 15 : 0));
@@ -147,14 +190,17 @@ export function splitSentences(text: string): Array<{ raw: string; term: string 
   return out;
 }
 
-export function extractAiTimes(text: string): TimeMention[] {
-  const n = maskNonOffers(norm(text));
+export function extractAiTimes(text: string, opts: { keepRangeStart?: boolean } = {}): TimeMention[] {
+  const n = maskNonOffers(norm(text), opts.keepRangeStart === true);
   const toks: Tok[] = [];
   pushTimes(n, toks);
   pushDays(n, toks);
   toks.sort((a, b) => a.at - b.at || (a.kind === "day" ? -1 : 1));
   const bs = breaks(n);
   const sentenceOf = (pos: number) => bs.filter((b) => b < pos).length;
+  // Oração = frase partida também por "mas/porém/só que": cada uma tem o seu índice.
+  const clauseBreaks = [...bs, ...[...n.matchAll(/\b(?:mas|porem|so que)\b/g)].map((m) => m.index ?? 0)].sort((a, b) => a - b);
+  const clauseOf = (pos: number) => clauseBreaks.filter((b) => b < pos).length;
   const out: TimeMention[] = [];
   let day: DayRef | undefined;
   const seen = new Set<string>();
@@ -167,7 +213,7 @@ export function extractAiTimes(text: string): TimeMention[] {
     const key = `${t.at}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ timeMin: t.timeMin, ...(day ? { day } : {}), sentence: sentenceOf(t.at) });
+    out.push({ timeMin: t.timeMin, ...(day ? { day } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at) });
   }
   return out;
 }

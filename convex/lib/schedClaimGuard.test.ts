@@ -20,7 +20,7 @@ const hasSched = mk(NOW_JUN, { existing: [bk("2026-06-30", "15:00", "scheduled")
 const hasSchedQui = mk(NOW_JUN, { existing: [bk("2026-06-18", "10:00", "scheduled")], offered: [at("2026-06-18", "10:00")] });
 const noOffers = mk(NOW_JUN);
 
-type Case = [text: string, state: ClaimState, block: boolean | "claim_without_booking" | "confirmed_but_pending" | "time_not_offered", tag: string];
+type Case = [text: string, state: ClaimState, block: boolean | "claim_without_booking" | "confirmed_but_pending" | "time_not_offered" | "reschedule_claim", tag: string];
 
 // 83 frases do revisor (+ as 4 do G2) ----------------------------------------------------------------------------
 const REVIEWER: Case[] = [
@@ -376,6 +376,141 @@ const R3: Case[] = [
   ["Seu horário de terça 30/06 às 15h está confirmado.", hasSched, false, "r3"],
 ];
 
+
+// Estados da rodada cega: O = qui 18/06 10:00 e 14:00, sex 19/06 09:00; nomes de serviço ativos.
+const SVC = ["Consulta", "Sessão"];
+const bN = mk(NOW_JUN, { offered: OFF, serviceNames: SVC });
+const bP = mk(NOW_JUN, { booked: [bk("2026-06-18", "10:00", "pending")], offered: OFF, serviceNames: SVC });
+const bS = mk(NOW_JUN, { existing: [bk("2026-06-30", "15:00", "scheduled")], offered: OFF, serviceNames: SVC });
+const BLIND_B: Array<[string, ClaimState, string]> = [
+  ["Feito o agendamento: quinta, dez da manhã.", bN, "N"],
+  ["Já está reservado pra você quinta dez horas.", bN, "N"],
+  ["Pode ficar tranquila, quinta às dez é seu horário.", bN, "N"],
+  ["Seu atendimento: quinta-feira, 10h. Até lá!", bN, "N"],
+  ["Quinta dez em ponto te esperamos aqui.", bN, "N"],
+  ["Combinadíssimo: quinta 14h.", bN, "N"],
+  ["Show, quinta às duas da tarde então, já deixei separado.", bN, "N"],
+  ["Agenda atualizada com sua consulta de quinta 14h.", bN, "N"],
+  ["Coloquei seu nome na quinta, catorze horas.", bN, "N"],
+  ["Sua vaga de sexta às nove está garantidinha.", bN, "N"],
+  ["Inscrevi você para sexta às 9h.", bN, "N"],
+  ["Fica valendo sexta 9h, beleza?", bN, "N"],
+  ["Perfeito, sexta 09h00 então. Qualquer imprevisto me avise.", bN, "N"],
+  ["Te encaixei na sexta, nove em ponto.", bN, "N"],
+  ["Sexta às 9 está fechado com você.", bN, "N"],
+  ["Ok! Consulta: sexta 19/06 9:00 ✔️", bN, "N"],
+  ["Tenho vaga quinta dez e meia.", bN, "N-inv"],
+  ["Consigo quinta ao meio dia.", bN, "N-inv"],
+  ["Temos horário sexta oito em ponto.", bN, "N-inv"],
+  ["Para a consulta tenho sábado 11h.", bN, "N-inv"],
+  ["Disponível amanhã às 15h.", bN, "N-inv"],
+  ["Horário livre: quinta 16h30.", bN, "N-inv"],
+  ["Tenho também quinta às onze.", bN, "N-inv"],
+  ["Posso oferecer depois de amanhã às 10h.", bN, "N-inv"],
+  ["Há vaga na quinta à uma da tarde.", bN, "N-inv"],
+  ["Sessão disponível quinta 18h.", bN, "N-inv"],
+  ["Sua consulta de quinta às 10h está confirmadíssima!", bP, "P"],
+  ["Quinta 10h: tudo certo, pode vir.", bP, "P"],
+  ["A equipe aprovou, quinta às dez te esperamos.", bP, "P"],
+  ["Seu horário de quinta, 10h, está garantido.", bP, "P"],
+  ["Já está tudo certo para quinta às dez.", bP, "P"],
+  ["Pronto, quinta 10h está marcadinho.", bP, "P"],
+  ["Confirmação feita: quinta às 10h.", bP, "P"],
+  ["Agendei também quinta às 14h.", bS, "S"],
+  ["Além do dia 30, sua consulta de quinta às 10h também está marcada.", bS, "S"],
+  ["Seu horário passou para quinta às 14h.", bS, "S"],
+  ["Troquei seu horário para sexta às 9h.", bS, "S"],
+  ["Quinta às 14h agora é seu também.", bS, "S"],
+  ["Remarquei para quinta 10h, tá?", bS, "S"],
+  ["Sua consulta foi transferida para sexta 9h.", bS, "S"],
+];
+const BLIND_L: Array<[string, ClaimState, string]> = [
+  ["Para quinta, tenho dez da manhã ou duas da tarde. Qual prefere?", bN, "N"],
+  ["Opções: quinta 10h, quinta 14h ou sexta 9h.", bN, "N"],
+  ["Quinta às 10h ainda está livre, quer?", bN, "N"],
+  ["Se quinta às 10h não der, tenho sexta às 9h.", bN, "N"],
+  ["Infelizmente quinta às 16h já foi preenchido. Tenho às 14h.", bN, "N"],
+  ["A consulta tem duração de uma hora e meia.", bN, "N"],
+  ["Nosso endereço é Av. Brasil, 1200, 3º andar.", bN, "N"],
+  ["O WhatsApp da recepção é 11 98888-7777.", bN, "N"],
+  ["O valor da sessão é R$ 120,00.", bN, "N"],
+  ["Posso te ligar hoje às 16h para tirar dúvidas?", bN, "N"],
+  ["O webinar gratuito será sábado às 10h.", bN, "N"],
+  ["A entrega do laudo sai em até 3 dias úteis.", bN, "N"],
+  ["Responderemos sua mensagem até às 18h.", bN, "N"],
+  ["Ainda não registrei nada; quer que eu reserve quinta às 10h?", bN, "N"],
+  ["Assim que você confirmar, eu registro quinta às 14h.", bN, "N"],
+  ["Você mencionou quinta às 10h; posso registrar?", bN, "N"],
+  ["Quer manter sexta às nove?", bN, "N"],
+  ["Tenho quinta (10h e 14h) e sexta (9h).", bN, "N"],
+  ["Prefere quinta dez horas ou sexta nove horas?", bN, "N"],
+  ["Chegue com 15 minutos de antecedência.", bN, "N"],
+  ["O exame fica pronto em 48 horas.", bN, "N"],
+  ["Seu cadastro foi confirmado com sucesso.", bN, "N"],
+  ["Os horários reservados para convênio são às terças.", bN, "N"],
+  ["Recebi seu áudio, já vou consultar a agenda.", bN, "N"],
+  ["Seu pedido para quinta às 10h ficou registrado; a equipe confirma e te avisa.", bP, "P"],
+  ["Quinta às 10h está aguardando a aprovação da equipe.", bP, "P"],
+  ["Assim que a equipe aprovar, sua consulta de quinta às 10h fica marcada.", bP, "P"],
+  ["Registrei a solicitação de quinta, dez horas. Logo a equipe responde.", bP, "P"],
+  ["Ainda não está confirmado: quinta 10h aguarda a equipe.", bP, "P"],
+  ["Seu pedido (quinta, 10h) está pendente de confirmação.", bP, "P"],
+  ["Sua consulta do dia 30 às 15h está marcada sim.", bS, "S"],
+  ["Lembrando: terça, 30/06, às 15h, te esperamos!", bS, "S"],
+  ["Seu horário de terça às três da tarde continua valendo.", bS, "S"],
+  ["Está tudo certo para terça 30/06 às 15h.", bS, "S"],
+  ["Você já tem consulta marcada dia 30 às 15h. Quer outro horário? Tenho quinta 10h.", bS, "S"],
+  ["Seu horário de dia 30, 15h, segue de pé; para remarcar chamo a equipe.", bS, "S"],
+  ["Prontinho, seu horário de terça 30 às 15 horas está confirmado.", bS, "S"],
+  ["Até terça, dia 30, às 15h!", bS, "S"],
+  ["A sua consulta é terça 30/06, 15h.", bS, "S"],
+  ["Sim, terça dia 30 às 15h é o seu horário.", bS, "S"],
+];
+
+// 40 NOVAS da rodada final (expectativa definida ANTES de rodar) --------------------------------------------------------
+const R4: Case[] = [
+  ["Remarquei seu horário para sexta, 19/06, às 9h.", bS, "reschedule_claim", "r4"],
+  ["Seu horário de quinta às 10h foi cancelado.", bN, "reschedule_claim", "r4"],
+  ["Desmarquei sua consulta, tudo bem?", bN, "reschedule_claim", "r4"],
+  ["Já mudei seu atendimento para quinta às 14h.", bS, "reschedule_claim", "r4"],
+  ["Sua sessão foi adiada para sexta 9h.", bS, "reschedule_claim", "r4"],
+  ["Antecipei sua consulta para quinta às 10h.", bS, "reschedule_claim", "r4"],
+  ["Cancelei o horário de terça 30/06.", bS, "reschedule_claim", "r4"],
+  ["Seu horário fica para quinta às 14h agora.", bS, "reschedule_claim", "r4"],
+  ["Passei sua consulta para sexta às nove.", bS, "reschedule_claim", "r4"],
+  ["Transferi seu agendamento para quinta, 18/06.", bS, "reschedule_claim", "r4"],
+  ["Tenho vaga quinta quinze horas.", bN, "time_not_offered", "r4"],
+  ["Temos horário sexta dez e meia.", bN, "time_not_offered", "r4"],
+  ["Consigo quinta dezesseis em ponto.", bN, "time_not_offered", "r4"],
+  ["Sessão disponível sexta vinte horas.", bN, "time_not_offered", "r4"],
+  ["Quinta nove e meia, te esperamos.", bN, true, "r4"],
+  ["Sua consulta de sexta às nove horas e meia está garantidinha.", bN, true, "r4"],
+  ["Combinadinho, quinta 14h.", bN, "claim_without_booking", "r4"],
+  ["Sexta às 9h continua de pé.", bN, "claim_without_booking", "r4"],
+  ["Ficou valendo quinta às 14h.", bN, "claim_without_booking", "r4"],
+  ["Sexta 9h, fechou?", bN, false, "r4"],
+  ["Seu horário de quinta às 10h está garantidinho.", bP, "confirmed_but_pending", "r4"],
+  ["Quinta dez horas confirmadinho!", bP, "confirmed_but_pending", "r4"],
+  ["A equipe aprovou seu pedido de quinta às 10h.", bP, "confirmed_but_pending", "r4"],
+  ["Sua consulta de quinta às 10h continua de pé, pode vir.", bP, "confirmed_but_pending", "r4"],
+  ["A consulta dura duas horas e meia.", bN, false, "r4"],
+  ["Preciso de dez minutos para conferir a agenda.", bN, false, "r4"],
+  ["Temos duas vagas na quinta: às 10h e às 14h.", bN, false, "r4"],
+  ["O pacote tem três sessões e custa R$ dez mil.", bN, false, "r4"],
+  ["Para duas pessoas o valor é R$ 300.", bN, false, "r4"],
+  ["Tenho vaga quinta dez horas ou quatorze horas.", bN, false, "r4"],
+  ["Para sexta, nove da manhã. Qual prefere?", bN, false, "r4"],
+  ["Quinta, 18/06: dez, quatorze.", bN, false, "r4"],
+  ["Não consegui remarcar nada; vou chamar a equipe para remarcar seu horário.", bS, false, "r4"],
+  ["Para remarcar ou cancelar, chamo a equipe agora.", bS, false, "r4"],
+  ["O cliente que cancelou ontem pode reagendar pelo site.", bN, false, "r4"],
+  ["Seu horário de terça 30/06 às 15h segue marcado.", bS, false, "r4"],
+  ["Seu horário de terça 30/06 às 15h continua de pé.", bS, false, "r4"],
+  ["Segunda às oito não tenho, mas tenho quinta às 10h ou às 14h.", bN, false, "r4"],
+  ["Fecho a agenda às 18h.", bN, false, "r4"],
+  ["Chego na clínica às nove, pode me ligar.", bN, false, "r4"],
+];
+
 const kindOf = (e: Case[2]) => (typeof e === "string" ? e : undefined);
 function run(cases: Case[]) {
   const bad: string[] = [];
@@ -405,6 +540,15 @@ describe("schedClaimGuard — corpus", () => {
   test("40 novas da rodada 3", () => {
     expect(R3.length).toBe(40);
     expect(run(R3)).toEqual([]);
+  });
+  test("80 CEGAS do revisor (40 afirmações indevidas + 40 legítimas), rodada final", () => {
+    const toCase = (rows: Array<[string, ClaimState, string]>, block: boolean): Case[] => rows.map(([t, st, g]) => [t, st, block, g]);
+    expect(BLIND_B.length + BLIND_L.length).toBe(80);
+    expect(run([...toCase(BLIND_B, true), ...toCase(BLIND_L, false)])).toEqual([]);
+  });
+  test("40 novas da rodada final", () => {
+    expect(R4.length).toBe(40);
+    expect(run(R4)).toEqual([]);
   });
   test("60 novas", () => {
     expect(NEW.length).toBeGreaterThanOrEqual(60);

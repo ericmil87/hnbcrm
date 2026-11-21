@@ -46,7 +46,7 @@ export type ClaimState = {
   serviceNames?: string[];
 };
 export type ClaimViolation = {
-  kind: "claim_without_booking" | "confirmed_but_pending" | "time_not_offered";
+  kind: "claim_without_booking" | "confirmed_but_pending" | "time_not_offered" | "reschedule_claim";
   /** Trecho da frase (≤ 80 caracteres) para log; nunca o texto inteiro. */
   evidence: string;
 };
@@ -79,25 +79,26 @@ type Level = "strong" | "closer" | "soft";
 type Marker = { re: RegExp; level: Level; needsMention?: boolean; readback?: boolean; domain?: boolean };
 
 const MARKERS: Marker[] = [
-  { re: /\bmarcad(?:[oa]s?|inh[oa]s?|issim[oa]s?)\b(?!\s+como\b)/g, level: "strong", domain: true },
-  { re: /\bagendad(?:[oa]s?|inh[oa]s?|issim[oa]s?)\b/g, level: "strong", domain: true },
-  { re: /\bconfirmad(?:[oa]s?|inh[oa]s?|issim[oa]s?)\b/g, level: "strong" },
-  { re: /\bgarantid[oa]s?\b|\bgaranti(?:i|mos)\b/g, level: "strong", domain: true },
+  { re: /\bmarcad(?:[oa]|inh|issim)\w*\b(?!\s+como\b)/g, level: "strong", domain: true },
+  { re: /\bagendad(?:[oa]|inh|issim)\w*\b/g, level: "strong", domain: true },
+  { re: /\bconfirmad(?:[oa]|inh|issim)\w*\b/g, level: "strong" },
+  { re: /\bgarantid\w*\b|\bgaranti(?:i|mos)\b/g, level: "strong", domain: true },
   { re: /\b(?:marquei|agendei|marcamos|agendamos|confirmei|encaixei|separei|coloquei|incluí|inclui|adicionei|segurei|bloqueei)\b/g, level: "strong", domain: true },
   { re: /\bja confirm(?:ou|aram|amos)\b|\bconfirm(?:ou|aram)\b|\baprovad[oa]s?\b|\baprov(?:ou|aram)\b/g, level: "strong" },
   { re: /\bconfirm(?:o|amos)\s+(?:(?:o|a|os|as|seu|sua|seus|suas)\s+)*(?:horario|agendamento|consulta|sessao|atendimento|reserva|marcacao|visita)s?\b/g, level: "strong" },
   { re: /\b(?:fica|ficou)\s+(?:para|pra)\b/g, level: "strong" },
   { re: /\bfica\s+(?:entao\s+)?(?:na\s+|no\s+|a\s+)?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g, level: "strong", needsMention: true },
   { re: /\b(?:esta|estao|ficou|ficaram)\s+(?:tudo\s+)?certo\b|\btudo certo\b/g, level: "strong" },
-  { re: /\bpode vir\b/g, level: "strong" },
-  { re: /\bte (?:espero|esperamos|vejo|aguardo|aguardamos|atende|atendo|recebo|recebe|mando)\b|\bnos (?:vemos|falamos)\b|\bate (?:la|logo|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/g, level: "strong", needsMention: true },
+  { re: /\bpode vir\b|\b(?:fica|ficou|continua) (?:valendo|de pe)\b|\besta de pe\b|\b(?:fica|ficou) certo\b/g, level: "strong" },
+  { re: /\batualizad[oa]\b(?=[^.!?]*\b(?:consulta|sessao|horario|agendamento)\b)|\binscrevi\b|\bconfirmacao feita\b|\bfeit[oa] o agendamento\b|\bagendamento (?:esta )?feito\b/g, level: "strong", domain: true },
+  { re: /\bte (?:espero|esperamos|vejo|aguardo|aguardamos|atende|atendo|recebo|recebe|mando)\b|\bnos (?:vemos|falamos)\b|\bate (?:la|logo|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/g, level: "strong", needsMention: true, domain: true },
   { re: /✅|✔/g, level: "strong" },
   { re: /\bja esta na agenda\b|\bna agenda (?:de|para|pra|do dia)\b|\bna lista de\b/g, level: "strong", domain: true },
   { re: /\bsua (?:consulta|sessao|vaga|reserva|visita|avaliacao|presenca) (?:e|esta)\b|\bvoce sera atendid[oa]\b/g, level: "strong" },
-  { re: /\be (?:seu|sua)\b|\bja era\b/g, level: "strong", needsMention: true },
+  { re: /\be (?:seu|sua)\b|\bja era\b/g, level: "strong", needsMention: true, domain: true },
   { re: /\bprontinho\b|\bpronto\b|\bfeito(?=\s*[!,:;]|\s*$)|\bcertinho\b|\btudo pronto\b/g, level: "closer", readback: true },
-  { re: /\bcombinad[oa]\b|\bfechad[oa]\b|\banotad[oa]\b|\banotei\b/g, level: "closer", readback: true },
-  { re: /\breservad(?:[oa]s?|inh[oa]s?)\b|\breservei\b|\breservamos\b/g, level: "soft", domain: true },
+  { re: /\bcombinad\w*\b|\bfechad[oa]\b|\banotad[oa]\b|\banotei\b/g, level: "closer", readback: true },
+  { re: /\breservad[oa]\w*\b|\breservei\b|\breservamos\b/g, level: "soft", domain: true },
   { re: /\bregistrad[oa]s?\b|\bregistrei\b|\bregistramos\b/g, level: "soft" },
   { re: /\bdeixei\b/g, level: "soft", needsMention: true },
 ];
@@ -110,7 +111,7 @@ const CONDITION_OPENER = /\b(?:se|caso|assim que|quando|ate que|depois que|desde
 /** Frases que narram o que o CLIENTE disse: nunca são afirmação nem horário inventado. */
 const CUSTOMER_CITATION = /^\s*(?:voce|vc|o senhor|a senhora)\s+(?:disse|falou|pediu|mencionou|escreveu|quer|queria|informou|perguntou|prefere|escolheu|comentou|contou)\b/;
 const UNAVAILABLE_CUE = /\b(?:nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem horario|nao consigo|nao da|ja passou|nao esta livre|nao esta disponivel)\b/;
-const BUSINESS_CUE = /\b(?:fecha|fechamos|fechado ate|abre|abrimos|aberto|abertos|aberta|funciona|funcionamos|funcionamento|atendemos|atende as|atende de|expediente|horario de atendimento|estacionamento)\b/;
+const BUSINESS_CUE = /\b(?:fecha|fecho|fechar|encerro|encerramos|fechamos|fechado ate|abre|abrimos|aberto|abertos|aberta|funciona|funcionamos|funcionamento|atendemos|atende as|atende de|expediente|horario de atendimento|estacionamento)\b/;
 const PAYMENT_CUE = /\b(?:pagamento|pix|comprovante|boleto|cartao|transferencia|compra|cadastro|recebimento|fatura|cobranca|valor)\b/;
 const SCHEDULE_NOUN = /\b(?:horario|horarios|consulta|consultas|sessao|sessoes|atendimento|vaga|vagas|agendamento|reserva|marcacao|avaliacao|visita|agenda)\b/;
 /** "os horários marcados no site podem estar desatualizados": o plural genérico não é afirmação sobre ESTE cliente. */
@@ -125,7 +126,7 @@ const OFFER_HEDGE = /\b(?:vou|vamos|posso|podemos|gostaria|quer|prefere|se|caso|
 /** Última frase pede a confirmação do cliente: a anterior é um read-back, não um fechamento. */
 const CONFIRM_QUESTION = /\b(?:posso (?:registrar|reservar|marcar|seguir|confirmar|anotar|fechar|prosseguir)|podemos (?:registrar|reservar|marcar|seguir|fechar)|confirma\b|esta certo|certo\b|correto\b|pode ser\b|ok\b|fechamos|e isso|e esse|e essa|quer que eu (?:registre|reserve|marque|anote)|devo (?:registrar|reservar|marcar|seguir))/;
 /** "…, tá?", "…, certo?": pergunta-eco; o que vem antes continua sendo afirmação. */
-const TAG_QUESTION = /,\s*(?:ta|tá|ne|né|certo|ok|combinado|beleza|tudo bem|viu)\s*\?\s*$/i;
+const TAG_QUESTION = /,\s*(?:ta|tá|ne|né|certo|ok|combinado|beleza|tudo bem|viu|fechou|fechado|blz|entendeu|pode ser)\s*\?\s*$/i;
 
 type Hit = { level: Level; needsMention: boolean; readback: boolean; domain: boolean };
 
@@ -149,6 +150,30 @@ function markersIn(n: string): Hit[] {
     }
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Remarcação / cancelamento afirmados (a IA ainda NÃO tem tool para isso: sempre barrado)
+// ---------------------------------------------------------------------------
+
+const CHANGE_CLAIM =
+  /\b(?:remarc(?:ad[oa]\w*|amos)|remarquei|reagend(?:ad[oa]\w*|ei|amos)|troquei|trocad[oa]\w*|trocamos|mudei|mudad[oa]\w*|mudamos|passei (?:o|seu|sua|a|para|pra)|passou (?:para|pra)|transferid[oa]\w*|transferi|transferimos|adiei|adiad[oa]\w*|adiamos|antecipei|antecipad[oa]\w*)\b/g;
+const CANCEL_CLAIM = /\b(?:cancelei|cancelad[oa]\w*|cancelamos|desmarquei|desmarcad[oa]\w*|desmarcamos)\b/g;
+const SUBJECT_FICA = /\b(?:horario|consulta|sessao|atendimento|agendamento)\b[^.!?]*\b(?:fica|ficou) (?:para|pra)\b/;
+const INSTEAD_OF = /\b(?:em vez de|ao inves de)\b/;
+
+/** A frase AFIRMA mudança ou cancelamento de um agendamento (nunca passa: a IA não remarca nem cancela neste bloco). */
+function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean): boolean {
+  const nounOrTime = SCHEDULE_NOUN.test(n) || hasMention;
+  for (const re of [CHANGE_CLAIM, CANCEL_CLAIM]) {
+    re.lastIndex = 0;
+    for (const m of n.matchAll(re)) {
+      if (isHedged(n, m.index ?? 0)) continue;
+      if (nounOrTime) return true;
+    }
+  }
+  if (SUBJECT_FICA.test(n) && !isHedged(n, n.search(/\b(?:fica|ficou) (?:para|pra)\b/))) return true;
+  return INSTEAD_OF.test(n) && hasMention && !hasOfferVerb;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,8 +206,13 @@ function isBareTimeSentence(n: string): boolean {
     .replace(/[^a-z0-9 ]/g, " ")
     .split(/\s+/)
     .filter(Boolean)
-    .filter((w) => !/^(?:\d+|\d+h\d*|\d+hs|as|a|e|ou|das|de|dia|da|manha|tarde|noite|feira|segunda|terca|quarta|quinta|sexta|sabado|domingo|hoje|amanha|depois|meio|meia|oito|nove|dez|onze|doze|uma|duas|tres|quatro|cinco|seis|sete)$/.test(w));
+    .filter((w) => !/^(?:\d+|\d+h\d*|\d+hs|as|a|e|ou|das|de|dia|da|manha|tarde|noite|feira|segunda|terca|quarta|quinta|sexta|sabado|domingo|hoje|amanha|depois|meio|meia|ponto|hora|horas|oito|nove|dez|onze|doze|treze|catorze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte|uma|duas|tres|quatro|cinco|seis|sete)$/.test(w));
   return words.length === 0;
+}
+
+/** Há hora ou dia citados na frase (mesmo que a frase tenha sido pulada)? */
+function mentionsAnyTime(raw: string): boolean {
+  return extractAiTimes(raw).length > 0;
 }
 
 type Sentence = {
@@ -242,20 +272,28 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
           return true;
         });
 
+  const isAgendaSentence = (s: Sentence, hits: Hit[]) =>
+    OFFER_VERB.test(s.n) ||
+    SCHEDULE_NOUN.test(s.n) ||
+    mentionsService(s.n) ||
+    hits.some((h) => h.domain) ||
+    (hits.length > 0 && /\b(?:seu|sua|voce|pra voce|para voce|no seu nome)\b/.test(s.n));
+  const lastIsRealQuestion = !!last && last.question && !last.tagQuestion;
+
   // Uma afirmação de agenda em qualquer frase ("Marcado!") vale para o dia e hora citados nas outras ("Quinta às 15h.").
   const messageClaim = live.some((s) => !s.skip && hitsOf(s).some((h) => h.domain || messageNoun));
+
+  // 0. Remarcação ou cancelamento AFIRMADOS: sempre barrado (a IA não tem tool de remarcar/cancelar; é repasse para humano).
+  for (const s of live) {
+    if (s.skip || (s.question && !s.tagQuestion)) continue;
+    if (claimsChange(s.n, s.mentions.length > 0 || mentionsAnyTime(s.raw), OFFER_VERB.test(s.n))) return { kind: "reschedule_claim", evidence: s.raw.slice(0, EVIDENCE_MAX) };
+  }
 
   // 1. Horário inventado em frase DE AGENDA.
   for (const s of live) {
     if (s.skip || s.mentions.length === 0) continue;
     const hits = hitsOf(s);
-    const agenda =
-      OFFER_VERB.test(s.n) ||
-      SCHEDULE_NOUN.test(s.n) ||
-      mentionsService(s.n) ||
-      hits.some((h) => h.domain) ||
-      messageClaim ||
-      (hits.length > 0 && /\b(?:seu|sua|voce|pra voce|para voce|no seu nome)\b/.test(s.n));
+    const agenda = isAgendaSentence(s, hits) || messageClaim;
     if (!agenda) continue;
     if (s.mentions.some((m) => classify(m, st, today) === "inventado")) return { kind: "time_not_offered", evidence: s.raw.slice(0, EVIDENCE_MAX) };
   }
@@ -266,9 +304,12 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
     if (GENERIC_PLURAL.test(s.n)) continue;
     const evidence = s.raw.slice(0, EVIDENCE_MAX);
     const hits = hitsOf(s);
-    const own = s.mentions.map((m) => classify(m, st, today));
+    // Hora SEM dia em frase que não é de agenda ("Chego na clínica às nove") não é horário de atendimento.
+    const agendaS = isAgendaSentence(s, hits);
+    const own = s.mentions.filter((m) => m.day !== undefined || agendaS).map((m) => classify(m, st, today));
     const definitive = (hs: Hit[]) => hs.some((h) => h.level === "strong") || (hs.some((h) => h.level === "closer") && !pendingQualified);
 
+    if (hits.length > 0 && hits.some((h) => h.domain) && own.includes("inventado")) return { kind: "time_not_offered", evidence };
     if (hits.length > 0) {
       const matches = own.length > 0 ? own : messageMatches;
       if (matches.length > 0) {
@@ -288,6 +329,7 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
     if (own.includes("oferta")) {
       const allowed =
         s.question ||
+        lastIsRealQuestion || // "Para sexta, nove da manhã. Qual prefere?": a oferta é a pergunta
         OFFER_VERB.test(s.n) ||
         OFFER_HEDGE.test(s.n) ||
         isBareTimeSentence(s.n) ||
@@ -309,6 +351,8 @@ export function claimNudge(kind: ClaimViolation["kind"]): string {
       return "Sua resposta anterior foi DESCARTADA: ela afirmava um horário marcado, confirmado, reservado ou registrado, mas nada foi registrado para esse horário. Se o cliente já escolheu um horário que você ofereceu, use bookOfferedTime (sozinha, numa rodada própria); senão ofereça horários com findAvailableTimes, ou repita o horário e PERGUNTE se pode registrar. Não afirme marcação sem o resultado da ferramenta.";
     case "confirmed_but_pending":
       return 'Sua resposta anterior foi DESCARTADA: ela dizia "confirmado/marcado/garantido/aprovado", mas o horário só foi REGISTRADO e aguarda a confirmação da equipe. Use a frase canônica do resultado da ferramenta: pedido registrado, aguardando a confirmação da equipe.';
+    case "reschedule_claim":
+      return "Sua resposta anterior foi DESCARTADA: ela afirmava que um horário foi REMARCADO, trocado ou CANCELADO, e você não faz isso. Se o cliente quer remarcar ou cancelar, diga que a equipe cuida e use requestHandoff; não afirme mudança nenhuma.";
     case "time_not_offered":
       return "Sua resposta anterior foi DESCARTADA: ela citava um dia e hora que o sistema não devolveu. Cite somente os horários retornados por findAvailableTimes (ou listados em ofertas_vigentes / horarios_do_cliente), ou consulte de novo.";
   }
