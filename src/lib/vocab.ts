@@ -202,6 +202,13 @@ export const VOCAB = {
     },
     bookedBy: "Marcado por {quem} às {hora}",
     withCompanion: "Vem acompanhado?",
+    // --- B2: entradas fora da página (chip e bloco); os textos da folha e do painel vivem em `lib/bookingCopy.ts`
+    block: {
+      title: "Agendamentos",
+      upcoming: "Próximos",
+      recent: "Recentes",
+      chipNext: "Próximo: {quando}",
+    },
     pendingTabs: { approval: "Aguardando aprovação", conflicts: "Conflitos", noOutcome: "Sem desfecho", suggestions: "Sugestões" },
     view: { day: "Dia", week: "Semana", month: "Mês", list: "Lista", byRoom: "Por sala", byPerson: "Por profissional" },
     /** B1 (configurações e assistente): textos compartilhados entre painéis, assistente e testes. Texto por TIPO para o gênero concordar (a sala, o profissional, o equipamento). */
