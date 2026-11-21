@@ -4,6 +4,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Agendamento: a IA consulta horários e a confirmação pelo WhatsApp vira sugestão
+
+- **O Atendente IA consulta a agenda e registra o pedido de horário.** Com o agendamento ligado e a IA ativa, ela oferece até três horários livres calculados pelo sistema e, quando o cliente escolhe, registra o pedido para a equipe aprovar com um toque. Ela nunca vê nome de sala, de profissional ou de outro cliente, e não pode dizer "marcado" sem um agendamento de verdade. Para marcar sozinha é preciso ligar a opção em Configurações › Sugestões e IA (com aviso); a primeira visita de cada cliente continua pedindo aprovação.
+- **"Confirmado quinta 10h" vira sugestão de um toque.** Quando alguém da equipe confirma um horário com o cliente pelo WhatsApp (pelo sistema ou pelo celular) e o cliente tinha proposto aquele dia e hora, aparece em Pendências uma sugestão já preenchida para marcar. Nada é marcado sozinho por padrão e nada é enviado ao cliente. "Marcar sozinho quando tiver certeza" existe como opção experimental.
+- **Novo aviso "horários para aprovar".** A equipe é avisada quando a IA registra um pedido ou quando há uma sugestão de confirmação; dá para desligar nas preferências de notificação.
+
 ### Agendamento com salas e profissionais (módulo opcional)
 
 - **Marque horário com cliente direto da conversa.** Em três toques: serviço, horário e confirmar. O sistema sugere os horários livres e destaca os que ficam encostados em outros atendimentos, para o dia não ficar cheio de buracos. Ligue em Configurações › Agendamento; quem não ligar não vê nada de novo.
