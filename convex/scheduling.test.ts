@@ -340,7 +340,7 @@ describe("loadWindow", () => {
         } as any)
       );
     await mkEvent({});
-    await mkEvent({ allDay: true });
+    await mkEvent({ allDay: true, startTime: at(MON, 0), endTime: at("2026-06-16", 0) - 1 });
     await mkEvent({ status: "cancelled" });
     await mkEvent({ assignedTo: s.none.memberId });
     await mkEvent({ assignedTo: undefined });
