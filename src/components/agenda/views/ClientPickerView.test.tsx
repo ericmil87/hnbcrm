@@ -11,7 +11,7 @@ describe("ClientPickerView", () => {
   });
   it("escolher um cliente devolve contato e nome", () => {
     const onPick = vi.fn();
-    render(<ClientPickerView {...base} onPick={onPick} results={[{ _id: "c1", name: "Maria Souza", phone: "+5511999998888" }, { _id: "c2", name: null, email: "x@y.com" }]} />);
+    render(<ClientPickerView {...base} onPick={onPick} results={[{ _id: "c1", name: "Maria Souza", phone: "+5511999998888" }, { _id: "c2", name: null, email: "cliente@example.com" }]} />);
     fireEvent.click(screen.getByRole("button", { name: "Escolher Maria Souza" }));
     expect(onPick).toHaveBeenCalledWith({ contactId: "c1", name: "Maria Souza" });
     expect(screen.getByRole("button", { name: "Escolher Sem nome" })).toBeInTheDocument();
