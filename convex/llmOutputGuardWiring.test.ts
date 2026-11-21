@@ -93,8 +93,9 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(finalClaim).toBeGreaterThan(finalLeak);
     expect(format).toBeGreaterThan(finalClaim);
 
-    // Só vale com as tools de agenda na run.
-    expect(runtime.slice(claimRound - 400, claimRound)).toMatch(/context\.sched/);
+    // Liga com o MÓDULO de agendamento (não com as tools: o turno de follow-up não tem tools e não pode afirmar marcação).
+    expect(runtime.slice(claimRound - 400, claimRound)).toMatch(/schedGuardOn/);
+    expect(runtime).toMatch(/const schedGuardOn = context\.schedulingOn === true/);
 
     // Simulador: o guard da rodada e a trava final vêm antes da formatação devolvida.
     const sim = src.slice(src.indexOf("export const simulateAttendant"));
