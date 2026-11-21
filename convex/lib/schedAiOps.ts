@@ -1,0 +1,669 @@
+/**
+ * Agenda v2 (D1) — execução das tools de agenda do Atendente. Chamado por `schedulingAi.ts` (mutations/query
+ * internas da action do atendente) e por `executeAttendantToolCore` (aprovação humana do rascunho).
+ *
+ * REGRAS (plano §3.4, §6.3; revisão de segurança D1):
+ *  - o executor RECONFERE tudo (módulo, IA da org, política `schedSettings.ai`, serviço e recurso ativos, contato não
+ *    "fora do comercial"): filtrar o registry da run não basta (precedente `allowMoveStages`);
+ *  - nada que venha do texto do cliente vira argumento de escrita sem passar por CÓDIGO DE OFERTA emitido nesta
+ *    conversa (`resolveOffer`: válido 30 min, emitido ANTES da última mensagem do cliente);
+ *  - a reserva SÓ passa por `bookAppointmentCore` (a porta); aqui não há insert nem patch de agendamento. As únicas
+ *    escritas são `schedConversationState` (via `schedAiState`), repasse (`createHandoffCore`) e as da própria porta;
+ *  - a IA só sabe "livre"/"ocupado": `searchSlots` com audiência `ai` sanitiza (sem nome de recurso, de cliente,
+ *    motivo ou pontuação); as `alternatives` da porta vêm no mesmo formato sanitizado;
+ *  - nenhum `catch` em volta da porta: erro inesperado aborta a mutation (nada fica pela metade) e a action devolve
+ *    ao modelo um erro genérico.
+ *
+ * CUSTO DE LEITURA por chamada (documentos): `findAvailableTimes` = acesso (org, settings, conversa, lead, contato,
+ * ≤ 101 serviços, ≤ 101 recursos, estado da conversa) + `searchSlots` (`loadWindow`: ≈ 40–60 documentos para 1 dia,
+ * 80–250 para 7 dias; + uma segunda janela de até 7 dias só quando a pedida veio vazia). `bookOfferedTime` = acesso +
+ * estado + 1 leitura por idempotência + a leitura da porta (≈ 15–25 documentos; até 45 com fallback). O contexto do
+ * prompt (`schedContextCore`) lê o acesso + até 30 agendamentos do contato. Nada disso assina (mutation/query avulsa).
+ */
+import { ConvexError, v } from "convex/values";
+import type { Doc, Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { createHandoffCore } from "../handoffs";
+import { orgAiActive } from "./agentSecurity";
+import { effectiveRelation, isOffBusiness } from "./contactRelation";
+import { getLeadRef } from "./leadRef";
+import { modulesOf } from "./orgModules";
+import { hasPermission, type Permissions, resolvePermissions, type Role } from "./permissions";
+import {
+  bookedResult,
+  type FindArgs,
+  findSlotsResult,
+  formatDayLabel,
+  formatOfferLine,
+  formatSlotText,
+  MAX_FIND_CALLS_PER_HOUR,
+  FIND_WINDOW_MS,
+  MAX_SERVICES_IN_PROMPT,
+  matchService,
+  noSlotsResult,
+  parseBookArgs,
+  parseFindArgs,
+  proposedResult,
+  type SchedPromptService,
+  type SchedUpcoming,
+  serviceListText,
+  type ToolText,
+  toolError,
+} from "./schedAttendantTools";
+import { loadConversationState, offersStateOf, saveConversationState } from "./schedAiState";
+import { type Alternative, bookAppointmentCore } from "./schedBookingOps";
+import { MAX_RESOURCES_PER_ORG, MAX_SERVICES_PER_ORG } from "./schedConstants";
+import { consumeOffer, invalidateOffers, issueOffers, type OfferPick, type OfferRecord, resolveOffer } from "./schedOffers";
+import { resolveDateRef } from "./schedRelativeDates";
+import { searchSlots } from "./schedSearch";
+import { resolveSchedSettings, type ResolvedSchedSettings } from "./schedSettingsDefaults";
+import { assertValidTimezone } from "./schedTime";
+import type { Slot } from "./schedViews";
+
+type ReadCtx = { db: QueryCtx["db"] };
+
+/** Resultado de uma tool + o que o RUNTIME precisa (nada disto vai ao modelo). */
+export type SchedToolOutcome = {
+  result: ToolText;
+  control: {
+    /** Horários devolvidos neste ato (busca, reserva, alternativas): alimentam o `schedClaimGuard`. */
+    offeredLabels: string[];
+    booked?: "pending" | "scheduled";
+    /** Um repasse para humano foi criado (ou já existia): a resposta do turno pode sair mesmo assim. */
+    handoff: boolean;
+    /** Só na prévia (`mode:"preview"`): o horário em texto, para o rótulo da ação proposta no rascunho. */
+    slotText?: string;
+  };
+};
+
+const outcome = (result: ToolText, extra: Partial<SchedToolOutcome["control"]> = {}): SchedToolOutcome => ({
+  result,
+  control: { offeredLabels: [], handoff: false, ...extra },
+});
+
+// ---------------------------------------------------------------------------
+// Acesso: as condições em que as tools existem (registro) e valem (execução)
+// ---------------------------------------------------------------------------
+
+export type SchedAiReason =
+  | "org"
+  | "modulo_desligado"
+  | "ia_desligada"
+  | "agente"
+  | "sem_permissao"
+  | "conversa"
+  | "grupo"
+  | "sem_contato"
+  | "nao_cliente"
+  | "politica"
+  | "sem_servico"
+  | "sem_recurso";
+
+export type SchedAiAccess =
+  | { ok: false; reason: SchedAiReason }
+  | {
+      ok: true;
+      org: Doc<"organizations">;
+      tz: string;
+      settings: ResolvedSchedSettings;
+      agent: Doc<"teamMembers">;
+      conversation: Doc<"conversations"> | null;
+      lead: Doc<"leads"> | null;
+      contact: Doc<"contacts"> | null;
+      services: Doc<"schedServices">[];
+      /** Política de reserva EFETIVA: `auto` só com o aceite do dono (`autoAck`); sem ele vale `propose`. */
+      bookPolicy: "propose" | "auto";
+      canBook: boolean;
+    };
+
+/**
+ * `conversationId` ausente = simulador (sem conversa nem contato). Com conversa: 1:1, contato da conversa presente e
+ * não "fora do comercial". `need: "book"` exige também `ai.book !== "off"` e permissão `agenda:edit` do agente.
+ */
+export async function loadSchedAiAccess(
+  ctx: ReadCtx,
+  args: { organizationId: Id<"organizations">; agentMemberId: Id<"teamMembers">; conversationId?: Id<"conversations">; need: "consult" | "book" }
+): Promise<SchedAiAccess> {
+  const org = await ctx.db.get(args.organizationId);
+  if (!org) return { ok: false, reason: "org" };
+  if (!modulesOf(org).scheduling) return { ok: false, reason: "modulo_desligado" };
+  if (!orgAiActive(org)) return { ok: false, reason: "ia_desligada" };
+  const agent = await ctx.db.get(args.agentMemberId);
+  if (!agent || agent.organizationId !== org._id || agent.type !== "ai" || agent.status !== "active") {
+    return { ok: false, reason: "agente" };
+  }
+  // RBAC do agente (mesma regra de `assertAgentCan`, que exige o ctx completo): a IA precisa de `agenda`.
+  const permissions = resolvePermissions(agent.role as Role, agent.permissions as Permissions | undefined);
+  if (!hasPermission(permissions, "agenda", args.need === "book" ? "edit" : "view_own")) {
+    return { ok: false, reason: "sem_permissao" };
+  }
+
+  let conversation: Doc<"conversations"> | null = null;
+  let lead: Doc<"leads"> | null = null;
+  let contact: Doc<"contacts"> | null = null;
+  if (args.conversationId) {
+    conversation = await ctx.db.get(args.conversationId);
+    if (!conversation || conversation.organizationId !== org._id) return { ok: false, reason: "conversa" };
+    if (conversation.kind === "group") return { ok: false, reason: "grupo" };
+    lead = await getLeadRef(ctx.db, conversation.leadId);
+    if (!lead || lead.organizationId !== org._id) return { ok: false, reason: "conversa" };
+    contact = lead.contactId ? await ctx.db.get(lead.contactId) : null;
+    if (!contact || contact.organizationId !== org._id) return { ok: false, reason: "sem_contato" };
+    if (isOffBusiness(effectiveRelation(contact, conversation))) return { ok: false, reason: "nao_cliente" };
+  }
+
+  const doc = await ctx.db
+    .query("schedSettings")
+    .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+    .first();
+  const settings = resolveSchedSettings(doc);
+  if (!settings.ai.consult) return { ok: false, reason: "politica" };
+  const canBook = settings.ai.book !== "off";
+  if (args.need === "book" && !canBook) return { ok: false, reason: "politica" };
+
+  const all = await ctx.db
+    .query("schedServices")
+    .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+    .take(MAX_SERVICES_PER_ORG + 1);
+  const services = all
+    .filter((s) => s.active && s.aiBookable !== false)
+    .sort((a, b) => a.sortOrder - b.sortOrder || (a._id < b._id ? -1 : 1));
+  if (services.length === 0) return { ok: false, reason: "sem_servico" };
+  const resources = await ctx.db
+    .query("schedResources")
+    .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
+    .take(MAX_RESOURCES_PER_ORG + 1);
+  if (!resources.some((r) => r.active)) return { ok: false, reason: "sem_recurso" };
+
+  const tz = assertValidTimezone(org.settings.timezone);
+  const bookPolicy = settings.ai.book === "auto" && settings.ai.autoAck !== undefined ? "auto" : "propose";
+  return { ok: true, org, tz, settings, agent, conversation, lead, contact, services, bookPolicy, canBook };
+}
+
+const ACCESS_MESSAGE: Record<SchedAiReason, string> = {
+  org: "A agenda não está disponível.",
+  modulo_desligado: "A agenda não está ligada neste negócio.",
+  ia_desligada: "A agenda não está disponível para a IA.",
+  agente: "A agenda não está disponível para este atendente.",
+  sem_permissao: "A agenda não está disponível para este atendente.",
+  conversa: "A agenda não está disponível nesta conversa.",
+  grupo: "A agenda não está disponível em grupos.",
+  sem_contato: "A agenda precisa do contato desta conversa.",
+  nao_cliente: "A agenda não está disponível para este contato.",
+  politica: "A IA não está autorizada a mexer na agenda neste negócio.",
+  sem_servico: "Não há serviço liberado para marcação pela IA.",
+  sem_recurso: "Não há sala ou profissional ativo na agenda.",
+};
+
+const accessError = (reason: SchedAiReason): SchedToolOutcome =>
+  outcome(toolError("agenda_desligada", `${ACCESS_MESSAGE[reason]} Diga ao cliente que a equipe confirma os horários e, se ele quiser marcar, chame requestHandoff.`));
+
+// ---------------------------------------------------------------------------
+// Contexto do prompt
+// ---------------------------------------------------------------------------
+
+export type SchedRunContext = {
+  tools: { find: boolean; book: boolean };
+  book: "propose" | "auto";
+  services: SchedPromptService[];
+  moreServices: boolean;
+  upcoming: SchedUpcoming[];
+  contactHas: "none" | "pending_only" | "scheduled";
+  /** Rótulos dos horários já marcados do contato (entram no `offeredLabels` do guard). */
+  upcomingLabels: string[];
+  timezone: string;
+};
+
+const UPCOMING_STATUSES = ["pending_approval", "scheduled", "confirmed"] as const;
+const UPCOMING_READ = 30;
+const UPCOMING_SHOWN = 3;
+
+function priceLabel(cents: number | undefined, currency: string): string | undefined {
+  if (cents === undefined || !Number.isFinite(cents) || cents < 0) return undefined;
+  const value = (cents / 100).toFixed(2).split(".").join(",");
+  return currency === "BRL" ? `R$ ${value}` : `${currency} ${value}`;
+}
+
+/** Próximos agendamentos ativos do contato (leitura por `by_contact_and_start`, teto 30, só da mesma org). */
+export async function loadUpcomingOfContact(
+  ctx: ReadCtx,
+  args: { organizationId: Id<"organizations">; contactId: Id<"contacts">; now: number; tz: string; limit?: number }
+): Promise<SchedUpcoming[]> {
+  const rows = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_contact_and_start", (q) => q.eq("contactId", args.contactId).gte("startTime", args.now))
+    .take(UPCOMING_READ);
+  const active = rows.filter(
+    (r) => r.organizationId === args.organizationId && (UPCOMING_STATUSES as readonly string[]).includes(r.status)
+  );
+  return active.slice(0, args.limit ?? UPCOMING_SHOWN).map((r, i) => ({
+    ref: `a${i + 1}`,
+    label: formatSlotText(r.startTime, args.now, args.tz),
+    serviceName: r.serviceName,
+    status: r.status as SchedUpcoming["status"],
+  }));
+}
+
+export function contactHasOf(upcoming: readonly SchedUpcoming[]): SchedRunContext["contactHas"] {
+  if (upcoming.some((u) => u.status === "scheduled" || u.status === "confirmed")) return "scheduled";
+  return upcoming.length > 0 ? "pending_only" : "none";
+}
+
+/** `null` = as tools de agenda NÃO entram nesta run. Mesmas condições do executor (`loadSchedAiAccess`). */
+export async function schedContextCore(
+  ctx: ReadCtx,
+  args: { organizationId: Id<"organizations">; agentMemberId: Id<"teamMembers">; conversationId?: Id<"conversations">; now: number }
+): Promise<SchedRunContext | null> {
+  const access = await loadSchedAiAccess(ctx, { ...args, need: "consult" });
+  if (!access.ok) return null;
+  const listed = access.services.slice(0, MAX_SERVICES_IN_PROMPT);
+  const upcoming = access.contact
+    ? await loadUpcomingOfContact(ctx, { organizationId: access.org._id, contactId: access.contact._id, now: args.now, tz: access.tz })
+    : [];
+  const currency = access.org.settings.currency;
+  return {
+    tools: { find: true, book: access.canBook },
+    book: access.bookPolicy,
+    services: listed.map((s) => ({ name: s.name, durationMin: s.durationMin, ...(priceLabel(s.priceCents, currency) ? { priceLabel: priceLabel(s.priceCents, currency) } : {}) })),
+    moreServices: access.services.length > MAX_SERVICES_IN_PROMPT,
+    upcoming,
+    contactHas: contactHasOf(upcoming),
+    upcomingLabels: upcoming.map((u) => u.label),
+    timezone: access.tz,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// findAvailableTimes
+// ---------------------------------------------------------------------------
+
+export type FindSearchOutcome =
+  | { kind: "error"; result: ToolText }
+  | { kind: "none"; result: ToolText }
+  | {
+      kind: "slots";
+      service: Doc<"schedServices">;
+      args: FindArgs;
+      echo: string;
+      tz: string;
+      now: number;
+      slots: Slot[];
+      hasMore: boolean;
+    };
+
+/** Leitura pura da busca (serve ao executor e ao simulador): serviço, data, `searchSlots` com audiência `ai`. */
+export async function runFindSearch(
+  ctx: ReadCtx,
+  access: Extract<SchedAiAccess, { ok: true }>,
+  args: FindArgs,
+  now: number
+): Promise<FindSearchOutcome> {
+  const idPicked = ctx.db.normalizeId("schedServices", args.service);
+  const byId = idPicked ? access.services.find((s) => s._id === idPicked) : undefined;
+  const service =
+    byId ??
+    (() => {
+      const m = matchService(
+        access.services.map((s) => ({ id: s._id as string, name: s.name, durationMin: s.durationMin })),
+        args.service
+      );
+      return m ? access.services.find((s) => s._id === m.id) : undefined;
+    })();
+  if (!service) {
+    return {
+      kind: "error",
+      result: toolError(
+        "servico_desconhecido",
+        `Serviços disponíveis: ${serviceListText(access.services)}. Pergunte ao cliente qual deles ele quer e use o nome exato.`
+      ),
+    };
+  }
+  const maxAdvanceDays = service.maxAdvanceDays ?? access.settings.maxAdvanceDays;
+  const when = resolveDateRef(args.dateRef, now, access.tz, { maxAdvanceDays });
+  if (!when.ok) return { kind: "error", result: toolError("data_invalida", when.error) };
+  const found = await searchSlots(ctx, {
+    organizationId: access.org._id,
+    serviceId: service._id,
+    fromLocalDate: when.from,
+    toLocalDate: when.to,
+    period: args.period,
+    audience: "ai",
+    now,
+    limit: 3,
+    ...(args.people > 1 ? { partySize: args.people } : {}),
+  });
+  if (found.reason === "unverifiable" && found.slots.length === 0) {
+    return {
+      kind: "error",
+      result: toolError(
+        "agenda_indisponivel",
+        "Não consegui verificar a agenda agora. Diga ao cliente que a equipe confirma o horário e chame requestHandoff."
+      ),
+    };
+  }
+  if (found.slots.length === 0) {
+    const next = found.firstPossible ? formatDayLabel(found.firstPossible.startTime, now, access.tz) : undefined;
+    return { kind: "none", result: noSlotsResult({ echo: when.echo, period: args.period, people: args.people, nextDateLabel: next }) };
+  }
+  return { kind: "slots", service, args, echo: when.echo, tz: access.tz, now, slots: found.slots, hasMore: found.hasMore };
+}
+
+const picksOf = (service: Doc<"schedServices">, slots: readonly Slot[], people: number): OfferPick[] =>
+  slots.map((s) => ({ serviceId: service._id, startTime: s.startTime, resourceIds: s.resourceIds, ...(people > 1 ? { people } : {}) }));
+
+async function openHandoff(
+  ctx: MutationCtx,
+  access: Extract<SchedAiAccess, { ok: true }>,
+  conversationId: Id<"conversations">,
+  reason: string,
+  summary: string
+): Promise<boolean> {
+  if (!access.lead) return false;
+  await createHandoffCore(ctx, {
+    leadId: access.lead._id,
+    conversationId,
+    fromMemberId: access.agent._id,
+    reason,
+    summary,
+    suggestedActions: ["Conferir a agenda e responder o cliente sobre o horário"],
+    origin: "ai_tool",
+    onDuplicate: "skip",
+  });
+  return true;
+}
+
+export async function findAvailableTimesCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; agentMemberId: Id<"teamMembers">; conversationId: Id<"conversations">; argsJson: string }
+): Promise<SchedToolOutcome> {
+  const now = Date.now(); // a tool lê o relógio UMA vez
+  const access = await loadSchedAiAccess(ctx, { ...args, need: "consult" });
+  if (!access.ok) return accessError(access.reason);
+
+  // Teto de consultas por conversa (modelo que entra em laço): estourou, repasse para humano.
+  const state = await loadConversationState(ctx, args.conversationId);
+  const prev = state?.findCalls;
+  const windowStart = prev && now - prev.windowStart < FIND_WINDOW_MS ? prev.windowStart : now;
+  const count = (windowStart === prev?.windowStart ? prev.count : 0) + 1;
+  if (count > MAX_FIND_CALLS_PER_HOUR) {
+    const handoff = await openHandoff(ctx, access, args.conversationId, "Muitas consultas de horário na conversa", "A IA consultou a agenda várias vezes sem fechar um horário. A equipe precisa assumir.");
+    return outcome(
+      toolError("limite_de_consultas", "Foram muitas consultas de horário nesta conversa. Diga ao cliente que a equipe vai ajudar com o horário; um repasse foi criado."),
+      { handoff }
+    );
+  }
+  await saveConversationState(ctx, {
+    organizationId: args.organizationId,
+    conversationId: args.conversationId,
+    existing: state,
+    patch: { findCalls: { windowStart, count } },
+    now,
+  });
+
+  const parsed = parseFindArgs(args.argsJson);
+  if (!parsed.ok) return outcome(toolError(parsed.error, parsed.proximo_passo));
+  const searched = await runFindSearch(ctx, access, parsed.args, now);
+  if (searched.kind !== "slots") return outcome(searched.result);
+
+  const fresh = await loadConversationState(ctx, args.conversationId);
+  const issued = issueOffers(offersStateOf(fresh), picksOf(searched.service, searched.slots, parsed.args.people), now);
+  await saveConversationState(ctx, {
+    organizationId: args.organizationId,
+    conversationId: args.conversationId,
+    existing: fresh,
+    patch: { offers: issued.state },
+    now,
+  });
+  const lines = issued.issued.map((o) => formatOfferLine(o.code, o.startTime, now, searched.tz));
+  return outcome(
+    findSlotsResult({ echo: searched.echo, period: parsed.args.period, people: parsed.args.people, lines, hasMore: searched.hasMore }),
+    { offeredLabels: issued.issued.map((o) => formatSlotText(o.startTime, now, searched.tz)) }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// bookOfferedTime
+// ---------------------------------------------------------------------------
+
+const TAKEN_CODES = new Set([
+  "CAPACITY_EXCEEDED",
+  "RESOURCE_CLOSED",
+  "OUTSIDE_HOURS",
+  "RESOURCE_BLOCKED",
+  "BUFFER_OVERLAP",
+  "INTERNAL_EVENT_OVERLAP",
+  "MIN_NOTICE",
+  "MAX_ADVANCE",
+  "OFF_GRID",
+  "PAST_START",
+]);
+const ALREADY_HAS_CODES = new Set(["MAX_ACTIVE_PER_CONTACT", "CLIENT_OVERLAP"]);
+const ACTIVE_BOOKED = ["pending_approval", "scheduled", "confirmed", "checked_in", "completed"] as const;
+
+/** Chave de idempotência da reserva: conversa + código da oferta (o código nunca é reaproveitado na conversa). */
+export const offerIdempotencyKey = (conversationId: string, code: string) => `ai:${conversationId}:${code}`;
+
+const OFFER_ERROR_TEXT = {
+  desconhecida: toolError(
+    "oferta_desconhecida",
+    "Esse código não é de uma oferta desta conversa. Consulte os horários de novo com findAvailableTimes e só reserve o que o cliente escolher."
+  ),
+  expirada: toolError(
+    "oferta_expirada",
+    "A oferta venceu (vale 30 minutos). Consulte os horários de novo, ofereça e peça a confirmação do cliente."
+  ),
+  sem_resposta_do_cliente: toolError(
+    "aguarde_resposta_do_cliente",
+    "O cliente ainda não respondeu a esta oferta. Apresente os horários, espere a escolha dele e só então reserve (em outra rodada)."
+  ),
+} as const;
+
+export async function bookOfferedTimeCore(
+  ctx: MutationCtx,
+  args: {
+    organizationId: Id<"organizations">;
+    agentMemberId: Id<"teamMembers">;
+    conversationId: Id<"conversations">;
+    argsJson: string;
+    /** `preview`: valida tudo e NÃO grava (rascunho do modo sugestão com a política `auto`). */
+    mode: "commit" | "preview";
+    approvedBy?: Id<"teamMembers">;
+    agentRunId?: string;
+  }
+): Promise<SchedToolOutcome> {
+  const now = Date.now();
+  const access = await loadSchedAiAccess(ctx, { ...args, need: "book" });
+  if (!access.ok) return accessError(access.reason);
+  const conversation = access.conversation!;
+  const contact = access.contact!;
+
+  const parsed = parseBookArgs(args.argsJson);
+  if (!parsed.ok) return outcome(toolError(parsed.error, parsed.proximo_passo));
+  const code = parsed.offer;
+
+  // Retry da mesma reserva (o commit da resposta abortou e o turno rodou de novo): devolve o MESMO agendamento.
+  const key = offerIdempotencyKey(args.conversationId, code);
+  const existing = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_organization_and_idempotency", (q) => q.eq("organizationId", args.organizationId).eq("idempotencyKey", key))
+    .first();
+  if (existing && existing.conversationId === args.conversationId && (ACTIVE_BOOKED as readonly string[]).includes(existing.status)) {
+    const slotText = formatSlotText(existing.startTime, now, access.tz);
+    const kind = existing.status === "pending_approval" ? "pending" : "scheduled";
+    return outcome(bookedResult(kind, slotText, true), { booked: kind, offeredLabels: [slotText] });
+  }
+
+  const state = await loadConversationState(ctx, args.conversationId);
+  const offers = offersStateOf(state);
+  const resolved = resolveOffer(offers, code, now, conversation.lastInboundAt);
+  if (!resolved.ok) return outcome(OFFER_ERROR_TEXT[resolved.error]);
+  const offer = resolved.offer;
+
+  if ((offer.people ?? 1) > 1) {
+    const handoff = await openHandoff(ctx, access, args.conversationId, "Marcação para mais de uma pessoa", "O cliente escolheu um horário para mais de uma pessoa. A equipe precisa marcar o grupo.");
+    return outcome(
+      toolError("precisa_de_pessoa", "Marcação para mais de uma pessoa fica com a equipe: um repasse foi criado. Diga ao cliente que a equipe confirma o horário."),
+      { handoff }
+    );
+  }
+
+  const result = await bookAppointmentCore(ctx, {
+    organizationId: args.organizationId,
+    actor: { type: "ai", member: access.agent, conversationId: args.conversationId },
+    origin: "ai",
+    mode: args.mode,
+    serviceId: offer.serviceId as Id<"schedServices">,
+    variantKey: offer.variantKey,
+    startTime: offer.startTime,
+    contactId: contact._id,
+    leadId: access.lead?._id,
+    conversationId: args.conversationId,
+    resourceIds: offer.resourceIds as Id<"schedResources">[],
+    // Só `auto` com aceite pede `scheduled`; a porta ainda recusa (vira pending) em primeira visita ou com aviso.
+    initialStatus: access.bookPolicy === "auto" ? "scheduled" : "pending_approval",
+    idempotencyKey: key,
+    auditMetadata: {
+      conversationId: args.conversationId,
+      offer: code,
+      ...(args.agentRunId ? { agentRunId: args.agentRunId } : {}),
+      ...(args.approvedBy ? { approvedBy: args.approvedBy } : {}),
+    },
+    now,
+  });
+
+  if (result.ok) {
+    if ("preview" in result) {
+      const slotText = formatSlotText(offer.startTime, now, access.tz);
+      return outcome(proposedResult(slotText), { slotText });
+    }
+    const slotText = formatSlotText(offer.startTime, now, access.tz);
+    const kind = result.status === "pending_approval" ? "pending" : "scheduled";
+    await saveConversationState(ctx, {
+      organizationId: args.organizationId,
+      conversationId: args.conversationId,
+      existing: state,
+      patch: { offers: consumeOffer(offers, code) },
+      now,
+    });
+    return outcome(bookedResult(kind, slotText, result.duplicate), { booked: kind, offeredLabels: [slotText] });
+  }
+
+  const codes = new Set(result.violations.map((x) => x.code as string));
+  if (codes.has("AI_DAILY_LIMIT")) {
+    const handoff = await openHandoff(ctx, access, args.conversationId, "Limite diário de marcações da IA", "A IA atingiu o limite diário de marcações para este cliente. A equipe precisa conferir.");
+    return outcome(
+      toolError("precisa_de_pessoa", "O limite de marcações da IA para este cliente hoje foi atingido: um repasse foi criado. Diga ao cliente que a equipe confirma."),
+      { handoff }
+    );
+  }
+  if ([...codes].some((c) => ALREADY_HAS_CODES.has(c))) {
+    const upcoming = await loadUpcomingOfContact(ctx, { organizationId: args.organizationId, contactId: contact._id, now, tz: access.tz });
+    const list = upcoming.map((u) => `${u.label} (${u.serviceName})`).join("; ");
+    return outcome(
+      toolError(
+        "ja_tem_marcado",
+        `Este cliente já tem horário${list ? `: ${list}` : " ativo nesse período"}. Não reserve outro; se ele quer trocar, chame requestHandoff para a equipe remarcar.`
+      ),
+      { offeredLabels: upcoming.map((u) => u.label) }
+    );
+  }
+  if ([...codes].some((c) => TAKEN_CODES.has(c))) {
+    return await slotTaken(ctx, { access, args, state, offers, code, offer, alternatives: result.alternatives, now });
+  }
+  const handoff = await openHandoff(ctx, access, args.conversationId, "Reserva de horário não concluída", "A IA não conseguiu registrar o horário escolhido pelo cliente. A equipe precisa conferir.");
+  return outcome(
+    toolError("precisa_de_pessoa", "Não foi possível registrar este horário: um repasse foi criado. Diga ao cliente que a equipe confirma."),
+    { handoff }
+  );
+}
+
+/** `horario_tomado`: invalida as ofertas antigas, reemite até 2 das alternativas e conta (no 2º, repasse). */
+async function slotTaken(
+  ctx: MutationCtx,
+  input: {
+    access: Extract<SchedAiAccess, { ok: true }>;
+    args: { organizationId: Id<"organizations">; conversationId: Id<"conversations"> };
+    state: Doc<"schedConversationState"> | null;
+    offers: ReturnType<typeof offersStateOf>;
+    code: string;
+    offer: OfferRecord;
+    alternatives: Alternative[];
+    now: number;
+  }
+): Promise<SchedToolOutcome> {
+  const { access, args, offer, now } = input;
+  const picks: OfferPick[] = input.alternatives.slice(0, 2).map((s) => ({ serviceId: offer.serviceId, variantKey: offer.variantKey, startTime: s.startTime, resourceIds: s.resourceIds }));
+  const cleared = invalidateOffers(input.offers);
+  const next = picks.length > 0 ? issueOffers(cleared, picks, now) : { state: cleared, issued: [] as OfferRecord[] };
+  const takenCount = (input.state?.slotTakenCount ?? 0) + 1;
+  await saveConversationState(ctx, {
+    organizationId: args.organizationId,
+    conversationId: args.conversationId,
+    existing: input.state,
+    patch: { offers: next.state, slotTakenCount: takenCount },
+    now,
+  });
+  const lines = next.issued.map((o) => formatOfferLine(o.code, o.startTime, now, access.tz));
+  const labels = next.issued.map((o) => formatSlotText(o.startTime, now, access.tz));
+  if (takenCount >= 2) {
+    const handoff = await openHandoff(ctx, access, args.conversationId, "Horário tomado duas vezes na conversa", "Dois horários escolhidos pelo cliente foram tomados antes da reserva. A equipe precisa assumir.");
+    return outcome(
+      toolError("horario_tomado", "Esse horário acabou de ser ocupado, e já foi a segunda vez nesta conversa: um repasse foi criado. Diga ao cliente que a equipe vai ajudar a escolher o horário."),
+      { handoff }
+    );
+  }
+  const alt = lines.length > 0 ? `Alternativas livres (os códigos antigos deixaram de valer):\n${lines.join("\n")}` : "Não há alternativas livres no mesmo dia.";
+  return outcome(
+    {
+      status: "erro",
+      error: "horario_tomado",
+      resultado: alt,
+      proximo_passo:
+        lines.length > 0
+          ? "Diga que esse horário acabou de ser ocupado, ofereça as alternativas (sem o código) e espere o cliente escolher; só então reserve."
+          : "Diga que esse horário acabou de ser ocupado e consulte outra data com findAvailableTimes.",
+    },
+    { offeredLabels: labels }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Validators de retorno das internas (o convex-test não valida `returns`: ver os testes)
+// ---------------------------------------------------------------------------
+
+export const toolTextValidator = v.object({
+  status: v.string(),
+  resultado: v.optional(v.string()),
+  error: v.optional(v.string()),
+  proximo_passo: v.optional(v.string()),
+  ha_mais: v.optional(v.union(v.literal("sim"), v.literal("nao"))),
+});
+export const schedToolOutcomeValidator = v.object({
+  result: toolTextValidator,
+  control: v.object({
+    offeredLabels: v.array(v.string()),
+    booked: v.optional(v.union(v.literal("pending"), v.literal("scheduled"))),
+    handoff: v.boolean(),
+    slotText: v.optional(v.string()),
+  }),
+});
+export const schedContextValidator = v.union(
+  v.null(),
+  v.object({
+    tools: v.object({ find: v.boolean(), book: v.boolean() }),
+    book: v.union(v.literal("propose"), v.literal("auto")),
+    services: v.array(v.object({ name: v.string(), durationMin: v.number(), priceLabel: v.optional(v.string()) })),
+    moreServices: v.boolean(),
+    upcoming: v.array(
+      v.object({
+        ref: v.string(),
+        label: v.string(),
+        serviceName: v.string(),
+        status: v.union(v.literal("pending_approval"), v.literal("scheduled"), v.literal("confirmed")),
+      })
+    ),
+    contactHas: v.union(v.literal("none"), v.literal("pending_only"), v.literal("scheduled")),
+    upcomingLabels: v.array(v.string()),
+    timezone: v.string(),
+  })
+);

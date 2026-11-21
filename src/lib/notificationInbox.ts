@@ -134,6 +134,8 @@ export function notificationHref(n: InboxNotification): string | null {
       return notificationTargetPath(n.type, {});
     case "appointment_no_outcome":
       return notificationTargetPath(n.type, {});
+    case "appointment_pending_approval":
+      return notificationTargetPath(n.type, {});
     case "lead_assigned": {
       const leadId = n.leadId ?? (n.data as { leadId?: unknown } | undefined)?.leadId;
       return typeof leadId === "string" && leadId ? `${TAB_ROUTES.board}?lead=${leadId}` : null;

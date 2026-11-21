@@ -2544,7 +2544,9 @@ const applicationTables = {
       // Agenda v2 (A3c) — agendamento ficou sem recurso (fechamento/remoção): fila de conflitos. `data.closureKey`.
       v.literal("appointment_conflict"),
       // Agenda v2 (A4) — resumo diário: atendimentos de ontem ainda sem desfecho (equipe com `agenda:edit`+).
-      v.literal("appointment_no_outcome")
+      v.literal("appointment_no_outcome"),
+      // Agenda v2 (D1) — a IA (ou o link público) registrou uma proposta `pending_approval`; `data.appointmentId`.
+      v.literal("appointment_pending_approval")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2785,6 +2787,8 @@ const applicationTables = {
     agendaConflict: v.optional(v.boolean()),
     // Agenda v2 (A4) — resumo diário "sem desfecho" (sino; sem e-mail).
     agendaActivity: v.optional(v.boolean()),
+    // Agenda v2 (D1) — proposta de horário da IA aguardando aprovação (sino + Telegram + push).
+    agendaApproval: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
@@ -5009,8 +5013,10 @@ const applicationTables = {
       startTime: v.number(), resourceIds: v.array(v.id("schedResources")),
       rescheduleOfId: v.optional(v.id("schedAppointments")),
       issuedAt: v.number(), expiresAt: v.number(),
+      people: v.optional(v.number()),             // D1: busca para 2–4 pessoas (a IA não marca grupo: vira repasse)
     })),
     slotTakenCount: v.optional(v.number()),       // repasse automático no 2º
+    findCalls: v.optional(v.object({ windowStart: v.number(), count: v.number() })), // D1: teto de consultas por hora
     pendingCancel: v.optional(v.object({ appointmentId: v.id("schedAppointments"), at: v.number() })),
     proposal: v.optional(v.object({               // horário proposto pelo humano, aguardando o cliente
       localDate: v.optional(v.string()), timeMin: v.optional(v.number()),

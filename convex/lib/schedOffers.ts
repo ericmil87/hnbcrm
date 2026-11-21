@@ -23,6 +23,8 @@ export type OfferRecord = {
   rescheduleOfId?: SchedId;
   issuedAt: number;
   expiresAt: number;
+  /** Busca para 2–4 pessoas (D1): a oferta lembra, a IA não marca grupo (vira repasse). */
+  people?: number;
 };
 export type OffersState = { offerSeq: number; offers: OfferRecord[] };
 export type OfferPick = {
@@ -31,6 +33,7 @@ export type OfferPick = {
   startTime: number;
   resourceIds: SchedId[];
   rescheduleOfId?: SchedId;
+  people?: number;
 };
 
 /** `OFFER_TTL_MS` e `OFFERS_KEPT` do plano (A1). UNIFICAR com `schedConstants`. */
@@ -64,6 +67,7 @@ export function issueOffers(
     };
     if (p.variantKey !== undefined) rec.variantKey = p.variantKey;
     if (p.rescheduleOfId !== undefined) rec.rescheduleOfId = p.rescheduleOfId;
+    if (p.people !== undefined && p.people > 1) rec.people = p.people;
     return rec;
   });
   const offers = [...state.offers, ...issued].slice(-keep);

@@ -82,7 +82,8 @@ export type CopyInput =
   | { type: "plan_cancel_scheduled"; endsAt: string }
   | { type: "plan_canceled" }
   | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean }
-  | { type: "appointment_no_outcome"; count: number; capped?: boolean };
+  | { type: "appointment_no_outcome"; count: number; capped?: boolean }
+  | { type: "appointment_pending_approval"; label?: string };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -513,6 +514,13 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
           : `${n} atendimentos de ontem ainda sem desfecho`;
       return { title, body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." };
     }
+    case "appointment_pending_approval":
+      return {
+        title: "A IA reservou um horário e aguarda você",
+        body: input.label
+          ? `${input.label}. Aprove, escolha outro horário ou recuse na fila de pendências da Agenda.`
+          : "Aprove, escolha outro horário ou recuse na fila de pendências da Agenda.",
+      };
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -574,4 +582,5 @@ export const COPY_TYPES = [
   "plan_refunded",
   "appointment_conflict",
   "appointment_no_outcome",
+  "appointment_pending_approval",
 ] as const satisfies readonly CopyInput["type"][];
