@@ -138,7 +138,7 @@ describe("segunda leitura (schema fechado validado no servidor)", () => {
 
   it("resposta válida", () => {
     expect(validateClassifierReply(JSON.stringify(ok), ctx)).toEqual({ status: "ok", ato: "confirmou", dia: "2026-06-15", hora: "10:00", servicoId: null });
-    expect(validateClassifierReply("```json\n" + JSON.stringify({ ...ok, servico: "consulta" }) + "\n```", ctx)).toMatchObject({ status: "ok", servicoId: "s1" });
+    expect(validateClassifierReply(JSON.stringify({ ...ok, servico: "consulta" }), ctx)).toMatchObject({ status: "ok", servicoId: "s1" });
   });
 
   it("fora do enum, hora malformada, tipos errados, JSON ruim: inválida", () => {
@@ -151,6 +151,11 @@ describe("segunda leitura (schema fechado validado no servidor)", () => {
     expect(bad({ servico: "Massagem" })).toBe("invalid");
     expect(bad({ hora: 10 })).toBe("invalid");
     expect(validateClassifierReply("não é json", ctx).status).toBe("invalid");
+    // Schema FECHADO: chave extra, texto em volta e cerca de código são recusados.
+    expect(bad({ admin: true })).toBe("invalid");
+    expect(validateClassifierReply(`Claro! ${JSON.stringify(ok)} espero ter ajudado`, ctx).status).toBe("invalid");
+    expect(validateClassifierReply("```json\n" + JSON.stringify(ok) + "\n```", ctx).status).toBe("invalid");
+    expect(validateClassifierReply("", ctx).status).toBe("invalid");
     expect(validateClassifierReply("[1,2]", ctx).status).toBe("invalid");
     expect(validateClassifierReply('{"ato":"confirmou"}', ctx).status).toBe("invalid");
   });
@@ -159,7 +164,9 @@ describe("segunda leitura (schema fechado validado no servidor)", () => {
     expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "outra coisa" }), ctx).status).toBe("bad_evidence");
     expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "" }), ctx).status).toBe("bad_evidence");
     expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "o" }), ctx).status).toBe("bad_evidence");
-    expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "amanha\u0303" }), { ...ctx, messageText: "Ok, confirmado amanhã 10h" }).status).toBe("ok");
+    expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "segunda" }), ctx).status).toBe("bad_evidence"); // curta e sem o marcador
+    expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "segunda 10h" }), ctx).status).toBe("bad_evidence"); // sem o marcador de confirmação
+    expect(validateClassifierReply(JSON.stringify({ ...ok, evidencia: "confirmado amanha\u0303" }), { ...ctx, messageText: "Ok, confirmado amanhã 10h" }).status).toBe("ok");
     expect(validateClassifierReply(JSON.stringify({ ato: "nenhum", dia: "nenhum", hora: "nenhuma", servico: "nenhum", evidencia: "" }), ctx).status).toBe("ok");
   });
 

@@ -82,6 +82,7 @@ import {
   moveFunnelStage,
   recordAppointmentActivity,
   recordAppointmentAudit,
+  restoreStageAfterUndo,
   type SchedActor,
 } from "./schedBookingEffects";
 import {
@@ -1988,7 +1989,7 @@ const UNDO_HUMAN_CONFIRM_REASON = "Desfeito: não era uma confirmação";
 export async function undoHumanConfirmBookingCore(
   ctx: MutationCtx,
   args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; actor: SchedActor; now?: number }
-): Promise<{ appointmentId: Id<"schedAppointments">; sourceMessageId: Id<"messages"> }> {
+): Promise<{ appointmentId: Id<"schedAppointments">; kind: "created" | "approved"; sourceMessageId?: Id<"messages"> }> {
   const now = args.now ?? Date.now();
   const { actor } = args;
   if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
@@ -1999,7 +2000,8 @@ export async function undoHumanConfirmBookingCore(
   const a = await ctx.db.get(args.appointmentId);
   if (!a || a.organizationId !== args.organizationId) fail("Agendamento não encontrado");
   const appt = a!;
-  if (appt.origin !== "human_message" || !appt.sourceMessageId) fail("Só o horário marcado a partir da sua confirmação se desfaz aqui.");
+  if (appt.origin !== "human_message") return await undoHumanApprovalCore(ctx, { appt, actor, tz, now });
+  if (!appt.sourceMessageId) fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
   if (now - appt.createdAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A marcação foi feita há mais de 24 horas: use Cancelar.");
   const untouched = appt.statusChangedAt <= appt.createdAt && appt.approvedAt === undefined && appt.clientConfirmedAt === undefined;
   if (appt.status !== "scheduled" || !untouched) fail("O horário já mudou de situação: use Cancelar.");
@@ -2023,7 +2025,7 @@ export async function undoHumanConfirmBookingCore(
     action: "update",
     actor,
     severity: "medium",
-    description: `Desfez a marcação feita pela confirmação do WhatsApp ${label}`,
+    description: `Desfez a marcação feita por uma confirmação no WhatsApp ${label}`,
     before: { ...appointmentSnapshot(appt), allocations: snapshot },
     after: { status: "cancelled" },
     metadata: { statusChange: true, outcome: "undone", undo: true, byClass: "system", lateCancel: false, messageId: appt.sourceMessageId },
@@ -2031,7 +2033,53 @@ export async function undoHumanConfirmBookingCore(
   });
   await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Marcação desfeita: ${label}`, actor, now });
   await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz });
-  return { appointmentId: appt._id, sourceMessageId: appt.sourceMessageId! };
+  // A etapa do funil que ESTA marcação deu ao lead volta (só se o lead ainda está nela).
+  await restoreStageAfterUndo(ctx, { appointment: after, actor, now });
+  return { appointmentId: appt._id, kind: "created", sourceMessageId: appt.sourceMessageId };
+}
+
+/**
+ * Desfaz a APROVAÇÃO feita pelo sistema a partir da confirmação do humano (pendente da IA ou do link que virou
+ * `scheduled`): volta a `pending_approval`, sem cancelar nem avisar o cliente. Só vale se a última mudança de status
+ * foi essa aprovação (auditoria com `metadata.via:"human_message"`), dentro de 24 h e sem outra mudança depois.
+ * Webhook: `appointment.undone` (o agendamento volta a aguardar aprovação; não é cancelamento).
+ */
+async function undoHumanApprovalCore(
+  ctx: MutationCtx,
+  args: { appt: Doc<"schedAppointments">; actor: SchedActor; tz: string; now: number }
+): Promise<{ appointmentId: Id<"schedAppointments">; kind: "approved" }> {
+  const { appt, actor, tz, now } = args;
+  if (appt.approvedAt === undefined) fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  if (now - appt.approvedAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A aprovação foi feita há mais de 24 horas: use Cancelar.");
+  const untouched = appt.status === "scheduled" && appt.approvedAt !== undefined && appt.approvedBy === undefined && appt.statusChangedAt === appt.approvedAt && appt.clientConfirmedAt === undefined;
+  if (!untouched) fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  const logs = await ctx.db
+    .query("auditLogs")
+    .withIndex("by_entity", (q) => q.eq("entityType", "schedAppointment").eq("entityId", appt._id))
+    .order("desc")
+    .take(UNDO_AUDIT_SCAN);
+  const last = logs.find((l) => l.organizationId === appt.organizationId && l.metadata?.statusChange === true);
+  if (!last || last.metadata?.via !== "human_message" || last.metadata?.undo === true || last.changes?.after?.status !== "scheduled" || last.changes?.before?.status !== "pending_approval") {
+    fail("Só o horário marcado ou aprovado a partir de uma confirmação no WhatsApp se desfaz aqui.");
+  }
+  await ctx.db.patch(appt._id, { status: "pending_approval", approvedAt: undefined, statusChangedAt: now, updatedAt: now });
+  const after = (await ctx.db.get(appt._id))!;
+  const label = appointmentLabel(after, tz);
+  await recordAppointmentAudit(ctx, {
+    appointment: after,
+    action: "update",
+    actor,
+    severity: "medium",
+    description: `Desfez a aprovação ${label}`,
+    before: { status: "scheduled" },
+    after: { status: "pending_approval" },
+    metadata: { statusChange: true, outcome: "undone", undo: true, byClass: "system" },
+    now,
+  });
+  await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Aprovação desfeita: ${label}`, actor, now });
+  await emitAppointmentWebhook(ctx, { event: "appointment.undone", appointment: after, tz });
+  await restoreStageAfterUndo(ctx, { appointment: after, actor, now });
+  return { appointmentId: appt._id, kind: "approved" };
 }
 
 // ---------------------------------------------------------------------------

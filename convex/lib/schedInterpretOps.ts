@@ -37,6 +37,7 @@ import { outboundBlockedFor } from "./readOnly";
 import {
   CONFIRM_MAX_CHARS,
   type ConfirmServiceRef,
+  extractDateTimeMentions,
   parseConfirmation,
   type ParsedConfirmation,
   prefilterConfirmation,
@@ -57,6 +58,10 @@ import {
   classifierHistory,
   collectProposals,
   findMatchingProposal,
+  hasCorrectionWords,
+  isWeakReply,
+  looksLikeCorrection,
+  prepClientText,
   INTERPRET_CONTEXT_MESSAGES,
   INTERPRET_MAX_AGE_MS,
   llmAgrees,
@@ -110,19 +115,32 @@ export type InterpretHookArgs = {
 
 /**
  * Chamado depois do insert de TODA mensagem outbound de HUMANO em conversa 1:1 (envio pelo app e mensagem digitada no
- * celular que o bridge ingere). Sequência barata e SEM leitura de banco até o pré-filtro positivo: texto, 1:1,
- * ≤ 600 caracteres, enviada há ≤ 10 min, contato comercial → `prefilterConfirmation` (puro) → só então lê a org
- * (módulo ligado, modo leitura) e a configuração (interpretação ≠ desligada) → agenda `internalStart`.
- * Devolve se agendou. Nunca lança por regra de negócio.
+ * celular que o bridge ingere). Sequência barata e SEM leitura de banco até o pré-filtro: texto, 1:1, ≤ 600 caracteres,
+ * enviada há ≤ 10 min, contato comercial → `prefilterConfirmation` (puro) OU resposta curta ("ok", "👍") OU palavra de
+ * correção ("ops", "na verdade": só olha se houve marcação/sugestão há pouco, o início confere) → só então lê a org (módulo
+ * ligado, modo leitura) e a configuração (interpretação ≠ desligada) → agenda `internalStart`. Com módulo ou interpretação
+ * desligados e pré-filtro positivo ficam 1 a 2 leituras (a org e a configuração): custo aceito, documentado.
+ *
+ * À PROVA DE FALHA: qualquer exceção aqui (agendador, leitura) é registrada e engolida. O gancho roda dentro da mutation
+ * que grava a mensagem; se ele lançasse, o envio cairia (no ingest do celular o bridge reentregaria em laço).
  */
 export async function maybeScheduleConfirmationInterpretation(ctx: MutationCtx, args: InterpretHookArgs): Promise<boolean> {
+  try {
+    return await scheduleInterpretationIfWorthIt(ctx, args);
+  } catch (e) {
+    console.error("[schedInterpret] gancho falhou (a mensagem segue):", e instanceof Error ? e.message : "erro desconhecido");
+    return false;
+  }
+}
+
+async function scheduleInterpretationIfWorthIt(ctx: MutationCtx, args: InterpretHookArgs): Promise<boolean> {
   if (args.isInternal || args.senderIsAi || args.isGroup || args.importedFromHistory === true) return false;
   if (args.contentType === "audio") return false;
   const text = args.content ?? "";
   if (text.trim().length === 0 || text.length > CONFIRM_MAX_CHARS) return false;
   if (args.now - args.sentAt > INTERPRET_MAX_AGE_MS) return false;
   if (args.contactRelation && isOffBusiness(args.contactRelation)) return false;
-  if (!prefilterConfirmation(text).pass) return false;
+  if (!prefilterConfirmation(text).pass && !isWeakReply(text) && !looksLikeCorrection(text)) return false;
   const org = await ctx.db.get(args.organizationId);
   if (!org || !modulesOf(org).scheduling) return false;
   if (outboundBlockedFor(org, args.now)) return false;
@@ -141,19 +159,28 @@ async function loadSettings(ctx: { db: QueryCtx["db"] }, organizationId: Id<"org
 }
 
 /**
- * Mensagem editada ou apagada no aparelho: só DESCARTA a proposta ainda aberta daquela mensagem. Agendamento já
- * criado não é tocado (o Desfazer é da equipe). Uma leitura indexada, só para mensagem do humano.
+ * Mensagem editada ou apagada no aparelho. Proposta ainda ABERTA: só é descartada (agendamento já criado não é tocado; o
+ * Desfazer é da equipe). Linha ainda `pending` (segunda leitura em curso): a decisão usaria o texto antigo, então a linha
+ * é APAGADA e, se foi edição, a interpretação é refeita com o texto novo (`internalStart` de novo). Uma leitura indexada,
+ * só para mensagem do humano.
  */
 export async function dismissOpenInterpretationOfMessage(
   ctx: MutationCtx,
-  message: Pick<Doc<"messages">, "_id" | "organizationId" | "direction">
+  message: Pick<Doc<"messages">, "_id" | "organizationId" | "direction">,
+  opts: { edited?: boolean } = {}
 ): Promise<boolean> {
   if (message.direction !== "outbound") return false;
   const row = await ctx.db
     .query("schedInterpretations")
     .withIndex("by_message", (q) => q.eq("messageId", message._id))
     .first();
-  if (!row || row.organizationId !== message.organizationId || row.status !== "open") return false;
+  if (!row || row.organizationId !== message.organizationId) return false;
+  if (row.status === "pending") {
+    await ctx.db.delete(row._id);
+    if (opts.edited) await ctx.scheduler.runAfter(0, internal.schedulingInterpret.internalStart, { messageId: message._id });
+    return true;
+  }
+  if (row.status !== "open") return false;
   await ctx.db.patch(row._id, { status: "dismissed", outcome: "dismissed", reason: "mensagem_alterada" });
   return true;
 }
@@ -296,53 +323,75 @@ async function supersedeOlderOpen(ctx: MutationCtx, c: Case, act: string, keep: 
   }
 }
 
+/**
+ * Quem recebe o aviso: remetente (mensagem do app) e responsável do lead, com `agenda >= edit`. A mensagem do CELULAR não
+ * tem remetente: sem responsável do lead, avisa só quem tem `agenda: manage` (admins), nunca 25 pessoas com push.
+ */
 async function recipientsOf(ctx: MutationCtx, c: Case): Promise<Doc<"teamMembers">[]> {
-  const canEdit = (m: Doc<"teamMembers">) =>
-    m.organizationId === c.org._id &&
-    m.type === "human" &&
-    !isMembershipRevoked(m) &&
-    !!m.userId &&
-    hasPermission(resolvePermissions(m.role as Role, m.permissions as Permissions | undefined), "agenda", "edit");
+  const human = (m: Doc<"teamMembers">) => m.organizationId === c.org._id && m.type === "human" && !isMembershipRevoked(m) && !!m.userId;
+  const level = (m: Doc<"teamMembers">, l: "edit" | "manage") =>
+    hasPermission(resolvePermissions(m.role as Role, m.permissions as Permissions | undefined), "agenda", l);
   const direct: Doc<"teamMembers">[] = [];
   for (const id of [c.message.senderId, c.lead.assignedTo]) {
     if (!id || direct.some((m) => m._id === id)) continue;
     const m = await ctx.db.get(id);
-    if (m && canEdit(m)) direct.push(m);
+    if (m && human(m) && level(m, "edit")) direct.push(m);
   }
   if (direct.length > 0) return direct.slice(0, MAX_NOTIFY_RECIPIENTS);
   const humans = await ctx.db
     .query("teamMembers")
     .withIndex("by_organization_and_type", (q) => q.eq("organizationId", c.org._id).eq("type", "human"))
     .take(200);
-  return humans.filter(canEdit).slice(0, MAX_NOTIFY_RECIPIENTS);
+  return humans.filter((m) => human(m) && level(m, "manage")).slice(0, MAX_NOTIFY_RECIPIENTS);
 }
 
-async function notifyCreated(ctx: MutationCtx, c: Case, p: { interpretationId: Id<"schedInterpretations">; appointmentId: AppointmentDoc["_id"]; startTime: number; inConflict: boolean }): Promise<void> {
-  const date = localDateOf(p.startTime, c.tz);
-  const min = Math.round((p.startTime - atLocalMinutes(date, 0, c.tz)) / MINUTE_MS);
-  const whenLabel = whenLabelOf(date, min) ?? "o horário";
+function whenLabelOfStart(startTime: number, tz: string): string {
+  const date = localDateOf(startTime, tz);
+  const min = Math.round((startTime - atLocalMinutes(date, 0, tz)) / MINUTE_MS);
+  return whenLabelOf(date, min) ?? "o horário";
+}
+
+async function notifyCreated(
+  ctx: MutationCtx,
+  c: Case,
+  p: { interpretationId: Id<"schedInterpretations">; appointmentId: AppointmentDoc["_id"]; startTime: number; inConflict: boolean; approved?: boolean }
+): Promise<void> {
+  const whenLabel = whenLabelOfStart(p.startTime, c.tz);
   for (const m of await recipientsOf(ctx, c)) {
     await createNotification(ctx, {
       organizationId: c.org._id,
       memberId: m._id,
       type: "appointment_created",
-      ...notificationCopy({ type: "appointment_created", contactName: contactName(c.contact), whenLabel, inConflict: p.inConflict }),
+      ...notificationCopy({ type: "appointment_created", contactName: contactName(c.contact), whenLabel, inConflict: p.inConflict, approved: p.approved }),
       conversationId: c.conversation._id,
-      data: { appointmentId: p.appointmentId, interpretationId: p.interpretationId, source: "human_message", inConflict: p.inConflict },
+      data: { appointmentId: p.appointmentId, interpretationId: p.interpretationId, source: "human_message", inConflict: p.inConflict, ...(p.approved ? { approved: true } : {}) },
     });
   }
 }
 
-async function notifySuggestion(ctx: MutationCtx, c: Case, p: { interpretationId: Id<"schedInterpretations">; act: string; parsed: Parsed }): Promise<void> {
-  const kind = p.act === "remarcou" ? "remarcou" : p.act === "cancelou" ? "cancelou" : "confirmou";
+type SuggestKind = "confirmou" | "remarcou" | "cancelou" | "aprovar" | "substituir" | "correcao";
+
+async function notifySuggestion(
+  ctx: MutationCtx,
+  c: Case,
+  p: { interpretationId: Id<"schedInterpretations">; act: string; parsed: Parsed; reason?: string; fromStart?: number }
+): Promise<void> {
+  const kind: SuggestKind =
+    p.reason === "aprovar_pendente" ? "aprovar" : p.reason === "substituir_pendente" ? "substituir" : p.reason === "correcao" ? "correcao" : p.act === "remarcou" ? "remarcou" : p.act === "cancelou" ? "cancelou" : "confirmou";
   for (const m of await recipientsOf(ctx, c)) {
     await createNotification(ctx, {
       organizationId: c.org._id,
       memberId: m._id,
       type: "appointment_suggestion",
-      ...notificationCopy({ type: "appointment_suggestion", kind, contactName: contactName(c.contact), whenLabel: whenLabelOf(p.parsed.localDate, p.parsed.timeMin) }),
+      ...notificationCopy({
+        type: "appointment_suggestion",
+        kind,
+        contactName: contactName(c.contact),
+        whenLabel: whenLabelOf(p.parsed.localDate, p.parsed.timeMin),
+        ...(p.fromStart !== undefined ? { fromLabel: whenLabelOfStart(p.fromStart, c.tz) } : {}),
+      }),
       conversationId: c.conversation._id,
-      data: { interpretationId: p.interpretationId, source: "human_message", act: p.act },
+      data: { interpretationId: p.interpretationId, source: "human_message", act: p.act, ...(p.reason ? { reason: p.reason } : {}) },
     });
   }
 }
@@ -352,11 +401,12 @@ async function propose(
   ctx: MutationCtx,
   c: Case,
   existing: Doc<"schedInterpretations"> | null,
-  p: { act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"] }
+  p: { act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"]; fromStart?: number }
 ): Promise<Id<"schedInterpretations">> {
-  const id = await writeRow(ctx, c, existing, { ...p, decision: "proposed", status: "open" });
+  const { fromStart, ...rowPart } = p;
+  const id = await writeRow(ctx, c, existing, { ...rowPart, decision: "proposed", status: "open" });
   await supersedeOlderOpen(ctx, c, p.act, id);
-  await notifySuggestion(ctx, c, { interpretationId: id, act: p.act, parsed: p.parsed });
+  await notifySuggestion(ctx, c, { interpretationId: id, act: p.act, parsed: p.parsed, reason: p.reason, fromStart });
   return id;
 }
 
@@ -396,12 +446,56 @@ export type StartResult = { status: "skipped" | "duplicate" | "final" | "pending
 
 type Plan =
   | { kind: "final"; row: RowFinal }
-  | { kind: "propose"; act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"] }
+  | { kind: "propose"; act: string; parsed: Parsed; checks: Checks; reason: string; appointmentId?: AppointmentDoc["_id"]; fromStart?: number }
   | { kind: "llm"; row: RowFinal };
 
 /** "Já marcado" (nada novo). O pendente de aprovação NÃO entra: a confirmação do humano pode aprová-lo. */
 const ALREADY_BOOKED = ACTIVE_STATUSES.filter((x) => x !== "pending_approval") as readonly string[];
 const BOOKED = ["pending_approval", "scheduled", "confirmed"] as const;
+/** Correção do humano logo depois de uma marcação/sugestão desta via. */
+const CORRECTION_WINDOW_MS = 30 * MINUTE_MS;
+
+const localMinutesOf = (ms: number, tz: string): number => Math.round((ms - atLocalMinutes(localDateOf(ms, tz), 0, tz)) / MINUTE_MS);
+
+/** A marcação/sugestão mais recente DESTA via na conversa, nos últimos 30 min (para a correção "ops, terça 10h"). */
+async function findRecentInterpretation(ctx: MutationCtx, c: Case): Promise<Doc<"schedInterpretations"> | null> {
+  const rows = await ctx.db
+    .query("schedInterpretations")
+    .withIndex("by_organization_and_created", (q) => q.eq("organizationId", c.org._id).gte("createdAt", c.now - CORRECTION_WINDOW_MS))
+    .order("desc")
+    .take(30);
+  return (
+    rows.find(
+      (r) =>
+        r.conversationId === c.conversation._id &&
+        r.messageId !== c.message._id &&
+        (r.decision === "created" || r.decision === "approved_existing" || (r.decision === "proposed" && r.status === "open"))
+    ) ?? null
+  );
+}
+
+/**
+ * Correção logo depois ("Ops, segunda não, terça 10h", "Corrigindo: confirmado terça 10h"): cita OUTRO dia ou hora, ou nega o
+ * anterior. NUNCA age sozinha: vira sugestão de REMARCAR apontando para o agendamento criado, ou substitui a sugestão aberta.
+ */
+async function planCorrection(ctx: MutationCtx, c: Case, recent: Doc<"schedInterpretations">): Promise<Plan | null> {
+  const text = c.message.content;
+  const rp = recent.parsed as Parsed;
+  const mentions = extractDateTimeMentions(text, { now: c.message.createdAt, tz: c.tz });
+  const repeats = mentions.some((m) => m.localDate === rp.localDate && m.timeMin === rp.timeMin && m.localDate !== undefined);
+  if (repeats) return null;
+  const differs = mentions.filter((m) => (m.localDate !== undefined && m.localDate !== rp.localDate) || (m.timeMin !== undefined && m.timeMin !== rp.timeMin));
+  const pick = differs.find((m) => m.localDate !== undefined && m.timeMin !== undefined) ?? differs[0];
+  if (!pick && !hasCorrectionWords(text)) return null;
+  const parsed: Parsed = compact({ localDate: pick?.localDate, timeMin: pick?.timeMin, serviceId: rp.serviceId });
+  if (recent.decision === "created" || recent.decision === "approved_existing") {
+    return { kind: "propose", act: "remarcou", parsed, checks: { parser: false }, reason: "correcao", appointmentId: recent.appointmentId };
+  }
+  // Sugestão ainda aberta: a nova leitura a substitui (quando há horário novo).
+  if (!pick) return null;
+  await ctx.db.patch(recent._id, { status: "expired", reason: "corrigida" });
+  return { kind: "propose", act: recent.act, parsed, checks: { parser: false }, reason: "correcao", appointmentId: recent.appointmentId };
+}
 
 export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messages">): Promise<StartResult> {
   const existing = await ctx.db
@@ -413,6 +507,14 @@ export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messa
   if (!gate.ok) return { status: "skipped", reason: gate.reason };
   const c = gate.c;
   if (c.services.length === 0) return { status: "skipped", reason: "sem_servico" };
+
+  const text = c.message.content;
+  const passes = prefilterConfirmation(text).pass;
+  const weak = isWeakReply(text);
+  if (!passes && !weak && !looksLikeCorrection(text)) return { status: "skipped", reason: "pre_filtro" };
+  // Sem marcação/sugestão desta via há pouco, uma mensagem que só parece correção não tem o que corrigir: nem lê o resto.
+  const recent = await findRecentInterpretation(ctx, c);
+  if (!passes && !weak && !recent) return { status: "skipped", reason: "sem_correcao" };
 
   const messages = (
     await ctx.db
@@ -439,8 +541,19 @@ export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messa
     now: c.now,
     tz: c.tz,
   });
+  // "ok", "sim", "👍": só interessam com uma proposta clara do cliente logo antes; senão nem linha se grava.
+  if (!passes && !recent && collection.lastClient === undefined) return { status: "skipped", reason: "sem_proposta" };
   const refs: Array<ConfirmServiceRef<string>> = c.services.map((s) => ({ _id: s._id, name: s.name }));
-  const parsed = parseConfirmation<string>(c.message.content, { now: c.message.createdAt, tz: c.tz, services: refs, proposal: collection.lastClient });
+  const parsed = parseConfirmation<string>(text, { now: c.message.createdAt, tz: c.tz, services: refs, proposal: collection.lastClient });
+  // Correção do que ESTA via fez há pouco (remarcar/cancelar têm o fluxo próprio; confirmação IGUAL à anterior não é correção).
+  if (recent && parsed.act !== "remarcou" && parsed.act !== "cancelou") {
+    const correction = await planCorrection(ctx, c, recent);
+    if (correction?.kind === "propose") {
+      await propose(ctx, c, null, correction);
+      return { status: "final", reason: correction.reason };
+    }
+  }
+  if (!passes && !weak) return { status: "skipped", reason: "sem_correcao" };
   const plan = await planInterpretation(ctx, c, parsed, collection, lite);
 
   switch (plan.kind) {
@@ -511,6 +624,7 @@ async function planInterpretation(
   const hasTime = p.timeMin !== undefined;
   const startTime = hasDate && hasTime ? atLocalMinutes(p.localDate!, p.timeMin!, c.tz) : undefined;
   if (startTime !== undefined && startTime <= c.now) return ignored("horario_passado");
+  const pastWord = p.negatives.includes("horario_passado") || p.negatives.includes("data_passada");
 
   // Já marcado para esse horário: nada novo (idempotente).
   if (startTime !== undefined) {
@@ -523,22 +637,34 @@ async function planInterpretation(
   const auto = c.settings.humanConfirm.mode === "auto";
   const aiOn = auto ? await aiAvailable(ctx, c) : false;
 
-  // Um pendente de aprovação do contato (da IA ou do link): a confirmação do humano pode aprová-lo.
-  const pendings = await readContactAppointmentsFrom(ctx, c.org._id, contactId, c.now, ["pending_approval"], 20);
-  const onePending = pendings.length === 1 && pendings[0].rescheduleOfId === undefined ? pendings[0] : undefined;
-  if (onePending && auto) {
-    const sameTime = startTime !== undefined && onePending.startTime === startTime && p.level === "completo" && p.form === "explicito";
-    const noDate = !hasDate && !hasTime && p.fromMessage.localDate === undefined && p.fromMessage.timeMin === undefined;
-    if ((sameTime || noDate) && aiOn) {
-      const row: RowFinal = {
-        act: "confirmou",
-        parsed: noDate ? {} : parsedOf(p, onePending.serviceId),
-        checks: { ...base, proposal: true, service: true },
-        decision: "pending",
-        status: "pending",
-        appointmentId: onePending._id,
+  // Pedidos pendentes de aprovação do contato (da IA ou do link). Aprovar pela mensagem SÓ com dia E hora da própria mensagem
+  // iguais aos do pendente (modo auto, IA concordando). Sem dia/hora, ou em outro horário: sugestão, nunca ato.
+  const pendings = (await readContactAppointmentsFrom(ctx, c.org._id, contactId, c.now, ["pending_approval"], 20)).filter((a) => a.rescheduleOfId === undefined);
+  if (pendings.length > 0) {
+    const pendParsed = (a: (typeof pendings)[number]): Parsed => ({ localDate: localDateOf(a.startTime, c.tz), timeMin: localMinutesOf(a.startTime, c.tz), serviceId: a.serviceId });
+    const explicitBoth = p.fromMessage.localDate !== undefined && p.fromMessage.timeMin !== undefined;
+    const sameTime = startTime !== undefined ? pendings.find((a) => a.startTime === startTime) : undefined;
+    if (sameTime) {
+      if (auto && aiOn && explicitBoth && p.level === "completo" && p.form === "explicito") {
+        return { kind: "llm", row: { act: "confirmou", parsed: pendParsed(sameTime), checks: { ...base, proposal: true, service: true }, decision: "pending", status: "pending", appointmentId: sameTime._id } };
+      }
+      return { kind: "propose", act: "confirmou", parsed: pendParsed(sameTime), checks: base, reason: "aprovar_pendente", appointmentId: sameTime._id };
+    }
+    if (!hasDate && !hasTime && pendings.length === 1) {
+      return { kind: "propose", act: "confirmou", parsed: pendParsed(pendings[0]), checks: base, reason: "aprovar_pendente", appointmentId: pendings[0]._id };
+    }
+    if (startTime !== undefined) {
+      // O contato já pediu OUTRO horário: não cria um segundo; pergunta se é para substituir o pedido.
+      const only = pendings.length === 1 ? pendings[0] : undefined;
+      return {
+        kind: "propose",
+        act: "remarcou",
+        parsed: parsedOf(p, only?.serviceId ?? p.serviceId),
+        checks: base,
+        reason: "substituir_pendente",
+        appointmentId: only?._id,
+        fromStart: only?.startTime,
       };
-      return { kind: "llm", row };
     }
   }
 
@@ -546,13 +672,14 @@ async function planInterpretation(
   // Sem dia nem hora não há o que sugerir ("ok, confirmado" sobre qualquer coisa).
   if (!hasDate && !hasTime) return ignored("sem_dia_ou_hora");
 
-  const proposal = findMatchingProposal(p, collection, c.now);
-  const matched: ProposalCandidate | undefined = proposal.match;
+  const strictFind = findMatchingProposal(p, collection, c.now, true);
+  const looseFind = strictFind.match ? strictFind : findMatchingProposal(p, collection, c.now, false);
+  const matched: ProposalCandidate | undefined = strictFind.match;
   const service = resolveServiceForConversation({
     activeServices: c.services.map((s) => ({ _id: s._id, name: s.name })),
     parserServiceId: p.serviceId,
     parserAmbiguous: p.negatives.includes("servico_ambiguo"),
-    proposalServiceId: matched?.serviceId,
+    proposalServiceId: (matched ?? looseFind.match)?.serviceId,
     conversationTexts: lite.filter((m) => c.now - m.createdAt < SUGGESTION_TTL_MS).map((m) => textOfMessage(m)).filter((t) => t.length > 0),
     defaultServiceId: c.settings.humanConfirm.defaultServiceId,
   });
@@ -560,13 +687,17 @@ async function planInterpretation(
   const withService: Parsed = compact({ ...parsed, serviceId: (service.serviceId ?? parsed.serviceId) as Id<"schedServices"> | undefined });
   const suggest = (reason: string): Plan => ({ kind: "propose", act: "confirmou", parsed: withService, checks, reason });
 
-  if (!auto) return suggest("modo_sugerir");
+  if (!auto) return suggest(pastWord ? "horario_passado" : "modo_sugerir");
+  if (pastWord && (!hasDate || !hasTime)) return suggest("horario_passado");
   if (!base.parser) {
     if (p.form === "resposta_curta") return suggest("resposta_curta");
     if (!(p.fromMessage.localDate !== undefined && p.fromMessage.timeMin !== undefined)) return suggest("sem_dia_ou_hora");
     return suggest("leitura_incompleta");
   }
-  if (matched === undefined) return suggest(proposal.reason === "sem_proposta" ? "sem_proposta" : "sem_proposta_coincidente");
+  if (matched === undefined) {
+    if (looseFind.match) return suggest("proposta_sem_intencao");
+    return suggest(strictFind.reason === "sem_proposta" ? "sem_proposta" : "sem_proposta_coincidente");
+  }
   if (!service.ok) return suggest(service.reason);
   if (p.negatives.includes("data_distante")) return suggest("data_distante");
   const daysAhead = diffLocalDays(localDateOf(c.now, c.tz), p.localDate!);
@@ -668,6 +799,12 @@ export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"mess
     return { decision: "ignored", reason: gate.reason };
   }
   const c = gate.c;
+  // Editada depois de a linha nascer: a leitura é do texto ANTIGO. Descarta (a edição pelo aparelho já refaz com o texto novo).
+  const editedAt = typeof c.message.metadata?.editedAt === "number" ? c.message.metadata.editedAt : undefined;
+  if (c.message.metadata?.edited === true && (editedAt === undefined || editedAt >= row.createdAt)) {
+    await ctx.db.patch(row._id, { decision: "ignored", status: "done", reason: "mensagem_alterada" });
+    return { decision: "ignored", reason: "mensagem_alterada" };
+  }
   const verdict: LlmVerdict = llm ?? { status: "unavailable" };
   const parsed = row.parsed as Parsed;
   const approveId = row.appointmentId;
@@ -701,6 +838,10 @@ export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"mess
       return await fallback("nao_foi_possivel_aprovar");
     }
     await writeRow(ctx, c, row, { act, parsed, checks, decision: "approved_existing", status: "done", appointmentId: approveId });
+    // Toda aprovação automática avisa a equipe (e é desfazível: volta a `pending_approval`).
+    if (parsed.localDate !== undefined && parsed.timeMin !== undefined) {
+      await notifyCreated(ctx, c, { interpretationId: row._id, appointmentId: approveId, startTime: atLocalMinutes(parsed.localDate, parsed.timeMin, c.tz), inConflict: false, approved: true });
+    }
     return { decision: "approved_existing", appointmentId: approveId };
   }
 
@@ -891,21 +1032,32 @@ export async function acceptSuggestionCore(
   return { appointmentId };
 }
 
-/** Desfazer a criação automática (porta própria, 24 h) e marcar a interpretação como `undone`. */
+/** Desfazer a criação (ou a aprovação) automática (porta própria, 24 h) e marcar a interpretação como `undone`. */
 export async function undoHumanConfirmCore(
   ctx: MutationCtx,
   args: { organizationId: Id<"organizations">; appointmentId: AppointmentDoc["_id"]; member: Doc<"teamMembers">; now: number }
-): Promise<{ appointmentId: AppointmentDoc["_id"] }> {
+): Promise<{ appointmentId: AppointmentDoc["_id"]; kind: "created" | "approved" }> {
   const res = await undoHumanConfirmBookingCore(ctx, { organizationId: args.organizationId, appointmentId: args.appointmentId, actor: { type: "human", member: args.member, via: "app" }, now: args.now });
-  const row = await ctx.db
-    .query("schedInterpretations")
-    .withIndex("by_message", (q) => q.eq("messageId", res.sourceMessageId))
-    .first();
+  let row: Doc<"schedInterpretations"> | null = null;
+  if (res.sourceMessageId) {
+    row = await ctx.db
+      .query("schedInterpretations")
+      .withIndex("by_message", (q) => q.eq("messageId", res.sourceMessageId!))
+      .first();
+  } else {
+    // Aprovação: o agendamento não guarda a mensagem; acha a linha `approved_existing` recente que aponta para ele.
+    const recent = await ctx.db
+      .query("schedInterpretations")
+      .withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId))
+      .order("desc")
+      .take(200);
+    row = recent.find((r) => r.decision === "approved_existing" && r.appointmentId === res.appointmentId && r.outcome === undefined) ?? null;
+  }
   if (row && row.organizationId === args.organizationId) {
     await ctx.db.patch(row._id, { outcome: "undone", answeredBy: args.member._id, answeredAt: args.now });
     await resolveRowNotifications(ctx, row, ["appointment_created"], args.member, "undone");
   }
-  return { appointmentId: res.appointmentId };
+  return { appointmentId: res.appointmentId, kind: res.kind };
 }
 
 // ---------------------------------------------------------------------------

@@ -65,15 +65,21 @@ export function textOfMessage(m: Pick<MessageLite, "contentType" | "content" | "
 export type ProposalCandidate = ConfirmProposal & {
   /** Serviço ligado à proposta (oferta da IA ou proposta gravada), se houver. */
   serviceId?: string;
+  /**
+   * Pode sustentar a criação AUTOMÁTICA: a ÚLTIMA mensagem do cliente, com UMA menção completa, intenção de marcar para si,
+   * sem assunto de terceiro/entrega/funcionamento, sem texto de comando, e nenhuma recusa do humano depois dela; ou oferta da
+   * IA que o cliente aceitou. As demais só PREENCHEM a sugestão de 1 toque.
+   */
+  strict?: boolean;
 };
 
 export type OfferLite = { startTime: number; serviceId: string; issuedAt: number };
 export type StoredProposalLite = { localDate?: string; timeMin?: number; serviceId?: string; at: number };
 
 export type ProposalCollection = {
-  /** Proposta para a RESPOSTA CURTA: só a última mensagem do cliente, com UMA menção completa de dia e hora. */
+  /** Proposta para a RESPOSTA CURTA: a última mensagem do cliente com UMA menção completa de dia e hora, ou a opção que ele escolheu entre as do humano. */
   lastClient?: ProposalCandidate;
-  /** Todas as propostas abertas (< 48 h) com dia e hora, para a forma explícita. */
+  /** Propostas abertas (< 48 h) com dia e hora, para a forma explícita (preenchem a sugestão). */
   candidates: ProposalCandidate[];
 };
 
@@ -83,9 +89,104 @@ function minutesOf(ms: number, tz: string): { date: LocalDate; min: number } {
   return { date: localDateOf(ms, tz), min: (g("hour") % 24) * 60 + g("minute") };
 }
 
+const foldText = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+/** "Queria marcar segunda 10h" é intenção, não passado: o parser lê "queria" como pretérito. */
+export function prepClientText(text: string): string {
+  return text.replace(/\b(queria|gostaria)\b/gi, (m) => (m.toLowerCase() === "queria" ? "quero" : "quero"));
+}
+
+/**
+ * Oferta do humano ("Tenho segunda 10h ou terça 14h", "Posso te encaixar segunda 10h?"): o parser lê "tenho" como
+ * "estou ocupado" e bloqueia o trecho. Só para PREENCHER a sugestão, reescreve para a forma de oferta que ele lê.
+ */
+export function prepHumanOffer(text: string): string {
+  return text.replace(/\bposso te (encaixar|atender|receber)\b/gi, "consigo te atender").replace(/\btenho\b/gi, "consigo");
+}
+
+/** O cliente quer marcar PARA SI (lista de permissão). */
+const INTENT_RE =
+  /\b(pode ser|podem ser|consegue|conseguem|tem vaga|tem vagas|tem horario|tem algum horario|tem disponibilidade|tem como|da pra|da para|seria possivel|(quero|queria|gostaria de|preciso de|preciso|vou querer) (de )?(marcar|agendar|reservar|uma consulta|um horario|uma sessao|um atendimento)|marca(r)? (pra|para) mim|agenda(r)? (pra|para) mim|posso ir|posso comparecer|me encaixa|me encaixar|pode me encaixar|prefiro|pode me atender|podem me atender)\b/;
+/** Assunto que não é "marcar atendimento para mim" (terceiros, entrega, funcionamento, pagamento, evento). */
+const SUBJECT_DENY_RE =
+  /\b(entreg\w*|motoboy|entregador|retirar|retirada|buscar|instalar|instalacao|tecnico|visita|mae|pai|filh[oa]s?|marido|esposa|mulher|irma|irmao|neto|neta|sobrinh[oa]|namorad[oa]|amig[oa]|vizinh[oa]|abrem|abre|abertos?|funcionando|funcionam|atendem|recebem|palestra|evento|pix|pagamento|comprovante|fica pronto|ficam prontos|pronto|apresentar|apresentacao|catalogo|reuniao|representante|mercadoria|encomenda|equipe|funcionari[oa])\b/;
+/** Texto de comando dentro da mensagem do cliente (injeção): nunca sustenta criação sozinha. */
+const INJECTION_RE = /\b(ignore|ignorem|instru\w*|system|crm data|prompt|responda|concord\w*|assistente|modelo|json)\b/;
+const ACCEPT_RE = /\b(pode ser|pode|sim|ok|okay|fechado|combinado|perfeito|beleza|blz|topo|quero|essa|esse|bora|vamos|isso|certo)\b/;
+const NEGATION_RE = /\b(nao|nunca|infelizmente|mas|so consigo|talvez)\b/;
+/** O humano recusou/ negou depois ("não tenho vaga", "já está ocupado"). */
+const REFUSAL_RE = /\b(nao|infelizmente|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem vagas|indisponivel|ja tem|ja esta|ja foi|cheio|cheia|desculp\w*|impossivel)\b/;
+const MAX_CLIENT_INTENT_CHARS = 240;
+
+export function clientBookingIntent(text: string): boolean {
+  if (text.length > MAX_CLIENT_INTENT_CHARS) return false;
+  const f = foldText(text);
+  return INTENT_RE.test(f) && !SUBJECT_DENY_RE.test(f) && !INJECTION_RE.test(f);
+}
+export const looksInjected = (text: string): boolean => INJECTION_RE.test(foldText(text));
+/** A resposta do cliente aceita a oferta que veio antes ("pode ser", "sim", "quero"). */
+export const clientAccepts = (text: string): boolean => {
+  const f = foldText(text);
+  return f.length <= 80 && ACCEPT_RE.test(f) && !NEGATION_RE.test(f) && !SUBJECT_DENY_RE.test(f) && !INJECTION_RE.test(f);
+};
+export const humanRefuses = (text: string): boolean => REFUSAL_RE.test(foldText(text));
+/** Palavras-chave de correção ("ops", "corrigindo", "na verdade", "não vai dar"): usadas só para olhar a conversa. */
+export const CORRECTION_RE = /\b(ops|corrigindo|correcao|na verdade|errei|errado|desconsidere|mudou|remarc\w*|troca\w*)\b/;
+const CHANGE_RE = /\b(nao|melhor|entao|mudou|troc\w*)\b/;
+const HOUR_RE = /\b\d{1,2}\s?(h|hs|horas)\b|\b\d{1,2}:\d{2}\b/;
+export const hasCorrectionWords = (text: string): boolean => CORRECTION_RE.test(foldText(text));
+/**
+ * Pode ser uma correção do que foi dito há pouco: palavra de correção explícita, ou mudança ("não", "melhor", "então")
+ * junto de uma hora. Barato e sem banco: é o que deixa o gancho olhar a conversa (sem isso "Atendemos das 8h às 18h" ou
+ * "Quinta não consigo" custariam leitura à toa).
+ */
+export function looksLikeCorrection(text: string): boolean {
+  const f = foldText(text);
+  return CORRECTION_RE.test(f) || (CHANGE_RE.test(f) && HOUR_RE.test(text.toLowerCase()));
+}
+const WEAK_REPLY_RE = /^(ok|okay|sim|beleza|blz|combinado|fechado|certo|perfeito|show|pode ser|confirmado|tudo certo|tá bom|ta bom)$/;
+/** Resposta curta ("ok", "👍", "sim"): o pré-filtro puro as barra, o gancho as deixa chegar ao início (que confere a conversa). */
+export function isWeakReply(text: string): boolean {
+  const t = text.trim();
+  if (t.length === 0 || t.length > 24) return false;
+  if (/^[\p{Extended_Pictographic}\u200d\ufe0f\s]+$/u.test(t) && /(\u{1F44D}|\u{1F44C}|\u{2705}|\u{1F64F})/u.test(t)) return true;
+  return WEAK_REPLY_RE.test(foldText(t).replace(/\s+/g, " "));
+}
+
+const ORDINAL_FIRST = /\b(a primeira|o primeiro|primeira opcao|opcao 1|opcao um|a 1)\b/;
+const ORDINAL_SECOND = /\b(a segunda opcao|segunda opcao|opcao 2|opcao dois|a 2)\b/;
+const ORDINAL_LAST = /\b(a ultima|o ultimo|ultima opcao)\b/;
+
+type Mention = { localDate?: string; timeMin?: number };
+
+/** O cliente ESCOLHEU uma das opções que o humano ofereceu ("segunda", "a primeira", "pode ser"). */
+export function chooseOffered(clientText: string, options: ReadonlyArray<{ localDate: string; timeMin: number }>, ctx: { now: number; tz: string }): { localDate: string; timeMin: number } | undefined {
+  if (options.length === 0) return undefined;
+  const f = foldText(clientText);
+  if (f.length === 0 || f.length > 60 || SUBJECT_DENY_RE.test(f) || INJECTION_RE.test(f)) return undefined;
+  if (ORDINAL_FIRST.test(f)) return options[0];
+  if (ORDINAL_SECOND.test(f)) return options[1];
+  if (ORDINAL_LAST.test(f)) return options[options.length - 1];
+  const said: Mention[] = extractDateTimeMentions(prepClientText(clientText), ctx).filter((m) => m.localDate !== undefined || m.timeMin !== undefined);
+  if (said.length > 0) {
+    const hits = options.filter((o) => said.some((m) => (m.localDate === undefined || m.localDate === o.localDate) && (m.timeMin === undefined || m.timeMin === o.timeMin)));
+    return hits.length === 1 ? hits[0] : undefined;
+  }
+  if (options.length === 1 && ACCEPT_RE.test(f) && !NEGATION_RE.test(f)) return options[0];
+  return undefined;
+}
+
 /**
  * Propostas abertas da conversa. `messages` vem em ordem DECRESCENTE e já sem nota interna; `current` é a mensagem
  * do humano sob análise: só o que veio ANTES dela conta (o parser nunca vê a própria mensagem como proposta).
+ * Regras: oferta/pergunta anterior do humano PREENCHE a sugestão (nunca cria sozinha); recusa do humano depois da proposta
+ * a derruba; a candidata da criação automática é só a ÚLTIMA mensagem do cliente, com intenção reconhecida.
  */
 export function collectProposals(args: {
   messages: ReadonlyArray<MessageLite>;
@@ -95,19 +196,27 @@ export function collectProposals(args: {
   stored?: StoredProposalLite;
   now: number;
   tz: string;
-}): ProposalCollection {
+}): ProposalCollection & { strict: ProposalCandidate[] } {
   const idx = args.messages.findIndex((m) => m._id === args.currentId);
   const before = idx >= 0 ? args.messages.slice(idx + 1) : args.messages.filter((m) => m.createdAt < args.currentAt);
   const fresh = (at: number) => args.now - at < PROPOSAL_TTL_MS && at <= args.now;
   const candidates: ProposalCandidate[] = [];
+  const strict: ProposalCandidate[] = [];
   let lastClient: ProposalCandidate | undefined;
 
-  const mentionsOf = (m: MessageLite) =>
-    extractDateTimeMentions(textOfMessage(m), { now: m.createdAt, tz: args.tz }).filter((x) => x.localDate !== undefined && x.timeMin !== undefined);
+  const mentionsOf = (m: MessageLite, client: boolean) =>
+    extractDateTimeMentions(client ? prepClientText(textOfMessage(m)) : prepHumanOffer(textOfMessage(m)), { now: m.createdAt, tz: args.tz }).filter(
+      (x): x is { localDate: string; timeMin: number; evidence: string[] } => x.localDate !== undefined && x.timeMin !== undefined
+    );
+
+  // Recusas do humano (cronologia): uma proposta anterior a elas não vale mais.
+  const refusals = before.filter((m) => m.direction === "outbound" && m.senderType === "human" && humanRefuses(textOfMessage(m))).map((m) => m.createdAt);
+  const refusedAfter = (at: number) => refusals.some((r) => r > at);
 
   let clientSeen = 0;
   let humanSeen = 0;
   let lastClientDone = false;
+  const humanOffers: Array<{ at: number; options: Array<{ localDate: string; timeMin: number }> }> = [];
   for (const m of before) {
     if (m.direction === "inbound" && m.senderType === "contact") {
       const isLast = !lastClientDone;
@@ -115,11 +224,13 @@ export function collectProposals(args: {
       if (clientSeen >= INTERPRET_CLIENT_MESSAGES) continue;
       clientSeen++;
       if (!fresh(m.createdAt)) continue;
-      const ms = mentionsOf(m);
+      const text = textOfMessage(m);
+      const ms = mentionsOf(m, true);
+      const injected = looksInjected(text);
       const asCandidates = ms.map((x): ProposalCandidate => ({ localDate: x.localDate, timeMin: x.timeMin, by: "cliente", at: m.createdAt }));
       candidates.push(...asCandidates);
-      // Duas menções na mesma mensagem ("quinta 10h ou sexta 14h") não são UMA proposta: a resposta curta não escolhe.
-      if (isLast && asCandidates.length === 1) lastClient = asCandidates[0];
+      if (isLast && asCandidates.length === 1 && !injected) lastClient = asCandidates[0];
+      if (isLast && asCandidates.length === 1 && clientBookingIntent(text) && !refusedAfter(m.createdAt)) strict.push({ ...asCandidates[0], strict: true });
     } else if (m.direction === "outbound" && m.senderType === "human") {
       if (humanSeen >= INTERPRET_HUMAN_MESSAGES) continue;
       humanSeen++;
@@ -128,32 +239,60 @@ export function collectProposals(args: {
       // seguidas sobre o mesmo horário (uma delas a um terceiro) se confirmariam uma à outra. Só oferta, pergunta ou citação.
       const prior = parseConfirmation(textOfMessage(m), { now: m.createdAt, tz: args.tz }).act;
       if (prior === "confirmou" || prior === "remarcou" || prior === "cancelou") continue;
-      for (const x of mentionsOf(m)) candidates.push({ localDate: x.localDate, timeMin: x.timeMin, by: "humano", at: m.createdAt });
+      const ms = mentionsOf(m, false);
+      for (const x of ms) {
+        if (refusedAfter(m.createdAt)) continue;
+        candidates.push({ localDate: x.localDate, timeMin: x.timeMin, by: "humano", at: m.createdAt });
+      }
+      if (ms.length > 0 && !refusedAfter(m.createdAt)) humanOffers.push({ at: m.createdAt, options: ms.map((x) => ({ localDate: x.localDate, timeMin: x.timeMin })) });
     }
   }
+
+  // O humano ofereceu e o cliente ESCOLHEU ("segunda", "a primeira", "pode ser"): a escolha é a proposta (preenche a sugestão).
+  if (!lastClient) {
+    const lastMsg = before.find((m) => m.direction === "inbound" && m.senderType === "contact");
+    if (lastMsg && fresh(lastMsg.createdAt)) {
+      const offer = humanOffers.filter((o) => o.at < lastMsg.createdAt).sort((a, b) => b.at - a.at)[0];
+      const pick = offer ? chooseOffered(textOfMessage(lastMsg), offer.options, { now: lastMsg.createdAt, tz: args.tz }) : undefined;
+      if (pick) {
+        lastClient = { ...pick, by: "cliente", at: lastMsg.createdAt };
+        candidates.push(lastClient);
+      }
+    }
+  }
+
+  // Ofertas da IA: valem para a criação automática só se uma mensagem DEPOIS delas do cliente as aceita.
+  const lastClientMsg = before.find((m) => m.direction === "inbound" && m.senderType === "contact");
   for (const o of args.offers) {
     if (!fresh(o.issuedAt)) continue;
     const { date, min } = minutesOf(o.startTime, args.tz);
-    candidates.push({ localDate: date, timeMin: min, by: "ia", at: o.issuedAt, serviceId: o.serviceId });
+    const cand: ProposalCandidate = { localDate: date, timeMin: min, by: "ia", at: o.issuedAt, serviceId: o.serviceId };
+    candidates.push(cand);
+    if (lastClientMsg && lastClientMsg.createdAt > o.issuedAt && clientAccepts(textOfMessage(lastClientMsg)) && !refusedAfter(o.issuedAt)) strict.push({ ...cand, strict: true });
   }
-  if (args.stored && args.stored.localDate !== undefined && args.stored.timeMin !== undefined && fresh(args.stored.at)) {
+  if (args.stored && args.stored.localDate !== undefined && args.stored.timeMin !== undefined && fresh(args.stored.at) && !refusedAfter(args.stored.at)) {
     candidates.push({ localDate: args.stored.localDate, timeMin: args.stored.timeMin, by: "humano", at: args.stored.at, serviceId: args.stored.serviceId });
   }
-  return { lastClient, candidates };
+  return { lastClient, candidates, strict };
 }
 
-/** A terceira condição do §8.1: existe proposta aberta com o MESMO dia e a MESMA hora (comparação determinística). */
+/**
+ * A terceira condição do §8.1: existe proposta aberta com o MESMO dia e a MESMA hora (comparação determinística).
+ * `strictOnly`: só as candidatas que podem sustentar a criação automática.
+ */
 export function findMatchingProposal(
   parsed: Pick<ParsedConfirmation, "act" | "form" | "localDate" | "timeMin" | "fromMessage">,
-  collection: ProposalCollection,
-  now: number
+  collection: ProposalCollection & { strict?: ProposalCandidate[] },
+  now: number,
+  strictOnly = false
 ): { match?: ProposalCandidate; reason: string } {
   if (parsed.form === "resposta_curta") {
     const m = matchesProposal(parsed, collection.lastClient, now);
     return m.ok ? { match: collection.lastClient, reason: "ok" } : { reason: m.reason };
   }
-  if (collection.candidates.length === 0) return { reason: "sem_proposta" };
-  for (const c of collection.candidates) {
+  const pool = strictOnly ? (collection.strict ?? []) : collection.candidates;
+  if (pool.length === 0) return { reason: strictOnly && collection.candidates.length > 0 ? "proposta_sem_intencao" : "sem_proposta" };
+  for (const c of pool) {
     if (matchesProposal(parsed, c, now).ok) return { match: c, reason: "ok" };
   }
   return { reason: "proposta_diferente" };
@@ -288,22 +427,32 @@ export type LlmVerdict =
 
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-/** Valida a resposta do modelo NO SERVIDOR: enums, formato de hora e evidência que é substring da mensagem. */
+const CLASSIFIER_KEYS = ["ato", "dia", "hora", "servico", "evidencia"] as const;
+/** A evidência precisa conter o marcador de confirmação (e ter pelo menos 6 caracteres). */
+const EVIDENCE_MARKER_RE = /(confirm|fechad|combinad|agendad|marcad|reservad|te espero|pode vir|esta marcad|tudo certo|perfeito|certo|pode ser|ate la|ok)/;
+export const EVIDENCE_MIN_CHARS = 6;
+
+/**
+ * Valida a resposta do modelo NO SERVIDOR (schema FECHADO): a resposta tem de ser SÓ o objeto JSON (sem texto em volta,
+ * sem cerca de código), com exatamente as cinco chaves, enums válidos, hora `HH:MM` e evidência que é substring da mensagem,
+ * com pelo menos 6 caracteres e o marcador de confirmação.
+ */
 export function validateClassifierReply(
   raw: string,
   ctx: { messageText: string; days: ReadonlyArray<{ date: LocalDate }>; services: ReadonlyArray<{ _id: string; name: string }> }
 ): LlmVerdict {
   let obj: unknown;
   try {
-    const start = raw.indexOf("{");
-    const end = raw.lastIndexOf("}");
-    if (start < 0 || end <= start) return { status: "invalid" };
-    obj = JSON.parse(raw.slice(start, end + 1));
+    const t = raw.trim();
+    if (!t.startsWith("{") || !t.endsWith("}")) return { status: "invalid" };
+    obj = JSON.parse(t);
   } catch {
     return { status: "invalid" };
   }
   if (typeof obj !== "object" || obj === null || Array.isArray(obj)) return { status: "invalid" };
   const o = obj as Record<string, unknown>;
+  const keys = Object.keys(o);
+  if (keys.length !== CLASSIFIER_KEYS.length || !CLASSIFIER_KEYS.every((k) => k in o)) return { status: "invalid" };
   const { ato, dia, hora, servico, evidencia } = o;
   if (typeof ato !== "string" || typeof dia !== "string" || typeof hora !== "string" || typeof servico !== "string" || typeof evidencia !== "string") {
     return { status: "invalid" };
@@ -320,7 +469,7 @@ export function validateClassifierReply(
   if (ato !== "nenhum") {
     const ev = normalizeConfirmationText(evidencia).trim();
     const text = normalizeConfirmationText(ctx.messageText);
-    if (ev.length < 2 || !text.includes(ev)) return { status: "bad_evidence" };
+    if (ev.length < EVIDENCE_MIN_CHARS || !text.includes(ev) || !EVIDENCE_MARKER_RE.test(foldText(ev))) return { status: "bad_evidence" };
   }
   return { status: "ok", ato: ato as ClassifierAct, dia, hora, servicoId };
 }

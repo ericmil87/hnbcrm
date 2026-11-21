@@ -240,6 +240,7 @@ export async function readAppointmentsStartingBetween(
  * `statuses` pedidos. Nunca consulta com `contactId` indefinido (leria documentos de outra org). Usado pela interpretação
  * da confirmação do humano (C1) para achar "já marcado" e "pendente de aprovação".
  */
+const CONTACT_SCAN_CAP = 100;
 export async function readContactAppointmentsFrom(
   ctx: ReadCtx,
   organizationId: Id<"organizations">,
@@ -252,8 +253,9 @@ export async function readContactAppointmentsFrom(
   const rows = await ctx.db
     .query("schedAppointments")
     .withIndex("by_contact_and_start", (q) => q.eq("contactId", contactId).gte("startTime", fromStart))
-    .take(cap);
-  return rows.filter((r) => r.organizationId === organizationId && statuses.includes(r.status));
+    .take(Math.max(cap, CONTACT_SCAN_CAP));
+  // O índice é por início, não por status: lê até o teto de varredura e só então filtra (o que importa não some atrás de cancelados).
+  return rows.filter((r) => r.organizationId === organizationId && statuses.includes(r.status)).slice(0, cap);
 }
 
 /** `true` se o dia não foi lido por inteiro por `readExceptionsRange` (fail-closed). */

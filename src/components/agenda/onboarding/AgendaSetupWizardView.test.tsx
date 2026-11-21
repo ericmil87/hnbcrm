@@ -29,7 +29,7 @@ describe("AgendaSetupWizardView", () => {
     expect(draft.templateKey).toBe("clinic");
     expect(draft.resources.filter((r: { kind: string }) => r.kind === "person")).toHaveLength(4);
     expect(draft.resources.find((r: { name: string }) => r.name === "Sala dupla").capacity).toBe(2);
-    expect(ai).toMatchObject({ book: "propose", humanConfirmMode: "auto", ackAcceptedNow: false });
+    expect(ai).toMatchObject({ book: "propose", humanConfirmMode: "suggest", ackAcceptedNow: false });
   });
 
   it("'Marca sozinha' mostra o aviso e só vale depois do aceite", () => {

@@ -253,7 +253,7 @@ export const answerSuggestion = mutation({
  */
 export const undoHumanConfirmBooking = mutation({
   args: { organizationId: v.id("organizations"), appointmentId: v.id("schedAppointments") },
-  returns: v.object({ appointmentId: v.id("schedAppointments") }),
+  returns: v.object({ appointmentId: v.id("schedAppointments"), kind: v.union(v.literal("created"), v.literal("approved")) }),
   handler: async (ctx, args) => {
     const member = await requirePermission(ctx, args.organizationId, "agenda", "edit");
     await assertModule(ctx, args.organizationId, "scheduling");

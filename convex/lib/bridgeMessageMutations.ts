@@ -166,7 +166,7 @@ export async function applyBridgeEdit(
   const metadata = { ...(message.metadata ?? {}), edited: true, editedAt: args.at, previousContent };
   await ctx.db.patch(message._id, withMessageSearchPatch(message, { content: newContent, metadata }));
   // Agenda v2 (C1): mensagem editada no aparelho só descarta a proposta aberta dela.
-  await dismissOpenInterpretationOfMessage(ctx, message);
+  await dismissOpenInterpretationOfMessage(ctx, message, { edited: true });
   await refreshLastMessagePreviewIfLast(ctx, { ...message, content: newContent, metadata });
   return message._id;
 }
