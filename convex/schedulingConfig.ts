@@ -269,6 +269,7 @@ export const upsertResource = mutation({
     futureOutsideHours: v.number(),
     overCapacityBy: v.number(),
     futureWithoutSpot: v.number(),
+    inServiceKept: v.number(),
     capped: v.boolean(),
   }),
   handler: async (ctx, args) => {

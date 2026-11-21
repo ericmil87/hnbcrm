@@ -47,6 +47,7 @@ import {
   type ClosureKind,
   type EquivalentSlot,
   loadAppointmentOfOrg,
+  markCapacityGrandfatheredCore,
   MOVABLE_STATUSES,
   newClosureResourceBook,
   planClosureRelocation,
@@ -254,7 +255,7 @@ async function scanUnits(
     cursor?: number;
     now: number;
   }
-): Promise<{ units: Unit[]; nextCursor: number | null }> {
+): Promise<{ units: Unit[]; nextCursor: number | null; inService?: Doc<"schedAllocations">[] }> {
   const { scope } = p;
   const apptCache = new Map<string, AppointmentDoc | null>();
   const getAppt = async (id: AppointmentId) => {
@@ -311,6 +312,7 @@ async function scanUnits(
       } else groups.set(key, { rows: [row], appointments: [a], created: a._creationTime, blockStart: row.blockStart });
     }
     const out: Unit[] = [];
+    const preadmitted = new Set<unknown>(admitted);
     const byAge = [...groups.values()].sort((x, y) => x.created - y.created || (x.appointments[0]._id < y.appointments[0]._id ? -1 : 1));
     for (const g of byAge) {
       const lo = Math.min(...g.rows.map((r) => r.coreStart));
@@ -322,7 +324,11 @@ async function scanUnits(
       g.appointments.sort((x, y) => (x._id < y._id ? -1 : 1));
       out.push({ appointments: g.appointments, resourceIds: [resource._id], cursorKey: g.blockStart });
     }
-    return { units: sortUnits(out), nextCursor: read.coverage ? read.coverage.to : null };
+    // Em andamento (núcleo já começou) e que seguem acima da capacidade: não são mexidos, ficam marcados (e contados na prévia).
+    const inService = read.allocations.filter(
+      (r) => preadmitted.has(r) && r.coreStart < p.now && peakUnits(admitted, r.coreStart, r.coreEnd, "core") > resource.capacity
+    );
+    return { units: sortUnits(out), nextCursor: read.coverage ? read.coverage.to : null, inService };
   }
 
   const dates = datesBetween(scope.fromLocalDate, scope.toLocalDate);
@@ -1072,14 +1078,22 @@ async function runningExceptionIds(ctx: MutationCtx, organizationId: Id<"organiz
 }
 
 /** Reabrir: conflito aberto cujo lugar original voltou a caber ganha esse lugar como 1ª sugestão (a tela oferece resolver). */
-async function reevaluateOpenConflicts(ctx: MutationCtx, organizationId: Id<"organizations">, from: LocalDate, to: LocalDate, now: number): Promise<number> {
+async function reevaluateOpenConflicts(
+  ctx: MutationCtx,
+  organizationId: Id<"organizations">,
+  from: LocalDate,
+  to: LocalDate,
+  now: number,
+  only: { kinds?: Array<Doc<"schedConflicts">["kind"]>; resourceId?: Id<"schedResources"> } = {}
+): Promise<number> {
   const open = await ctx.db
     .query("schedConflicts")
     .withIndex("by_organization_and_status_and_date", (q) => q.eq("organizationId", organizationId).eq("status", "open").gte("localDate", from).lte("localDate", to))
     .take(300);
   let restorable = 0;
   for (const c of open) {
-    if (c.kind !== "resource_closed" || c.resourceId === undefined) continue;
+    if (!(only.kinds ?? ["resource_closed", "capacity"]).includes(c.kind) || c.resourceId === undefined) continue;
+    if (only.resourceId !== undefined && c.resourceId !== only.resourceId) continue;
     const fit = await canRestoreOriginalPlacement(ctx, { appointmentId: c.appointmentId, organizationId, resourceId: c.resourceId, now });
     if (!fit || !fit.ok) continue;
     const others = (c.suggestions ?? []).filter((s) => !(s.startTime === fit.startTime && s.resourceIds.join() === fit.resourceIds.join()));
@@ -1087,6 +1101,17 @@ async function reevaluateOpenConflicts(ctx: MutationCtx, organizationId: Id<"org
     restorable++;
   }
   return restorable;
+}
+
+/**
+ * Capacidade AUMENTADA de volta: os conflitos `capacity` abertos do recurso cujo lugar original voltou a caber ganham esse
+ * lugar como 1ª sugestão (mesmo mecanismo de reabrir recurso fechado). Ninguém é realocado: a decisão é humana.
+ */
+export async function suggestRestoredPlacementsForCapacityCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; resourceId: Id<"schedResources">; now: number }
+): Promise<number> {
+  return reevaluateOpenConflicts(ctx, args.organizationId, "0000-01-01", "9999-12-31", args.now, { kinds: ["capacity"], resourceId: args.resourceId });
 }
 
 // ---------------------------------------------------------------------------
@@ -1141,14 +1166,14 @@ export async function openRemovedResourceConflictsCore(
 export async function previewCapacityExcessCore(
   ctx: MutationCtx,
   args: { organizationId: Id<"organizations">; resource: Doc<"schedResources">; now: number }
-): Promise<{ appointments: number; capped: boolean }> {
+): Promise<{ appointments: number; inService: number; capped: boolean }> {
   const org = await ctx.db.get(args.organizationId);
-  if (!org) return { appointments: 0, capped: false };
+  if (!org) return { appointments: 0, inService: 0, capped: false };
   const tz = assertValidTimezone(org.settings.timezone);
   const today = localDateOf(args.now, tz);
   const scope: ScanScope = { mode: "capacity", resourceId: args.resource._id, fromLocalDate: today, toLocalDate: today };
   const found = await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets: [args.resource], adjust: {}, now: args.now });
-  return { appointments: appointmentsIn(found.units), capped: found.nextCursor !== null };
+  return { appointments: appointmentsIn(found.units), inService: new Set((found.inService ?? []).map((r) => r.appointmentId)).size, capped: found.nextCursor !== null };
 }
 
 /**
@@ -1169,6 +1194,9 @@ export async function openCapacityExcessConflictsCore(
   const today = localDateOf(args.now, tz);
   const scope: ScanScope = { mode: "capacity", resourceId: args.resourceId, fromLocalDate: today, toLocalDate: today };
   const found = await scanUnits(ctx, { organizationId: args.organizationId, tz, scope, targets: [resource], adjust: {}, now: args.now });
+  if (found.inService && found.inService.length > 0) {
+    await markCapacityGrandfatheredCore(ctx, { organizationId: args.organizationId, allocationIds: found.inService.map((r) => r._id), now: args.now });
+  }
   if (found.units.length === 0 && found.nextCursor === null) return { conflicts: 0, pending: 0 };
   const affected = appointmentsIn(found.units);
   const runId = await startRun(ctx, {

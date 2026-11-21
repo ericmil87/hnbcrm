@@ -347,6 +347,27 @@ async function deleteAllocationRows(ctx: MutationCtx, appointmentId: Id<"schedAp
   for (const row of rows) await ctx.db.delete(row._id);
 }
 
+/**
+ * Capacidade reduzida com atendimento JÁ em andamento: quem começou antes da mudança não é mexido, e a linha ganha a
+ * marca `capacityGrandfatheredAt` (a única escrita fora de `assertCapacityAndAllocate` nas alocações, só este campo)
+ * para o excesso ser verificável, não uma heurística de relógio.
+ */
+export async function markCapacityGrandfatheredCore(
+  ctx: MutationCtx,
+  args: { organizationId: Id<"organizations">; allocationIds: Id<"schedAllocations">[]; now: number }
+): Promise<number> {
+  let marked = 0;
+  for (const id of args.allocationIds) {
+    const row = await ctx.db.get(id);
+    if (!row || row.organizationId !== args.organizationId || row.coreStart >= args.now) continue;
+    if (row.capacityGrandfatheredAt === undefined) {
+      await ctx.db.patch(id, { capacityGrandfatheredAt: args.now });
+      marked++;
+    }
+  }
+  return marked;
+}
+
 export type AllocationSnapshot = { resourceId: string; role: string; units: number; exclusive: boolean };
 
 /** Retrato das linhas de alocação (ids, papel, unidades, exclusividade): o desfazer recria EXATAMENTE isto. */
@@ -2230,6 +2251,8 @@ export async function undoAppointmentStatusCore(
   const org = assertOrgModule(await ctx.db.get(a.organizationId));
   const tz = orgTimezone(org);
   let skipped: RestoreSkip[] = [];
+  // A3e: recusa de proposta VENCIDA não se desfaz: voltaria `pending_approval` com a vaga segurada no passado.
+  if (target === "pending_approval" && a.startTime < now) fail("Esse horário já passou: a proposta venceu e não pode voltar para a fila. Marque de novo.");
   if (allocationEffect(a.status, target) === "recreate") {
     const restored = await recreateAllocations(ctx, a, args.actor, now, previous.allocations, "conflict");
     if (!restored.ok) return restored;
