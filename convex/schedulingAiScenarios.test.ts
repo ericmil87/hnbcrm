@@ -12,6 +12,7 @@ import { convexTest, type TestConvex } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
 import { AI_NOW, type AiSeed, seedAiAgenda } from "./lib/schedAiTestSeed.test-helper";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
@@ -256,14 +257,19 @@ describe("o guard barra afirmação sem reserva", () => {
     expect(await appointments()).toHaveLength(0);
   });
 
-  test("insistiu na afirmação falsa: o turno falha, nada sai ao cliente, nenhum agendamento", async () => {
+  test("barrado DUAS vezes: o turno NÃO falha: sai o texto seguro fixo e um repasse com motivo próprio (sem tentativas pagas)", async () => {
     const s = await seedAiAgenda(t);
-    stubModel([reply("Marcado! Segunda às 10h."), reply("Agendado para segunda às 10h, te espero.")]);
+    const m = stubModel([reply("Marcado! Segunda às 10h."), reply("Agendado para segunda às 10h, te espero.")]);
     await turn(s, s.ana, "Quero marcar uma consulta segunda às 10h");
-    expect(await outbound(s.ana)).toHaveLength(0);
+    expect((await outbound(s.ana)).map((x) => x.content)).toEqual([SCHED_SAFE_TEXT]);
     expect(await appointments()).toHaveLength(0);
+    expect(m.calls()).toHaveLength(2); // a original + UMA nova tentativa; nada de laço pago
+    const hs = await handoffs();
+    expect(hs).toHaveLength(1);
+    expect(hs[0].reason).toBe("Resposta da IA sobre horário barrada pelo guard de agenda");
     const runs = await t.run((ctx) => ctx.db.query("agentRuns").collect());
-    expect(runs.some((r) => r.status === "error")).toBe(true);
+    expect(runs.some((r) => r.status === "error")).toBe(false);
+    expect((await failedItems()).filter((i) => i.status === "failed")).toHaveLength(0);
   });
 
   test("propose: depois de reservar, 'confirmado' é barrado; só 'pedido registrado, a equipe confirma' sai", async () => {
@@ -710,8 +716,11 @@ describe("ofertas vigentes: o modelo só usa o que a requisição traz (P1, P1b,
       reply("Vou conferir com a equipe e já retorno."),
     ]);
     await turn(s, s.ana, "Quero consulta segunda");
-    expect(await outbound(s.ana)).toHaveLength(0);
+    expect((await outbound(s.ana)).map((x) => x.content)).toEqual([SCHED_SAFE_TEXT]); // sem horário: as ofertas continuam não mostradas
+    expect((await stateOffers(s.ana)).every((o) => o.shownAt === undefined)).toBe(true);
     await t.run(async (ctx) => { for (const i of await ctx.db.query("aiReplyQueue").collect()) await ctx.db.delete(i._id); });
+    // a equipe tratou o repasse do guard e devolveu a conversa à IA
+    await t.run(async (ctx) => { await ctx.db.patch(s.ana.leadId, { handoffState: undefined }); });
     await turn(s, s.ana, "oi? alguém?");
     expect(offersInRequest(m.calls().at(-2)!)).toEqual([]);
     expect(toolResults(m.calls().at(-1)!).at(-1)!.error).toBe("aguarde_resposta_do_cliente");
@@ -812,8 +821,8 @@ describe("simulador do atendente espelha as tools (sem gravar nada)", () => {
     const s = await seedAiAgenda(t);
     stubModel([reply("Marcado! Segunda às 10h."), reply("Agendado para segunda às 10h.")]);
     const res = await sim(s, [{ role: "customer", content: "Quero consulta segunda às 10h" }]);
-    expect(res.reply).toBeNull();
-    expect(res.error).toContain("produção descartaria");
+    expect(res.reply).toBe(SCHED_SAFE_TEXT);
+    expect(res.actions.some((a) => a.includes("texto padrão"))).toBe(true);
   });
 
   test("sem presumir nada: reserva só com a oferta MOSTRADA na fala anterior (estado reenviado) e o cliente falando depois", async () => {
@@ -838,5 +847,53 @@ describe("simulador do atendente espelha as tools (sem gravar nada)", () => {
     // mesma fala no mesmo instante em que a oferta foi mostrada: o cliente ainda não respondeu
     stubModel([bookFirst, reply("Vou conferir com a equipe.")]);
     await expect(sim(s, [{ role: "customer", content: "o primeiro" }], { schedState: first.schedState, now: AI_NOW })).resolves.toBeDefined();
+  });
+});
+
+describe("guard fora do assunto agenda (P13) e formatos de oferta (P9)", () => {
+  test("P13: frase legítima com horário que NÃO é de agenda ('Posso te ligar amanhã às 10h?') sai normalmente, sem nudge nem repasse", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([reply("Posso te ligar amanhã às 10h?")]);
+    await turn(s, s.ana, "Prefiro que me liguem");
+    expect((await outbound(s.ana)).map((x) => x.content)).toEqual(["Posso te ligar amanhã às 10h?"]);
+    expect(m.calls()).toHaveLength(1);
+    expect(await handoffs()).toHaveLength(0);
+  });
+
+  test.each<[string, (times: string[], day: string) => string]>([
+    ["lista de linhas", (times, day) => `${day}:\n${times.map((x) => `- ${x}`).join("\n")}\nQual prefere?`],
+    ["condicional", (times, day) => `Se quiser, tenho ${day} às ${times.join(" ou às ")}.`],
+    ["dia com dois-pontos", (times, day) => `${day}: ${times.map((x) => x.replace(/^0/, "").replace(":00", "h")).join(", ")}. Qual prefere?`],
+    ["dia numa frase e horas na outra", (times, day) => `${day} tenho vaga. Às ${times.join(", às ")}.`],
+  ])("P9: oferta em formato '%s' é marcada como mostrada e o cliente consegue reservar (sem laço de consultas)", async (_label, fmt) => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([
+      find("Consulta", "2026-06-15"),
+      (req) => reply(fmt(offeredTexts(req).map((x) => x.split("às ")[1]), "Segunda-feira, 15/06")),
+      bookFirst,
+      afterBooking,
+    ]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    const shown = (await stateOffers(s.ana)).filter((o) => o.shownAt !== undefined).length;
+    expect(shown).toBeGreaterThan(0);
+    await turn(s, s.ana, "o das 8");
+    expect(await appointments()).toHaveLength(1);
+    expect(m.calls().filter((c) => c.tools.length > 0).length).toBeGreaterThan(0);
+    expect(toolResults(m.calls().at(-1)!).at(-1)!.status).toBe("reservado_aguardando_equipe");
+  });
+
+  test("D(i): aprovar SÓ o texto de um rascunho que propõe reservar avisa antes de enviar; 'enviar mesmo assim' envia sem registrar", async () => {
+    const s = await seedAiAgenda(t, { mode: "suggest" });
+    stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, reply("Vou registrar o pedido e a equipe confirma.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await approve(s, (await drafts(s.ana))[0]._id);
+    await turn(s, s.ana, "Pode ser o primeiro");
+    const pending = await pendingDraft(s.ana);
+    const before = (await outbound(s.ana)).length;
+    await expect(approve(s, pending._id)).rejects.toThrow(/promete registrar um horário/);
+    expect((await outbound(s.ana)).length).toBe(before);
+    await asAdmin(s).mutation(api.attendant.acceptAiDraft, { draftMessageId: pending._id, sendWithoutBooking: true });
+    expect((await outbound(s.ana)).length).toBe(before + 1);
+    expect(await appointments()).toHaveLength(0);
   });
 });

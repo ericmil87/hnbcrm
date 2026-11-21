@@ -120,7 +120,7 @@ import {
 } from "./lib/schedAttendantTools";
 import { currentOffers, issueOffers, markShown, type OffersState, resolveOffer } from "./lib/schedOffers";
 import { offersShownInText } from "./lib/schedOfferShown";
-import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, knownTime } from "./lib/schedClaimGuard";
+import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, knownTime, SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
 import { markOffersShownFromText } from "./lib/schedAiState";
 // ── Follow-up da IA (v0.60) ──
 // `isWithinSchedule` MUDOU DE CASA para lib/agentSchedule.ts (módulo puro, com
@@ -4154,9 +4154,30 @@ export const internalProcessQueueItem = internalAction({
         })),
         booked: schedTurn.booked.map((b) => ({ ...knownTime(b.startTime, schedTz), status: b.status })),
         offered: schedTurn.offered.map((t) => knownTime(t, schedTz)),
+        serviceNames: context.sched?.services.map((sv) => sv.name) ?? [],
       });
       // O guard liga com o módulo (não com as tools): a IA não pode afirmar marcação em nenhum turno.
       const schedGuardOn = context.schedulingOn === true;
+      let schedSafeFallback = false;
+      const useSafeSchedText = async (kind: string) => {
+        schedSafeFallback = true;
+        replyText = SCHED_SAFE_TEXT;
+        console.warn(JSON.stringify({ event: "attendantSchedSafeText", kind }));
+        try {
+          await ctx.runMutation(internal.handoffs.internalRequestHandoff, {
+            leadId: context.leadId,
+            conversationId: context.conversationId,
+            reason: "Resposta da IA sobre horário barrada pelo guard de agenda",
+            summary: "A IA tentou afirmar ou citar um horário sem reserva correspondente; enviei uma resposta padrão. A equipe precisa conferir o horário com o cliente.",
+            suggestedActions: ["Conferir a agenda e responder o cliente sobre o horário"],
+            teamMemberId: context.agentMemberId,
+            origin: "ai_tool",
+          });
+        } catch {
+          // repasse pendente já existe: a equipe já foi avisada
+        }
+        handoffRequestedThisRun = true;
+      };
       // Agenda externa (v0.64): eventos que a IA de fato VIU neste turno — a
       // única fonte aceita para `replyToCustomer.imageUrl`.
       const agendaEventsSeen: AgendaEvent[] = [];
@@ -4320,7 +4341,12 @@ export const internalProcessQueueItem = internalAction({
           );
           if (claim) {
             console.warn(JSON.stringify({ event: "attendantSchedClaim", round, kind: claim.kind, sample: claim.evidence }));
-            if (claimedOnce) throw new Error(`Resposta afirmava horário sem reserva (${claim.kind})`);
+            if (claimedOnce) {
+              // Barrado duas vezes: nunca falha o turno (a fila repetiria 4x pagando o modelo e terminaria em
+              // `ai_failure` sem o cliente receber nada). Sai um texto seguro fixo + repasse, uma vez.
+              await useSafeSchedText(claim.kind);
+              break;
+            }
             claimedOnce = true;
             messages.push({ role: "user", content: claimNudge(claim.kind) });
             continue;
@@ -4726,11 +4752,11 @@ export const internalProcessQueueItem = internalAction({
       const finalLeak = detectLeakedModelMarkup(replyText);
       if (finalLeak) throw new Error(describeLeakedModelMarkup(finalLeak));
       // Agenda v2 (D1): trava final da regra de afirmação de horário (cobre também o texto da recuperação sem tools).
-      if (schedGuardOn) {
+      if (schedGuardOn && !schedSafeFallback) {
         const finalClaim = detectUnbackedBookingClaim(replyText, schedClaimState());
         if (finalClaim) {
           console.warn(JSON.stringify({ event: "attendantSchedClaim", path: "final", kind: finalClaim.kind, sample: finalClaim.evidence }));
-          throw new Error(`Resposta afirmava horário sem reserva (${finalClaim.kind})`);
+          await useSafeSchedText(finalClaim.kind);
         }
       }
       // Formato por canal (F3): WhatsApp entende `*x*`; Instagram e Messenger
@@ -4970,6 +4996,8 @@ export const acceptAiDraft = mutation({
     draftMessageId: v.id("messages"),
     editedText: v.optional(v.string()),
     actionIndexes: v.optional(v.array(v.number())),
+    // Agenda v2 (D1): "enviar mesmo assim" quando o rascunho propõe reservar um horário e a ação NÃO foi marcada.
+    sendWithoutBooking: v.optional(v.boolean()),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -4984,6 +5012,7 @@ export const acceptAiDraft = mutation({
       member,
       editedText: args.editedText,
       actionIndexes: args.actionIndexes,
+      sendWithoutBooking: args.sendWithoutBooking,
     });
   },
 });
@@ -5001,6 +5030,8 @@ export async function acceptAiDraftCore(
     member: Doc<"teamMembers">;
     editedText?: string;
     actionIndexes?: number[];
+    /** Só a tela: o humano viu o aviso e escolheu enviar o texto SEM registrar o horário. */
+    sendWithoutBooking?: boolean;
     via?: "telegram" | "telegram_auto" | "copilot";
   }
 ): Promise<Id<"messages">> {
@@ -5052,6 +5083,18 @@ export async function acceptAiDraftCore(
   const approvedIndexes = [...new Set(args.actionIndexes ?? [])].filter(
     (i) => Number.isInteger(i) && i >= 0 && i < proposedActionsRaw.length
   );
+  // Aviso ANTES de enviar: o rascunho propõe reservar e a ação não foi marcada. O texto promete o registro ("vou registrar
+  // o horário…") e ele não será feito. A tela mostra o aviso com editar / enviar mesmo assim (`sendWithoutBooking`).
+  // Só no app: Telegram/Copiloto seguem sem este passo (pendente, documentado).
+  const unselectedBooking = proposedActionsRaw.some(
+    (a, i) => !approvedIndexes.includes(i) && typeof a === "object" && a !== null && (a as { name?: unknown }).name === BOOK_TOOL
+  );
+  if (unselectedBooking && !args.via && !args.sendWithoutBooking) {
+    throw new ConvexError({
+      code: "booking_action_not_selected",
+      message: "Esta resposta promete registrar um horário, mas o registro não será feito. Marque a ação de reservar, edite o texto ou envie mesmo assim.",
+    });
+  }
   const bookingResults = new Map<number, { label: string }>();
   for (const index of approvedIndexes) {
     const action = proposedActionsRaw[index] as Partial<ProposedAction> | string;
@@ -6239,6 +6282,7 @@ export const simulateAttendant = action({
       offered: [...(context.sched?.offers.map((o) => o.startTime) ?? [])],
     };
     let simClaimedOnce = false;
+    let simSafeText = false;
     const simTz = context.sched?.timezone ?? context.timezone;
     // O simulador roda em modo sugestão: a reserva nunca grava e nunca vira "marcado"; só "proposta" (O, não R).
     const simClaimState = (): ClaimState => ({
@@ -6247,6 +6291,7 @@ export const simulateAttendant = action({
       existing: [],
       booked: [],
       offered: simSched.offered.map((t) => knownTime(t, simTz)),
+      serviceNames: context.sched?.services.map((sv) => sv.name) ?? [],
     });
 
     try {
@@ -6326,12 +6371,11 @@ export const simulateAttendant = action({
           );
           if (claim) {
             if (simClaimedOnce) {
-              simFailed = true;
-              return {
-                reply: null,
-                actions,
-                error: `A resposta afirmava horário marcado sem reserva (${claim.kind}) — a produção descartaria e o turno falharia.`,
-              };
+              // Produção: barrado duas vezes = texto seguro fixo + repasse (o turno não falha).
+              reply = SCHED_SAFE_TEXT;
+              simSafeText = true;
+              actions.push(`O guard de agenda barrou a resposta duas vezes (${claim.kind}): em produção sai o texto padrão e um repasse é criado`);
+              break;
             }
             simClaimedOnce = true;
             messages.push({ role: "user", content: claimNudge(claim.kind) });
@@ -6510,15 +6554,11 @@ export const simulateAttendant = action({
         simFailed = true;
         return { reply: null, actions, error: "O modelo não produziu resposta nesta tentativa — tente de novo." };
       }
-      if (reply !== null && context.schedulingOn) {
+      if (reply !== null && context.schedulingOn && !simSafeText) {
         const finalClaim = detectUnbackedBookingClaim(reply, simClaimState());
         if (finalClaim) {
-          simFailed = true;
-          return {
-            reply: null,
-            actions,
-            error: `A resposta afirmava horário marcado sem reserva (${finalClaim.kind}) — a produção descartaria e o turno falharia.`,
-          };
+          reply = SCHED_SAFE_TEXT;
+          actions.push(`O guard de agenda barrou a resposta (${finalClaim.kind}): em produção sai o texto padrão e um repasse é criado`);
         }
       }
       const finalReply = reply === null ? null : formatReplyForTransport(reply, simulatedTransport);

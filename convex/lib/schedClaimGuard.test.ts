@@ -249,6 +249,133 @@ const NEW: Case[] = [
   ["Entendi, vou chamar a equipe para remarcar seu horário.", mk(NOW_JUN, { existing: [bk("2026-06-18", "10:00", "scheduled")] }), false, "n"],
 ];
 
+
+// 60 da RODADA 2 do revisor ---------------------------------------------------------------------------------
+const R2: Case[] = [
+  // ===== 60 NOVAS (round 2) — O = qui 18/06 10:00 e 14:00, sex 19/06 09:00 =====
+  // indevidas (devem barrar)
+  ["Tenho quinta às 17h, se preferir.", none, true, "n-inv-cond"],
+  ["Caso queira, tenho quinta às 16h também.", none, true, "n-inv-cond"],
+  ["Tenho quinta às dez e às quatro da tarde.", none, true, "n-inv-extenso"],
+  ["Tenho quinta ao meio-dia e meia.", none, true, "n-inv-extenso"],
+  ["Tenho amanhã às 8.", none, true, "n-inv-rel"],
+  ["Depois de amanhã tenho às 11h.", none, true, "n-inv-rel"],
+  ["Tenho quinta. Às 17h está livre.", none, true, "n-inv-split"],
+  ["Tenho quinta às 10h e às 17h.", none, true, "n-inv-dois"],
+  ["Tenho sexta às 9h e sábado às 9h.", none, true, "n-inv-dois"],
+  ["Seu horário de terça 30/06 às 15h segue, e também deixei quinta às 10h pra você.", hasSched, true, "n-E+O"],
+  ["Além do dia 30, já te encaixei quinta às 14h.", hasSched, true, "n-E+O"],
+  ["Ficou certinho pra quinta 10h, viu?", none, true, "n-claim"],
+  ["Quinta às 10h é sua, pode contar!", none, true, "n-claim"],
+  ["Segurei quinta às 10h pra você.", none, true, "n-claim"],
+  ["Bloqueei quinta 10h no seu nome.", none, true, "n-claim"],
+  ["Seu nome está na lista de quinta às 10h.", none, true, "n-claim"],
+  ["Deixei quinta 10h no seu nome.", none, true, "n-claim"],
+  ["Tá feito, quinta às 10h.", none, true, "n-claim"],
+  ["Já era, quinta 10h tá contigo!", none, true, "n-claim"],
+  ["Pode deixar que quinta às 10h a Dra. te atende.", none, true, "n-claim"],
+  ["Sua presença está confirmada.", none, true, "n-claim-semhora"],
+  ["Tudo pronto pra sua consulta!", none, true, "n-claim-semhora"],
+  ["Qualquer coisa me avisa, quinta 10h te esperamos.", none, true, "n-claim"],
+  ["Pronto, a equipe já confirmou sua consulta de quinta às 10h.", pend, true, "n-pend"],
+  ["Seu horário de quinta às 10h foi aprovado.", pend, true, "n-pend"],
+  ["Quinta às 10h então, a equipe só formaliza depois, mas pode vir.", pend, true, "n-pend"],
+  ["Quinta às 10h então! Te mando a localização.", none, true, "n-claim"],
+  ["Beleza, nos falamos quinta às 10h na clínica.", none, true, "n-claim"],
+  ["A sessão das 17h de quinta é sua.", none, true, "n-inv"],
+  ["Confirmado pras 10 da manhã de quinta.", none, true, "n-claim"],
+  // legítimas (NÃO podem barrar)
+  ["A consulta dura 50 minutos.", none, false, "n-ok-dur"],
+  ["Chegue uns 10 minutos antes, por favor. Tenho quinta às 10h ou às 14h.", none, false, "n-ok-dur"],
+  ["Em 10 minutos a equipe te responde.", none, false, "n-ok-dur"],
+  ["O valor é R$ 150, e tenho quinta às 10h.", none, false, "n-ok-preco"],
+  ["Ficamos na Rua 7 de Setembro, 1500, sala 12.", none, false, "n-ok-end"],
+  ["Nosso telefone é (11) 3456-7890.", none, false, "n-ok-tel"],
+  ["Atendemos das 8 às 18h, de segunda a sexta.", none, false, "n-ok-faixa"],
+  ["A clínica abre às 8h no sábado.", none, false, "n-ok-func"],
+  ["A equipe costuma responder até as 18h.", none, false, "n-ok-limite"],
+  ["Tenho quinta às dez ou às duas da tarde.", none, false, "n-ok-extenso"],
+  ["Tenho quinta-feira 18/06 às 10:00. Também tenho sexta às 9h.", none, false, "n-ok"],
+  ["Tenho quinta. Às 10h ou às 14h, qual prefere?", none, false, "n-ok-split"],
+  ["Seu horário de terça 30/06 às 15h continua de pé.", hasSched, false, "n-ok-E"],
+  ["Seu horário de terça 30/06 às 15h continua marcado. Para outro, tenho quinta às 10h.", hasSched, false, "n-ok-E+O"],
+  ["Seu pedido de quinta às 10h está com a equipe, aguardando confirmação.", pend, false, "n-ok-pend"],
+  ["Registrei seu pedido para quinta às 10h; a equipe confirma em breve.", pend, false, "n-ok-pend"],
+  ["Seu Pix de R$ 150 foi confirmado hoje às 9h.", none, false, "n-ok-pag"],
+  ["Recebi o comprovante enviado hoje às 8h40, obrigado!", none, false, "n-ok-pag"],
+  ["Você comentou que só pode depois das 18h; tenho quinta às 14h, serve?", none, false, "n-ok"],
+  ["Não tenho quinta às 17h, só às 10h ou 14h.", none, false, "n-ok-neg"],
+  ["Prefere manhã ou tarde?", none, false, "n-ok"],
+  ["Posso consultar a agenda pra você, qual dia prefere?", none, false, "n-ok"],
+  ["O Dr. atende às terças e quintas.", none, false, "n-ok-semhora"],
+  ["Lembre de trazer os exames na consulta.", none, false, "n-ok"],
+  ["Hoje é sexta, 12/06.", none, false, "n-ok-data"],
+  ["O retorno costuma ser em 30 dias.", none, false, "n-ok-dur"],
+  ["Tenho quinta às 10h e às 14h. Qual fica melhor pra você?", none, false, "n-ok"],
+  ["Ah, entendi! Quinta às 14h então é a sua preferência? Posso registrar?", none, false, "n-ok-readback"],
+  ["Desculpe a demora! Tenho sexta às 9h.", none, false, "n-ok"],
+  ["Nosso estacionamento fecha às 22h.", none, false, "n-ok-func"],
+];
+
+// Sem as tools / frases fora do assunto agenda (o guard roda em todo turno de org com o módulo ligado) -------------
+const VAZIO = mk(NOW_JUN);
+const FORA: Case[] = [
+  ["O evento é sábado às 19h.", VAZIO, false, "f"],
+  ["Posso te ligar amanhã às 10h?", VAZIO, false, "f"],
+  ["Posso te ligar amanhã às 10h para explicar?", VAZIO, false, "f"],
+  ["O curso começa dia 20 às 19h.", VAZIO, false, "f"],
+  ["Sua entrega chega amanhã às 14h.", VAZIO, false, "f"],
+  ["A live é hoje às 20h!", VAZIO, false, "f"],
+  ["A reunião com o consultor ficou para quinta às 15h.", VAZIO, false, "f"],
+  ["A promoção vai até domingo às 23h59.", VAZIO, false, "f"],
+  ["Seu pedido sai amanhã às 9h.", VAZIO, false, "f"],
+  ["Seu horário de quinta às 10h está confirmado.", VAZIO, "time_not_offered", "f"],
+];
+
+// 40 NOVAS da rodada 3 (expectativa definida ANTES de rodar) --------------------------------------------------------
+const R3: Case[] = [
+  ["Tenho quinta às 18h, se quiser.", none, "time_not_offered", "r3"],
+  ["Se preferir à noite, tenho quinta às 19h.", none, "time_not_offered", "r3"],
+  ["Caso não possa, consigo sexta, 19/06, às 16h.", none, "time_not_offered", "r3"],
+  ["Quinta às 10h ficou no seu nome.", none, "claim_without_booking", "r3"],
+  ["Pode contar com quinta às 14h, já está reservado.", none, "claim_without_booking", "r3"],
+  ["A vaga de quinta às 14h é sua.", none, "claim_without_booking", "r3"],
+  ["Quinta às 10h, está garantido!", none, "claim_without_booking", "r3"],
+  ["Anotado! Quinta às 10h.", none, "claim_without_booking", "r3"],
+  ["Pronto, sexta 19/06 às 9h.", none, "claim_without_booking", "r3"],
+  ["Beleza, sexta às 9h, te aguardo!", none, "claim_without_booking", "r3"],
+  ["Seu horário de quinta às 10h foi confirmado pela equipe.", pend, "confirmed_but_pending", "r3"],
+  ["A equipe já aprovou quinta às 10h.", pend, "confirmed_but_pending", "r3"],
+  ["Quinta às 10h está garantido, pode vir.", pend, "confirmed_but_pending", "r3"],
+  ["Tudo certo com quinta às 10h!", pend, "confirmed_but_pending", "r3"],
+  ["Sua consulta de quinta às 17h está marcada.", none, "time_not_offered", "r3"],
+  ["Já te encaixei quinta às 14h.", hasSched, "claim_without_booking", "r3"],
+  ["Confirmei sua sessão de sexta, 19/06, às 9h.", none, "claim_without_booking", "r3"],
+  ["Prontinho! Sua consulta está confirmada.", none, "claim_without_booking", "r3"],
+  ["Seu agendamento está feito!", none, "claim_without_booking", "r3"],
+  ["Reservado!", none, "claim_without_booking", "r3"],
+  ["Tenho quinta às 10h. Já deixei reservado pra você.", none, "claim_without_booking", "r3"],
+  ["Quinta às 10h então, combinado!", none, "claim_without_booking", "r3"],
+  ["Sua consulta ficou marcada pra quinta.", none, "claim_without_booking", "r3"],
+  ["Agendei você para sexta, 19/06, às 17h.", none, true, "r3"],
+  ["Tenho quinta às 10h, se preferir.", none, false, "r3"],
+  ["Se quiser, tenho sexta, 19/06, às 9h.", none, false, "r3"],
+  ["Caso prefira à tarde, tenho quinta às 14h.", none, false, "r3"],
+  ["Quinta às 10h ou sexta às 9h, qual você prefere?", none, false, "r3"],
+  ["Qual horário fica melhor: quinta às 10h ou às 14h?", none, false, "r3"],
+  ["Quinta, 18/06:\n- 10:00\n- 14:00", none, false, "r3"],
+  ["Posso reservar quinta às 14h pra você?", none, false, "r3"],
+  ["Vou registrar quinta às 10h, tudo bem?", none, false, "r3"],
+  ["Pedido registrado para quinta-feira, 18/06, às 10:00, aguardando confirmação da equipe.", pend, false, "r3"],
+  ["Anotei seu pedido; a equipe confirma quinta às 10h.", pend, false, "r3"],
+  ["Seu pedido de quinta às 10h está com a equipe.", pend, false, "r3"],
+  ["O treino começa às 7h, a gente se vê lá.", none, false, "r3"],
+  ["Estarei fora amanhã às 16h, mas já te respondo.", none, false, "r3"],
+  ["O prazo de resposta é até as 18h de hoje.", none, false, "r3"],
+  ["A consulta de hoje às 9h já passou, tenho quinta às 10h.", none, false, "r3"],
+  ["Seu horário de terça 30/06 às 15h está confirmado.", hasSched, false, "r3"],
+];
+
 const kindOf = (e: Case[2]) => (typeof e === "string" ? e : undefined);
 function run(cases: Case[]) {
   const bad: string[] = [];
@@ -267,6 +394,17 @@ describe("schedClaimGuard — corpus", () => {
   });
   test("43 do PR original continuam valendo", () => {
     expect(run(ORIGINAL)).toEqual([]);
+  });
+  test("60 da rodada 2 do revisor (zero afirmação indevida passando, zero falso positivo nas legítimas)", () => {
+    expect(R2.length).toBeGreaterThanOrEqual(58);
+    expect(run(R2)).toEqual([]);
+  });
+  test("10 frases fora do assunto agenda (módulo ligado, sem tools) passam; só o horário de agenda inventado barra", () => {
+    expect(run(FORA)).toEqual([]);
+  });
+  test("40 novas da rodada 3", () => {
+    expect(R3.length).toBe(40);
+    expect(run(R3)).toEqual([]);
   });
   test("60 novas", () => {
     expect(NEW.length).toBeGreaterThanOrEqual(60);
