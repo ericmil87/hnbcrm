@@ -13,6 +13,12 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Agenda mais leve e completa.** O calendário mostra também eventos que começaram antes do período e terminam dentro dele, tem teto de leitura (com aviso de truncamento) e a paginação da API segue a ordem por horário de início, sem pular nem repetir eventos. A API ganhou `POST /api/v1/calendar/events/cancel`, e o `update` aceita responsável, lead, contato, participantes, cor e recorrência.
 - **Contrato da API.** `calendar/events` e `calendar/events/get` devolvem lead, contato e responsável em formato reduzido, e `calendar/events` passa a incluir `truncated`. O cursor tem formato novo; cursores antigos retornam erro 400.
 
+### Agenda: datas, filtro e grade corrigidos
+
+- **Evento salvo no dia escolhido.** Antes o evento era gravado um dia antes e cada "Editar > Atualizar" o empurrava mais um dia. Agora data e hora seguem o horário do seu aparelho.
+- **Filtro por vários tipos, cabeçalho do mês e navegação.** Com dois ou mais tipos marcados todos aparecem; os dias da semana do mês batem com a grade (começa na segunda); avançar ou voltar mês não pula de mês em dia 31 e a última linha do mês mostra os eventos.
+- **Eventos no mesmo horário lado a lado** (até 3 colunas e um "+N" que abre a lista), eventos de madrugada ou de noite e os que passam da meia-noite aparecem na grade. O formulário "Novo evento" abre limpo, aceita fim depois da meia-noite e "Data de término", e avisa se o fim é antes do início. Navegar não pisca mais a tela e os botões da agenda têm 44 px. Evento de vários dias aparece por inteiro só depois da correção do servidor.
+
 ### Contatos que não são clientes ("Não é cliente" / "Virar lead")
 
 - **Marque quem não é cliente e a IA deixa a pessoa em paz.** Família, equipe, fornecedor, parceiro ou robô que escreve no mesmo WhatsApp pode ser marcado como não-cliente. A partir daí a Atendente IA nunca responde nem lê essas conversas (sem transcrição de áudio, leitura de imagem ou PDF, tradução), não há follow-up, campanha, repasse nem aviso de "mensagem nova", e nada disso conta no limite mensal de atendimentos da IA. O lead dessa pessoa sai do funil (fica arquivado) e a conversa continua na lista, para você ler quando quiser.

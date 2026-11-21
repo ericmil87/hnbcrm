@@ -2,15 +2,16 @@ import { useMemo } from "react";
 import { TimeGrid } from "./TimeGrid";
 import { WEEKDAYS_SHORT } from "./constants";
 import { cn } from "@/lib/utils";
+import { isSameDay, localDateKey, overlapsDay, weekDays } from "@/lib/agendaDates";
 
 interface WeekViewEvent {
   _id: string;
   title: string;
-  startTime: string;
-  endTime: string;
+  startTime: number;
+  endTime: number;
   eventType: string;
   allDay?: boolean;
-  assignee?: { name: string; type: "human" | "ai" };
+  assignee?: { name: string; type: "human" | "ai" } | null;
   _source?: "event" | "task";
 }
 
@@ -22,16 +23,8 @@ interface WeekViewProps {
 }
 
 export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekViewProps) {
-  // Always generate all 7 days (Mon-Sun)
-  const weekDates = useMemo(() => {
-    const dates = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(d.getDate() + i);
-      dates.push(d);
-    }
-    return dates;
-  }, [weekStart]);
+  // Sempre os 7 dias da semana de `weekStart` (início definido em agendaDates).
+  const weekDates = useMemo(() => weekDays(weekStart), [weekStart]);
 
   const { allDayEventsByDay, timedEvents } = useMemo(() => {
     const allDayByDay: WeekViewEvent[][] = weekDates.map(() => []);
@@ -39,15 +32,9 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
 
     events.forEach((event) => {
       if (event.allDay) {
-        const eventDate = new Date(event.startTime);
-        const dayIndex = weekDates.findIndex((d) =>
-          d.getDate() === eventDate.getDate() &&
-          d.getMonth() === eventDate.getMonth() &&
-          d.getFullYear() === eventDate.getFullYear()
-        );
-        if (dayIndex !== -1) {
-          allDayByDay[dayIndex].push(event);
-        }
+        weekDates.forEach((d, i) => {
+          if (overlapsDay(event.startTime, event.endTime, d)) allDayByDay[i].push(event);
+        });
       } else {
         timed.push(event);
       }
@@ -56,14 +43,7 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
     return { allDayEventsByDay: allDayByDay, timedEvents: timed };
   }, [events, weekDates]);
 
-  const isToday = (checkDate: Date) => {
-    const today = new Date();
-    return (
-      checkDate.getDate() === today.getDate() &&
-      checkDate.getMonth() === today.getMonth() &&
-      checkDate.getFullYear() === today.getFullYear()
-    );
-  };
+  const isToday = (checkDate: Date) => isSameDay(checkDate, new Date());
 
   return (
     <div className="flex flex-col h-full">
@@ -72,7 +52,7 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
         <div className="w-10 md:w-14 shrink-0 border-r border-border" /> {/* Time column spacer */}
         {weekDates.map((date) => (
           <div
-            key={date.toISOString()}
+            key={localDateKey(date)}
             className="flex-1 text-center py-1 md:py-2 border-r border-border last:border-r-0 min-w-0"
           >
             <div className="text-caption md:text-xs text-text-muted font-medium leading-tight">
@@ -93,12 +73,12 @@ export function WeekView({ weekStart, events, onEventClick, onSlotClick }: WeekV
         <div className="flex border-b border-border bg-surface-raised max-h-16 md:max-h-24 overflow-y-auto">
           <div className="w-10 md:w-14 shrink-0 border-r border-border px-0.5 md:px-1 py-1 md:py-2">
             <div className="text-[8px] md:text-caption text-text-muted font-medium leading-tight">
-              Dia Inteiro
+              Dia inteiro
             </div>
           </div>
           {allDayEventsByDay.map((dayEvents, index) => (
             <div
-              key={weekDates[index].toISOString()}
+              key={localDateKey(weekDates[index])}
               className="flex-1 border-r border-border last:border-r-0 p-0.5 md:p-1 min-w-0"
             >
               <div className="space-y-0.5">

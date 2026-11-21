@@ -22,6 +22,9 @@ import type { CalendarEventType } from "./constants";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
+import { useKeepPrevious } from "@/hooks/useKeepPrevious";
+import { addDays, startOfWeek } from "@/lib/agendaDates";
+import { calendarQueryKey, serverEventTypeFilter } from "@/lib/agendaQuery";
 import { memberLabel } from "@/lib/teamMembers";
 
 /** Fallback vazio que limpa o `?event=` inválido ao montar. */
@@ -60,14 +63,29 @@ export function CalendarPage() {
   const [selectedEventTypes, setSelectedEventTypes] = useState<CalendarEventType[]>([]);
   const [activeEvent, setActiveEvent] = useState<any>(null);
 
-  const events = useQuery(api.calendar.getEvents, {
+  // A query só aceita UM tipo: com 0 ou 2+ tipos marcados busca todos e o filtro
+  // por tipo roda no cliente (filteredEvents).
+  const serverEventType = serverEventTypeFilter(selectedEventTypes);
+  const rawEvents = useQuery(api.calendar.getEvents, {
     organizationId,
-    startDate: dateRange.startDate,
+    // O índice do backend filtra pelo INÍCIO do evento: recua um dia para trazer o que
+    // começou ontem e cruza a meia-noite (o recorte por dia é feito no cliente).
+    // Evento de vários dias que começou antes disso só volta a aparecer em todos os dias
+    // quando o backend buscar por sobreposição (correção em PR separado do backend).
+    startDate: addDays(dateRange.startDate, -1).getTime(),
     endDate: dateRange.endDate,
     includeTasks: true,
     assignedTo: selectedMemberId ? (selectedMemberId as Id<"teamMembers">) : undefined,
-    eventType: selectedEventTypes.length > 0 ? selectedEventTypes[0] : undefined,
+    eventType: serverEventType,
   });
+  // Navegar entre datas não desmonta a página nem pisca: mantém o resultado anterior enquanto
+  // o novo chega. Trocar organização, responsável ou tipo do servidor descarta o resultado
+  // (chave), para nunca mostrar como atual o de outro filtro.
+  const events = useKeepPrevious(
+    rawEvents,
+    calendarQueryKey(organizationId, selectedMemberId, serverEventType)
+  );
+  const isLoadingEvents = rawEvents === undefined;
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
@@ -89,6 +107,8 @@ export function CalendarPage() {
     if (selectedEventTypes.length === 0) return events;
     return events.filter((event) => selectedEventTypes.includes(event.eventType));
   }, [events, selectedEventTypes]);
+
+  const weekStart = useMemo(() => startOfWeek(currentDate), [currentDate]);
 
   const handleDragStart = (event: any) => {
     setActiveEvent(event.active.data.current);
@@ -191,7 +211,7 @@ export function CalendarPage() {
     setInitialMinute(undefined);
   };
 
-  if (!events || !teamMembers) {
+  if (!teamMembers) {
     return (
       <div className="flex items-center justify-center h-full">
         <Spinner size="lg" />
@@ -221,7 +241,12 @@ export function CalendarPage() {
           onEventTypesChange={setSelectedEventTypes}
         />
 
-        <div className="flex-1 overflow-hidden">
+        <div className="relative flex-1 overflow-hidden">
+          {isLoadingEvents && (
+            <div className="absolute right-3 top-2 z-20 rounded-full bg-surface-raised/90 p-1.5 shadow-sm">
+              <Spinner size="sm" />
+            </div>
+          )}
           {view === "month" && (
             <MonthView
               currentDate={currentDate}
@@ -233,13 +258,7 @@ export function CalendarPage() {
 
           {view === "week" && (
             <WeekView
-              weekStart={(() => {
-                const dayOfWeek = currentDate.getDay();
-                const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-                const monday = new Date(currentDate);
-                monday.setDate(currentDate.getDate() - diff);
-                return monday;
-              })()}
+              weekStart={weekStart}
               events={filteredEvents}
               onEventClick={handleEventClick}
               onSlotClick={handleSlotClick}
@@ -261,7 +280,7 @@ export function CalendarPage() {
         <button
           onClick={handleCreateEvent}
           className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-brand-600 text-white shadow-lg flex items-center justify-center hover:bg-brand-700 active:scale-95 transition-all"
-          aria-label="Novo Evento"
+          aria-label="Novo evento"
         >
           <Plus size={24} />
         </button>
@@ -270,6 +289,7 @@ export function CalendarPage() {
           {activeEvent && (
             <EventBlock
               event={activeEvent}
+              dragKey="overlay"
               onClick={() => {}}
             />
           )}
