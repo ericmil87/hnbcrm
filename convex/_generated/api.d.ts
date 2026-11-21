@@ -288,6 +288,7 @@ import type * as lib_safeFetch from "../lib/safeFetch.js";
 import type * as lib_safeFetchNode from "../lib/safeFetchNode.js";
 import type * as lib_schedAvailability from "../lib/schedAvailability.js";
 import type * as lib_schedCandidates from "../lib/schedCandidates.js";
+import type * as lib_schedConfirmParser from "../lib/schedConfirmParser.js";
 import type * as lib_schedConstants from "../lib/schedConstants.js";
 import type * as lib_schedOffers from "../lib/schedOffers.js";
 import type * as lib_schedRelativeDates from "../lib/schedRelativeDates.js";
@@ -708,6 +709,7 @@ declare const fullApi: ApiFromModules<{
   "lib/safeFetchNode": typeof lib_safeFetchNode;
   "lib/schedAvailability": typeof lib_schedAvailability;
   "lib/schedCandidates": typeof lib_schedCandidates;
+  "lib/schedConfirmParser": typeof lib_schedConfirmParser;
   "lib/schedConstants": typeof lib_schedConstants;
   "lib/schedOffers": typeof lib_schedOffers;
   "lib/schedRelativeDates": typeof lib_schedRelativeDates;
