@@ -62,6 +62,8 @@ export interface BookingSheetProps {
   reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number };
   /** Abre num dia (`YYYY-MM-DD`), ex.: "+ livre" da Agenda. */
   initialDate?: LocalDate;
+  /** Hora pedida (minutos do dia no fuso da org); só vale junto de `initialDate`: destaca a sugestão mais próxima e pré-preenche "Outro horário". */
+  initialTimeMin?: number;
   /** Sala/profissional já fixados por tipo (`room`, `person`), ex.: coluna da Agenda. */
   initialPinned?: Record<string, string>;
   /** Abrir um agendamento (o "Ver horário" do aviso de duplicado). Ausente = sem o atalho. */
@@ -197,7 +199,7 @@ function useSlotSearch(input: {
   return { slots, reload };
 }
 
-function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
+function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
   const bookAppointment = useMutation(api.schedulingMutations.bookAppointment);
   const rescheduleAppointment = useMutation(api.schedulingMutations.rescheduleAppointment);
   const cancelAppointment = useMutation(api.schedulingMutations.cancelAppointment);
@@ -317,6 +319,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialDate, in
       slots={slots}
       clientName={clientName}
       whoOk={whoOk}
+      initialTimeMin={initialDate ? initialTimeMin : undefined}
       reschedule={reschedule ? { fromStartTime: reschedule.startTime } : null}
       busy={busy}
       failure={failure}

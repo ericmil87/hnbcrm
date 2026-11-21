@@ -34,13 +34,15 @@ interface HarnessProps {
   clientName?: string;
   reschedule?: { fromStartTime?: number } | null;
   preview?: (startTime: number) => Promise<ManualPreviewResult>;
+  initialTimeMin?: number;
+  date?: string;
   onOutcome?: (o: SubmitOutcome) => void;
 }
 
 /** Faz o papel do contêiner (estado do fluxo e envio), com o servidor falso; a tela é a real. */
-function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reasons: ["logo após outro atendimento"] }), slot(4)]), book, clientName = "Maria", reschedule = null, preview, onOutcome }: HarnessProps) {
+function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reasons: ["logo após outro atendimento"] }), slot(4)]), book, clientName = "Maria", reschedule = null, preview, initialTimeMin, date, onOutcome }: HarnessProps) {
   const [state, dispatch] = useReducer(bookingReducer, undefined, () =>
-    initialBookingState({ services, idempotencyKey: "k1", serviceId: reschedule ? "svc1" : undefined })
+    initialBookingState({ services, idempotencyKey: "k1", serviceId: reschedule ? "svc1" : undefined, date })
   );
   const [failure, setFailure] = useState<FailureView | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,6 +81,7 @@ function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reas
         dispatch({ type: "pickSlot", slot: pickedFromOffered(s) });
       }}
       onDismissFailure={() => setFailure(null)}
+      initialTimeMin={initialTimeMin}
       onPreviewManual={preview ?? (async () => ({ kind: "ok", warnings: [], resourceNames: [] }))}
     />
   );
@@ -101,6 +104,23 @@ describe("BookingFlowView", () => {
     expect(book.mock.calls[0][0]).toMatchObject({ serviceId: "svc1", contactId: "c1", resourceIds: ["room1"], idempotencyKey: "k1" });
     expect(book.mock.calls[0][0]).not.toHaveProperty("force");
     await waitFor(() => expect(onOutcome).toHaveBeenCalledWith({ kind: "booked", appointmentIds: ["a1"] }));
+  });
+
+  it("hora pedida pela Agenda: destaca a sugestão mais próxima e pré-preenche 'Outro horário'", () => {
+    // 09:00, 10:00 e 12:00 em São Paulo no dia 2030-01-01; pedido: 11:40 -> 12:00.
+    const at = (h: number) => Date.UTC(2030, 0, 1, h + 3, 0);
+    const slots = ready([slot(2, { startTime: at(9), endTime: at(10) }), slot(2, { startTime: at(10), endTime: at(11) }), slot(2, { startTime: at(12), endTime: at(13) })]);
+    render(<Harness services={[sessao]} slots={slots} date="2030-01-01" initialTimeMin={11 * 60 + 40} />);
+    const nearest = document.querySelectorAll('[data-nearest="true"]');
+    expect(nearest).toHaveLength(1);
+    expect(nearest[0].textContent).toContain("12:00");
+    expect((screen.getByLabelText("Hora") as HTMLInputElement).value).toBe("11:40");
+  });
+
+  it("sem hora pedida nada é destacado e o campo fica vazio", () => {
+    render(<Harness services={[sessao]} date="2030-01-01" />);
+    expect(document.querySelector('[data-nearest="true"]')).toBeNull();
+    expect(screen.queryByLabelText("Hora")).toBeNull();
   });
 
   it("serviço único já vem escolhido: 2 toques", async () => {

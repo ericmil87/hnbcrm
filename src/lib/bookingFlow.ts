@@ -16,8 +16,10 @@ import { ConvexError } from "convex/values";
 import type { Id } from "../../convex/_generated/dataModel";
 import {
   addLocalDays,
+  minutesLabel,
   weekdayOf,
   zonedDateKey,
+  zonedMinutes,
   zonedDateTimeLabel,
   zonedTimeLabel,
   zonedToday,
@@ -531,6 +533,29 @@ export function splitSuggestions(slots: readonly OfferedSlot[], top = SUGGESTED_
   const suggested = slots.slice(0, top);
   const others = slots.slice(top).sort((a, b) => a.startTime - b.startTime);
   return { suggested, others };
+}
+
+/**
+ * Horário inicial pedido pela Agenda ("+ livre" numa linha de hora): a sugestão MAIS PRÓXIMA da hora (minutos do dia
+ * no fuso da org), no dia pedido (`date`, se informado). Empate: a mais cedo. `null` sem sugestão no dia.
+ */
+export function nearestSlotStart(
+  slots: ReadonlyArray<Pick<OfferedSlot, "startTime" | "localDate">>,
+  input: { timeMin: number; tz: string; date?: string | null }
+): number | null {
+  let best: { start: number; gap: number } | null = null;
+  for (const s of slots) {
+    if (input.date && s.localDate !== input.date) continue;
+    const gap = Math.abs(zonedMinutes(s.startTime, input.tz) - input.timeMin);
+    if (best === null || gap < best.gap || (gap === best.gap && s.startTime < best.start)) best = { start: s.startTime, gap };
+  }
+  return best ? best.start : null;
+}
+
+/** Valor do campo de hora ("HH:mm") para minutos do dia; fora de 0–1439 não pré-preenche. */
+export function timeInputValue(timeMin: number | undefined): string {
+  if (timeMin === undefined || !Number.isFinite(timeMin) || timeMin < 0 || timeMin >= 1440) return "";
+  return minutesLabel(timeMin);
 }
 
 // ---------------------------------------------------------------------------

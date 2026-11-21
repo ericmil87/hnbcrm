@@ -10,6 +10,8 @@ import {
   SUGGESTED_COUNT,
   bookingReducer,
   buildBookArgs,
+  nearestSlotStart,
+  timeInputValue,
   buildFindSlotsArgs,
   buildRescheduleArgs,
   bookingLabels,
@@ -639,5 +641,29 @@ describe("prévia de 'Outro horário'", () => {
     expect(interpretPreview(res({ ok: false, violations: [{ code: "OUTSIDE_HOURS", severity: "warn", message: "" }] }), ctx).kind).toBe("warn");
     const blocked = interpretPreview(res({ ok: false, violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "" }], alternatives: [{ startTime: at(16), resourceIds: [] }] }), ctx);
     expect(blocked.kind).toBe("blocked");
+  });
+});
+
+describe("hora pedida pela Agenda", () => {
+  const tz = "America/Sao_Paulo";
+  const at = (date: string, h: number, m = 0) => atLocalMinutes(date, h * 60 + m, tz);
+  const slot = (date: string, h: number, m = 0) => ({ startTime: at(date, h, m), localDate: date });
+  it("escolhe a sugestão mais próxima; empate vai para a mais cedo", () => {
+    const list = [slot("2026-11-26", 9), slot("2026-11-26", 10), slot("2026-11-26", 12)];
+    expect(nearestSlotStart(list, { timeMin: 11 * 60 + 40, tz })).toBe(at("2026-11-26", 12));
+    expect(nearestSlotStart(list, { timeMin: 11 * 60, tz })).toBe(at("2026-11-26", 10)); // 10:00 e 12:00 a 60 min? 10:00 vence por ser a mais cedo
+    expect(nearestSlotStart(list, { timeMin: 0, tz })).toBe(at("2026-11-26", 9));
+  });
+  it("só considera o dia pedido e devolve null sem sugestão", () => {
+    const list = [slot("2026-11-25", 11), slot("2026-11-26", 15)];
+    expect(nearestSlotStart(list, { timeMin: 11 * 60, tz, date: "2026-11-26" })).toBe(at("2026-11-26", 15));
+    expect(nearestSlotStart(list, { timeMin: 11 * 60, tz, date: "2026-11-27" })).toBeNull();
+    expect(nearestSlotStart([], { timeMin: 600, tz })).toBeNull();
+  });
+  it("campo de hora: HH:mm ou vazio quando fora do dia", () => {
+    expect(timeInputValue(9 * 60 + 5)).toBe("09:05");
+    expect(timeInputValue(undefined)).toBe("");
+    expect(timeInputValue(1440)).toBe("");
+    expect(timeInputValue(-1)).toBe("");
   });
 });
