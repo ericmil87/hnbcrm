@@ -235,6 +235,8 @@ export type StateAdjust = {
   beforeCutoff?: number;
 };
 
+type AllocationRows = Awaited<ReturnType<typeof readResourceAllocations>>["allocations"];
+
 type ScanScope = {
   mode: "closure" | "removal" | "capacity";
   resourceId?: Id<"schedResources">;
@@ -255,7 +257,7 @@ async function scanUnits(
     cursor?: number;
     now: number;
   }
-): Promise<{ units: Unit[]; nextCursor: number | null; inService?: Doc<"schedAllocations">[] }> {
+): Promise<{ units: Unit[]; nextCursor: number | null; inService?: AllocationRows }> {
   const { scope } = p;
   const apptCache = new Map<string, AppointmentDoc | null>();
   const getAppt = async (id: AppointmentId) => {
