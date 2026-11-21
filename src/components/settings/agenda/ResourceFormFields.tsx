@@ -28,7 +28,7 @@ const KINDS: ResourceKind[] = ["person", "room", "equipment"];
 export function ResourceFormFields({ value, onChange, errors = {}, disabled, kindLocked, memberOptions }: ResourceFormFieldsProps) {
   const set = (patch: Partial<ResourceForm>) => onChange({ ...value, ...patch });
   const isPerson = value.kind === "person";
-  const kindLabel = VOCAB.scheduling.resource[value.kind].one;
+  const kindText = VOCAB.scheduling.config.kind[value.kind];
   return (
     <div className="space-y-5">
       <FormField label="Tipo" htmlFor="resource-kind">
@@ -55,16 +55,14 @@ export function ResourceFormFields({ value, onChange, errors = {}, disabled, kin
         </FormField>
       ) : (
         <div className="space-y-2 rounded-card border border-border bg-surface-sunken p-3">
-          <FormField label="Quantas pessoas ao mesmo tempo" error={errors.capacity}>
+          <FormField label={VOCAB.scheduling.config.capacityLabel} error={errors.capacity}>
             {(aria) => (
               <Input {...aria} type="number" inputMode="numeric" min={1} max={50} value={value.capacity} disabled={disabled} onChange={(e) => set({ capacity: e.target.value })} />
             )}
           </FormField>
           <p className="flex items-start gap-2 text-sm text-text-secondary">
             <Users size={16} className="mt-0.5 shrink-0 text-brand-500" aria-hidden="true" />
-            <span>
-              Uma {kindLabel} comum atende 1 pessoa por vez. Se ela comporta mais, coloque aqui: com <strong>2</strong>, duas pessoas marcam o mesmo horário (por exemplo, um casal na sala dupla) e só então o horário fica cheio.
-            </span>
+            <span>{value.kind === "person" ? "" : VOCAB.scheduling.config.kind[value.kind as "room" | "equipment"].capacityExample}</span>
           </p>
         </div>
       )}
@@ -72,7 +70,7 @@ export function ResourceFormFields({ value, onChange, errors = {}, disabled, kin
       <div className="space-y-2">
         <div>
           <p className="text-sm font-medium text-text-primary">Horário semanal</p>
-          <p className="text-sm text-text-muted">Quando {isPerson ? "este profissional atende" : `esta ${kindLabel} está disponível`}. Dias sem turno ficam fechados.</p>
+          <p className="text-sm text-text-muted">{kindText.weeklyHint}</p>
         </div>
         <WeeklyHoursEditor value={value.week} onChange={(week) => set({ week })} errors={errors.weekDays} disabled={disabled} />
       </div>

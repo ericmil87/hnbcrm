@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Switch } from "@/components/ui/Switch";
 import {
-  MAX_REQUIREMENTS, MAX_VARIANTS, newRequirement, newVariant, type RequirementForm, type ResourceKind, type ServiceErrorKey, type ServiceForm, type FormErrors,
+  changeRequirementKind, MAX_REQUIREMENTS, MAX_VARIANTS, newRequirement, newVariant, type RequirementForm, type ResourceKind, type ServiceErrorKey, type ServiceForm, type FormErrors,
 } from "@/lib/agendaConfigForms";
 import { VOCAB } from "@/lib/vocab";
 import { NoticeField } from "./NoticeField";
@@ -123,13 +123,13 @@ export function ServiceFormFields({ value, onChange, errors = {}, disabled, reso
         </div>
         {value.requirements.map((r, i) => {
           const options = resources.filter((x) => x.kind === r.kind && (x.active || r.resourceIds.includes(x._id)));
-          const kindTitle = VOCAB.scheduling.resource[r.kind];
+          const kindText = VOCAB.scheduling.config.kind[r.kind];
           return (
             <div key={`req:${i}`} className="space-y-3 rounded-card border border-border p-3">
-              <div className="flex items-end gap-2">
-                <div className="w-40 shrink-0">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="sm:w-40 sm:shrink-0">
                   <FormField label="Tipo" htmlFor={`req-kind-${i}`}>
-                    <Select id={`req-kind-${i}`} value={r.kind} disabled={disabled} onValueChange={(kind) => setReq(i, { kind: kind as ResourceKind, resourceIds: [], exclusive: false })} options={(["person", "room", "equipment"] as ResourceKind[]).map((k) => ({ value: k, label: VOCAB.scheduling.resource[k].title }))} />
+                    <Select id={`req-kind-${i}`} value={r.kind} disabled={disabled} onValueChange={(kind) => set({ requirements: value.requirements.map((x, idx) => (idx === i ? changeRequirementKind(x, kind as ResourceKind) : x)) })} options={(["person", "room", "equipment"] as ResourceKind[]).map((k) => ({ value: k, label: VOCAB.scheduling.resource[k].title }))} />
                   </FormField>
                 </div>
                 <div className="min-w-0 flex-1">
@@ -150,8 +150,8 @@ export function ServiceFormFields({ value, onChange, errors = {}, disabled, reso
                   disabled={disabled}
                   onValueChange={(v) => setReq(i, { resourceIds: v === "any" ? [] : options.slice(0, 1).map((x) => x._id) })}
                   options={[
-                    { value: "any", label: `Qualquer ${kindTitle.one}` },
-                    { value: "some", label: `Só ${kindTitle.many} que eu escolher`, disabled: options.length === 0 },
+                    { value: "any", label: kindText.any },
+                    { value: "some", label: kindText.only, disabled: options.length === 0 },
                   ]}
                 />
               </FormField>
@@ -175,7 +175,7 @@ export function ServiceFormFields({ value, onChange, errors = {}, disabled, reso
               )}
               {r.kind !== "person" && (
                 <div className="space-y-3">
-                  <SwitchRow title={`Ocupa ${kindTitle.one} inteira`} description="Ninguém mais entra no horário, mesmo que comporte mais pessoas." checked={r.exclusive} disabled={disabled} onChange={(exclusive) => setReq(i, { exclusive })} />
+                  <SwitchRow title={VOCAB.scheduling.config.kind[r.kind].exclusive} description="Ninguém mais entra no horário, mesmo que comporte mais pessoas." checked={r.exclusive} disabled={disabled} onChange={(exclusive) => setReq(i, { exclusive })} />
                   {!r.exclusive && <NumberInput label="Vagas que ocupa" hint="Em branco = 1. Um casal numa sala dupla ocupa 2." value={r.units} disabled={disabled} onChange={(units) => setReq(i, { units })} />}
                 </div>
               )}

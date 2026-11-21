@@ -10,8 +10,14 @@ describe("ResourceFormFields", () => {
     render(<ResourceFormFields value={value} onChange={onChange} memberOptions={[]} />);
     expect(screen.getByLabelText("Quantas pessoas ao mesmo tempo")).toBeInTheDocument();
     expect(screen.getByText(/casal na sala dupla/)).toBeInTheDocument();
+    expect(screen.queryByText(/Uma equipamento|esta equipamento/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("Quantas pessoas ao mesmo tempo"), { target: { value: "2" } });
     expect(onChange).toHaveBeenLastCalledWith({ ...value, capacity: "2" });
+  });
+  it("equipamento concorda em gênero", () => {
+    render(<ResourceFormFields value={newResourceForm("equipment")} onChange={() => {}} memberOptions={[]} />);
+    expect(screen.getByText(/Um equipamento comum atende 1 pessoa por vez\. Se este comporta mais/)).toBeInTheDocument();
+    expect(screen.getByText(/Quando este equipamento está disponível/)).toBeInTheDocument();
   });
   it("profissional não tem capacidade, mas liga a alguém da equipe", () => {
     render(<ResourceFormFields value={newResourceForm("person")} onChange={() => {}} memberOptions={[{ value: "m1", label: "Ana" }]} />);

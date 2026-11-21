@@ -35,6 +35,8 @@ export interface AutomationForm {
   /** O aceite do "marca sozinha" já está gravado no servidor (por quem e quando vem em `ackAt`). */
   hasAck: boolean;
   ackAt?: number;
+  /** Quem aceitou (id do membro). */
+  ackBy?: string;
   /** O dono confirmou o aviso nesta edição (ainda não salvo). */
   ackAcceptedNow: boolean;
 }
@@ -66,6 +68,7 @@ export function automationFromSettings(s: SettingsView): AutomationForm | undefi
     humanConfirmMode: s.humanConfirm.mode,
     hasAck: s.ai.autoAck !== undefined,
     ackAt: s.ai.autoAck?.at,
+    ackBy: s.ai.autoAck?.by,
     ackAcceptedNow: false,
   };
 }
@@ -133,9 +136,10 @@ export const parseWeights = (w: Record<WeightKey, string>): SchedSmartWeights =>
 
 /**
  * Só o que mudou, mais o `aiAutoAck`: `true` somente quando a IA passa a agir sozinha, ainda não havia
- * aceite gravado e o dono confirmou o aviso agora (o servidor grava quem e quando).
+ * aceite gravado e o dono confirmou o aviso agora (o servidor grava quem e quando); `false` quando havia
+ * alguma ação sozinha e agora não há nenhuma (revoga o aceite).
  */
-export function automationToPatch(f: AutomationForm, saved: AutomationForm): { patch: AutomationPatch; aiAutoAck?: true } {
+export function automationToPatch(f: AutomationForm, saved: AutomationForm): { patch: AutomationPatch; aiAutoAck?: boolean } {
   const patch: AutomationPatch = {};
   const smart: NonNullable<AutomationPatch["smart"]> = {};
   if (f.smartMode !== saved.smartMode) smart.mode = f.smartMode;
@@ -158,7 +162,10 @@ export function automationToPatch(f: AutomationForm, saved: AutomationForm): { p
   if (f.humanConfirmMode !== saved.humanConfirmMode) patch.humanConfirm = { mode: f.humanConfirmMode };
 
   const sendAck = wantsAuto(f) && !saved.hasAck && f.ackAcceptedNow;
-  return sendAck ? { patch, aiAutoAck: true } : { patch };
+  if (sendAck) return { patch, aiAutoAck: true };
+  // Saiu de "sozinha" para nada sozinho: o aceite é revogado (auditado), e voltar a escolher mostra o aviso de novo.
+  if (saved.hasAck && wantsAuto(saved) && !wantsAuto(f)) return { patch, aiAutoAck: false };
+  return { patch };
 }
 
 // ---------------------------------------------------------------------------
@@ -168,11 +175,6 @@ export function automationToPatch(f: AutomationForm, saved: AutomationForm): { p
 /** Dia de exemplo da prévia: amanhã (no fuso da org), que costuma ter agenda aberta. */
 export function previewDefaultDate(today: LocalDate): LocalDate {
   return addLocalDays(today, 1);
-}
-
-/** O servidor descreve o motivo em português ("logo após outro atendimento"); "encostado" = colado em outro. */
-export function touchesAnother(reasons: ReadonlyArray<string>): boolean {
-  return reasons.some((r) => /^logo (após|antes de) outro atendimento/.test(r));
 }
 
 export interface PreviewArgs {
@@ -189,4 +191,55 @@ export function previewDraftArgs(f: AutomationForm): PreviewArgs {
     ...(errors.weights ? {} : { weights: parseWeights(f.weights) }),
     ...(errors.minOffer ? {} : { minOffer: Number(f.minOffer) }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Aceite do "marca sozinha": textos
+// ---------------------------------------------------------------------------
+
+/** Aviso do aceite, conforme as ações que passam a valer sozinhas (marcar / remarcar / cancelar). */
+export function autoAckText(f: Pick<AutomationForm, "book" | "reschedule" | "cancel" | "firstVisitNeedsApproval">): string {
+  const verbs: string[] = [];
+  if (f.book === "auto") verbs.push("marcar horários");
+  if (f.reschedule === "auto") verbs.push("remarcar");
+  if (f.cancel === "auto") verbs.push("cancelar");
+  const list = verbs.length <= 1 ? (verbs[0] ?? "agir") : `${verbs.slice(0, -1).join(", ")} e ${verbs[verbs.length - 1]}`;
+  const first = f.firstVisitNeedsApproval
+    ? "A primeira visita de cada cliente continua pedindo a sua aprovação."
+    : "Atenção: a aprovação da primeira visita está desligada, então novos clientes também serão atendidos sem passar por você.";
+  return `A IA vai ${list} sozinha, sem passar por você. Marcação dupla continua impossível, mas ela pode fazer algo que você não faria. ${first} Você pode voltar atrás quando quiser.`;
+}
+
+/** "Você aceitou este aviso em 12/11/2026." / "Ana aceitou este aviso em ..."; `dateText` já formatado. */
+export function ackSentence(a: { by?: string; dateText: string }, meId: string | undefined, nameOf: (id: string) => string | undefined): string {
+  const who = a.by && a.by === meId ? "Você aceitou" : `${(a.by && nameOf(a.by)) || "Outra pessoa da equipe"} aceitou`;
+  return `${who} o aviso do "marca sozinha" em ${a.dateText}.`;
+}
+
+/** Padrões do servidor (IA consulta e propõe, confirmações marcadas sozinhas): ponto de partida do assistente. */
+export function defaultAutomationForm(): AutomationForm {
+  return {
+    smartMode: "rank",
+    weights: { ...DEFAULT_WEIGHTS_FORM },
+    minOffer: "3",
+    consult: true,
+    book: "propose",
+    reschedule: "propose",
+    cancel: "handoff",
+    firstVisitNeedsApproval: true,
+    maxAiBookingsPerContactPerDay: "2",
+    humanConfirmMode: "auto",
+    hasAck: false,
+    ackAcceptedNow: false,
+  };
+}
+
+export type WizardAiChoice = AiLevel;
+
+/** Escolha única do assistente: não mexe / propõe / marca sozinha (reagenda sempre propõe; cancelar passa pela equipe). */
+export function wizardAiChoice(f: AutomationForm): WizardAiChoice {
+  return f.book;
+}
+export function applyWizardAiChoice(f: AutomationForm, choice: AiLevel): AutomationForm {
+  return { ...f, consult: choice !== "off", book: choice, reschedule: choice === "off" ? "off" : "propose" };
 }

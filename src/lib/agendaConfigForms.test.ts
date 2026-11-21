@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { nameKey as serverNameKey } from "../../convex/lib/schedConfigOps";
 import {
-  generalFromSettings, generalToPatch, newRequirement, newResourceForm, newServiceForm, nameKey, noticeFromMinutes, noticeToMinutes,
+  changeRequirementKind, generalFromSettings, generalToPatch, newRequirement, newResourceForm, newServiceForm, generalErrors, nameKey, noticeFromMinutes, noticeToMinutes,
   resourceCreateArgs, resourceErrors, resourcePatchArgs, serviceCreateArgs, serviceErrors, serviceFormFrom, servicePatchArgs, stageChoiceGroups, withVariantKeys,
 } from "./agendaConfigForms";
 
@@ -79,5 +79,20 @@ describe("agendaConfigForms", () => {
     expect(generalToPatch({ ...base, minNotice: { value: "1", unit: "d" } }, base)).toEqual({ minNoticeMin: 1440 });
     const g = stageChoiceGroups([{ _id: "b", name: "Vendas", stages: [{ _id: "a", name: "Novo" }, { _id: "l", name: "Perdido", isClosedLost: true }] }]);
     expect(g[0].options.map((o) => o.value)).toEqual(["a"]);
+  });
+  it("trocar o tipo do item zera vagas, exclusivo, escolhas e etiqueta; profissional não ocupa 2 vagas", () => {
+    const room = { ...newRequirement("room"), units: "2", exclusive: true, resourceIds: ["r1"], tag: "x" };
+    const person = changeRequirementKind(room, "person");
+    expect(person).toMatchObject({ kind: "person", units: "", exclusive: false, resourceIds: [], tag: "" });
+    const f = { ...newServiceForm(), name: "Sessão", requirements: [{ ...person, units: "2" }] };
+    expect(serviceErrors(f, []).requirements).toMatch(/uma pessoa por vez/);
+    expect(serviceErrors({ ...f, requirements: [person] }, [])).toEqual({});
+  });
+  it("sem desfecho: valida 30–720 e 0–23 e manda só o que mudou", () => {
+    const base = generalFromSettings({ gridMinutes: 30, minNoticeMin: 120, maxAdvanceDays: 60, smart: { mode: "rank", weights: { adjacency: 1, deadGap: 1, openNewResource: 1, earlyFirst: 1, balance: 0, preference: 1 }, minOffer: 3 }, outcome: { graceMin: 120, noticeHour: 8 } });
+    expect(generalToPatch({ ...base, outcomeGraceMin: "60" }, base)).toEqual({ outcome: { graceMin: 60 } });
+    expect(generalErrors({ ...base, outcomeGraceMin: "10" }).outcomeGraceMin).toBeDefined();
+    expect(generalErrors({ ...base, outcomeNoticeHour: "24" }).outcomeNoticeHour).toBeDefined();
+    expect(generalErrors(base)).toEqual({});
   });
 });

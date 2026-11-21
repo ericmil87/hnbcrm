@@ -11,8 +11,8 @@ function BoardStages({ boardId, onStages }: { boardId: Id<"boards">; onStages: (
 }
 
 /** Funis ativos com as etapas (inclui `isClosedLost`). `source` precisa ser renderizado (uma assinatura por funil). */
-export function useFunnelStages(organizationId: Id<"organizations">) {
-  const boards = useQuery(api.boards.getBoards, { organizationId }) as { _id: Id<"boards">; name: string; archivedAt?: number | null }[] | undefined;
+export function useFunnelStages(organizationId: Id<"organizations">, enabled = true) {
+  const boards = useQuery(api.boards.getBoards, enabled ? { organizationId } : "skip") as { _id: Id<"boards">; name: string; archivedAt?: number | null }[] | undefined;
   const [byBoard, setByBoard] = useState<Record<string, StageOption[] | undefined>>({});
   const [onStages] = useState(() => (id: string, s: StageOption[] | undefined) => setByBoard((p) => (p[id] === s ? p : { ...p, [id]: s })));
   const active = (boards ?? []).filter((b) => !b.archivedAt);

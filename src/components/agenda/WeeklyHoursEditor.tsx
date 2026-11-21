@@ -1,9 +1,8 @@
 import { useState } from "react";
 import { Copy, Plus, Trash2, UtensilsCrossed } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
 import {
-  addShift, copyDayTo, removeShift, setShift, splitWithLunch, WEEKDAY_NAMES, WEEKDAYS_MON_FRI, WEEK_DISPLAY_ORDER, WEEK_GENERAL_ERROR,
+  addShift, copyDayTo, END_OF_DAY, removeShift, setShift, splitWithLunch, WEEKDAY_NAMES, WEEKDAYS_MON_FRI, WEEK_DISPLAY_ORDER, WEEK_GENERAL_ERROR,
   type WeekForm,
 } from "@/lib/agendaWeek";
 
@@ -64,55 +63,78 @@ export function WeeklyHoursEditor({ value, onChange, errors = {}, disabled }: We
                     className="min-h-11 w-28 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
                   />
                   <span className="text-text-muted" aria-hidden="true">às</span>
-                  <input
-                    type="time"
-                    aria-label={`${WEEKDAY_NAMES[day]}, fim do turno ${i + 1}`}
-                    value={s.end}
-                    disabled={disabled}
-                    onChange={(e) => onChange(setShift(value, day, i, { end: e.target.value }))}
-                    className="min-h-11 w-28 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
-                  />
+                  {s.end === END_OF_DAY ? (
+                    <Button
+                      variant="secondary"
+                      className="w-28 tabular-nums"
+                      disabled={disabled}
+                      aria-label={`${WEEKDAY_NAMES[day]}, fim do turno ${i + 1}: 24:00 (meia-noite). Tocar para escolher outra hora`}
+                      onClick={() => onChange(setShift(value, day, i, { end: "23:59" }))}
+                    >
+                      24:00
+                    </Button>
+                  ) : (
+                    <input
+                      type="time"
+                      aria-label={`${WEEKDAY_NAMES[day]}, fim do turno ${i + 1}`}
+                      value={s.end}
+                      disabled={disabled}
+                      onChange={(e) => onChange(setShift(value, day, i, { end: e.target.value }))}
+                      className="min-h-11 w-28 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
+                    />
+                  )}
                   <Button iconOnly size="sm" variant="ghost" aria-label={`Remover turno ${i + 1} de ${WEEKDAY_NAMES[day]}`} disabled={disabled} onClick={() => onChange(removeShift(value, day, i))}>
                     <Trash2 size={16} aria-hidden="true" />
                   </Button>
                 </div>
               ))}
               {errors[day] && <p role="alert" className="text-sm text-semantic-error">{errors[day]}</p>}
+              {copyFrom === day && (
+                <div
+                  role="group"
+                  aria-label={`Copiar horário de ${WEEKDAY_NAMES[day]}`}
+                  onKeyDown={(e) => {
+                    // Esc fecha só esta escolha: a folha ou o assistente por baixo escutam o mesmo evento no documento.
+                    if (e.key === "Escape") {
+                      e.stopPropagation();
+                      setCopyFrom(null);
+                    }
+                  }}
+                  className="space-y-3 rounded-card border border-brand-500/40 bg-surface-sunken p-3"
+                >
+                  <p className="text-sm text-text-secondary">Copiar para quais dias? O que eles já tinham é substituído.</p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="secondary" onClick={() => setTargets([...WEEKDAYS_MON_FRI].filter((d) => d !== day))}>Segunda a sexta</Button>
+                    <Button size="sm" variant="secondary" onClick={() => setTargets(WEEK_DISPLAY_ORDER.filter((d) => d !== day))}>Todos os dias</Button>
+                  </div>
+                  <div role="group" aria-label="Dias de destino" className="grid grid-cols-2 gap-2">
+                    {WEEK_DISPLAY_ORDER.filter((d) => d !== day).map((d) => (
+                      <label key={`copy:${d}`} className="flex min-h-11 items-center gap-2 rounded-field border border-border px-3 text-sm text-text-primary">
+                        <input type="checkbox" checked={targets.includes(d)} onChange={() => toggle(d)} />
+                        {WEEKDAY_NAMES[d]}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="secondary" className="flex-1" onClick={() => setCopyFrom(null)}>Cancelar</Button>
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      disabled={targets.length === 0}
+                      onClick={() => {
+                        onChange(copyDayTo(value, day, targets));
+                        setCopyFrom(null);
+                      }}
+                    >
+                      Copiar
+                    </Button>
+                  </div>
+                </div>
+              )}
             </li>
           );
         })}
       </ul>
-
-      <Modal open={copyFrom !== null} onClose={() => setCopyFrom(null)} title={copyFrom === null ? undefined : `Copiar horário de ${WEEKDAY_NAMES[copyFrom]}`}>
-        <div className="space-y-4">
-          <p className="text-sm text-text-secondary">Escolha os dias que passam a ter o mesmo horário. O que eles já tinham é substituído.</p>
-          <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="secondary" onClick={() => setTargets([...WEEKDAYS_MON_FRI].filter((d) => d !== copyFrom))}>Segunda a sexta</Button>
-            <Button size="sm" variant="secondary" onClick={() => setTargets(WEEK_DISPLAY_ORDER.filter((d) => d !== copyFrom))}>Todos os dias</Button>
-          </div>
-          <div role="group" aria-label="Dias de destino" className="grid grid-cols-2 gap-2">
-            {WEEK_DISPLAY_ORDER.filter((d) => d !== copyFrom).map((d) => (
-              <label key={`copy:${d}`} className="flex min-h-11 items-center gap-2 rounded-field border border-border px-3 text-sm text-text-primary">
-                <input type="checkbox" checked={targets.includes(d)} onChange={() => toggle(d)} />
-                {WEEKDAY_NAMES[d]}
-              </label>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <Button variant="secondary" className="flex-1" onClick={() => setCopyFrom(null)}>Cancelar</Button>
-            <Button
-              className="flex-1"
-              disabled={targets.length === 0}
-              onClick={() => {
-                if (copyFrom !== null) onChange(copyDayTo(value, copyFrom, targets));
-                setCopyFrom(null);
-              }}
-            >
-              Copiar
-            </Button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 }

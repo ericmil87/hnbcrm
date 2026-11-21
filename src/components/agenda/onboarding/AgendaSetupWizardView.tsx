@@ -4,6 +4,10 @@ import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
+import { ChoiceCards } from "@/components/agenda/ChoiceCards";
+import { AiPolicyForm } from "@/components/settings/agenda/AiPolicyForm";
+import { defaultAutomationForm, needsAutoAck, type AutomationForm } from "@/lib/agendaAutomation";
+import { VOCAB } from "@/lib/vocab";
 import { Spinner } from "@/components/ui/Spinner";
 import { Stepper } from "@/components/ui/Stepper";
 import { WeeklyHoursEditor } from "@/components/agenda/WeeklyHoursEditor";
@@ -13,13 +17,12 @@ import {
   updateSetupResource, updateSetupService, SETUP_MAX_RESOURCES, SETUP_MAX_SERVICES, type SetupForm,
 } from "@/lib/agendaSetupDraft";
 import { SCHED_TEMPLATE_KEYS, SCHED_TEMPLATE_LABELS, type SchedTemplateDraft, type SchedTemplateKey } from "../../../../convex/lib/schedTemplates";
-import { cn } from "@/lib/utils";
 
-type StepId = "model" | "adjust" | "review";
+type StepId = "model" | "adjust" | "ai";
 const STEPS = [
-  { id: "model", label: "Como você atende?" },
-  { id: "adjust", label: "Ajuste o que preparamos" },
-  { id: "review", label: "Revise e crie" },
+  { id: "model", label: VOCAB.scheduling.onboarding.steps.model },
+  { id: "adjust", label: VOCAB.scheduling.onboarding.steps.review },
+  { id: "ai", label: VOCAB.scheduling.onboarding.steps.ai },
 ];
 
 export interface AgendaSetupWizardViewProps {
@@ -32,20 +35,38 @@ export interface AgendaSetupWizardViewProps {
   submitting: boolean;
   /** Mensagem do servidor da última tentativa (ex.: agenda já tem dados). */
   error: string | null;
-  onApply: (draft: SchedTemplateDraft) => void;
+  onApply: (draft: SchedTemplateDraft, ai: AutomationForm) => void;
+  /** A agenda foi criada, mas a escolha da IA não foi salva: a tela explica e só oferece fechar. */
+  partialNotice?: string | null;
 }
 
 /** Assistente de 3 passos. Apresentacional: o container liga `previewTemplate` e `applyTemplate`. */
-export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateChange, serverDraft, submitting, error, onApply }: AgendaSetupWizardViewProps) {
+export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateChange, serverDraft, submitting, error, onApply, partialNotice = null }: AgendaSetupWizardViewProps) {
   const [step, setStep] = useState<StepId>("model");
-  const [form, setForm] = useState<SetupForm | null>(null);
+  const [formState, setFormState] = useState<SetupForm | null>(null);
+  // Chave do modelo cujo rascunho já virou formulário: atualização do servidor com o assistente aberto NÃO
+  // descarta o que a pessoa editou; só trocar de modelo recomeça.
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const [ai, setAi] = useState<AutomationForm>(() => defaultAutomationForm());
   const [showErrors, setShowErrors] = useState(false);
 
-  // Recomeça do rascunho do servidor sempre que o modelo escolhido muda.
   useEffect(() => {
-    if (serverDraft && serverDraft.templateKey === templateKey) setForm(draftToForm(serverDraft));
-    else setForm(null);
-  }, [serverDraft, templateKey]);
+    if (serverDraft && serverDraft.templateKey === templateKey && loadedKey !== templateKey) {
+      setFormState(draftToForm(serverDraft));
+      setLoadedKey(templateKey);
+    }
+  }, [serverDraft, templateKey, loadedKey]);
+
+  // Reabrir recomeça do primeiro passo (o que foi editado fica).
+  useEffect(() => {
+    if (open) {
+      setStep("model");
+      setShowErrors(false);
+    }
+  }, [open]);
+
+  const form = loadedKey === templateKey ? formState : null;
+  const setForm = (next: SetupForm | null) => setFormState(next);
 
   const errors = form ? setupErrors(form) : null;
   const stepIndex = STEPS.findIndex((s) => s.id === step);
@@ -53,42 +74,31 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
   const unavailable = templateKey !== null && serverDraft === null;
 
   const toAdjust = () => setStep("adjust");
-  const toReview = () => {
+  const toAi = () => {
     if (errors && hasSetupErrors(errors)) {
       setShowErrors(true);
       return;
     }
-    setStep("review");
+    setStep("ai");
   };
 
   const set = (next: SetupForm) => setForm(next);
 
   return (
-    <Modal open={open} onClose={onClose} title="Configurar o agendamento" className="sm:max-w-2xl">
+    <Modal open={open} onClose={onClose} title={VOCAB.scheduling.onboarding.title} className="sm:max-w-2xl">
       <div className="space-y-5">
         <Stepper steps={STEPS} current={step} completed={STEPS.slice(0, stepIndex).map((s) => s.id)} ariaLabel="Passos do assistente" />
 
         {step === "model" && (
           <div className="space-y-4">
             <p className="text-sm text-text-secondary">Escolha o que mais se parece com o seu negócio. Preparamos salas, profissionais, serviços e horários para você ajustar no próximo passo.</p>
-            <div role="radiogroup" aria-label="Como você atende?" className="grid gap-2 sm:grid-cols-2">
-              {SCHED_TEMPLATE_KEYS.map((key) => (
-                <button
-                  key={`tpl:${key}`}
-                  type="button"
-                  role="radio"
-                  aria-checked={templateKey === key}
-                  onClick={() => onTemplateChange(key)}
-                  className={cn(
-                    "min-h-11 rounded-card border p-3 text-left transition-colors",
-                    templateKey === key ? "border-brand-500 bg-brand-500/10" : "border-border bg-surface-raised hover:border-border-strong"
-                  )}
-                >
-                  <span className="block text-sm font-medium text-text-primary">{SCHED_TEMPLATE_LABELS[key].title}</span>
-                  <span className="mt-1 block text-sm text-text-muted">{SCHED_TEMPLATE_LABELS[key].description}</span>
-                </button>
-              ))}
-            </div>
+            <ChoiceCards
+              label={VOCAB.scheduling.onboarding.steps.model}
+              columns={2}
+              options={SCHED_TEMPLATE_KEYS.map((key) => ({ value: key, title: SCHED_TEMPLATE_LABELS[key].title, hint: SCHED_TEMPLATE_LABELS[key].description }))}
+              value={templateKey}
+              onChange={onTemplateChange}
+            />
             {loading && <div className="flex justify-center py-2"><Spinner /></div>}
             {unavailable && <p role="alert" className="text-sm text-semantic-error">Não foi possível preparar este modelo. Tente de novo.</p>}
             <div className="flex gap-2">
@@ -141,33 +151,45 @@ export function AgendaSetupWizardView({ open, onClose, templateKey, onTemplateCh
               {showErrors && errors.week && !Object.keys(weekErrors(form.week)).length && <p role="alert" className="text-sm text-semantic-error">{errors.week}</p>}
             </section>
 
+            <section className="space-y-1 rounded-card border border-border bg-surface-sunken p-3 text-sm text-text-primary" aria-label="Resumo">
+              <p className="font-medium">Vamos criar</p>
+              <ul className="space-y-0.5">
+                {setupSummary(form).map((l) => <li key={l}>{l}</li>)}
+                <li className="text-text-secondary">{weekSummary(form.week)}</li>
+              </ul>
+              <p className="text-text-muted">Nada é marcado ainda: isto só cria a estrutura da agenda. Você muda tudo depois em Configurações.</p>
+            </section>
+
             {showErrors && errors.general.map((m) => <p key={m} role="alert" className="text-sm text-semantic-error">{m}</p>)}
             <div className="flex gap-2">
               <Button variant="secondary" className="flex-1" onClick={() => setStep("model")}>
                 <ArrowLeft size={16} aria-hidden="true" /> Voltar
               </Button>
-              <Button className="flex-1" onClick={toReview}>Continuar</Button>
+              <Button className="flex-1" onClick={toAi}>Continuar</Button>
             </div>
           </div>
         )}
 
-        {step === "review" && form && (
+        {step === "ai" && form && (
           <div className="space-y-4">
-            <p className="text-sm text-text-secondary">Confira. Nada é marcado ainda: isto só cria a estrutura da sua agenda, e você pode mudar tudo depois em Configurações.</p>
-            <ul className="space-y-1 rounded-card border border-border bg-surface-sunken p-3 text-sm text-text-primary">
-              {setupSummary(form).map((l) => <li key={l}>{l}</li>)}
-              <li className="text-text-secondary">{weekSummary(form.week)}</li>
-            </ul>
-            <ul className="space-y-1 text-sm text-text-secondary">
-              {form.services.map((s, i) => <li key={`rev:${i}`} className="tabular-nums">{s.name.trim()}: {s.durationMin} min</li>)}
-            </ul>
-            {error && <p role="alert" className="rounded-card border border-semantic-error/30 bg-semantic-error/5 p-3 text-sm text-semantic-error">{error}</p>}
-            <div className="flex gap-2">
-              <Button variant="secondary" className="flex-1" disabled={submitting} onClick={() => setStep("adjust")}>
-                <ArrowLeft size={16} aria-hidden="true" /> Voltar
-              </Button>
-              <Button className="flex-1" loading={submitting} onClick={() => onApply(formToDraft(form))}>Criar minha agenda</Button>
-            </div>
+            {partialNotice ? (
+              <>
+                <p role="status" className="rounded-card border border-semantic-warning/30 bg-semantic-warning/5 p-3 text-sm text-text-primary">{partialNotice}</p>
+                <Button className="w-full" onClick={onClose}>Fechar</Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-text-secondary">Escolha quanto a IA decide sozinha na agenda. Você pode mudar isso quando quiser em Configurações › Sugestões e IA.</p>
+                <AiPolicyForm variant="wizard" value={ai} onChange={setAi} disabled={submitting} />
+                {error && <p role="alert" className="rounded-card border border-semantic-error/30 bg-semantic-error/5 p-3 text-sm text-semantic-error">{error}</p>}
+                <div className="flex gap-2">
+                  <Button variant="secondary" className="flex-1" disabled={submitting} onClick={() => setStep("adjust")}>
+                    <ArrowLeft size={16} aria-hidden="true" /> Voltar
+                  </Button>
+                  <Button className="flex-1" loading={submitting} disabled={needsAutoAck(ai)} onClick={() => onApply(formToDraft(form), ai)}>Criar minha agenda</Button>
+                </div>
+              </>
+            )}
           </div>
         )}
       </div>

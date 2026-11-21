@@ -8,7 +8,7 @@
  * Campos numéricos vivem como string no formulário (vazio = padrão do servidor).
  */
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import { GRID_MINUTES_OPTIONS, MAX_BLOCK_MIN } from "../../convex/lib/schedConstants";
+import { GRID_MINUTES_OPTIONS, MAX_BLOCK_MIN, OUTCOME_GRACE_MIN_LIMITS, DEFAULT_OUTCOME_GRACE_MIN, DEFAULT_OUTCOME_NOTICE_HOUR } from "../../convex/lib/schedConstants";
 import type { SettingsView } from "../../convex/lib/schedViews";
 import { sameWeek, weekErrors, weekFromWeekly, weekWith, weeklyFromWeek, WEEK_GENERAL_ERROR, type WeekForm, type WeeklyItem } from "./agendaWeek";
 
@@ -97,9 +97,13 @@ export interface GeneralForm {
   onScheduledStageId: string;
   onCompletedStageId: string;
   onNoShowStageId: string;
+  /** Atendimentos sem desfecho: folga em minutos (30–720) e hora local do aviso (0–23). */
+  outcomeGraceMin: string;
+  outcomeNoticeHour: string;
 }
 
 export type GeneralPatch = {
+  outcome?: { graceMin?: number; noticeHour?: number };
   gridMinutes?: number;
   minNoticeMin?: number;
   maxAdvanceDays?: number;
@@ -120,10 +124,12 @@ export function generalFromSettings(s: SettingsView): GeneralForm {
     onScheduledStageId: s.funnel?.onScheduledStageId ?? "",
     onCompletedStageId: s.funnel?.onCompletedStageId ?? "",
     onNoShowStageId: s.funnel?.onNoShowStageId ?? "",
+    outcomeGraceMin: String(s.outcome?.graceMin ?? DEFAULT_OUTCOME_GRACE_MIN),
+    outcomeNoticeHour: String(s.outcome?.noticeHour ?? DEFAULT_OUTCOME_NOTICE_HOUR),
   };
 }
 
-export function generalErrors(f: GeneralForm): FormErrors<"gridMinutes" | "minNotice" | "maxAdvanceDays"> {
+export function generalErrors(f: GeneralForm): FormErrors<"gridMinutes" | "minNotice" | "maxAdvanceDays" | "outcomeGraceMin" | "outcomeNoticeHour"> {
   const grid = parseIntField(f.gridMinutes);
   return compact({
     gridMinutes:
@@ -132,6 +138,8 @@ export function generalErrors(f: GeneralForm): FormErrors<"gridMinutes" | "minNo
         : undefined,
     minNotice: noticeError(f.minNotice, "A antecedência mínima") ?? (f.minNotice.value.trim() === "" ? "Informe a antecedência mínima (pode ser 0)." : undefined),
     maxAdvanceDays: checkInt(f.maxAdvanceDays, "A antecedência máxima", 1, 730, true),
+    outcomeGraceMin: checkInt(f.outcomeGraceMin, "A folga", OUTCOME_GRACE_MIN_LIMITS.min, OUTCOME_GRACE_MIN_LIMITS.max, true),
+    outcomeNoticeHour: checkInt(f.outcomeNoticeHour, "A hora do aviso", 0, 23, true),
   });
 }
 
@@ -150,6 +158,10 @@ export function generalToPatch(f: GeneralForm, saved: GeneralForm): GeneralPatch
   if (f.onCompletedStageId !== saved.onCompletedStageId) funnel.onCompletedStageId = stage(f.onCompletedStageId);
   if (f.onNoShowStageId !== saved.onNoShowStageId) funnel.onNoShowStageId = stage(f.onNoShowStageId);
   if (Object.keys(funnel).length > 0) patch.funnel = funnel;
+  const outcome: NonNullable<GeneralPatch["outcome"]> = {};
+  if (f.outcomeGraceMin.trim() !== saved.outcomeGraceMin.trim()) outcome.graceMin = Number(f.outcomeGraceMin);
+  if (f.outcomeNoticeHour.trim() !== saved.outcomeNoticeHour.trim()) outcome.noticeHour = Number(f.outcomeNoticeHour);
+  if (Object.keys(outcome).length > 0) patch.outcome = outcome;
   return patch;
 }
 
@@ -337,6 +349,11 @@ export function newRequirement(kind: ResourceKind, used: ReadonlyArray<string> =
   return { role, kind, resourceIds: [], tag: "", units: "", exclusive: false };
 }
 
+/** Troca o tipo de um item exigido zerando o que só faz sentido no tipo antigo (vagas, exclusivo, escolhas, etiqueta). */
+export function changeRequirementKind(r: RequirementForm, kind: ResourceKind): RequirementForm {
+  return { ...r, kind, resourceIds: [], exclusive: false, units: "", tag: "" };
+}
+
 export function newServiceForm(): ServiceForm {
   return {
     name: "",
@@ -507,6 +524,10 @@ export function serviceErrors(
       const e = checkInt(r.units, "As vagas que o serviço ocupa", 1, MAX_CAPACITY);
       if (e) {
         requirementsError = e;
+        break;
+      }
+      if (r.kind === "person" && (parseIntField(r.units) ?? 1) > 1) {
+        requirementsError = `"${role}" é um profissional e atende uma pessoa por vez: não dá para ocupar mais de 1 vaga. Sem isso o serviço nunca teria horário livre.`;
         break;
       }
     }

@@ -32,4 +32,10 @@ describe("agendaWeek", () => {
     expect(weekSummary(w)).toBe("Seg a sex: 09:00–12:00 e 14:00–18:00 · Sáb: 09:00–12:00");
     expect(weekSummary(emptyWeek())).toBe("Sem horário");
   });
+  it("preserva 24:00 na ida e na volta", () => {
+    const weekly = [{ weekday: 5, startMin: 1200, endMin: 1440 }];
+    const w = weekFromWeekly(weekly);
+    expect(w[5][0].end).toBe("24:00");
+    expect(weeklyFromWeek(w)).toEqual({ ok: true, weekly });
+  });
 });

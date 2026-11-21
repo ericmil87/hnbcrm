@@ -6,13 +6,14 @@ import { api } from "../../../../convex/_generated/api";
 import type { Doc, Id } from "../../../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAgendaConfig } from "@/hooks/useAgendaConfig";
 import {
-  durationLabel, hasErrors, newServiceForm, serviceCreateArgs, serviceErrors, serviceFormFrom, servicePatchArgs, withVariantKeys, type ServiceForm,
+  durationLabel, hasErrors, isEmptyPatch, newServiceForm, serviceCreateArgs, serviceErrors, serviceFormFrom, servicePatchArgs, withVariantKeys, type ServiceForm,
 } from "@/lib/agendaConfigForms";
 import { runWithFutureAccept, serviceArchiveAccept } from "@/lib/agendaFutureAccept";
 import { mutationErrorMessage } from "@/lib/errors";
@@ -36,10 +37,11 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   if (config === undefined) return <div className="flex justify-center py-12"><Spinner size="lg" /></div>;
   if (config === null || !config.enabled) {
-    return <EmptyState icon={Scissors} title="Sem acesso à Agenda" description="Peça a quem administra a conta a permissão para configurar a Agenda." />;
+    return <EmptyState icon={Scissors} title={VOCAB.scheduling.config.noAccess.title} description={VOCAB.scheduling.config.noAccess.hint} />;
   }
 
   const all = config.services;
@@ -55,7 +57,11 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
   const close = () => {
     setEditing(null);
     setDraft(null);
+    setConfirmDiscard(false);
   };
+  const draftDirty = !!draft && !!editing && JSON.stringify(draft) !== JSON.stringify(editing.initial);
+  /** Fechar com alteração pendente pergunta antes de descartar. */
+  const requestClose = () => (draftDirty ? setConfirmDiscard(true) : close());
 
   const save = async () => {
     if (!draft || !editing) return;
@@ -67,7 +73,14 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
     try {
       const form = { ...draft, variants: withVariantKeys(draft.variants) };
       if (editing.id === null) await upsert({ organizationId, ...serviceCreateArgs(form) });
-      else await upsert({ organizationId, serviceId: editing.id, ...servicePatchArgs(form, editing.initial) });
+      else {
+        const patch = servicePatchArgs(form, editing.initial);
+        if (isEmptyPatch(patch)) {
+          close();
+          return;
+        }
+        await upsert({ organizationId, serviceId: editing.id, ...patch });
+      }
       toast.success(editing.id === null ? "Serviço criado" : "Alterações salvas");
       close();
     } catch (e) {
@@ -85,6 +98,7 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
         ask
       );
       if (outcome.done) toast.success("Serviço arquivado");
+      else toast("Nada foi alterado");
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível arquivar."));
     }
@@ -156,7 +170,7 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
         )}
       </SectionCard>
 
-      <SlideOver open={editing !== null} onClose={close} title={editing?.id ? "Editar serviço" : "Novo serviço"}>
+      <SlideOver open={editing !== null} onClose={requestClose} title={editing?.id ? "Editar serviço" : "Novo serviço"}>
         {draft && editing && (
           <div className="space-y-5 p-4">
             <ServiceFormFields
@@ -167,12 +181,13 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
               resources={config.resources.map((r) => ({ _id: r._id, name: r.name, kind: r.kind, active: r.active }))}
             />
             <div className="flex gap-2 pb-safe">
-              <Button variant="secondary" className="flex-1" onClick={close} disabled={saving}>Cancelar</Button>
+              <Button variant="secondary" className="flex-1" onClick={requestClose} disabled={saving}>Cancelar</Button>
               <Button className="flex-1" loading={saving} onClick={() => void save()}>Salvar</Button>
             </div>
           </div>
         )}
       </SlideOver>
+      <ConfirmDialog open={confirmDiscard} onClose={() => setConfirmDiscard(false)} onConfirm={close} title="Descartar alterações?" description="O que você mudou aqui ainda não foi salvo." confirmLabel="Descartar" cancelLabel="Continuar editando" variant="danger" />
       {dialog}
     </>
   );

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Sparkles } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
+import { ChoiceCards } from "@/components/agenda/ChoiceCards";
 import { Button } from "@/components/ui/Button";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -14,21 +15,19 @@ import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAgendaConfig } from "@/hooks/useAgendaConfig";
 import {
-  automationErrors, automationFromSettings, automationToPatch, DEFAULT_WEIGHTS_FORM, previewDefaultDate, previewDraftArgs, WEIGHT_KEYS, type AutomationForm, type SmartMode, type WeightKey,
+  ackSentence, automationErrors, automationFromSettings, automationToPatch, DEFAULT_WEIGHTS_FORM, previewDefaultDate, previewDraftArgs, WEIGHT_KEYS, type AutomationForm, type SmartMode, type WeightKey,
 } from "@/lib/agendaAutomation";
 import { hasErrors, isEmptyPatch } from "@/lib/agendaConfigForms";
 import { mutationErrorMessage } from "@/lib/errors";
-import { cn } from "@/lib/utils";
+import { formatDate } from "@/lib/format";
+import { usePermissions } from "@/hooks/usePermissions";
+import { VOCAB } from "@/lib/vocab";
 import type { SettingsPanelProps } from "../registry";
 import { SaveBar, useUnsavedGuard } from "../attendant/AttendantPanelFrame";
 import { AiPolicyForm } from "./AiPolicyForm";
 import { SuggestionPreviewView } from "./SuggestionPreviewView";
 
-const SMART_MODES: Array<{ value: SmartMode; title: string; hint: string }> = [
-  { value: "off", title: "Desligado", hint: "Os horários livres aparecem em ordem, do mais cedo ao mais tarde." },
-  { value: "rank", title: "Priorizar horários encostados", hint: "Oferece primeiro os horários colados em outro atendimento, para não deixar buracos na agenda. Os outros continuam disponíveis." },
-  { value: "restrict", title: "Oferecer só horários encostados", hint: "A IA e o link só mostram os horários que fecham os buracos. Se houver poucos, completa com os melhores até o mínimo de opções." },
-];
+const SMART_MODES = (["off", "rank", "restrict"] as const).map((value) => ({ value, ...VOCAB.scheduling.config.smartModes[value] }));
 
 const WEIGHT_LABELS: Record<WeightKey, string> = {
   adjacency: "Encostar um atendimento no outro",
@@ -43,6 +42,8 @@ const WEIGHT_LABELS: Record<WeightKey, string> = {
 export function AgendaAutomationPanel({ organizationId }: SettingsPanelProps) {
   const { config, timezone, today, now } = useAgendaConfig(organizationId);
   const updateSettings = useMutation(api.schedulingConfig.updateSettings);
+  const { member: me } = usePermissions(organizationId);
+  const members = useQuery(api.teamMembers.getTeamMembers, config?.enabled ? { organizationId } : "skip") as Array<{ _id: string; name: string }> | undefined;
   const [draft, setDraft] = useState<AutomationForm | null>(null);
   const [saving, setSaving] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
@@ -67,7 +68,7 @@ export function AgendaAutomationPanel({ organizationId }: SettingsPanelProps) {
 
   if (config === undefined) return <div className="flex justify-center py-12"><Spinner size="lg" /></div>;
   if (config === null || !config.enabled || !saved || !value) {
-    return <EmptyState icon={Sparkles} title="Sem acesso a estas configurações" description="Só quem pode gerenciar a Agenda vê as regras de sugestão e da IA." />;
+    return <EmptyState icon={Sparkles} title={VOCAB.scheduling.config.noAccessAutomation.title} description={VOCAB.scheduling.config.noAccessAutomation.hint} />;
   }
 
   const errors = automationErrors(value);
@@ -81,7 +82,7 @@ export function AgendaAutomationPanel({ organizationId }: SettingsPanelProps) {
     const { patch, aiAutoAck } = automationToPatch(draft, saved);
     setSaving(true);
     try {
-      await updateSettings({ organizationId, patch, ...(aiAutoAck ? { aiAutoAck } : {}) });
+      await updateSettings({ organizationId, patch, ...(aiAutoAck !== undefined ? { aiAutoAck } : {}) });
       setDraft(null);
       setShowErrors(false);
       toast.success("Alterações salvas");
@@ -97,22 +98,7 @@ export function AgendaAutomationPanel({ organizationId }: SettingsPanelProps) {
     <div className="space-y-4">
       <SectionCard title="Horários sugeridos" description="Quais horários a IA e o link público oferecem primeiro.">
         <div className="space-y-5">
-          <div role="radiogroup" aria-label="Modo de sugestão" className="grid gap-2 sm:grid-cols-3">
-            {SMART_MODES.map((m) => (
-              <button
-                key={`smart:${m.value}`}
-                type="button"
-                role="radio"
-                aria-checked={value.smartMode === m.value}
-                disabled={disabled}
-                onClick={() => set({ ...value, smartMode: m.value })}
-                className={cn("min-h-11 rounded-card border p-3 text-left transition-colors disabled:opacity-60", value.smartMode === m.value ? "border-brand-500 bg-brand-500/10" : "border-border bg-surface-raised hover:border-border-strong")}
-              >
-                <span className="block text-sm font-medium text-text-primary">{m.title}</span>
-                <span className="mt-1 block text-sm text-text-muted">{m.hint}</span>
-              </button>
-            ))}
-          </div>
+          <ChoiceCards label="Modo de sugestão" options={SMART_MODES} value={value.smartMode} disabled={disabled} onChange={(smartMode: SmartMode) => set({ ...value, smartMode })} />
 
           <div className="space-y-3 rounded-card border border-border bg-surface-sunken p-3">
             <p className="text-sm font-medium text-text-primary">Prévia</p>
@@ -158,7 +144,13 @@ export function AgendaAutomationPanel({ organizationId }: SettingsPanelProps) {
       </SectionCard>
 
       <SectionCard title="O que a IA pode fazer na agenda" description="Você escolhe, ação por ação, quanto a IA decide sozinha.">
-        <AiPolicyForm value={value} onChange={set} disabled={disabled} errors={showErrors ? errors : {}} />
+        <AiPolicyForm
+          value={value}
+          onChange={set}
+          disabled={disabled}
+          errors={showErrors ? errors : {}}
+          ackNote={saved.hasAck && saved.ackAt !== undefined ? ackSentence({ by: saved.ackBy, dateText: formatDate(saved.ackAt, { timeZone: timezone }) }, me?._id, (id) => members?.find((m) => m._id === id)?.name) : undefined}
+        />
       </SectionCard>
 
       {guard}

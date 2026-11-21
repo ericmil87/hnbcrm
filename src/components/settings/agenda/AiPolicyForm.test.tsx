@@ -18,7 +18,8 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     render(<AiPolicyForm value={base()} onChange={onChange} />);
     fireEvent.click(screen.getAllByRole("radio", { name: /Marca sozinha/ })[0]);
     expect(onChange).not.toHaveBeenCalled();
-    expect(screen.getByText(/A IA vai marcar horários sem passar por você/)).toBeInTheDocument();
+    expect(screen.getByText(/A IA vai marcar horários sozinha, sem passar por você/)).toBeInTheDocument();
+    expect(screen.getByText(/primeira visita de cada cliente continua pedindo a sua aprovação/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Entendi, ligar" }));
     expect(onChange).toHaveBeenCalledWith({ ...base(), book: "auto", ackAcceptedNow: true });
   });
@@ -38,5 +39,23 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
   it("explica as confirmações pelo WhatsApp e o 'na dúvida só sugere'", () => {
     render(<AiPolicyForm value={base()} onChange={() => {}} />);
     expect(screen.getByText(/Na dúvida, ele só sugere/)).toBeInTheDocument();
+  });
+  it("assistente: três opções e o interruptor das confirmações; sozinha pede o mesmo aceite", () => {
+    const onChange = vi.fn();
+    render(<AiPolicyForm variant="wizard" value={base()} onChange={onChange} />);
+    expect(screen.getAllByRole("radio")).toHaveLength(3);
+    expect(screen.getByRole("radio", { name: /Consulta e reserva para você aprovar/ })).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(screen.getByRole("radio", { name: /Não mexe na agenda/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), consult: false, book: "off", reschedule: "off" });
+    fireEvent.click(screen.getByRole("radio", { name: /Marca sozinha/ }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Entendi, ligar" }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), book: "auto", ackAcceptedNow: true });
+    fireEvent.click(screen.getByRole("switch", { name: "Interpretar minhas confirmações pelo WhatsApp" }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), humanConfirmMode: "off" });
+  });
+  it("mostra quem aceitou", () => {
+    render(<AiPolicyForm value={base(true)} onChange={() => {}} ackNote='Ana aceitou o aviso do "marca sozinha" em 01/01/2026.' />);
+    expect(screen.getByText(/Ana aceitou/)).toBeInTheDocument();
   });
 });

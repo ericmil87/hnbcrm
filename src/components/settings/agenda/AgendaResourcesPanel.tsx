@@ -6,13 +6,14 @@ import { api } from "../../../../convex/_generated/api";
 import type { Doc, Id } from "../../../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SectionCard } from "@/components/ui/SectionCard";
 import { SlideOver } from "@/components/ui/SlideOver";
 import { Spinner } from "@/components/ui/Spinner";
 import { useAgendaConfig } from "@/hooks/useAgendaConfig";
 import {
-  hasErrors, newResourceForm, resourceCreateArgs, resourceErrors, resourceFormFrom, resourcePatchArgs, type ResourceForm, type ResourceKind,
+  hasErrors, isEmptyPatch, newResourceForm, resourceCreateArgs, resourceErrors, resourceFormFrom, resourcePatchArgs, type ResourceForm, type ResourceKind,
 } from "@/lib/agendaConfigForms";
 import { resourceArchiveAccept, resourceEditAccept, runWithFutureAccept } from "@/lib/agendaFutureAccept";
 import { weekSummary } from "@/lib/agendaWeek";
@@ -23,7 +24,7 @@ import { ResourceFormFields, type MemberOption } from "./ResourceFormFields";
 import { useFutureAsk } from "./useFutureAsk";
 
 type Resource = Doc<"schedResources">;
-const NEW_TITLE: Record<ResourceKind, string> = { person: "Novo profissional", room: "Nova sala", equipment: "Novo equipamento" };
+
 
 interface TeamMemberRow {
   _id: Id<"teamMembers">;
@@ -35,7 +36,7 @@ interface TeamMemberRow {
 /** Painel "Salas e profissionais": lista, editor em folha, arquivar/reativar e aceite quando afeta horários marcados. */
 export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
   const { config } = useAgendaConfig(organizationId);
-  const members = useQuery(api.teamMembers.getTeamMembers, { organizationId }) as TeamMemberRow[] | undefined;
+  const members = useQuery(api.teamMembers.getTeamMembers, config?.enabled ? { organizationId } : "skip") as TeamMemberRow[] | undefined;
   const upsert = useMutation(api.schedulingConfig.upsertResource);
   const archive = useMutation(api.schedulingConfig.archiveResource);
   const reactivate = useMutation(api.schedulingConfig.reactivateResource);
@@ -46,10 +47,11 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
   const [saving, setSaving] = useState(false);
   const [showErrors, setShowErrors] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   if (config === undefined) return <div className="flex justify-center py-12"><Spinner size="lg" /></div>;
   if (config === null || !config.enabled) {
-    return <EmptyState icon={DoorOpen} title="Sem acesso à Agenda" description="Peça a quem administra a conta a permissão para configurar a Agenda." />;
+    return <EmptyState icon={DoorOpen} title={VOCAB.scheduling.config.noAccess.title} description={VOCAB.scheduling.config.noAccess.hint} />;
   }
 
   const all = config.resources;
@@ -59,9 +61,15 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
     new Set(all.filter((r) => r.active && r._id !== selfId && r.teamMemberId).map((r) => r.teamMemberId as string));
   const memberOptions = (selfId: string | null, current: string): MemberOption[] => {
     const taken = linkedElsewhere(selfId);
-    return (members ?? [])
-      .filter((m) => m.type === "human" && !m.removed && (!taken.has(m._id) || m._id === current))
+    const options: MemberOption[] = (members ?? [])
+      .filter((m) => m.type === "human" && !m.removed && !taken.has(m._id))
       .map((m) => ({ value: m._id, label: m.name }));
+    // Membro já ligado que saiu da equipe: continua escolhido, com o aviso, em vez de sumir do seletor.
+    if (current && !options.some((o) => o.value === current)) {
+      const row = (members ?? []).find((m) => m._id === current);
+      options.push({ value: current, label: `${row?.name ?? "Pessoa"} (removido)` });
+    }
+    return options;
   };
 
   const open = (id: Id<"schedResources"> | null, form: ResourceForm) => {
@@ -72,7 +80,11 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
   const close = () => {
     setEditing(null);
     setDraft(null);
+    setConfirmDiscard(false);
   };
+  const draftDirty = !!draft && !!editing && JSON.stringify(draft) !== JSON.stringify(editing.initial);
+  /** Fechar com alteração pendente pergunta antes de descartar. */
+  const requestClose = () => (draftDirty ? setConfirmDiscard(true) : close());
 
   const errors = draft && editing ? resourceErrors(draft, all, editing.id ?? undefined) : {};
 
@@ -87,16 +99,23 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
       const name = draft.name.trim();
       if (editing.id === null) {
         await upsert({ organizationId, ...resourceCreateArgs(draft) });
-        toast.success("Criado");
+        toast.success(VOCAB.scheduling.config.kind[draft.kind].created);
       } else {
         const patch = resourcePatchArgs(draft, editing.initial);
+        if (isEmptyPatch(patch)) {
+          close();
+          return;
+        }
         const resourceId = editing.id;
         const outcome = await runWithFutureAccept(
           (acceptFuture) => upsert({ organizationId, resourceId, ...patch, ...(acceptFuture ? { acceptFuture: true } : {}) }),
           (r) => resourceEditAccept(name, r),
           ask
         );
-        if (!outcome.done) return;
+        if (!outcome.done) {
+          toast("Nada foi alterado");
+          return;
+        }
         toast.success("Alterações salvas");
       }
       close();
@@ -114,7 +133,8 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
         (res) => resourceArchiveAccept(r.name, res),
         ask
       );
-      if (outcome.done) toast.success("Arquivado");
+      if (outcome.done) toast.success(VOCAB.scheduling.config.kind[r.kind].archived);
+      else toast("Nada foi alterado");
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível arquivar."));
     }
@@ -122,7 +142,7 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
   const reactivateOne = async (r: Resource) => {
     try {
       await reactivate({ organizationId, resourceId: r._id });
-      toast.success("Reativado");
+      toast.success(VOCAB.scheduling.config.kind[r.kind].reactivated);
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível reativar."));
     }
@@ -189,7 +209,7 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
         )}
       </SectionCard>
 
-      <SlideOver open={editing !== null} onClose={close} title={editing?.id ? "Editar" : draft ? NEW_TITLE[draft.kind] : "Novo"}>
+      <SlideOver open={editing !== null} onClose={requestClose} title={editing?.id ? "Editar" : draft ? VOCAB.scheduling.config.kind[draft.kind].newTitle : "Novo"}>
         {draft && editing && (
           <div className="space-y-5 p-4">
             <ResourceFormFields
@@ -201,12 +221,13 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
               memberOptions={memberOptions(editing.id, draft.teamMemberId)}
             />
             <div className="flex gap-2 pb-safe">
-              <Button variant="secondary" className="flex-1" onClick={close} disabled={saving}>Cancelar</Button>
+              <Button variant="secondary" className="flex-1" onClick={requestClose} disabled={saving}>Cancelar</Button>
               <Button className="flex-1" loading={saving} onClick={() => void save()}>Salvar</Button>
             </div>
           </div>
         )}
       </SlideOver>
+      <ConfirmDialog open={confirmDiscard} onClose={() => setConfirmDiscard(false)} onConfirm={close} title="Descartar alterações?" description="O que você mudou aqui ainda não foi salvo." confirmLabel="Descartar" cancelLabel="Continuar editando" variant="danger" />
       {dialog}
     </>
   );

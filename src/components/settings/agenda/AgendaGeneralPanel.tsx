@@ -29,7 +29,7 @@ export function AgendaGeneralPanel({ organizationId }: SettingsPanelProps) {
   const { can } = usePermissions(organizationId);
   const on = modules.scheduling;
   const { config, timezone } = useAgendaConfig(organizationId, on);
-  const stages = useFunnelStages(organizationId);
+  const stages = useFunnelStages(organizationId, on);
   const updateSettings = useMutation(api.schedulingConfig.updateSettings);
 
   const [wizardOpen, setWizardOpen] = useState(false);
@@ -112,7 +112,9 @@ export function AgendaGeneralPanel({ organizationId }: SettingsPanelProps) {
               onChange={setDraft}
               errors={showErrors ? errors : {}}
               disabled={saving || !config.canManage}
-              services={config.services.filter((s) => s.active).map((s) => ({ _id: s._id, name: s.name }))}
+              services={config.services
+                .filter((s) => s.active || s._id === value.defaultServiceId)
+                .map((s) => ({ _id: s._id, name: s.active ? s.name : `${s.name} (arquivado)` }))}
               boards={stages.groups}
               timezoneLabel={timezone}
             />

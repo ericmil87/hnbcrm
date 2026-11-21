@@ -31,10 +31,13 @@ export function emptyWeek(): WeekForm {
   return Array.from({ length: 7 }, () => []);
 }
 
-/** Minutos do dia -> "HH:mm" aceito pelo `<input type="time">` (24:00 vira 23:59). */
+/** Minutos do dia -> "HH:mm". 1440 vira "24:00" (o servidor aceita `endMin = 1440`; o editor mostra um botão no lugar do campo de hora). */
 export function minutesToTime(minutes: number): string {
-  return minutesLabel(Math.min(minutes, 1439));
+  return minutesLabel(minutes);
 }
+
+/** Fim de turno à meia-noite do dia seguinte ("24:00"): o `<input type="time">` não representa. */
+export const END_OF_DAY = "24:00";
 
 export function weekFromWeekly(weekly: ReadonlyArray<WeeklyItem>): WeekForm {
   const week = emptyWeek();

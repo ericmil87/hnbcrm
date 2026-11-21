@@ -1,6 +1,6 @@
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
-import { touchesAnother } from "@/lib/agendaAutomation";
+import { slotTouchesAnother } from "@/lib/agendaSlots";
 import { zonedTimeLabel } from "@/lib/agendaZone";
 
 export interface PreviewSlot {
@@ -9,6 +9,8 @@ export interface PreviewSlot {
   label: string;
   resourceNames: string[];
   reasons: string[];
+  /** Formato futuro do servidor (`ADJACENT`). */
+  reasonCodes?: string[];
 }
 
 interface SuggestionPreviewViewProps {
@@ -33,7 +35,7 @@ function Slots({ title, slots, timezone }: { title: string; slots: PreviewSlot[]
               <p className="flex flex-wrap items-center gap-2 text-sm text-text-primary">
                 <span className="font-medium tabular-nums">{zonedTimeLabel(s.startTime, timezone)}</span>
                 {s.resourceNames.length > 0 && <span className="text-text-secondary">{s.resourceNames.join(" + ")}</span>}
-                {touchesAnother(s.reasons) && <Badge variant="success">Encostado</Badge>}
+                {slotTouchesAnother(s) && <Badge variant="success">Encostado</Badge>}
               </p>
               {s.reasons.length > 0 && <p className="mt-0.5 text-sm text-text-muted">{s.reasons.join("; ")}</p>}
             </li>

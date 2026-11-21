@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { Globe } from "lucide-react";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
 import { FormField } from "@/components/ui/FormField";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -11,7 +12,7 @@ import { NoticeField } from "./NoticeField";
 interface GeneralSettingsFormProps {
   value: GeneralForm;
   onChange: (next: GeneralForm) => void;
-  errors?: FormErrors<"gridMinutes" | "minNotice" | "maxAdvanceDays">;
+  errors?: FormErrors<"gridMinutes" | "minNotice" | "maxAdvanceDays" | "outcomeGraceMin" | "outcomeNoticeHour">;
   disabled?: boolean;
   services: Array<{ _id: string; name: string }>;
   boards: Array<{ _id: string; name: string; stages: StageOption[] }>;
@@ -70,6 +71,18 @@ export function GeneralSettingsForm({ value, onChange, errors = {}, disabled, se
         {stageSelect("Ao atender", "Quando o atendimento é concluído.", "onCompletedStageId")}
         {stageSelect("Quando o cliente faltar", "Quando o horário é marcado como falta.", "onNoShowStageId")}
       </section>
+
+      <CollapsibleSection title="Atendimentos sem desfecho">
+        <div className="space-y-4 pb-3">
+          <p className="text-sm text-text-muted">Depois do horário, o atendimento que ninguém marcou como atendido, falta ou cancelado vira pendência e a equipe recebe um aviso por dia.</p>
+          <FormField label="Esperar quantos minutos depois do fim" hint="De 30 a 720 minutos." error={errors.outcomeGraceMin}>
+            {(aria) => <Input {...aria} type="number" inputMode="numeric" min={30} max={720} value={value.outcomeGraceMin} disabled={disabled} onChange={(e) => set({ outcomeGraceMin: e.target.value })} />}
+          </FormField>
+          <FormField label="Hora do aviso diário" hint="De 0 a 23 (horário da empresa). Por exemplo, 8 para as 8h." error={errors.outcomeNoticeHour}>
+            {(aria) => <Input {...aria} type="number" inputMode="numeric" min={0} max={23} value={value.outcomeNoticeHour} disabled={disabled} onChange={(e) => set({ outcomeNoticeHour: e.target.value })} />}
+          </FormField>
+        </div>
+      </CollapsibleSection>
     </div>
   );
 }
