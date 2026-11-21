@@ -54,7 +54,7 @@ const ORG_TABLES: { table: string; index: string }[] = [
   // Agenda v2: `schedAllocations` sai com o agendamento (filho sem índice por org, tabela quente) e
   // `schedConversationState` com a conversa; o resto tem índice por org.
   { table: "schedInterpretations", index: "by_organization_and_created" },
-  { table: "schedConflicts", index: "by_organization_and_status" },
+  { table: "schedConflicts", index: "by_organization_and_status_and_created" },
   { table: "schedAppointments", index: "by_organization" },
   { table: "schedExceptions", index: "by_organization" },
   { table: "schedServices", index: "by_organization" },

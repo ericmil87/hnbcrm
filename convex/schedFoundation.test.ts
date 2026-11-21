@@ -223,7 +223,7 @@ describe("cascata de lead/contato com agendamento", () => {
   test("excluir o lead mantém o agendamento (e a ocupação) sem o vínculo; apaga estado/interpretações da conversa", async () => {
     const s = await seed();
     const { contactId, leadId, conversationId } = await leadAndContact(s);
-    const { appointmentId } = await insertAppointment(s, { leadId, contactId });
+    const { appointmentId } = await insertAppointment(s, { leadId, contactId, contactName: "Cliente" });
     await t.run(async (ctx) => {
       const now = Date.now();
       await ctx.db.insert("schedConversationState", { organizationId: s.organizationId, conversationId, offerSeq: 1, offers: [], updatedAt: now });
@@ -249,6 +249,7 @@ describe("cascata de lead/contato com agendamento", () => {
     expect(after.appointment).not.toBeNull();
     expect(after.appointment!.leadId).toBeUndefined();
     expect(after.appointment!.serviceName).toBe("Sessão");
+    expect(after.appointment!.contactName).toBe("Cliente");
     expect(after.allocations).toHaveLength(1);
     expect(after.state).toHaveLength(0);
     expect(after.interp).toHaveLength(0);
@@ -257,14 +258,46 @@ describe("cascata de lead/contato com agendamento", () => {
   test("excluir o contato junto zera contactId do agendamento", async () => {
     const s = await seed();
     const { contactId, leadId } = await leadAndContact(s);
-    const { appointmentId } = await insertAppointment(s, { leadId, contactId, contactName: "Cliente" });
+    const { appointmentId } = await insertAppointment(s, { leadId, contactId, contactName: "Cliente", guestName: "Acompanhante", notes: "nota interna", cancelReason: "motivo" });
     await asAdmin(s).mutation(api.leads.deleteLead, { leadId, deleteContact: true });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
     const after = await t.run(async (ctx) => ({ contact: await ctx.db.get(contactId), appt: await ctx.db.get(appointmentId) }));
     expect(after.contact).toBeNull();
-    expect(after.appt).toMatchObject({ contactName: "Cliente", status: "scheduled" });
+    expect(after.appt).toMatchObject({ status: "scheduled", serviceName: "Sessão" });
+    expect(after.appt!.contactName).toBeUndefined();
+    expect(after.appt!.guestName).toBeUndefined();
+    expect(after.appt!.notes).toBeUndefined();
+    expect(after.appt!.cancelReason).toBeUndefined();
     expect(after.appt!.contactId).toBeUndefined();
     expect(after.appt!.leadId).toBeUndefined();
+  });
+});
+
+describe("deleteContact (contato sem lead) passa pela cascata de referências", () => {
+  test("agendamento perde vínculo e dado pessoal; tarefa e compromisso perdem o contactId", async () => {
+    const s = await seed();
+    const ids = await t.run(async (ctx) => {
+      const now = Date.now();
+      const contactId = await ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: "Solo", tags: [], createdAt: now, updatedAt: now });
+      const eventId = await ctx.db.insert("calendarEvents", {
+        organizationId: s.organizationId, title: "Ligar", eventType: "call", startTime: now, endTime: now + 1000, allDay: false,
+        status: "scheduled", contactId, createdBy: s.admin.memberId, createdAt: now, updatedAt: now,
+      });
+      return { contactId, eventId };
+    });
+    const { appointmentId } = await insertAppointment(s, { contactId: ids.contactId, contactName: "Solo", notes: "n" });
+    await asAdmin(s).mutation(api.contacts.deleteContact, { contactId: ids.contactId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const after = await t.run(async (ctx) => ({
+      contact: await ctx.db.get(ids.contactId), appt: await ctx.db.get(appointmentId), event: await ctx.db.get(ids.eventId),
+    }));
+    expect(after.contact).toBeNull();
+    expect(after.appt).not.toBeNull();
+    expect(after.appt!.contactId).toBeUndefined();
+    expect(after.appt!.contactName).toBeUndefined();
+    expect(after.appt!.notes).toBeUndefined();
+    expect(after.event).not.toBeNull();
+    expect(after.event!.contactId).toBeUndefined();
   });
 });
 

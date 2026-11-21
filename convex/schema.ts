@@ -4804,9 +4804,9 @@ const applicationTables = {
   schedServices: defineTable({
     organizationId: v.id("organizations"),
     name: v.string(),                             // ≤ 60; único por org sem acento/caixa (a IA cita pelo nome)
-    durationMin: v.number(),                      // 5..480
+    durationMin: v.number(),                      // 5..480; duração (inclusive variantes) + folgas ≤ MAX_BLOCK_MIN (a escrita recusa mais)
     variants: v.optional(v.array(v.object({ key: v.string(), name: v.string(), durationMin: v.number() }))), // ≤ 6
-    bufferBeforeMin: v.number(),                  // 0..120
+    bufferBeforeMin: v.number(),                  // 0..120 (vale a soma com durationMin e bufferAfterMin ≤ MAX_BLOCK_MIN)
     bufferAfterMin: v.number(),
     requirements: v.array(v.object({              // 1..4; ex.: 1 sala qualquer + 1 terapeuta
       role: v.string(),                           // rótulo: "Sala", "Terapeuta"
@@ -4916,6 +4916,7 @@ const applicationTables = {
     blockStart: v.number(), blockEnd: v.number(), // chave do índice; com folgas
     coreStart: v.number(), coreEnd: v.number(),   // sem folgas (capacidade dura)
     units: v.number(),
+    exclusive: v.optional(v.boolean()),           // true = ocupa o recurso inteiro mesmo se a capacidade subir depois
   })
     .index("by_resource_and_start", ["resourceId", "blockStart"])
     .index("by_appointment", ["appointmentId"]),
@@ -4931,7 +4932,7 @@ const applicationTables = {
     createdAt: v.number(),
     resolvedAt: v.optional(v.number()), resolvedBy: v.optional(v.id("teamMembers")),
   })
-    .index("by_organization_and_status", ["organizationId", "status", "createdAt"])
+    .index("by_organization_and_status_and_created", ["organizationId", "status", "createdAt"])
     .index("by_appointment", ["appointmentId"]),
 
   // Estado da agenda POR CONVERSA (fora do doc quente `conversations`).

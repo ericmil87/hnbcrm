@@ -416,7 +416,7 @@ export async function cascadeContactRefs(
   }
   if (budget.left <= 0) return false;
 
-  // Agenda v2: o agendamento é histórico da operação (agenda, relatório): fica, só perde o vínculo.
+  // Agenda v2: o agendamento é histórico da operação: fica, sem o vínculo e sem dado pessoal.
   while (budget.left > 0) {
     const page = await ctx.db
       .query("schedAppointments")
@@ -424,7 +424,14 @@ export async function cascadeContactRefs(
       .take(Math.min(budget.left, 100));
     if (page.length === 0) break;
     for (const appointment of page) {
-      await ctx.db.patch(appointment._id, { contactId: undefined });
+      // LGPD: contato apagado = some a cópia do nome e o texto livre (nota, motivo, acompanhante).
+      await ctx.db.patch(appointment._id, {
+        contactId: undefined,
+        contactName: undefined,
+        guestName: undefined,
+        notes: undefined,
+        cancelReason: undefined,
+      });
       budget.left -= 1;
     }
   }

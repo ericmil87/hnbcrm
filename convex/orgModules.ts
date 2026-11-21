@@ -11,7 +11,7 @@ import { requireAuth, requirePermission } from "./lib/auth";
 import { getModules, isDemoOrg } from "./lib/orgModules";
 import { setOrgModulesCore } from "./lib/orgModulesOps";
 
-const modulesReturn = v.object({
+export const modulesReturn = v.object({
   units: v.boolean(),
   departments: v.boolean(),
   attribution: v.boolean(),
