@@ -9,6 +9,7 @@ import { initialOrgBilling, initialTrialBilling } from "./lib/entitlementsOps";
 import { TRIAL } from "./lib/plans";
 import { pickFreeOrgSlug } from "./lib/orgSlug";
 import { assertCurrentTermsVersion, recordTermsAcceptance } from "./terms";
+import { assertTimezoneChangeAllowed } from "./lib/schedConfigOps";
 
 // Get user's organizations
 export const getUserOrganizations = query({
@@ -266,6 +267,11 @@ export const updateOrganization = mutation({
     const now = Date.now();
     const changes: Record<string, any> = {};
     const before: Record<string, any> = {};
+
+    // Agenda v2: trocar o fuso com agendamento futuro mudaria o dia/hora marcado (docs/architecture/agenda.md).
+    if (args.settings !== undefined && args.settings.timezone !== org.settings?.timezone) {
+      await assertTimezoneChangeAllowed(ctx, args.organizationId, now);
+    }
 
     if (args.name !== undefined && args.name !== org.name) {
       changes.name = args.name;

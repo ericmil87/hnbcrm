@@ -26,3 +26,4 @@ Leia `docs/architecture/agenda.md` antes de mexer. Tabelas `sched*`; `calendarEv
 - Contato apagado: agendamento perde `contactId`, `contactName`, `guestName`, `notes`, `cancelReason` (`cascadeContactRefs`). Import/restauração reconstrói as alocações pela porta (ficam fora do backup).
 - O `convex-test` NÃO valida `returns` (o runtime recusa campo a mais). Todo validator de retorno de `scheduling*` precisa de teste que compare as chaves devolvidas com o validator, ou ser construído da mesma fonte; módulos novos: `modulesValidatorsParity.test.ts`.
 - Nome de índice lista todos os campos (`by_organization_and_status_and_created`).
+- Teste de função `scheduling*`: confira o retorno com `assertMatchesReturns(valor, funçãoRegistrada)` (`lib/assertMatchesValidator.test-helper.ts`) e semeie com `seedAgenda` (`lib/schedTestSeed.test-helper.ts`). Leitura de disponibilidade passa por `lib/schedRead.ts` (`loadWindow`); a tabela de ocupação só nele e nas portas.
