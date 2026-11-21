@@ -291,6 +291,7 @@ export async function readResourceAllocations(
 /** Folga da consulta por índice: o dia inteiro expandido pode começar até 12h antes e terminar até 12h depois do gravado. */
 const ALL_DAY_SLACK_MS = 24 * 60 * 60 * 1000;
 const HALF_DAY_MS = 12 * 60 * 60 * 1000;
+const SHORT_ALL_DAY_MS = 20 * 60 * 60 * 1000;
 
 /**
  * Intervalo que um compromisso de DIA INTEIRO ocupa: do início do primeiro ao fim do último dia LOCAL (fuso da org).
@@ -299,6 +300,11 @@ const HALF_DAY_MS = 12 * 60 * 60 * 1000;
  */
 export function allDaySpan(ev: Pick<Doc<"calendarEvents">, "startTime" | "endTime">, tz: string | null): { start: number; end: number } {
   if (tz === null) return { start: ev.startTime, end: Math.max(ev.endTime, ev.startTime + 1) };
+  // Duração curta (< ~20h: "dia inteiro" com horário, só via REST/MCP): é de UM dia só, o do início (o centro erraria à tarde).
+  if (ev.endTime - ev.startTime < SHORT_ALL_DAY_MS) {
+    const day = localDateOf(ev.startTime, tz);
+    return { start: dayBounds(day, tz).start, end: dayBounds(day, tz).end };
+  }
   const first = localDateOf(ev.startTime + HALF_DAY_MS, tz);
   const lastRaw = localDateOf(ev.endTime - HALF_DAY_MS, tz);
   const last = lastRaw < first ? first : lastRaw;

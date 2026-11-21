@@ -1912,6 +1912,8 @@ export async function undoBookingCore(
     }
     const before = await stateBeforeReschedule(ctx, old!, a._id);
     if (!before) refusal("Não há registro do estado anterior do horário: recuse ou cancele pelo painel.");
+    // A3e: proposta antiga VENCIDA não volta a `pending_approval` no passado (mesma recusa de `undoAppointmentStatusCore`).
+    if (before!.status === "pending_approval" && old!.startTime < now) refusal("Esse horário já passou: a proposta anterior venceu e não pode voltar para a fila. Marque de novo.");
     olds.set(a._id, { doc: old!, before: before! });
   }
 

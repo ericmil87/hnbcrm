@@ -506,4 +506,63 @@ describe("5. reauditoria: atendimento em andamento, verificador, desfazer vencid
     await as(s.agent).mutation(api.schedulingExceptions.resolveConflict, { organizationId: s.orgId, conflictId: c._id, action: { type: "resource", resourceIds: [dupla] } });
     expect(await allocOf(y)).toHaveLength(1);
   });
+  test("undoBooking da remarcação de proposta VENCIDA: recusa e nada muda", async () => {
+    const sala = await mkRes("Sala 1", { weekly: weeklyAll });
+    const svc = await mkSvc();
+    const r = await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.orgId, serviceId: svc, startTime: at(MON, 11), contactId: s.contactId, resourceIds: [sala],
+      actor: { type: "system", via: "public_link" }, origin: "public",
+    } as any);
+    const old = r.appointmentId as Id<"schedAppointments">;
+    const now = at(MON, 12);
+    vi.setSystemTime(new Date(now));
+    await t.mutation(internal.schedulingJobs.internalOutcomePendingOrg, { organizationId: s.orgId, now });
+    await drain();
+    expect((await apptOf(old))!.needsAttention?.code).toBe("proposal_expired");
+    const { appointmentId: next } = await as(s.manager).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.orgId, appointmentId: old, startTime: at(TUE, 10) });
+    const snap = async () => [(await apptOf(old))!.status, (await apptOf(next))!.status, (await allocOf(old)).length, (await allocOf(next)).length];
+    const before = await snap();
+    await expect(as(s.manager).mutation(api.schedulingMutations.undoBooking, { organizationId: s.orgId, appointmentIds: [next] })).rejects.toThrow(/já passou/);
+    expect(await snap()).toEqual(before);
+    expect((await apptOf(old))!.status).toBe("rescheduled");
+  });
+});
+
+describe("3c. dia inteiro com horário curto (REST/MCP): ancora pelo dia do início", () => {
+  const weeklyWeek = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, startMin: 540, endMin: 1080 }));
+  const D = (d: number) => `2026-06-${String(d).padStart(2, "0")}`;
+  const cases: Array<[string, string, number, number]> = [
+    ["America/Sao_Paulo", "9h–10h", 9, 10],
+    ["America/Sao_Paulo", "14h–15h", 14, 15],
+    ["America/Sao_Paulo", "22h–23h", 22, 23],
+    ["Asia/Tokyo", "14h–15h", 14, 15],
+    ["Pacific/Honolulu", "22h–23h", 22, 23],
+  ];
+  test.each(cases)("%s, allDay %s: bloqueia SÓ o dia do início, na busca e na porta", async (tz, _label, h1, h2) => {
+    await t.run((ctx) => ctx.db.patch(s.orgId, { settings: { timezone: tz, currency: "BRL", modules: { scheduling: true } } } as any));
+    const pessoa = await mkRes("Dra. Ana", { kind: "person", teamMemberId: s.viewAll.memberId, weekly: weeklyWeek });
+    const svc = await mkSvc({ requirements: [{ role: "Profissional", kind: "person" }] });
+    await t.run((ctx) =>
+      ctx.db.insert("calendarEvents", {
+        organizationId: s.orgId, title: "Folga", eventType: "other", startTime: atLocalMinutes(D(18), h1 * 60, tz), endTime: atLocalMinutes(D(18), h2 * 60, tz),
+        allDay: true, status: "scheduled", assignedTo: s.viewAll.memberId, createdBy: s.manager.memberId, createdAt: 1, updatedAt: 1,
+      } as any)
+    );
+    const days = [D(17), D(18), D(19)];
+    const now = Date.UTC(2026, 5, 12, 15);
+    const found = await as(s.agent).query(api.scheduling.findSlots, { organizationId: s.orgId, serviceId: svc, fromLocalDate: days[0], toLocalDate: days[2], resourceIds: [pessoa], limit: 200, now } as any);
+    const open = new Set<string>(found.slots.map((x: any) => days.find((d) => x.startTime >= atLocalMinutes(d, 0, tz) && x.startTime < atLocalMinutes(d, 1440, tz))!));
+    const bySearch = days.filter((d) => !open.has(d));
+    const byDoor: string[] = [];
+    for (const d of days) {
+      try {
+        await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.orgId, serviceId: svc, startTime: atLocalMinutes(d, 14 * 60, tz), resourceIds: [pessoa] } as any);
+      } catch (e: any) {
+        const data = typeof e?.data === "string" ? JSON.parse(e.data) : e?.data;
+        if ((data?.violations ?? []).some((v: any) => v.code === "INTERNAL_EVENT_OVERLAP")) byDoor.push(d);
+      }
+    }
+    expect(bySearch).toEqual([D(18)]);
+    expect(byDoor).toEqual([D(18)]);
+  });
 });
