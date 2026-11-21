@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { type AllocationLite, computeDayAvailability, type ResourceLite } from "./schedAvailability";
 import { durationFor, generateCandidates, type ServiceLite } from "./schedCandidates";
-import { atLocalMinutes, dayBounds } from "./schedTime";
+import { evaluateRules } from "./schedRules";
+import { applySmartMode, DEFAULT_WEIGHTS, pickOffers, scoreCandidate } from "./schedScore";
+import { addLocalDays, atLocalMinutes, dayBounds, minutesOfDay } from "./schedTime";
 
 const tz = "America/Sao_Paulo";
 const MIN = 60_000;
@@ -266,5 +268,56 @@ describe("planos com vários papéis", () => {
   });
   it("serviço sem requisitos não gera nada", () => {
     expect(gen({ resources: [sala("s1")], service: svc({ requirements: [] }) })).toEqual([]);
+  });
+});
+
+describe("regressões da revisão", () => {
+  it("unidades 0, negativas ou fracionárias lançam; exclusive em capacidade inválida também", () => {
+    for (const units of [0, -1, 1.5]) {
+      expect(() => gen({ resources: [res({ _id: "r1" })], service: svc({ requirements: [{ role: "Sala", kind: "room", units }] }) })).toThrow(/Unidades/);
+    }
+    expect(() => gen({ resources: [res({ _id: "r1", capacity: 0 })], service: svc({ requirements: [{ role: "Sala", kind: "room", exclusive: true }] }) })).toThrow(/Unidades/);
+  });
+  it("gerador e regra OFF_GRID concordam num dia de horário de verão com passo que não divide 60 (NY 08/03/2026, 45 min)", () => {
+    const z = "America/New_York";
+    const date = "2026-03-08";
+    const r = res({ _id: "r1", weekly: [{ weekday: 0, startMin: 0, endMin: 1440 }] });
+    const c = gen({ resources: [r], zone: z, date, service: svc({ durationMin: 30, slotIntervalMin: 45 }) });
+    expect(c.length).toBeGreaterThan(10);
+    const minutes = c.map((x) => minutesOfDay(x.startTime, z));
+    expect(minutes.every((m) => m % 45 === 0)).toBe(true);
+    expect(minutes).not.toContain(195); // 03:15 era oferecido e recusado pela regra
+    const day = computeDayAvailability({ date, tz: z, resources: [r], exceptions: [], allocations: [], internalEvents: [] });
+    for (const cand of c) {
+      const v = evaluateRules({
+        origin: "ai", now: 0, tz: z, startTime: cand.startTime, endTime: cand.endTime, blockStart: cand.blockStart, blockEnd: cand.blockEnd,
+        plan: cand.plan.map((p) => ({ ...p, day: day.get(p.resourceId)! })), service: { slotIntervalMin: 45 },
+        settings: { gridMinutes: 30, minNoticeMin: 0, maxAdvanceDays: 36500, maxAiBookingsPerContactPerDay: 2 },
+      });
+      expect(v.map((x) => x.code)).not.toContain("OFF_GRID");
+    }
+  });
+  it("desempenho: 4 pessoas × 3 salas, grade de 5 min, 7 dias (geração + pontuação + escolha) com teto folgado", () => {
+    const allDays = [0, 1, 2, 3, 4, 5, 6];
+    const weekly = allDays.map((w) => ({ weekday: w, startMin: 480, endMin: 1080 }));
+    const resources = [
+      ...[1, 2, 3, 4].map((i) => res({ _id: `p${i}`, kind: "person", weekly, sortOrder: i })),
+      res({ _id: "s1", weekly, sortOrder: 11 }), res({ _id: "s2", weekly, sortOrder: 12 }), res({ _id: "s3", weekly, capacity: 2, sortOrder: 13 }),
+    ];
+    const service = svc({ durationMin: 50, bufferAfterMin: 10, requirements: [{ role: "t", kind: "person" }, { role: "s", kind: "room" }] });
+    const t0 = performance.now();
+    const scored: ReturnType<typeof scoreCandidate>[] = [];
+    for (let i = 0; i < 7; i++) {
+      const date = addLocalDays(MON, i);
+      const day = computeDayAvailability({ date, tz, resources, exceptions: [], allocations: [], internalEvents: [] });
+      for (const c of generateCandidates({ date, tz, gridMinutes: 5, service, day, earliest: 0, latest: Number.MAX_SAFE_INTEGER })) {
+        scored.push(scoreCandidate(c, day, DEFAULT_WEIGHTS, { minUsefulGapMin: 30, preference: { period: "afternoon" }, tz }));
+      }
+    }
+    const { list } = applySmartMode(scored, "rank", 3, "ai", tz);
+    pickOffers(list, 3, tz);
+    const ms = performance.now() - t0;
+    expect(scored.length).toBeGreaterThan(2000);
+    expect(ms).toBeLessThan(150);
   });
 });

@@ -83,7 +83,7 @@ describe("exemplo das 3 salas (relatório 04 §5.3)", () => {
 
   it("ranking A 08:00 > A 11:00 > B 13:00 > C 08:00 > A 11:15", () => {
     const five = expected.map(([r, s, e]) => scoreCandidate(cand(r, s, e), day, W, opts));
-    const { list } = applySmartMode(five, "rank", 3, "ai");
+    const { list } = applySmartMode(five, "rank", 3, "ai", tz);
     expect(list.map((c) => `${c.plan[0].resourceId} ${hhmm(c.startTime)}`)).toEqual([
       "A 08:00", "A 11:00", "B 13:00", "C 08:00", "A 11:15",
     ]);
@@ -91,11 +91,11 @@ describe("exemplo das 3 salas (relatório 04 §5.3)", () => {
 
   it("restrict oferta os quatro primeiros e esconde A 11:15; com minOffer maior cai para rank (relaxed)", () => {
     const five = expected.map(([r, s, e]) => scoreCandidate(cand(r, s, e), day, W, opts));
-    const strict = applySmartMode(five, "restrict", 3, "public");
+    const strict = applySmartMode(five, "restrict", 3, "public", tz);
     expect(strict.relaxed).toBe(false);
     expect(strict.list.map((c) => `${c.plan[0].resourceId} ${hhmm(c.startTime)}`)).toEqual(["A 08:00", "A 11:00", "B 13:00", "C 08:00"]);
     // só 3 inícios distintos (A e C às 08:00) -> pedir 4 força o fallback
-    const relaxed = applySmartMode(five, "restrict", 4, "public");
+    const relaxed = applySmartMode(five, "restrict", 4, "public", tz);
     expect(relaxed.relaxed).toBe(true);
     expect(relaxed.list).toHaveLength(5);
   });
@@ -104,10 +104,10 @@ describe("exemplo das 3 salas (relatório 04 §5.3)", () => {
     const all = generateCandidates({
       date: MON, tz, gridMinutes: 15, service: service(), day, earliest: 0, latest: Number.MAX_SAFE_INTEGER, maxPerStart: 3,
     }).map((c) => scoreCandidate(c, day, W, opts));
-    const ranked = applySmartMode(all, "rank", 3, "ai").list;
+    const ranked = applySmartMode(all, "rank", 3, "ai", tz).list;
     expect(`${ranked[0].plan[0].resourceId} ${hhmm(ranked[0].startTime)}`).toBe("A 08:00");
     expect(ranked[0].score).toBeCloseTo(50, 6);
-    const r = applySmartMode(all, "restrict", 3, "ai");
+    const r = applySmartMode(all, "restrict", 3, "ai", tz);
     expect(r.relaxed).toBe(false);
     expect(r.list.some((c) => c.plan[0].resourceId === "A" && hhmm(c.startTime) === "11:15")).toBe(false);
     expect(r.list.every((c) => c.features.deadGap === 0 && c.features.adjacency > 0)).toBe(true);
@@ -210,28 +210,28 @@ describe("applySmartMode", () => {
   const list = [mk("A", "10:00", 5), mk("A", "09:00", 20), mk("B", "09:00", 20), mk("A", "11:00", 1, false)];
 
   it("off = cronológico (empate por plano); rank = maior pontuação, empate mais cedo e por plano", () => {
-    expect(applySmartMode(list, "off", 3, "ai").list.map((c) => `${c.plan[0].resourceId}${hhmm(c.startTime)}`)).toEqual(["A09:00", "B09:00", "A10:00", "A11:00"]);
-    expect(applySmartMode(list, "rank", 3, "ai").list.map((c) => `${c.plan[0].resourceId}${hhmm(c.startTime)}`)).toEqual(["A09:00", "B09:00", "A10:00", "A11:00"]);
+    expect(applySmartMode(list, "off", 3, "ai", tz).list.map((c) => `${c.plan[0].resourceId}${hhmm(c.startTime)}`)).toEqual(["A09:00", "B09:00", "A10:00", "A11:00"]);
+    expect(applySmartMode(list, "rank", 3, "ai", tz).list.map((c) => `${c.plan[0].resourceId}${hhmm(c.startTime)}`)).toEqual(["A09:00", "B09:00", "A10:00", "A11:00"]);
     // não muta a entrada
     expect(list[0].plan[0].resourceId).toBe("A");
     expect(hhmm(list[0].startTime)).toBe("10:00");
   });
   it("equipe nunca recebe restrict: vira rank e não esconde nada", () => {
-    const staff = applySmartMode(list, "restrict", 1, "staff");
+    const staff = applySmartMode(list, "restrict", 1, "staff", tz);
     expect(staff.relaxed).toBe(false);
     expect(staff.list).toHaveLength(4);
-    const ai = applySmartMode(list, "restrict", 1, "ai");
+    const ai = applySmartMode(list, "restrict", 1, "ai", tz);
     expect(ai.list).toHaveLength(3); // some o de adjacency 0
-    expect(applySmartMode(list, "restrict", 1, "public").list).toHaveLength(3);
+    expect(applySmartMode(list, "restrict", 1, "public", tz).list).toHaveLength(3);
   });
   it("restrict faz fallback para rank quando sobra menos que minOffer", () => {
-    const r = applySmartMode(list, "restrict", 4, "ai");
+    const r = applySmartMode(list, "restrict", 4, "ai", tz);
     expect(r.relaxed).toBe(true);
     expect(r.list).toHaveLength(4);
   });
   it("restrict usa a feature crua: peso zero não esconde tudo", () => {
     const zero = list.map((c) => ({ ...c, parts: { ...c.parts, adjacency: 0 } }));
-    expect(applySmartMode(zero, "restrict", 1, "ai").list).toHaveLength(3);
+    expect(applySmartMode(zero, "restrict", 1, "ai", tz).list).toHaveLength(3);
   });
 });
 
@@ -274,5 +274,51 @@ describe("pickOffers", () => {
   it("é determinístico", () => {
     const ranked = [mk(MON, "09:00", 50), mk(MON, "14:00", 40), mk("2026-11-24", "09:00", 35)];
     expect(pickOffers(ranked, 3, tz)).toEqual(pickOffers([...ranked], 3, tz));
+  });
+});
+
+describe("restrict: minOffer e fallback por dia (regressão da revisão)", () => {
+  const mk = (date: string, s: string, adj: number, score: number): ScoredCandidate => ({
+    ...cand("A", s, `${String(Number(s.slice(0, 2)) + 1).padStart(2, "0")}:${s.slice(3)}`),
+    startTime: at(date, s), endTime: at(date, `${String(Number(s.slice(0, 2)) + 1).padStart(2, "0")}:${s.slice(3)}`),
+    blockStart: at(date, s), blockEnd: at(date, `${String(Number(s.slice(0, 2)) + 1).padStart(2, "0")}:${s.slice(3)}`),
+    score, parts: { adjacency: 0, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 },
+    features: { adjacency: adj, deadGap: 0, openNewResource: 0, earlyFirst: 0, balance: 0, preference: 0 }, reasons: [],
+  });
+  const D1 = "2026-11-23";
+  const D2 = "2026-11-24";
+  it("minOffer 0 ou negativo vale 1: nunca devolve lista vazia havendo horário", () => {
+    const nothingStrict = [mk(D1, "09:00", 0, 5), mk(D1, "10:00", 0, 4)];
+    for (const minOffer of [0, -3, NaN]) {
+      const r = applySmartMode(nothingStrict, "restrict", minOffer, "ai", tz);
+      expect(r.list).toHaveLength(2);
+      expect(r.relaxed).toBe(true);
+    }
+    const some = [mk(D1, "09:00", 1, 5), mk(D1, "10:00", 0, 4)];
+    expect(applySmartMode(some, "restrict", 0, "ai", tz)).toMatchObject({ relaxed: false, list: [expect.objectContaining({ score: 5 })] });
+  });
+  it("o fallback é por dia: o dia sem horário 'estrito' volta ao rank sem arrastar os outros", () => {
+    const list = [
+      mk(D1, "09:00", 1, 50), mk(D1, "10:00", 0.5, 40), mk(D1, "11:00", 1, 30), mk(D1, "14:00", 0, 1), // D1: 3 estritos
+      mk(D2, "09:00", 0, 20), mk(D2, "10:00", 0, 10), // D2: nenhum estrito
+    ];
+    const r = applySmartMode(list, "restrict", 3, "public", tz);
+    expect(r.relaxed).toBe(true);
+    expect(r.relaxedDays).toEqual([D2]);
+    const d1 = r.list.filter((c) => c.startTime < at(D2, "00:00"));
+    const d2 = r.list.filter((c) => c.startTime >= at(D2, "00:00"));
+    expect(d1).toHaveLength(3); // o de adjacency 0 some em D1
+    expect(d2).toHaveLength(2); // D2 não fica com zero ofertas
+    expect(r.list.map((c) => c.score)).toEqual([50, 40, 30, 20, 10]); // ordenado por pontuação no conjunto
+  });
+  it("a janela inteira com muitos horários estritos num dia não esconde o dia vazio de estritos (antes: 3+ estritos globais zerava D2)", () => {
+    const list = [mk(D1, "09:00", 1, 9), mk(D1, "10:00", 1, 8), mk(D1, "11:00", 1, 7), mk(D2, "09:00", 0, 1)];
+    expect(applySmartMode(list, "restrict", 3, "ai", tz).list.some((c) => c.startTime >= at(D2, "00:00"))).toBe(true);
+  });
+  it("o dia local decide o agrupamento (22:30 local em UTC-3 ainda é o dia local)", () => {
+    const late = mk(D1, "22:30", 1, 1);
+    const r = applySmartMode([late, mk(D2, "09:00", 0, 2)], "restrict", 1, "ai", tz);
+    expect(r.list).toHaveLength(2);
+    expect(r.relaxedDays).toEqual([D2]);
   });
 });

@@ -17,14 +17,16 @@
 
 import {
   type AllocationLite,
+  assertUnits,
   type Interval,
+  MAX_BLOCK_MIN,
   peakUnits,
   type ResourceDay,
   type ResourceLite,
   type SchedId,
   usableIntervals,
 } from "./schedAvailability";
-import { atLocalMinutes, type LocalDate } from "./schedTime";
+import { atLocalMinutes, dayBounds, type LocalDate, minutesOfDay } from "./schedTime";
 
 export type ServiceRequirementLite = {
   role: string;
@@ -53,8 +55,6 @@ export type Candidate = {
 };
 
 const MINUTE_MS = 60_000;
-/** Teto de bloco do plano (`MAX_BLOCK_MIN`, A1). UNIFICAR com `schedConstants`. */
-const DEFAULT_MAX_BLOCK_MIN = 480;
 const DEFAULT_MAX_PER_START = 3;
 
 /** Duração efetiva em minutos (variante, se houver). Lança se `variantKey` não existe. */
@@ -74,7 +74,9 @@ export function requirementMatches(resource: ResourceLite, req: ServiceRequireme
 
 /** Unidades que o requisito consome no recurso (`exclusive` = capacidade inteira). */
 export function unitsFor(req: ServiceRequirementLite, resource: Pick<ResourceLite, "capacity">): number {
-  return req.exclusive ? resource.capacity : (req.units ?? 1);
+  const units = req.exclusive ? resource.capacity : (req.units ?? 1);
+  assertUnits(units); // lança para 0, negativo ou fracionário (inclui exclusive em recurso de capacidade < 1)
+  return units;
 }
 
 function coveredBy(intervals: Interval[], start: number, end: number): boolean {
@@ -123,17 +125,15 @@ export function generateCandidates(input: {
   preferredResourceIds?: SchedId[];
   maxPerStart?: number; // planos alternativos por início; default 3
   basis?: "core" | "block"; // default "block"
-  maxBlockMin?: number; // default 480
 }): Candidate[] {
   const { date, tz, service, day, earliest, latest } = input;
   const step = service.slotIntervalMin ?? input.gridMinutes;
   if (!Number.isInteger(step) || step < 1 || step > 1440) throw new Error("Passo da grade inválido.");
   const maxPerStart = Math.max(1, input.maxPerStart ?? DEFAULT_MAX_PER_START);
   const basis = input.basis ?? "block";
-  const maxBlockMin = input.maxBlockMin ?? DEFAULT_MAX_BLOCK_MIN;
   const durationMin = durationFor(service, input.variantKey);
   const blockMin = durationMin + service.bufferBeforeMin + service.bufferAfterMin;
-  if (durationMin <= 0 || blockMin > maxBlockMin) return [];
+  if (durationMin <= 0 || blockMin > MAX_BLOCK_MIN) return [];
   if (service.requirements.length === 0) return [];
   const preferred = new Set(input.preferredResourceIds ?? []);
   const resources = [...day.values()].map((d) => d.resource).sort(byPreference(preferred));
@@ -141,11 +141,18 @@ export function generateCandidates(input: {
   const usableByResource = new Map<SchedId, Interval[]>();
   for (const [id, rd] of day) usableByResource.set(id, usableIntervals(rd));
 
+  // Dia de exatamente 24 h: minuto local m = início do dia + m min (sem Intl por candidato).
+  // Dias de 23/25 h (horário de verão) convertem pelo conversor oficial.
+  const bounds = dayBounds(date, tz);
+  const plainDay = bounds.end - bounds.start === 1440 * MINUTE_MS;
+
   const out: Candidate[] = [];
   const seenStarts = new Set<number>();
   for (let m = 0; m < 1440; m += step) {
-    const startTime = atLocalMinutes(date, m, tz);
-    if (seenStarts.has(startTime)) continue; // hora inexistente/duplicada colapsa no mesmo instante
+    const startTime = plainDay ? bounds.start + m * MINUTE_MS : atLocalMinutes(date, m, tz);
+    // Hora inexistente (salto) cai em outro minuto local: a regra OFF_GRID a recusaria, então não oferece.
+    if (!plainDay && minutesOfDay(startTime, tz) !== m) continue;
+    if (seenStarts.has(startTime)) continue;
     seenStarts.add(startTime);
     if (startTime < earliest || startTime > latest) continue;
     const c = {

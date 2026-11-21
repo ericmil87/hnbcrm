@@ -2,7 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   type AllocationLite,
   capacityCheck,
+  assertBlockWithinCap,
+  assertUnits,
   capacityReadRange,
+  MAX_BLOCK_MIN,
+  validateIntervals,
+  validateWeekly,
   computeDayAvailability,
   type ExceptionLite,
   mergeIntervals,
@@ -223,24 +228,91 @@ describe("peakUnits — capacidade por PICO (não soma)", () => {
 });
 
 describe("lookback L da faixa de leitura", () => {
-  const L = 480; // min
+  const L = MAX_BLOCK_MIN; // min
   const bs = at(MON, "12:00");
   const be = bs + 60 * MIN;
   it("a faixa é [bs − L, be)", () => {
-    expect(capacityReadRange(bs, be, L)).toEqual({ from: bs - L * MIN, to: be });
+    expect(capacityReadRange(bs, be)).toEqual({ from: bs - L * MIN, to: be });
     expect(capacityReadRange(bs, be)).toEqual({ from: bs - 480 * MIN, to: be }); // default 480
   });
   it("bloco que começa L − 1 min antes entra; L + 1 min antes não (e não poderia sobrepor)", () => {
     const inside = alloc({ blockStart: bs - (L - 1) * MIN, blockEnd: bs - (L - 1) * MIN + L * MIN }); // dura L, termina 1 min depois de bs
     const outside = alloc({ blockStart: bs - (L + 1) * MIN, blockEnd: bs - (L + 1) * MIN + L * MIN }); // dura L, termina 1 min antes de bs
-    expect(rowsInCapacityWindow([inside, outside], bs, be, L)).toEqual([inside]);
+    expect(rowsInCapacityWindow([inside, outside], bs, be)).toEqual([inside]);
     expect(peakUnits([inside], bs, be, "block")).toBe(1);
     expect(peakUnits([outside], bs, be, "block")).toBe(0); // fora da faixa também não conflitaria
     // borda exata: começa em bs − L (entra) e termina exatamente em bs (não sobrepõe: sai pelo filtro blockEnd > bs)
     const edge = alloc({ blockStart: bs - L * MIN, blockEnd: bs });
-    expect(rowsInCapacityWindow([edge], bs, be, L)).toEqual([]);
+    expect(rowsInCapacityWindow([edge], bs, be)).toEqual([]);
   });
   it("linha que começa em `be` (encostada depois) fica fora da faixa", () => {
-    expect(rowsInCapacityWindow([alloc({ blockStart: be, blockEnd: be + 30 * MIN })], bs, be, L)).toEqual([]);
+    expect(rowsInCapacityWindow([alloc({ blockStart: be, blockEnd: be + 30 * MIN })], bs, be)).toEqual([]);
+  });
+});
+
+describe("teto de bloco e unidades (regressão da revisão)", () => {
+  it("assertBlockWithinCap: L passa, L + 1 min lança, bloco invertido ou nulo lança", () => {
+    const t0 = at(MON, "08:00");
+    expect(() => assertBlockWithinCap(t0, t0 + MAX_BLOCK_MIN * MIN)).not.toThrow();
+    expect(() => assertBlockWithinCap(t0, t0 + (MAX_BLOCK_MIN + 1) * MIN)).toThrow(/limite de 480/);
+    expect(() => assertBlockWithinCap(t0, t0)).toThrow();
+    expect(() => assertBlockWithinCap(t0 + 1, t0)).toThrow();
+    expect(() => assertBlockWithinCap(NaN, t0)).toThrow();
+  });
+  it("alocação de L + 1 min ficaria invisível na faixa lida (por isso o guard antes do insert)", () => {
+    const bs = at(MON, "12:00");
+    const be = bs + 60 * MIN;
+    // começa 1 min antes da faixa [bs − L, be) e dura L + 31 min: invade [bs, be) sem ser lida
+    const long = alloc({ blockStart: bs - (MAX_BLOCK_MIN + 1) * MIN, blockEnd: bs + 30 * MIN });
+    expect(long.blockEnd - long.blockStart).toBe((MAX_BLOCK_MIN + 31) * MIN);
+    expect(peakUnits([long], bs, be, "block")).toBe(1);
+    expect(rowsInCapacityWindow([long], bs, be)).toEqual([]); // fora da faixa [bs − L, be)
+    expect(() => assertBlockWithinCap(long.blockStart, long.blockEnd)).toThrow();
+  });
+  it("unidades 0, negativas ou fracionárias lançam em peakUnits (linha sobreposta) e capacityCheck", () => {
+    const T = (m: number) => m * MIN;
+    for (const units of [0, -1, 1.5, NaN]) {
+      expect(() => peakUnits([alloc({ blockStart: T(0), blockEnd: T(60), units })], T(0), T(60), "core")).toThrow(/Unidades/);
+    }
+    // linha que não sobrepõe a consulta não é lida
+    expect(peakUnits([alloc({ blockStart: T(100), blockEnd: T(160), units: -5 })], T(0), T(60), "core")).toBe(0);
+    for (const units of [0, -1, 2.5]) {
+      expect(() => capacityCheck({ rows: [], capacity: 1, units, start: T(0), end: T(60), which: "core" })).toThrow(/Unidades/);
+    }
+    for (const capacity of [0, -1, 1.5]) {
+      expect(() => capacityCheck({ rows: [], capacity, units: 1, start: T(0), end: T(60), which: "core" })).toThrow(/Capacidade/);
+    }
+    expect(() => assertUnits(1)).not.toThrow();
+  });
+});
+
+describe("turno que cruza a meia-noite não é suportado (regressão da revisão)", () => {
+  const night = res({ _id: "n1", weekly: [{ weekday: 1, startMin: 1320, endMin: 120 }] });
+  it("openIntervalsForDay lança em vez de devolver 'fechado'", () => {
+    expect(() => openIntervalsForDay(night, [], MON, tz)).toThrow(/Intervalo inválido/);
+    expect(() => openIntervalsForDay(res({ _id: "x", weekly: [{ weekday: 1, startMin: 0, endMin: 1500 }] }), [], MON, tz)).toThrow();
+    expect(() =>
+      openIntervalsForDay(res({ _id: "x" }), [{ localDate: MON, mode: "custom", resourceId: "x", intervals: [{ startMin: 600, endMin: 600 }] }], MON, tz)
+    ).toThrow();
+    // a regra de outro dia da semana não interfere
+    expect(openIntervalsForDay(night, [], "2026-11-24", tz)).toEqual([]);
+  });
+  it("validateIntervals: limites, ordem, sobreposição, inteiros", () => {
+    expect(validateIntervals([{ startMin: 480, endMin: 720 }, { startMin: 720, endMin: 1080 }])).toEqual({ ok: true });
+    expect(validateIntervals([])).toEqual({ ok: true });
+    expect(validateIntervals([{ startMin: 1320, endMin: 120 }])).toMatchObject({ ok: false, error: expect.stringContaining("meia-noite") });
+    expect(validateIntervals([{ startMin: 600, endMin: 600 }]).ok).toBe(false);
+    expect(validateIntervals([{ startMin: -1, endMin: 60 }]).ok).toBe(false);
+    expect(validateIntervals([{ startMin: 0, endMin: 1441 }]).ok).toBe(false);
+    expect(validateIntervals([{ startMin: 0.5, endMin: 60 }]).ok).toBe(false);
+    expect(validateIntervals([{ startMin: 480, endMin: 720 }, { startMin: 700, endMin: 800 }]).ok).toBe(false);
+    expect(validateIntervals([{ startMin: 840, endMin: 900 }, { startMin: 480, endMin: 720 }]).ok).toBe(false); // fora de ordem
+  });
+  it("validateWeekly valida por dia da semana, o teto de 28 itens e o weekday", () => {
+    expect(validateWeekly([{ weekday: 1, startMin: 480, endMin: 720 }, { weekday: 2, startMin: 480, endMin: 720 }])).toEqual({ ok: true });
+    expect(validateWeekly([{ weekday: 1, startMin: 480, endMin: 720 }, { weekday: 1, startMin: 600, endMin: 900 }]).ok).toBe(false);
+    expect(validateWeekly([{ weekday: 7, startMin: 480, endMin: 720 }]).ok).toBe(false);
+    expect(validateWeekly([{ weekday: 1, startMin: 1320, endMin: 120 }]).ok).toBe(false);
+    expect(validateWeekly(Array.from({ length: 29 }, () => ({ weekday: 0, startMin: 0, endMin: 1 }))).ok).toBe(false);
   });
 });

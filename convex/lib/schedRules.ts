@@ -19,7 +19,15 @@
  *  - "janela máxima" usa `now + dias * 24 h` em ms.
  */
 
-import { overlaps, peakUnits, type Interval, type ResourceDay, type SchedId } from "./schedAvailability";
+import {
+  assertUnits,
+  type Interval,
+  MAX_BLOCK_MIN,
+  overlaps,
+  peakUnits,
+  type ResourceDay,
+  type SchedId,
+} from "./schedAvailability";
 import { minutesOfDay } from "./schedTime";
 
 export type SchedOrigin = "staff" | "ai" | "public" | "api" | "human_message" | "waitlist" | "import";
@@ -101,8 +109,6 @@ export const FIT_IN_CODES: readonly RuleCode[] = [
 const UNAVAILABLE = "Esse horário não está disponível.";
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MINUTE_MS = 60_000;
-/** Teto de bloco (`MAX_BLOCK_MIN`, A1). UNIFICAR com `schedConstants`. */
-const DEFAULT_MAX_BLOCK_MIN = 480;
 
 export type RulePlanEntry = {
   resourceId: SchedId;
@@ -148,7 +154,6 @@ export type RuleInput = {
   aiBookingsTodayForContact?: number;
   /** Início do agendamento existente em cancelar/remarcar — para `RESCHEDULE_NOTICE`. */
   existingStartTime?: number;
-  maxBlockMin?: number; // default 480
 };
 
 export function evaluateRules(input: RuleInput): Violation[] {
@@ -183,28 +188,47 @@ export function evaluateRules(input: RuleInput): Violation[] {
       { entity: problem }
     );
   }
-  const maxBlockMs = (input.maxBlockMin ?? DEFAULT_MAX_BLOCK_MIN) * MINUTE_MS;
+  const maxBlockMs = MAX_BLOCK_MIN * MINUTE_MS;
   if (input.blockEnd - input.blockStart > maxBlockMs) {
     emit("DURATION_TOO_LONG", "A duração do serviço com as folgas passa do limite permitido.");
   }
 
   // --- por recurso do plano
+  // O mesmo recurso em dois papéis do plano é recusado (bloqueio duro, não forçável) e
+  // as unidades são SOMADAS por recurso antes do teste de pico.
+  const seenResources = new Set<SchedId>();
+  const unitsByResource = new Map<SchedId, number>();
   for (const entry of input.plan) {
+    assertUnits(entry.units);
+    if (seenResources.has(entry.resourceId)) {
+      emit("WRONG_ORG_OR_INACTIVE", "O mesmo recurso foi usado em mais de um papel do agendamento.", {
+        entity: "duplicate_resource",
+        resourceId: entry.resourceId,
+      });
+    }
+    seenResources.add(entry.resourceId);
+    unitsByResource.set(entry.resourceId, (unitsByResource.get(entry.resourceId) ?? 0) + entry.units);
+  }
+  const checked = new Set<SchedId>();
+  for (const entry of input.plan) {
+    if (checked.has(entry.resourceId)) continue;
+    checked.add(entry.resourceId);
+    const units = unitsByResource.get(entry.resourceId)!;
     const { day } = entry;
     const name = day.resource.name;
     const cap = day.resource.capacity;
     const corePeak = peakUnits(day.allocations, input.startTime, input.endTime, "core");
-    const coreExceeded = corePeak + entry.units > cap;
+    const coreExceeded = corePeak + units > cap;
     if (coreExceeded) {
       emit("CAPACITY_EXCEEDED", `${name} já está com a capacidade cheia nesse horário.`, {
         resourceId: entry.resourceId,
         peak: corePeak,
-        units: entry.units,
+        units,
         capacity: cap,
       });
     } else {
       const blockPeak = peakUnits(day.allocations, input.blockStart, input.blockEnd, "block");
-      if (blockPeak + entry.units > cap) {
+      if (blockPeak + units > cap) {
         emit("BUFFER_OVERLAP", `A folga do atendimento encosta em outro atendimento de ${name}.`, {
           resourceId: entry.resourceId,
         });

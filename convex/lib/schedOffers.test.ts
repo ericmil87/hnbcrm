@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { invalidateOffers, issueOffers, type OfferPick, type OffersState, resolveOffer } from "./schedOffers";
+import { consumeOffer, invalidateOffers, issueOffers, type OfferPick, type OffersState, resolveOffer } from "./schedOffers";
 
 const MIN = 60_000;
 const T0 = 1_800_000_000_000;
@@ -101,5 +101,27 @@ describe("invalidateOffers (horario_tomado)", () => {
     const before = JSON.stringify(b.state);
     invalidateOffers(b.state, 1);
     expect(JSON.stringify(b.state)).toBe(before);
+  });
+});
+
+describe("teto, consumo e validação (regressão da revisão)", () => {
+  it("keep 0, negativo ou fracionário lança; lote maior que o teto lança", () => {
+    for (const keep of [0, -1, 1.5]) expect(() => issueOffers(empty, [pick(1)], T0, { keep })).toThrow(/keep/);
+    expect(() => issueOffers(empty, [pick(1), pick(2), pick(3)], T0, { keep: 2 })).toThrow(/teto/);
+    expect(() => issueOffers(empty, Array.from({ length: 10 }, (_, i) => pick(i)), T0)).toThrow(/teto de 9/);
+    expect(issueOffers(empty, [pick(1), pick(2)], T0, { keep: 2 }).state.offers).toHaveLength(2);
+    expect(() => issueOffers(empty, [pick(1)], T0, { ttlMs: 0 })).toThrow();
+  });
+  it("resolveOffer não consome; consumeOffer remove só o código usado e preserva offerSeq", () => {
+    const { state } = issueOffers(empty, [pick(1), pick(2), pick(3)], T0);
+    const reply = T0 + MIN;
+    expect(resolveOffer(state, "h2", T0 + 2 * MIN, reply).ok).toBe(true);
+    expect(resolveOffer(state, "h2", T0 + 2 * MIN, reply).ok).toBe(true); // ainda vale
+    const after = consumeOffer(state, " H2 ");
+    expect(after.offers.map((o) => o.code)).toEqual(["h1", "h3"]);
+    expect(after.offerSeq).toBe(3);
+    expect(resolveOffer(after, "h2", T0 + 2 * MIN, reply)).toEqual({ ok: false, error: "desconhecida" });
+    expect(consumeOffer(after, "h9")).toEqual(after);
+    expect(state.offers).toHaveLength(3); // não muta
   });
 });

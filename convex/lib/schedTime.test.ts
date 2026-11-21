@@ -149,3 +149,39 @@ describe("formatSlotLabel", () => {
     expect(formatSlotLabel(atLocalMinutes("2026-11-28", 600, tz), lateNow, tz)).toContain("(amanhã)");
   });
 });
+
+describe("fusos extras (regressão da revisão)", () => {
+  it("America/Santiago: dia de 23 h com meia-noite inexistente (06/09/2026) e dia de 25 h (04/04/2026)", () => {
+    const spring = dayBounds("2026-09-06", "America/Santiago");
+    expect(spring.end - spring.start).toBe(23 * H);
+    expect(spring.start).toBe(iso("2026-09-06T04:00:00Z")); // 00:00 não existe: o dia começa às 01:00 locais
+    expect(minutesOfDay(spring.start, "America/Santiago")).toBe(60);
+    expect(localDateOf(spring.start, "America/Santiago")).toBe("2026-09-06");
+    const fall = dayBounds("2026-04-04", "America/Santiago");
+    expect(fall.end - fall.start).toBe(25 * H);
+    // 23:30 local duplicada: vale a primeira ocorrência (offset -3)
+    expect(atLocalMinutes("2026-04-04", 1410, "America/Santiago")).toBe(iso("2026-04-05T02:30:00Z"));
+  });
+  it("America/Sao_Paulo em 04/11/2018: meia-noite inexistente, dia de 23 h", () => {
+    const tz = "America/Sao_Paulo";
+    const b = dayBounds("2018-11-04", tz);
+    expect(b.start).toBe(iso("2018-11-04T03:00:00Z"));
+    expect(b.end - b.start).toBe(23 * H);
+    expect(minutesOfDay(b.start, tz)).toBe(60);
+    expect(localDateOf(b.start, tz)).toBe("2018-11-04");
+    expect(atLocalMinutes("2018-11-04", 1440, tz)).toBe(atLocalMinutes("2018-11-05", 0, tz));
+    const fall = dayBounds("2019-02-16", tz);
+    expect(fall.end - fall.start).toBe(25 * H);
+  });
+  it("Asia/Kathmandu (+05:45): ida e volta de todos os minutos do dia", () => {
+    const tz = "Asia/Kathmandu";
+    const b = dayBounds("2026-12-31", tz);
+    expect(b.start).toBe(iso("2026-12-30T18:15:00Z"));
+    expect(atLocalMinutes("2026-12-31", 540, tz)).toBe(iso("2026-12-31T03:15:00Z"));
+    for (let m = 0; m < 1440; m += 15) {
+      const ms = atLocalMinutes("2026-12-31", m, tz);
+      expect(minutesOfDay(ms, tz)).toBe(m);
+      expect(localDateOf(ms, tz)).toBe("2026-12-31");
+    }
+  });
+});

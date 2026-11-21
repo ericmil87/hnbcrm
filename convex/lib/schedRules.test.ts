@@ -269,3 +269,34 @@ describe("applyForce", () => {
     expect(applyForce(aiV, ["OUTSIDE_HOURS"], "ai").blocking.length).toBeGreaterThan(0);
   });
 });
+
+describe("mesmo recurso em dois papéis e unidades inválidas (regressão da revisão)", () => {
+  const dupla: ResourceLite = { ...room, capacity: 2 };
+  const entry = (role: string, units: number, allocs: AllocationLite[]) => ({ resourceId: "r1", role, units, day: dayOf(dupla, { allocations: allocs }) });
+  it("sala de capacidade 2 com 1 ocupada + plano [{r1,1},{r1,1}]: soma as unidades E recusa o recurso repetido (não forçável)", () => {
+    const input = baseInput("staff", { plan: [entry("A", 1, [alloc("12:00", "13:00")]), entry("B", 1, [alloc("12:00", "13:00")])] });
+    const v = evaluateRules(input);
+    expect(codes(v).sort()).toEqual(["CAPACITY_EXCEEDED", "WRONG_ORG_OR_INACTIVE"]);
+    expect(v.every((x) => x.severity === "block")).toBe(true);
+    const forced = applyForce(v, ["CAPACITY_EXCEEDED", "WRONG_ORG_OR_INACTIVE"], "staff");
+    expect(forced.blocking).toHaveLength(2);
+    expect(forced.forced).toEqual([]);
+  });
+  it("sem ocupação, 2 + 2 unidades no mesmo recurso de capacidade 2 também estoura; e a repetição sozinha ainda é recusada", () => {
+    const v = evaluateRules(baseInput("staff", { plan: [entry("A", 2, []), entry("B", 2, [])] }));
+    expect(codes(v)).toContain("CAPACITY_EXCEEDED");
+    const rep = evaluateRules(baseInput("ai", { plan: [entry("A", 1, []), entry("B", 1, [])] }));
+    expect(codes(rep)).toEqual(["WRONG_ORG_OR_INACTIVE"]); // 2 unidades cabem em capacidade 2, mas o recurso repetido não é aceito
+    expect(rep[0].message).toBe("Esse horário não está disponível.");
+  });
+  it("unidades 0, negativas ou fracionárias no plano lançam", () => {
+    for (const units of [0, -1, 1.5]) {
+      expect(() => evaluateRules(baseInput("staff", { plan: [entry("A", units, [])] }))).toThrow(/Unidades/);
+    }
+  });
+  it("DURATION_TOO_LONG usa o teto único: 480 passa, 481 bloqueia", () => {
+    const s = at("08:00");
+    expect(codes(evaluateRules(baseInput("staff", { plan: [], startTime: at("12:00"), blockStart: s, blockEnd: s + 480 * MIN })))).not.toContain("DURATION_TOO_LONG");
+    expect(codes(evaluateRules(baseInput("staff", { plan: [], startTime: at("12:00"), blockStart: s, blockEnd: s + 481 * MIN })))).toContain("DURATION_TOO_LONG");
+  });
+});

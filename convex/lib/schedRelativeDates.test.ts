@@ -122,3 +122,14 @@ describe("periodWindow", () => {
     expect(periodWindow("qualquer")).toEqual({ startMin: 0, endMin: 1440 });
   });
 });
+
+describe("maxAdvanceDays em data explícita (regressão da revisão)", () => {
+  const now = noon("2026-11-27");
+  it("recusa data além da janela com motivo claro; no limite aceita; sem opção não limita", () => {
+    expect(resolveDateRef("2099-01-01", now, tz, { maxAdvanceDays: 60 })).toEqual({ ok: false, error: expect.stringContaining("longe demais") });
+    expect(resolveDateRef("2026-12-27", now, tz, { maxAdvanceDays: 30 }).ok).toBe(true); // exatamente 30 dias
+    expect(resolveDateRef("2026-12-28", now, tz, { maxAdvanceDays: 30 }).ok).toBe(false);
+    expect(resolveDateRef("2099-01-01", now, tz).ok).toBe(true);
+    expect(resolveDateRef("amanha", now, tz, { maxAdvanceDays: 0 }).ok).toBe(true); // só vale para data explícita
+  });
+});

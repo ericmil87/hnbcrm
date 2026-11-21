@@ -59,7 +59,8 @@ function normalizeToken(ref: string): string {
 export function resolveDateRef(
   ref: string,
   now: number,
-  tz: string
+  tz: string,
+  opts?: { maxAdvanceDays?: number }
 ): { ok: true; from: LocalDate; to: LocalDate; echo: string } | { ok: false; error: string } {
   assertValidTimezone(tz);
   const today = localDateOf(now, tz);
@@ -88,6 +89,10 @@ export function resolveDateRef(
     from = to = ref.trim();
     if (diffLocalDays(today, from) < 0) {
       return { ok: false, error: `A data ${formatLocalDateLabel(from)} já passou. Peça uma data a partir de hoje.` };
+    }
+    const maxAdv = opts?.maxAdvanceDays;
+    if (maxAdv !== undefined && diffLocalDays(today, from) > maxAdv) {
+      return { ok: false, error: `A data ${formatLocalDateLabel(from)} está longe demais: só é possível marcar com até ${maxAdv} dias de antecedência.` };
     }
   } else {
     return {

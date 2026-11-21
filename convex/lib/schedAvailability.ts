@@ -5,6 +5,19 @@
  * documentos do schema satisfazem estes tipos, e ids (`Id<"schedResources">`
  * etc.) são `string` em tempo de compilação, então entram sem conversão.
  *
+ * LIMITES DO MVP
+ *  - Turno que cruza a meia-noite NÃO é suportado: cada intervalo (regra
+ *    semanal, exceção) é `0 <= startMin < endMin <= 1440` num único dia local;
+ *    para o noturno use dois dias (22:00-24:00 num e 00:00-02:00 no seguinte).
+ *    `validateIntervals`/`validateWeekly` são o validador da porta de
+ *    configuração; `openIntervalsForDay` LANÇA diante de intervalo inválido
+ *    (nunca devolve "fechado" em silêncio).
+ *  - Quando a equipe força marcação fora do expediente que passa da meia-noite,
+ *    os compromissos do dia SEGUINTE não entram neste `ResourceDay` (o aviso
+ *    `INTERNAL_EVENT_OVERLAP`/`RESOURCE_BLOCKED` desse trecho não sai). A
+ *    capacidade continua garantida: quem decide é a faixa `[bs − L, be)` lida
+ *    na porta (`capacityReadRange`), que atravessa a meia-noite.
+ *
  * Capacidade (regra dura) usa o NÚCLEO `[coreStart, coreEnd)` da alocação;
  * folga (aviso) usa o BLOCO `[blockStart, blockEnd)`. Intervalos são
  * semiabertos: encostar (fim = início) NÃO conflita.
@@ -46,12 +59,72 @@ export type ExceptionLite = {
 export type BusyBlock = Interval & { source: "block" | "internal_event" };
 
 /**
- * Teto de duração de bloco (duração + folgas) usado como `L` do lookback.
- * Valor do plano (`MAX_BLOCK_MIN = 480`, `schedConstants.ts` do PR A1);
- * recebido por parâmetro nas funções que o usam. UNIFICAR com a constante do A1.
+ * Teto de duração de bloco (duração + folgas) = `L` do lookback. ÚNICA
+ * constante do teto nas libs `sched*`; não é parâmetro de nenhuma função: a
+ * garantia de capacidade depende de `L` ser um teto real e fixo.
+ * Unificar com schedConstants.MAX_BLOCK_MIN no merge.
  */
-const DEFAULT_MAX_BLOCK_MIN = 480;
+export const MAX_BLOCK_MIN = 480;
 const MINUTE_MS = 60_000;
+
+/**
+ * A porta chama ANTES de todo insert de alocação (reservar, realocar, desfazer,
+ * trocar recurso). Alocação mais longa que `L` fica invisível na faixa
+ * `[bs − L, be)` e abriria marcação dupla.
+ */
+export function assertBlockWithinCap(blockStart: number, blockEnd: number): void {
+  if (!Number.isFinite(blockStart) || !Number.isFinite(blockEnd) || blockEnd <= blockStart) {
+    throw new Error("Bloco de agendamento inválido.");
+  }
+  if (blockEnd - blockStart > MAX_BLOCK_MIN * MINUTE_MS) {
+    throw new Error(`O bloco do agendamento (duração + folgas) passa do limite de ${MAX_BLOCK_MIN} minutos.`);
+  }
+}
+
+/** Unidades resolvidas precisam ser inteiro >= 1. */
+export function assertUnits(units: number): void {
+  if (!Number.isInteger(units) || units < 1) throw new Error("Unidades de ocupação inválidas: use um inteiro maior ou igual a 1.");
+}
+function assertCapacity(capacity: number): void {
+  if (!Number.isInteger(capacity) || capacity < 1) throw new Error("Capacidade do recurso inválida: use um inteiro maior ou igual a 1.");
+}
+
+/** Valida uma lista de intervalos de um dia local: `0 <= startMin < endMin <= 1440`, ordenados e sem sobreposição (encostar pode). Mensagem PT-BR para a configuração. */
+export function validateIntervals(
+  list: Array<{ startMin: number; endMin: number }>
+): { ok: true } | { ok: false; error: string } {
+  let prevEnd = -1;
+  for (const it of list) {
+    if (!Number.isInteger(it.startMin) || !Number.isInteger(it.endMin)) {
+      return { ok: false, error: "Os horários precisam ser minutos inteiros." };
+    }
+    if (it.startMin < 0 || it.endMin > 1440) return { ok: false, error: "Os horários precisam estar entre 00:00 e 24:00." };
+    if (it.endMin <= it.startMin) {
+      return {
+        ok: false,
+        error: "O fim do turno precisa ser depois do início. Turno que cruza a meia-noite não é suportado: divida em dois dias.",
+      };
+    }
+    if (it.startMin < prevEnd) return { ok: false, error: "Os turnos do mesmo dia não podem se sobrepor e devem estar em ordem." };
+    prevEnd = it.endMin;
+  }
+  return { ok: true };
+}
+
+/** Valida a regra semanal (`weekday` 0..6, até 28 itens, turnos válidos por dia). */
+export function validateWeekly(
+  weekly: Array<{ weekday: number; startMin: number; endMin: number }>
+): { ok: true } | { ok: false; error: string } {
+  if (weekly.length > 28) return { ok: false, error: "No máximo 28 turnos por semana." };
+  for (let wd = 0; wd <= 6; wd++) {
+    const r = validateIntervals(weekly.filter((w) => w.weekday === wd));
+    if (!r.ok) return r;
+  }
+  if (weekly.some((w) => !Number.isInteger(w.weekday) || w.weekday < 0 || w.weekday > 6)) {
+    return { ok: false, error: "Dia da semana inválido." };
+  }
+  return { ok: true };
+}
 
 // ---------------------------------------------------------------------------
 // Intervalos
@@ -98,10 +171,11 @@ function localMinuteIntervals(
 ): Interval[] {
   const out: Interval[] = [];
   for (const it of list ?? []) {
-    const s = Math.max(0, Math.min(1440, Math.trunc(it.startMin)));
-    const e = Math.max(0, Math.min(1440, Math.trunc(it.endMin)));
-    if (e <= s) continue;
-    out.push({ start: atLocalMinutes(date, s, tz), end: atLocalMinutes(date, e, tz) });
+    const ok = validateIntervals([it]);
+    if (!ok.ok) throw new Error(`Intervalo inválido em ${date}: ${ok.error}`);
+    const start = atLocalMinutes(date, it.startMin, tz);
+    const end = atLocalMinutes(date, it.endMin, tz);
+    if (end > start) out.push({ start, end }); // 0 só em hora inexistente (dia de horário de verão)
   }
   return mergeIntervals(out);
 }
@@ -272,6 +346,7 @@ export function peakUnits(rows: AllocationLite[], start: number, end: number, wh
   for (const row of rows) {
     const r = rowRange(row, which);
     if (!overlaps(r.start, r.end, start, end)) continue;
+    assertUnits(row.units); // linha corrompida falha alto: nunca reduz nem ignora o pico
     events.push([Math.max(r.start, start), row.units]);
     events.push([Math.min(r.end, end), -row.units]);
   }
@@ -295,6 +370,8 @@ export function capacityCheck(input: {
   end: number;
   which: "core" | "block";
 }): { ok: boolean; peak: number } {
+  assertCapacity(input.capacity);
+  assertUnits(input.units);
   const peak = peakUnits(input.rows, input.start, input.end, input.which);
   return { ok: peak + input.units <= input.capacity, peak };
 }
@@ -304,21 +381,12 @@ export function capacityCheck(input: {
  * `blockStart >= bs − L` e `blockStart < be`. `L` é o teto fixo de duração de
  * bloco; toda alocação que pode sobrepor `[bs, be)` começa dentro dela.
  */
-export function capacityReadRange(
-  blockStart: number,
-  blockEnd: number,
-  maxBlockMin: number = DEFAULT_MAX_BLOCK_MIN
-): { from: number; to: number } {
-  return { from: blockStart - maxBlockMin * MINUTE_MS, to: blockEnd };
+export function capacityReadRange(blockStart: number, blockEnd: number): { from: number; to: number } {
+  return { from: blockStart - MAX_BLOCK_MIN * MINUTE_MS, to: blockEnd };
 }
 
 /** Filtra linhas para a faixa de leitura e descarta as que já terminaram (`blockEnd <= bs`). */
-export function rowsInCapacityWindow(
-  rows: AllocationLite[],
-  blockStart: number,
-  blockEnd: number,
-  maxBlockMin: number = DEFAULT_MAX_BLOCK_MIN
-): AllocationLite[] {
-  const range = capacityReadRange(blockStart, blockEnd, maxBlockMin);
+export function rowsInCapacityWindow(rows: AllocationLite[], blockStart: number, blockEnd: number): AllocationLite[] {
+  const range = capacityReadRange(blockStart, blockEnd);
   return rows.filter((r) => r.blockStart >= range.from && r.blockStart < range.to && r.blockEnd > blockStart);
 }

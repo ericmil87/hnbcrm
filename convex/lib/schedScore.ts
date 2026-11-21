@@ -248,28 +248,72 @@ function distinctStarts(list: Candidate[]): number {
 
 /**
  * off = cronológico; rank = por pontuação; restrict = só deadGap 0 e adjacency > 0,
- * com fallback para rank se sobrar menos que minOffer (horários distintos).
- * Equipe nunca recebe "restrict" (vira rank).
+ * com fallback para rank POR DIA (relatório 04): num dia em que sobrar menos que
+ * `minOffer` horários distintos, aquele dia volta para o rank completo — nenhum
+ * dia com horário fica sem oferta por causa do modo. `minOffer` abaixo de 1 vale 1.
+ * Equipe nunca recebe "restrict" (vira rank). `relaxedDays` lista os dias que
+ * cairam no fallback; `relaxed` = há algum.
  */
 export function applySmartMode(
   cands: ScoredCandidate[],
   mode: SmartMode,
   minOffer: number,
-  audience: Audience
-): { list: ScoredCandidate[]; relaxed: boolean } {
+  audience: Audience,
+  tz: string
+): { list: ScoredCandidate[]; relaxed: boolean; relaxedDays: string[] } {
+  assertValidTimezone(tz);
   const effective: SmartMode = mode === "restrict" && audience === "staff" ? "rank" : mode;
-  if (effective === "off") return { list: [...cands].sort(compareChrono), relaxed: false };
+  if (effective === "off") return { list: [...cands].sort(compareChrono), relaxed: false, relaxedDays: [] };
   const ranked = [...cands].sort(compareRank);
-  if (effective === "rank") return { list: ranked, relaxed: false };
-  const strict = ranked.filter((c) => c.features.deadGap === 0 && c.features.adjacency > 0);
-  if (distinctStarts(strict) >= minOffer) return { list: strict, relaxed: false };
-  return { list: ranked, relaxed: true };
+  if (effective === "rank") return { list: ranked, relaxed: false, relaxedDays: [] };
+  const need = Math.max(1, Math.trunc(Number.isFinite(minOffer) ? minOffer : 1));
+  const byDay = new Map<string, ScoredCandidate[]>();
+  const dayOfStart = new Map<number, string>();
+  for (const c of ranked) {
+    let day = dayOfStart.get(c.startTime);
+    if (day === undefined) {
+      day = localDateOf(c.startTime, tz);
+      dayOfStart.set(c.startTime, day);
+    }
+    const list = byDay.get(day);
+    if (list) list.push(c);
+    else byDay.set(day, [c]);
+  }
+  const out: ScoredCandidate[] = [];
+  const relaxedDays: string[] = [];
+  for (const [day, list] of byDay) {
+    const strict = list.filter((c) => c.features.deadGap === 0 && c.features.adjacency > 0);
+    if (distinctStarts(strict) >= need) out.push(...strict);
+    else {
+      out.push(...list);
+      relaxedDays.push(day);
+    }
+  }
+  out.sort(compareRank);
+  return { list: out, relaxed: relaxedDays.length > 0, relaxedDays };
 }
 
 type Period = "manha" | "tarde" | "noite";
 function periodOf(ms: number, tz: string): Period {
   const m = minutesOfDay(ms, tz);
   return m < 720 ? "manha" : m < 1080 ? "tarde" : "noite";
+}
+/** Período e dia locais de cada início, calculados uma vez por início distinto. */
+function memoizeLocal(tz: string) {
+  const periods = new Map<number, Period>();
+  const days = new Map<number, string>();
+  return {
+    period: (ms: number): Period => {
+      let v = periods.get(ms);
+      if (v === undefined) periods.set(ms, (v = periodOf(ms, tz)));
+      return v;
+    },
+    day: (ms: number): string => {
+      let v = days.get(ms);
+      if (v === undefined) days.set(ms, (v = localDateOf(ms, tz)));
+      return v;
+    },
+  };
 }
 
 /**
@@ -280,6 +324,7 @@ function periodOf(ms: number, tz: string): Period {
 export function pickOffers(ranked: ScoredCandidate[], max: number, tz: string): ScoredCandidate[] {
   assertValidTimezone(tz);
   if (max <= 0 || ranked.length === 0) return [];
+  const local = memoizeLocal(tz);
   const picks: ScoredCandidate[] = [];
   const taken = new Set<number>();
   const take = (c: ScoredCandidate | undefined): boolean => {
@@ -292,12 +337,12 @@ export function pickOffers(ranked: ScoredCandidate[], max: number, tz: string): 
 
   take(ranked[0]);
   if (picks.length < max) {
-    const periods = new Set(picks.map((p) => periodOf(p.startTime, tz)));
-    take(rest().find((c) => !periods.has(periodOf(c.startTime, tz))) ?? rest()[0]);
+    const periods = new Set(picks.map((p) => local.period(p.startTime)));
+    take(rest().find((c) => !periods.has(local.period(c.startTime))) ?? rest()[0]);
   }
   if (picks.length < max) {
-    const days = new Set(picks.map((p) => localDateOf(p.startTime, tz)));
-    take(rest().find((c) => !days.has(localDateOf(c.startTime, tz))) ?? rest()[0]);
+    const days = new Set(picks.map((p) => local.day(p.startTime)));
+    take(rest().find((c) => !days.has(local.day(c.startTime))) ?? rest()[0]);
   }
   while (picks.length < max) {
     if (!take(rest()[0])) break;

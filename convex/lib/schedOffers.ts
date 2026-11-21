@@ -47,6 +47,9 @@ export function issueOffers(
 ): { state: OffersState; issued: OfferRecord[]; batch: number } {
   const ttl = opts?.ttlMs ?? OFFER_TTL_MS;
   const keep = opts?.keep ?? OFFERS_KEPT;
+  if (!Number.isInteger(keep) || keep < 1) throw new Error("`keep` deve ser um inteiro maior ou igual a 1.");
+  if (!Number.isInteger(ttl) || ttl < 1) throw new Error("`ttlMs` deve ser um inteiro positivo.");
+  if (picks.length > keep) throw new Error(`Um lote não pode ter mais ofertas (${picks.length}) que o teto de ${keep} códigos.`);
   const batch = state.offerSeq + 1;
   let seq = state.offerSeq;
   const issued: OfferRecord[] = picks.map((p) => {
@@ -68,7 +71,12 @@ export function issueOffers(
   return { state: { offerSeq: seq, offers }, issued, batch };
 }
 
-/** Procura a oferta: `desconhecida` | `expirada` | `sem_resposta_do_cliente` (emitida depois da última mensagem do cliente, ou cliente nunca respondeu). */
+/**
+ * Procura a oferta. NÃO consome: chamar duas vezes devolve a mesma oferta. A
+ * porta chama `consumeOffer` na mesma mutation que reserva, para o código usado
+ * não valer de novo.
+ *
+ * Erros: `desconhecida` | `expirada` | `sem_resposta_do_cliente` (emitida depois da última mensagem do cliente, ou cliente nunca respondeu). */
 export function resolveOffer(
   state: OffersState,
   code: string,
@@ -83,6 +91,12 @@ export function resolveOffer(
     return { ok: false, error: "sem_resposta_do_cliente" };
   }
   return { ok: true, offer };
+}
+
+/** Remove o código usado (depois de reservar). Código ausente devolve o estado igual. `offerSeq` nunca recua. */
+export function consumeOffer(state: OffersState, code: string): OffersState {
+  const normalized = typeof code === "string" ? code.trim().toLowerCase() : "";
+  return { offerSeq: state.offerSeq, offers: state.offers.filter((o) => o.code !== normalized) };
 }
 
 /** `horario_tomado`: descarta todas as ofertas, exceto as do lote `keepBatch` (se informado). `offerSeq` nunca recua. */

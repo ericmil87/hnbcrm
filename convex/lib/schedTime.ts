@@ -3,10 +3,13 @@
  *
  * Embrulha os conversores já testados do repo — NÃO existe terceira
  * implementação de offset de fuso aqui:
- *  - `localToEpoch` (`lib/agentSchedule.ts`): hora local -> epoch, com hora
- *    INEXISTENTE (salto de primavera) avançando para o próximo instante válido
- *    e hora DUPLICADA (volta do horário de verão) na PRIMEIRA ocorrência;
- *  - `localParts` (`lib/groupPostSchedule.ts`): epoch -> partes locais.
+ *  - `localToEpoch` (`lib/agentSchedule.ts`): hora local -> epoch. Hora
+ *    INEXISTENTE (salto de primavera) é calculada com o offset de ANTES do
+ *    salto e cai depois dele (02:30 em New_York em 08/03/2026 vira 03:30 EDT);
+ *    hora DUPLICADA (volta do horário de verão) fica na PRIMEIRA ocorrência;
+ *  - epoch -> partes locais usa `Intl.DateTimeFormat` com formatador em cache
+ *    por fuso (criar um formatador por chamada custava ~150 µs e dominava a
+ *    geração de horários) e cache pequeno por instante.
  *
  * Diferença deliberada: os dois conversores caem em São Paulo quando o fuso é
  * inválido. Agenda NUNCA pode fazer isso em silêncio (o dia/hora marcado
@@ -18,7 +21,6 @@
  */
 
 import { localToEpoch } from "./agentSchedule";
-import { localParts } from "./groupPostSchedule";
 
 export type LocalDate = string; // "YYYY-MM-DD"
 
@@ -27,6 +29,38 @@ const LOCAL_DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const WEEKDAY_ABBR_PT = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"] as const;
 
 const validTimezones = new Set<string>();
+
+type Parts = { y: number; m: number; d: number; hh: number; mm: number };
+const formatters = new Map<string, Intl.DateTimeFormat>();
+const partsCache = new Map<string, Parts>();
+const PARTS_CACHE_MAX = 20_000;
+
+function partsOf(ms: number, tz: string): Parts {
+  const key = `${tz}|${ms}`;
+  const hit = partsCache.get(key);
+  if (hit) return hit;
+  let fmt = formatters.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    formatters.set(tz, fmt);
+  }
+  const get = (parts: Intl.DateTimeFormatPart[], type: string) => Number(parts.find((p) => p.type === type)?.value ?? "0");
+  const parts = fmt.formatToParts(new Date(ms));
+  let hh = get(parts, "hour");
+  if (hh === 24) hh = 0; // alguns motores devolvem "24" à meia-noite mesmo com h23
+  const out = { y: get(parts, "year"), m: get(parts, "month"), d: get(parts, "day"), hh, mm: get(parts, "minute") };
+  if (partsCache.size >= PARTS_CACHE_MAX) partsCache.clear();
+  partsCache.set(key, out);
+  return out;
+}
 
 /** Devolve `tz` se for um fuso IANA válido; lança `Error` PT-BR caso contrário (nunca cai em São Paulo). */
 export function assertValidTimezone(tz: string): string {
@@ -73,22 +107,23 @@ function parseLocalDate(date: LocalDate): { y: number; m: number; d: number } {
 /** Data local ("YYYY-MM-DD") do instante `ms` no fuso `tz`. */
 export function localDateOf(ms: number, tz: string): LocalDate {
   assertValidTimezone(tz);
-  const p = localParts(ms, tz);
+  const p = partsOf(ms, tz);
   return formatDate(p.y, p.m, p.d);
 }
 
 /** Minuto do dia local (0..1439) do instante `ms` no fuso `tz`. */
 export function minutesOfDay(ms: number, tz: string): number {
   assertValidTimezone(tz);
-  const p = localParts(ms, tz);
+  const p = partsOf(ms, tz);
   return p.hh * 60 + p.mm;
 }
 
 /**
  * Instante UTC (ms) de `minutes` desde a meia-noite local de `date`.
  * `1440` = meia-noite do dia seguinte. Hora inexistente avança para o próximo
- * instante válido; hora duplicada devolve a primeira ocorrência (ambos
- * herdados de `localToEpoch`).
+ * instante válido (02:30 em New_York em 08/03/2026 vira 03:30 EDT, não
+ * 03:00); hora duplicada devolve a primeira ocorrência (ambos herdados de
+ * `localToEpoch`).
  */
 export function atLocalMinutes(date: LocalDate, minutes: number, tz: string): number {
   assertValidTimezone(tz);
