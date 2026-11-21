@@ -5,6 +5,7 @@
  */
 import type { Doc } from "../_generated/dataModel";
 import { escapeHtml } from "./telegramFormat";
+import { SCHED_COPILOT_TOOL_NAMES } from "./schedCopilotTools";
 
 export type AssistantMode = "suggest" | "auto";
 
@@ -66,7 +67,13 @@ export function autoWriteTools(link: Pick<Doc<"telegramLinks">, "assistant">): s
 }
 
 /** Read tools the automatic turn must NOT get (customer-triggered turn: no persona/knowledge leaks). */
-export const AUTO_BLOCKED_READ_TOOLS: ReadonlySet<string> = new Set(["getAttendantConfig", "getAttendantSetupGuide"]);
+export const AUTO_BLOCKED_READ_TOOLS: ReadonlySet<string> = new Set([
+  "getAttendantConfig",
+  "getAttendantSetupGuide",
+  // Agenda v2 (E1): a agenda traz nome de OUTROS clientes e o turno automático (disparado por mensagem de cliente) pode
+  // gerar resposta ao cliente sozinho se ninguém vetar: nenhuma tool de agenda do Copiloto entra nele.
+  ...SCHED_COPILOT_TOOL_NAMES,
+]);
 
 /** Tool filter of the automatic turn: reads (minus the blocked ones) plus the allowed writes. */
 export function autoTurnAllowsTool(spec: { name: string; effect: string }, allowedWrites: ReadonlySet<string>): boolean {

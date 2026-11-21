@@ -26,6 +26,7 @@ import {
   type BookResult,
   bookAppointmentCore,
   cancelAppointmentCore,
+  changeResourceCore,
   peekUndoTargetCore,
   rescheduleAppointmentCore,
   type SchedActor,
@@ -59,6 +60,7 @@ import {
   matchByName,
   resolveStaffDates,
   safeText,
+  trimEndDots,
   type SchedSessionInfo,
   statusPt,
 } from "./schedCopilotTools";
@@ -252,7 +254,7 @@ async function getAgendaDay(ctx: ReadCtx & { db: QueryCtx["db"] }, args: Record<
       const free = gaps.filter((x) => x.resourceId === r._id).reduce((s, x) => s + x.minutes, 0);
       return {
         recurso: safeText(r.name),
-        aberto: r.closed || open === 0 ? "fechado" : durationText(Math.round(open)),
+        aberto: r.closed ? "fechado" : open === 0 ? "indisponível (compromisso ou bloqueio)" : durationText(Math.round(open)),
         livre: r.closed ? "0" : durationText(Math.round(free)),
       };
     });
@@ -470,7 +472,8 @@ export async function runSchedCopilotReadTool(
 // referência), chama a porta em `mode:"preview"` (não grava nada) e grava uma `pendingActions` com o plano que foi
 // mostrado. Fase 2 (`executeSchedPendingAction`, chamada por `confirmPendingActionCore`): só a confirmação do MEMBRO
 // (botão do painel ou do Telegram) executa; reconfere módulo, org, permissão e que o agendamento não mudou; usa
-// exatamente o plano mostrado e SÓ os avisos mostrados em `force`. Nada aqui envia mensagem ao cliente.
+// exatamente o plano mostrado (sem fallback de recurso; depois de executar compara os recursos do resultado com os da
+// prévia e desfaz a transação se diferirem) e SÓ os avisos mostrados em `force`. Nada aqui envia mensagem ao cliente.
 
 export type SchedWriteScope = {
   organizationId: Id<"organizations">;
@@ -513,6 +516,11 @@ async function previewWithWarnings(
   if (second.duplicateOf) return { ok: false, result: toolErr("Já existe um agendamento igual (mesmo contato, serviço e horário).") };
   const shown = second.warnings.length > 0 ? second.warnings : first.violations.filter((v) => v.severity === "warn");
   return { ok: true, plan: second.plan, warnings: shown, force: codes };
+}
+
+/** Avisos para a prévia: uma linha sem ponto final duplicado ("…passou.."). */
+function warnText(warnings: ReadonlyArray<{ message: string }>): string {
+  return warnings.map((w) => trimEndDots(safeText(w.message, 140))).join("; ");
 }
 
 async function savePending(
@@ -592,12 +600,15 @@ async function resolveStart(
   if (hasLocal) {
     const parsed = parseStartLocal(args.startLocal, env.tz);
     if (!parsed.ok) return { ok: false, result: toolErr(parsed.error) };
+    // Registrar atendimento passado não é função destas tools: horário no passado é recusado já na prévia.
+    if (parsed.startTime < env.now) return { ok: false, result: toolErr("Esse horário já passou.", "Peça um horário a partir de agora.") };
     return { ok: true, startTime: parsed.startTime, ...(preferred ? { resourceIds: preferred } : {}) };
   }
   const parsed = parseRef(args.offer, "o");
   const stale = toolErr("Oferta de horário inválida.", "Busque os horários de novo com findFreeTimes nesta conversa e use o `ref` de um deles.");
   if (!parsed || !env.sc.threadId || !refMatches("o", parsed, env.sc.threadId, service._id)) return { ok: false, result: stale };
   const startTime = parsed.startMinute * MINUTE_MS;
+  if (startTime < env.now) return { ok: false, result: toolErr("Esse horário já passou.", "Busque os horários de novo com findFreeTimes.") };
   const date = localDateOf(startTime, env.tz);
   // A oferta só vale se o horário ainda está livre agora (a mesma busca da tela, no mesmo dia).
   const found = await searchSlots(ctx, {
@@ -670,7 +681,8 @@ async function previewBook(ctx: MutationCtx, args: Record<string, unknown>, env:
   const withWho = planNames(p.plan);
   const preview =
     `Marcar ${who}: ${safeText(svc.service.name)} em ${label} (${durationText(svc.service.durationMin)})${withWho ? ` com ${withWho}` : ""}.` +
-    (p.warnings.length ? ` Avisos: ${p.warnings.map((w) => safeText(w.message, 140)).join("; ")}.` : "") +
+    (notes ? ` Observação: ${notes}.` : "") +
+    (p.warnings.length ? ` Avisos: ${warnText(p.warnings)}.` : "") +
     " Nada é enviado ao cliente.";
   return await savePending(
     ctx, sc, env.now, "bookAppointment",
@@ -717,7 +729,8 @@ async function previewReschedule(ctx: MutationCtx, args: Record<string, unknown>
   const withWho = planNames(p.plan);
   const preview =
     `Remarcar ${clientOf(a)} — ${safeText(a.serviceName)}: de ${formatSlotLabel(a.startTime, env.now, env.tz)} para ${to}${withWho ? ` (${withWho})` : ""}.` +
-    (p.warnings.length ? ` Avisos: ${p.warnings.map((w) => safeText(w.message, 140)).join("; ")}.` : "") +
+    (a.status === "pending_approval" ? " Remarcar o pedido também o aprova: passa a ficar marcado." : "") +
+    (p.warnings.length ? ` Avisos: ${warnText(p.warnings)}.` : "") +
     " Nada é enviado ao cliente.";
   return await savePending(ctx, env.sc, env.now, "rescheduleAppointment", { kind: "reschedule", ...snapshotArgs(a), startTime: start.startTime, resourceIds: p.plan.map((x) => x.resourceId), force: p.force }, preview, p.warnings);
 }
@@ -751,7 +764,11 @@ async function previewApprove(ctx: MutationCtx, args: Record<string, unknown>, e
   const a = found.appointment;
   if (a.status !== "pending_approval") return toolErr(`Esse agendamento está ${statusPt(a.status)}, não aguarda aprovação.`);
   if (a.startTime < env.now) return toolErr("Esse horário já passou: a proposta venceu. Recuse ou marque de novo.");
-  const preview = `Aprovar ${describeAppointment(a, env.tz, env.now)}: passa a ficar marcado. O cliente NÃO é avisado por aqui.`;
+  // As mesmas recusas da porta, já na prévia (não prometer o que o clique vai recusar).
+  if (a.resources.some((r) => !r.allocated) && a.needsAttention?.code !== "no_resource") {
+    return toolErr("Esse agendamento está sem sala/profissional (conflito).", "Resolva o conflito antes de aprovar (resolveAgendaConflict).");
+  }
+  const preview = `Aprovar ${describeAppointment(a, env.tz, env.now)}: passa a ficar marcado${a.rescheduleOfId ? " e substitui o agendamento anterior do cliente" : ""}. O cliente NÃO é avisado por aqui.`;
   return await savePending(ctx, env.sc, env.now, "approveAppointment", { kind: "status", ...snapshotArgs(a), to: "scheduled" }, preview);
 }
 
@@ -811,10 +828,12 @@ async function previewClosure(ctx: MutationCtx, args: Record<string, unknown>, e
       .query("schedExceptions")
       .withIndex("by_organization_and_date", (q) => q.eq("organizationId", env.sc.organizationId).eq("localDate", dates.from))
       .take(200);
-    const closed = dayRows.filter((e) => e.mode === "closed");
+    const closed = dayRows.filter((e) => e.mode === "closed" && e.source === "manual"); // só o que a porta remove
     const mine = closed.filter((e) => (resource ? e.resourceId === resource._id : e.resourceId === undefined && e.resourceKind === undefined));
     if (mine.length === 0) {
       const orgWide = resource && closed.some((e) => e.resourceId === undefined && e.resourceKind === undefined);
+      const external = dayRows.some((e) => e.mode === "closed" && e.source !== "manual" && (resource ? e.resourceId === resource._id : e.resourceId === undefined));
+      if (external) return toolErr(`${target} está fechado por um fechamento que não é manual (ex.: importado); só dá para reabrir pela origem dele.`);
       return toolErr(orgWide ? "Esse dia está fechado pela agenda inteira, não por este recurso." : `${target} não está fechado em ${dates.echo}.`);
     }
     const preview = `Reabrir ${target} em ${dates.echo}: remove ${mine.length} fechamento(s). Não desfaz realocações já feitas${result.affected > 0 ? `; ${result.affected} agendamento(s) fora do expediente voltam a ser avaliados` : ""}.`;
@@ -831,6 +850,17 @@ async function previewClosure(ctx: MutationCtx, args: Record<string, unknown>, e
       : `Afeta ${result.capped ? "pelo menos " : ""}${result.affected} agendamento(s): ${result.reallocated} mudam de sala, ${result.conflicts} ficam sem lugar (profissional nunca é trocado sozinho)${lines.length ? `. ${lines.join("; ")}${result.affected > lines.length ? "; …" : ""}` : ""}.`;
   const preview = `Fechar ${target} em ${dates.echo}${reason ? ` (${reason})` : ""}. ${impact} Nada é cancelado nem enviado ao cliente.`;
   return await savePending(ctx, env.sc, env.now, "closeResourceDay", { kind: "close", ...(resource ? { resourceId: resource._id } : {}), wholeAgenda: whole, localDate: dates.from, ...(reason ? { reason } : {}), expectedAffected: result.affected }, preview);
+}
+
+/** Mesma regra de `resolveConflictCore` para montar a lista final de recursos de uma troca (1 id substitui o que saiu). */
+function finalResourceIdsForConflict(a: Doc<"schedAppointments">, conflict: Doc<"schedConflicts">, given: Id<"schedResources">[]): Id<"schedResources">[] | null {
+  const ids = a.resources.map((r) => r.resourceId);
+  if (given.length === ids.length) return given;
+  if (given.length !== 1) return null;
+  const idx = a.resources.findIndex((r) => !r.allocated && (conflict.resourceId === undefined || r.resourceId === conflict.resourceId));
+  const at = idx >= 0 ? idx : a.resources.findIndex((r) => !r.allocated);
+  if (at < 0) return null;
+  return ids.map((id, i) => (i === at ? given[0] : id));
 }
 
 async function previewConflict(ctx: MutationCtx, args: Record<string, unknown>, env: WriteEnv): Promise<SchedToolResult> {
@@ -863,21 +893,25 @@ async function previewConflict(ctx: MutationCtx, args: Record<string, unknown>, 
   } else if (action === "reassign") {
     const r = pickResource(await activeResources(ctx, env.sc.organizationId), args.resourceName);
     if (!r.ok) return r.result;
-    return await savePending(
-      ctx, env.sc, env.now, "resolveAgendaConflict",
-      { ...base, action: { type: "resource", resourceIds: [r.resource._id] } },
-      `Resolver o conflito de ${who} trocando o recurso que saiu por ${safeText(r.resource.name)}. As regras da agenda são conferidas ao confirmar; se houver bloqueio, a ação é recusada com o motivo.`
-    );
+    target = { startTime: a.startTime, resourceIds: [r.resource._id] };
   } else return toolErr("Ação inválida.", "Use useSuggestion, reassign, reschedule ou cancel.");
 
   if (target.startTime === a.startTime && target.resourceIds && target.resourceIds.length > 0) {
-    // Sugestão no mesmo horário = trocar o recurso (a porta de reserva reavalia ao confirmar).
-    const nameOf = new Map((await activeResources(ctx, env.sc.organizationId)).map((r) => [r._id as string, r.name]));
-    const sugNames = target.resourceIds.map((id) => safeText(nameOf.get(id) ?? "")).filter(Boolean).join(", ");
+    // Mesmo horário = trocar o recurso: prévia pelas MESMAS regras da porta (`changeResourceCore` em `mode:"preview"`).
+    const finalIds = finalResourceIdsForConflict(a, conflict, target.resourceIds);
+    if (!finalIds) return toolErr("Informe o recurso que substitui o que saiu.", "Esse agendamento não está sem recurso.");
+    const actorR = humanActor(env.sc.member, "copilot");
+    const runR = (force?: string[]) => changeResourceCore(ctx, { appointment: a, actor: actorR, resourceIds: finalIds, ...(force ? { force } : {}), mode: "preview", now: env.now });
+    const pr = await previewWithWarnings(runR, env.tz, env.now, "Não dá para trocar assim:");
+    if (!pr.ok) return pr.result;
+    const previewR =
+      `Resolver o conflito de ${who} trocando o recurso: ${planNames(pr.plan) || "outro recurso"}.` +
+      (pr.warnings.length ? ` Avisos: ${warnText(pr.warnings)}.` : "") +
+      " Nada é enviado ao cliente.";
     return await savePending(
       ctx, env.sc, env.now, "resolveAgendaConflict",
-      { ...base, action: { type: "resource", resourceIds: target.resourceIds } },
-      `Resolver o conflito de ${who} usando a sugestão: mesmo horário com ${sugNames || "outro recurso"}. As regras da agenda são conferidas ao confirmar.`
+      { ...base, action: { type: "resource", resourceIds: pr.plan.map((x) => x.resourceId), force: pr.force } },
+      previewR, pr.warnings
     );
   }
   const actor = humanActor(env.sc.member, "copilot");
@@ -888,7 +922,8 @@ async function previewConflict(ctx: MutationCtx, args: Record<string, unknown>, 
   if (!p.ok) return p.result;
   const preview =
     `Resolver o conflito de ${who} remarcando para ${formatSlotLabel(t.startTime, env.now, env.tz)}${planNames(p.plan) ? ` (${planNames(p.plan)})` : ""}.` +
-    (p.warnings.length ? ` Avisos: ${p.warnings.map((w) => safeText(w.message, 140)).join("; ")}.` : "") +
+    (a.status === "pending_approval" ? " Remarcar o pedido também o aprova: passa a ficar marcado." : "") +
+    (p.warnings.length ? ` Avisos: ${warnText(p.warnings)}.` : "") +
     " Nada é enviado ao cliente.";
   return await savePending(
     ctx, env.sc, env.now, "resolveAgendaConflict",
@@ -968,6 +1003,21 @@ async function loadSnapshotAppointment(ctx: MutationCtx, orgId: Id<"organization
   return a;
 }
 
+const PLAN_CHANGED = "A sala/profissional da prévia não está mais livre. Peça de novo.";
+
+/**
+ * Rede de segurança: a execução tem de ter usado EXATAMENTE o plano mostrado. Depois de executar, os recursos do
+ * agendamento resultante precisam ser os da prévia (e todos alocados); diferente = erro, que desfaz a transação.
+ */
+async function assertSamePlan(ctx: MutationCtx, appointmentId: Id<"schedAppointments"> | undefined, expected: ReadonlyArray<string>): Promise<void> {
+  if (expected.length === 0) return;
+  const doc = appointmentId ? await ctx.db.get(appointmentId) : null;
+  if (!doc) raise(PLAN_CHANGED);
+  const got = doc.resources.filter((r) => r.allocated).map((r) => r.resourceId as string).sort();
+  const want = [...expected].sort();
+  if (doc.resources.length !== want.length || got.length !== want.length || got.some((id, i) => id !== want[i])) raise(PLAN_CHANGED);
+}
+
 function assertViolations(result: { ok: boolean; violations?: Violation[]; alternatives?: Array<{ startTime: number }> }, prefix: string): void {
   if (result.ok) return;
   raise(`${prefix} ${violationsText(result.violations ?? [])}`.trim());
@@ -1031,6 +1081,7 @@ export async function executeSchedPendingAction(
       });
       assertViolations(result, "Não deu para marcar:");
       if (!result.ok || "preview" in result) raise("Resposta inesperada da marcação.");
+      if (!result.duplicate) await assertSamePlan(ctx, result.appointmentId, resourceIds);
       return { ok: true, message: result.duplicate ? "Esse horário já estava marcado para o contato." : `Horário marcado: ${formatSlotLabel(startTime, now, tz)}.` };
     }
     case "rescheduleAppointment": {
@@ -1041,8 +1092,9 @@ export async function executeSchedPendingAction(
         if (!rid) raise("Um dos recursos da prévia não existe mais.");
         resourceIds.push(rid);
       }
-      const result = await rescheduleAppointmentCore(ctx, { appointment: a, actor, startTime: args.startTime as number, ...(resourceIds.length ? { resourceIds } : {}), force: strs(args.force), idempotencyKey: key, now });
+      const result = await rescheduleAppointmentCore(ctx, { appointment: a, actor, startTime: args.startTime as number, ...(resourceIds.length ? { resourceIds } : {}), force: strs(args.force), allowResourceFallback: false, idempotencyKey: key, now });
       assertViolations(result, "Não deu para remarcar:");
+      await assertSamePlan(ctx, result.ok && !("preview" in result) ? result.appointmentId : undefined, resourceIds);
       return { ok: true, message: `Remarcado para ${formatSlotLabel(args.startTime as number, now, tz)}.` };
     }
     case "cancelAppointment":
@@ -1077,7 +1129,10 @@ export async function executeSchedPendingAction(
         pending.tool === "closeResourceDay"
           ? await setResourceDayExceptionCore(ctx, { ...base, kind: "closed", reasonCode: "other", ...(str(args.reason) ? { reason: str(args.reason) } : {}) })
           : await clearResourceDayExceptionCore(ctx, base);
-      if (pending.tool === "reopenResourceDay") return { ok: true, message: `Reaberto (${result.removed} fechamento(s) removido(s)).` };
+      if (pending.tool === "reopenResourceDay") {
+        if (result.removed === 0) raise("Nada foi reaberto: não há fechamento manual desse recurso nesse dia.");
+        return { ok: true, message: `Reaberto (${result.removed} fechamento(s) removido(s)).` };
+      }
       return { ok: true, message: `Fechado em ${formatLocalDateLabel(localDate)}: ${result.affected} afetado(s), ${result.reallocated} mudaram de sala, ${result.conflicts} ficaram sem lugar${result.pending > 0 ? `; ${result.pending} ainda em processamento` : ""}.` };
     }
     case "resolveAgendaConflict": {
@@ -1098,11 +1153,16 @@ export async function executeSchedPendingAction(
         return out;
       };
       if (raw.type === "cancel") action = { type: "cancel", ...(raw.reason ? { reason: raw.reason } : {}) };
-      else if (raw.type === "resource") action = { type: "resource", resourceIds: await ids() };
-      else if (raw.type === "reschedule" && typeof raw.startTime === "number") action = { type: "reschedule", startTime: raw.startTime, resourceIds: await ids(), force: strs(raw.force) };
+      else if (raw.type === "resource") action = { type: "resource", resourceIds: await ids(), force: strs(raw.force) };
+      else if (raw.type === "reschedule" && typeof raw.startTime === "number") action = { type: "reschedule", startTime: raw.startTime, resourceIds: await ids(), force: strs(raw.force), allowResourceFallback: false };
       else raise("Ação do conflito inválida.");
       const result = await resolveConflictCore(ctx, { conflict, actor, action, now });
       assertViolations(result, "Não deu para resolver:");
+      if (action.type === "resource") await assertSamePlan(ctx, a._id, action.resourceIds);
+      else if (action.type === "reschedule") {
+        const moved = await ctx.db.get(a._id);
+        await assertSamePlan(ctx, moved?.rescheduledToId, action.resourceIds ?? []);
+      }
       return { ok: true, message: "Conflito resolvido." };
     }
     default:

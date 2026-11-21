@@ -344,21 +344,23 @@ export function fnv36(input: string): string {
 }
 
 export type RefKind = "a" | "o";
-const REF_RE = /^([ao])([0-9a-z]{3,8})\.([0-9a-z]{3})$/;
+const REF_RE = /^([ao])([0-9a-z]{3,8})\.([0-9a-z]{7})$/;
 
-function check(kind: RefKind, threadId: string, key: string): string {
-  return fnv36(`${threadId}|${kind}|${key}`).padStart(3, "0").slice(-3);
+/** Verificação de 32 bits (7 caracteres em base 36), amarrada à conversa, ao documento/serviço E ao minuto da referência. */
+function check(kind: RefKind, threadId: string, key: string, minute: number): string {
+  return fnv36(`${threadId}|${kind}|${key}|${minute}`).padStart(7, "0").slice(-7);
 }
 
 /**
  * Referência curta de um agendamento (`a…`) ou de uma oferta de horário (`o…`) NESTA conversa do Copiloto.
- * Formato `<tipo><minuto do início em base 36>.<3 caracteres de verificação>`: o minuto permite achar o
+ * Formato `<tipo><minuto do início em base 36>.<7 caracteres de verificação (32 bits)>`; a verificação cobre conversa, documento/serviço e minuto: o minuto permite achar o
  * agendamento pelo índice de início sem varrer a org, e a verificação amarra a referência à conversa e ao
  * documento (outra conversa, ou uma referência inventada, não confere). Quem usa SEMPRE confere a org e a
  * permissão do membro depois de resolver.
  */
 export function makeRef(kind: RefKind, startTime: number, threadId: string, key: string): string {
-  return `${kind}${Math.floor(startTime / 60_000).toString(36)}.${check(kind, threadId, key)}`;
+  const minute = Math.floor(startTime / 60_000);
+  return `${kind}${minute.toString(36)}.${check(kind, threadId, key, minute)}`;
 }
 
 export function parseRef(raw: unknown, kind: RefKind): { startMinute: number; check: string } | null {
@@ -371,8 +373,8 @@ export function parseRef(raw: unknown, kind: RefKind): { startMinute: number; ch
 }
 
 /** A verificação do candidato bate com a da referência? */
-export function refMatches(kind: RefKind, parsed: { check: string }, threadId: string, key: string): boolean {
-  return check(kind, threadId, key) === parsed.check;
+export function refMatches(kind: RefKind, parsed: { startMinute: number; check: string }, threadId: string, key: string): boolean {
+  return check(kind, threadId, key, parsed.startMinute) === parsed.check;
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +451,11 @@ export function safeText(raw: unknown, max = 60): string {
   // eslint-disable-next-line no-control-regex
   const flat = raw.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/[`<>]/g, "").replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
+/** Tira pontos e espaços do fim (a prévia acrescenta o próprio ponto final). */
+export function trimEndDots(text: string): string {
+  return text.replace(/[.\s]+$/, "");
 }
 
 export function pad2(n: number): string {

@@ -1628,6 +1628,8 @@ export async function rescheduleAppointmentCore(
     resourceIds?: Id<"schedResources">[];
     force?: string[];
     idempotencyKey?: string;
+    /** E1: `false` = usar EXATAMENTE `resourceIds` (o plano mostrado ao membro); ausente mantém o fallback de sempre. */
+    allowResourceFallback?: boolean;
     /** `preview`: simula a remarcação (mesmas validações, MESMA leitura de capacidade com as alocações do antigo ignoradas) sem gravar nada. */
     mode?: "commit" | "preview";
     now?: number;
@@ -1669,6 +1671,7 @@ export async function rescheduleAppointmentCore(
       guestName: old.guestName,
       partyKey: old.partyKey,
       resourceIds: args.resourceIds ?? old.resources.map((r) => r.resourceId),
+      ...(args.allowResourceFallback !== undefined ? { allowResourceFallback: args.allowResourceFallback } : {}),
       force: args.force,
       notes: old.notes,
       idempotencyKey: preview ? undefined : args.idempotencyKey,
@@ -2594,7 +2597,7 @@ async function markRestoreSkipped(
 
 export async function changeResourceCore(
   ctx: MutationCtx,
-  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; resourceIds: Id<"schedResources">[]; force?: string[]; now?: number }
+  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; resourceIds: Id<"schedResources">[]; force?: string[]; /** E1: `preview` avalia as MESMAS regras (capacidade incluída) e devolve o plano sem gravar. */ mode?: "commit" | "preview"; now?: number }
 ): Promise<BookResult> {
   const now = args.now ?? Date.now();
   const a = await loadAppointment(ctx, args.appointment, args.actor);
@@ -2624,6 +2627,14 @@ export async function changeResourceCore(
   if (resolution.blocking.length > 0) {
     const view = await loadDayView(ctx, rb, bc, reads, { startTime: a.startTime, preferred: requested.items.map((i) => i.resource._id), ignoreAppointmentId: a._id });
     return done(computeAlternatives(bc, view, { origin, now, startTime: a.startTime, variantKey: a.variantKey, current: requested.items.map((i) => i.resource._id) }));
+  }
+  if (args.mode === "preview") {
+    return {
+      ok: true,
+      preview: true,
+      plan: requested.items.map((i) => ({ role: i.role, resourceId: i.resource._id, units: i.units, resourceName: i.resource.name })),
+      warnings: violations.filter((v) => resolution.forced.includes(v.code)),
+    };
   }
   const alloc = await assertCapacityAndAllocate(ctx, {
     appointmentId: a._id,

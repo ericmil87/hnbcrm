@@ -508,7 +508,7 @@ describe("resolver conflito 'sem lugar' (resolveAgendaConflict)", () => {
     await as(s.admin).mutation(api.schedulingExceptions.removeResourceClosure, { organizationId: s.orgId, resourceId: s1, fromLocalDate: MON } as any);
     const r = await write(s.admin, "resolveAgendaConflict", { ref, action: "reassign", resourceName: "Sala 1" });
     expect(r.status).toBe("confirmacao_necessaria");
-    expect(r.preview).toMatch(/trocando o recurso que saiu por Sala 1/);
+    expect(r.preview).toMatch(/trocando o recurso: Sala 1/);
     await confirm(s.admin, r.pendingActionId);
     const [a] = (await apptList()).filter((x) => x.contactName === "Joana");
     expect(a.resources[0]).toMatchObject({ resourceId: s1, allocated: true });

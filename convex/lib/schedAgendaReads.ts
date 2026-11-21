@@ -9,7 +9,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { computeDayAvailability, MAX_BLOCK_MIN, usableIntervals } from "./schedAvailability";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./permissions";
-import { type AgendaReader, canSeeAppointment, personResourceIdsOf } from "./schedRead";
+import { type AgendaReader, canSeeAppointment, memberResourcesOf, personResourceIdsOf, readInternalEventsOfMembers } from "./schedRead";
 import { SUGGESTION_TTL_MS } from "./schedInterpretPure";
 import { ACTIVE_STATUSES } from "./schedStatus";
 import { assertValidTimezone, dayBounds, isValidLocalDate, type LocalDate } from "./schedTime";
@@ -129,7 +129,9 @@ export async function readAgendaDay(ctx: QueryCtx, organizationId: Id<"organizat
       resources,
       exceptions: exceptionRows,
       allocations: [],
-      internalEvents: [],
+      // Compromisso interno do profissional (inclusive dia inteiro) tira o horário dele, como na busca e na porta. Entra só
+      // o intervalo (sem título); leitura extra só para os membros que são recurso do dia.
+      internalEvents: (await readInternalEventsOfMembers(ctx, organizationId, bounds, memberResourcesOf(resources))).events,
     });
     return {
       enabled: true,
