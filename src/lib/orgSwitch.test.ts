@@ -46,6 +46,12 @@ describe("pathAfterOrgSwitch", () => {
     expect(pathAfterOrgSwitch("/app/entrada", "?unread=1&label=k17abc")).toBe("/app/entrada?unread=1");
   });
 
+  it("Agenda v2: mantém visão, dia, agrupamento e status; derruba recurso e agendamento", () => {
+    expect(pathAfterOrgSwitch("/app/calendario", "?view=day&date=2026-11-26&by=room&status=confirmed&res=r1&appt=a1")).toBe(
+      "/app/calendario?view=day&date=2026-11-26&by=room&status=confirmed"
+    );
+  });
+
   it("Tarefas: mantém modo, filtro rápido e status; derruba responsável, etiqueta e projeto", () => {
     expect(
       pathAfterOrgSwitch("/app/tarefas", "?view=status&smart=today&status=pending&assignee=m1&label=l1,l2&project=p1&task=t1")

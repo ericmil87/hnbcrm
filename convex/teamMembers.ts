@@ -1,4 +1,5 @@
 import { v, ConvexError } from "convex/values";
+import { deactivatePersonResourcesForMemberCore } from "./lib/schedConfigOps";
 import { markMemberNotificationsRead } from "./lib/notificationResolve";
 import { deleteFileRow } from "./lib/storageUsage";
 import { query, mutation, internalQuery, internalMutation } from "./_generated/server";
@@ -419,6 +420,15 @@ export const removeTeamMember = mutation({
       removedAt: now,
       removedBy: userMember._id,
       updatedAt: now,
+    });
+
+    // Agenda v2 (A3c): o recurso-pessoa dele fica inativo e os futuros viram conflito `resource_removed`
+    // (sem o módulo ligado não faz nada; nada é cancelado).
+    await deactivatePersonResourcesForMemberCore(ctx, {
+      organizationId: teamMember.organizationId,
+      memberId: args.teamMemberId,
+      actor: userMember,
+      now,
     });
 
     // Telegram (F0): o vínculo cai junto — revoga, apaga as mensagens ≤ 48 h e

@@ -77,6 +77,10 @@ const permissionsValidator = v.object({
   campaigns: v.optional(
     v.union(v.literal("none"), v.literal("view"), v.literal("manage"), v.literal("full"))
   ),
+  // Agenda (compromissos e agendamentos). Opcional pelo mesmo motivo de campaigns.
+  agenda: v.optional(
+    v.union(v.literal("none"), v.literal("view_own"), v.literal("view_all"), v.literal("edit"), v.literal("manage"))
+  ),
 });
 
 export { permissionsValidator };
@@ -658,6 +662,23 @@ export const groupMediaOverrideModeValidator = v.union(
   v.literal("off")
 );
 
+// ── Agenda v2 (módulo `scheduling`): validadores compartilhados das tabelas `sched*` ──
+// Docs: docs/architecture/agenda.md. Tudo aditivo; org sem o módulo ligado nunca grava aqui.
+export const minuteInterval = v.object({ startMin: v.number(), endMin: v.number() }); // 0..1440, hora local
+
+export const schedOrigin = v.union(
+  v.literal("staff"), v.literal("ai"), v.literal("public"), v.literal("api"),
+  v.literal("human_message"), v.literal("waitlist"), v.literal("import")
+);
+
+export const schedStatus = v.union(
+  v.literal("pending_approval"), v.literal("scheduled"), v.literal("confirmed"),
+  v.literal("checked_in"), v.literal("completed"), v.literal("no_show"),
+  v.literal("cancelled"), v.literal("rescheduled")
+);
+
+export const smartMode = v.union(v.literal("off"), v.literal("rank"), v.literal("restrict"));
+
 // ── MVP "Central" (unidades, setores, conversão, atribuição, painel) ──
 // Tudo opcional e desligado por padrão: só age numa org com
 // `settings.modules.<x> === true` (lib/orgModules.ts).
@@ -672,6 +693,8 @@ export const orgModulesValidator = v.object({
   telegram: v.optional(v.boolean()),
   // Tradução automática no inbox (F1). NÃO é da Central: fora de assertAnyModule.
   translation: v.optional(v.boolean()),
+  // Agendamento (agenda por recurso, Agenda v2). NÃO é da Central: fora de assertAnyModule. Gate de plano.
+  scheduling: v.optional(v.boolean()),
 });
 
 // Tradução automática (F1): opções da org. Ausente = padrões (lib/translationGate.ts).
@@ -896,7 +919,10 @@ const applicationTables = {
     })),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_slug", ["slug"]),
+  })
+    .index("by_slug", ["slug"])
+    // Agenda v2 (A4): o job horário lê só as orgs com o módulo ligado (campo aninhado; zero orgs = zero leituras).
+    .index("by_scheduling_module", ["settings.modules.scheduling"]),
 
   // Team Members (humans and AI agents)
   teamMembers: defineTable({
@@ -2244,7 +2270,9 @@ const applicationTables = {
       v.literal("created"), v.literal("message_sent"),
       v.literal("message_received"),
       v.literal("task_created"), v.literal("task_completed"),
-      v.literal("event_created"), v.literal("event_completed")
+      v.literal("event_created"), v.literal("event_completed"),
+      // Agenda v2: marcar / mudar de estado, remarcar, cancelar, desfazer / concluir.
+      v.literal("appointment_booked"), v.literal("appointment_changed"), v.literal("appointment_completed")
     ),
     actorId: v.optional(v.id("teamMembers")),
     actorType: v.union(v.literal("human"), v.literal("ai"), v.literal("system"), v.literal("api")),
@@ -2512,7 +2540,11 @@ const applicationTables = {
       v.literal("plan_change_scheduled"),
       v.literal("plan_cancel_scheduled"),
       v.literal("plan_canceled"),
-      v.literal("plan_refunded")
+      v.literal("plan_refunded"),
+      // Agenda v2 (A3c) — agendamento ficou sem recurso (fechamento/remoção): fila de conflitos. `data.closureKey`.
+      v.literal("appointment_conflict"),
+      // Agenda v2 (A4) — resumo diário: atendimentos de ontem ainda sem desfecho (equipe com `agenda:edit`+).
+      v.literal("appointment_no_outcome")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2649,7 +2681,12 @@ const applicationTables = {
       pattern: v.union(v.literal("daily"), v.literal("weekly"), v.literal("biweekly"), v.literal("monthly")),
       endDate: v.optional(v.number()),
       lastGeneratedAt: v.optional(v.number()),
+      // Dia do mês da série mensal (31 → fev/28, mar/31). Só o servidor grava.
+      anchorDay: v.optional(v.number()),
     })),
+    // = startTime, só quando a duração passa de 1 dia (lib/calendarRules.longStartFor).
+    // Alimenta by_organization_and_long_start; legado sem o campo: opsCalendar.
+    longStart: v.optional(v.number()),
     parentEventId: v.optional(v.id("calendarEvents")),
     notes: v.optional(v.string()),
     searchText: v.optional(v.string()),
@@ -2658,7 +2695,10 @@ const applicationTables = {
   })
     .index("by_organization", ["organizationId"])
     .index("by_organization_and_start", ["organizationId", "startTime"])
+    .index("by_organization_and_long_start", ["organizationId", "longStart"])
     .index("by_organization_and_assigned", ["organizationId", "assignedTo"])
+    // Agenda v2 (A3a): compromissos internos de um membro por faixa de tempo (lib/schedRead.loadWindow).
+    .index("by_organization_and_assigned_and_start", ["organizationId", "assignedTo", "startTime"])
     .index("by_organization_and_type", ["organizationId", "eventType"])
     .index("by_organization_and_status", ["organizationId", "status"])
     .index("by_lead", ["leadId"])
@@ -2741,6 +2781,10 @@ const applicationTables = {
     aiSpendAlert: v.optional(v.boolean()),
     // Billing B4 — avisos de plano (franquia, excedente, teste); sino + e-mail `planAlert`.
     planAlert: v.optional(v.boolean()),
+    // Agenda v2 (A3c) — conflito de agenda (sino + Telegram + push).
+    agendaConflict: v.optional(v.boolean()),
+    // Agenda v2 (A4) — resumo diário "sem desfecho" (sino; sem e-mail).
+    agendaActivity: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
@@ -4714,6 +4758,289 @@ const applicationTables = {
     files: v.number(),
     bytes: v.number(),
   }).index("by_organization_and_day", ["organizationId", "dayKey"]),
+  // ── Agenda v2 ─────────────────────────────────────────────────────────────
+  // 1 doc por org. AUSENTE = padrões de resolveSchedSettings() (ligar o módulo não exige o doc).
+  schedSettings: defineTable({
+    organizationId: v.id("organizations"),
+    gridMinutes: v.optional(v.number()),          // 5|10|15|20|30|60; ausente = 30
+    minNoticeMin: v.optional(v.number()),         // IA e link público; ausente = 120. Equipe = 0
+    maxAdvanceDays: v.optional(v.number()),       // ausente = 60
+    smart: v.optional(v.object({
+      mode: v.optional(smartMode),                // ausente = "rank"
+      weights: v.optional(v.object({
+        adjacency: v.number(), deadGap: v.number(), openNewResource: v.number(),
+        earlyFirst: v.number(), balance: v.number(), preference: v.number(),
+      })),                                        // ausente = 40/50/20/10/0/30
+      minUsefulGapMin: v.optional(v.number()),    // ausente = menor serviço ativo
+      minOffer: v.optional(v.number()),           // fallback do "restrict"; ausente = 3
+    })),
+    ai: v.optional(v.object({
+      consult: v.optional(v.boolean()),           // ausente = true
+      book: v.optional(v.union(v.literal("off"), v.literal("propose"), v.literal("auto"))),       // ausente = "propose"
+      reschedule: v.optional(v.union(v.literal("off"), v.literal("propose"), v.literal("auto"))), // ausente = "propose"
+      cancel: v.optional(v.union(v.literal("handoff"), v.literal("auto"))),                       // ausente = "handoff"
+      firstVisitNeedsApproval: v.optional(v.boolean()), // ausente = true (vale mesmo em "auto")
+      maxAiBookingsPerContactPerDay: v.optional(v.number()), // ausente = 2
+      autoAck: v.optional(v.object({ by: v.id("teamMembers"), at: v.number() })), // aceite do "marca sozinha"
+    })),
+    humanConfirm: v.optional(v.object({
+      mode: v.optional(v.union(v.literal("auto"), v.literal("suggest"), v.literal("off"))), // ausente = "auto"
+      defaultServiceId: v.optional(v.id("schedServices")),
+    })),
+    funnel: v.optional(v.object({                 // tudo opcional; ausente = não move
+      onScheduledStageId: v.optional(v.id("stages")),
+      onCompletedStageId: v.optional(v.id("stages")),
+      onNoShowStageId: v.optional(v.id("stages")),
+    })),
+    reminders: v.optional(v.object({              // fase F
+      enabled: v.optional(v.boolean()),           // ausente = false
+      dayBeforeAtMin: v.optional(v.number()),     // hora local do envio D-1; ausente = 600 (10:00)
+      hoursBefore: v.optional(v.number()),        // H-2 opcional; ausente = desligado
+      mentionService: v.optional(v.boolean()),    // ausente = false (privacidade)
+      template: v.optional(v.string()),
+    })),
+    templateKey: v.optional(v.string()),          // modelo aplicado no onboarding do módulo
+    outcome: v.optional(v.object({                // pendência "sem desfecho" (A4)
+      graceMin: v.optional(v.number()),           // folga após o fim antes de marcar; ausente = 120
+      noticeHour: v.optional(v.number()),         // hora local (0..23) do aviso diário; ausente = 8
+    })),
+    updatedBy: v.optional(v.id("teamMembers")),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  schedResources: defineTable({
+    organizationId: v.id("organizations"),
+    kind: v.union(v.literal("person"), v.literal("room"), v.literal("equipment")),
+    name: v.string(),                             // ≤ 60
+    capacity: v.number(),                         // inteiro 1..50; pessoa = 1
+    teamMemberId: v.optional(v.id("teamMembers")),// pessoa ligada a membro (assertAssignableMember)
+    weekly: v.array(v.object({ weekday: v.number(), startMin: v.number(), endMin: v.number() })), // ≤ 28 itens; 0 = domingo
+    tags: v.optional(v.array(v.string())),        // ≤ 10; filtro de requisito
+    sortOrder: v.number(),
+    active: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"])
+    .index("by_team_member", ["teamMemberId"]),
+
+  schedServices: defineTable({
+    organizationId: v.id("organizations"),
+    name: v.string(),                             // ≤ 60; único por org sem acento/caixa (a IA cita pelo nome)
+    durationMin: v.number(),                      // 5..480; duração (inclusive variantes) + folgas ≤ MAX_BLOCK_MIN (a escrita recusa mais)
+    variants: v.optional(v.array(v.object({ key: v.string(), name: v.string(), durationMin: v.number() }))), // ≤ 6
+    bufferBeforeMin: v.number(),                  // 0..120 (vale a soma com durationMin e bufferAfterMin ≤ MAX_BLOCK_MIN)
+    bufferAfterMin: v.number(),
+    requirements: v.array(v.object({              // 1..4; ex.: 1 sala qualquer + 1 terapeuta
+      role: v.string(),                           // rótulo: "Sala", "Terapeuta"
+      kind: v.union(v.literal("person"), v.literal("room"), v.literal("equipment")),
+      resourceIds: v.optional(v.array(v.id("schedResources"))), // ausente/vazio = qualquer ativo do kind (e da tag)
+      tag: v.optional(v.string()),
+      units: v.optional(v.number()),              // ausente = 1
+      exclusive: v.optional(v.boolean()),         // true = ocupa a capacidade inteira do recurso
+    })),
+    slotIntervalMin: v.optional(v.number()),      // ausente = gridMinutes da org
+    minNoticeMin: v.optional(v.number()),         // sobrepõe o da org (IA e link)
+    maxAdvanceDays: v.optional(v.number()),
+    maxActivePerContact: v.optional(v.number()),  // ausente = sem teto para equipe; IA e link assumem 1
+    clientCanCancel: v.optional(v.boolean()),     // ausente = true
+    clientCanReschedule: v.optional(v.boolean()), // ausente = true
+    minRescheduleNoticeMin: v.optional(v.number()), // ausente = 0
+    lateCancelWindowMin: v.optional(v.number()),  // só marca lateCancel; nunca impede
+    smartMode: v.optional(smartMode),             // override da org
+    aiBookable: v.optional(v.boolean()),          // ausente = true
+    publicBookable: v.optional(v.boolean()),      // ausente = false (fase H)
+    priceCents: v.optional(v.number()),           // só exibição
+    sortOrder: v.number(),
+    active: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  // Fechamento, horário especial, horário extra e bloqueio, sempre por DATA LOCAL.
+  // Dia inteiro fechado é linha aqui (mode "closed"), nunca alocação.
+  schedExceptions: defineTable({
+    organizationId: v.id("organizations"),
+    resourceId: v.optional(v.id("schedResources")), // ausente = org inteira
+    resourceKind: v.optional(v.union(v.literal("person"), v.literal("room"), v.literal("equipment"))), // com resourceId ausente: só esse kind
+    localDate: v.string(),                        // "YYYY-MM-DD" no fuso da org
+    mode: v.union(v.literal("closed"), v.literal("custom"), v.literal("extra"), v.literal("block")),
+    intervals: v.optional(v.array(minuteInterval)), // obrigatório em custom/extra/block; ≤ 6
+    reasonCode: v.optional(v.union(v.literal("no_staff"), v.literal("maintenance"), v.literal("day_off"), v.literal("holiday"), v.literal("other"))),
+    reason: v.optional(v.string()),               // ≤ 120
+    source: v.union(v.literal("manual"), v.literal("system"), v.literal("external")),
+    createdBy: v.optional(v.id("teamMembers")),
+    createdAt: v.number(),
+  })
+    .index("by_organization", ["organizationId"]) // backup/purga
+    .index("by_organization_and_date", ["organizationId", "localDate"])
+    .index("by_resource_and_date", ["resourceId", "localDate"]),
+
+  schedAppointments: defineTable({
+    organizationId: v.id("organizations"),
+    serviceId: v.id("schedServices"),
+    serviceName: v.string(),                      // retrato no momento da marcação
+    variantKey: v.optional(v.string()),
+    kind: v.union(v.literal("normal"), v.literal("fit_in"), v.literal("untimed")), // untimed reservado
+    startTime: v.number(), endTime: v.number(),   // serviço, UTC ms
+    blockStart: v.number(), blockEnd: v.number(), // com folgas
+    localDate: v.string(),                        // data local do início
+    status: schedStatus,
+    origin: schedOrigin,
+    contactId: v.optional(v.id("contacts")),
+    leadId: v.optional(v.id("leads")),
+    conversationId: v.optional(v.id("conversations")),
+    contactName: v.optional(v.string()),          // denormalizado para a grade
+    guestName: v.optional(v.string()),            // acompanhante sem contato
+    partyKey: v.optional(v.string()),             // agendamentos marcados juntos (casal)
+    resources: v.array(v.object({                 // ≤ 4; retrato para a grade (não é a ocupação)
+      resourceId: v.id("schedResources"), role: v.string(), name: v.string(),
+      allocated: v.boolean(),                     // false = em conflito, sem linha em schedAllocations
+    })),
+    notes: v.optional(v.string()),                // ≤ 500, interno, sanitizado
+    forcedRules: v.optional(v.array(v.string())), // avisos aceitos por quem marcou
+    needsAttention: v.optional(v.object({ code: v.string(), at: v.number() })),
+    outcomePendingSince: v.optional(v.number()),  // job "sem desfecho"
+    idempotencyKey: v.optional(v.string()),
+    sourceMessageId: v.optional(v.id("messages")),// origem human_message
+    rescheduledFromId: v.optional(v.id("schedAppointments")),
+    rescheduledToId: v.optional(v.id("schedAppointments")),
+    rescheduleOfId: v.optional(v.id("schedAppointments")), // proposta de remarcação aguardando aprovação
+    createdBy: v.optional(v.id("teamMembers")),   // membro humano ou IA; ausente = mensagem do aparelho/link
+    approvedBy: v.optional(v.id("teamMembers")), approvedAt: v.optional(v.number()),
+    clientConfirmedAt: v.optional(v.number()), checkedInAt: v.optional(v.number()),
+    completedAt: v.optional(v.number()), noShowAt: v.optional(v.number()),
+    cancelledAt: v.optional(v.number()),
+    cancelledByClass: v.optional(v.union(v.literal("staff"), v.literal("client"), v.literal("ai"), v.literal("system"))),
+    cancelReason: v.optional(v.string()),
+    lateCancel: v.optional(v.boolean()),
+    reminder: v.optional(v.object({               // fase F
+      token: v.string(), nextAt: v.optional(v.number()),
+      schedulerFnId: v.optional(v.string()), sentAt: v.optional(v.array(v.number())),
+    })),
+    icalUid: v.optional(v.string()), icalSequence: v.optional(v.number()),
+    statusChangedAt: v.number(),
+    createdAt: v.number(), updatedAt: v.number(),
+  })
+    // `by_organization` serve ao backup (internalCollectPage pagina por _creationTime) e à purga.
+    .index("by_organization", ["organizationId"])
+    .index("by_organization_and_start", ["organizationId", "startTime"])
+    .index("by_organization_and_status_and_start", ["organizationId", "status", "startTime"])
+    .index("by_contact_and_start", ["contactId", "startTime"])
+    .index("by_lead_and_start", ["leadId", "startTime"])
+    .index("by_organization_and_idempotency", ["organizationId", "idempotencyKey"]),
+
+  // Tabela quente. Só agendamento ATIVO tem linha (cancelar/remarcar/faltar apaga).
+  schedAllocations: defineTable({
+    organizationId: v.id("organizations"),
+    appointmentId: v.id("schedAppointments"),
+    resourceId: v.id("schedResources"),
+    role: v.string(),
+    blockStart: v.number(), blockEnd: v.number(), // chave do índice; com folgas
+    coreStart: v.number(), coreEnd: v.number(),   // sem folgas (capacidade dura)
+    units: v.number(),
+    exclusive: v.optional(v.boolean()),           // true = ocupa o recurso inteiro mesmo se a capacidade subir depois
+    // A3e: gravada só pela porta quando a capacidade do recurso foi REDUZIDA com esta linha já em andamento (núcleo começou
+    // antes da mudança) e ela não foi solta: o excesso de quem já começou é tolerado até acabar (o verificador a isenta).
+    capacityGrandfatheredAt: v.optional(v.number()),
+  })
+    .index("by_resource_and_start", ["resourceId", "blockStart"])
+    .index("by_appointment", ["appointmentId"]),
+
+  // Estado pequeno dos jobs da agenda, 1 linha por org (fora do doc da org para não invalidar as
+  // queries reativas que a leem). Derivado/efêmero: fora do backup, apagado na purga.
+  schedJobState: defineTable({
+    organizationId: v.id("organizations"),
+    lastOutcomeNoticeDate: v.optional(v.string()), // data local ("AAAA-MM-DD") do último aviso "sem desfecho", mesmo com N = 0
+    updatedAt: v.number(),
+  }).index("by_organization", ["organizationId"]),
+
+  schedConflicts: defineTable({
+    organizationId: v.id("organizations"),
+    appointmentId: v.id("schedAppointments"),
+    kind: v.union(v.literal("resource_closed"), v.literal("capacity"), v.literal("human_confirm"), v.literal("resource_removed")),
+    status: v.union(v.literal("open"), v.literal("resolved"), v.literal("dismissed")),
+    resourceId: v.optional(v.id("schedResources")),
+    // A3c: todos os recursos que saíram do agendamento (fechar a org/um tipo pode tirar sala E profissional: 1 linha por agendamento).
+    resourceIds: v.optional(v.array(v.id("schedResources"))),
+    localDate: v.optional(v.string()),
+    suggestions: v.optional(v.array(v.object({ startTime: v.number(), resourceIds: v.array(v.id("schedResources")) }))), // ≤ 3
+    createdAt: v.number(),
+    resolvedAt: v.optional(v.number()), resolvedBy: v.optional(v.id("teamMembers")),
+    // A3d: COMO foi encerrado (rescheduled, cancelled, approved, no_show, resource_changed, restored, undone, manual, dismissed_no_appointment).
+    resolution: v.optional(v.string()),
+  })
+    .index("by_organization_and_status_and_created", ["organizationId", "status", "createdAt"])
+    // A3c: conflitos abertos de um intervalo de datas (reabrir recurso reavalia só estes). `localDate` sempre definido nas linhas do fechamento.
+    .index("by_organization_and_status_and_date", ["organizationId", "status", "localDate"])
+    .index("by_appointment", ["appointmentId"]),
+
+  // A3c: resumo de cada fechamento/remoção de recurso (progresso dos lotes e resultado final). 1 linha pequena por
+  // fechamento; derivado/efêmero: fora do backup, apagado na purga.
+  schedClosureRuns: defineTable({
+    organizationId: v.id("organizations"),
+    kind: v.union(v.literal("resource_closed"), v.literal("resource_removed"), v.literal("capacity")), // A3e: `capacity` = excedente solto ao reduzir a capacidade
+    resourceId: v.optional(v.id("schedResources")),
+    resourceKind: v.optional(v.union(v.literal("person"), v.literal("room"), v.literal("equipment"))),
+    fromLocalDate: v.string(),
+    toLocalDate: v.string(),
+    status: v.union(v.literal("running"), v.literal("done"), v.literal("failed")),
+    // `failed`: a varredura lançou ou o limite de lotes estourou: parte dos agendamentos pode NÃO ter sido tratada (`failure` diz por quê).
+    failure: v.optional(v.string()),
+    truncated: v.optional(v.boolean()),
+    total: v.number(),                 // agendamentos conhecidos (ao concluir = processed)
+    totalIsPartial: v.boolean(),       // true = ainda há mais por achar (total é "pelo menos")
+    processed: v.number(),
+    reallocated: v.number(),
+    conflicts: v.number(),
+    failed: v.number(),                // itens cujo tratamento lançou erro (viraram conflito)
+    exceptionIds: v.optional(v.array(v.id("schedExceptions"))),
+    createdBy: v.optional(v.id("teamMembers")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_organization_and_created", ["organizationId", "createdAt"]),
+
+  // Estado da agenda POR CONVERSA (fora do doc quente `conversations`).
+  schedConversationState: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    offerSeq: v.number(),                         // último número emitido (h{n})
+    offers: v.array(v.object({                    // ≤ 9
+      code: v.string(), batch: v.number(),
+      serviceId: v.id("schedServices"), variantKey: v.optional(v.string()),
+      startTime: v.number(), resourceIds: v.array(v.id("schedResources")),
+      rescheduleOfId: v.optional(v.id("schedAppointments")),
+      issuedAt: v.number(), expiresAt: v.number(),
+    })),
+    slotTakenCount: v.optional(v.number()),       // repasse automático no 2º
+    pendingCancel: v.optional(v.object({ appointmentId: v.id("schedAppointments"), at: v.number() })),
+    proposal: v.optional(v.object({               // horário proposto pelo humano, aguardando o cliente
+      localDate: v.optional(v.string()), timeMin: v.optional(v.number()),
+      serviceId: v.optional(v.id("schedServices")),
+      fromMessageId: v.id("messages"), at: v.number(), expiresAt: v.number(), // 48 h
+    })),
+    updatedAt: v.number(),
+  }).index("by_conversation", ["conversationId"]),
+
+  // Uma linha por mensagem do humano que passou no pré-filtro. Nunca guarda o texto.
+  schedInterpretations: defineTable({
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    messageId: v.id("messages"),
+    act: v.string(),                              // confirmou|propos|remarcou|cancelou|informativo|nenhum
+    parsed: v.object({ localDate: v.optional(v.string()), timeMin: v.optional(v.number()), serviceId: v.optional(v.id("schedServices")) }),
+    checks: v.object({ parser: v.boolean(), llm: v.optional(v.boolean()), agree: v.optional(v.boolean()) }),
+    decision: v.union(v.literal("created"), v.literal("approved_existing"), v.literal("confirmed_existing"),
+                      v.literal("proposed"), v.literal("proposal_saved"), v.literal("ignored")),
+    status: v.union(v.literal("open"), v.literal("accepted"), v.literal("dismissed"), v.literal("expired"), v.literal("done")),
+    appointmentId: v.optional(v.id("schedAppointments")),
+    outcome: v.optional(v.union(v.literal("kept"), v.literal("edited"), v.literal("undone"))),
+    createdAt: v.number(),
+  })
+    .index("by_message", ["messageId"])
+    .index("by_conversation_and_status", ["conversationId", "status"])
+    .index("by_organization_and_created", ["organizationId", "createdAt"]),
 };
 
 export default defineSchema({

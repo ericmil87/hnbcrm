@@ -29,6 +29,9 @@ export function notificationTargetPath(type: NotificationType | string, d: Notif
       const isMeta = Boolean(d.metaConnectionId ?? d.data?.metaConnectionId);
       return `/app/configuracoes?secao=${isMeta ? "instagram" : "channels"}`;
     }
+    case "appointment_no_outcome":
+    case "appointment_conflict":
+      return "/app/calendario?pendencias=1";
     case "ai_followup_needs_human":
       return d.taskId ? `/app/tarefas?task=${d.taskId}` : (conversation ?? "/app/tarefas");
     default:

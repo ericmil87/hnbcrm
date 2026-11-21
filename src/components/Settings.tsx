@@ -15,6 +15,7 @@ import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useOrgModules } from "@/hooks/useOrgModules";
 import { usePageTitle } from "@/hooks/usePageTitle";
 import { usePermissions } from "@/hooks/usePermissions";
+import { schedulingLockedNotice } from "@/lib/agendaAccess";
 import { groupOf, groupSettingsPanels, resolveSettingsPanelState, visibleSettingsPanels } from "@/lib/settingsNav";
 import { searchSettingsPanels } from "@/lib/settingsSearch";
 import { VOCAB } from "@/lib/vocab";
@@ -131,7 +132,7 @@ export function Settings() {
       {denied && requested && active && (
         <p role="status" className="flex items-center gap-2 rounded-lg border border-border bg-surface-sunken p-3 text-sm text-text-secondary">
           <Lock size={14} className="shrink-0" aria-hidden="true" />
-          Você não tem permissão para abrir «{requested.label}». Mostrando {active.label}.
+          {schedulingLockedNotice(requested, modules, can) ?? `Você não tem permissão para abrir «${requested.label}».`} Mostrando {active.label}.
         </p>
       )}
       <ErrorBoundary resetKey={active.id} fallback={<PanelError />}>

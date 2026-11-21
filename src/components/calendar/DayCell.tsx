@@ -1,4 +1,5 @@
 import { useDroppable } from "@dnd-kit/core";
+import { localDateKey } from "@/lib/agendaDates";
 import { cn } from "@/lib/utils";
 import { EventDot } from "./EventDot";
 
@@ -17,7 +18,7 @@ interface DayCellProps {
 
 export function DayCell({ date, events, isToday, isCurrentMonth, onSelectDay }: DayCellProps) {
   const { setNodeRef, isOver } = useDroppable({
-    id: `day-${date.toISOString()}`,
+    id: `day-${localDateKey(date)}`,
     data: { date },
   });
 

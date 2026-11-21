@@ -48,6 +48,7 @@ export const PUSH_TEMPLATES: Partial<Record<NotificationType, PushTemplate>> = {
   task_overdue: TASKS,
   ai_followup_needs_human: TASKS,
   channel_session_lost: CHANNEL,
+  appointment_conflict: TASKS, // Agenda v2 (A3c): precisa de gente resolver (normal, 24 h)
 };
 
 /** Informativos (sino/e-mail/Telegram conforme preferência) e o lead atribuído (tabela do PLANO, seção 4). */
@@ -75,6 +76,8 @@ export const IGNORED_FOR_PUSH: ReadonlySet<NotificationType> = new Set<Notificat
   "plan_cancel_scheduled",
   "plan_canceled",
   "plan_refunded",
+  // Resumo diário da agenda: sino e Telegram, nunca vibra o aparelho (plano §3.7).
+  "appointment_no_outcome",
 ]);
 
 export function pushTemplateOf(type: NotificationType): PushTemplate | null {

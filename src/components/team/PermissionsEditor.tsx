@@ -7,6 +7,7 @@ import {
   LEVEL_LABELS,
   getLevelsForCategory,
   DEFAULT_PERMISSIONS,
+  resolvePermissions,
 } from "../../../convex/lib/permissions";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -77,9 +78,9 @@ export function PermissionsEditor({
         {/* Rows */}
         {CATEGORIES.map((category, i) => {
           const levels = getLevelsForCategory(category);
-          // Permissões explícitas antigas não têm categorias novas: vale o
-          // default do cargo (mesma regra do resolvePermissions no servidor).
-          const currentLevel = value[category] ?? (role ? DEFAULT_PERMISSIONS[role][category] : undefined);
+          // Permissões explícitas antigas não têm categorias novas: mesma função do servidor
+          // (`resolvePermissions`: `agenda` ausente deriva do `tasks` gravado), a tela não mente.
+          const currentLevel = role ? resolvePermissions(role, value as any)[category] : value[category];
 
           return (
             <div

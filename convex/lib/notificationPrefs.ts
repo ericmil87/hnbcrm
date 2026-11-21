@@ -28,6 +28,8 @@ export const PREF_DEFAULTS = {
   channelSessionLost: true,
   aiSpendAlert: true,
   planAlert: true,
+  agendaConflict: true,
+  agendaActivity: true,
 };
 
 export async function loadMemberPrefs(

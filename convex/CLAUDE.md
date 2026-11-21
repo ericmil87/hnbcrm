@@ -60,6 +60,8 @@ Deployments, commands and ops rules: root `CLAUDE.md` + `docs/architecture/ops-d
 | `lib/agentRoutes.ts` / `agentPersonas.ts` | LLM route resolution (platform chain or BYO + `strictZdr`; `effectivePlatformOrder`) / industry personas |
 | `lib/promptEnvelope.ts` / `outboundSideEffects.ts` / `llm/` | `<crm_data untrusted>` envelope / outbound side effects shared by conversations+attendant / pure LLM layer |
 | `boards.ts` / `organizations.ts` / `teamMembers.ts` / `calendar.ts` | Kanban boards+stages / org CRUD + settings / human+AI members / calendar events |
+| `lib/schedConstants.ts` / `schedSettingsDefaults.ts` | Agenda v2 (module `scheduling`, `sched*` tables): engine constants / `resolveSchedSettings` defaults (`docs/architecture/agenda.md`) |
+| `lib/schedBookingOps.ts` / `lib/schedBookingEffects.ts` / `schedulingMutations.ts` | Agenda v2 booking ports (A3b): only `schedBookingOps` writes `schedAppointments`/`schedAllocations` (`assertCapacityAndAllocate` is the sole capacity read + allocation insert); effects (audit, activity, webhook, funnel stage) in `schedBookingEffects`; thin public/internal mutations; guard `schedulingPort.test.ts` |
 | `tasks.ts` | Task CRUD (projects, labels, `assigneeIds`, subtasks, `blockedBy`); writers call `syncFollowUpForTask`; `internal*` variants serve REST/MCP |
 | `taskComments.ts` / `taskProjects.ts` / `taskLabels.ts` / `lib/taskOps.ts` | Comments / projects + columns / labels / shared cores `applyTaskCompletion`, `addTaskCommentCore` |
 | `notifications.ts` / `lib/notify.ts` | In-app notifications (bell) / `createNotification()`, `PREFERENCE_FLAG`, `inboxRepliers`; skips AI members and self |

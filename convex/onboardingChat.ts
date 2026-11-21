@@ -112,6 +112,7 @@ const NO_PERMISSIONS: Permissions = {
   auditLogs: "none",
   apiKeys: "none",
   campaigns: "none",
+  agenda: "none",
 };
 
 const EMPTY_PAGE = { page: [], isDone: true, continueCursor: "" };

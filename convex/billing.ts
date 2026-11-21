@@ -69,7 +69,7 @@ const priceLockValidator = v.object({
   discountPct: v.optional(v.number()),
   until: v.optional(v.number()),
 });
-const gatedFeaturesValidator = v.object({
+export const gatedFeaturesValidator = v.object({
   groups: v.boolean(),
   departments: v.boolean(),
   translation: v.boolean(),
@@ -77,8 +77,9 @@ const gatedFeaturesValidator = v.object({
   central: v.boolean(),
   units: v.boolean(),
   attribution: v.boolean(),
+  scheduling: v.boolean(),
 });
-const minPlanForValidator = v.object({
+export const minPlanForValidator = v.object({
   groups: planKeyValidator,
   departments: planKeyValidator,
   translation: planKeyValidator,
@@ -86,6 +87,7 @@ const minPlanForValidator = v.object({
   central: planKeyValidator,
   units: planKeyValidator,
   attribution: planKeyValidator,
+  scheduling: planKeyValidator,
 });
 /** Assinatura vista pelo cliente: nunca documento, e-mail nem ids do provedor. */
 const subscriptionViewValidator = v.object({

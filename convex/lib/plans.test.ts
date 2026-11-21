@@ -44,13 +44,20 @@ describe("catálogo de planos", () => {
   });
 
   test("módulos: grupos/setores/tradução/api no Profissional+; Central, unidades e atribuição só Empresa", () => {
-    expect(PLANS.essencial.modules).toEqual([]);
+    expect(PLANS.essencial.modules).toEqual(["scheduling"]);
     for (const p of ["profissional", "escala"] as const) {
-      expect(PLANS[p].modules).toEqual(["groups", "departments", "translation", "api"]);
+      expect(PLANS[p].modules).toEqual(["groups", "departments", "translation", "api", "scheduling"]);
     }
     expect([...PLANS.empresa.modules].sort()).toEqual([...GATED_MODULES].sort());
     expect(lowestPlanWithModule("api")).toBe("profissional");
     expect(lowestPlanWithModule("central")).toBe("empresa");
+  });
+
+  test("Agendamento (scheduling) entra nos 4 planos pagos e tem gate próprio", () => {
+    for (const p of PLAN_KEYS) expect(PLANS[p].modules).toContain("scheduling");
+    expect(GATED_MODULES).toContain("scheduling");
+    expect(MODULE_GATE.scheduling).toBe("scheduling");
+    expect(lowestPlanWithModule("scheduling")).toBe("essencial");
   });
 
   test("planos crescentes em preço e franquia", () => {
@@ -62,7 +69,7 @@ describe("catálogo de planos", () => {
   });
 
   test("MODULE_GATE só cobre chaves reais, sem metaMessaging nem telegram", () => {
-    const valid = ["units", "departments", "attribution", "central", "metaMessaging", "telegram", "translation"];
+    const valid = ["units", "departments", "attribution", "central", "metaMessaging", "telegram", "translation", "scheduling"];
     for (const [k, g] of Object.entries(MODULE_GATE)) {
       expect(valid).toContain(k);
       expect(GATED_MODULES).toContain(g);

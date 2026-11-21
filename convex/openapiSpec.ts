@@ -1863,7 +1863,7 @@ export const OPENAPI_SPEC = `{
       "get": {
         "tags": ["Calendario"],
         "summary": "Listar eventos do calendario",
-        "description": "Retorna eventos do calendario em um intervalo de datas com filtros opcionais. Pode incluir tarefas com data de vencimento no intervalo. Requer permissão tasks: view_own na chave de API.",
+        "description": "Retorna eventos do calendario em um intervalo de datas com filtros opcionais. Inclui eventos que sobrepoem o intervalo. Cursor ordenado por inicio; truncated=true indica que o teto de leitura foi atingido. Requer permissão agenda: view_own (view_all para ver eventos de todos).",
         "operationId": "listCalendarEvents",
         "parameters": [
           { "name": "startDate", "in": "query", "required": true, "schema": { "type": "number" }, "description": "Inicio do intervalo (timestamp ms)" },
@@ -1931,7 +1931,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Criar evento",
-        "description": "Cria um novo evento no calendario. Requer permissão tasks: view_own na chave de API.",
+        "description": "Cria um novo evento no calendario. Requer permissão agenda: edit na chave de API (altera qualquer evento da organização). Chave antiga sem a categoria agenda herda o nível de tasks (edit_own/edit_all/full viram edit).",
         "operationId": "createCalendarEvent",
         "requestBody": {
           "required": true,
@@ -1986,7 +1986,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Atualizar evento",
-        "description": "Atualiza campos de um evento existente. Requer permissão tasks: view_own na chave de API.",
+        "description": "Atualiza campos de um evento existente. Requer permissão agenda: edit na chave de API (altera qualquer evento da organização). Chave antiga sem a categoria agenda herda o nível de tasks (edit_own/edit_all/full viram edit).",
         "operationId": "updateCalendarEvent",
         "requestBody": {
           "required": true,
@@ -2024,7 +2024,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Excluir evento",
-        "description": "Remove um evento do calendario. Exclui tambem eventos recorrentes filhos. Requer permissão tasks: view_own na chave de API.",
+        "description": "Remove um evento do calendario. Exclui tambem eventos recorrentes filhos. Requer permissão agenda: edit na chave de API (altera qualquer evento da organização). Chave antiga sem a categoria agenda herda o nível de tasks (edit_own/edit_all/full viram edit).",
         "operationId": "deleteCalendarEvent",
         "requestBody": {
           "required": true,
@@ -2053,7 +2053,7 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Reagendar evento",
-        "description": "Reagenda um evento para novo horario. Se newEndTime nao for fornecido, a duracao original e mantida. Requer permissão tasks: view_own na chave de API.",
+        "description": "Reagenda um evento para novo horario. Se newEndTime nao for fornecido, a duracao original e mantida. Requer permissão agenda: edit na chave de API (altera qualquer evento da organização). Chave antiga sem a categoria agenda herda o nível de tasks (edit_own/edit_all/full viram edit).",
         "operationId": "rescheduleCalendarEvent",
         "requestBody": {
           "required": true,
@@ -2084,8 +2084,37 @@ export const OPENAPI_SPEC = `{
       "post": {
         "tags": ["Calendario"],
         "summary": "Concluir evento",
-        "description": "Marca um evento como concluido. Se o evento tiver recorrencia, gera automaticamente a proxima instancia. Requer permissão tasks: view_own na chave de API.",
+        "description": "Marca um evento como concluido. Se o evento tiver recorrencia, gera automaticamente a proxima instancia. Requer permissão agenda: edit na chave de API (altera qualquer evento da organização). Chave antiga sem a categoria agenda herda o nível de tasks (edit_own/edit_all/full viram edit).",
         "operationId": "completeCalendarEvent",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["eventId"],
+                "properties": {
+                  "eventId": { "type": "string", "description": "ID do evento" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Success" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "500": { "$ref": "#/components/responses/InternalError" }
+        }
+      }
+    },
+    "/api/v1/calendar/events/cancel": {
+      "post": {
+        "tags": ["Calendario"],
+        "summary": "Cancelar evento",
+        "description": "Marca um evento agendado como cancelado. Requer permissão agenda: edit na chave de API (altera qualquer evento da organização). Chave antiga sem a categoria agenda herda o nível de tasks (edit_own/edit_all/full viram edit).",
+        "operationId": "cancelCalendarEvent",
         "requestBody": {
           "required": true,
           "content": {

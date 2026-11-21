@@ -15,6 +15,7 @@ import {
   type SavedStepStatus,
 } from "./lib/onboardingStatus";
 import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { assertTimezoneChangeAllowed } from "./lib/schedConfigOps";
 import { hasAppliedOnboardingConversation, withWizardDeferred } from "./lib/wizardDeferral";
 
 const wizardDataValidator = v.optional(v.any());
@@ -856,6 +857,10 @@ export const completeWizard = mutation({
 
     // Patch organization with onboarding metadata and settings from wizard data
     const wizardData = progress.wizardData;
+    // Agenda v2: o assistente também grava o fuso; mesma recusa de `updateOrganization` com agendamento futuro.
+    if (wizardData?.timezone !== undefined && wizardData.timezone !== existingOrg?.settings.timezone) {
+      await assertTimezoneChangeAllowed(ctx, args.organizationId, now);
+    }
     await ctx.db.patch(args.organizationId, {
       // Preserva os campos v2 (business, steps…) já gravados; os do v1 só
       // sobrescrevem quando o wizard trouxe valor.

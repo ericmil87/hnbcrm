@@ -4,6 +4,38 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Agendamento com salas e profissionais (módulo opcional)
+
+- **Marque horário com cliente direto da conversa.** Em três toques: serviço, horário e confirmar. O sistema sugere os horários livres e destaca os que ficam encostados em outros atendimentos, para o dia não ficar cheio de buracos. Ligue em Configurações › Agendamento; quem não ligar não vê nada de novo.
+- **Salas, profissionais e equipamentos, cada um com seu horário.** Uma sala pode atender mais de uma pessoa ao mesmo tempo (ex.: sala dupla), e o sistema nunca deixa passar da capacidade. Serviços têm duração, folga entre atendimentos e o que exigem (por exemplo, um profissional e uma sala).
+- **Assistente em 3 passos.** Escolha o tipo de negócio (clínica com salas, profissional solo, barbearia ou salão, consultoria), ajuste nomes e horários e pronto.
+- **Agenda por sala ou por profissional.** Grade do dia com as vagas de cada sala, lista do dia no celular, mês de ocupação e a visão Semana de sempre para compromissos e tarefas da equipe.
+- **Fechar uma sala ou a agenda de alguém no dia.** Antes de fechar, você vê quem é afetado. Quem cabe em outra sala no mesmo horário é movido; quem não cabe vai para a fila "sem lugar" para você resolver. Profissional nunca é trocado sozinho. Nada é cancelado e nada é enviado ao cliente.
+- **Fila de pendências.** Propostas aguardando aprovação, atendimentos sem lugar e atendimentos que terminaram sem registro (atendido ou faltou), com aviso diário para a equipe. Falta nunca é marcada sozinha.
+- **Sugestão inteligente de horários.** Três modos: desligada, destacar os melhores ou oferecer só os melhores. A equipe sempre pode marcar fora da sugestão; avisos podem ser aceitos, capacidade não.
+- **Desfazer.** Marcou errado? Dá para desfazer na hora (até 10 minutos) sem contar como cancelamento. Mudanças de status também têm desfazer.
+- **Permissão própria "Agenda".** Níveis: nenhum, ver a minha, ver todas, marcar e editar, configurar. Quem tinha permissões personalizadas herda o acesso a partir do que já tinha em Tarefas.
+
+### Agenda: segurança, permissões e recorrência
+
+- **A agenda tem permissão própria.** Quem tem "ver a minha" enxerga só os compromissos em que é criador, responsável ou participante; "ver todas" enxerga todos sem alterar; "marcar e editar" cria e altera qualquer compromisso da organização. Administrador nasce com "configurar"; gerente, atendente e IA com "marcar e editar". Tarefas mostradas na agenda continuam seguindo a permissão de Tarefas. Na API, as rotas de `calendar/events` passam a exigir `agenda` (leitura: ver a minha; escrita: marcar e editar); chaves antigas herdam o acesso a partir do que tinham em Tarefas.
+- **Evento não aponta mais para dados de outra organização.** Lead, contato, tarefa e participantes precisam ser da mesma organização (e participante removido é recusado), no app e na API. Mesmo que um vínculo cruzado já exista gravado, a leitura não devolve nada dele, e lead, contato e responsável saem só com o essencial (nome/título).
+- **Validações com mensagem clara.** Título obrigatório, término não anterior ao início, duração de até 31 dias, e evento só pode ser concluído, cancelado ou reagendado uma vez (concluir duas vezes não duplica mais a próxima ocorrência).
+- **Eventos recorrentes mais certos.** A próxima ocorrência respeita o fuso da organização (sem deslocar a hora no horário de verão), mensal em dia 29–31 cai no último dia do mês (31/01 vira 28/02) e concluir pela API gera a próxima igual ao app. Excluir um evento recorrente apaga a cadeia inteira.
+- **Agenda mais leve e completa.** O calendário mostra também eventos que começaram antes do período e terminam dentro dele, tem teto de leitura (com aviso de truncamento) e a paginação da API segue a ordem por horário de início, sem pular nem repetir eventos. A API ganhou `POST /api/v1/calendar/events/cancel`, e o `update` aceita responsável, lead, contato, participantes, cor e recorrência.
+- **Reagendar ou arrastar evento concluído ou cancelado agora é recusado** (antes passava em silêncio).
+- **Calendário do dia lê menos.** Eventos curtos são buscados só 1 dia para trás e eventos de vários dias têm índice próprio (`longStart`); os longos gravados antes desta versão só aparecem na janela certa depois do backfill `opsCalendar:internalBackfillCalendarLongStart` (rodar em DEV e PROD, com `dryRun` antes).
+- **Excluir um evento recorrente preserva o histórico.** Só o evento e as ocorrências seguintes ainda agendadas são apagados; as já concluídas ou canceladas ficam. Cadeias muito grandes (mais de 400 ocorrências) não são apagadas de uma vez.
+- **Recorrência mensal fiel ao dia original.** Série no dia 31 vai 31/01, 28/02, 31/03 (séries antigas seguem como antes).
+- **Quem não tem acesso a Tarefas recebe a agenda vazia** em vez de erro, e o servidor informa `canEdit` em cada evento para a tela esconder botões.
+- **Contrato da API.** `calendar/events` e `calendar/events/get` devolvem lead, contato e responsável em formato reduzido, e `calendar/events` passa a incluir `truncated`. O cursor tem formato novo; cursores antigos retornam erro 400.
+
+### Agenda: datas, filtro e grade corrigidos
+
+- **Evento salvo no dia escolhido.** Antes o evento era gravado um dia antes e cada "Editar > Atualizar" o empurrava mais um dia. Agora data e hora seguem o horário do seu aparelho.
+- **Filtro por vários tipos, cabeçalho do mês e navegação.** Com dois ou mais tipos marcados todos aparecem; os dias da semana do mês batem com a grade (começa na segunda); avançar ou voltar mês não pula de mês em dia 31 e a última linha do mês mostra os eventos.
+- **Eventos no mesmo horário lado a lado** (até 3 colunas e um "+N" que abre a lista), eventos de madrugada ou de noite e os que passam da meia-noite aparecem na grade. O formulário "Novo evento" abre limpo, aceita fim depois da meia-noite e "Data de término", e avisa se o fim é antes do início. Navegar não pisca mais a tela e os botões da agenda têm 44 px. Evento de vários dias aparece por inteiro só depois da correção do servidor.
+
 ### Contatos que não são clientes ("Não é cliente" / "Virar lead")
 
 - **Marque quem não é cliente e a IA deixa a pessoa em paz.** Família, equipe, fornecedor, parceiro ou robô que escreve no mesmo WhatsApp pode ser marcado como não-cliente. A partir daí a Atendente IA nunca responde nem lê essas conversas (sem transcrição de áudio, leitura de imagem ou PDF, tradução), não há follow-up, campanha, repasse nem aviso de "mensagem nova", e nada disso conta no limite mensal de atendimentos da IA. O lead dessa pessoa sai do funil (fica arquivado) e a conversa continua na lista, para você ler quando quiser.

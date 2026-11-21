@@ -14,6 +14,8 @@ export interface OrgModules {
   telegram: boolean;
   /** Tradução automática das conversas (v0.80). */
   translation: boolean;
+  /** Agenda v2: agendamentos por recurso (salas, profissionais). Desligado = a Agenda de hoje. NÃO acende a Central. */
+  scheduling: boolean;
 }
 
 /** Módulos ligáveis por org (tudo menos `demoMode`). */
@@ -28,9 +30,10 @@ const ALL_OFF: OrgModules = {
   metaMessaging: false,
   telegram: false,
   translation: false,
+  scheduling: false,
 };
 
-/** Gate da Central: `metaMessaging`, `telegram`, `translation` e `demoMode` ficam de fora de propósito. */
+/** Gate da Central: `metaMessaging`, `telegram`, `translation`, `scheduling` e `demoMode` ficam de fora de propósito. */
 export function computeAnyEnabled(m: OrgModules): boolean {
   return m.units || m.departments || m.attribution || m.central;
 }

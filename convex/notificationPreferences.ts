@@ -72,6 +72,7 @@ export const getMyPreferences = query({
       channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
       aiSpendAlert: prefs.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
       planAlert: prefs.planAlert ?? DEFAULTS.planAlert,
+      agendaActivity: prefs.agendaActivity ?? DEFAULTS.agendaActivity,
       _id: prefs._id,
       _exists: true,
     };
@@ -106,6 +107,7 @@ export const updateMyPreferences = mutation({
     channelSessionLost: v.optional(v.boolean()),
     aiSpendAlert: v.optional(v.boolean()),
     planAlert: v.optional(v.boolean()),
+    agendaActivity: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -225,6 +227,7 @@ export const internalGetPreferences = internalQuery({
       channelSessionLost: prefs.channelSessionLost ?? DEFAULTS.channelSessionLost,
       aiSpendAlert: prefs.aiSpendAlert ?? DEFAULTS.aiSpendAlert,
       planAlert: prefs.planAlert ?? DEFAULTS.planAlert,
+      agendaActivity: prefs.agendaActivity ?? DEFAULTS.agendaActivity,
       // Modelo atual (aditivo): flags = canais externos; o sino de tipo acionável registra sempre.
       preset: prefs.preset ?? orgPreset ?? "all",
       channels: prefs.channels ?? {},

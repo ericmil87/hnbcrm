@@ -14,7 +14,8 @@ export type PermissionCategory =
   | "settings"
   | "auditLogs"
   | "apiKeys"
-  | "campaigns";
+  | "campaigns"
+  | "agenda";
 
 // Level definitions per category
 export type LeadsLevel = "none" | "view_own" | "view_all" | "edit_own" | "edit_all" | "full";
@@ -27,6 +28,7 @@ export type SettingsLevel = "none" | "view" | "manage";
 export type AuditLogsLevel = "none" | "view";
 export type ApiKeysLevel = "none" | "view" | "manage";
 export type CampaignsLevel = "none" | "view" | "manage" | "full";
+export type AgendaLevel = "none" | "view_own" | "view_all" | "edit" | "manage";
 
 export interface Permissions {
   leads: LeadsLevel;
@@ -39,6 +41,7 @@ export interface Permissions {
   auditLogs: AuditLogsLevel;
   apiKeys: ApiKeysLevel;
   campaigns: CampaignsLevel;
+  agenda: AgendaLevel;
 }
 
 export type Role = "admin" | "manager" | "agent" | "ai";
@@ -56,6 +59,8 @@ const LEVEL_HIERARCHIES: Record<PermissionCategory, string[]> = {
   apiKeys: ["none", "view", "manage"],
   // manage = criar/editar/pausar; full = lançar, cancelar, excluir, override de tetos
   campaigns: ["none", "view", "manage", "full"],
+  // Agenda: compromissos internos e agendamentos. manage = serviços, recursos, regras e política da IA.
+  agenda: ["none", "view_own", "view_all", "edit", "manage"],
 };
 
 // Default permissions per role
@@ -71,6 +76,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "view",
     apiKeys: "manage",
     campaigns: "full",
+    agenda: "manage",
   },
   manager: {
     leads: "edit_all",
@@ -83,6 +89,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "view",
     apiKeys: "manage",
     campaigns: "manage",
+    agenda: "edit",
   },
   agent: {
     leads: "edit_own",
@@ -95,6 +102,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "none",
     apiKeys: "none",
     campaigns: "view",
+    agenda: "edit",
   },
   ai: {
     leads: "edit_own",
@@ -107,6 +115,7 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
     auditLogs: "none",
     apiKeys: "none",
     campaigns: "view",
+    agenda: "edit",
   },
 };
 
@@ -116,13 +125,71 @@ export const DEFAULT_PERMISSIONS: Record<Role, Permissions> = {
  */
 export function resolvePermissions(
   role: Role,
-  explicit?: (Partial<Permissions> & Omit<Permissions, "campaigns">) | null
+  explicit?: (Partial<Permissions> & Omit<Permissions, "campaigns" | "agenda">) | null
 ): Permissions {
   const defaults = DEFAULT_PERMISSIONS[role];
   if (!explicit) return defaults;
   // Categorias criadas depois de o membro ter permissões explícitas gravadas
   // (ex.: campaigns) caem no default do role em vez de "undefined" (= negado).
-  return { ...explicit, campaigns: explicit.campaigns ?? defaults.campaigns };
+  return {
+    ...explicit,
+    campaigns: explicit.campaigns ?? defaults.campaigns,
+    // Sem `agenda` gravada: deriva do `tasks` EXPLÍCITO do membro (quem teve Tarefas cortadas
+    // não ganha Agenda aberta); sem `tasks` explícito, default do papel.
+    // Quem já configura a organização (`settings: manage`) e tinha edição em Tarefas também
+    // configura a Agenda: sem isso um admin com permissões personalizadas não conseguiria
+    // ligar nem ajustar o módulo.
+    agenda: explicit.agenda ?? deriveAgendaLevel(explicit.tasks, explicit.settings) ?? defaults.agenda,
+  };
+}
+
+/**
+ * Chave de API LEGADA: permissões gravadas antes da categoria `agenda` existir
+ * não têm a chave, e `hasPermission` trata ausente como negado (a integração
+ * perderia o calendário que tinha via `tasks`). Mapa explícito e conservador,
+ * derivado do nível de `tasks` DA PRÓPRIA CHAVE (nunca acima do que ele dava):
+ * none→none, view_own→view_own, view_all→view_all,
+ * edit_own/edit_all/full→edit (escrever no calendário pelo REST continua possível).
+ * `manage` só pela MESMA regra do membro (`deriveAgendaLevel`): `settings: manage` gravado + edição em tarefas.
+ * Idempotente: quem já tem `agenda` volta igual (mesmo objeto).
+ */
+const LEGACY_TASKS_TO_AGENDA: Record<TasksLevel, AgendaLevel> = {
+  none: "none",
+  view_own: "view_own",
+  view_all: "view_all",
+  edit_own: "edit",
+  edit_all: "edit",
+  full: "edit",
+};
+
+/** Nível de `agenda` derivado de um nível de `tasks` (mapa conservador). */
+/** `edit` derivado + `settings: manage` gravado = `manage`. Nunca promove abaixo de `edit`. */
+export function promoteAgendaForSettingsManager(
+  derived: AgendaLevel | undefined,
+  settings: string | undefined
+): AgendaLevel | undefined {
+  return derived === "edit" && settings === "manage" ? "manage" : derived;
+}
+
+export function agendaFromTasks(tasks: string | undefined): AgendaLevel | undefined {
+  if (tasks === undefined) return undefined;
+  return LEGACY_TASKS_TO_AGENDA[tasks as TasksLevel] ?? "none";
+}
+
+/**
+ * ÚNICA derivação de `agenda` para permissões gravadas sem a categoria (membro com permissões personalizadas E chave
+ * de API legada): do `tasks` gravado, promovido a `manage` quando `settings` é `manage` e o derivado é `edit`.
+ * `undefined` = sem `tasks` gravado (quem chama decide o padrão).
+ */
+export function deriveAgendaLevel(tasks: string | undefined, settings: string | undefined): AgendaLevel | undefined {
+  return promoteAgendaForSettingsManager(agendaFromTasks(tasks), settings);
+}
+
+export function completeLegacyPermissions<T extends { tasks: TasksLevel; agenda?: AgendaLevel; settings?: string }>(
+  perms: T
+): T & { agenda: AgendaLevel } {
+  if (perms.agenda !== undefined) return perms as T & { agenda: AgendaLevel };
+  return { ...perms, agenda: deriveAgendaLevel(perms.tasks, perms.settings) ?? "none" };
 }
 
 /**
@@ -160,6 +227,7 @@ export const CATEGORY_LABELS: Record<PermissionCategory, string> = {
   auditLogs: "Auditoria",
   apiKeys: "Chaves API",
   campaigns: "Campanhas",
+  agenda: "Agenda",
 };
 
 // PT-BR labels for levels

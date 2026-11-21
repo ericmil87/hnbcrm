@@ -5,10 +5,12 @@
  * já autorizou o `member` (settings:manage); ligar a tradução exige conta com
  * e-mail AQUI (porta crítica, como os toggles de IA).
  */
+import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { requireAccountWithEmail } from "./auth";
 import { modulesOf, type OrgModules } from "./orgModules";
+import { checkModule, resolveEntitlements } from "./entitlements";
 import type { ConfigVia } from "./attendantConfigOps";
 
 export type OrgModulesPatch = {
@@ -19,6 +21,7 @@ export type OrgModulesPatch = {
   metaMessaging?: boolean;
   telegram?: boolean;
   translation?: boolean;
+  scheduling?: boolean;
 };
 
 export async function setOrgModulesCore(
@@ -38,9 +41,24 @@ export async function setOrgModulesCore(
   if (modules.translation === true && !before.translation) {
     await requireAccountWithEmail(ctx, member.userId);
   }
+  // Agendamento: gate de plano SÓ na transição desligado → ligado (desligar e reenviar `true`
+  // com o módulo já ligado nunca recusa). Org legacy/sem billing passa (`gated: false`);
+  // conta em modo leitura/cancelada/teste vencido tem `modules` zerado e também recusa.
+  if (modules.scheduling === true && !before.scheduling) {
+    const now0 = Date.now();
+    const entitlements = resolveEntitlements(org, now0);
+    const check = checkModule(entitlements, "scheduling");
+    if (!check.ok) {
+      const blocked = entitlements.gated && entitlements.plan !== null && entitlements.modules.scheduling === false
+        && (entitlements.status === "read_only" || entitlements.status === "canceled" || entitlements.status === "trial");
+      throw new ConvexError(
+        blocked ? "Sua conta está em modo leitura: renove o plano para ligar o Agendamento." : check.message,
+      );
+    }
+  }
   const current = org.settings.modules ?? {};
   const next = { ...current };
-  for (const key of ["units", "departments", "attribution", "central", "metaMessaging", "telegram", "translation"] as const) {
+  for (const key of ["units", "departments", "attribution", "central", "metaMessaging", "telegram", "translation", "scheduling"] as const) {
     const value = modules[key];
     if (value !== undefined) next[key] = value;
   }
@@ -94,6 +112,7 @@ export async function setOrgModulesCore(
         metaMessaging: before.metaMessaging,
         telegram: before.telegram,
         translation: before.translation,
+        scheduling: before.scheduling,
       },
       after: {
         units: after.units,
@@ -103,10 +122,11 @@ export async function setOrgModulesCore(
         metaMessaging: after.metaMessaging,
         telegram: after.telegram,
         translation: after.translation,
+        scheduling: after.scheduling,
       },
     },
     metadata: { modules: true, ...(via ? { via } : {}) },
-    description: "Alterou os módulos da organização (Central, Instagram e Messenger, Telegram, Tradução automática)",
+    description: "Alterou os módulos da organização (Central, Instagram e Messenger, Telegram, Tradução automática, Agendamento)",
     severity: "medium",
     createdAt: now,
   });

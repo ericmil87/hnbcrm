@@ -83,6 +83,13 @@ export const BACKUP_TABLES: readonly string[] = [
   "taskComments",
   "handoffs",
   "calendarEvents",
+  // Agenda v2 (módulo `scheduling`): configuração e agendamentos. As alocações, os conflitos, o
+  // estado por conversa e as interpretações são derivados/efêmeros (EXCLUDED_BACKUP_TABLES).
+  "schedSettings",
+  "schedResources",
+  "schedServices",
+  "schedExceptions",
+  "schedAppointments",
   "savedViews",
   "webhooks",
   // Campanhas (v0.55): dependem de contacts/leads/conversations/messages acima.
