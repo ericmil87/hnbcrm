@@ -12,6 +12,7 @@ import { formatPhone } from "@/components/campaigns/campaignUtils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { fillVocab } from "@/lib/agendaCopy";
 import { rescheduleDefaults } from "@/lib/agendaBooking";
+import { resourcesOffInWindow, type DayOffClosure } from "@/lib/agendaDayOff";
 import { BOOKING_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday, type LocalDate } from "@/lib/agendaZone";
@@ -29,6 +30,7 @@ import {
   partySizeOf,
   pickedFromOffered,
   previewManualSlot,
+  searchWindow,
   submitBooking,
   undoFreshBooking,
   undoRefusedText,
@@ -120,6 +122,7 @@ function BookingSheetLoader(props: LoaderProps) {
       services={services}
       resources={resources}
       preferredServiceId={config?.settings.humanConfirm?.defaultServiceId ?? null}
+      closures={config?.closures ?? []}
     />
   );
 }
@@ -127,8 +130,9 @@ function BookingSheetLoader(props: LoaderProps) {
 interface FlowProps extends LoaderProps {
   tz: string;
   services: ServiceLike[];
-  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string; capacity?: number; active?: boolean }>;
+  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string; capacity?: number; active?: boolean; weekly?: ReadonlyArray<{ weekday: number }> }>;
   preferredServiceId: string | null;
+  closures: ReadonlyArray<DayOffClosure>;
 }
 
 const EMPTY_SLOTS: SlotsState = { status: "loading", slots: [], hasMore: false, reason: "ok", firstPossible: null };
@@ -203,7 +207,7 @@ function useSlotSearch(input: {
   return { slots, reload };
 }
 
-function BookingFlow({ organizationId, onClose, who, reschedule, initialService, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
+function BookingFlow({ organizationId, onClose, who, reschedule, initialService, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, closures, busy, setBusy }: FlowProps) {
   const bookAppointment = useMutation(api.schedulingMutations.bookAppointment);
   const rescheduleAppointment = useMutation(api.schedulingMutations.rescheduleAppointment);
   const undoBooking = useMutation(api.schedulingMutations.undoBooking);
@@ -234,6 +238,10 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
   const whoOk = Boolean(reschedule) || hasWho(who);
   const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin });
   const [failure, setFailure] = useState<FailureView | null>(null);
+  const dayOff = useMemo(() => {
+    const w = searchWindow(state, today);
+    return resourcesOffInWindow(resources.map((r) => ({ _id: r._id as string, kind: r.kind, weekly: r.weekly })), closures, w.from, w.to);
+  }, [resources, closures, state, today]);
   const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind, capacity: r.capacity, active: r.active })), [resources]);
 
   /** Toast "Desfazer": tudo ou nada; recusa mostra o motivo e abre o painel do horário. */
@@ -331,6 +339,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
       dispatch={dispatch}
       services={services}
       resources={resourceList}
+      dayOff={dayOff}
       tz={tz}
       today={today}
       slots={slots}

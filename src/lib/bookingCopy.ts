@@ -34,6 +34,7 @@ export const BOOKING_COPY = {
     loading: "Buscando horários…",
     failed: "Não foi possível buscar os horários.",
     unverifiable: "Não deu para conferir os horários agora. Tente de novo.",
+    dayOffSuffix: "(folga)",
     partyLabel: "Quantas pessoas?",
     partyOption: "{n} pessoas",
     partyOne: "1 pessoa",

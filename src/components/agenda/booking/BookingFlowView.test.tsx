@@ -44,11 +44,12 @@ interface HarnessProps {
   date?: string;
   resources?: Array<{ _id: string; name: string; kind: string; capacity?: number }>;
   pinned?: Record<string, string>;
+  dayOff?: ReadonlySet<string>;
   onOutcome?: (o: SubmitOutcome) => void;
 }
 
 /** Faz o papel do contêiner (estado do fluxo e envio), com o servidor falso; a tela é a real. */
-function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reasons: ["logo após outro atendimento"] }), slot(4)]), book, clientName = "Maria", reschedule = null, preview, initialTimeMin, date, resources, pinned, onOutcome }: HarnessProps) {
+function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reasons: ["logo após outro atendimento"] }), slot(4)]), book, clientName = "Maria", reschedule = null, preview, initialTimeMin, date, resources, pinned, dayOff, onOutcome }: HarnessProps) {
   const [state, dispatch] = useReducer(bookingReducer, undefined, () =>
     initialBookingState({ services, idempotencyKey: "k1", serviceId: reschedule ? "svc1" : undefined, date, pinned })
   );
@@ -90,6 +91,7 @@ function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reas
       }}
       onDismissFailure={() => setFailure(null)}
       initialTimeMin={initialTimeMin}
+      dayOff={dayOff}
       onPreviewManual={preview ?? (async () => ({ kind: "ok", warnings: [], resourceIds: [], resourceNames: [] }))}
     />
   );
@@ -323,6 +325,15 @@ describe("BookingFlowView", () => {
     render(<Harness services={[sessao]} slots={ready(slots)} initialTimeMin={hh * 60 + mm} date={undefined} />);
     const first = timeButtons()[0];
     expect(first).toHaveTextContent(clicked);
+  });
+
+  it("profissional de folga no dia aparece desabilitado com '(folga)' no seletor", async () => {
+    const resources = [{ _id: "room1", name: "Sala 1", kind: "room" }, { _id: "eric", name: "Dr. Eric", kind: "person" }, { _id: "ana", name: "Dra. Ana", kind: "person" }];
+    render(<Harness services={[corte]} resources={resources} dayOff={new Set(["eric"])} pinned={{ person: "ana" }} />);
+    await userEvent.click(screen.getByRole("button", { name: /Padrão/ }));
+    const eric = screen.getByRole("option", { name: "Dr. Eric (folga)" });
+    expect(eric).toBeDisabled();
+    expect(screen.getByRole("option", { name: "Dra. Ana" })).not.toBeDisabled();
   });
 
   it("remarcar mostra 'De X para Y'", async () => {

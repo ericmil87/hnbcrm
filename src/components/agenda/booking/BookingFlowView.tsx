@@ -94,6 +94,8 @@ export interface BookingFlowViewProps {
   onPreviewManual: (startTime: number) => Promise<ManualPreviewResult>;
   /** Abrir o agendamento que já existia (duplicado). */
   onOpenExisting?: (appointmentId: string) => void;
+  /** Recursos de folga em toda a janela de busca: aparecem desabilitados, com "(folga)", no seletor. */
+  dayOff?: ReadonlySet<string>;
   /** Hora pedida pela Agenda (minutos do dia no fuso da org; vale com o dia já aberto): destaca a sugestão mais próxima e pré-preenche "Outro horário". */
   initialTimeMin?: number;
 }
@@ -228,6 +230,7 @@ function SlotStep({
   onPreviewManual,
   onOpenExisting,
   initialTimeMin,
+  dayOff,
 }: BookingFlowViewProps & { service: ServiceLike | undefined }) {
   const [showPeople, setShowPeople] = useState(Object.keys(state.pinned).length > 0);
   const prefill = timeInputValue(initialTimeMin);
@@ -300,7 +303,12 @@ function SlotStep({
                   onValueChange={(v) => dispatch({ type: "pin", kind, resourceId: v || null })}
                   options={[
                     { value: "", label: fillVocab(t.slot.anyResource, { recurso: meta.one }) },
-                    ...resources.filter((r) => r.kind === kind).map((r) => ({ value: r._id, label: r.name })),
+                    ...resources
+                      .filter((r) => r.kind === kind)
+                      .map((r) => {
+                        const off = dayOff?.has(r._id) && state.pinned[kind] !== r._id;
+                        return { value: r._id, label: off ? `${r.name} ${t.slot.dayOffSuffix}` : r.name, disabled: off };
+                      }),
                   ]}
                 />
               );
