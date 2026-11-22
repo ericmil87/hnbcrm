@@ -240,6 +240,8 @@ export type SchedRunContext = {
   handoffPending: boolean;
   /** Todos os códigos de oferta guardados na conversa (mostrados ou não): `hN` fora desta lista não é vazamento. */
   offerCodes: string[];
+  /** Juiz de afirmação (D3) ligado para esta org (`schedSettings.ai.claimJudge`; ausente = ligado). */
+  claimJudge: boolean;
 };
 
 const UPCOMING_STATUSES = ["pending_approval", "scheduled", "confirmed"] as const;
@@ -344,7 +346,7 @@ export async function schedContextCore(
     }));
   }
   if (!access.ok) {
-    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz, guardNames: [], handoffPending, offerCodes };
+    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz, guardNames: [], handoffPending, offerCodes, claimJudge: false };
   }
   const listed = access.services.slice(0, MAX_SERVICES_IN_PROMPT);
   const currency = org.settings.currency;
@@ -359,6 +361,7 @@ export async function schedContextCore(
     guardNames: access.resources.map((r) => r.name),
     handoffPending,
     offerCodes,
+    claimJudge: access.settings.ai.claimJudge,
   };
 }
 
@@ -923,5 +926,6 @@ export const schedContextValidator = v.union(
     guardNames: v.array(v.string()),
     handoffPending: v.boolean(),
     offerCodes: v.array(v.string()),
+    claimJudge: v.boolean(),
   })
 );

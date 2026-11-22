@@ -299,6 +299,8 @@ import type * as lib_schedBookingEffects from "../lib/schedBookingEffects.js";
 import type * as lib_schedBookingOps from "../lib/schedBookingOps.js";
 import type * as lib_schedCandidates from "../lib/schedCandidates.js";
 import type * as lib_schedClaimGuard from "../lib/schedClaimGuard.js";
+import type * as lib_schedClaimJudge from "../lib/schedClaimJudge.js";
+import type * as lib_schedClaimJudgeRun from "../lib/schedClaimJudgeRun.js";
 import type * as lib_schedClaimState from "../lib/schedClaimState.js";
 import type * as lib_schedConfigOps from "../lib/schedConfigOps.js";
 import type * as lib_schedConfirmParser from "../lib/schedConfirmParser.js";
@@ -754,6 +756,8 @@ declare const fullApi: ApiFromModules<{
   "lib/schedBookingOps": typeof lib_schedBookingOps;
   "lib/schedCandidates": typeof lib_schedCandidates;
   "lib/schedClaimGuard": typeof lib_schedClaimGuard;
+  "lib/schedClaimJudge": typeof lib_schedClaimJudge;
+  "lib/schedClaimJudgeRun": typeof lib_schedClaimJudgeRun;
   "lib/schedClaimState": typeof lib_schedClaimState;
   "lib/schedConfigOps": typeof lib_schedConfigOps;
   "lib/schedConfirmParser": typeof lib_schedConfirmParser;

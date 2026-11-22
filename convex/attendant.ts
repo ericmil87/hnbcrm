@@ -123,6 +123,10 @@ import { currentOffers, issueOffers, markShown, type OffersState, resolveOffer }
 import { offersShownInText } from "./lib/schedOfferShown";
 import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
 import { buildClaimState, knowledgeTimesOf } from "./lib/schedClaimState";
+import { claimJudgeOn, judgeViolation, shouldJudge } from "./lib/schedClaimJudge";
+import { runClaimJudge } from "./lib/schedClaimJudgeRun";
+import { SCHED_CLAIM_JUDGE_ENABLED } from "./lib/schedConstants";
+import { localDateOf } from "./lib/schedTime";
 import { customerTail, customerTextForGroup, detectCustomerIntent, iaAskedHowMany, isChangeIntent, mentionsGroup, mentionsOtherService } from "./lib/schedIntent";
 import { schedSafeReply } from "./lib/schedSafeText";
 import { markOffersShownFromText } from "./lib/schedAiState";
@@ -2070,6 +2074,30 @@ export function claimInOutgoingRound(
     }
     const claim = typeof text === "string" ? detectUnbackedBookingClaim(text, state) : null;
     if (claim) return claim;
+  }
+  return null;
+}
+
+/**
+ * O texto que ESTA rodada mandaria ao cliente (mesma extração de `claimInOutgoingRound`): é o que o juiz de afirmação (D3) lê.
+ * `null` = a rodada não manda texto (só tools, ou resposta que será descartada).
+ */
+export function outgoingReplyText(
+  message: { content?: unknown; tool_calls?: { function: { name: string; arguments: string } }[] },
+  opts: { textFallback: boolean; skipReply?: boolean; replyToolNames?: string[] }
+): string | null {
+  const toolCalls = message.tool_calls ?? [];
+  if (toolCalls.length === 0) return opts.textFallback && typeof message.content === "string" && message.content.trim() ? message.content : null;
+  if (opts.skipReply) return null;
+  const replyNames = opts.replyToolNames ?? ["replyToCustomer"];
+  for (const tc of toolCalls) {
+    if (!replyNames.includes(tc.function.name)) continue;
+    try {
+      const text = (JSON.parse(tc.function.arguments || "{}") as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim()) return text;
+    } catch {
+      // argumento que não parseia não vira mensagem
+    }
   }
   return null;
 }
@@ -4225,6 +4253,42 @@ export const internalProcessQueueItem = internalAction({
         }
         handoffRequestedThisRun = true;
       };
+      // Agenda v2 (D3): juiz de afirmação, SEGUNDA camada depois do léxico. Só roda com o léxico já satisfeito, com a IA na agenda (1:1,
+      // `tools.find`), org e global ligados e gatilho (dia/hora ou verbo de compromisso). Falha do juiz = vale o léxico (nunca trava).
+      // Cada texto é julgado uma vez por turno (a trava final reaproveita o veredito da rodada).
+      const judgeCache = new Map<string, ClaimViolation | null>();
+      const claimJudgeFor = async (text: string, state: ClaimState): Promise<ClaimViolation | null> => {
+        if (!schedGuardOn || context.sched?.tools.find !== true || !claimJudgeOn(context.sched.claimJudge, SCHED_CLAIM_JUDGE_ENABLED) || !shouldJudge(text)) return null;
+        const key = `${state.handoff === true ? "h" : "-"}|${text}`;
+        if (judgeCache.has(key)) return judgeCache.get(key) ?? null;
+        const res = await runClaimJudge(ctx, {
+          organizationId: context.organizationId,
+          conversationId: context.conversationId,
+          providerConfig: context.providerConfig,
+          text,
+          today: localDateOf(state.now, state.tz),
+        });
+        let violation: ClaimViolation | null = null;
+        if (res.ok) {
+          violation = judgeViolation(res.verdict, state);
+          console.log(
+            JSON.stringify({
+              event: "attendantClaimJudge",
+              outcome: violation ? "blocked" : "passed",
+              kind: violation?.kind,
+              promptTokens: res.promptTokens,
+              completionTokens: res.completionTokens,
+              costUsd: res.costUsd,
+              latencyMs: res.latencyMs,
+            })
+          );
+        } else {
+          // Métrica de falha: o léxico já tinha passado a mensagem, então ela segue.
+          console.warn(JSON.stringify({ event: "attendantClaimJudge", outcome: "failed", reason: res.reason }));
+        }
+        judgeCache.set(key, violation);
+        return violation;
+      };
       // Agenda externa (v0.64): eventos que a IA de fato VIU neste turno — a
       // única fonte aceita para `replyToCustomer.imageUrl`.
       const agendaEventsSeen: AgendaEvent[] = [];
@@ -4390,17 +4454,20 @@ export const internalProcessQueueItem = internalAction({
         // Só avalia o texto que de fato sairia (rodada com tool de horário + resposta já descarta a resposta).
         if (schedGuardOn) {
           const roundToolCalls = resp.message.tool_calls ?? [];
-          const claim = claimInOutgoingRound(
-            resp.message,
-            {
-              textFallback: !replyText && !context.followUp,
-              skipReply:
-                roundHasReadAndReply(roundToolCalls) ||
-                roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
-            },
-            // `requestHandoff` na MESMA rodada vale como repasse criado ("já passei seu pedido para a equipe" é verdade).
-            { ...schedClaimState(), handoff: handoffRequestedThisRun || context.sched?.handoffPending === true || roundToolCalls.some((tc) => tc.function.name === "requestHandoff") }
-          );
+          const claimOpts = {
+            textFallback: !replyText && !context.followUp,
+            skipReply:
+              roundHasReadAndReply(roundToolCalls) ||
+              roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+          };
+          // `requestHandoff` na MESMA rodada vale como repasse criado ("já passei seu pedido para a equipe" é verdade).
+          const roundClaimState = { ...schedClaimState(), handoff: handoffRequestedThisRun || context.sched?.handoffPending === true || roundToolCalls.some((tc) => tc.function.name === "requestHandoff") };
+          let claim = claimInOutgoingRound(resp.message, claimOpts, roundClaimState);
+          if (!claim) {
+            // Segunda camada (D3): o léxico deixou passar; o juiz lê o que a mensagem AFIRMA e o servidor compara com o estado.
+            const outgoing = outgoingReplyText(resp.message, claimOpts);
+            if (outgoing) claim = await claimJudgeFor(outgoing, roundClaimState);
+          }
           if (claim) {
             console.warn(JSON.stringify({ event: "attendantSchedClaim", round, kind: claim.kind, sample: claim.evidence }));
             if (claimedOnce) {
@@ -4852,7 +4919,8 @@ export const internalProcessQueueItem = internalAction({
       }
       // Agenda v2 (D1): trava final da regra de afirmação de horário (cobre também o texto da recuperação sem tools).
       if (schedGuardOn && !schedSafeFallback) {
-        const finalClaim = detectUnbackedBookingClaim(replyText, schedClaimState());
+        const finalState = schedClaimState();
+        const finalClaim = detectUnbackedBookingClaim(replyText, finalState) ?? (await claimJudgeFor(replyText, finalState));
         if (finalClaim) {
           console.warn(JSON.stringify({ event: "attendantSchedClaim", path: "final", kind: finalClaim.kind, sample: finalClaim.evidence }));
           await useSafeSchedText(finalClaim.kind);

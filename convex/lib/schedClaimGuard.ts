@@ -382,7 +382,7 @@ export const resourceKey = (name: string): string => norm(name).replace(/[^a-z0-
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Recursos citados na frase (normalizada). */
-function citedResources(n: string, index: ReturnType<typeof buildAliasIndex>): string[] {
+export function citedResources(n: string, index: ReturnType<typeof buildAliasIndex>): string[] {
   const out: string[] = [];
   for (const { key, aliases } of index) {
     if (aliases.some((a) => new RegExp(`(?:^|[^a-z0-9])${escapeRe(a)}(?![a-z0-9])`).test(n))) out.push(key);

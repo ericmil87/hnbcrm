@@ -60,6 +60,8 @@ export type ResolvedSchedSettings = {
     maxAiBookingsPerContactPerDay: number;
     /** Aceite do "marca sozinha" (auditado); sem ele `book:"auto"` não vale. */
     autoAck: { by: Id<"teamMembers">; at: number } | undefined;
+    /** Juiz de afirmação (D3, segunda camada do guard): ausente = ligado. */
+    claimJudge: boolean;
   };
   humanConfirm: { mode: SchedHumanConfirmMode; defaultServiceId: Id<"schedServices"> | undefined };
   funnel: {
@@ -113,6 +115,7 @@ export function resolveSchedSettings(
       maxAiBookingsPerContactPerDay:
         ai?.maxAiBookingsPerContactPerDay ?? DEFAULT_MAX_AI_BOOKINGS_PER_CONTACT_PER_DAY,
       autoAck: ai?.autoAck,
+      claimJudge: ai?.claimJudge ?? true,
     },
     humanConfirm: { mode: hc?.mode ?? "suggest", defaultServiceId: hc?.defaultServiceId },
     funnel: {

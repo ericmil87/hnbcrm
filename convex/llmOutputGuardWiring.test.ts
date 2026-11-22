@@ -95,13 +95,31 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(format).toBeGreaterThan(finalClaim);
 
     // Liga com o MÓDULO de agendamento (não com as tools: o turno de follow-up não tem tools e não pode afirmar marcação).
-    expect(runtime.slice(claimRound - 400, claimRound)).toMatch(/schedGuardOn/);
+    expect(runtime.slice(claimRound - 1200, claimRound)).toMatch(/schedGuardOn/); // (D3: a montagem das opções e do estado da rodada vem entre o `if` e a chamada)
     expect(runtime).toMatch(/const schedGuardOn = context\.schedulingOn === true/);
 
     // Simulador: o guard da rodada e a trava final vêm antes da formatação devolvida.
     const sim = src.slice(src.indexOf("export const simulateAttendant"));
     expect(sim.indexOf("claimInOutgoingRound(")).toBeGreaterThan(sim.indexOf("leakInOutgoingRound("));
     expect(sim.indexOf("detectUnbackedBookingClaim(reply")).toBeLessThan(sim.indexOf("formatReplyForTransport(reply, simulatedTransport)"));
+  });
+
+  test("D3: o juiz de afirmação só roda DEPOIS do léxico (rodada e trava final) e só com a IA na agenda ligada", () => {
+    const src = read("attendant.ts");
+    const runtime = src.slice(src.indexOf("export const internalProcessQueueItem"), src.indexOf("export const simulateAttendant"));
+    const lexRound = runtime.indexOf("let claim = claimInOutgoingRound(");
+    const judgeRound = runtime.indexOf("claim = await claimJudgeFor(");
+    expect(lexRound).toBeGreaterThan(-1);
+    expect(judgeRound).toBeGreaterThan(lexRound);
+    expect(runtime).toMatch(/detectUnbackedBookingClaim\(replyText, finalState\) \?\? \(await claimJudgeFor\(replyText, finalState\)\)/);
+    // as condições do juiz: guard ligado, tools de horário (1:1), interruptor por org + global, gatilho
+    expect(runtime).toMatch(/!schedGuardOn \|\| context\.sched\?\.tools\.find !== true \|\| !claimJudgeOn\(context\.sched\.claimJudge, SCHED_CLAIM_JUDGE_ENABLED\) \|\| !shouldJudge\(text\)/);
+    // o simulador não chama o juiz
+    expect(src.slice(src.indexOf("export const simulateAttendant"))).not.toMatch(/claimJudgeFor|runClaimJudge/);
+    // o módulo do juiz roda só pela action do atendente e não escreve em tabelas de agenda
+    const judge = read("lib/schedClaimJudgeRun.ts");
+    expect(judge).not.toMatch(/schedAppointments|schedAllocations/);
+    expect(read("lib/schedClaimJudge.ts")).not.toMatch(/from\s+["']\.\.?\/_generated|Date\.now\(/);
   });
 
   test("a regra de afirmação é pura e fica fora do funil de vazamento (sem imports de servidor)", () => {

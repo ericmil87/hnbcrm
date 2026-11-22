@@ -3266,7 +3266,9 @@ const applicationTables = {
       // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
       v.literal("tts"),
       // Agenda v2 (C1): segunda leitura (classificador) da confirmação que o humano mandou.
-      v.literal("sched_interpret")
+      v.literal("sched_interpret"),
+      // Agenda v2 (D3): juiz de afirmação (segunda camada do guard; extrai o que a resposta da IA afirma).
+      v.literal("sched_claim_judge")
     ),
     status: v.union(
       v.literal("running"),
@@ -4792,6 +4794,7 @@ const applicationTables = {
       firstVisitNeedsApproval: v.optional(v.boolean()), // ausente = true (vale mesmo em "auto")
       maxAiBookingsPerContactPerDay: v.optional(v.number()), // ausente = 2
       autoAck: v.optional(v.object({ by: v.id("teamMembers"), at: v.number() })), // aceite do "marca sozinha"
+      claimJudge: v.optional(v.boolean()),        // juiz de afirmação (D3); ausente = true (com a IA na agenda ligada)
     })),
     humanConfirm: v.optional(v.object({
       mode: v.optional(v.union(v.literal("auto"), v.literal("suggest"), v.literal("off"))), // ausente = "auto"
