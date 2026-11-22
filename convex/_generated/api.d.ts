@@ -425,6 +425,8 @@ import type * as savedViews from "../savedViews.js";
 import type * as scheduledMessages from "../scheduledMessages.js";
 import type * as scheduling from "../scheduling.js";
 import type * as schedulingAi from "../schedulingAi.js";
+import type * as simAgenda from "../simAgenda.js";
+import type * as simAgendaRead from "../simAgendaRead.js";
 import type * as schedulingConfig from "../schedulingConfig.js";
 import type * as schedulingExceptions from "../schedulingExceptions.js";
 import type * as schedulingInterpret from "../schedulingInterpret.js";
@@ -884,6 +886,8 @@ declare const fullApi: ApiFromModules<{
   scheduledMessages: typeof scheduledMessages;
   scheduling: typeof scheduling;
   schedulingAi: typeof schedulingAi;
+  simAgenda: typeof simAgenda;
+  simAgendaRead: typeof simAgendaRead;
   schedulingConfig: typeof schedulingConfig;
   schedulingExceptions: typeof schedulingExceptions;
   schedulingInterpret: typeof schedulingInterpret;
