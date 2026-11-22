@@ -753,6 +753,7 @@ export function AgendaPageView() {
               serviceId: rescheduling.appointment.serviceId,
               variantKey: rescheduling.appointment.variantKey,
               startTime: rescheduling.appointment.startTime,
+              resourceIds: rescheduling.appointment.resources.filter((r) => r.allocated).map((r) => r.resourceId),
             }}
           />
         </Suspense>

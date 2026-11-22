@@ -192,7 +192,7 @@ function DetailBody({
           open
           onClose={() => setRescheduling(false)}
           who={{ contactId: appt.contactId, leadId: appt.leadId, conversationId: appt.conversationId, name: clientLabel(who) }}
-          reschedule={{ appointmentId, serviceId: appt.serviceId, variantKey: appt.variantKey, startTime: appt.startTime }}
+          reschedule={{ appointmentId, serviceId: appt.serviceId, variantKey: appt.variantKey, startTime: appt.startTime, resourceIds: appt.resources.map((r) => r.resourceId) }}
         />
       )}
       {rebooking && (

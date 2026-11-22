@@ -11,6 +11,7 @@ import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { formatPhone } from "@/components/campaigns/campaignUtils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { fillVocab } from "@/lib/agendaCopy";
+import { rescheduleDefaults } from "@/lib/agendaBooking";
 import { BOOKING_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday, type LocalDate } from "@/lib/agendaZone";
@@ -60,7 +61,7 @@ export interface BookingSheetProps {
   /** Quem será marcado (contato, lead e/ou conversa). Obrigatório para marcar; remarcar dispensa. */
   who: BookingSheetWho;
   /** Modo remarcar: o horário atual deixa de contar como ocupado na busca; `startTime` alimenta "De X para Y". */
-  reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number };
+  reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number; resourceIds?: readonly string[] };
   /** Serviço (e variação) já decididos ao marcar de novo uma proposta vencida; o passo de serviço não é repetido. */
   initialService?: { serviceId: Id<"schedServices">; variantKey?: string };
   /** Abre num dia (`YYYY-MM-DD`), ex.: "+ livre" da Agenda. */
@@ -213,16 +214,19 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
   const [state, dispatch] = useReducer(
     bookingReducer,
     undefined,
-    (): BookingState =>
-      initialBookingState({
+    (): BookingState => {
+      // Remarcar abre no dia do agendamento (não em "Hoje") com a sala/profissional atuais.
+      const re = reschedule ? rescheduleDefaults({ startTime: reschedule.startTime, now: Date.now(), tz, resourceIds: reschedule.resourceIds, resources }) : null;
+      return initialBookingState({
         services,
         preferredServiceId,
         serviceId: reschedule?.serviceId ?? initialService?.serviceId,
         variantKey: reschedule?.variantKey ?? initialService?.variantKey,
         idempotencyKey: newIdempotencyKey(),
-        date: initialDate,
-        pinned: initialPinned,
-      })
+        date: initialDate ?? re?.date,
+        pinned: initialPinned ?? re?.pinned,
+      });
+    }
   );
   const service = services.find((s) => s._id === state.serviceId);
   const durationMin = chosenDurationMin(service, state.variantKey);

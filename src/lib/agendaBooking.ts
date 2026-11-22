@@ -3,6 +3,8 @@
  * O minuto (do dia, no fuso da org) fica no estado da página até a folha abrir e vira a prop
  * `initialTimeMin` do `BookingSheet` (que só a usa junto de `initialDate`).
  */
+import { zonedDateKey, zonedToday, type LocalDate } from "./agendaZone";
+
 export function bookingSheetExtraProps(minute: number | undefined): { initialTimeMin?: number } {
   return minute === undefined ? {} : { initialTimeMin: minute };
 }
@@ -10,6 +12,28 @@ export function bookingSheetExtraProps(minute: number | undefined): { initialTim
 /** Texto do seletor de cliente: dia e lugar, sem prometer a hora enquanto a folha não a recebe. */
 export function bookingContextParts(dateLabel: string, resourceName: string | undefined): string {
   return resourceName ? `${dateLabel} · ${resourceName}` : dateLabel;
+}
+
+/**
+ * Onde a folha de REMARCAR abre: no dia do agendamento (se ainda é hoje ou futuro; se já passou, em hoje) e com
+ * a sala/profissional atuais fixados (um por tipo; recurso sem lugar não entra). O serviço já vem do agendamento.
+ */
+export function rescheduleDefaults(input: {
+  startTime: number | undefined;
+  now: number;
+  tz: string;
+  resourceIds: readonly string[] | undefined;
+  resources: ReadonlyArray<{ _id: string; kind: string }>;
+}): { date: LocalDate; pinned: Record<string, string> } {
+  const today = zonedToday(input.now, input.tz);
+  const day = input.startTime !== undefined ? zonedDateKey(input.startTime, input.tz) : today;
+  const kindOf = new Map(input.resources.map((r) => [r._id, r.kind]));
+  const pinned: Record<string, string> = {};
+  for (const id of input.resourceIds ?? []) {
+    const kind = kindOf.get(id);
+    if (kind && pinned[kind] === undefined) pinned[kind] = id;
+  }
+  return { date: day >= today ? day : today, pinned };
 }
 
 export interface RebookSource {
