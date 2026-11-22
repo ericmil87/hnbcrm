@@ -144,6 +144,9 @@ async function turnWithClock(s: AiSeed, who: Who, content: string): Promise<void
   });
   while (!done) await vi.advanceTimersByTimeAsync(500);
   await p;
+  // O relógio falso dispara funções agendadas (runAfter) durante o turno: espere as que estão em curso, senão elas
+  // escrevem depois do fim do teste ("Write outside of transaction" como rejeição solta, intermitente sob carga).
+  await t.finishInProgressScheduledFunctions();
 }
 
 const outbound = (who: Who) =>
