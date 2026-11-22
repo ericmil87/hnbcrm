@@ -112,3 +112,30 @@ describe("AgendaWeekView", () => {
     expect(sc.querySelector(".sticky.top-0")).not.toBeNull();
   });
 });
+
+describe("AgendaWeekView: arrastar, toque e dia fechado", () => {
+  beforeAllMatchMedia();
+  it("o pedaço de compromisso que continua de um dia anterior (cruza a meia-noite) não arrasta; o do dia de início arrasta", () => {
+    const night = ev("n", 25, 22, { endTime: at(26, 2), title: "Plantão" });
+    setup([], [night], { onMoveEvent: vi.fn() });
+    const start = within(document.querySelector('[data-day="2026-11-25"]') as HTMLElement).getByRole("button", { name: /Plantão/ });
+    const cont = within(document.querySelector('[data-day="2026-11-26"]') as HTMLElement).getByRole("button", { name: /Plantão/ });
+    expect(start.className).toContain("cursor-grab");
+    expect(cont.className).not.toContain("cursor-grab");
+  });
+  it("alvos de toque: ficha '+N' e faixas de dia inteiro ampliadas no toque (coarse)", () => {
+    setup(Array.from({ length: 5 }, (_, i) => appt(`m${i}`, 24, 10)), [ev("f", 27, 0, { allDay: true, startTime: at(27, 0), endTime: at(28, 0), title: "Feriado" })]);
+    expect(screen.getByRole("button", { name: /a mais, abrir o dia/ }).className).toContain("coarse:before:-inset-4");
+    expect(screen.getByRole("button", { name: /Feriado/ }).className).toContain("coarse:min-h-11");
+  });
+  it("dia com a agenda toda fechada não abre a folha ao clicar no vazio", () => {
+    const h = setup([], [], { canBookOn: (d) => d !== "2026-11-26" });
+    fireEvent.click(document.querySelector('[data-day="2026-11-26"]') as HTMLElement, { clientY: 565 });
+    expect(h.onSlotClick).not.toHaveBeenCalled();
+  });
+});
+
+function beforeAllMatchMedia() {
+  // Cursor de arrastar só em ponteiro fino com hover.
+  window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: q.includes("hover: hover"), media: q, addEventListener: vi.fn(), removeEventListener: vi.fn() })) as never;
+}

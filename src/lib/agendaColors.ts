@@ -37,6 +37,9 @@ const PALETTE: readonly Tone[] = [
   { block: "border-l-4 border-cal-10 bg-cal-10/25", dot: "bg-cal-10" },
 ];
 
+/** Sem recurso alocado ou serviço fora da configuração: tom neutro (nunca a cor de outro item). */
+export const NEUTRAL_TONE: Tone = { block: "border-l-4 border-border-strong bg-surface-overlay", dot: "bg-border-strong" };
+
 /** Cor por situação (esquema padrão): fundo tingido e borda esquerda forte, também nos 4 temas. */
 const STATUS_BLOCK: Record<string, string> = {
   pending_approval: "border-l-4 border-dashed border-semantic-warning bg-semantic-warning/10",
@@ -70,6 +73,8 @@ const STATUS_DOT: Record<string, string> = {
   no_show: "bg-semantic-error",
 };
 
+const neutral = (pending: boolean): Tone => ({ ...NEUTRAL_TONE, block: NEUTRAL_TONE.block + (pending ? " border-dashed" : ""), hatch: pending });
+
 export interface ToneContext {
   scheme: ColorScheme;
   /** Ids de recursos e de serviços na ordem da configuração. */
@@ -89,11 +94,13 @@ export function appointmentTone(
     return { block: STATUS_BLOCK[a.status] ?? statusMeta(a.status).blockClassName, dot: STATUS_DOT[a.status] ?? "bg-semantic-info", hatch: pending };
   }
   if (ctx.scheme === "servico") {
+    if (!a.serviceId || !ctx.serviceOrder.includes(a.serviceId)) return neutral(pending);
     const t = toneAt(toneIndexOf(ctx.serviceOrder, a.serviceId));
     return { block: tint(t.block), dot: t.dot, hatch: pending };
   }
   // Recurso: o primeiro alocado na ordem da configuração (o que aparece primeiro nos filtros).
-  const ids = a.resources.filter((r) => r.allocated).map((r) => r.resourceId as string);
+  const ids = a.resources.filter((r) => r.allocated && ctx.resourceOrder.includes(r.resourceId as string)).map((r) => r.resourceId as string);
+  if (ids.length === 0) return neutral(pending);
   const first = ids.sort((x, y) => toneIndexOf(ctx.resourceOrder, x) - toneIndexOf(ctx.resourceOrder, y))[0];
   const t = toneAt(toneIndexOf(ctx.resourceOrder, first));
   return { block: tint(t.block), dot: t.dot, hatch: pending };

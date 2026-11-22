@@ -30,7 +30,9 @@ export function useRangeAppointments(
   const p3 = useQuery(api.scheduling.listAgendaAppointments, base && p2?.next ? { ...base, after: p2.next } : "skip");
 
   let fresh: RangeAppointments | undefined;
-  if (p1 && p1.enabled && !(p1.next && p2 === undefined) && !(p2?.next && p3 === undefined)) {
+  // Módulo desligado (`enabled: false`): resposta vazia e definitiva, não esqueleto para sempre.
+  if (p1 && !p1.enabled) fresh = { appointments: [], truncated: false };
+  else if (p1 && !(p1.next && p2 === undefined) && !(p2?.next && p3 === undefined)) {
     const pages = [p1, p2, p3].filter((p) => p !== undefined);
     const last = pages[pages.length - 1];
     fresh = { appointments: pages.flatMap((p) => p.appointments) as GridAppointment[], truncated: !!last.next };

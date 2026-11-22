@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
 import { useMutation, useQuery } from "convex/react";
 import { Plus, Settings2, TriangleAlert } from "lucide-react";
@@ -34,6 +34,8 @@ import {
 } from "@/lib/agendaGrid";
 import { isExpiredProposal } from "@/lib/agendaStatus";
 import { buildMonthCells } from "@/lib/agendaMonth";
+import { closedResourcesByDay, syntheticRange } from "@/lib/agendaClosedDays";
+import { UNDO_TARGETS, type SchedStatus } from "../../../../convex/lib/schedStatus";
 import { buildMonthGrid, buildMonthLines, monthGridDates } from "@/lib/agendaMonthLines";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
 import { DENSITY_HOUR_PX, readPrefs, writePrefs, type AgendaPrefs, type Density } from "@/lib/agendaPrefs";
@@ -68,6 +70,8 @@ import type { ColumnAction } from "./ResourceDayGrid";
 import type { PendingAppointment, PendingConflict, PendingData } from "./PendingQueueView";
 import type { ClosureTarget } from "./ResourceDaySheet";
 import { useRangeAppointments } from "./useRangeAppointments";
+import { useFillHeight } from "./useFillHeight";
+import { shortcutBlocked } from "@/lib/agendaShortcuts";
 import { isManualNoPlace } from "@/lib/agendaConflict";
 import { bookingContextParts, bookingSheetExtraProps, rebookTarget } from "@/lib/agendaBooking";
 import type { PickedClient } from "./ClientPickerSheet";
@@ -119,13 +123,6 @@ function ClearParam({ onClear }: { onClear: () => void }) {
   return null;
 }
 
-/** Quem digita não dispara atalho (campo, área de texto, menu aberto, diálogo). */
-function isTypingTarget(el: EventTarget | null): boolean {
-  const n = el as HTMLElement | null;
-  if (!n || !n.tagName) return false;
-  return n.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) || n.closest('[role="dialog"],[role="menu"]') !== null;
-}
-
 /**
  * Corpo da página da Agenda com o módulo `scheduling` LIGADO (o `AgendaPage` é só o casco lazy; ver lá). Contêiner: lê a URL
  * (`?visao= ?data= ?por= ?lista= ?appt= ?pendencias=`, mais `?event=` dos compromissos), assina só as
@@ -147,6 +144,9 @@ export function AgendaPageView() {
   const hourNow = useRoundedNow("hour");
   const today = zonedToday(now, tz);
   const [searchParams, setSearchParams] = useSearchParams();
+  // A altura vem da posição real na tela (aviso de plano ou termos no topo empurra a página; a grade encolhe).
+  const pageRef = useRef<HTMLDivElement>(null);
+  const fillH = useFillHeight(pageRef, isMobile ? 80 : 0);
 
   // --- preferências deste aparelho (visão, agrupamento, cores, densidade, filtro da Semana) ---
   const [prefs, setPrefs] = useState<AgendaPrefs>(() => readPrefs(organizationId));
@@ -216,23 +216,22 @@ export function AgendaPageView() {
   /** Dias cobertos pelas leituras de Semana e Mês (Mês: semanas inteiras, com os dias vizinhos). */
   const span = useMemo(() => {
     if (week) return { from: weekDates[0], to: weekDates[6] };
-    if (month) return { from: monthDates[0], to: monthDates[monthDates.length - 1] };
+    // Mês: do dia 1 (os dias do mês anterior que aparecem esmaecidos não gastam leitura) até o fim da última semana.
+    if (month) return { from: monthArgs.fromLocalDate, to: monthDates[monthDates.length - 1] };
     return { from: date, to: date };
-  }, [week, month, weekDates, monthDates, date]);
+  }, [week, month, weekDates, monthDates, monthArgs, date]);
 
   // --- dados ---
   const canQuery = access.canView;
   const config = useQuery(api.schedulingConfig.getConfig, access.canView ? { organizationId, closuresFrom: today } : "skip");
   const rawDay = useQuery(api.scheduling.listAgendaDay, canQuery && !rangeView ? { organizationId, localDate: date } : "skip");
   const day = useKeepPrevious(rawDay, organizationId);
-  // Contagens e fechamentos por dia: o mês inteiro (até 31 dias) ou os 7 dias da semana.
-  const rangeArgs = useMemo(
-    () => (week ? { organizationId, fromLocalDate: weekDates[0], toLocalDate: weekDates[6] } : monthArgs),
-    [week, organizationId, weekDates, monthArgs]
-  );
-  const rawRange = useQuery(api.scheduling.listAgendaRange, canQuery && rangeView ? rangeArgs : "skip");
-  const range = useKeepPrevious(rawRange, organizationId);
   const rangeAppts = useRangeAppointments(organizationId, span.from, span.to, canQuery && rangeView);
+  // `listAgendaRange` só quando a leitura do mês foi cortada (precisa da contagem do servidor para o "+N"); fechamentos
+  // de hoje em diante vêm de `getConfig`, e o resto da contagem sai do que já foi lido.
+  const needRange = month && !!rangeAppts.data?.truncated;
+  const rawRange = useQuery(api.scheduling.listAgendaRange, canQuery && needRange ? monthArgs : "skip");
+  const range = useKeepPrevious(rawRange, organizationId);
   const pending = useQuery(api.scheduling.listPending, access.canView ? { organizationId, now: hourNow } : "skip");
 
   const eventArgs = useMemo(() => {
@@ -273,9 +272,20 @@ export function AgendaPageView() {
   const summaries = useMemo(() => (grid ? summarizeResources(grid) : []), [grid]);
   const activeResources = useMemo(() => (config?.resources ?? []).filter((r) => r.active), [config]);
   const activeServices = useMemo(() => (config?.services ?? []).filter((s) => s.active), [config]);
+  const apptsInRange = rangeAppts.data?.appointments;
+  const closedByDay = useMemo(() => {
+    const dates = (week ? weekDates : monthDates).filter((d) => d >= today);
+    return closedResourcesByDay(config?.closures ?? [], activeResources, dates);
+  }, [week, weekDates, monthDates, today, config, activeResources]);
+  const monthRangeData = useMemo(() => {
+    if (!month) return undefined;
+    if (range?.enabled && rangeAppts.data?.truncated) return range;
+    const days = monthDates.filter((d) => d >= monthArgs.fromLocalDate && d <= monthArgs.toLocalDate);
+    return syntheticRange(days, apptsInRange ?? [], closedByDay);
+  }, [month, range, rangeAppts.data?.truncated, monthDates, monthArgs, apptsInRange, closedByDay]);
   const cells = useMemo(
-    () => buildMonthCells(monthArgs.fromLocalDate, monthArgs.toLocalDate, range?.enabled ? range : undefined, config ? activeResources.length : undefined),
-    [monthArgs, range, config, activeResources]
+    () => buildMonthCells(monthArgs.fromLocalDate, monthArgs.toLocalDate, monthRangeData, config ? activeResources.length : undefined),
+    [monthArgs, monthRangeData, config, activeResources]
   );
 
   // Cores: a ordem da configuração fixa a cor de cada sala, profissional e serviço.
@@ -283,7 +293,6 @@ export function AgendaPageView() {
     () => ({ scheme: color, resourceOrder: activeResources.map((r) => r._id as string), serviceOrder: activeServices.map((s) => s._id as string) }),
     [color, activeResources, activeServices]
   );
-  const apptsInRange = rangeAppts.data?.appointments;
 
   // Semana: filtro por sala/profissional (lembrado), modelo de 7 colunas e fechamentos por dia.
   const weekFilterOptions: WeekFilterOption[] = useMemo(
@@ -307,20 +316,12 @@ export function AgendaPageView() {
         : null,
     [week, weekDates, tz, now, apptsInRange, allInternal, activeResources, weekFilter, isMobile]
   );
-  const dayStatus = useMemo(() => {
-    const out: Record<string, { closed: number; all: boolean }> = {};
-    if (!range?.enabled) return out;
-    for (const d of range.days) {
-      if (d.closedResources > 0) out[d.localDate] = { closed: d.closedResources, all: activeResources.length > 0 && d.closedResources >= activeResources.length };
-    }
-    return out;
-  }, [range, activeResources]);
-
   // Mês: linhas por dia (uma leitura por intervalo) completadas pela contagem do servidor quando cortou.
   const monthWeeks = useMemo(() => {
     if (!month) return [];
     const lines = buildMonthLines({ dates: monthDates, tz, appointments: apptsInRange ?? [], internal: allInternal });
-    return buildMonthGrid({ date, cells, lines, truncated: !!rangeAppts.data?.truncated });
+    const loadedThrough = (apptsInRange ?? []).reduce<string | null>((m, a) => (m === null || a.localDate > m ? a.localDate : m), null);
+    return buildMonthGrid({ date, cells, lines, truncated: !!rangeAppts.data?.truncated, loadedThrough });
   }, [month, monthDates, tz, apptsInRange, allInternal, date, cells, rangeAppts.data?.truncated]);
 
   const pendingData = pending?.enabled ? (pending as PendingData) : undefined;
@@ -357,17 +358,34 @@ export function AgendaPageView() {
 
   // Ações rápidas do cartão do passar do mouse (Confirmar, Chegou): a mesma mutation do painel.
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
+  const undoStatus = useMutation(api.schedulingMutations.undoAppointmentStatus);
   const quick: QuickActions = useMemo(
     () => ({
       canEdit: access.canEdit,
       onStatus: (appointmentId, to) => {
-        setStatus({ organizationId, appointmentId: appointmentId as Id<"schedAppointments">, to }).then(
-          () => toast.success(to === "confirmed" ? t.dense.quick.confirmed : t.dense.quick.arrivedDone),
+        const id = appointmentId as Id<"schedAppointments">;
+        // Como no painel: o toast oferece "Desfazer" (só onde o servidor aceita).
+        const undo =
+          (UNDO_TARGETS[to as SchedStatus] ?? []).length > 0
+            ? {
+                action: {
+                  label: VOCAB.scheduling.undo,
+                  onClick: () => {
+                    undoStatus({ organizationId, appointmentId: id }).then(
+                      () => toast.success(VIEWS_COPY.pendingQueue.toast.undone),
+                      (e) => toast.error(mutationErrorMessage(e, t.dense.quick.failed))
+                    );
+                  },
+                },
+              }
+            : undefined;
+        setStatus({ organizationId, appointmentId: id, to }).then(
+          () => toast.success(to === "confirmed" ? t.dense.quick.confirmed : t.dense.quick.arrivedDone, undo),
           (e) => toast.error(mutationErrorMessage(e, t.dense.quick.failed))
         );
       },
     }),
-    [access.canEdit, organizationId, setStatus]
+    [access.canEdit, organizationId, setStatus, undoStatus]
   );
 
   // Arrastar um compromisso da equipe na Semana: a mesma mutation da página de compromissos (mantém a duração).
@@ -433,7 +451,9 @@ export function AgendaPageView() {
   // Atalhos de teclado (computador): T hoje, D/S/M/L visão, setas anterior e próximo.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target) || apptState.value || pendingState.value || booking || closure) return;
+      // Quem já tratou a tecla (o seletor de visão usa as setas e dá `preventDefault`) ou camada aberta: não é com a página.
+      const layerOpen = !!(apptState.value || pendingState.value || eventState.value || eventModal || taskId || booking || closure || rebooking || rescheduling || resolvingId || wizardOpen);
+      if (shortcutBlocked(e, layerOpen)) return;
       const k = e.key.toLowerCase();
       if (k === "t") dateState.set(null);
       else if (k === "d") changeView("dia");
@@ -448,7 +468,7 @@ export function AgendaPageView() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, view, apptState.value, pendingState.value, booking, closure]);
+  }, [date, view, apptState.value, pendingState.value, eventState.value, eventModal, taskId, booking, closure, rebooking, rescheduling, resolvingId, wizardOpen]);
 
   const renderDay = () => {
     if (!dayInput || !grid) {
@@ -546,7 +566,7 @@ export function AgendaPageView() {
             hourPx={hourPx}
             tone={tone}
             quick={quick}
-            scrollKey={groupBy}
+            scrollKey={`${shownDate}:${groupBy}`}
             onSlotClick={(resource, minute) => startBooking({ resource: resource ?? undefined, minute })}
             onAppointmentClick={openAppointment}
             onInternalClick={onInternalClick}
@@ -747,7 +767,11 @@ export function AgendaPageView() {
 
   return (
     // Ocupa a altura da tela (cancela o respiro da área de conteúdo): barra única no topo e só a grade rola.
-    <div className="-m-4 flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top)-5rem)] min-h-[28rem] flex-col gap-2 px-2 pb-1 pt-2 md:-m-6 md:h-[calc(100dvh-4rem)] md:px-3 md:pb-3">
+    <div
+      ref={pageRef}
+      style={fillH === undefined ? undefined : { height: fillH }}
+      className="-m-4 flex h-[calc(100vh-3.5rem-env(safe-area-inset-top)-5rem)] min-h-[28rem] flex-col gap-2 px-2 pb-1 pt-2 supports-[height:100dvh]:h-[calc(100dvh-3.5rem-env(safe-area-inset-top)-5rem)] md:-m-6 md:h-[calc(100vh-4rem)] md:px-3 md:pb-3 md:supports-[height:100dvh]:h-[calc(100dvh-4rem)]"
+    >
       {header}
 
       {setupIncomplete && (
@@ -789,10 +813,10 @@ export function AgendaPageView() {
               now={now}
               today={today}
               selected={date}
-              loading={rangeAppts.data === undefined || rawRange === undefined}
+              loading={rangeAppts.data === undefined}
               tone={tone}
               isMobile={isMobile}
-              partialFrom={range?.enabled && range.capped ? { through: range.completeThrough } : null}
+              partialFrom={needRange && range?.enabled && range.capped ? { through: range.completeThrough } : null}
               truncated={rangeAppts.data?.truncated}
               onOpenDay={goToDay}
               onSelectDay={(d) => dateState.set(d === today ? null : d)}
@@ -808,11 +832,11 @@ export function AgendaPageView() {
                 tz={tz}
                 hourPx={hourPx}
                 tone={tone}
-                canBookOn={(d) => access.canEdit && !setupIncomplete && d >= today}
+                canBookOn={(d) => access.canEdit && !setupIncomplete && d >= today && !closedByDay[d]?.all}
                 quick={quick}
-                dayStatus={dayStatus}
+                dayStatus={closedByDay}
                 compact={isMobile}
-                scrollKey={`${weekFilter ?? "todos"}`}
+                scrollKey={`${weekDates[0]}:${weekFilter ?? "todos"}`}
                 onSlotClick={bookFromWeek}
                 onAppointmentClick={openAppointment}
                 onInternalClick={onInternalClick}

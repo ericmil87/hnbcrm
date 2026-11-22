@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appointmentTooltip, compactText, firstName, widthClass, COMPACT_MAX_PX, placeText, planBlock, statusFlags, timeRangeLabel } from "./agendaBlockText";
-import { appointmentTone, PALETTE_SIZE, toneAt, toneIndexOf } from "./agendaColors";
+import { appointmentTone, NEUTRAL_TONE, PALETTE_SIZE, toneAt, toneIndexOf } from "./agendaColors";
 import { initialScrollMinute, scrollTopFor, visibleHours } from "./agendaScroll";
 import { DENSITY_HOUR_PX, PREFS_KEY, readPrefs, writePrefs } from "./agendaPrefs";
 import { buildMonthLines, cutMonthLines, monthMaxLines, unseenCount } from "./agendaMonthLines";
@@ -301,6 +301,7 @@ describe("Semana", () => {
 
 import { buildMonthGrid, monthGridDates } from "./agendaMonthLines";
 import { buildMonthCells } from "./agendaMonth";
+import { closedResourcesByDay, syntheticRange } from "./agendaClosedDays";
 
 describe("grade do mês", () => {
   it("semanas inteiras: do começo da semana do dia 1 ao fim da semana do último dia", () => {
@@ -349,5 +350,47 @@ describe("largura do bloco e paleta", () => {
       expect(t.block).toContain("border-dashed");
       expect(t.block).not.toContain("/25");
     }
+  });
+});
+
+describe("tom neutro e fechamentos por dia", () => {
+  it("sem recurso alocado ou serviço fora da configuração: neutro, nunca a cor do primeiro item", () => {
+    const ctx = { resourceOrder: ["r1"], serviceOrder: ["s1"] };
+    const none = { status: "scheduled", resources: [{ resourceId: "x", role: "room", name: "S", allocated: false }], serviceId: "s1" } as never;
+    expect(appointmentTone(none, { ...ctx, scheme: "recurso" }).dot).toBe(NEUTRAL_TONE.dot);
+    const gone = { status: "scheduled", resources: [], serviceId: "removido" } as never;
+    expect(appointmentTone(gone, { ...ctx, scheme: "servico" }).dot).toBe(NEUTRAL_TONE.dot);
+    expect(appointmentTone({ ...(gone as object), status: "pending_approval" } as never, { ...ctx, scheme: "servico" }).block).toContain("border-dashed");
+  });
+  const resources = [{ _id: "r1", kind: "room" }, { _id: "r2", kind: "room" }, { _id: "p1", kind: "person" }];
+  it("fechamentos de hoje em diante vêm de getConfig: recurso, tipo e agenda toda", () => {
+    const closures = [
+      { localDate: "2026-11-26", mode: "closed", resourceId: "r1" },
+      { localDate: "2026-11-27", mode: "closed", resourceKind: "room" },
+      { localDate: "2026-11-28", mode: "closed" },
+      { localDate: "2026-11-28", mode: "block", resourceId: "r1" },
+      { localDate: "2026-12-30", mode: "closed" },
+    ];
+    const out = closedResourcesByDay(closures, resources, ["2026-11-26", "2026-11-27", "2026-11-28", "2026-11-29"]);
+    expect(out["2026-11-26"]).toEqual({ closed: 1, all: false });
+    expect(out["2026-11-27"]).toEqual({ closed: 2, all: false });
+    expect(out["2026-11-28"]).toEqual({ closed: 3, all: true });
+    expect(out["2026-11-29"]).toBeUndefined();
+    expect(out["2026-12-30"]).toBeUndefined();
+    expect(closedResourcesByDay(closures, [], ["2026-11-26"])).toEqual({});
+  });
+  it("contagens do mês a partir do que foi lido (sem listAgendaRange)", () => {
+    const r = syntheticRange(["2026-11-26", "2026-11-27"], [appt("a", 26, 9), appt("b", 26, 10, 60, { status: "pending_approval" }), appt("c", 26, 11, 60, { status: "cancelled" })], { "2026-11-27": { closed: 2, all: false } });
+    expect(r.days[0]).toMatchObject({ active: 2, pending: 1, closedResources: 0 });
+    expect(r.days[1]).toMatchObject({ active: 0, closedResources: 2 });
+    expect(r.capped).toBe(false);
+  });
+  it("dia do mês seguinte depois do corte fica 'incompleto' em vez de vazio", () => {
+    const cells = buildMonthCells("2026-11-01", "2026-11-30", syntheticRange([], [], {}), 3);
+    const lines = buildMonthLines({ dates: monthGridDates("2026-11-26"), tz: TZ, appointments: [appt("a", 26, 9)], internal: [] });
+    const days = buildMonthGrid({ date: "2026-11-26", cells, lines, truncated: true, loadedThrough: "2026-11-27" }).flat();
+    expect(days.find((d) => d.localDate === "2026-12-02")!.incomplete).toBe(true);
+    expect(days.find((d) => d.localDate === "2026-11-10")!.incomplete).toBe(false);
+    expect(buildMonthGrid({ date: "2026-11-26", cells, lines, truncated: false }).flat().some((d) => d.incomplete)).toBe(false);
   });
 });

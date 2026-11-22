@@ -11,7 +11,7 @@ import { initialScrollMinute, scrollTopFor } from "@/lib/agendaScroll";
 import { fillVocab } from "@/lib/agendaCopy";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import type { WeekModel, WeekPlaced } from "@/lib/agendaWeekGrid";
-import { minutesLabel, shortDateLabel, weekdayOf } from "@/lib/agendaZone";
+import { minutesLabel, shortDateLabel, weekdayOf, zonedDayBounds } from "@/lib/agendaZone";
 import { cn } from "@/lib/utils";
 
 const w = VIEWS_COPY.dense.weekGrid;
@@ -165,7 +165,9 @@ export function AgendaWeekView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag === null]);
 
-  const canDrag = (e: InternalItem) => !!onMoveEvent && finePointer && e.source === "event" && !e.allDay && isCalendarItemDraggable(e);
+  // O pedaço que continua de um dia anterior (cruza a meia-noite) não arrasta: o início real é de outro dia.
+  const canDrag = (e: InternalItem, localDate: string) =>
+    !!onMoveEvent && finePointer && e.source === "event" && !e.allDay && isCalendarItemDraggable(e) && e.startTime >= zonedDayBounds(localDate, tz).start;
   const openInternal = (e: InternalItem) => {
     if (justDragged.current) return;
     onInternalClick(e);
@@ -244,7 +246,7 @@ export function AgendaWeekView({
                           title={e.title}
                           onClick={() => onInternalClick(e)}
                           className={cn(
-                            "flex min-h-5 w-full items-center gap-1 rounded-md border border-dashed border-ai-500 bg-ai-500/20 px-1 text-left text-xs text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+                            "flex min-h-5 coarse:min-h-11 w-full items-center gap-1 rounded-md border border-dashed border-ai-500 bg-ai-500/20 px-1 text-left text-xs text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
                             d.allDayDimmed.includes(e.id) && "opacity-50"
                           )}
                         >
@@ -305,7 +307,7 @@ export function AgendaWeekView({
                           widthPx={widthOf(p)}
                           muted={p.item.dimmed}
                           dragging={drag?.active && drag.item.id === ev.id}
-                          onDragStart={canDrag(ev) ? (pe, top) => startDrag(ev, pe, top) : undefined}
+                          onDragStart={canDrag(ev, d.localDate) ? (pe, top) => startDrag(ev, pe, top) : undefined}
                           onOpen={openInternal}
                         />
                       );
@@ -340,7 +342,7 @@ export function AgendaWeekView({
                           onOpenDay(d.localDate);
                         }}
                         style={{ top: Math.max(0, bottom - 20) }}
-                        className="absolute right-0.5 z-20 flex h-[18px] min-w-[26px] items-center justify-center rounded-full border border-border bg-surface-raised px-1.5 text-micro font-semibold text-text-primary shadow-card hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                        className="absolute right-0.5 z-20 flex h-[18px] min-w-[26px] before:absolute before:-inset-1.5 before:content-[''] coarse:before:-inset-4 items-center justify-center rounded-full border border-border bg-surface-raised px-1.5 text-micro font-semibold text-text-primary shadow-card hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
                         {fillVocab(blk.moreLabel, { n: o.hidden })}
                       </button>

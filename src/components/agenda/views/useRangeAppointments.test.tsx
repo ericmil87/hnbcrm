@@ -50,9 +50,9 @@ describe("useRangeAppointments", () => {
     const { result } = renderHook(() => useRangeAppointments("org1" as never, "2026-11-23", "2026-11-29", true));
     expect(result.current.data).toBeUndefined();
   });
-  it("módulo desligado (enabled: false) não vira lista", () => {
+  it("módulo desligado (enabled: false) vira resposta vazia, não esqueleto para sempre", () => {
     pages.first = { enabled: false, appointments: [], next: null };
     const { result } = renderHook(() => useRangeAppointments("org1" as never, "2026-11-23", "2026-11-29", true));
-    expect(result.current.data).toBeUndefined();
+    expect(result.current.data).toEqual({ appointments: [], truncated: false });
   });
 });

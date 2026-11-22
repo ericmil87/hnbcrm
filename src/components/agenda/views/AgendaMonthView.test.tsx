@@ -134,3 +134,45 @@ describe("AgendaMonthView: '+N mais' abre a lista do dia (computador)", () => {
     expect(h.onOpenDay).toHaveBeenCalledWith("2026-11-10");
   });
 });
+
+describe("AgendaMonthView: dia cortado pelo teto e foco do popover", () => {
+  function truncatedWeeks() {
+    // O servidor contou 9 no dia 3 e só 2 vieram: leitura cortada.
+    const cells = buildMonthCells("2026-11-01", "2026-11-30", { days: [{ localDate: "2026-11-03", active: 9, pending: 0, closedResources: 0, occupancy: [] }], capped: false, completeThrough: null }, 3);
+    const lines = buildMonthLines({ dates: monthGridDates("2026-11-10"), tz: TZ, appointments: [appt("a", 3, 9), appt("b", 3, 10)], internal: [] });
+    return buildMonthGrid({ date: "2026-11-10", cells, lines, truncated: true, loadedThrough: "2026-11-03" });
+  }
+  it("celular: dia cortado mostra 'não listados' e o botão para abrir o dia, nunca 'sem horários'", () => {
+    const h = setup({ isMobile: true, selected: "2026-11-03", weeks: truncatedWeeks() });
+    expect(screen.getByText(/\+7 não listados/)).toBeInTheDocument();
+    expect(screen.queryByText("Nada marcado neste dia.")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Abrir o dia" }));
+    expect(h.onOpenDay).toHaveBeenCalledWith("2026-11-03");
+  });
+  it("celular: dia depois do corte sem contagem diz que não foi lido por inteiro, em vez de vazio", () => {
+    setup({ isMobile: true, selected: "2026-12-02", weeks: truncatedWeeks() });
+    expect(screen.getByText(/não foi lido por inteiro/)).toBeInTheDocument();
+    expect(screen.queryByText("Nada marcado neste dia.")).toBeNull();
+  });
+  it("computador: dia do mês seguinte depois do corte mostra 'Ver o dia' em vez de vazio", () => {
+    const h = setup({ weeks: truncatedWeeks() });
+    fireEvent.click(screen.getAllByRole("button", { name: "Ver o dia" })[0]);
+    expect(h.onOpenDay).toHaveBeenCalled();
+  });
+  it("popover '+N mais': recebe o foco ao abrir, Tab circula dentro dele e Esc fecha devolvendo o foco", () => {
+    const many = Array.from({ length: 8 }, (_, i) => appt(`m${i}`, 10, 8 + i, `Pessoa ${i}`));
+    setup({}, many);
+    const more = screen.getByRole("button", { name: /a mais em ter, 10\/11/ });
+    more.focus();
+    fireEvent.click(more);
+    const pop = screen.getByRole("dialog");
+    expect(pop.contains(document.activeElement)).toBe(true);
+    const buttons = within(pop).getAllByRole("button");
+    buttons[buttons.length - 1].focus();
+    fireEvent.keyDown(buttons[buttons.length - 1], { key: "Tab" });
+    expect(document.activeElement).toBe(buttons[0]);
+    fireEvent.keyDown(document.activeElement!, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
+});

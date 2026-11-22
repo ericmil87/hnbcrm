@@ -97,6 +97,8 @@ export interface MonthGridDay {
   /** Todos os recursos fechados / alguns fechados. */
   allClosed: boolean;
   someClosed: boolean;
+  /** A leitura foi cortada antes deste dia e não há contagem do servidor: pode haver horários ("ver o dia"). */
+  incomplete: boolean;
 }
 
 export function buildMonthGrid(input: {
@@ -106,6 +108,8 @@ export function buildMonthGrid(input: {
   lines: Readonly<Record<string, MonthLine[]>>;
   /** A leitura dos agendamentos foi cortada: só aí a contagem do servidor completa o "+N". */
   truncated: boolean;
+  /** Último dia coberto pelas páginas lidas (`null` = nenhum agendamento lido). Só importa com `truncated`. */
+  loadedThrough?: string | null;
 }): MonthGridDay[][] {
   const byDate = new Map(input.cells.filter((c): c is MonthCell => c !== null).map((c) => [c.localDate, c]));
   const month = input.date.slice(0, 7);
@@ -115,6 +119,8 @@ export function buildMonthGrid(input: {
     const cell = byDate.get(localDate);
     const loaded = lines.filter((l) => l.kind === "appointment").length;
     const unseen = input.truncated && cell ? unseenCount(cell.active, loaded) : 0;
+    // Dia do mês seguinte depois do corte: sem contagem do servidor, não dá para afirmar que está vazio.
+    const incomplete = input.truncated && !cell && localDate.slice(0, 7) > month && (input.loadedThrough == null || localDate > input.loadedThrough);
     return {
       localDate,
       day: Number(localDate.slice(8)),
@@ -125,6 +131,7 @@ export function buildMonthGrid(input: {
       pending: cell?.pending ?? 0,
       allClosed: cell?.allClosed ?? false,
       someClosed: (cell?.closedResources ?? 0) > 0 && !cell?.allClosed,
+      incomplete,
     };
   });
   const weeks: MonthGridDay[][] = [];

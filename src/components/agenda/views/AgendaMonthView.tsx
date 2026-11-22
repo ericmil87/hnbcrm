@@ -155,6 +155,20 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
             <LineButton line={line} tz={tz} now={now} tone={tone} onAppointmentClick={onAppointmentClick} onInternalClick={onInternalClick} />
           </li>
         ))}
+        {day.incomplete && hidden === 0 && (
+          <li>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenDay(day.localDate);
+              }}
+              className="flex h-[18px] w-full items-center rounded px-1 text-left text-xs font-medium leading-[18px] text-text-muted hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+            >
+              {d.seeDay}
+            </button>
+          </li>
+        )}
         {hidden > 0 && (
           <li>
             <button
@@ -172,7 +186,7 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
             </button>
             {moreOpen && (
               <Popover open onOpenChange={setMoreOpen} anchor={moreRef} side="bottom" align="start" role="dialog" aria-label={fillVocab(d.dayList, { data: shortDateLabel(day.localDate) })} className="w-72">
-                <div onClick={(e) => e.stopPropagation()}>
+                <MorePopoverBody onClose={() => setMoreOpen(false)}>
                   <p className="border-b border-border px-3 py-2 text-sm font-semibold text-text-primary">{shortDateLabel(day.localDate)}</p>
                   <ul className="max-h-72 space-y-px overflow-y-auto p-1">
                     {day.lines.map((line) => (
@@ -206,12 +220,42 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
                       {d.openDay}
                     </Button>
                   </div>
-                </div>
+                </MorePopoverBody>
               </Popover>
             )}
           </li>
         )}
       </ul>
+    </div>
+  );
+}
+
+/** Corpo do popover "+N mais": recebe o foco ao abrir, Tab circula dentro dele e Esc fecha (o foco volta ao "+N mais"). */
+function MorePopoverBody({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    ref.current?.querySelector<HTMLElement>("button")?.focus();
+  }, []);
+  return (
+    <div
+      ref={ref}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          onClose();
+          return;
+        }
+        if (e.key !== "Tab") return;
+        const items = Array.from(ref.current?.querySelectorAll<HTMLElement>("button") ?? []);
+        if (items.length === 0) return;
+        const i = items.indexOf(document.activeElement as HTMLElement);
+        const next = e.shiftKey ? (i <= 0 ? items.length - 1 : i - 1) : i === items.length - 1 ? 0 : i + 1;
+        e.preventDefault();
+        items[next].focus();
+      }}
+    >
+      {children}
     </div>
   );
 }
@@ -227,7 +271,7 @@ function SelectedDayList({ day, tz, now, onOpenDay, onAppointmentClick, onIntern
           {d.openDay}
         </Button>
       </div>
-      {day.lines.length === 0 ? (
+      {day.lines.length === 0 && day.unseen === 0 && !day.incomplete ? (
         <p className="px-2 py-3 text-sm text-text-secondary">{day.allClosed ? d.closedDay : d.emptyDay}</p>
       ) : (
         <ul className="space-y-1.5">
@@ -256,6 +300,11 @@ function SelectedDayList({ day, tz, now, onOpenDay, onAppointmentClick, onIntern
             );
           })}
         </ul>
+      )}
+      {(day.unseen > 0 || day.incomplete) && (
+        <p className="px-2 py-2 text-sm text-text-secondary">
+          {day.unseen > 0 ? fillVocab(d.unlisted, { n: day.unseen }) : d.incompleteDay}
+        </p>
       )}
     </section>
   );

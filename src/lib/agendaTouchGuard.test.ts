@@ -72,7 +72,10 @@ describe("Agenda v2: alvos de toque e layout no celular", () => {
 
   it("a página ocupa a altura da tela e só a grade rola (sem rolagem dupla)", () => {
     const page = read("src/components/agenda/views/AgendaPageView.tsx");
-    expect(page).toContain("md:h-[calc(100dvh-4rem)]");
+    // Altura medida na tela (aviso no topo empurra a página) com o CSS `vh` + `supports-[height:100dvh]:` como ponto de partida.
+    expect(page).toContain("useFillHeight");
+    expect(page).toContain("supports-[height:100dvh]:h-[calc(100dvh-");
+    expect(page).not.toMatch(/[^:\-]h-\[calc\(100dvh/);
     for (const f of ["ResourceDayGrid", "AgendaWeekView"]) {
       const src = read(`src/components/agenda/views/${f}.tsx`);
       expect(src).toContain("data-grid-scroller");

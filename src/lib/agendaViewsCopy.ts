@@ -53,6 +53,8 @@ export const VIEWS_COPY = {
       moreAria: "{n} a mais em {data}: ver a lista",
       openDay: "Abrir o dia",
       unlisted: "+{n} não listados: abra o dia para ver todos",
+      seeDay: "Ver o dia",
+      incompleteDay: "Há muitos horários neste período e este dia não foi lido por inteiro. Abra o dia para ver.",
       dayList: "Horários de {data}",
       emptyDay: "Nada marcado neste dia.",
       closedDay: "Dia fechado",
