@@ -432,6 +432,8 @@ import type * as schedulingJobs from "../schedulingJobs.js";
 import type * as schedulingMutations from "../schedulingMutations.js";
 import type * as schedulingRest from "../schedulingRest.js";
 import type * as seed from "../seed.js";
+import type * as simAgenda from "../simAgenda.js";
+import type * as simAgendaRead from "../simAgendaRead.js";
 import type * as startConversation from "../startConversation.js";
 import type * as taskComments from "../taskComments.js";
 import type * as taskLabels from "../taskLabels.js";
@@ -891,6 +893,8 @@ declare const fullApi: ApiFromModules<{
   schedulingMutations: typeof schedulingMutations;
   schedulingRest: typeof schedulingRest;
   seed: typeof seed;
+  simAgenda: typeof simAgenda;
+  simAgendaRead: typeof simAgendaRead;
   startConversation: typeof startConversation;
   taskComments: typeof taskComments;
   taskLabels: typeof taskLabels;
