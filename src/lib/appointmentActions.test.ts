@@ -122,3 +122,30 @@ describe("appointmentHistory com quem fez (A3d)", () => {
     expect(h[1].label).toBe("Atendimento concluído por Bia");
   });
 });
+
+import { detailPanelTitle } from "./appointmentActions";
+
+describe("título do painel do agendamento segue a situação", () => {
+  const T0 = Date.UTC(2026, 10, 24, 14, 0);
+  const a = (status: string, extra: Record<string, unknown> = {}) => ({ status, startTime: T0 + 3_600_000, ...extra });
+  it("cada status tem o seu título (nunca 'Horário marcado' para atendido, faltou ou cancelado)", () => {
+    expect(detailPanelTitle(a("pending_approval"), T0)).toBe("Pedido aguardando aprovação");
+    expect(detailPanelTitle(a("scheduled"), T0)).toBe("Horário marcado");
+    expect(detailPanelTitle(a("confirmed"), T0)).toBe("Horário confirmado");
+    expect(detailPanelTitle(a("checked_in"), T0)).toBe("Cliente chegou");
+    expect(detailPanelTitle(a("completed"), T0)).toBe("Atendido");
+    expect(detailPanelTitle(a("no_show"), T0)).toBe("Faltou");
+    expect(detailPanelTitle(a("cancelled"), T0)).toBe("Cancelado");
+    expect(detailPanelTitle(a("rescheduled"), T0)).toBe("Remarcado");
+  });
+  it("todo status do servidor tem título próprio", () => {
+    const generic = detailPanelTitle(null, T0);
+    for (const s of ALL_STATUSES) if (s !== "scheduled") expect(detailPanelTitle(a(s), T0)).not.toBe(generic);
+  });
+  it("proposta vencida, carregando e status desconhecido", () => {
+    expect(detailPanelTitle(a("pending_approval", { startTime: T0 - 1 }), T0)).toBe("Proposta vencida");
+    expect(detailPanelTitle(a("pending_approval", { needsAttention: { code: "proposal_expired" } }), T0)).toBe("Proposta vencida");
+    expect(detailPanelTitle(undefined, T0)).toBe("Horário marcado");
+    expect(detailPanelTitle(a("novo_status"), T0)).toBe("Horário marcado");
+  });
+});

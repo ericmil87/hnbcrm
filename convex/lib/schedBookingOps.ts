@@ -183,6 +183,12 @@ export type BookArgs = {
   guestName?: string;
   partyKey?: string;
   resourceIds?: Id<"schedResources">[];
+  /**
+   * `false` = o recurso PEDIDO em `resourceIds` nunca é trocado por outro (tela em que a pessoa escolheu a sala ou
+   * viu o plano na revisão). Com a lista completa (um por requisito) não há plano alternativo: recurso cheio vira
+   * recusa com alternativas. Com lista parcial (só a sala), só o que o servidor completou sozinho pode trocar.
+   * Ausente/`true` = comportamento de sempre (plano alternativo do mesmo início quando o pedido está cheio).
+   */
   allowResourceFallback?: boolean;
   initialStatus?: "pending_approval" | "scheduled";
   force?: string[];
@@ -907,8 +913,19 @@ function candidatesOf(bc: BookingContext, view: DayView, p: { startTime: number;
   }).filter((c) => c.plan.every((x) => blockCovered(view.coverage, x.resourceId, c.blockStart, c.blockEnd)));
 }
 
-/** Outro plano para o MESMO início (primeiro que couber, por preferência e `sortOrder`). */
-function fallbackPlan(bc: BookingContext, view: DayView, p: { startTime: number; variantKey?: string; current: Id<"schedResources">[] }): PlanItem[] | null {
+/**
+ * Recursos que o plano alternativo tem de MANTER: `[]` = qualquer plano; `null` = não há plano alternativo.
+ * Ver `BookArgs.allowResourceFallback`.
+ */
+function fallbackKeep(args: Pick<BookArgs, "allowResourceFallback" | "resourceIds">, planSize: number): Id<"schedResources">[] | null {
+  if (args.allowResourceFallback !== false) return [];
+  const asked = args.resourceIds ?? [];
+  return asked.length > 0 && asked.length < planSize ? asked : null;
+}
+
+/** Outro plano para o MESMO início (primeiro que couber, por preferência e `sortOrder`), mantendo os recursos de `keep`. */
+function fallbackPlan(bc: BookingContext, view: DayView, p: { startTime: number; variantKey?: string; current: Id<"schedResources">[]; keep?: Id<"schedResources">[] }): PlanItem[] | null {
+  const keep = p.keep ?? [];
   const cands = candidatesOf(bc, view, {
     startTime: p.startTime,
     earliest: Number.NEGATIVE_INFINITY,
@@ -916,8 +933,9 @@ function fallbackPlan(bc: BookingContext, view: DayView, p: { startTime: number;
     basis: "block",
     maxPerStart: 6,
     variantKey: p.variantKey,
-    preferred: [],
-  }).filter((c) => c.startTime === p.startTime);
+    // Os mantidos vão na frente: os primeiros planos gerados já os contêm (quando cabem).
+    preferred: keep,
+  }).filter((c) => c.startTime === p.startTime && keep.every((id) => c.plan.some((x) => x.resourceId === id)));
   const currentKey = [...p.current].sort().join("|");
   const byId = new Map(view.pool.map((r) => [r._id as string, r]));
   for (const c of cands) {
@@ -1142,13 +1160,22 @@ type Selection = { violations: Violation[]; resolution: ReturnType<typeof applyF
 async function selectPlan(att: Attempt): Promise<Selection> {
   let { violations, resolution } = await evaluateItems(att, att.items);
   const capacityBlocked = violations.some((v) => v.code === "CAPACITY_EXCEEDED");
-  if (att.args.allowResourceFallback === false || !shouldTryFallback(resolution.blocking, att.origin, att.queue, capacityBlocked)) {
+  const keep = fallbackKeep(att.args, att.items.length);
+  if (keep === null || !shouldTryFallback(resolution.blocking, att.origin, att.queue, capacityBlocked)) {
     return { violations, resolution, fallbackTried: false };
   }
-  const alt = fallbackPlan(att.bc, await dayViewOf(att), { startTime: att.args.startTime, variantKey: att.args.variantKey, current: currentIds(att) });
-  if (!alt) return { violations, resolution, fallbackTried: false };
+  // Sem plano que mantenha o recurso PEDIDO: a recusa fala dele, não do que o servidor completou sozinho
+  // (ex.: sala escolhida cheia + o primeiro profissional da ordem ocupado = "a sala está cheia").
+  const refused = (): Selection => {
+    const asked = new Set<string>(keep);
+    const own = violations.filter((v) => v.code !== "CAPACITY_EXCEEDED" || asked.has(String(v.detail?.resourceId)));
+    const narrowed = asked.size > 0 && own.some((v) => v.code === "CAPACITY_EXCEEDED") ? own : violations;
+    return { violations: narrowed, resolution: narrowed === violations ? resolution : applyForce(narrowed, att.args.force, att.origin), fallbackTried: false };
+  };
+  const alt = fallbackPlan(att.bc, await dayViewOf(att), { startTime: att.args.startTime, variantKey: att.args.variantKey, current: currentIds(att), keep });
+  if (!alt) return refused();
   const next = await evaluateItems(att, alt);
-  if (withoutQueuedCapacity(att, next.resolution.blocking).length > 0) return { violations, resolution, fallbackTried: false };
+  if (withoutQueuedCapacity(att, next.resolution.blocking).length > 0) return refused();
   att.items = alt;
   ({ violations, resolution } = next);
   return { violations, resolution, fallbackTried: true };
@@ -1222,9 +1249,10 @@ async function insertAndAllocate(
   let alloc: AllocOutcome = await allocateAttempt(att, appointmentId);
   if (!alloc.ok) {
     await discardAppointment(att.ctx, appointmentId);
+    const keep = fallbackKeep(att.args, att.items.length);
     const alt =
-      att.args.allowResourceFallback !== false && !sel.fallbackTried
-        ? fallbackPlan(att.bc, await dayViewOf(att), { startTime: att.args.startTime, variantKey: att.args.variantKey, current: currentIds(att) })
+      keep !== null && !sel.fallbackTried
+        ? fallbackPlan(att.bc, await dayViewOf(att), { startTime: att.args.startTime, variantKey: att.args.variantKey, current: currentIds(att), keep })
         : null;
     if (!alt) return alloc;
     att.items = alt;
@@ -1626,6 +1654,8 @@ export async function rescheduleAppointmentCore(
     actor: SchedActor;
     startTime: number;
     resourceIds?: Id<"schedResources">[];
+    /** Ver `BookArgs.allowResourceFallback` (só vale com `resourceIds` informado). */
+    allowResourceFallback?: boolean;
     force?: string[];
     idempotencyKey?: string;
     /** `preview`: simula a remarcação (mesmas validações, MESMA leitura de capacidade com as alocações do antigo ignoradas) sem gravar nada. */
@@ -1669,6 +1699,7 @@ export async function rescheduleAppointmentCore(
       guestName: old.guestName,
       partyKey: old.partyKey,
       resourceIds: args.resourceIds ?? old.resources.map((r) => r.resourceId),
+      allowResourceFallback: args.resourceIds ? args.allowResourceFallback : undefined,
       force: args.force,
       notes: old.notes,
       idempotencyKey: preview ? undefined : args.idempotencyKey,

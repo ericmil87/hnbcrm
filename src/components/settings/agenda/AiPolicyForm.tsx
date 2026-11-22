@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ChoiceCards } from "@/components/agenda/ChoiceCards";
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
@@ -53,6 +53,7 @@ const NO_AI_LINK = "Configurar a IA";
 /** Política da IA por ação, com AVISO + ACEITE ao escolher "marca sozinha". Controlado, sem Convex. */
 export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant = "panel", ackNote, aiActive = true, onOpenAiSettings }: AiPolicyFormProps) {
   const [pending, setPending] = useState<{ next: AutomationForm } | null>(null);
+  const switchId = useId();
   const set = (patch: Partial<AutomationForm>) => onChange({ ...value, ...patch });
   const needsAsk = (next: AutomationForm) => next.book === "auto" || next.reschedule === "auto" || next.cancel === "auto" ? !value.hasAck && !value.ackAcceptedNow : false;
 
@@ -125,11 +126,12 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
       ) : (
         <>
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-text-primary">Consultar horários livres</p>
-              <p className="text-sm text-text-muted">A IA vê o que está livre e responde ao cliente.</p>
-            </div>
-            <Switch checked={value.consult} onCheckedChange={(consult) => set({ consult })} label="Consultar horários livres" hideLabel disabled={disabled} />
+            {/* O texto é o rótulo da chave: tocar nele também liga e desliga (a chave em si já tem área de toque de 44 px). */}
+            <label htmlFor={`${switchId}-consult`} className="min-w-0 flex-1 cursor-pointer">
+              <span className="block text-sm font-medium text-text-primary">Consultar horários livres</span>
+              <span className="block text-sm text-text-muted">A IA vê o que está livre e responde ao cliente.</span>
+            </label>
+            <Switch id={`${switchId}-consult`} checked={value.consult} onCheckedChange={(consult) => set({ consult })} label="Consultar horários livres" hideLabel disabled={disabled} />
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium text-text-primary">Marcar horário</p>
@@ -156,11 +158,11 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
           {ackNote && <p className="text-sm text-text-muted">{ackNote}</p>}
 
           <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm font-medium text-text-primary">Primeira visita sempre com aprovação</p>
-              <p className="text-sm text-text-muted">Mesmo com a IA marcando sozinha, quem nunca veio antes passa pela sua aprovação.</p>
-            </div>
-            <Switch checked={value.firstVisitNeedsApproval} onCheckedChange={(firstVisitNeedsApproval) => set({ firstVisitNeedsApproval })} label="Primeira visita sempre com aprovação" hideLabel disabled={disabled} />
+            <label htmlFor={`${switchId}-first`} className="min-w-0 flex-1 cursor-pointer">
+              <span className="block text-sm font-medium text-text-primary">Primeira visita sempre com aprovação</span>
+              <span className="block text-sm text-text-muted">Mesmo com a IA marcando sozinha, quem nunca veio antes passa pela sua aprovação.</span>
+            </label>
+            <Switch id={`${switchId}-first`} checked={value.firstVisitNeedsApproval} onCheckedChange={(firstVisitNeedsApproval) => set({ firstVisitNeedsApproval })} label="Primeira visita sempre com aprovação" hideLabel disabled={disabled} />
           </div>
 
           <FormField label="Limite de marcações da IA por cliente, por dia" error={errors.maxAiBookingsPerContactPerDay}>

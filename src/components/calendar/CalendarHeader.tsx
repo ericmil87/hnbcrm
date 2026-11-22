@@ -12,6 +12,8 @@ interface CalendarHeaderProps {
   view: CalendarView;
   currentDate: Date;
   onViewChange: (view: CalendarView) => void;
+  /** `false` esconde o seletor Dia/Semana/Mês (página embutida na Agenda nova, que já tem o dela). */
+  showViewToggle?: boolean;
   onNavigatePrev: () => void;
   onNavigateNext: () => void;
   onGoToToday: () => void;
@@ -29,6 +31,7 @@ export function CalendarHeader({
   view,
   currentDate,
   onViewChange,
+  showViewToggle = true,
   onNavigatePrev,
   onNavigateNext,
   onGoToToday,
@@ -72,9 +75,10 @@ export function CalendarHeader({
   return (
     <div className="border-b border-border bg-surface-raised px-4 py-3 space-y-3">
       {/* Row 1: View toggle pills (left) + Hoje + Filter + Create (desktop) (right) */}
-      <div className="flex items-center justify-between gap-2">
+      <div className={cn("flex items-center gap-2", showViewToggle ? "justify-between" : "justify-end")}>
         {/* View toggle pills - compact on mobile */}
-        <div className="flex gap-1 bg-surface-sunken rounded-full p-0.5 md:p-1">
+        {showViewToggle && (
+        <div role="group" aria-label="Visão" className="flex gap-1 bg-surface-sunken rounded-full p-0.5 md:p-1">
           <button
             onClick={() => onViewChange("day")}
             className={cn(
@@ -109,6 +113,7 @@ export function CalendarHeader({
             Mês
           </button>
         </div>
+        )}
 
         {/* Right side: Hoje + Filters + Create */}
         <div className="flex items-center gap-2">

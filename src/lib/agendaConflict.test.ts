@@ -99,3 +99,17 @@ describe("conflito de capacidade", () => {
     expect(conflictKindText("resource_closed")).toBe("A sala ou o profissional fechou");
   });
 });
+
+import { suggestionAction } from "./agendaConflict";
+
+describe("ação de uma sugestão do servidor", () => {
+  it("mesmo horário com outro lugar é troca de recurso, não remarcação", () => {
+    expect(suggestionAction({ startTime: 1000, resourceIds: ["s2", "p2"] }, 1000)).toEqual({ type: "resource", resourceIds: ["s2", "p2"] });
+  });
+  it("horário diferente é remarcação, levando os recursos da sugestão", () => {
+    expect(suggestionAction({ startTime: 2000, resourceIds: ["s1"] }, 1000)).toEqual({ type: "reschedule", startTime: 2000, resourceIds: ["s1"] });
+  });
+  it("mesmo horário sem recurso não vira troca vazia", () => {
+    expect(suggestionAction({ startTime: 1000, resourceIds: [] }, 1000).type).toBe("reschedule");
+  });
+});

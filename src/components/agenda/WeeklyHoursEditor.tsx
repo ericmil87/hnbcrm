@@ -60,13 +60,13 @@ export function WeeklyHoursEditor({ value, onChange, errors = {}, disabled }: We
                     value={s.start}
                     disabled={disabled}
                     onChange={(e) => onChange(setShift(value, day, i, { start: e.target.value }))}
-                    className="min-h-11 w-28 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
+                    className="min-h-11 w-32 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
                   />
                   <span className="text-text-muted" aria-hidden="true">às</span>
                   {s.end === END_OF_DAY ? (
                     <Button
                       variant="secondary"
-                      className="w-28 tabular-nums"
+                      className="w-32 tabular-nums"
                       disabled={disabled}
                       aria-label={`${WEEKDAY_NAMES[day]}, fim do turno ${i + 1}: 24:00 (meia-noite). Tocar para escolher outra hora`}
                       onClick={() => onChange(setShift(value, day, i, { end: "23:59" }))}
@@ -80,7 +80,7 @@ export function WeeklyHoursEditor({ value, onChange, errors = {}, disabled }: We
                       value={s.end}
                       disabled={disabled}
                       onChange={(e) => onChange(setShift(value, day, i, { end: e.target.value }))}
-                      className="min-h-11 w-28 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
+                      className="min-h-11 w-32 rounded-field border border-border-strong bg-surface-raised px-2 text-base text-text-primary md:text-sm"
                     />
                   )}
                   <Button iconOnly size="sm" variant="ghost" aria-label={`Remover turno ${i + 1} de ${WEEKDAY_NAMES[day]}`} disabled={disabled} onClick={() => onChange(removeShift(value, day, i))}>

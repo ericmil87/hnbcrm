@@ -22,12 +22,12 @@ import {
   clientLabel,
   hasWho,
   initialBookingState,
-  interpretPreview,
   mergeRefreshedSlots,
   newIdempotencyKey,
   normalizeOffered,
   partySizeOf,
   pickedFromOffered,
+  previewManualSlot,
   submitBooking,
   undoFreshBooking,
   undoRefusedText,
@@ -314,7 +314,8 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
     });
     if (!args) return { kind: "error", message: t.slot.manualInvalid };
     try {
-      return interpretPreview(await previewBooking(args), { tz, now: Date.now(), durationMin });
+      // Só avisos: repete a prévia aceitando-os para a revisão mostrar a sala e o profissional REAIS.
+      return await previewManualSlot((force) => previewBooking({ ...args, ...(force ? { force } : {}) }), { tz, now: Date.now(), durationMin });
     } catch (e) {
       return { kind: "error", message: mutationErrorMessage(e, VOCAB.scheduling.toast.failed) };
     }

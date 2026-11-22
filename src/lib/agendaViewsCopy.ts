@@ -218,7 +218,9 @@ export const VIEWS_COPY = {
     run: {
       running: "Tratando os horários… {done} de {total}",
       runningPartial: "Tratando os horários… {done} até agora",
-      done: "Fechamento concluído: {moved} mudaram de lugar e {conflicts} ficaram sem lugar.",
+      done: "Fechamento concluído: {moved} e {conflicts}.",
+      moved: { zero: "nenhum mudou de lugar", one: "1 mudou de lugar", many: "{n} mudaram de lugar" },
+      without: { zero: "nenhum ficou sem lugar", one: "1 ficou sem lugar", many: "{n} ficaram sem lugar" },
       doneNone: "Fechamento concluído. Nenhum horário foi afetado.",
       incomplete: "O fechamento não terminou por inteiro. Confira a fila de pendências.",
       kinds: { resource_closed: "Fechamento", resource_removed: "Arquivamento", capacity: "Capacidade reduzida" },

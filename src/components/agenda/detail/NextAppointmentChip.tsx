@@ -27,7 +27,7 @@ export function NextAppointmentChipView({ label, extra, onOpen }: { label: strin
     <button
       type="button"
       onClick={onOpen}
-      className="inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-500/10 px-2.5 text-xs font-medium text-brand-400 transition-colors hover:bg-brand-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 coarse:h-9"
+      className="inline-flex h-7 coarse:h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-brand-500/10 px-2.5 text-xs font-medium text-brand-400 transition-colors hover:bg-brand-500/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 coarse:h-9"
     >
       <CalendarClock size={12} aria-hidden="true" />
       {label}

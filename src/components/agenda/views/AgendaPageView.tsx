@@ -602,7 +602,7 @@ export function AgendaPageView() {
           </p>
         </div>
         <div className="min-h-0 flex-1">
-          <CalendarPage />
+          <CalendarPage embedded />
         </div>
         {overlays}
       </div>

@@ -17,6 +17,9 @@ import {
   buildRescheduleArgs,
   clientLabel,
   interpretPreview,
+  pinsForService,
+  previewManualSlot,
+  reviewSubmitLabel,
   mergeRefreshedSlots,
   submitBooking,
   undoFreshBooking,
@@ -144,9 +147,11 @@ describe("máquina de passos", () => {
     expect(s.step).toBe("slot");
     expect(s.variantKey).toBe("longo");
   });
-  it("trocar serviço descarta horário, variação e recursos fixados", () => {
+  it("escolher o serviço mantém a sala clicada na Agenda; trocar para um que não usa sala descarta horário, variação e a sala", () => {
     let s = base({ pinned: { room: "room1" } });
     s = bookingReducer(s, { type: "pickService", serviceId: "svc1", services });
+    expect(s.pinned).toEqual({ room: "room1" }); // a coluna clicada continua fixada (antes era apagada aqui)
+    expect(buildFindSlotsArgs({ organizationId: "org", state: s, tz: "America/Sao_Paulo", now: NOW })?.resourceIds).toEqual(["room1"]);
     s = bookingReducer(s, { type: "pickSlot", slot: picked() });
     s = bookingReducer(s, { type: "pickService", serviceId: "svc2", services });
     expect(s.slot).toBeNull();
@@ -250,14 +255,26 @@ describe("argumentos de marcar e remarcar", () => {
       leadId: "l1",
       conversationId: "v1",
       resourceIds: ["room1", "pers1"],
+      allowResourceFallback: false,
       idempotencyKey: "k1",
     });
   });
-  it("horário digitado não fixa recursos do plano: só o que a pessoa escolheu", () => {
-    const manual = state({ slot: picked({ manual: true, resourceIds: ["roomX"] }), pinned: { person: "pers9" } });
-    expect(buildBookArgs({ organizationId: "org", state: manual, who })?.resourceIds).toEqual(["pers9"]);
-    const none = state({ slot: picked({ manual: true, resourceIds: ["roomX"] }) });
-    expect(buildBookArgs({ organizationId: "org", state: none, who })).not.toHaveProperty("resourceIds");
+  it("horário digitado: a prévia vai com o que a pessoa fixou; depois dela, o envio leva o plano que a revisão mostrou", () => {
+    // Antes da prévia o horário digitado não tem plano: só o que a pessoa escolheu, sem deixar trocar.
+    const beforePreview = state({ slot: picked({ manual: true, resourceIds: [], resourceNames: [] }), pinned: { room: "roomD" } });
+    const preview = buildBookArgs({ organizationId: "org", state: beforePreview, who, mode: "preview" });
+    expect(preview?.resourceIds).toEqual(["roomD"]);
+    expect(preview?.allowResourceFallback).toBe(false);
+    // Depois da prévia: o plano real (a sala fixada + o profissional que o servidor achou).
+    const afterPreview = state({ slot: picked({ manual: true, resourceIds: ["roomD", "pers2"] }), pinned: { room: "roomD" } });
+    const book = buildBookArgs({ organizationId: "org", state: afterPreview, who });
+    expect(book?.resourceIds).toEqual(["roomD", "pers2"]);
+    expect(book?.allowResourceFallback).toBe(false);
+    // Nada fixado e sem plano: o servidor escolhe (sem `resourceIds` não há o que manter).
+    const none = state({ slot: picked({ manual: true, resourceIds: [] }) });
+    const free = buildBookArgs({ organizationId: "org", state: none, who });
+    expect(free).not.toHaveProperty("resourceIds");
+    expect(free).not.toHaveProperty("allowResourceFallback");
   });
   it("force só com os códigos informados, sem repetir; vazio não envia", () => {
     expect(buildBookArgs({ organizationId: "org", state: state(), who, force: ["OUTSIDE_HOURS", "OUTSIDE_HOURS", "BUFFER_OVERLAP"] })?.force).toEqual([
@@ -293,6 +310,7 @@ describe("argumentos de marcar e remarcar", () => {
       appointmentId: "a1",
       startTime: at(14),
       resourceIds: ["room1", "pers1"],
+      allowResourceFallback: false,
       force: ["OUTSIDE_HOURS"],
       idempotencyKey: "k1",
     });
@@ -652,6 +670,67 @@ describe("prévia de 'Outro horário'", () => {
     expect(interpretPreview(res({ ok: false, violations: [{ code: "OUTSIDE_HOURS", severity: "warn", message: "" }] }), ctx).kind).toBe("warn");
     const blocked = interpretPreview(res({ ok: false, violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "" }], alternatives: [{ startTime: at(16), resourceIds: [] }] }), ctx);
     expect(blocked.kind).toBe("blocked");
+  });
+});
+
+describe("recursos fixados e o serviço", () => {
+  const restrito: ServiceLike = { _id: "svc9", name: "Casal", durationMin: 60, requirements: [{ kind: "room", resourceIds: ["roomD"] }, { kind: "person" }] };
+  it("mantém o que o serviço pede; tira o tipo que ele não usa e a sala fora da lista do requisito", () => {
+    expect(pinsForService({ room: "room1", person: "pers1" }, sessao)).toEqual({ room: "room1", person: "pers1" });
+    expect(pinsForService({ room: "room1", person: "pers1" }, corte)).toEqual({ person: "pers1" });
+    expect(pinsForService({ room: "room1" }, restrito)).toEqual({});
+    expect(pinsForService({ room: "roomD" }, restrito)).toEqual({ room: "roomD" });
+    expect(pinsForService({ room: "room1" }, undefined)).toEqual({});
+  });
+  it("abrindo já com o serviço decidido, a sala clicada vem fixada (e some se o serviço não usa sala)", () => {
+    expect(initialBookingState({ services: [sessao], idempotencyKey: "k", pinned: { room: "room1" } }).pinned).toEqual({ room: "room1" });
+    expect(initialBookingState({ services: [sessao, corte], serviceId: "svc2", variantKey: "longo", idempotencyKey: "k", pinned: { room: "room1" } }).pinned).toEqual({});
+  });
+});
+
+describe("prévia de 'Outro horário' com o plano real", () => {
+  const ctx = { tz: "America/Sao_Paulo", now: NOW };
+  const okRes = { ok: true, warnings: [], violations: [], alternatives: [], plan: [{ resourceId: "room1", resourceName: "Sala 1" }, { resourceId: "pers1", resourceName: "Ana" }] };
+  const warn = { code: "OUTSIDE_HOURS", severity: "warn", message: "" };
+  it("livre: uma chamada, com o plano (ids e nomes)", async () => {
+    const calls: Array<string[] | undefined> = [];
+    const v = await previewManualSlot(async (force) => (calls.push(force), okRes), ctx);
+    expect(calls).toEqual([undefined]);
+    expect(v).toEqual({ kind: "ok", warnings: [], resourceIds: ["room1", "pers1"], resourceNames: ["Sala 1", "Ana"] });
+  });
+  it("só avisos: repete aceitando os avisos para saber o lugar; a revisão recebe avisos E plano", async () => {
+    const calls: Array<string[] | undefined> = [];
+    const v = await previewManualSlot(async (force) => {
+      calls.push(force);
+      return force ? { ...okRes, warnings: [warn] } : { ...okRes, ok: false, plan: [], violations: [warn, warn] };
+    }, ctx);
+    expect(calls).toEqual([undefined, ["OUTSIDE_HOURS"]]);
+    expect(v).toMatchObject({ kind: "ok", resourceIds: ["room1", "pers1"], resourceNames: ["Sala 1", "Ana"] });
+    expect(v.kind === "ok" && v.warnings.map((w) => w.code)).toEqual(["OUTSIDE_HOURS"]);
+  });
+  it("bloqueio (sala escolhida cheia) não repete e devolve as alternativas", async () => {
+    let n = 0;
+    const v = await previewManualSlot(async () => (n++, { ...okRes, ok: false, plan: [], violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "" }], alternatives: [{ startTime: at(16), resourceIds: ["room1"] }] }), ctx);
+    expect(n).toBe(1);
+    expect(v.kind).toBe("blocked");
+    expect(v.kind === "blocked" && v.alternatives).toHaveLength(1);
+  });
+  it("aceitar os avisos revelou bloqueio: vale o bloqueio", async () => {
+    const v = await previewManualSlot(async (force) => (force ? { ...okRes, ok: false, plan: [], violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "" }] } : { ...okRes, ok: false, plan: [], violations: [warn] }), ctx);
+    expect(v.kind).toBe("blocked");
+  });
+});
+
+describe("botão de confirmar da revisão", () => {
+  const w = { code: "OUTSIDE_HOURS", severity: "warn" as const, message: "" };
+  it("sem aviso: Marcar horário / Remarcar", () => {
+    expect(reviewSubmitLabel(picked(), false)).toBe("Marcar horário");
+    expect(reviewSubmitLabel(picked(), true)).toBe("Remarcar");
+    expect(reviewSubmitLabel(null, false)).toBe("Marcar horário");
+  });
+  it("com aviso visível: Marcar mesmo assim / Remarcar mesmo assim", () => {
+    expect(reviewSubmitLabel(picked({ warnings: [w] }), false)).toBe("Marcar mesmo assim");
+    expect(reviewSubmitLabel(picked({ warnings: [w] }), true)).toBe("Remarcar mesmo assim");
   });
 });
 

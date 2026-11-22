@@ -22,8 +22,8 @@ import { mutationErrorMessage } from "@/lib/errors";
 import { BOOKING_COPY, DETAIL_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday } from "@/lib/agendaZone";
-import { STATUS_TARGET, STATUS_TOAST, type DetailAction } from "@/lib/appointmentActions";
 import { HUMAN_UNDO_COPY, humanConfirmUndoKind } from "@/lib/agendaHumanConfirm";
+import { STATUS_TARGET, STATUS_TOAST, detailPanelTitle, type DetailAction } from "@/lib/appointmentActions";
 import { clientLabel, isProposalFailure, parseSchedRulesError, type ViolationView } from "@/lib/bookingFlow";
 import { AppointmentDetailView } from "./AppointmentDetailView";
 
@@ -44,8 +44,11 @@ export interface AppointmentDetailPanelProps {
  * cancelar pede motivo opcional; mudança de status, cancelar e recusar têm "Desfazer".
  */
 export function AppointmentDetailPanel({ organizationId, appointmentId, onClose, onOpenConversation }: AppointmentDetailPanelProps) {
+  // Mesma assinatura do corpo (o Convex não busca duas vezes): aqui só para o título seguir a situação.
+  const data = useQuery(api.scheduling.getAppointment, appointmentId ? { appointmentId } : "skip");
+  const now = useRoundedNow("minute");
   return (
-    <SlideOver open={appointmentId !== null} onClose={onClose} title={t.title}>
+    <SlideOver open={appointmentId !== null} onClose={onClose} title={detailPanelTitle(data?.appointment, now)}>
       {appointmentId && (
         <DetailBody
           key={`detail:${appointmentId}`}
@@ -236,10 +239,10 @@ export function CancelDialog({ open, busy, onClose, onConfirm }: { open: boolean
         <p className="text-sm text-text-secondary">{t.cancel.hint}</p>
         <Textarea label={t.cancel.reason} rows={2} maxLength={300} value={reason} onChange={(e) => setReason(e.target.value)} />
         <div className="flex flex-col-reverse gap-2 sm:flex-row">
-          <Button type="button" variant="secondary" className="flex-1" onClick={onClose}>
+          <Button type="button" variant="secondary" className="sm:flex-1" onClick={onClose}>
             {t.cancel.keep}
           </Button>
-          <Button type="button" variant="danger" className="flex-1" loading={busy} onClick={() => onConfirm(reason)}>
+          <Button type="button" variant="danger" className="sm:flex-1" loading={busy} onClick={() => onConfirm(reason)}>
             {t.cancel.confirm}
           </Button>
         </div>
@@ -297,10 +300,10 @@ function SwapDialog({ tz, current, resources, onClose, onApply }: SwapDialogProp
             );
           })}
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
-            <Button type="button" variant="secondary" className="flex-1" onClick={onClose}>
+            <Button type="button" variant="secondary" className="sm:flex-1" onClick={onClose}>
               {t.swap.keep}
             </Button>
-            <Button type="button" className="flex-1" loading={busy} onClick={() => void apply()}>
+            <Button type="button" className="sm:flex-1" loading={busy} onClick={() => void apply()}>
               {t.swap.confirm}
             </Button>
           </div>
