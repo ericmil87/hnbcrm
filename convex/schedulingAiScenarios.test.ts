@@ -1054,3 +1054,32 @@ describe("D2: vazamento de código de oferta e raciocínio do modelo", () => {
     expect((await outbound(s.ana)).map((x) => x.content)).toEqual(["O cliente quer saber o preço? Custa R$ 150."]);
   });
 });
+
+describe("D2: pedido para mais de uma pessoa sem people na busca é recusado (o grupo não vira reserva de uma só)", () => {
+  test("'pra mim e meu filho, um depois do outro': a busca sem people é recusada e a IA repassa; nada é marcado", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([
+      find("Consulta", "2026-06-15"),
+      (req) => {
+        expect(toolResults(req).at(-1)).toMatchObject({ status: "erro", error: "pedido_de_grupo" });
+        return { tools: [handoffTool("Dois atendimentos em sequência"), { name: "replyToCustomer", args: { text: "Para dois atendimentos em sequência a equipe organiza o horário com você; já passei seu pedido para eles." } }] };
+      },
+    ]);
+    await turn(s, s.ana, "Quero uma consulta segunda pra mim e meu filho, um depois do outro");
+    expect(await appointments()).toHaveLength(0);
+    expect((await stateOffers(s.ana)).length).toBe(0);
+    expect(await handoffs()).toHaveLength(1);
+    expect((await outbound(s.ana)).at(-1)!.content).toMatch(/a equipe organiza/);
+    expect(m.calls().length).toBe(2);
+  });
+
+  test("com people na busca (mesmo horário) segue normal; sem menção a grupo, a busca sem people segue normal", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([find("Massagem casal", "2026-06-15", { people: 2 }), offering()]);
+    await turn(s, s.ana, "Queremos massagem segunda eu e minha amiga, juntas");
+    expect(toolResults(m.calls()[1]).at(-1)).toMatchObject({ status: "ok" });
+    const m2 = stubModel([find("Consulta", "2026-06-15"), offering()]);
+    await turn(s, s.bia, "Quero uma consulta segunda");
+    expect(toolResults(m2.calls()[1]).at(-1)).toMatchObject({ status: "ok" });
+  });
+});

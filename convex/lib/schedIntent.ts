@@ -28,6 +28,21 @@ export function detectCustomerIntent(text: string): CustomerIntent | null {
   return MARCAR.test(n) ? "marcar" : null;
 }
 
+/** O texto fala de mais de uma pessoa ("pra mim e meu filho", "somos em 2", "eu e uma amiga")? */
+export function mentionsGroup(text: string): boolean {
+  return GRUPO.test(norm(text));
+}
+
+/** Tudo o que o cliente escreveu na janela recente do histórico (a menção ao grupo costuma vir na primeira mensagem, não na última). */
+export function customerWindow(history: ReadonlyArray<{ de: string; texto: string }>, last = 12): string {
+  return history
+    .filter((m) => m.de === "cliente")
+    .slice(-last)
+    .map((m) => m.texto)
+    .join(" ")
+    .slice(0, 2000);
+}
+
 /** Só remarcar/cancelar: é o que a busca de horários recusa (a equipe cuida; a IA não oferece horário novo). */
 export function isChangeIntent(intent: CustomerIntent | null): intent is "remarcar" | "cancelar" {
   return intent === "remarcar" || intent === "cancelar";

@@ -123,7 +123,7 @@ import { currentOffers, issueOffers, markShown, type OffersState, resolveOffer }
 import { offersShownInText } from "./lib/schedOfferShown";
 import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
 import { buildClaimState, knowledgeTimesOf } from "./lib/schedClaimState";
-import { customerTail, detectCustomerIntent, isChangeIntent } from "./lib/schedIntent";
+import { customerTail, customerWindow, detectCustomerIntent, isChangeIntent, mentionsGroup } from "./lib/schedIntent";
 import { schedSafeReply } from "./lib/schedSafeText";
 import { markOffersShownFromText } from "./lib/schedAiState";
 // ── Follow-up da IA (v0.60) ──
@@ -1980,6 +1980,16 @@ export function isTruncatedResponse(
 ): boolean {
   if (resp.finishReason === "length") return true;
   return !!resp.usage && resp.usage.completionTokens >= maxTokens;
+}
+
+/** Os argumentos da busca pedem UMA pessoa só (people ausente ou ≤ 1)? Argumento ilegível conta como "uma" (o parse da tool recusa depois). */
+function askedForOnePersonOnly(argsJson: string): boolean {
+  try {
+    const p = (JSON.parse(argsJson || "{}") as { people?: unknown }).people;
+    return typeof p !== "number" || p <= 1;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -4537,6 +4547,17 @@ export const internalProcessQueueItem = internalAction({
                 error: "remarcacao_e_com_a_equipe",
                 proximo_passo:
                   "O cliente quer remarcar ou cancelar um horário que já tem: isso é com a equipe. NÃO ofereça horários novos nem consulte a agenda: chame requestHandoff (diga no motivo o que ele pediu) e responda que a equipe cuida disso e retorna por aqui.",
+              };
+            } else if (name === FIND_TOOL && askedForOnePersonOnly(tc.function.arguments) && mentionsGroup(customerWindow(context.history))) {
+              // O cliente falou em mais de uma pessoa e a busca veio sem `people`: a reserva seria de UMA só e a mensagem diria "para vocês dois"
+              // (medido: modelo marcou 1 corte e confirmou "para você e seu filho"). Recusa e manda refazer com people ou repassar.
+              schedRoundExecuted = true;
+              schedTurn.calls += 1;
+              result = {
+                status: "erro",
+                error: "pedido_de_grupo",
+                proximo_passo:
+                  "O cliente falou em mais de uma pessoa. Se elas vão no MESMO horário, consulte de novo passando people (2 a 4). Se for um atendimento depois do outro, em horários diferentes ou mais de 4 pessoas, NÃO ofereça horário nem marque só uma delas: chame requestHandoff e diga que a equipe organiza.",
               };
             } else if (schedTurn.calls >= MAX_SCHED_CALLS_PER_TURN) {
               // Modelo em laço nas tools de agenda: repasse para humano.

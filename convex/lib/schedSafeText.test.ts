@@ -111,3 +111,27 @@ describe("buildClaimState e horas do conhecimento", () => {
     expect(st.knowledgeTimes).toBeUndefined();
   });
 });
+
+import { customerWindow, mentionsGroup } from "./schedIntent";
+describe("mentionsGroup e customerWindow (a menção ao grupo costuma vir na primeira mensagem)", () => {
+  test.each([
+    ["queria um corte quinta pra mim e meu filho, um depois do outro", true],
+    ["somos em 2, eu e meu marido", true],
+    ["quero marcar para mim e minha amiga", true],
+    ["vou com minha esposa", true],
+    ["queria um corte quinta de tarde", false],
+    ["minha amiga indicou vocês", false],
+    ["só eu mesmo", false],
+  ])("%j → %s", (text, expected) => {
+    expect(mentionsGroup(text)).toBe(expected);
+  });
+  test("a janela junta as mensagens do cliente (não só as do fim)", () => {
+    const h = [
+      { de: "cliente", texto: "oi, queria marcar pra mim e meu filho" },
+      { de: "ia", texto: "claro" },
+      { de: "cliente", texto: "quinta de tarde" },
+    ];
+    expect(mentionsGroup(customerWindow(h))).toBe(true);
+    expect(mentionsGroup(customerTail(h))).toBe(false);
+  });
+});
