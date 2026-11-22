@@ -22,12 +22,21 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Marque horário com cliente direto da conversa.** Em três toques: serviço, horário e confirmar. O sistema sugere os horários livres e destaca os que ficam encostados em outros atendimentos, para o dia não ficar cheio de buracos. Ligue em Configurações › Agendamento; quem não ligar não vê nada de novo.
 - **Salas, profissionais e equipamentos, cada um com seu horário.** Uma sala pode atender mais de uma pessoa ao mesmo tempo (ex.: sala dupla), e o sistema nunca deixa passar da capacidade. Serviços têm duração, folga entre atendimentos e o que exigem (por exemplo, um profissional e uma sala).
 - **Assistente em 3 passos.** Escolha o tipo de negócio (clínica com salas, profissional solo, barbearia ou salão, consultoria), ajuste nomes e horários e pronto.
-- **Agenda por sala ou por profissional.** Grade do dia com as vagas de cada sala, lista do dia no celular, mês de ocupação e a visão Semana de sempre para compromissos e tarefas da equipe.
+- **Agenda por sala ou por profissional.** Grade do dia com as vagas de cada sala, lista do dia no celular, semana e mês com os horários dos clientes e os compromissos e tarefas da equipe.
 - **Fechar uma sala ou a agenda de alguém no dia.** Antes de fechar, você vê quem é afetado. Quem cabe em outra sala no mesmo horário é movido; quem não cabe vai para a fila "sem lugar" para você resolver. Profissional nunca é trocado sozinho. Nada é cancelado e nada é enviado ao cliente.
 - **Fila de pendências.** Propostas aguardando aprovação, atendimentos sem lugar e atendimentos que terminaram sem registro (atendido ou faltou), com aviso diário para a equipe. Falta nunca é marcada sozinha.
 - **Sugestão inteligente de horários.** Três modos: desligada, destacar os melhores ou oferecer só os melhores. A equipe sempre pode marcar fora da sugestão; avisos podem ser aceitos, capacidade não.
 - **Desfazer.** Marcou errado? Dá para desfazer na hora (até 10 minutos) sem contar como cancelamento. Mudanças de status também têm desfazer.
 - **Permissão própria "Agenda".** Níveis: nenhum, ver a minha, ver todas, marcar e editar, configurar. Quem tinha permissões personalizadas herda o acesso a partir do que já tinha em Tarefas.
+
+### Agenda mais densa, no estilo do Google Agenda
+
+- **Uma barra só no topo.** Hoje, setas, o período ("26 de novembro de 2026", "23 – 29 de nov. de 2026"), Sala/Profissional, Dia/Semana/Mês/Lista, Pendências com contador, menu e "Marcar horário" ficam numa linha. No celular a barra tem uma linha e a visão vira um menu.
+- **A grade usa a altura da tela.** Só a grade rola, com o cabeçalho das colunas fixo. Ela abre no começo do expediente (ou em "agora", com a linha vermelha), mostra as horas fora do expediente esmaecidas e cabem bem mais horas na tela.
+- **Blocos que dizem do que se trata.** Cliente em negrito, horário, serviço e sala ou profissional, conforme o espaço; os curtos viram uma linha "11:00 Cliente · Serviço". Ícones mostram confirmado, chegou, aguardando aprovação e marcado pela IA. No computador, passar o mouse abre um cartão com o resumo e os botões Confirmar (ou Chegou) e Abrir.
+- **Semana de verdade.** Sete colunas com os agendamentos dos clientes e os compromissos e tarefas da equipe juntos, lado a lado como no Google (o bloco ocupa o espaço livre ao lado; o que passa de 3 vira um "+N" pequeno). No celular, 3 dias por tela. Blocos com fundo colorido, proposta hachurada, nomes sem palavra quebrada. Dá para filtrar por sala ou profissional, marcar horário clicando num espaço livre e arrastar compromissos da equipe para outro dia ou hora.
+- **Mês como no Google.** Cada dia lista os horários ("09:00 Maria") e o "+N mais" abre a lista do dia. Dias de outros meses ficam esmaecidos. No celular, pontos nos dias e a lista do dia escolhido logo abaixo.
+- **Cores e densidade à escolha.** No menu ⋯: colorir por situação, por sala ou profissional, ou por serviço (com legenda, 10 cores), e densidade compacta, padrão ou confortável. Sua visão, agrupamento e escolhas ficam lembrados neste aparelho. Atalhos: T (hoje), D, S, M, L e as setas.
 
 ### Agenda: segurança, permissões e recorrência
 
