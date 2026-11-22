@@ -14,7 +14,7 @@ import { SearchInput } from "@/components/ui/SearchInput";
 import { Spinner } from "@/components/ui/Spinner";
 import { fillVocab } from "@/lib/agendaCopy";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
-import { formatClientPhone } from "@/lib/agendaClientPicker";
+import { clientCandidateName, clientCandidateSub, type ClientCandidate } from "@/lib/agendaClientPicker";
 import { newContactArgs, newContactErrors, NEW_CONTACT_COPY, prefillNewContact, type NewContactForm } from "@/lib/agendaNewContact";
 import { mutationErrorMessage } from "@/lib/errors";
 import { resolveDefaultCountry } from "../../../../convex/lib/orgPhone";
@@ -26,12 +26,7 @@ export interface PickedClient {
   name: string;
 }
 
-export interface ClientCandidate {
-  _id: string;
-  name?: string | null;
-  phone?: string | null;
-  email?: string | null;
-}
+export type { ClientCandidate };
 
 export interface ClientPickerViewProps {
   /** "seg, 23/11 às 14:30 em Sala 2": a folha mostra para onde o horário vai. */
@@ -73,13 +68,14 @@ export function ClientPickerView({ context, term, onTermChange, results, onPick,
       ) : (
         <ul className="space-y-1" aria-label={t.searchLabel}>
           {results.map((c) => {
-            const name = c.name?.trim() || t.noName;
-            const sub = c.phone ? formatClientPhone(c.phone) : c.email ?? "";
+            const name = clientCandidateName(c) || t.noName;
+            const sub = clientCandidateSub(c);
             return (
               <li key={`client:${c._id}`}>
                 <button
                   type="button"
-                  onClick={() => onPick({ contactId: c._id, name })}
+                  // Contato sem nome segue para a revisão com o telefone (ou e-mail), não com "Sem nome".
+                  onClick={() => onPick({ contactId: c._id, name: clientCandidateName(c) || sub || name })}
                   aria-label={fillVocab(t.pick, { nome: name })}
                   className="flex min-h-14 w-full items-center gap-3 rounded-card px-3 text-left hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                 >
@@ -128,11 +124,11 @@ export function NewContactFormView({ value, onChange, errors, busy, onSubmit, on
         {(aria) => <Input {...aria} type="tel" inputMode="tel" autoComplete="off" value={value.phone} disabled={busy} onChange={(e) => onChange({ ...value, phone: e.target.value })} />}
       </FormField>
       <div className="flex flex-col-reverse gap-2 sm:flex-row">
-        <Button type="button" variant="secondary" className="flex-1" disabled={busy} onClick={onBack}>
+        <Button type="button" variant="secondary" className="sm:flex-1" disabled={busy} onClick={onBack}>
           <ArrowLeft size={16} aria-hidden="true" />
           {nc.back}
         </Button>
-        <Button type="submit" className="flex-1" loading={busy}>
+        <Button type="submit" className="sm:flex-1" loading={busy}>
           {busy ? nc.creating : nc.create}
         </Button>
       </div>

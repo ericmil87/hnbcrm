@@ -1239,7 +1239,12 @@ export async function resolveConflictCore(
   if (!conflict || conflict.organizationId !== args.conflict.organizationId) fail("Conflito não encontrado");
   if (conflict.status !== "open") fail("Esse conflito já foi resolvido.");
   const appointment = await loadAppointmentOfOrg(ctx, conflict.organizationId, conflict.appointmentId);
-  const act = args.action;
+  // Sugestão no MESMO horário com outro lugar é troca de recurso: remarcar recusa horário igual ao atual.
+  const raw = args.action;
+  const act: ResolveConflictAction =
+    appointment && raw.type === "reschedule" && raw.startTime === appointment.startTime && raw.resourceIds && raw.resourceIds.length > 0
+      ? { type: "resource", resourceIds: raw.resourceIds, ...(raw.force ? { force: raw.force } : {}) }
+      : raw;
   if (!appointment) {
     // Conflito órfão (o agendamento foi apagado): só dá para DISPENSAR (ação manual); as demais precisam do agendamento.
     if (act.type !== "manual") fail("Esse agendamento não existe mais: dispense o conflito.");

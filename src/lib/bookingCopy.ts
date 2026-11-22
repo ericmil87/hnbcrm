@@ -71,7 +71,9 @@ export const BOOKING_COPY = {
       hint: "Mesmo horário, na mesma sala quando ela comporta duas pessoas.",
     },
     submit: "Marcar horário",
+    submitAnyway: "Marcar mesmo assim",
     submitReschedule: "Remarcar",
+    submitRescheduleAnyway: "Remarcar mesmo assim",
     back: "Voltar",
     warningsTitle: "Avisos deste horário",
   },
@@ -95,6 +97,18 @@ export const BOOKING_COPY = {
 
 export const DETAIL_COPY = {
   title: "Horário marcado",
+  /** Título do painel conforme a situação (`detailPanelTitle`); o genérico acima vale enquanto carrega. */
+  titles: {
+    pending_approval: "Pedido aguardando aprovação",
+    proposalExpired: "Proposta vencida",
+    scheduled: "Horário marcado",
+    confirmed: "Horário confirmado",
+    checked_in: "Cliente chegou",
+    completed: "Atendido",
+    no_show: "Faltou",
+    cancelled: "Cancelado",
+    rescheduled: "Remarcado",
+  },
   loading: "Carregando…",
   notFound: { title: "Agendamento não encontrado", hint: "Ele pode ter sido removido ou você não tem acesso." },
   fields: {

@@ -131,7 +131,7 @@ describe("ResourceDaySheetView: depois de confirmar", () => {
   });
   it("sem lote (poucos afetados): resultado na hora", () => {
     setup({ committed: result({ mode: "commit", affected: 2, reallocated: 2, conflicts: 0 }) });
-    expect(screen.getByText("Fechamento concluído: 2 mudaram de lugar e 0 ficaram sem lugar.")).toBeInTheDocument();
+    expect(screen.getByText("Fechamento concluído: 2 mudaram de lugar e nenhum ficou sem lugar.")).toBeInTheDocument();
   });
 });
 

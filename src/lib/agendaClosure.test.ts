@@ -198,3 +198,13 @@ describe("lote de capacidade reduzida", () => {
     expect(closureRunKindLabel(undefined)).toBe("Fechamento");
   });
 });
+
+import { closureDoneText } from "./agendaClosure";
+
+describe("resultado do fechamento: concordância", () => {
+  it("um, vários e nenhum", () => {
+    expect(closureDoneText(1, 0)).toBe("Fechamento concluído: 1 mudou de lugar e nenhum ficou sem lugar.");
+    expect(closureDoneText(0, 1)).toBe("Fechamento concluído: nenhum mudou de lugar e 1 ficou sem lugar.");
+    expect(closureDoneText(7, 3)).toBe("Fechamento concluído: 7 mudaram de lugar e 3 ficaram sem lugar.");
+  });
+});

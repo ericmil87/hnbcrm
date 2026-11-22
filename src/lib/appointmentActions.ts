@@ -157,3 +157,16 @@ export function appointmentHistory(a: HistoryInput): HistoryEvent[] {
   }
   return events.sort((x, y) => x.at - y.at).slice(-6);
 }
+
+/**
+ * Título do painel do agendamento conforme a situação ("Pedido aguardando aprovação", "Horário confirmado",
+ * "Atendido"...). Sem agendamento (carregando, não encontrado) ou com status desconhecido, o genérico.
+ */
+export function detailPanelTitle(
+  appointment: { status: string; startTime: number; needsAttention?: { code: string } | undefined } | null | undefined,
+  now: number
+): string {
+  if (!appointment) return DETAIL_COPY.title;
+  if (isExpiredProposal(appointment, now)) return DETAIL_COPY.titles.proposalExpired;
+  return (DETAIL_COPY.titles as Record<string, string | undefined>)[appointment.status] ?? DETAIL_COPY.title;
+}

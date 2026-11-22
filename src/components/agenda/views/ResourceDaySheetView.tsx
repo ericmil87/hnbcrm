@@ -18,7 +18,7 @@ import {
 import { CLOSURE_REASON_TEXT } from "@/lib/agendaGrid";
 import type { ResourceKind } from "@/lib/agendaTypes";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
-import { periodText } from "@/lib/agendaClosure";
+import { closureDoneText, periodText } from "@/lib/agendaClosure";
 import { zonedTimeLabel } from "@/lib/agendaZone";
 import { cn } from "@/lib/utils";
 import { VOCAB } from "@/lib/vocab";
@@ -103,6 +103,7 @@ export function ResourceDaySheetView(p: ResourceDaySheetViewProps) {
             {t.reasonLabel}
           </p>
           <FilterChips
+            className="flex-wrap"
             ariaLabel={t.reasonLabel}
             chips={CLOSURE_REASONS.map((code) => ({ id: code, label: CLOSURE_REASON_TEXT[code], pressed: p.reasonCode === code }))}
             onToggle={(id) => p.onReasonChange(id as ClosureReasonCode)}
@@ -203,7 +204,7 @@ function Done(p: ResourceDaySheetViewProps & { committed: ClosureResult }) {
   const immediate = p.committed.pending === 0 && !p.committed.runId
     ? p.committed.affected === 0
       ? t.run.doneNone
-      : fillVocab(t.run.done, { moved: p.committed.reallocated, conflicts: p.committed.conflicts })
+      : closureDoneText(p.committed.reallocated, p.committed.conflicts)
     : null;
   return (
     <div className="space-y-4">

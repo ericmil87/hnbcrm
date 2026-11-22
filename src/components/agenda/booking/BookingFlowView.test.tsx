@@ -84,7 +84,7 @@ function Harness({ services = [sessao, avaliacao], slots = ready([slot(2, { reas
       }}
       onDismissFailure={() => setFailure(null)}
       initialTimeMin={initialTimeMin}
-      onPreviewManual={preview ?? (async () => ({ kind: "ok", warnings: [], resourceNames: [] }))}
+      onPreviewManual={preview ?? (async () => ({ kind: "ok", warnings: [], resourceIds: [], resourceNames: [] }))}
     />
   );
 }
@@ -108,7 +108,7 @@ describe("BookingFlowView", () => {
     await waitFor(() => expect(onOutcome).toHaveBeenCalledWith({ kind: "booked", appointmentIds: ["a1"] }));
   });
 
-  it("hora pedida pela Agenda: destaca a sugestão mais próxima e pré-preenche 'Outro horário'", () => {
+  it("hora pedida pela Agenda: destaca a sugestão mais próxima e pré-preenche 'Outro horário'", async () => {
     // 09:00, 10:00 e 12:00 em São Paulo no dia 2030-01-01; pedido: 11:40 -> 12:00.
     const at = (h: number) => Date.UTC(2030, 0, 1, h + 3, 0);
     const slots = ready([slot(2, { startTime: at(9), endTime: at(10) }), slot(2, { startTime: at(10), endTime: at(11) }), slot(2, { startTime: at(12), endTime: at(13) })]);
@@ -116,7 +116,60 @@ describe("BookingFlowView", () => {
     const nearest = document.querySelectorAll('[data-nearest="true"]');
     expect(nearest).toHaveLength(1);
     expect(nearest[0].textContent).toContain("12:00");
+    // "Outro horário" começa FECHADO (aberto de antemão ficava fora da vista e o botão o fechava): um toque abre, já com a hora pedida.
+    const toggle = screen.getByRole("button", { name: "Outro horário" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByLabelText("Hora")).toBeNull();
+    await userEvent.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
     expect((screen.getByLabelText("Hora") as HTMLInputElement).value).toBe("11:40");
+  });
+
+  it("sala clicada na Agenda continua escolhida depois de escolher o serviço", async () => {
+    const resources = [{ _id: "room1", name: "Sala 1", kind: "room" }, { _id: "dual", name: "Sala dupla", kind: "room", capacity: 2 }];
+    render(<Harness pinned={{ room: "dual" }} resources={resources} />);
+    await userEvent.click(screen.getByRole("button", { name: /Sessão/ }));
+    // O seletor já vem aberto, com a sala da coluna clicada (antes voltava a "Qualquer sala").
+    expect(screen.getByRole("button", { name: "Escolher sala ou profissional" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByLabelText("Sala")).toHaveTextContent("Sala dupla");
+  });
+
+  it("Outro horário com a sala escolhida cheia: recusa e mostra as alternativas COM o lugar; nada de marcar em outra sala", async () => {
+    const alt = Math.ceil((Date.now() + 6 * HOUR) / 300_000) * 300_000;
+    const preview = vi.fn().mockResolvedValue({
+      kind: "blocked",
+      violations: [{ code: "CAPACITY_EXCEEDED", severity: "block", message: "", detail: { resourceId: "dual" } }],
+      alternatives: [slot(0, { startTime: alt, endTime: alt + HOUR, resourceIds: ["dual", "p1"], resourceNames: ["Sala dupla", "Ana"] })],
+    });
+    const book = vi.fn().mockResolvedValue({ appointmentIds: ["a1"], duplicate: false });
+    const resources = [{ _id: "room1", name: "Sala 1", kind: "room" }, { _id: "dual", name: "Sala dupla", kind: "room", capacity: 2 }];
+    render(<Harness services={[sessao]} slots={ready([])} pinned={{ room: "dual" }} resources={resources} preview={preview} book={book} />);
+    await userEvent.click(screen.getByRole("button", { name: "Outro horário" }));
+    await userEvent.type(screen.getByLabelText("Hora"), "11:00");
+    await userEvent.click(screen.getByRole("button", { name: "Conferir horário" }));
+    expect(await screen.findByText("Não dá para marcar neste horário.")).toBeInTheDocument();
+    expect(screen.getByText("Sala dupla não tem mais vaga neste horário.")).toBeInTheDocument();
+    expect(screen.queryByText("Confira e marque")).toBeNull(); // não foi para a revisão
+    const option = screen.getByRole("button", { name: /Sala dupla e Ana/ });
+    await userEvent.click(option);
+    expect(screen.getByText("Sala dupla e Ana")).toBeInTheDocument(); // revisão com o lugar real da alternativa
+    await userEvent.click(screen.getByRole("button", { name: "Marcar horário" }));
+    await waitFor(() => expect(book).toHaveBeenCalledTimes(1));
+    expect(book.mock.calls[0][0]).toMatchObject({ startTime: alt, resourceIds: ["dual", "p1"], allowResourceFallback: false });
+  });
+
+  it("Outro horário livre: a revisão mostra a sala e o profissional REAIS da prévia e o envio vai para eles", async () => {
+    const preview = vi.fn().mockResolvedValue({ kind: "ok", warnings: [], resourceIds: ["dual", "p2"], resourceNames: ["Sala dupla", "Bia"] });
+    const book = vi.fn().mockResolvedValue({ appointmentIds: ["a1"], duplicate: false });
+    render(<Harness services={[sessao]} slots={ready([])} pinned={{ room: "dual" }} resources={[{ _id: "dual", name: "Sala dupla", kind: "room" }]} preview={preview} book={book} />);
+    await userEvent.click(screen.getByRole("button", { name: "Outro horário" }));
+    await userEvent.type(screen.getByLabelText("Hora"), "11:00");
+    await userEvent.click(screen.getByRole("button", { name: "Conferir horário" }));
+    expect(await screen.findByText("Sala dupla e Bia")).toBeInTheDocument();
+    expect(screen.queryByText("Escolhido pelo sistema")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Marcar horário" }));
+    await waitFor(() => expect(book).toHaveBeenCalledTimes(1));
+    expect(book.mock.calls[0][0]).toMatchObject({ resourceIds: ["dual", "p2"], allowResourceFallback: false });
   });
 
   it("'Quantas pessoas?' só aparece com sala de capacidade maior que 1 e escolher 2 limpa o horário", async () => {
@@ -129,7 +182,7 @@ describe("BookingFlowView", () => {
   });
 
   it("sem horário com acompanhante e profissional fixo: explica o motivo", async () => {
-    render(<Harness services={[sessao]} slots={ready([])} pinned={{ person: "p1" }} resources={[{ _id: "dual", name: "Dupla", kind: "room", capacity: 2 }, { _id: "p1", name: "Ana", kind: "person" }]} />);
+    render(<Harness services={[{ ...sessao, requirements: [{ kind: "room" }, { kind: "person" }] }]} slots={ready([])} pinned={{ person: "p1" }} resources={[{ _id: "dual", name: "Dupla", kind: "room", capacity: 2 }, { _id: "p1", name: "Ana", kind: "person" }]} />);
     expect(screen.queryByText(/um profissional por pessoa/)).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "2 pessoas" }));
     expect(screen.getByText(/Com acompanhante é preciso um profissional por pessoa/)).toBeInTheDocument();
@@ -210,17 +263,25 @@ describe("BookingFlowView", () => {
     expect(screen.queryByText("Esse horário acabou de ser ocupado")).toBeNull();
   });
 
-  it("Outro horário: avisos da prévia aparecem na revisão e vão em force sem pedir de novo", async () => {
+  it("Outro horário com aviso: a revisão mostra o aviso acima do botão, que vira 'Marcar mesmo assim', e o force vai sem pedir de novo", async () => {
     const book = vi.fn().mockResolvedValue({ appointmentIds: ["a1"], duplicate: false });
-    const preview = vi.fn().mockResolvedValue({ kind: "warn", warnings: [{ code: "OUTSIDE_HOURS", severity: "warn", message: "" }] });
+    const preview = vi.fn().mockResolvedValue({ kind: "ok", resourceIds: ["room1"], resourceNames: ["Sala 1"], warnings: [{ code: "OUTSIDE_HOURS", severity: "warn", message: "", detail: { resourceId: "room1" } }] });
     render(<Harness services={[sessao]} book={book} slots={ready([])} preview={preview} />);
     await userEvent.click(screen.getByRole("button", { name: "Outro horário" }));
     await userEvent.type(screen.getByLabelText("Hora"), "20:00");
     await userEvent.click(screen.getByRole("button", { name: "Conferir horário" }));
-    expect(await screen.findByText("Avisos deste horário")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Marcar horário" }));
+    const title = await screen.findByText("Avisos deste horário");
+    expect(screen.getByText("Fora do horário de atendimento: Sala 1")).toBeInTheDocument();
+    expect(screen.getByText("Sala 1")).toBeInTheDocument(); // "Com quem e onde" com o lugar real, não "Escolhido pelo sistema"
+    expect(screen.queryByRole("button", { name: "Marcar horário" })).toBeNull();
+    const submit = screen.getByRole("button", { name: "Marcar mesmo assim" });
+    // Os avisos ficam logo antes do botão (depois da observação).
+    expect(title.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByLabelText("Observação (opcional)").compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await userEvent.click(submit);
     await waitFor(() => expect(book).toHaveBeenCalledTimes(1));
     expect(book.mock.calls[0][0].force).toEqual(["OUTSIDE_HOURS"]);
+    expect(book.mock.calls[0][0].resourceIds).toEqual(["room1"]);
   });
 
   it("Outro horário que já existe: avisa '{nome} já tem esse horário' e não segue", async () => {
@@ -247,6 +308,8 @@ describe("BookingFlowView", () => {
     expect(screen.getByText("De")).toBeInTheDocument();
     expect(screen.getByText("Para")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Remarcar" })).toBeInTheDocument();
+    // Botões da revisão empilhados no celular: `flex-1` em coluna zera a base e o botão principal ficava com 24 px.
+    expect(screen.getByRole("button", { name: "Remarcar" }).className).not.toMatch(/(^| )flex-1( |$)/);
   });
 
   it("variações de duração marcam o botão escolhido (aria-pressed)", async () => {
