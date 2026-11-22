@@ -137,6 +137,7 @@ const MODULE_NAMES: Record<GatedModule, string> = {
   central: "Painel da Central",
   units: "Unidades",
   attribution: "Atribuição de mídia",
+  scheduling: "Agendamento",
 };
 
 export function checkModule(

@@ -76,6 +76,10 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   plan_cancel_scheduled: "planAlert",
   plan_canceled: "planAlert",
   plan_refunded: "planAlert",
+  // Agenda v2 (A3c)
+  appointment_conflict: "agendaConflict",
+  // Agenda v2 (A4): resumo diário de agendamentos sem desfecho.
+  appointment_no_outcome: "agendaActivity",
 };
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */
@@ -104,6 +108,8 @@ export const ACTIONABLE_TYPES: readonly NotificationType[] = [
   "lead_assigned",
   "channel_session_lost",
   "ai_followup_needs_human",
+  // Agenda v2 (A3c): alguém precisa resolver o agendamento sem recurso
+  "appointment_conflict",
 ];
 export const ACTIONABLE_FLAGS: readonly string[] = Array.from(
   new Set(ACTIONABLE_TYPES.map((t) => PREFERENCE_FLAG[t]))
@@ -120,6 +126,7 @@ export const NON_PERSONAL_FLAGS = new Set([
   "groupDigest",
   "aiSpendAlert",
   "planAlert",
+  "agendaActivity",
 ]);
 
 /**

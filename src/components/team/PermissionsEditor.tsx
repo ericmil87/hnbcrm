@@ -7,6 +7,7 @@ import {
   LEVEL_LABELS,
   getLevelsForCategory,
   DEFAULT_PERMISSIONS,
+  resolvePermissions,
 } from "../../../convex/lib/permissions";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/Button";
@@ -48,7 +49,7 @@ export function PermissionsEditor({
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} className="text-brand-500" />
           <span className="text-sm font-semibold text-text-primary">
-            Permissoes
+            Permissões
           </span>
         </div>
         {role && !disabled && (
@@ -70,16 +71,16 @@ export function PermissionsEditor({
             Categoria
           </span>
           <span className="text-xs font-medium text-text-muted uppercase tracking-wide">
-            Nivel de Acesso
+            Nível de acesso
           </span>
         </div>
 
         {/* Rows */}
         {CATEGORIES.map((category, i) => {
           const levels = getLevelsForCategory(category);
-          // Permissões explícitas antigas não têm categorias novas: vale o
-          // default do cargo (mesma regra do resolvePermissions no servidor).
-          const currentLevel = value[category] ?? (role ? DEFAULT_PERMISSIONS[role][category] : undefined);
+          // Permissões explícitas antigas não têm categorias novas: mesma função do servidor
+          // (`resolvePermissions`: `agenda` ausente deriva do `tasks` gravado), a tela não mente.
+          const currentLevel = role ? resolvePermissions(role, value as any)[category] : value[category];
 
           return (
             <div

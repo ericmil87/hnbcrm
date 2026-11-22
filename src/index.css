@@ -68,6 +68,17 @@
   --rgb-ai-500: 168 85 247;
   --rgb-ai-600: 147 51 234;
   --rgb-ai-700: 126 34 206;
+  /* Calendário: 10 tons para salas, profissionais e serviços */
+  --rgb-cal-1: 96 165 250;
+  --rgb-cal-2: 192 132 252;
+  --rgb-cal-3: 251 191 36;
+  --rgb-cal-4: 45 212 191;
+  --rgb-cal-5: 74 222 128;
+  --rgb-cal-6: 248 113 113;
+  --rgb-cal-7: 244 114 182;
+  --rgb-cal-8: 34 211 238;
+  --rgb-cal-9: 251 146 60;
+  --rgb-cal-10: 129 140 248;
 
   --rgb-chat-bg: 15 15 17;
   --rgb-chat-header: 24 24 27;
@@ -174,6 +185,17 @@
   --rgb-ai-500: 147 51 234;
   --rgb-ai-600: 126 34 206;
   --rgb-ai-700: 107 33 168;
+  /* Calendário: 10 tons para salas, profissionais e serviços */
+  --rgb-cal-1: 37 99 235;
+  --rgb-cal-2: 147 51 234;
+  --rgb-cal-3: 217 119 6;
+  --rgb-cal-4: 13 148 136;
+  --rgb-cal-5: 22 163 74;
+  --rgb-cal-6: 220 38 38;
+  --rgb-cal-7: 219 39 119;
+  --rgb-cal-8: 8 145 178;
+  --rgb-cal-9: 234 88 12;
+  --rgb-cal-10: 79 70 229;
   --rgb-chat-bg: 244 244 245;
   --rgb-chat-header: 255 255 255;
   --rgb-composer: 255 255 255;
@@ -254,6 +276,17 @@
   --rgb-ai-500: 147 51 234;
   --rgb-ai-600: 126 34 206;
   --rgb-ai-700: 107 33 168;
+  /* Calendário: 10 tons para salas, profissionais e serviços */
+  --rgb-cal-1: 37 99 235;
+  --rgb-cal-2: 147 51 234;
+  --rgb-cal-3: 217 119 6;
+  --rgb-cal-4: 13 148 136;
+  --rgb-cal-5: 22 163 74;
+  --rgb-cal-6: 220 38 38;
+  --rgb-cal-7: 219 39 119;
+  --rgb-cal-8: 8 145 178;
+  --rgb-cal-9: 234 88 12;
+  --rgb-cal-10: 79 70 229;
   --rgb-chat-bg: 239 234 226;
   --rgb-chat-header: 240 242 245;
   --rgb-composer: 240 242 245;
@@ -336,6 +369,17 @@
   --rgb-ai-500: 168 85 247;
   --rgb-ai-600: 147 51 234;
   --rgb-ai-700: 126 34 206;
+  /* Calendário: 10 tons para salas, profissionais e serviços */
+  --rgb-cal-1: 96 165 250;
+  --rgb-cal-2: 192 132 252;
+  --rgb-cal-3: 251 191 36;
+  --rgb-cal-4: 45 212 191;
+  --rgb-cal-5: 74 222 128;
+  --rgb-cal-6: 248 113 113;
+  --rgb-cal-7: 244 114 182;
+  --rgb-cal-8: 34 211 238;
+  --rgb-cal-9: 251 146 60;
+  --rgb-cal-10: 129 140 248;
   --rgb-chat-bg: 11 20 26;
   --rgb-chat-header: 32 44 51;
   --rgb-composer: 32 44 51;
@@ -505,6 +549,20 @@ body {
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
+  }
+}
+
+/* Ações do aviso (toast, sonner) no toque: 44 px de área real. O padrão da lib é 24 px de altura; no computador
+   (ponteiro fino) segue igual. Seletor mais específico que o da lib, que injeta o CSS depois deste. */
+@media (pointer: coarse) {
+  [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-button],
+  [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-cancel] {
+    min-width: 44px;
+    height: 44px;
+    padding-left: 12px;
+    padding-right: 12px;
+    font-size: 14px;
+    justify-content: center;
   }
 }
 

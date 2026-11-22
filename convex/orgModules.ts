@@ -11,7 +11,7 @@ import { requireAuth, requirePermission } from "./lib/auth";
 import { getModules, isDemoOrg } from "./lib/orgModules";
 import { setOrgModulesCore } from "./lib/orgModulesOps";
 
-const modulesReturn = v.object({
+export const modulesReturn = v.object({
   units: v.boolean(),
   departments: v.boolean(),
   attribution: v.boolean(),
@@ -19,6 +19,7 @@ const modulesReturn = v.object({
   metaMessaging: v.boolean(),
   telegram: v.boolean(),
   translation: v.boolean(),
+  scheduling: v.boolean(),
   demoMode: v.boolean(),
 });
 
@@ -43,6 +44,7 @@ export const setOrgModules = mutation({
       metaMessaging: v.optional(v.boolean()),
       telegram: v.optional(v.boolean()),
       translation: v.optional(v.boolean()),
+      scheduling: v.optional(v.boolean()),
     }),
   },
   returns: modulesReturn,

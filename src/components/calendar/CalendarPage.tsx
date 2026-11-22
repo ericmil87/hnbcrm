@@ -22,7 +22,13 @@ import type { CalendarEventType } from "./constants";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { Spinner } from "../ui/Spinner";
 import { toast } from "sonner";
+import { useKeepPrevious } from "@/hooks/useKeepPrevious";
+import { addDays, startOfWeek } from "@/lib/agendaDates";
+import { calendarQueryKey, serverEventTypeFilter } from "@/lib/agendaQuery";
 import { memberLabel } from "@/lib/teamMembers";
+import { usePermissions } from "@/hooks/usePermissions";
+import { mutationErrorMessage } from "@/lib/errors";
+import { isCalendarItemDraggable } from "@/lib/agendaPermissions";
 
 /** Fallback vazio que limpa o `?event=` inválido ao montar. */
 function ClearEventParam({ onClear }: { onClear: () => void }) {
@@ -33,7 +39,11 @@ function ClearEventParam({ onClear }: { onClear: () => void }) {
   return <></>;
 }
 
-export function CalendarPage() {
+/**
+ * `embedded`: dentro da Agenda nova (visão Semana). A página de fora já tem o seletor Dia/Semana/Lista/Mês, então
+ * o seletor interno some e a visão fica fixa em semana (dois seletores empilhados confundiam).
+ */
+export function CalendarPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle(VOCAB.agenda.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const {
@@ -47,7 +57,11 @@ export function CalendarPage() {
     selectDay,
     eventParam,
     setSelectedEvent,
-  } = useCalendarState();
+  } = useCalendarState(embedded ? { forcedView: "week" } : {});
+
+  // Criar evento exige `agenda` >= edit.
+  const { can } = usePermissions(organizationId);
+  const canCreate = can("agenda", "edit");
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [editEventId, setEditEventId] = useState<string | null>(null);
@@ -60,14 +74,29 @@ export function CalendarPage() {
   const [selectedEventTypes, setSelectedEventTypes] = useState<CalendarEventType[]>([]);
   const [activeEvent, setActiveEvent] = useState<any>(null);
 
-  const events = useQuery(api.calendar.getEvents, {
+  // A query só aceita UM tipo: com 0 ou 2+ tipos marcados busca todos e o filtro
+  // por tipo roda no cliente (filteredEvents).
+  const serverEventType = serverEventTypeFilter(selectedEventTypes);
+  const rawEvents = useQuery(api.calendar.getEvents, {
     organizationId,
-    startDate: dateRange.startDate,
+    // O índice do backend filtra pelo INÍCIO do evento: recua um dia para trazer o que
+    // começou ontem e cruza a meia-noite (o recorte por dia é feito no cliente).
+    // Evento de vários dias que começou antes disso só volta a aparecer em todos os dias
+    // quando o backend buscar por sobreposição (correção em PR separado do backend).
+    startDate: addDays(dateRange.startDate, -1).getTime(),
     endDate: dateRange.endDate,
     includeTasks: true,
     assignedTo: selectedMemberId ? (selectedMemberId as Id<"teamMembers">) : undefined,
-    eventType: selectedEventTypes.length > 0 ? selectedEventTypes[0] : undefined,
+    eventType: serverEventType,
   });
+  // Navegar entre datas não desmonta a página nem pisca: mantém o resultado anterior enquanto
+  // o novo chega. Trocar organização, responsável ou tipo do servidor descarta o resultado
+  // (chave), para nunca mostrar como atual o de outro filtro.
+  const events = useKeepPrevious(
+    rawEvents,
+    calendarQueryKey(organizationId, selectedMemberId, serverEventType)
+  );
+  const isLoadingEvents = rawEvents === undefined;
 
   const teamMembers = useQuery(api.teamMembers.getTeamMembers, { organizationId });
 
@@ -90,6 +119,8 @@ export function CalendarPage() {
     return events.filter((event) => selectedEventTypes.includes(event.eventType));
   }, [events, selectedEventTypes]);
 
+  const weekStart = useMemo(() => startOfWeek(currentDate), [currentDate]);
+
   const handleDragStart = (event: any) => {
     setActiveEvent(event.active.data.current);
   };
@@ -111,6 +142,9 @@ export function CalendarPage() {
       return;
     }
 
+    // Defesa: o bloco já nasce sem arrasto, mas o servidor é quem decide.
+    if (!isCalendarItemDraggable(eventData)) return;
+
     // Handle drop on day cell (month view)
     if (over.id.toString().startsWith("day-")) {
       const targetDate = over.data.current?.date as Date;
@@ -127,7 +161,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Não foi possível reagendar o evento.");
+        toast.error(mutationErrorMessage(error, "Não foi possível reagendar o evento."));
         console.error(error);
       }
       return;
@@ -153,7 +187,7 @@ export function CalendarPage() {
         });
         toast.success("Evento reagendado!");
       } catch (error) {
-        toast.error("Não foi possível reagendar o evento.");
+        toast.error(mutationErrorMessage(error, "Não foi possível reagendar o evento."));
         console.error(error);
       }
     }
@@ -165,6 +199,7 @@ export function CalendarPage() {
   };
 
   const handleSlotClick = (date: Date, hour: number, minute: number) => {
+    if (!canCreate) return;
     setInitialDate(date);
     setInitialHour(hour);
     setInitialMinute(minute);
@@ -191,7 +226,7 @@ export function CalendarPage() {
     setInitialMinute(undefined);
   };
 
-  if (!events || !teamMembers) {
+  if (!teamMembers) {
     return (
       <div className="flex items-center justify-center h-full">
         <Spinner size="lg" />
@@ -210,10 +245,12 @@ export function CalendarPage() {
           view={view}
           currentDate={currentDate}
           onViewChange={setView}
+          showViewToggle={!embedded}
           onNavigatePrev={navigatePrev}
           onNavigateNext={navigateNext}
           onGoToToday={goToToday}
           onCreateEvent={handleCreateEvent}
+          canCreate={canCreate}
           teamMembers={teamMembers.map((m) => ({ _id: m._id, name: memberLabel(m) }))}
           selectedMemberId={selectedMemberId}
           selectedEventTypes={selectedEventTypes}
@@ -221,7 +258,12 @@ export function CalendarPage() {
           onEventTypesChange={setSelectedEventTypes}
         />
 
-        <div className="flex-1 overflow-hidden">
+        <div className="relative flex-1 overflow-hidden">
+          {isLoadingEvents && (
+            <div className="absolute right-3 top-2 z-20 rounded-full bg-surface-raised/90 p-1.5 shadow-sm">
+              <Spinner size="sm" />
+            </div>
+          )}
           {view === "month" && (
             <MonthView
               currentDate={currentDate}
@@ -233,13 +275,7 @@ export function CalendarPage() {
 
           {view === "week" && (
             <WeekView
-              weekStart={(() => {
-                const dayOfWeek = currentDate.getDay();
-                const diff = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-                const monday = new Date(currentDate);
-                monday.setDate(currentDate.getDate() - diff);
-                return monday;
-              })()}
+              weekStart={weekStart}
               events={filteredEvents}
               onEventClick={handleEventClick}
               onSlotClick={handleSlotClick}
@@ -258,18 +294,21 @@ export function CalendarPage() {
         </div>
 
         {/* Mobile FAB - shows only on mobile, positioned above bottom tab bar */}
+        {canCreate && (
         <button
           onClick={handleCreateEvent}
           className="md:hidden fixed bottom-20 right-4 z-30 w-14 h-14 rounded-full bg-brand-600 text-white shadow-lg flex items-center justify-center hover:bg-brand-700 active:scale-95 transition-all"
-          aria-label="Novo Evento"
+          aria-label="Novo evento"
         >
           <Plus size={24} />
         </button>
+        )}
 
         <DragOverlay>
           {activeEvent && (
             <EventBlock
               event={activeEvent}
+              dragKey="overlay"
               onClick={() => {}}
             />
           )}

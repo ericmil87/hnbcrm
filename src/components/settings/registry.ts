@@ -12,6 +12,9 @@ import {
   UserRound,
   Wand2,
   Building2,
+  CalendarOff,
+  CalendarRange,
+  DoorOpen,
   KeyRound,
   ListChecks,
   Megaphone,
@@ -19,7 +22,9 @@ import {
   Network,
   Palette,
   Receipt,
+  Scissors,
   Smartphone,
+  Sparkles,
   Users,
   Database,
   Webhook,
@@ -28,10 +33,11 @@ import {
 import type { PermissionCategory } from "../../../convex/lib/permissions";
 import { computeAnyEnabled, type OrgModules } from "@/hooks/useOrgModules";
 import { VOCAB } from "@/lib/vocab";
+import { canConfigureScheduling } from "@/lib/agendaAccess";
 import { isBillingPanelVisible, type BillingMode } from "@/lib/billingPanel";
 import type { Id } from "../../../convex/_generated/dataModel";
 
-export type SettingsGroupId = "conta" | "whatsapp" | "atendente" | "equipe" | "dados" | "avancado";
+export type SettingsGroupId = "conta" | "whatsapp" | "atendente" | "agenda" | "equipe" | "dados" | "avancado";
 
 export interface SettingsPanelProps {
   organizationId: Id<"organizations">;
@@ -64,6 +70,7 @@ export const SETTINGS_GROUPS: ReadonlyArray<{ id: SettingsGroupId; label: string
   { id: "conta", label: "Conta" },
   { id: "whatsapp", label: "WhatsApp e canais" },
   { id: "atendente", label: VOCAB.attendant.name },
+  { id: "agenda", label: VOCAB.scheduling.settings.group },
   { id: "equipe", label: "Equipe" },
   { id: "dados", label: "Dados" },
   { id: "avancado", label: "Avançado" },
@@ -79,6 +86,10 @@ export const DEFAULT_SETTINGS_PANEL_ID = "general";
 export const PLANNED_PANEL_IDS: readonly string[] = [];
 
 const view = { category: "settings", level: "view" } as const;
+const manage = (category: PermissionCategory) => ({ category, level: "manage" }) as const;
+
+/** Painel da Agenda v2 que só existe com o módulo `scheduling` ligado (`agenda:manage` vem da `permission`). */
+const schedulingOn: NonNullable<SettingsPanelDef["visible"]> = ({ can, modules }) => canConfigureScheduling(modules, can);
 
 /** Painel novo = uma entrada aqui (mais o componente). */
 export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
@@ -236,6 +247,62 @@ export const SETTINGS_PANELS: ReadonlyArray<SettingsPanelDef> = [
     keywords: ["custo", "gasto", "teto", "orçamento", "consumo", "dólar", "reais"],
     permission: view,
     Component: lazy(() => import("./ai/UsagePanel").then((m) => ({ default: m.UsagePanel }))),
+  },
+  // Agenda v2 (módulo `scheduling`). Os cinco painéis ficam atrás de `agenda:manage`. Só o primeiro aparece com
+  // o módulo desligado (é onde se liga); os outros quatro só com o módulo ligado.
+  {
+    id: "agenda",
+    group: "agenda",
+    label: VOCAB.scheduling.settings.general.label,
+    description: VOCAB.scheduling.settings.general.description,
+    icon: CalendarRange,
+    keywords: ["agenda", "agendamento", "hora marcada", "marcar horário", "ativar", "clínica", "salão", "barbearia", "consultório", "fuso", "fuso horário", "funil", "etapa do funil", "modelo", "assistente", "configurar em 3 passos", "antecedência", "grade de horários", "serviço padrão"],
+    permission: manage("agenda"),
+    Component: lazy(() => import("./agenda/AgendaGeneralPanel").then((m) => ({ default: m.AgendaGeneralPanel }))),
+  },
+  {
+    id: "agenda-services",
+    group: "agenda",
+    label: VOCAB.scheduling.settings.services.label,
+    description: VOCAB.scheduling.settings.services.description,
+    icon: Scissors,
+    keywords: ["serviço", "serviços", "duração", "sessão", "consulta", "corte", "intervalo", "preço", "variação"],
+    permission: manage("agenda"),
+    visible: schedulingOn,
+    Component: lazy(() => import("./agenda/AgendaServicesPanel").then((m) => ({ default: m.AgendaServicesPanel }))),
+  },
+  {
+    id: "agenda-resources",
+    group: "agenda",
+    label: VOCAB.scheduling.settings.resources.label,
+    description: VOCAB.scheduling.settings.resources.description,
+    icon: DoorOpen,
+    keywords: ["recurso", "recursos", "sala", "salas", "profissional", "profissionais", "capacidade", "horário semanal", "horários"],
+    permission: manage("agenda"),
+    visible: schedulingOn,
+    Component: lazy(() => import("./agenda/AgendaResourcesPanel").then((m) => ({ default: m.AgendaResourcesPanel }))),
+  },
+  {
+    id: "agenda-closures",
+    group: "agenda",
+    label: VOCAB.scheduling.settings.closures.label,
+    description: VOCAB.scheduling.settings.closures.description,
+    icon: CalendarOff,
+    keywords: ["feriado", "fechamento", "exceção", "exceções", "folga", "férias", "horário especial", "bloqueio", "horários e exceções"],
+    permission: manage("agenda"),
+    visible: schedulingOn,
+    Component: lazy(() => import("./agenda/AgendaClosuresPanel").then((m) => ({ default: m.AgendaClosuresPanel }))),
+  },
+  {
+    id: "agenda-automation",
+    group: "agenda",
+    label: VOCAB.scheduling.settings.automation.label,
+    description: VOCAB.scheduling.settings.automation.description,
+    icon: Sparkles,
+    keywords: ["sugestão", "sugestões", "regras de sugestão", "encostar", "buracos", "política da ia", "ia", "automação", "marca sozinha", "confirmação", "lembrete", "antecedência"],
+    permission: manage("agenda"),
+    visible: schedulingOn,
+    Component: lazy(() => import("./agenda/AgendaAutomationPanel").then((m) => ({ default: m.AgendaAutomationPanel }))),
   },
   {
     id: "team",

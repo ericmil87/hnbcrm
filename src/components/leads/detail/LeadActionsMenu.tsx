@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { toast } from "sonner";
-import { MoreVertical, Archive, ArchiveRestore, Home, Trash2 } from "lucide-react";
+import { MoreVertical, Archive, ArchiveRestore, CalendarPlus, Home, Trash2 } from "lucide-react";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -11,6 +11,9 @@ import { cn } from "@/lib/utils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { ContactRelationSheet } from "@/components/contacts/ContactRelationSheet";
 import { useContactRelationChange } from "@/components/contacts/useContactRelationChange";
+import { LazyBookingSheet } from "@/components/agenda/booking/LazyBookingSheet";
+import { useSchedulingGate } from "@/components/agenda/booking/useSchedulingGate";
+import { VOCAB } from "@/lib/vocab";
 import { asContactRelation, type ContactRelation } from "@/lib/contactRelationUi";
 
 /* ------------------------------------------------------------------ */
@@ -34,15 +37,18 @@ export function LeadActionsMenu({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [relationSheetOpen, setRelationSheetOpen] = useState(false);
   const relationChange = useContactRelationChange();
+  const scheduling = useSchedulingGate(organizationId);
+  const [bookOpen, setBookOpen] = useState(false);
 
   const canArchive = can("leads", "edit_own");
   const canDelete = can("leads", "full");
   const contactId = lead?.contactId as Id<"contacts"> | undefined;
   // "Não é cliente…": muda o tipo do contato do lead (exige `contacts:edit`).
   const canMarkContact = !!contactId && can("contacts", "edit");
-  if (!canArchive && !canDelete && !canMarkContact) return null;
+  if (!canArchive && !canDelete && !canMarkContact && !scheduling.canBook) return null;
 
   const contact = lead?.contact as { firstName?: string; lastName?: string; relation?: unknown } | null | undefined;
+  const contactPhone = (lead?.contact as { phone?: string } | null | undefined)?.phone;
   const contactName = [contact?.firstName, contact?.lastName].filter(Boolean).join(" ");
   const relation = asContactRelation(contact?.relation);
   const selectRelation = (next: ContactRelation) => {
@@ -85,6 +91,16 @@ export function LeadActionsMenu({
           </button>
         )}
         items={[
+          ...(scheduling.canBook
+            ? [
+                {
+                  label: VOCAB.scheduling.book,
+                  icon: <CalendarPlus size={15} aria-hidden="true" />,
+                  onSelect: () => setBookOpen(true),
+                  disabled: !lead,
+                },
+              ]
+            : []),
           ...(canMarkContact
             ? [
                 {
@@ -98,7 +114,7 @@ export function LeadActionsMenu({
             ? [
                 {
                   label: archived ? "Restaurar lead" : "Arquivar lead",
-                  separatorBefore: canMarkContact,
+                  separatorBefore: canMarkContact || scheduling.canBook,
                   icon: archived ? <ArchiveRestore size={15} aria-hidden="true" /> : <Archive size={15} aria-hidden="true" />,
                   onSelect: handleArchive,
                   disabled: !lead || archiving,
@@ -112,11 +128,18 @@ export function LeadActionsMenu({
                   icon: <Trash2 size={15} aria-hidden="true" />,
                   onSelect: () => setConfirmDelete(true),
                   danger: true,
-                  separatorBefore: canArchive || canMarkContact,
+                  separatorBefore: canArchive || canMarkContact || scheduling.canBook,
                 },
               ]
             : []),
         ]}
+      />
+
+      <LazyBookingSheet
+        organizationId={organizationId}
+        open={bookOpen}
+        onClose={() => setBookOpen(false)}
+        who={{ leadId, contactId, name: contactName || undefined, phone: contactPhone }}
       />
 
       {canMarkContact && (

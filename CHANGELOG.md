@@ -4,6 +4,51 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Agendamento com salas e profissionais (módulo opcional)
+
+- **Marque horário com cliente direto da conversa.** Em três toques: serviço, horário e confirmar. O sistema sugere os horários livres e destaca os que ficam encostados em outros atendimentos, para o dia não ficar cheio de buracos. Ligue em Configurações › Agendamento; quem não ligar não vê nada de novo.
+- **Salas, profissionais e equipamentos, cada um com seu horário.** Uma sala pode atender mais de uma pessoa ao mesmo tempo (ex.: sala dupla), e o sistema nunca deixa passar da capacidade. Serviços têm duração, folga entre atendimentos e o que exigem (por exemplo, um profissional e uma sala).
+- **Assistente em 3 passos.** Escolha o tipo de negócio (clínica com salas, profissional solo, barbearia ou salão, consultoria), ajuste nomes e horários e pronto.
+- **Agenda por sala ou por profissional.** Grade do dia com as vagas de cada sala, lista do dia no celular, semana e mês com os horários dos clientes e os compromissos e tarefas da equipe.
+- **Fechar uma sala ou a agenda de alguém no dia.** Antes de fechar, você vê quem é afetado. Quem cabe em outra sala no mesmo horário é movido; quem não cabe vai para a fila "sem lugar" para você resolver. Profissional nunca é trocado sozinho. Nada é cancelado e nada é enviado ao cliente.
+- **Fila de pendências.** Propostas aguardando aprovação, atendimentos sem lugar e atendimentos que terminaram sem registro (atendido ou faltou), com aviso diário para a equipe. Falta nunca é marcada sozinha.
+- **Sugestão inteligente de horários.** Três modos: desligada, destacar os melhores ou oferecer só os melhores. A equipe sempre pode marcar fora da sugestão; avisos podem ser aceitos, capacidade não.
+- **Desfazer.** Marcou errado? Dá para desfazer na hora (até 10 minutos) sem contar como cancelamento. Mudanças de status também têm desfazer.
+- **Permissão própria "Agenda".** Níveis: nenhum, ver a minha, ver todas, marcar e editar, configurar. Quem tinha permissões personalizadas herda o acesso a partir do que já tinha em Tarefas.
+
+### Agenda mais densa, no estilo do Google Agenda
+
+- **Uma barra só no topo.** Hoje, setas, o período ("26 de novembro de 2026", "23 – 29 de nov. de 2026"), Sala/Profissional, Dia/Semana/Mês/Lista, Pendências com contador, menu e "Marcar horário" ficam numa linha. No celular a barra tem uma linha e a visão vira um menu.
+- **A grade usa a altura da tela.** Só a grade rola, com o cabeçalho das colunas fixo. Ela abre no começo do expediente (ou em "agora", com a linha vermelha), mostra as horas fora do expediente esmaecidas e cabem bem mais horas na tela.
+- **Blocos que dizem do que se trata.** Cliente em negrito, horário, serviço e sala ou profissional, conforme o espaço; os curtos viram uma linha "11:00 Cliente · Serviço". Ícones mostram confirmado, chegou, aguardando aprovação e marcado pela IA. No computador, passar o mouse abre um cartão com o resumo e os botões Confirmar (ou Chegou) e Abrir.
+- **Semana de verdade.** Sete colunas com os agendamentos dos clientes e os compromissos e tarefas da equipe juntos, lado a lado como no Google (o bloco ocupa o espaço livre ao lado; o que passa de 3 vira um "+N" pequeno). No celular, 3 dias por tela. Blocos com fundo colorido, proposta hachurada, nomes sem palavra quebrada. Dá para filtrar por sala ou profissional, marcar horário clicando num espaço livre e arrastar compromissos da equipe para outro dia ou hora.
+- **Mês como no Google.** Cada dia lista os horários ("09:00 Maria") e o "+N mais" abre a lista do dia. Dias de outros meses ficam esmaecidos. No celular, pontos nos dias e a lista do dia escolhido logo abaixo.
+- **Cores e densidade à escolha.** No menu ⋯: colorir por situação, por sala ou profissional, ou por serviço (com legenda, 10 cores), e densidade compacta, padrão ou confortável. Sua visão, agrupamento e escolhas ficam lembrados neste aparelho. Atalhos: T (hoje), D, S, M, L e as setas.
+
+- **Semana e Mês mais completos.** Um atendimento que começa antes da meia-noite (dom 23:00 até seg 01:00) aparece na primeira coluna a partir de 00:00; cancelados e remarcados deixam de ocupar a leitura; os dias de outros meses no Mês mostram seus horários; o cadeado de dia fechado vale também para dias passados e considera a reabertura parcial. O compromisso que cruza a meia-noite agora também arrasta pelo segundo pedaço. No cartão ao passar o mouse e no painel do atendimento aparece o telefone do cliente, com "Abrir conversa" quando há conversa.
+
+- **Acabamento do teste visual da Agenda.** Os botões do cartão ao passar o mouse (Confirmar, Chegou, Abrir) não abrem mais "Marcar horário" por baixo. "Resolver" na faixa "Sem lugar" e no painel do atendimento abre o resolvedor do conflito. Quando o horário é recusado ou traz aviso, a tela leva até o aviso. Na Semana, blocos estreitos mostram o primeiro nome e a inicial do sobrenome, e homônimos lado a lado se distinguem. Remarcar abre no dia do atendimento, com a sala e o profissional atuais. Marcar pelo clique no vazio mostra a hora clicada e a oferece primeiro quando está livre. Profissional de folga aparece desabilitado no seletor. No celular, "Desfazer" do aviso e o botão do passo do Marcar horário têm 44 px de toque. "Abrir conversa" só aparece para quem pode ver a Caixa de entrada.
+
+### Agenda: segurança, permissões e recorrência
+
+- **A agenda tem permissão própria.** Quem tem "ver a minha" enxerga só os compromissos em que é criador, responsável ou participante; "ver todas" enxerga todos sem alterar; "marcar e editar" cria e altera qualquer compromisso da organização. Administrador nasce com "configurar"; gerente, atendente e IA com "marcar e editar". Tarefas mostradas na agenda continuam seguindo a permissão de Tarefas. Na API, as rotas de `calendar/events` passam a exigir `agenda` (leitura: ver a minha; escrita: marcar e editar); chaves antigas herdam o acesso a partir do que tinham em Tarefas.
+- **Evento não aponta mais para dados de outra organização.** Lead, contato, tarefa e participantes precisam ser da mesma organização (e participante removido é recusado), no app e na API. Mesmo que um vínculo cruzado já exista gravado, a leitura não devolve nada dele, e lead, contato e responsável saem só com o essencial (nome/título).
+- **Validações com mensagem clara.** Título obrigatório, término não anterior ao início, duração de até 31 dias, e evento só pode ser concluído, cancelado ou reagendado uma vez (concluir duas vezes não duplica mais a próxima ocorrência).
+- **Eventos recorrentes mais certos.** A próxima ocorrência respeita o fuso da organização (sem deslocar a hora no horário de verão), mensal em dia 29–31 cai no último dia do mês (31/01 vira 28/02) e concluir pela API gera a próxima igual ao app. Excluir um evento recorrente apaga a cadeia inteira.
+- **Agenda mais leve e completa.** O calendário mostra também eventos que começaram antes do período e terminam dentro dele, tem teto de leitura (com aviso de truncamento) e a paginação da API segue a ordem por horário de início, sem pular nem repetir eventos. A API ganhou `POST /api/v1/calendar/events/cancel`, e o `update` aceita responsável, lead, contato, participantes, cor e recorrência.
+- **Reagendar ou arrastar evento concluído ou cancelado agora é recusado** (antes passava em silêncio).
+- **Calendário do dia lê menos.** Eventos curtos são buscados só 1 dia para trás e eventos de vários dias têm índice próprio (`longStart`); os longos gravados antes desta versão só aparecem na janela certa depois do backfill `opsCalendar:internalBackfillCalendarLongStart` (rodar em DEV e PROD, com `dryRun` antes).
+- **Excluir um evento recorrente preserva o histórico.** Só o evento e as ocorrências seguintes ainda agendadas são apagados; as já concluídas ou canceladas ficam. Cadeias muito grandes (mais de 400 ocorrências) não são apagadas de uma vez.
+- **Recorrência mensal fiel ao dia original.** Série no dia 31 vai 31/01, 28/02, 31/03 (séries antigas seguem como antes).
+- **Quem não tem acesso a Tarefas recebe a agenda vazia** em vez de erro, e o servidor informa `canEdit` em cada evento para a tela esconder botões.
+- **Contrato da API.** `calendar/events` e `calendar/events/get` devolvem lead, contato e responsável em formato reduzido, e `calendar/events` passa a incluir `truncated`. O cursor tem formato novo; cursores antigos retornam erro 400.
+
+### Agenda: datas, filtro e grade corrigidos
+
+- **Evento salvo no dia escolhido.** Antes o evento era gravado um dia antes e cada "Editar > Atualizar" o empurrava mais um dia. Agora data e hora seguem o horário do seu aparelho.
+- **Filtro por vários tipos, cabeçalho do mês e navegação.** Com dois ou mais tipos marcados todos aparecem; os dias da semana do mês batem com a grade (começa na segunda); avançar ou voltar mês não pula de mês em dia 31 e a última linha do mês mostra os eventos.
+- **Eventos no mesmo horário lado a lado** (até 3 colunas e um "+N" que abre a lista), eventos de madrugada ou de noite e os que passam da meia-noite aparecem na grade. O formulário "Novo evento" abre limpo, aceita fim depois da meia-noite e "Data de término", e avisa se o fim é antes do início. Navegar não pisca mais a tela e os botões da agenda têm 44 px. Evento de vários dias aparece por inteiro só depois da correção do servidor.
+
 ### Contatos que não são clientes ("Não é cliente" / "Virar lead")
 
 - **Marque quem não é cliente e a IA deixa a pessoa em paz.** Família, equipe, fornecedor, parceiro ou robô que escreve no mesmo WhatsApp pode ser marcado como não-cliente. A partir daí a Atendente IA nunca responde nem lê essas conversas (sem transcrição de áudio, leitura de imagem ou PDF, tradução), não há follow-up, campanha, repasse nem aviso de "mensagem nova", e nada disso conta no limite mensal de atendimentos da IA. O lead dessa pessoa sai do funil (fica arquivado) e a conversa continua na lista, para você ler quando quiser.

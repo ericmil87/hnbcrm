@@ -1,16 +1,17 @@
 import { useMemo } from "react";
 import { cn } from "@/lib/utils";
+import { addDays, isSameDay, localDateKey, overlapsDay } from "@/lib/agendaDates";
 import { TimeGrid } from "./TimeGrid";
 import { WEEKDAYS_SHORT } from "./constants";
 
 interface DayViewEvent {
   _id: string;
   title: string;
-  startTime: string;
-  endTime: string;
+  startTime: number;
+  endTime: number;
   eventType: string;
   allDay?: boolean;
-  assignee?: { name: string; type: "human" | "ai" };
+  assignee?: { name: string; type: "human" | "ai" } | null;
   _source?: "event" | "task";
 }
 
@@ -25,38 +26,21 @@ interface DayViewProps {
 export function DayView({ date, events, onEventClick, onSlotClick, onSelectDay }: DayViewProps) {
   const { allDayEvents, timedEvents } = useMemo(() => {
     return {
-      allDayEvents: events.filter((e) => e.allDay),
+      allDayEvents: events.filter((e) => e.allDay && overlapsDay(e.startTime, e.endTime, date)),
       timedEvents: events.filter((e) => !e.allDay),
     };
-  }, [events]);
+  }, [events, date]);
 
   // Generate 7 days centered on current date for mobile swipe strip
   const weekDates = useMemo(() => {
     const dates = [];
     for (let i = -3; i <= 3; i++) {
-      const d = new Date(date);
-      d.setDate(d.getDate() + i);
-      dates.push(d);
+      dates.push(addDays(date, i));
     }
     return dates;
   }, [date]);
 
-  const isToday = (checkDate: Date) => {
-    const today = new Date();
-    return (
-      checkDate.getDate() === today.getDate() &&
-      checkDate.getMonth() === today.getMonth() &&
-      checkDate.getFullYear() === today.getFullYear()
-    );
-  };
-
-  const isSameDay = (d1: Date, d2: Date) => {
-    return (
-      d1.getDate() === d2.getDate() &&
-      d1.getMonth() === d2.getMonth() &&
-      d1.getFullYear() === d2.getFullYear()
-    );
-  };
+  const isToday = (checkDate: Date) => isSameDay(checkDate, new Date());
 
   return (
     <div className="flex flex-col h-full">
@@ -64,10 +48,10 @@ export function DayView({ date, events, onEventClick, onSlotClick, onSelectDay }
       <div className="md:hidden flex justify-center gap-2 px-4 py-3 border-b border-border overflow-x-auto">
         {weekDates.map((d) => (
           <button
-            key={d.toISOString()}
+            key={localDateKey(d)}
             onClick={() => onSelectDay(d)}
             className={cn(
-              "flex flex-col items-center justify-center flex-1 h-[56px] rounded-lg transition-colors shrink-0",
+              "flex flex-col items-center justify-center flex-1 min-h-[56px] rounded-lg transition-colors shrink-0",
               isSameDay(d, date)
                 ? "bg-brand-600 text-white"
                 : "bg-surface-raised text-text-secondary hover:bg-surface-overlay"
@@ -89,7 +73,7 @@ export function DayView({ date, events, onEventClick, onSlotClick, onSelectDay }
       {/* All-day events */}
       {allDayEvents.length > 0 && (
         <div className="px-4 py-2 border-b border-border bg-surface-raised">
-          <div className="text-xs font-medium text-text-muted mb-1">Dia Inteiro</div>
+          <div className="text-xs font-medium text-text-muted mb-1">Dia inteiro</div>
           <div className="space-y-1">
             {allDayEvents.map((event) => (
               <div

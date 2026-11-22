@@ -69,6 +69,7 @@ export type CopyInput =
   | { type: "ai_spend_reached"; costBrl: string; capBrl: string; blockMode: boolean }
   | { type: "new_message"; contactName?: string; count: number; preview?: string }
   | { type: "lead_assigned"; leadTitle: string; actorName?: string }
+  | { type: "appointment_conflict"; kind: "resource_closed" | "resource_removed" | "capacity"; count: number; resourceName?: string; dateLabel?: string; problem?: "failed" | "truncated" }
   | { type: "plan_usage_warning"; meter: "ai" | "campaign"; pct: number; month: string }
   | { type: "plan_usage_reached"; meter: "ai" | "campaign"; overageEnabled: boolean }
   | { type: "plan_overage_cap_reached"; capBrl: string }
@@ -80,7 +81,8 @@ export type CopyInput =
   | { type: "plan_change_scheduled"; planLabel: string; effectiveAt: string }
   | { type: "plan_cancel_scheduled"; endsAt: string }
   | { type: "plan_canceled" }
-  | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean };
+  | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean }
+  | { type: "appointment_no_outcome"; count: number; capped?: boolean };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -502,10 +504,38 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
         title: "Reembolso solicitado",
         body: `Devolvemos ${input.amountBrl ?? "o valor pago"}; ele volta pelo mesmo meio de pagamento em alguns dias. A conta ficou em modo só leitura e você ainda pode exportar seus dados.`,
       };
+    case "appointment_no_outcome": {
+      const n = Math.max(0, Math.floor(input.count));
+      const title = input.capped
+        ? `Mais de ${n} atendimentos de ontem ainda sem desfecho`
+        : n === 1
+          ? "1 atendimento de ontem ainda sem desfecho"
+          : `${n} atendimentos de ontem ainda sem desfecho`;
+      return { title, body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." };
+    }
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
         title: input.actorName ? `${entity(input.actorName, "Alguém")} atribuiu o lead ${lead} a você` : `Lead ${lead} atribuído a você`,
+      };
+    }
+    case "appointment_conflict": {
+      const what = input.resourceName ? entity(input.resourceName, "Um recurso") : "Um recurso";
+      const cause =
+        input.kind === "resource_closed"
+          ? `${what} fechou${input.dateLabel ? ` em ${input.dateLabel}` : ""}`
+          : input.kind === "capacity"
+            ? `${what} passou a comportar menos pessoas ao mesmo tempo`
+            : `${what} saiu da agenda`;
+      if (input.problem) {
+        return {
+          title: "O fechamento não terminou por inteiro",
+          body: `${cause}, mas o tratamento dos agendamentos parou antes do fim (${input.count} já foram para a fila de pendências). Confira a Agenda e, se preciso, repita o fechamento.`,
+        };
+      }
+      return {
+        title: input.count === 1 ? "1 agendamento precisa de novo lugar" : `${input.count} agendamentos precisam de novo lugar`,
+        body: `${cause}. Nada foi cancelado nem avisado ao cliente: escolha outro recurso ou horário na fila de pendências da Agenda.`,
       };
     }
   }
@@ -547,4 +577,6 @@ export const COPY_TYPES = [
   "plan_cancel_scheduled",
   "plan_canceled",
   "plan_refunded",
+  "appointment_conflict",
+  "appointment_no_outcome",
 ] as const satisfies readonly CopyInput["type"][];

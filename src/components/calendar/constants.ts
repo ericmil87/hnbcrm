@@ -1,3 +1,5 @@
+import { orderWeekdayLabels } from "@/lib/agendaDates";
+
 // Tipos de evento aceitos pelo backend (espelha o validator de convex/calendar).
 // Existe como união (e não `string`) para o filtro não conseguir mandar um valor
 // que a query recusa.
@@ -56,7 +58,10 @@ export const RECURRENCE_OPTIONS = [
   { value: "monthly", label: "Mensal" },
 ];
 
+// Indexados por `Date.getDay()` (0 = domingo). Para cabeçalho de grade use
+// WEEKDAYS_SHORT_ORDERED, que segue WEEK_STARTS_ON (mesma fonte da grade).
 export const WEEKDAYS_SHORT = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sab"];
+export const WEEKDAYS_SHORT_ORDERED = orderWeekdayLabels(WEEKDAYS_SHORT);
 export const WEEKDAYS_LONG = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
 export const MONTHS_LONG = [
@@ -64,4 +69,4 @@ export const MONTHS_LONG = [
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"
 ];
 
-export const TIME_SLOTS = Array.from({ length: 17 }, (_, i) => 6 + i); // 6:00 to 22:00
+export const HOUR_HEIGHT_PX = 60;

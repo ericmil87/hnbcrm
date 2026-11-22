@@ -103,7 +103,7 @@ export const ROUTES: RouteObject[] = [
           { path: "contatos/importar-celular", ...appPage(() => import("./components/contacts/phoneImport/PhoneContactsImportPage").then(m => ({ default: m.PhoneContactsImportPage }))) },
           { path: "entrada", ...appPage(() => import("./components/Inbox").then(m => ({ default: m.Inbox }))) },
           { path: "tarefas", ...appPage(() => import("./components/TasksPage").then(m => ({ default: m.TasksPage }))) },
-          { path: "calendario", ...appPage(() => import("./components/calendar/CalendarPage").then(m => ({ default: m.CalendarPage }))) },
+          { path: "calendario", ...appPage(() => import("./components/agenda/AgendaEntry").then(m => ({ default: m.AgendaEntry }))) },
           { path: "repasses", ...appPage(() => import("./components/HandoffQueue").then(m => ({ default: m.HandoffQueue }))) },
           { path: "equipe", ...appPage(() => import("./components/TeamPage").then(m => ({ default: m.TeamPage }))) },
           { path: "auditoria", ...appPage(() => import("./components/AuditLogs").then(m => ({ default: m.AuditLogs }))) },

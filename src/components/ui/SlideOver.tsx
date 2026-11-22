@@ -1,5 +1,6 @@
-import { useEffect, useCallback, useRef } from "react";
+import { useEffect, useCallback, useId, useRef } from "react";
 import { lockBodyScroll } from "@/lib/scrollLock";
+import { isTopLayer, nextLayerOrder, popLayer, pushLayer } from "@/lib/layerStack";
 import { useKeyboardViewportBox } from "@/hooks/useKeyboardViewportBox";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
@@ -33,12 +34,27 @@ export function SlideOver({
   className,
   bodyClassName,
 }: SlideOverProps) {
+  // Esc fecha só a camada do topo (pilha em `lib/layerStack`).
+  const layerId = useId();
+  // Posição na pilha: tirada na 1ª renderização aberta (pai antes do filho), devolvida ao fechar.
+  const orderRef = useRef<number | null>(null);
+  if (!open) orderRef.current = null;
+  else if (orderRef.current === null) orderRef.current = nextLayerOrder();
+  const layerOrder = orderRef.current;
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape" && isTopLayer(layerId)) onClose();
     },
-    [onClose]
+    [onClose, layerId]
   );
+
+  // Empilha uma vez por abertura (não refaz a cada render: a ordem de abertura é a ordem da pilha).
+  useEffect(() => {
+    if (!open) return;
+    if (layerOrder === null) return;
+    pushLayer(layerId, layerOrder);
+    return () => popLayer(layerId);
+  }, [open, layerId, layerOrder]);
 
   useEffect(() => {
     if (!open) return;
@@ -48,7 +64,7 @@ export function SlideOver({
       document.removeEventListener("keydown", handleKeyDown);
       unlock();
     };
-  }, [open, handleKeyDown]);
+  }, [open, handleKeyDown, layerId]);
 
   if (!open) return null;
 
@@ -117,7 +133,8 @@ function SlideOverLayer({
           {/* Mobile: back arrow */}
           <button
             onClick={onClose}
-            className="md:hidden p-1.5 -ml-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+            // Toque: alvo de 44 px; as margens negativas mantêm a altura do cabeçalho e o ícone no mesmo lugar.
+            className="md:hidden inline-flex items-center justify-center p-1.5 -ml-1.5 coarse:-my-1.5 coarse:-ml-3 coarse:min-h-11 coarse:min-w-11 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
             aria-label="Voltar"
           >
             <ArrowLeft size={20} />

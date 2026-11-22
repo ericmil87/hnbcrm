@@ -1,33 +1,40 @@
 import { useDraggable } from "@dnd-kit/core";
 import { cn } from "@/lib/utils";
 import { EVENT_TYPE_COLORS } from "./constants";
+import { isCalendarItemDraggable } from "@/lib/agendaPermissions";
+import { formatTime } from "@/lib/format";
 import { Avatar } from "../ui/Avatar";
 
 interface EventBlockProps {
   event: {
     _id: string;
     title: string;
-    startTime: string;
-    endTime: string;
+    startTime: number;
+    endTime: number;
     eventType: string;
-    assignee?: { name: string; type: "human" | "ai" };
+    assignee?: { name: string; type: "human" | "ai" } | null;
     _source?: "event" | "task";
+    canEdit?: boolean | null;
+    status?: string | null;
   };
   onClick: () => void;
+  /** Distingue o mesmo evento desenhado em mais de um dia (ou no overlay do arrasto). */
+  dragKey?: string;
   compact?: boolean; // For narrow columns (week view on mobile)
 }
 
-export function EventBlock({ event, onClick, compact }: EventBlockProps) {
+export function EventBlock({ event, onClick, compact, dragKey }: EventBlockProps) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
-    id: event._id,
+    id: dragKey ? `${event._id}:${dragKey}` : event._id,
     data: event,
+    disabled: !isCalendarItemDraggable(event),
   });
 
   const colors = EVENT_TYPE_COLORS[event.eventType] || EVENT_TYPE_COLORS.other;
   const startDate = new Date(event.startTime);
   const isTask = event._source === "task";
 
-  const timeString = `${startDate.getHours().toString().padStart(2, "0")}:${startDate.getMinutes().toString().padStart(2, "0")}`;
+  const timeString = formatTime(startDate);
 
   return (
     <div
