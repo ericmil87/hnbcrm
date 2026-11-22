@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalendarX, Plus, UserPlus, X } from "lucide-react";
 import { Stepper } from "@/components/ui/Stepper";
 import { FilterChips } from "@/components/ui/FilterChips";
@@ -24,6 +24,7 @@ import {
   nearestSlotStart,
   partySizeOf,
   pinnableKinds,
+  reviewSubmitLabel,
   splitSuggestions,
   supportsGroup,
   timeInputValue,
@@ -38,7 +39,7 @@ import {
   type SlotPeriod,
   type ViolationView,
 } from "@/lib/bookingFlow";
-import { SlotSuggestionList } from "./SlotSuggestionList";
+import { SlotButton, SlotSuggestionList } from "./SlotSuggestionList";
 import { RuleWarningsDialog } from "./RuleWarningsDialog";
 
 const t = BOOKING_COPY;
@@ -229,7 +230,13 @@ function SlotStep({
 }: BookingFlowViewProps & { service: ServiceLike | undefined }) {
   const [showPeople, setShowPeople] = useState(Object.keys(state.pinned).length > 0);
   const prefill = timeInputValue(initialTimeMin);
-  const [showManual, setShowManual] = useState(prefill !== "");
+  // "Outro horário" abre só pelo toque (a hora pedida já vem no campo): aberto de antemão ficava fora da vista e o
+  // botão o fechava, parecendo não fazer nada.
+  const [showManual, setShowManual] = useState(false);
+  const manualRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (showManual) manualRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [showManual]);
   const highlightStart = initialTimeMin !== undefined ? nearestSlotStart(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }) : null;
   const kinds = pinnableKinds(service);
   const { suggested, others } = splitSuggestions(slots.slots);
@@ -247,6 +254,7 @@ function SlotStep({
       </div>
 
       <FilterChips
+        className="flex-wrap"
         ariaLabel={t.slot.dayLabel}
         chips={DAY_CHIPS.map((c) => ({ ...c, pressed: state.dayPreset === c.id }))}
         onToggle={(id) => dispatch({ type: "setDay", preset: id as DayPreset, date: id === "other" ? (state.otherDate ?? today) : undefined })}
@@ -262,12 +270,14 @@ function SlotStep({
       )}
       {supportsGroup(service, resources) && (
         <FilterChips
+          className="flex-wrap"
           ariaLabel={t.slot.partyLabel}
           chips={[1, 2, 3, 4].map((n) => ({ id: String(n), label: n === 1 ? t.slot.partyOne : fillVocab(t.slot.partyOption, { n: String(n) }), pressed: partySizeOf(state) === n }))}
           onToggle={(id) => dispatch({ type: "setPartySize", size: Number(id) })}
         />
       )}
       <FilterChips
+        className="flex-wrap"
         ariaLabel={t.slot.periodLabel}
         chips={SLOT_PERIODS.map((p) => ({ id: p, label: t.slot.periods[p], pressed: state.period === p }))}
         onToggle={(id) => dispatch({ type: "setPeriod", period: id as SlotPeriod })}
@@ -356,6 +366,8 @@ function SlotStep({
       </Button>
       {showManual && (
         <ManualSlotForm
+          containerRef={manualRef}
+          resourceNames={new Map(resources.map((r) => [r._id, r.name]))}
           tz={tz}
           today={today}
           initialDate={state.otherDate ?? today}
@@ -373,6 +385,8 @@ function SlotStep({
 
 /** "Outro horário": dia e hora digitados; a prévia (sem gravar) diz se está livre, com avisos ou bloqueado. */
 function ManualSlotForm({
+  containerRef,
+  resourceNames,
   tz,
   today,
   initialDate,
@@ -383,6 +397,8 @@ function ManualSlotForm({
   onPickAlternative,
   onOpenExisting,
 }: {
+  containerRef?: React.Ref<HTMLDivElement>;
+  resourceNames: ReadonlyMap<string, string>;
   tz: string;
   today: LocalDate;
   initialDate: string;
@@ -418,7 +434,8 @@ function ManualSlotForm({
         setExisting(verdict.appointmentId);
         setMessage(fillVocab(t.slot.duplicate, { nome: clientName }));
       } else if (verdict.kind === "ok") {
-        onPick({ ...slot, warnings: verdict.warnings, resourceNames: verdict.resourceNames });
+        // O plano da prévia (sala e profissional REAIS) vai para a revisão e para o envio.
+        onPick({ ...slot, warnings: verdict.warnings, resourceIds: verdict.resourceIds, resourceNames: verdict.resourceNames });
       } else if (verdict.kind === "warn") {
         onPick({ ...slot, warnings: verdict.warnings });
       } else if (verdict.kind === "blocked") {
@@ -433,7 +450,7 @@ function ManualSlotForm({
   };
 
   return (
-    <div className="space-y-3 rounded-card border border-border bg-surface-sunken p-3">
+    <div ref={containerRef} className="space-y-3 rounded-card border border-border bg-surface-sunken p-3">
       <h3 className="text-sm font-semibold text-text-primary">{t.slot.manualTitle}</h3>
       <div className="grid grid-cols-2 gap-3">
         <Input type="date" label={t.slot.manualDate} min={today} value={date} onChange={(e) => setDate(e.target.value)} />
@@ -456,19 +473,19 @@ function ManualSlotForm({
         <>
           <ul className="space-y-1 text-sm text-text-primary">
             {blocked.violations.map((v, i) => (
-              <li key={`${v.code}:${i}`}>{violationText(v)}</li>
+              <li key={`${v.code}:${i}`}>{violationText(v, resourceNames)}</li>
             ))}
           </ul>
           {blocked.alternatives.length > 0 && (
-            <ul className="space-y-2">
-              {blocked.alternatives.map((s) => (
-                <li key={`${s.startTime}:${s.resourceIds.join(",")}`}>
-                  <Button type="button" variant="secondary" className="w-full" onClick={() => onPickAlternative(s)}>
-                    {zonedDateTimeLabel(s.startTime, tz)}
-                  </Button>
-                </li>
-              ))}
-            </ul>
+            <section aria-label={t.rulesDialog.alternatives} className="space-y-2">
+              <h4 className="text-caption font-semibold uppercase tracking-wide text-text-muted">{t.rulesDialog.alternatives}</h4>
+              {/* Mesma linha das sugestões: hora E lugar, para a pessoa ver onde cada alternativa fica. */}
+              <ul className="space-y-2">
+                {blocked.alternatives.map((s) => (
+                  <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={false} showDay onPick={onPickAlternative} />
+                ))}
+              </ul>
+            </section>
           )}
         </>
       )}
@@ -523,17 +540,6 @@ function ReviewStep({
         ))}
       </dl>
 
-      {slot.warnings.length > 0 && (
-        <div className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3" role="status">
-          <p className="text-sm font-medium text-semantic-warning">{t.review.warningsTitle}</p>
-          <ul className="mt-1 space-y-1 text-sm text-text-primary">
-            {slot.warnings.map((w, i) => (
-              <li key={`${w.code}:${i}`}>{violationText(w, resourceNames)}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       {!reschedule && (
         <div className="space-y-2">
           {state.companions.map((name, i) => (
@@ -565,12 +571,25 @@ function ReviewStep({
 
       {!whoOk && <p className="text-sm text-semantic-warning">{t.review.noWho}</p>}
 
+      {/* Avisos logo acima do botão: quem confirma está marcando "mesmo assim" e vê o porquê. */}
+      {slot.warnings.length > 0 && (
+        <div className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3" role="status">
+          <p className="text-sm font-medium text-semantic-warning">{t.review.warningsTitle}</p>
+          <ul className="mt-1 space-y-1 text-sm text-text-primary">
+            {slot.warnings.map((w, i) => (
+              <li key={`${w.code}:${i}`}>{violationText(w, resourceNames)}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-caption text-text-secondary">{t.rulesDialog.warnHint}</p>
+        </div>
+      )}
+
       <div className="flex flex-col-reverse gap-2 sm:flex-row">
-        <Button type="button" variant="secondary" className="flex-1" onClick={() => dispatch({ type: "back" })}>
+        <Button type="button" variant="secondary" className="sm:flex-1" onClick={() => dispatch({ type: "back" })}>
           {t.review.back}
         </Button>
-        <Button type="button" size="lg" className="flex-1" disabled={!canAdvance(state, whoOk)} loading={busy} onClick={onSubmit}>
-          {reschedule ? t.review.submitReschedule : t.review.submit}
+        <Button type="button" size="lg" className="sm:flex-1" disabled={!canAdvance(state, whoOk)} loading={busy} onClick={onSubmit}>
+          {reviewSubmitLabel(slot, Boolean(reschedule))}
         </Button>
       </div>
     </div>

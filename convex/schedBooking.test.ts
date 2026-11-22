@@ -530,6 +530,99 @@ describe("marcação em grupo (casal na sala dupla)", () => {
 // Fila de conflito (criação automática pela mensagem do humano)
 // ---------------------------------------------------------------------------
 
+describe("recurso escolhido pela pessoa não é trocado em silêncio (allowResourceFallback: false)", () => {
+  /** Clínica do teste visual: serviço com profissional + QUALQUER sala (Um, Dois, Dupla) e três profissionais. */
+  async function clinic() {
+    const s = await seedOrg();
+    const extra = await t.run(async (ctx) => {
+      const p3 = await ctx.db.insert("schedResources", {
+        organizationId: s.organizationId, kind: "person", name: "Profissional Três", capacity: 1, weekly: WEEKDAYS, tags: [], sortOrder: 5, active: true, createdAt: NOW, updatedAt: NOW,
+      });
+      const clinica = await ctx.db.insert("schedServices", {
+        organizationId: s.organizationId, name: "Sessão clínica", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0,
+        requirements: [{ role: "Terapeuta", kind: "person" }, { role: "Sala", kind: "room" }], sortOrder: 9, active: true, createdAt: NOW, updatedAt: NOW,
+      });
+      return { p3, clinica };
+    });
+    const args = (start: number, over: Record<string, unknown> = {}) => ({ organizationId: s.organizationId, serviceId: extra.clinica, startTime: start, contactId: s.contacts[2], ...over });
+    const bookC = (start: number, over: Record<string, unknown> = {}) => asAdmin(s).mutation(api.schedulingMutations.bookAppointment, args(start, over) as never);
+    const previewC = (start: number, over: Record<string, unknown> = {}) => asAdmin(s).mutation(api.schedulingMutations.previewBooking, args(start, over) as never);
+    return { s, ...extra, bookC, previewC };
+  }
+  const roomOf = async (id: Id<"schedAppointments">) => (await appointmentOf(id))!.resources.find((r) => r.role === "Sala")!.resourceId;
+
+  test("casal na sala dupla + terceira pessoa na MESMA sala: recusa com alternativas (prévia e marcação), nunca outra sala", async () => {
+    const { s, bookC, previewC } = await clinic();
+    const { dupla } = s.resources;
+    const couple = await bookC(at(10), { contactId: s.contacts[0], resourceIds: [dupla], allowResourceFallback: false, companions: [{ guestName: "Acompanhante" }] });
+    expect(couple.appointmentIds).toHaveLength(2);
+    for (const id of couple.appointmentIds) expect(await roomOf(id)).toBe(dupla); // os dois na sala escolhida
+    const before = await counts();
+    const pv = await previewC(at(10), { resourceIds: [dupla], allowResourceFallback: false });
+    assertMatchesReturns(pv, M.previewBooking);
+    expect(pv.ok).toBe(false);
+    expect(pv.violations.map((v) => v.code)).toEqual(["CAPACITY_EXCEEDED"]);
+    expect(pv.plan).toEqual([]);
+    expect(pv.alternatives.length).toBeGreaterThan(0);
+    expect(pv.alternatives.every((a) => a.startTime !== at(10))).toBe(true);
+    const err = await rulesError(bookC(at(10), { resourceIds: [dupla], allowResourceFallback: false }));
+    expect(err.violations.map((v) => v.code)).toEqual(["CAPACITY_EXCEEDED"]);
+    expect(err.alternatives.length).toBeGreaterThan(0);
+    expect(await counts()).toEqual(before); // nada gravado
+    // Sem o parâmetro (outros chamadores) o comportamento de sempre continua: o servidor acha outro lugar.
+    const legacy = await bookC(at(10), { resourceIds: [dupla] });
+    expect(await roomOf(legacy.appointmentIds[0])).not.toBe(dupla);
+  });
+
+  test("só a sala foi escolhida: a sala fica e o profissional que o servidor completou pode trocar", async () => {
+    const { s, bookC, previewC, p3 } = await clinic();
+    const { p1, p2, sala1, sala2 } = s.resources;
+    await bookC(at(10), { contactId: s.contacts[0], resourceIds: [p1, sala1], allowResourceFallback: false });
+    // Sala Dois livre; o primeiro profissional por ordem (Um) está ocupado.
+    const pv = await previewC(at(10), { resourceIds: [sala2], allowResourceFallback: false });
+    expect(pv.ok).toBe(true);
+    expect(pv.plan.map((x) => x.resourceId)).toEqual([p2, sala2]);
+    const ok = await bookC(at(10), { contactId: s.contacts[1], resourceIds: [sala2], allowResourceFallback: false });
+    expect((await appointmentOf(ok.appointmentIds[0]))!.resources.map((r) => r.resourceId)).toEqual([p2, sala2]);
+    // Sala Dois agora cheia: mesmo com profissional livre (Três), a sala escolhida não é trocada.
+    const err = await rulesError(bookC(at(10), { resourceIds: [sala2], allowResourceFallback: false }));
+    expect(err.violations.map((v) => v.code)).toEqual(["CAPACITY_EXCEEDED"]);
+    // Só o profissional foi escolhido (Três): a sala é que troca.
+    const byPro = await bookC(at(10), { resourceIds: [p3], allowResourceFallback: false });
+    const appt = (await appointmentOf(byPro.appointmentIds[0]))!;
+    expect(appt.resources[0].resourceId).toBe(p3);
+    expect([sala1, sala2]).not.toContain(appt.resources[1].resourceId);
+  });
+
+  test("plano inteiro da revisão (sala e profissional): se alguém ocupou, recusa em vez de marcar em outro lugar", async () => {
+    const { s, bookC } = await clinic();
+    const { p1, p2, sala1 } = s.resources;
+    await bookC(at(10), { contactId: s.contacts[0], resourceIds: [p1, sala1], allowResourceFallback: false });
+    const err = await rulesError(bookC(at(10), { resourceIds: [p2, sala1], allowResourceFallback: false }));
+    expect(err.violations.map((v) => v.code)).toEqual(["CAPACITY_EXCEEDED"]);
+    expect(await allAllocations()).toHaveLength(2);
+  });
+
+  test("remarcar para a sala escolhida cheia: recusa (prévia e remarcação); sem o parâmetro segue como antes", async () => {
+    const { s, bookC, previewC, clinica } = await clinic();
+    const { dupla } = s.resources;
+    await bookC(at(10), { contactId: s.contacts[0], resourceIds: [dupla], allowResourceFallback: false, companions: [{ guestName: "Acompanhante" }] });
+    const third = (await bookC(at(14), { resourceIds: [dupla], allowResourceFallback: false })).appointmentIds[0];
+    const pv = await previewC(at(10), { rescheduleAppointmentId: third, resourceIds: [dupla], allowResourceFallback: false });
+    expect(pv.ok).toBe(false);
+    expect(pv.violations.map((v) => v.code)).toEqual(["CAPACITY_EXCEEDED"]);
+    const re = (over: Record<string, unknown>) =>
+      asAdmin(s).mutation(api.schedulingMutations.rescheduleAppointment, { organizationId: s.organizationId, appointmentId: third, startTime: at(10), resourceIds: [dupla], ...over } as never);
+    const err = await rulesError(re({ allowResourceFallback: false }));
+    expect(err.violations.map((v) => v.code)).toEqual(["CAPACITY_EXCEEDED"]);
+    expect((await appointmentOf(third))!.status).toBe("scheduled");
+    const moved = await re({});
+    assertMatchesReturns(moved, M.rescheduleAppointment);
+    expect(await roomOf(moved.appointmentId)).not.toBe(dupla);
+    expect(clinica).toBeDefined();
+  });
+});
+
 describe("conflictToQueue", () => {
   const runHuman = (s: Seed, extra: Record<string, unknown> = {}) =>
     t.run((ctx) =>

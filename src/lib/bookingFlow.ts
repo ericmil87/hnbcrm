@@ -83,7 +83,7 @@ export interface PickedSlot {
   resourceIds: string[];
   resourceNames: string[];
   reasons: string[];
-  /** Escolhido à mão em "Outro horário" (o servidor planeja os recursos; a prévia mostra os avisos). */
+  /** Escolhido à mão em "Outro horário" (o servidor planeja os recursos; a prévia devolve o plano e os avisos). */
   manual: boolean;
   /** Avisos da prévia (só "Outro horário"): o passo 3 mostra antes de marcar. */
   warnings: ViolationView[];
@@ -131,6 +131,22 @@ export interface InitialStateInput {
   pinned?: Record<string, string>;
 }
 
+/**
+ * Recursos fixados (coluna clicada na Agenda ou seletor) que o serviço ACEITA: o tipo é pedido por algum requisito
+ * e, se o requisito lista recursos, o fixado está na lista. Trocar de serviço não pode apagar a sala que a pessoa
+ * escolheu; só sai o que o serviço não usa (um fixado invisível faria toda marcação falhar).
+ */
+export function pinsForService(pinned: Readonly<Record<string, string>>, service: ServiceLike | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [kind, id] of Object.entries(pinned)) {
+    const accepts = (service?.requirements ?? []).some(
+      (req) => req.kind === kind && (!req.resourceIds || req.resourceIds.length === 0 || req.resourceIds.includes(id))
+    );
+    if (accepts) out[kind] = id;
+  }
+  return out;
+}
+
 /** Estado de abertura. Com serviço decidido ou pré-selecionável, abre no passo 2 (o caminho feliz fica em 2 toques). */
 export function initialBookingState(input: InitialStateInput): BookingState {
   const serviceId = input.serviceId ?? defaultServiceId(input.services, input.preferredServiceId);
@@ -146,7 +162,8 @@ export function initialBookingState(input: InitialStateInput): BookingState {
     dayPreset: input.date ? "other" : "today",
     otherDate: input.date ?? null,
     period: "qualquer",
-    pinned: { ...(input.pinned ?? {}) },
+    // Sem serviço decidido os fixados ficam inteiros até a escolha (`pickService` filtra pelo serviço escolhido).
+    pinned: service ? pinsForService(input.pinned ?? {}, service) : { ...(input.pinned ?? {}) },
     expanded: false,
     slot: null,
     companions: [],
@@ -185,7 +202,7 @@ export function bookingReducer(state: BookingState, action: BookingAction): Book
         ...resetSearch(state),
         serviceId: action.serviceId,
         variantKey: null,
-        pinned: {},
+        pinned: pinsForService(state.pinned, service),
         step: hasVariants ? "service" : "slot",
       };
     }
@@ -353,9 +370,13 @@ function cleanNotes(notes: string): string | undefined {
   return t.length > 0 ? t.slice(0, 500) : undefined;
 }
 
-/** Recursos do pedido: o plano do horário da busca, ou o que a pessoa fixou (manual). */
-function requestedResources(state: BookingState): Id<"schedResources">[] | undefined {
-  const fromSlot = state.slot && !state.slot.manual ? state.slot.resourceIds : [];
+/**
+ * Recursos do pedido: o plano do horário (da busca, de uma alternativa ou o que a prévia de "Outro horário"
+ * devolveu), senão o que a pessoa fixou. São sempre recursos que a pessoa VIU ou ESCOLHEU: por isso o envio vai com
+ * `allowResourceFallback: false` (o servidor recusa com alternativas em vez de trocar de sala em silêncio).
+ */
+export function requestedResources(state: Pick<BookingState, "slot" | "pinned">): Id<"schedResources">[] | undefined {
+  const fromSlot = state.slot?.resourceIds ?? [];
   const ids = fromSlot.length > 0 ? fromSlot : Object.values(state.pinned);
   return ids.length > 0 ? (ids as Id<"schedResources">[]) : undefined;
 }
@@ -369,6 +390,8 @@ export interface BookArgs {
   leadId?: Id<"leads">;
   conversationId?: Id<"conversations">;
   resourceIds?: Id<"schedResources">[];
+  /** `false` junto de `resourceIds`: o recurso pedido não é trocado por outro. */
+  allowResourceFallback?: false;
   force?: string[];
   notes?: string;
   idempotencyKey?: string;
@@ -402,7 +425,7 @@ export function buildBookArgs(input: {
     ...(who.contactId ? { contactId: who.contactId as Id<"contacts"> } : {}),
     ...(who.leadId ? { leadId: who.leadId as Id<"leads"> } : {}),
     ...(who.conversationId ? { conversationId: who.conversationId as Id<"conversations"> } : {}),
-    ...(resourceIds ? { resourceIds } : {}),
+    ...(resourceIds ? { resourceIds, allowResourceFallback: false as const } : {}),
     ...(force ? { force } : {}),
     ...(cleanNotes(state.notes) ? { notes: cleanNotes(state.notes) } : {}),
     ...(commit ? { idempotencyKey: state.idempotencyKey } : {}),
@@ -416,6 +439,7 @@ export interface RescheduleArgs {
   appointmentId: Id<"schedAppointments">;
   startTime: number;
   resourceIds?: Id<"schedResources">[];
+  allowResourceFallback?: false;
   force?: string[];
   idempotencyKey?: string;
 }
@@ -434,7 +458,7 @@ export function buildRescheduleArgs(input: {
     organizationId: input.organizationId as Id<"organizations">,
     appointmentId: input.appointmentId as Id<"schedAppointments">,
     startTime: input.state.slot.startTime,
-    ...(resourceIds ? { resourceIds } : {}),
+    ...(resourceIds ? { resourceIds, allowResourceFallback: false as const } : {}),
     ...(force ? { force } : {}),
     idempotencyKey: input.state.idempotencyKey,
   };
@@ -847,21 +871,62 @@ export function undoRefusedText(message: string): string {
 
 export type PreviewVerdict =
   | { kind: "duplicate"; appointmentId: string }
-  | { kind: "ok"; warnings: ViolationView[]; resourceNames: string[] }
+  | { kind: "ok"; warnings: ViolationView[]; resourceIds: string[]; resourceNames: string[] }
   | { kind: "warn"; warnings: ViolationView[] }
   | { kind: "blocked"; violations: ViolationView[]; alternatives: OfferedSlot[] };
 
+export interface PreviewResponse {
+  ok: boolean;
+  warnings: unknown;
+  violations: unknown;
+  alternatives: unknown;
+  plan: ReadonlyArray<{ resourceId?: string; resourceName?: string }>;
+  duplicateOf?: string;
+}
+
 /** Lê o resultado de `previewBooking` ("Outro horário"). */
 export function interpretPreview(
-  res: { ok: boolean; warnings: unknown; violations: unknown; alternatives: unknown; plan: ReadonlyArray<{ resourceName?: string }>; duplicateOf?: string },
+  res: PreviewResponse,
   ctx: { tz: string; now: number; durationMin?: number }
 ): PreviewVerdict {
   if (res.duplicateOf) return { kind: "duplicate", appointmentId: res.duplicateOf };
   if (res.ok) {
-    return { kind: "ok", warnings: parseViolations(res.warnings), resourceNames: res.plan.map((p) => p.resourceName ?? "").filter(Boolean) };
+    const names = res.plan.map((p) => p.resourceName ?? "");
+    return {
+      kind: "ok",
+      warnings: parseViolations(res.warnings),
+      resourceIds: res.plan.map((p) => p.resourceId ?? "").filter(Boolean),
+      // Nomes só valem se forem um por recurso do plano.
+      resourceNames: names.every(Boolean) ? names : [],
+    };
   }
   const violations = parseViolations(res.violations);
   const outcome = classifyViolations(violations);
   if (outcome.canForce) return { kind: "warn", warnings: outcome.warnings };
   return { kind: "blocked", violations, alternatives: readAlternatives(res.alternatives, ctx) };
+}
+
+/**
+ * Prévia de "Outro horário" com o plano REAL. A primeira chamada vai sem `force`; se só houver avisos (que a equipe
+ * pode aceitar), o servidor ainda não devolve o plano: a prévia é repetida aceitando esses avisos, só para saber em
+ * que sala e com quem o horário ficaria. A revisão mostra os avisos e o lugar verdadeiro; nada é gravado aqui.
+ */
+export async function previewManualSlot(
+  call: (force: string[] | undefined) => Promise<PreviewResponse>,
+  ctx: { tz: string; now: number; durationMin?: number }
+): Promise<PreviewVerdict> {
+  const first = interpretPreview(await call(undefined), ctx);
+  if (first.kind !== "warn") return first;
+  const codes = [...new Set(first.warnings.map((w) => w.code))];
+  const second = interpretPreview(await call(codes), ctx);
+  if (second.kind === "ok") return { ...second, warnings: second.warnings.length > 0 ? second.warnings : first.warnings };
+  // Aceitar os avisos revelou outro aviso ou um bloqueio: vale o resultado mais recente.
+  return second;
+}
+
+/** Texto do botão de confirmar: com aviso visível na revisão a pessoa está marcando "mesmo assim". */
+export function reviewSubmitLabel(slot: Pick<PickedSlot, "warnings"> | null, reschedule: boolean): string {
+  const anyway = (slot?.warnings ?? []).some(isForceable);
+  if (reschedule) return anyway ? BOOKING_COPY.review.submitRescheduleAnyway : BOOKING_COPY.review.submitReschedule;
+  return anyway ? BOOKING_COPY.review.submitAnyway : BOOKING_COPY.review.submit;
 }

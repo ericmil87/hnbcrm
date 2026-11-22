@@ -76,10 +76,10 @@ export function RuleWarningsDialog({
           <>
             <p className="text-sm text-text-secondary">{t.warnHint}</p>
             <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button type="button" variant="secondary" className="flex-1" onClick={onClose}>
+              <Button type="button" variant="secondary" className="sm:flex-1" onClick={onClose}>
                 {t.back}
               </Button>
-              <Button type="button" className="flex-1" loading={busy} onClick={() => onForce(outcome.forceCodes)}>
+              <Button type="button" className="sm:flex-1" loading={busy} onClick={() => onForce(outcome.forceCodes)}>
                 {VOCAB.scheduling.forceBook}
               </Button>
             </div>

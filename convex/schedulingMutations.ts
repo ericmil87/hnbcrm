@@ -266,12 +266,12 @@ async function previewRescheduleAs(
   ctx: MutationCtx,
   actor: SchedActor,
   now: number,
-  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[] }
+  args: { organizationId: Id<"organizations">; appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; startTime: number; resourceIds?: Id<"schedResources">[]; allowResourceFallback?: boolean; force?: string[] }
 ): Promise<BookResult> {
   await assertEntitiesInOrg(ctx, args.organizationId, { serviceId: args.serviceId, resourceIds: args.resourceIds });
   const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
   if (appointment.serviceId !== args.serviceId) throw new ConvexError("O serviço não é o do agendamento.");
-  return rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force, mode: "preview", now });
+  return rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force, mode: "preview", now });
 }
 
 /**
@@ -286,7 +286,7 @@ export const previewBooking = mutation({
     if (rescheduleAppointmentId) {
       const { actor, now } = await enter(ctx, args.organizationId);
       return flatten(
-        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force })
+        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force })
       );
     }
     const result = (await bookAsStaff(ctx, rest, "preview")) as BookResult;
@@ -313,6 +313,8 @@ export const rescheduleAppointment = mutation({
     appointmentId: v.id("schedAppointments"),
     startTime: v.number(),
     resourceIds: v.optional(v.array(v.id("schedResources"))),
+    /** `false` = o recurso pedido em `resourceIds` não é trocado por outro (ver `BookArgs.allowResourceFallback`). */
+    allowResourceFallback: v.optional(v.boolean()),
     force: v.optional(v.array(v.string())),
     idempotencyKey: v.optional(v.string()),
   },
@@ -322,7 +324,7 @@ export const rescheduleAppointment = mutation({
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
     await assertEntitiesInOrg(ctx, args.organizationId, { resourceIds: args.resourceIds });
     const result = committed(
-      await rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force, idempotencyKey: args.idempotencyKey, now })
+      await rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force, idempotencyKey: args.idempotencyKey, now })
     );
     return { appointmentId: result.appointmentId };
   },
