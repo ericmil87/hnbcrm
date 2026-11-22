@@ -118,3 +118,19 @@ describe("AgendaMonthView (celular)", () => {
     expect(screen.getByText("Nada marcado neste dia.")).toBeInTheDocument();
   });
 });
+
+describe("AgendaMonthView: '+N mais' abre a lista do dia (computador)", () => {
+  const many = Array.from({ length: 8 }, (_, i) => appt(`m${i}`, 10, 8 + i, `Pessoa ${i}`));
+  it("popover com todas as linhas; cada linha abre o painel; rodapé abre o dia", () => {
+    const h = setup({}, many);
+    fireEvent.click(screen.getByRole("button", { name: /a mais em ter, 10\/11/ }));
+    const pop = screen.getByRole("dialog", { name: /Horários de ter, 10\/11/ });
+    expect(within(pop).getAllByRole("button", { name: /Pessoa/ })).toHaveLength(8);
+    fireEvent.click(within(pop).getByRole("button", { name: /Pessoa 7/ }));
+    expect(h.onAppointmentClick).toHaveBeenCalledWith("m7");
+    expect(h.onOpenDay).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /a mais em ter, 10\/11/ }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Abrir o dia" }));
+    expect(h.onOpenDay).toHaveBeenCalledWith("2026-11-10");
+  });
+});

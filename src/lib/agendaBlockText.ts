@@ -84,3 +84,19 @@ export function quickStatusAction(status: string, expired: boolean): QuickStatus
   if (status === "confirmed") return { to: "checked_in" };
   return null;
 }
+
+export type WidthClass = "tiny" | "narrow" | "medium" | "wide";
+
+/** Largura do bloco em px -> quanto texto cabe sem quebrar palavra. Sem medida (testes, primeira pintura) = larga. */
+export function widthClass(widthPx: number | undefined): WidthClass {
+  if (widthPx === undefined || !Number.isFinite(widthPx)) return "wide";
+  if (widthPx < 56) return "tiny";
+  if (widthPx < 90) return "narrow";
+  if (widthPx < 130) return "medium";
+  return "wide";
+}
+
+/** Primeiro nome (blocos muito estreitos); o resto fica no tooltip e no cartão. */
+export function firstName(label: string): string {
+  return label.trim().split(/\s+/)[0] ?? label;
+}

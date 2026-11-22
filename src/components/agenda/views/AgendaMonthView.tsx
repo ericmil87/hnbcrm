@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalendarDays, Hourglass, Lock, TriangleAlert } from "lucide-react";
 import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { Button } from "@/components/ui/Button";
+import { Popover } from "@/components/ui/Popover";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { fillVocab } from "@/lib/agendaCopy";
 import { appointmentTooltip, placeText, statusFlags } from "@/lib/agendaBlockText";
@@ -106,6 +107,8 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
 } & Pick<AgendaMonthViewProps, "onOpenDay" | "onAppointmentClick" | "onInternalClick">) {
   const isToday = day.localDate === today;
   const { shown, hidden } = cutMonthLines(day.lines, maxLines, day.unseen);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLButtonElement>(null);
   const summary = `${shortDateLabel(day.localDate)}: ${daySummary(day)}`;
   return (
     <div
@@ -155,16 +158,57 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
         {hidden > 0 && (
           <li>
             <button
+              ref={moreRef}
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
-                onOpenDay(day.localDate);
+                setMoreOpen(true);
               }}
+              aria-haspopup="dialog"
               aria-label={fillVocab(d.moreAria, { n: hidden, data: shortDateLabel(day.localDate) })}
               className="flex h-[18px] w-full items-center rounded px-1 text-left text-xs font-medium leading-[18px] text-text-secondary hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
             >
               {fillVocab(d.more, { n: hidden })}
             </button>
+            {moreOpen && (
+              <Popover open onOpenChange={setMoreOpen} anchor={moreRef} side="bottom" align="start" role="dialog" aria-label={fillVocab(d.dayList, { data: shortDateLabel(day.localDate) })} className="w-72">
+                <div onClick={(e) => e.stopPropagation()}>
+                  <p className="border-b border-border px-3 py-2 text-sm font-semibold text-text-primary">{shortDateLabel(day.localDate)}</p>
+                  <ul className="max-h-72 space-y-px overflow-y-auto p-1">
+                    {day.lines.map((line) => (
+                      <li key={line.id}>
+                        <LineButton
+                          line={line}
+                          tz={tz}
+                          now={now}
+                          tone={tone}
+                          onAppointmentClick={(id) => {
+                            setMoreOpen(false);
+                            onAppointmentClick(id);
+                          }}
+                          onInternalClick={(it) => {
+                            setMoreOpen(false);
+                            onInternalClick(it);
+                          }}
+                        />
+                      </li>
+                    ))}
+                    {day.unseen > 0 && <li className="px-1 py-1 text-caption text-text-muted">{fillVocab(d.unlisted, { n: day.unseen })}</li>}
+                  </ul>
+                  <div className="flex justify-end border-t border-border p-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        setMoreOpen(false);
+                        onOpenDay(day.localDate);
+                      }}
+                    >
+                      {d.openDay}
+                    </Button>
+                  </div>
+                </div>
+              </Popover>
+            )}
           </li>
         )}
       </ul>

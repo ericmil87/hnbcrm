@@ -11,20 +11,41 @@ export const COLOR_SCHEMES = ["status", "recurso", "servico"] as const;
 export type ColorScheme = (typeof COLOR_SCHEMES)[number];
 
 export interface Tone {
-  /** Fundo suave + borda esquerda forte (classe do bloco). */
+  /** Fundo tingido + borda esquerda forte (classe do bloco). */
   block: string;
   /** Ponto colorido (linhas do mês, legenda). */
   dot: string;
+  /** Proposta aguardando aprovação: hachurado por cima da tinta mais clara. */
+  hatch?: boolean;
 }
 
+/** Hachura das propostas (tokens: o amarelo de aviso). */
+export const PENDING_HATCH =
+  "repeating-linear-gradient(135deg, rgb(var(--rgb-semantic-warning) / 0.2) 0 2px, transparent 2px 8px)";
+
+// 10 tons (`--rgb-cal-1..10`, um conjunto por tema). Classes literais para o Tailwind enxergá-las.
 const PALETTE: readonly Tone[] = [
-  { block: "border-l-4 border-semantic-info bg-semantic-info/15", dot: "bg-semantic-info" },
-  { block: "border-l-4 border-ai-500 bg-ai-500/15", dot: "bg-ai-500" },
-  { block: "border-l-4 border-semantic-warning bg-semantic-warning/15", dot: "bg-semantic-warning" },
-  { block: "border-l-4 border-brand-500 bg-brand-500/15", dot: "bg-brand-500" },
-  { block: "border-l-4 border-semantic-success bg-semantic-success/15", dot: "bg-semantic-success" },
-  { block: "border-l-4 border-semantic-error bg-semantic-error/15", dot: "bg-semantic-error" },
+  { block: "border-l-4 border-cal-1 bg-cal-1/25", dot: "bg-cal-1" },
+  { block: "border-l-4 border-cal-2 bg-cal-2/25", dot: "bg-cal-2" },
+  { block: "border-l-4 border-cal-3 bg-cal-3/25", dot: "bg-cal-3" },
+  { block: "border-l-4 border-cal-4 bg-cal-4/25", dot: "bg-cal-4" },
+  { block: "border-l-4 border-cal-5 bg-cal-5/25", dot: "bg-cal-5" },
+  { block: "border-l-4 border-cal-6 bg-cal-6/25", dot: "bg-cal-6" },
+  { block: "border-l-4 border-cal-7 bg-cal-7/25", dot: "bg-cal-7" },
+  { block: "border-l-4 border-cal-8 bg-cal-8/25", dot: "bg-cal-8" },
+  { block: "border-l-4 border-cal-9 bg-cal-9/25", dot: "bg-cal-9" },
+  { block: "border-l-4 border-cal-10 bg-cal-10/25", dot: "bg-cal-10" },
 ];
+
+/** Cor por situação (esquema padrão): fundo tingido e borda esquerda forte, também nos 4 temas. */
+const STATUS_BLOCK: Record<string, string> = {
+  pending_approval: "border-l-4 border-dashed border-semantic-warning bg-semantic-warning/10",
+  scheduled: "border-l-4 border-semantic-info bg-semantic-info/25",
+  confirmed: "border-l-4 border-semantic-success bg-semantic-success/25",
+  checked_in: "border-l-4 border-brand-500 bg-brand-500/25",
+  completed: "border-l-4 border-border-strong bg-surface-overlay",
+  no_show: "border-l-4 border-semantic-error bg-semantic-error/25",
+};
 
 export const PALETTE_SIZE = PALETTE.length;
 
@@ -61,19 +82,21 @@ export function appointmentTone(
   a: Pick<GridAppointment, "status" | "resources"> & { serviceId?: string },
   ctx: ToneContext
 ): Tone {
-  const dashed = a.status === "pending_approval" ? " border-dashed" : "";
+  const pending = a.status === "pending_approval";
+  // Proposta: tinta mais clara, borda tracejada e hachurado.
+  const tint = (block: string) => (pending ? block.replace("/25", "/10") + " border-dashed" : block);
   if (ctx.scheme === "status") {
-    return { block: statusMeta(a.status).blockClassName, dot: STATUS_DOT[a.status] ?? "bg-semantic-info" };
+    return { block: STATUS_BLOCK[a.status] ?? statusMeta(a.status).blockClassName, dot: STATUS_DOT[a.status] ?? "bg-semantic-info", hatch: pending };
   }
   if (ctx.scheme === "servico") {
     const t = toneAt(toneIndexOf(ctx.serviceOrder, a.serviceId));
-    return { block: t.block + dashed, dot: t.dot };
+    return { block: tint(t.block), dot: t.dot, hatch: pending };
   }
   // Recurso: o primeiro alocado na ordem da configuração (o que aparece primeiro nos filtros).
   const ids = a.resources.filter((r) => r.allocated).map((r) => r.resourceId as string);
   const first = ids.sort((x, y) => toneIndexOf(ctx.resourceOrder, x) - toneIndexOf(ctx.resourceOrder, y))[0];
   const t = toneAt(toneIndexOf(ctx.resourceOrder, first));
-  return { block: t.block + dashed, dot: t.dot };
+  return { block: tint(t.block), dot: t.dot, hatch: pending };
 }
 
 /** Legenda das cores: o que cada cor quer dizer no esquema escolhido (itens na ordem da configuração). */

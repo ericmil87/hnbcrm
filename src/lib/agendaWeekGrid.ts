@@ -13,16 +13,13 @@ import {
   type InternalItem,
   type MinuteSpan,
 } from "./agendaGrid";
-import { layoutOverlaps, type LayoutItem } from "./agendaLayout";
+import { layoutOverlaps, MIN_EVENT_MINUTES, type LayoutItem } from "./agendaLayout";
 import { isExpiredProposal } from "./agendaStatus";
 import { weekdayOf, zonedMinutes, zonedToday } from "./agendaZone";
 
-/**
- * Faixas lado a lado numa coluna de dia (estreita): até `FULL_LANES` sobrepostos aparecem todos; acima disso o grupo
- * mostra `LANES_WITH_MORE` faixas e uma ficha "+N" (que abre o dia), para os blocos não ficarem finos demais.
- */
-export const FULL_LANES = 3;
-export const LANES_WITH_MORE = 2;
+/** Faixas lado a lado visíveis por grupo de sobrepostos: 3 no computador, 2 no celular; o resto vira a ficha "+N". */
+export const LANES_DESKTOP = 3;
+export const LANES_MOBILE = 2;
 const DEFAULT_OPEN_START = 8 * 60;
 const DEFAULT_OPEN_END = 18 * 60;
 
@@ -38,22 +35,23 @@ export interface WeekResource {
 
 export type WeekItem =
   | { kind: "appointment"; id: string; startMin: number; endMin: number; appointment: GridAppointment; expired: boolean }
-  | { kind: "internal"; id: string; startMin: number; endMin: number; internal: InternalItem };
+  | { kind: "internal"; id: string; startMin: number; endMin: number; internal: InternalItem; dimmed: boolean };
 
 export interface WeekPlaced {
   item: WeekItem;
   column: number;
   columns: number;
+  /** Faixas que o bloco ocupa: expande para a direita enquanto não há vizinho no mesmo horário (como o Google). */
+  span: number;
 }
 
 export interface WeekOverflow {
   id: string;
-  /** Quantos blocos o chip esconde. */
+  /** Quantos blocos a ficha esconde. */
   hidden: number;
+  /** Onde ancorar: o fim do grupo. */
   startMin: number;
   endMin: number;
-  column: number;
-  columns: number;
 }
 
 export interface WeekDay {
@@ -63,6 +61,8 @@ export interface WeekDay {
   overflow: WeekOverflow[];
   /** Compromissos de dia inteiro (faixa no topo). */
   allDay: InternalItem[];
+  /** Ids dos de dia inteiro que o filtro de sala deixa esmaecidos. */
+  allDayDimmed: string[];
   /** Fora do expediente (esmaecido). */
   offHours: MinuteSpan[];
   /** Total de agendamentos + compromissos do dia (inclui os dentro de "+N"). */
@@ -84,28 +84,36 @@ export interface WeekModel {
 }
 
 export interface CappedWeek {
-  visible: LayoutItem[];
-  overflow: Array<{ clusterId: number; hiddenIds: string[]; startMin: number; endMin: number; column: number; columns: number }>;
+  visible: Array<LayoutItem & { span: number }>;
+  overflow: Array<{ clusterId: number; hiddenIds: string[]; startMin: number; endMin: number }>;
 }
 
-/** Corta os grupos de sobrepostos que passam de `FULL_LANES` em `LANES_WITH_MORE` faixas + a ficha "+N". */
-export function capWeekClusters(items: readonly LayoutItem[]): CappedWeek {
-  const visible: LayoutItem[] = [];
+const shownEnd = (i: { startMin: number; endMin: number }) => Math.max(i.endMin, i.startMin + MIN_EVENT_MINUTES);
+const overlaps = (a: { startMin: number; endMin: number }, b: { startMin: number; endMin: number }) => a.startMin < shownEnd(b) && b.startMin < shownEnd(a);
+
+/**
+ * Limita cada grupo de sobrepostos a `limit` faixas (o resto vira a ficha "+N", sem ocupar faixa) e faz cada bloco
+ * expandir para a direita sobre as faixas livres no seu horário (estilo Google).
+ */
+export function capWeekClusters(items: readonly LayoutItem[], limit: number): CappedWeek {
+  const kept: LayoutItem[] = [];
   const hidden = new Map<number, LayoutItem[]>();
   for (const i of items) {
-    if (i.columns <= FULL_LANES) visible.push(i);
-    else if (i.column < LANES_WITH_MORE) visible.push({ ...i, columns: LANES_WITH_MORE + 1 });
+    if (i.column < limit) kept.push({ ...i, columns: Math.min(i.columns, limit) });
     else hidden.set(i.clusterId, [...(hidden.get(i.clusterId) ?? []), i]);
   }
+  const visible = kept.map((i) => {
+    let span = 1;
+    while (i.column + span < i.columns && !kept.some((o) => o.clusterId === i.clusterId && o.column === i.column + span && overlaps(i, o))) span++;
+    return { ...i, span };
+  });
   return {
     visible,
     overflow: [...hidden.entries()].map(([clusterId, h]) => ({
       clusterId,
       hiddenIds: h.map((x) => x.id),
       startMin: Math.min(...h.map((x) => x.startMin)),
-      endMin: Math.max(...h.map((x) => x.endMin)),
-      column: LANES_WITH_MORE,
-      columns: LANES_WITH_MORE + 1,
+      endMin: Math.max(...h.map((x) => shownEnd(x))),
     })),
   };
 }
@@ -122,7 +130,7 @@ function matchesFilter(a: GridAppointment, filterId: string | null): boolean {
 
 /**
  * Compromisso da equipe com o filtro: "Todos" mostra tudo; um profissional mostra o que é dele (responsável ou
- * participante); sala e equipamento não têm compromisso da equipe.
+ * participante); sala e equipamento não têm compromisso da equipe. O que não casa não some: fica esmaecido.
  */
 function internalMatchesFilter(e: InternalItem, filter: WeekResource | undefined): boolean {
   if (!filter) return true;
@@ -144,6 +152,8 @@ export function buildWeekModel(input: {
   internal: readonly InternalItem[];
   resources: readonly WeekResource[];
   filterResourceId: string | null;
+  /** Faixas visíveis por grupo (padrão `LANES_DESKTOP`; celular `LANES_MOBILE`). */
+  maxLanes?: number;
 }): WeekModel {
   const { dates, tz, now } = input;
   const filter = input.filterResourceId ? input.resources.find((r) => r._id === input.filterResourceId) : undefined;
@@ -162,19 +172,21 @@ export function buildWeekModel(input: {
       if (span) items.push({ kind: "appointment", id: `appt:${a._id}`, startMin: span.startMin, endMin: span.endMin, appointment: a, expired: isExpiredProposal(a, now) });
     }
     const allDay: InternalItem[] = [];
+    const allDayDimmed: string[] = [];
     for (const e of filterInternalForDay(input.internal, localDate, tz)) {
-      if (!internalMatchesFilter(e, filter)) continue;
+      const dimmed = !internalMatchesFilter(e, filter);
       if (e.allDay) {
         allDay.push(e);
+        if (dimmed) allDayDimmed.push(e.id);
         continue;
       }
       const span = daySpan(e.startTime, e.endTime, localDate, tz);
-      if (span) items.push({ kind: "internal", id: `${e.source}:${e.id}`, startMin: span.startMin, endMin: span.endMin, internal: e });
+      if (span) items.push({ kind: "internal", id: `${e.source}:${e.id}`, startMin: span.startMin, endMin: span.endMin, internal: e, dimmed });
     }
     const byId = new Map(items.map((i) => [i.id, i]));
     const laid = layoutOverlaps(items.map((i) => ({ id: i.id, startMin: i.startMin, endMin: i.endMin })));
-    const { visible, overflow } = capWeekClusters(laid);
-    const placed: WeekPlaced[] = visible.map((l: LayoutItem) => ({ item: byId.get(l.id)!, column: l.column, columns: l.columns }));
+    const { visible, overflow } = capWeekClusters(laid, input.maxLanes ?? LANES_DESKTOP);
+    const placed: WeekPlaced[] = visible.map((l) => ({ item: byId.get(l.id)!, column: l.column, columns: l.columns, span: l.span }));
     for (const i of items) firstItemMin = firstItemMin === null ? i.startMin : Math.min(firstItemMin, i.startMin);
     if (items.length > 0 || allDay.length > 0) anyItem = true;
 
@@ -190,10 +202,9 @@ export function buildWeekModel(input: {
         hidden: o.hiddenIds.length,
         startMin: o.startMin,
         endMin: o.endMin,
-        column: o.column,
-        columns: o.columns,
       })),
       allDay,
+      allDayDimmed,
       offHours,
       count: items.length + allDay.length,
     };

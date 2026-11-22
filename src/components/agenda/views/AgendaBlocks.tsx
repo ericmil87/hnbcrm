@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/Button";
 import { Popover } from "@/components/ui/Popover";
 import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { appointmentTooltip, placeText, planBlock, quickStatusAction, statusFlags, timeRangeLabel, type StatusFlag } from "@/lib/agendaBlockText";
-import type { Tone } from "@/lib/agendaColors";
+import { appointmentTooltip, firstName, placeText, planBlock, quickStatusAction, statusFlags, timeRangeLabel, widthClass, type StatusFlag } from "@/lib/agendaBlockText";
+import { PENDING_HATCH, type Tone } from "@/lib/agendaColors";
 import { appointmentLabel, type GridAppointment, type InternalItem } from "@/lib/agendaGrid";
 import { originLabel } from "@/lib/agendaStatus";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
@@ -76,7 +76,20 @@ function useHoverCard(enabled: boolean) {
 
 const BASE = "absolute isolate overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-[15px] text-text-primary";
 /** Fundo opaco por baixo da cor suave: as linhas da grade não aparecem através do bloco. */
-const UNDERLAY = <span aria-hidden="true" className="absolute inset-0 -z-10 bg-surface-raised" />;
+function Underlay({ fill, hatch }: { fill?: string; hatch?: boolean }) {
+  return (
+    <>
+      <span aria-hidden="true" className="absolute inset-0 -z-10 bg-surface-raised" />
+      {fill && <span aria-hidden="true" className={cn("absolute inset-0 -z-10", fill)} style={hatch ? { backgroundImage: PENDING_HATCH } : undefined} />}
+    </>
+  );
+}
+
+/** Separa a classe do bloco em borda (fica no botão) e fundo `bg-*` (vai para a camada tingida sobre o fundo opaco). */
+function splitTone(block: string): { rest: string; fill: string } {
+  const parts = block.split(/\s+/).filter(Boolean);
+  return { rest: parts.filter((c) => !c.startsWith("bg-")).join(" "), fill: parts.filter((c) => c.startsWith("bg-")).join(" ") };
+}
 const FOCUS = "focus:outline-none focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-brand-500";
 
 function style(box: BlockBox): CSSProperties {
@@ -98,23 +111,24 @@ export interface AppointmentBlockProps {
   tone: Tone;
   /** Recurso da coluna: não se repete na linha "onde". */
   exceptResourceId?: string | null;
-  /** Faixas lado a lado neste trecho: com 3 ou mais o bloco é estreito (nome em até 2 linhas, só a hora de início). */
-  lanes?: number;
+  /** Largura do bloco em px (mede-se na grade): decide o texto sem nunca quebrar palavra. Ausente = larga. */
+  widthPx?: number;
   onOpen: (appointmentId: string) => void;
   quick?: QuickActions;
 }
 
 /** Bloco de um agendamento com cliente: o texto muda com a altura (cliente, horário, serviço, lugar). */
-export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, lanes = 1, onOpen, quick }: AppointmentBlockProps) {
+export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, widthPx, onOpen, quick }: AppointmentBlockProps) {
   const hoverable = useMediaQuery("(hover: hover)");
   const hc = useHoverCard(hoverable);
   const st = style(box);
   const plan = planBlock(Number(st.height));
-  const narrow = lanes >= 3;
-  const flags = statusFlags(a, expired).slice(0, narrow ? 1 : undefined);
+  const wc = widthClass(widthPx);
+  const flags = wc === "tiny" || wc === "narrow" ? [] : statusFlags(a, expired);
   const title = appointmentLabel(a);
   const tip = appointmentTooltip(a, tz, expired, VOCAB.scheduling.proposalExpired) + (conflict ? ` · ${g.conflictMark}` : "") + (over ? ` · ${g.overCapacity}` : "");
   const place = placeText(a, exceptResourceId);
+  const { rest: toneBorder, fill: toneFill } = splitTone(tone.block);
   return (
     <>
       <button
@@ -131,21 +145,30 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
         }}
         onMouseEnter={hc.show}
         onMouseLeave={hc.hide}
-        className={cn(BASE, FOCUS, "transition-[filter] hover:brightness-95 dark:hover:brightness-110", tone.block, narrow && "px-1 text-micro", over && "ring-2 ring-inset ring-semantic-error")}
+        className={cn(BASE, FOCUS, "transition-[filter] hover:brightness-95 dark:hover:brightness-110", toneBorder, (wc === "tiny" || wc === "narrow") && "px-1 text-micro", over && "ring-2 ring-inset ring-semantic-error")}
       >
-        {UNDERLAY}
-        {plan.compact ? (
+        <Underlay fill={toneFill} hatch={tone.hatch} />
+        {wc === "tiny" ? (
+          <span className="block truncate font-semibold">{firstName(title)}</span>
+        ) : plan.compact ? (
           <span className="flex items-center gap-1">
             <Flags flags={flags} />
             <span className="truncate">
-              <span className="font-semibold tabular-nums">{zonedTimeLabel(a.startTime, tz)}</span> <span className="font-semibold">{title}</span>
-              {!narrow && <span className="text-text-secondary">{a.serviceName ? ` · ${a.serviceName}` : ""}</span>}
+              {wc !== "narrow" && <span className="font-semibold tabular-nums">{zonedTimeLabel(a.startTime, tz)} </span>}
+              <span className="font-semibold">{wc === "narrow" ? firstName(title) : title}</span>
+              {wc === "wide" && <span className="text-text-secondary">{a.serviceName ? ` · ${a.serviceName}` : ""}</span>}
             </span>
           </span>
-        ) : narrow ? (
+        ) : wc === "narrow" ? (
           <>
-            <span className="line-clamp-2 block font-semibold [overflow-wrap:anywhere]">{title}</span>
-            {plan.rows.length > 2 && (
+            <span className="block truncate font-semibold">{title}</span>
+            {plan.rows.length > 2 && <span className="block truncate tabular-nums text-text-secondary">{zonedTimeLabel(a.startTime, tz)}</span>}
+          </>
+        ) : wc === "medium" ? (
+          <>
+            {/* Até 2 linhas, quebrando só em espaço; a hora só aparece inteira. */}
+            <span className={cn("block font-semibold [overflow-wrap:normal]", plan.rows.length > 2 ? "line-clamp-2" : "truncate")}>{title}</span>
+            {plan.rows.length > 3 && (
               <span className="flex items-center gap-1 tabular-nums text-text-secondary">
                 {zonedTimeLabel(a.startTime, tz)}
                 <Flags flags={flags} />
@@ -251,8 +274,10 @@ export function AppointmentHoverCard({
 
 export interface InternalBlockProps {
   item: InternalItem;
-  /** Faixas lado a lado neste trecho (3 ou mais = bloco estreito). */
-  lanes?: number;
+  /** Largura do bloco em px; ausente = larga. */
+  widthPx?: number;
+  /** Compromisso fora do filtro da Semana: fica esmaecido. */
+  muted?: boolean;
   /** Arrastar para outro horário (só computador, só compromisso editável): recebe o início do gesto. */
   onDragStart?: (e: React.PointerEvent<HTMLButtonElement>, blockTopPx: number) => void;
   /** Está sendo arrastado (fica esmaecido onde estava). */
@@ -263,8 +288,9 @@ export interface InternalBlockProps {
 }
 
 /** Bloco de compromisso ou tarefa da equipe (tracejado em roxo, como no resto da Agenda). */
-export function InternalBlock({ item: e, tz, box, lanes = 1, onDragStart, dragging, onOpen }: InternalBlockProps) {
-  const narrow = lanes >= 3;
+export function InternalBlock({ item: e, tz, box, widthPx, muted, onDragStart, dragging, onOpen }: InternalBlockProps) {
+  const wc = widthClass(widthPx);
+  const narrow = wc === "tiny" || wc === "narrow";
   const st = style(box);
   const plan = planBlock(Number(st.height));
   const Icon = e.source === "task" ? CheckSquare : CalendarDays;
@@ -286,24 +312,33 @@ export function InternalBlock({ item: e, tz, box, lanes = 1, onDragStart, draggi
       className={cn(
         BASE,
         FOCUS,
-        "border border-dashed border-ai-500 bg-ai-500/10 transition-[filter] hover:brightness-95 dark:hover:brightness-110",
+        "border border-dashed border-ai-500 transition-[filter] hover:brightness-95 dark:hover:brightness-110",
         narrow && "px-1 text-micro",
+        muted && "opacity-50",
         onDragStart && "cursor-grab touch-none active:cursor-grabbing",
         dragging && "opacity-40"
       )}
     >
-      {UNDERLAY}
-      {plan.compact ? (
+      <Underlay fill="bg-ai-500/20" />
+      {wc === "tiny" ? (
+        <span className="block truncate font-semibold">{firstName(e.title)}</span>
+      ) : plan.compact ? (
         <span className="flex items-center gap-1">
-          <Icon size={12} className="shrink-0 text-ai-400" aria-hidden="true" />
+          {!narrow && <Icon size={12} className="shrink-0 text-ai-400" aria-hidden="true" />}
           <span className="truncate">
-            <span className="font-semibold tabular-nums">{time}</span> <span className="font-semibold">{e.title}</span>
+            {!narrow && <span className="font-semibold tabular-nums">{time} </span>}
+            <span className="font-semibold">{narrow ? firstName(e.title) : e.title}</span>
           </span>
         </span>
       ) : narrow ? (
         <>
-          <span className="line-clamp-2 block font-semibold [overflow-wrap:anywhere]">{e.title}</span>
+          <span className="block truncate font-semibold">{e.title}</span>
           {plan.rows.length > 2 && <span className="block truncate tabular-nums text-text-secondary">{time}</span>}
+        </>
+      ) : wc === "medium" ? (
+        <>
+          <span className={cn("block font-semibold [overflow-wrap:normal]", plan.rows.length > 2 ? "line-clamp-2" : "truncate")}>{e.title}</span>
+          {plan.rows.length > 3 && <span className="block truncate tabular-nums text-text-secondary">{time}</span>}
         </>
       ) : (
         <>

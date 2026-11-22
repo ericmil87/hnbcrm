@@ -38,7 +38,7 @@ import { buildMonthGrid, buildMonthLines, monthGridDates } from "@/lib/agendaMon
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
 import { DENSITY_HOUR_PX, readPrefs, writePrefs, type AgendaPrefs, type Density } from "@/lib/agendaPrefs";
 import type { ColorScheme, ToneContext } from "@/lib/agendaColors";
-import { buildWeekModel, type WeekResource } from "@/lib/agendaWeekGrid";
+import { buildWeekModel, LANES_DESKTOP, LANES_MOBILE, type WeekResource } from "@/lib/agendaWeekGrid";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import {
   dateKeyParam,
@@ -302,9 +302,10 @@ export function AgendaPageView() {
             internal: allInternal,
             resources: activeResources as unknown as WeekResource[],
             filterResourceId: weekFilter,
+            maxLanes: isMobile ? LANES_MOBILE : LANES_DESKTOP,
           })
         : null,
-    [week, weekDates, tz, now, apptsInRange, allInternal, activeResources, weekFilter]
+    [week, weekDates, tz, now, apptsInRange, allInternal, activeResources, weekFilter, isMobile]
   );
   const dayStatus = useMemo(() => {
     const out: Record<string, { closed: number; all: boolean }> = {};

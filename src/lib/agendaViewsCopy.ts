@@ -50,8 +50,9 @@ export const VIEWS_COPY = {
     },
     month: {
       more: "+{n} mais",
-      moreAria: "{n} a mais em {data}: abrir o dia",
+      moreAria: "{n} a mais em {data}: ver a lista",
       openDay: "Abrir o dia",
+      unlisted: "+{n} não listados: abra o dia para ver todos",
       dayList: "Horários de {data}",
       emptyDay: "Nada marcado neste dia.",
       closedDay: "Dia fechado",

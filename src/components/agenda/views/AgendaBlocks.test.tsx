@@ -81,12 +81,33 @@ describe("AppointmentBlock: texto por altura", () => {
     expect(b.querySelector('svg.lucide-bot')).not.toBeNull();
     expect(b).toHaveTextContent("Aguardando aprovação");
   });
-  it("faixa estreita (3 faixas): nome em até 2 linhas e só a hora de início", () => {
-    mount({}, 100, { lanes: 3 });
+  it("nunca quebra palavra: bloco estreito mostra o nome em uma linha com reticências, sem faixa de horário completa", () => {
+    mount({}, 100, { widthPx: 70 });
+    const b = screen.getByRole("button");
+    const title = b.querySelector(".truncate.font-semibold");
+    expect(title).toHaveTextContent("Maria Silva");
+    expect(b.querySelector(".line-clamp-2")).toBeNull();
+    expect(b.textContent).not.toContain("11:00 – 11:50");
+    expect(b.className).not.toContain("[overflow-wrap:anywhere]");
+  });
+  it("muito estreito (< 56 px): só o primeiro nome; o resto fica no tooltip", () => {
+    mount({}, 100, { widthPx: 40 });
+    const b = screen.getByRole("button");
+    expect(b.textContent).toBe("Maria");
+    expect(b.getAttribute("title")).toContain("Maria Silva");
+    mount({}, 28, { widthPx: 40 });
+    expect(screen.getAllByRole("button").at(-1)!.textContent).toBe("Maria");
+  });
+  it("largura média e bloco alto: até 2 linhas quebrando só em espaço, e a hora de início inteira", () => {
+    mount({}, 100, { widthPx: 110 });
     const b = screen.getByRole("button");
     expect(b.querySelector(".line-clamp-2")).toHaveTextContent("Maria Silva");
-    expect(b.textContent).not.toContain("11:00 – 11:50");
+    expect(b.querySelector(".line-clamp-2")!.className).toContain("[overflow-wrap:normal]");
     expect(b).toHaveTextContent("11:00");
+  });
+  it("proposta aguardando: hachurado e tinta clara", () => {
+    mount({ status: "pending_approval" }, 60, { tone: { block: "border-l-4 border-dashed bg-semantic-warning/10", dot: "x", hatch: true } });
+    expect(screen.getByRole("button").querySelector("[style*=\"repeating-linear-gradient\"]")).not.toBeNull();
   });
   it("clique abre o painel e não propaga", () => {
     const onOpen = mount({}, 60);

@@ -1,6 +1,7 @@
 import { AlertTriangle, CalendarDays, DoorOpen, Lock, MoreVertical, Plus, UserRound } from "lucide-react";
 import { useLayoutEffect, useRef } from "react";
 import type { CSSProperties, MouseEvent } from "react";
+import { useColumnWidth } from "./useColumnWidth";
 import { AppointmentBlock, InternalBlock, type BlockBox, type QuickActions } from "./AgendaBlocks";
 import { VacancyIndicator } from "@/components/agenda/VacancyIndicator";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
@@ -194,6 +195,9 @@ export function ResourceDayGrid({
   const hours = hourLabels(model.window);
   const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(${columns.length}, minmax(${visibleKeys ? "0px" : "10rem"}, 1fr))` };
   const scroller = useRef<HTMLDivElement>(null);
+  const colW = useColumnWidth(scroller, "[data-col]", columns.length);
+  // Largura do bloco = faixa da coluna (menos a folga); decide o texto sem quebrar palavra.
+  const widthOf = (p: PlacedItem) => (colW === undefined ? undefined : colW / p.columns - 4);
 
   // Posição inicial: começo do expediente (ou "agora"); só quando o dia, o agrupamento ou a densidade mudam.
   useLayoutEffect(() => {
@@ -238,6 +242,7 @@ export function ResourceDayGrid({
                 key={`col:${col.key}`}
                 role="group"
                 aria-label={col.label}
+                data-col=""
                 className={cn("relative border-l border-border-subtle", canBook && !col.closed && col.kind !== "internal" && "cursor-pointer")}
                 style={{ height }}
                 onClick={(e) => clickColumn(col, e)}
@@ -314,7 +319,7 @@ export function ResourceDayGrid({
                     );
                   }
                   if (item.kind === "internal") {
-                    return <InternalBlock key={`blk:${item.id}`} item={item.internal} tz={tz} box={box} lanes={p.columns} onOpen={onInternalClick} />;
+                    return <InternalBlock key={`blk:${item.id}`} item={item.internal} tz={tz} box={box} widthPx={widthOf(p)} onOpen={onInternalClick} />;
                   }
                   const a = item.appointment;
                   return (
@@ -328,7 +333,7 @@ export function ResourceDayGrid({
                       box={box}
                       tone={appointmentTone(a, tone)}
                       exceptResourceId={col.resource?._id ?? null}
-                      lanes={p.columns}
+                      widthPx={widthOf(p)}
                       onOpen={onAppointmentClick}
                       quick={quick}
                     />

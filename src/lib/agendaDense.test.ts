@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { appointmentTooltip, compactText, COMPACT_MAX_PX, placeText, planBlock, statusFlags, timeRangeLabel } from "./agendaBlockText";
+import { appointmentTooltip, compactText, firstName, widthClass, COMPACT_MAX_PX, placeText, planBlock, statusFlags, timeRangeLabel } from "./agendaBlockText";
 import { appointmentTone, PALETTE_SIZE, toneAt, toneIndexOf } from "./agendaColors";
 import { initialScrollMinute, scrollTopFor, visibleHours } from "./agendaScroll";
 import { DENSITY_HOUR_PX, PREFS_KEY, readPrefs, writePrefs } from "./agendaPrefs";
 import { buildMonthLines, cutMonthLines, monthMaxLines, unseenCount } from "./agendaMonthLines";
-import { buildWeekModel, FULL_LANES, LANES_WITH_MORE, type WeekResource } from "./agendaWeekGrid";
+import { buildWeekModel, LANES_DESKTOP, LANES_MOBILE, type WeekResource } from "./agendaWeekGrid";
 import type { GridAppointment, InternalItem } from "./agendaGrid";
 
 const TZ = "America/Sao_Paulo";
@@ -217,26 +217,59 @@ describe("Semana", () => {
     });
     expect(buildWeekModel({ ...base, appointments: [a], internal: [] }).days[3].placed).toHaveLength(1);
   });
-  it("até 3 sobrepostos aparecem todos; acima disso 2 faixas e a ficha +N", () => {
-    const three = Array.from({ length: FULL_LANES }, (_, i) => appt(`t${i}`, 25, 10));
+  it("até 3 sobrepostos aparecem todos; acima disso 3 faixas e uma ficha +N que não ocupa faixa", () => {
+    const three = Array.from({ length: LANES_DESKTOP }, (_, i) => appt(`t${i}`, 25, 10));
     const d3 = buildWeekModel({ ...base, appointments: three, internal: [] }).days[2];
     expect(d3.placed.map((p) => p.columns)).toEqual([3, 3, 3]);
     expect(d3.overflow).toHaveLength(0);
-    const many = Array.from({ length: 6 }, (_, i) => appt(`m${i}`, 25, 10));
+    const many = Array.from({ length: 7 }, (_, i) => appt(`m${i}`, 25, 10));
     const day = buildWeekModel({ ...base, appointments: many, internal: [] }).days[2];
-    expect(day.placed).toHaveLength(LANES_WITH_MORE);
-    expect(day.placed.every((p) => p.columns === LANES_WITH_MORE + 1)).toBe(true);
+    expect(day.placed).toHaveLength(LANES_DESKTOP);
+    expect(day.placed.every((p) => p.columns === LANES_DESKTOP)).toBe(true);
     expect(day.overflow).toHaveLength(1);
-    expect(day.overflow[0]).toMatchObject({ hidden: many.length - LANES_WITH_MORE, column: LANES_WITH_MORE, columns: LANES_WITH_MORE + 1 });
-    expect(day.count).toBe(6);
+    expect(day.overflow[0].hidden).toBe(many.length - LANES_DESKTOP);
+    expect(day.count).toBe(7);
+  });
+  it("celular: 2 faixas por grupo", () => {
+    const many = Array.from({ length: 5 }, (_, i) => appt(`m${i}`, 25, 10));
+    const day = buildWeekModel({ ...base, maxLanes: LANES_MOBILE, appointments: many, internal: [] }).days[2];
+    expect(day.placed).toHaveLength(2);
+    expect(day.overflow[0].hidden).toBe(3);
+  });
+  it("estilo Google: o bloco expande para a direita enquanto não há vizinho no horário", () => {
+    // Longo 10:00-12:00 ao lado de dois curtos empilhados (10:00 e 11:00) na 2ª faixa.
+    const long = appt("long", 25, 10, 120);
+    const s1 = appt("s1", 25, 10);
+    const s2 = appt("s2", 25, 11);
+    const lone = appt("lone", 25, 14);
+    const day = buildWeekModel({ ...base, appointments: [long, s1, s2, lone], internal: [] }).days[2];
+    const by = (id: string) => day.placed.find((p) => p.item.id === `appt:${id}`)!;
+    expect(by("long")).toMatchObject({ column: 0, columns: 2, span: 1 });
+    expect(by("s1")).toMatchObject({ column: 1, span: 1 });
+    expect(by("lone")).toMatchObject({ columns: 1, span: 1 });
+    // Três faixas no começo; D (10:00) entra na 2ª faixa e, como a 3ª está livre no horário dele, ocupa as duas.
+    const A = appt("A", 25, 9, 120);
+    const B = appt("B", 25, 9, 60);
+    const C = appt("C", 25, 9, 60);
+    const D = appt("D", 25, 10, 60);
+    const day2 = buildWeekModel({ ...base, appointments: [A, B, C, D], internal: [] }).days[2];
+    const by2 = (id: string) => day2.placed.find((p) => p.item.id === `appt:${id}`)!;
+    expect(by2("D")).toMatchObject({ column: 1, columns: 3, span: 2 });
+    expect(by2("A")).toMatchObject({ column: 0, span: 1 });
+    expect(by2("C").span).toBe(1);
   });
   it("filtro por recurso: só o que é dele; compromisso só do profissional dono; sala não mostra compromisso", () => {
     const appts = [appt("a", 26, 9), appt("b", 26, 12, 60, { resources: [{ resourceId: "p1" as never, role: "person", name: "Ana", allocated: true }] })];
     const evs = [internalItem("e1", 26, 15, { memberIds: ["m1"] }), internalItem("e2", 26, 16, { memberIds: ["m2"] })];
+    const dimmedOf = (d: ReturnType<typeof buildWeekModel>["days"][number]) =>
+      d.placed.filter((p) => p.item.kind === "internal" && p.item.dimmed).map((p) => p.item.id).sort();
+    // Compromissos que não casam com o filtro não somem: ficam esmaecidos.
     const room = buildWeekModel({ ...base, filterResourceId: "r1", appointments: appts, internal: evs }).days[3];
-    expect(room.placed.map((p) => p.item.id)).toEqual(["appt:a"]);
+    expect(room.placed.filter((p) => p.item.kind === "appointment").map((p) => p.item.id)).toEqual(["appt:a"]);
+    expect(dimmedOf(room)).toEqual(["event:e1", "event:e2"]);
     const person = buildWeekModel({ ...base, filterResourceId: "p1", appointments: appts, internal: evs }).days[3];
-    expect(person.placed.map((p) => p.item.id).sort()).toEqual(["appt:b", "event:e1"]);
+    expect(person.placed.filter((p) => p.item.kind === "appointment").map((p) => p.item.id)).toEqual(["appt:b"]);
+    expect(dimmedOf(person)).toEqual(["event:e2"]);
     expect(buildWeekModel({ ...base, appointments: appts, internal: evs }).days[3].placed).toHaveLength(4);
   });
   it("compromisso de dia inteiro vai para a faixa do topo", () => {
@@ -288,5 +321,33 @@ describe("grade do mês", () => {
     expect(d26).toMatchObject({ inMonth: true, unseen: 0, total: 3, pending: 2, someClosed: true, allClosed: false });
     const cut = buildMonthGrid({ date: "2026-11-26", cells, lines, truncated: true }).flat().find((x) => x.localDate === "2026-11-26")!;
     expect(cut).toMatchObject({ unseen: 7, total: 10 });
+  });
+});
+
+describe("largura do bloco e paleta", () => {
+  it("classes de largura: nunca depende de quebrar palavra", () => {
+    expect(widthClass(40)).toBe("tiny");
+    expect(widthClass(55.9)).toBe("tiny");
+    expect(widthClass(56)).toBe("narrow");
+    expect(widthClass(89)).toBe("narrow");
+    expect(widthClass(100)).toBe("medium");
+    expect(widthClass(130)).toBe("wide");
+    expect(widthClass(undefined)).toBe("wide");
+    expect(firstName("  Maria  Silva ")).toBe("Maria");
+  });
+  it("10 tons distintos, cada um com classe de borda, fundo e ponto próprios", () => {
+    expect(PALETTE_SIZE).toBe(10);
+    const tones = Array.from({ length: PALETTE_SIZE }, (_, i) => toneAt(i));
+    expect(new Set(tones.map((t) => t.dot)).size).toBe(10);
+    expect(tones.every((t) => /border-cal-\d+ bg-cal-\d+\/25/.test(t.block))).toBe(true);
+  });
+  it("proposta: tinta mais clara, tracejada e hachurada em qualquer esquema", () => {
+    const a = { status: "pending_approval", resources: [], serviceId: "s1" } as never;
+    for (const scheme of ["status", "recurso", "servico"] as const) {
+      const t = appointmentTone(a, { scheme, resourceOrder: [], serviceOrder: ["s1"] });
+      expect(t.hatch).toBe(true);
+      expect(t.block).toContain("border-dashed");
+      expect(t.block).not.toContain("/25");
+    }
   });
 });

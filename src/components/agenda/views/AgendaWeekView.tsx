@@ -4,6 +4,7 @@ import { CalendarDays, Lock } from "lucide-react";
 import { AppointmentBlock, InternalBlock, type BlockBox, type QuickActions } from "./AgendaBlocks";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { isCalendarItemDraggable } from "@/lib/agendaPermissions";
+import { useColumnWidth } from "./useColumnWidth";
 import { appointmentTone, type ToneContext } from "@/lib/agendaColors";
 import { blockGeometry, gridHeight, hourLabels, HOUR_PX, minuteFromOffset, nowLineTop, type InternalItem } from "@/lib/agendaGrid";
 import { initialScrollMinute, scrollTopFor } from "@/lib/agendaScroll";
@@ -60,9 +61,11 @@ interface DragState {
   target: { localDate: string; minute: number } | null;
 }
 
-function boxOf(p: Pick<WeekPlaced, "column" | "columns">, startMin: number, endMin: number, hourPx: number): BlockBox {
+/** Posição do bloco: faixa `column` de `columns`, ocupando `span` faixas (expande sobre o espaço livre à direita). */
+function boxOf(p: { column: number; columns: number; span?: number }, startMin: number, endMin: number, hourPx: number): BlockBox {
   const { top, height } = blockGeometry(startMin, endMin, WINDOW.startHour, hourPx);
-  return { top, height, left: `calc(${(p.column / p.columns) * 100}% + 1px)`, width: `calc(${100 / p.columns}% - 3px)` };
+  const span = p.span ?? 1;
+  return { top, height, left: `calc(${(p.column / p.columns) * 100}% + 1px)`, width: `calc(${(span / p.columns) * 100}% - 3px)` };
 }
 
 /**
@@ -90,8 +93,12 @@ export function AgendaWeekView({
 }: AgendaWeekViewProps) {
   const height = gridHeight(WINDOW, hourPx);
   const hours = hourLabels(WINDOW);
-  const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(7, minmax(${compact ? "11rem" : "6.5rem"}, 1fr))` };
+  // Celular: 3 dias por tela (a grade tem 7/3 da largura e a rolagem na horizontal para em cada dia).
+  const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(7, minmax(${compact ? "0px" : "6.5rem"}, 1fr))` };
+  const groupStyle: CSSProperties | undefined = compact ? { width: `calc(${GUTTER} + (100% - ${GUTTER}) * 7 / 3)` } : undefined;
   const scroller = useRef<HTMLDivElement>(null);
+  const colW = useColumnWidth(scroller, "[data-day]", compact);
+  const widthOf = (p: { columns: number; span: number }) => (colW === undefined ? undefined : (colW * p.span) / p.columns - 3);
   const nowTop = nowLineTop(model.nowMin, WINDOW, hourPx);
   const hasAllDay = model.days.some((d) => d.allDay.length > 0);
   const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)");
@@ -183,8 +190,8 @@ export function AgendaWeekView({
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-border bg-surface-raised", className)}>
-      <div ref={scroller} data-grid-scroller className="relative min-h-0 flex-1 overflow-auto overscroll-contain">
-        <div role="group" aria-label={w.ariaLabel} className="min-w-fit">
+      <div ref={scroller} data-grid-scroller className={cn("relative min-h-0 flex-1 overflow-auto overscroll-contain", compact && "snap-x snap-mandatory scroll-pl-[2.75rem]")}>
+        <div role="group" aria-label={w.ariaLabel} className={compact ? undefined : "min-w-fit"} style={groupStyle}>
           <div className="sticky top-0 z-30 border-b border-border bg-surface-raised">
             <div className="grid" style={template}>
               <div aria-hidden="true" className="sticky left-0 z-20 bg-surface-raised" />
@@ -197,7 +204,7 @@ export function AgendaWeekView({
                     type="button"
                     onClick={() => onOpenDay(d.localDate)}
                     aria-current={d.isToday ? "date" : undefined}
-                    className="flex min-h-12 flex-col items-center justify-center gap-0.5 border-l border-border-subtle px-1 py-1 hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500"
+                    className={cn("flex min-h-12 snap-start flex-col items-center justify-center gap-0.5 border-l border-border-subtle px-1 py-1 hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-500")}
                   >
                     <span className={cn("text-micro font-medium uppercase tracking-wide", d.isToday ? "text-brand-500 light-theme:text-brand-600" : "text-text-muted")}>{dow}</span>
                     <span
@@ -236,7 +243,10 @@ export function AgendaWeekView({
                           type="button"
                           title={e.title}
                           onClick={() => onInternalClick(e)}
-                          className="flex min-h-5 w-full items-center gap-1 rounded-md border border-dashed border-ai-500 bg-ai-500/10 px-1 text-left text-xs text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                          className={cn(
+                            "flex min-h-5 w-full items-center gap-1 rounded-md border border-dashed border-ai-500 bg-ai-500/20 px-1 text-left text-xs text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500",
+                            d.allDayDimmed.includes(e.id) && "opacity-50"
+                          )}
                         >
                           <CalendarDays size={11} className="shrink-0 text-ai-400" aria-hidden="true" />
                           <span className="truncate">{e.title}</span>
@@ -267,7 +277,7 @@ export function AgendaWeekView({
                   aria-label={shortDateLabel(d.localDate)}
                   data-day={d.localDate}
                   data-today={d.isToday ? "true" : undefined}
-                  className={cn("relative border-l border-border-subtle", bookable && "cursor-pointer", d.isToday && "bg-brand-500/5")}
+                  className={cn("relative snap-start border-l border-border-subtle", bookable && "cursor-pointer", d.isToday && "bg-brand-500/5")}
                   style={{ height }}
                   onClick={(e) => clickDay(d.localDate, e)}
                 >
@@ -292,7 +302,8 @@ export function AgendaWeekView({
                           item={ev}
                           tz={tz}
                           box={box}
-                          lanes={p.columns}
+                          widthPx={widthOf(p)}
+                          muted={p.item.dimmed}
                           dragging={drag?.active && drag.item.id === ev.id}
                           onDragStart={canDrag(ev) ? (pe, top) => startDrag(ev, pe, top) : undefined}
                           onOpen={openInternal}
@@ -309,14 +320,15 @@ export function AgendaWeekView({
                         tz={tz}
                         box={box}
                         tone={appointmentTone(a, tone)}
-                        lanes={p.columns}
+                        widthPx={widthOf(p)}
                         onOpen={onAppointmentClick}
                         quick={quick}
                       />
                     );
                   })}
                   {d.overflow.map((o) => {
-                    const box = boxOf(o, o.startMin, o.endMin, hourPx);
+                    // Ficha pequena no fim do grupo (não ocupa faixa); abre o dia.
+                    const bottom = (o.endMin / 60) * hourPx;
                     return (
                       <button
                         key={o.id}
@@ -327,8 +339,8 @@ export function AgendaWeekView({
                           e.stopPropagation();
                           onOpenDay(d.localDate);
                         }}
-                        style={{ top: box.top, height: Math.max(box.height - 2, 20), left: box.left, width: box.width }}
-                        className="absolute flex items-start justify-center overflow-hidden rounded-md border border-border bg-surface-overlay px-0.5 py-0.5 text-xs font-semibold text-text-secondary hover:bg-surface-sunken focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                        style={{ top: Math.max(0, bottom - 20) }}
+                        className="absolute right-0.5 z-20 flex h-[18px] min-w-[26px] items-center justify-center rounded-full border border-border bg-surface-raised px-1.5 text-micro font-semibold text-text-primary shadow-card hover:bg-surface-overlay focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
                       >
                         {fillVocab(blk.moreLabel, { n: o.hidden })}
                       </button>
