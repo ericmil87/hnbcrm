@@ -125,6 +125,17 @@ describe("AppointmentBlock: rótulo do bloco estreito", () => {
     mount({ contactName: "Teste Ana" }, 28, { widthPx: 50, name: { text: "Teste A.", withTime: false } });
     expect(screen.getByRole("button")).toHaveTextContent("Teste A.");
   });
+  it("bloco muito estreito e alto quebra em até 2 linhas só em espaço (a inicial do sobrenome não é cortada); o curto trunca", () => {
+    const { unmount } = render(
+      <AppointmentBlock appointment={{ ...base, contactName: "Teste Ana" }} expired={false} conflict={false} tz={TZ} box={{ top: 0, height: 56, left: "0px", width: "100%" }} tone={tone} widthPx={50} name={{ text: "Teste A.", withTime: false }} onOpen={vi.fn()} />
+    );
+    const tall = screen.getByRole("button").querySelector(".line-clamp-2");
+    expect(tall).toHaveTextContent("Teste A.");
+    expect(tall!.className).toContain("[overflow-wrap:normal]");
+    unmount();
+    mount({ contactName: "Teste Ana" }, 28, { widthPx: 50, name: { text: "Teste A.", withTime: false } });
+    expect(screen.getByRole("button").querySelector(".line-clamp-2")).toBeNull();
+  });
   it("sem rótulo calculado, volta ao primeiro nome", () => {
     mount({ contactName: "Teste Ana" }, 28, { widthPx: 50 });
     expect(screen.getByRole("button").textContent).toBe("Teste");
