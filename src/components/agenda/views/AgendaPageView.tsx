@@ -61,6 +61,7 @@ import { TAB_ROUTES } from "@/lib/routes";
 import { booleanParam } from "@/lib/searchParamState";
 import { VOCAB } from "@/lib/vocab";
 import { AgendaToolbar, type WeekFilterOption } from "./AgendaToolbar";
+import { AgendaColorLegend } from "./AgendaColorLegend";
 import { AgendaDayList } from "./AgendaDayList";
 import type { QuickActions } from "./AgendaBlocks";
 import type { ColumnAction } from "./ResourceDayGrid";
@@ -825,6 +826,10 @@ export function AgendaPageView() {
           renderDay()
         )}
       </div>
+
+      {(week || month || (view === "dia" && hasColumns)) && (
+        <AgendaColorLegend scheme={color} resources={activeResources} services={activeServices} />
+      )}
 
       {canBookDay && (
         <button

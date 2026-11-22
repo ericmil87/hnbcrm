@@ -4,6 +4,7 @@
  * As classes são literais completas para o Tailwind enxergá-las.
  */
 import { statusMeta } from "./agendaStatus";
+import { VOCAB } from "./vocab";
 import type { GridAppointment } from "./agendaGrid";
 
 export const COLOR_SCHEMES = ["status", "recurso", "servico"] as const;
@@ -73,4 +74,21 @@ export function appointmentTone(
   const first = ids.sort((x, y) => toneIndexOf(ctx.resourceOrder, x) - toneIndexOf(ctx.resourceOrder, y))[0];
   const t = toneAt(toneIndexOf(ctx.resourceOrder, first));
   return { block: t.block + dashed, dot: t.dot };
+}
+
+/** Legenda das cores: o que cada cor quer dizer no esquema escolhido (itens na ordem da configuração). */
+export function colorLegend(
+  scheme: ColorScheme,
+  resources: ReadonlyArray<{ _id: string; name: string }>,
+  services: ReadonlyArray<{ _id: string; name: string }>
+): Array<{ id: string; label: string; dot: string }> {
+  if (scheme === "status") {
+    return (["scheduled", "confirmed", "checked_in", "pending_approval", "completed"] as const).map((st) => ({
+      id: st,
+      label: VOCAB.scheduling.status[st],
+      dot: STATUS_DOT[st],
+    }));
+  }
+  const list = scheme === "recurso" ? resources : services;
+  return list.map((x, i) => ({ id: x._id, label: x.name, dot: toneAt(i).dot }));
 }

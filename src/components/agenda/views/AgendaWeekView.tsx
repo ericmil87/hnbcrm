@@ -90,7 +90,7 @@ export function AgendaWeekView({
 }: AgendaWeekViewProps) {
   const height = gridHeight(WINDOW, hourPx);
   const hours = hourLabels(WINDOW);
-  const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(7, minmax(${compact ? "8rem" : "6.5rem"}, 1fr))` };
+  const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(7, minmax(${compact ? "11rem" : "6.5rem"}, 1fr))` };
   const scroller = useRef<HTMLDivElement>(null);
   const nowTop = nowLineTop(model.nowMin, WINDOW, hourPx);
   const hasAllDay = model.days.some((d) => d.allDay.length > 0);
@@ -222,7 +222,10 @@ export function AgendaWeekView({
             {hasAllDay && (
               <div className="grid border-t border-border-subtle" style={template}>
                 <div className="sticky left-0 z-20 flex items-start justify-end bg-surface-raised px-1 py-1 text-micro text-text-muted">{w.allDay}</div>
-                {model.days.map((d) => (
+                {model.days.map((d) =>
+                  d.allDay.length === 0 ? (
+                    <div key={`allday:${d.localDate}`} aria-hidden="true" className="border-l border-border-subtle" />
+                  ) : (
                   <ul key={`allday:${d.localDate}`} className="min-w-0 space-y-0.5 border-l border-border-subtle p-0.5" aria-label={w.allDay}>
                     {d.allDay.map((e) => (
                       <li key={`${e.source}:${e.id}`}>
@@ -238,7 +241,8 @@ export function AgendaWeekView({
                       </li>
                     ))}
                   </ul>
-                ))}
+                  )
+                )}
               </div>
             )}
           </div>
