@@ -62,6 +62,8 @@ describe("codecs da URL", () => {
 describe("datas", () => {
   it("setas: um dia (Dia, Lista) ou um mês (Mês)", () => {
     expect(shiftDate("2026-11-30", "dia", 1)).toBe("2026-12-01");
+    expect(shiftDate("2026-11-30", "semana", 1)).toBe("2026-12-07");
+    expect(shiftDate("2026-11-03", "semana", -1)).toBe("2026-10-27");
     expect(shiftDate("2026-11-01", "lista", -1)).toBe("2026-10-31");
     expect(shiftDate("2026-01-31", "mes", 1)).toBe("2026-02-28");
     expect(shiftDate("2026-12-15", "mes", 1)).toBe("2027-01-15");
@@ -89,8 +91,14 @@ describe("datas", () => {
 describe("rótulo do período", () => {
   it("dia e mês", async () => {
     const { periodLabel } = await import("./agendaViewParams");
-    expect(periodLabel("2026-11-23", "dia")).toBe("seg, 23/11");
-    expect(periodLabel("2026-11-23", "lista")).toBe("seg, 23/11");
+    expect(periodLabel("2026-11-23", "dia")).toBe("23 de novembro de 2026");
+    expect(periodLabel("2026-11-23", "lista")).toBe("23 de novembro de 2026");
+    expect(periodLabel("2026-11-26", "dia", true)).toBe("26 de nov.");
+    expect(periodLabel("2026-11-26", "semana")).toBe("23 – 29 de nov. de 2026");
+    expect(periodLabel("2026-11-26", "semana", true)).toBe("23 – 29 nov");
+    expect(periodLabel("2026-12-02", "semana", true)).toBe("30 nov – 6 dez");
+    expect(periodLabel("2026-12-02", "semana")).toBe("30 de nov. – 6 de dez. de 2026");
+    expect(periodLabel("2026-12-30", "semana")).toBe("28 de dez. de 2026 – 3 de jan. de 2027");
     expect(periodLabel("2026-03-05", "mes")).toBe("Março de 2026");
   });
 });
@@ -106,8 +114,9 @@ describe("parâmetros antigos da Agenda", () => {
     expect(m("view=day&date=2026-11-23")).toEqual({ visao: "dia", view: null, date: null, data: "2026-11-23" });
     expect(m("view=month")).toEqual({ visao: "mes", view: null });
   });
-  it("semana: vai para a visão Semana e mantém view e date (são os da CalendarPage)", () => {
-    expect(m("view=week&date=2026-11-23")).toEqual({ visao: "semana" });
+  it("semana: vai para a visão Semana e leva a data junto (a Semana usa ?data= como as outras)", () => {
+    expect(m("view=week&date=2026-11-23")).toEqual({ visao: "semana", view: null, date: null, data: "2026-11-23" });
+    expect(m("view=week")).toEqual({ visao: "semana", view: null });
   });
   it("com ?visao= nada muda; data inválida é descartada; ?data= existente não é sobrescrito", () => {
     expect(m("visao=semana&view=week&date=2026-11-23")).toBeNull();

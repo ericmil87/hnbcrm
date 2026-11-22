@@ -67,7 +67,7 @@ export type GridAppointment = Pick<
   SchedAppointmentView,
   "_id" | "serviceName" | "startTime" | "endTime" | "status" | "origin" | "resources" | "localDate"
 > &
-  Partial<Pick<SchedAppointmentView, "contactName" | "guestName" | "conversationId" | "needsAttention" | "kind">>;
+  Partial<Pick<SchedAppointmentView, "contactName" | "guestName" | "conversationId" | "needsAttention" | "kind" | "serviceId">>;
 
 /** Compromisso interno ou tarefa (`calendar.getEvents`), já normalizado. */
 export interface InternalItem {
@@ -82,6 +82,8 @@ export interface InternalItem {
   /** Responsável e participantes (ids de membro): decidem em que coluna de profissional o item aparece. */
   memberIds: string[];
   canEdit?: boolean;
+  /** `scheduled`, `completed` ou `cancelled` (concluído e cancelado não se arrastam). */
+  status?: string;
 }
 
 /** `getEvents` devolve `any`: aceita só o que tem id, título e horário válidos. */
@@ -109,6 +111,7 @@ export function toInternalItems(raw: readonly unknown[] | undefined | null): Int
       assigneeName: typeof assignee?.name === "string" ? assignee.name : undefined,
       memberIds: [...ids],
       canEdit: typeof e.canEdit === "boolean" ? e.canEdit : undefined,
+      status: typeof e.status === "string" ? e.status : undefined,
     });
   }
   return out.sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));
@@ -227,6 +230,11 @@ export interface DayGridModel {
   /** Compromissos de dia inteiro (chips acima da grade). */
   allDay: InternalItem[];
   window: { startHour: number; endHour: number };
+  /** Expediente dos recursos mostrados (minutos), para a rolagem inicial; padrão 08:00–18:00. */
+  openStartMin: number;
+  openEndMin: number;
+  /** Primeiro item do dia (minuto), ou `null` sem itens. */
+  firstItemMin: number | null;
   /** Minuto atual no fuso da org quando o dia é hoje; senão `null`. */
   nowMin: number | null;
   /** Há agendamento ou compromisso no dia (para o estado vazio). */
@@ -358,7 +366,14 @@ export function kindLabel(groupBy: GroupBy): { one: string; unassigned: string }
 }
 
 /** Constrói o modelo da grade do dia. */
-export function buildDayGridModel(input: { day: DayInput; internal: readonly InternalItem[]; groupBy: GroupBy; now: number }): DayGridModel {
+export function buildDayGridModel(input: {
+  day: DayInput;
+  internal: readonly InternalItem[];
+  groupBy: GroupBy;
+  now: number;
+  /** As 24 horas (a grade abre rolada no expediente); padrão: só o expediente, ampliado para caber qualquer item. */
+  fullDay?: boolean;
+}): DayGridModel {
   const { day, groupBy, now } = input;
   const tz = day.timezone;
   const kindOf = new Map(day.resources.map((r) => [r._id, r.kind]));
@@ -424,7 +439,7 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
   for (const items of byColumn.values()) segments.push(...items);
   segments.push(...unassigned, ...timedInternal);
   const base = openWindowHours(shown, day.localDate, tz);
-  const window = gridHourRange(segments, base);
+  const window = input.fullDay ? { startHour: 0, endHour: 24 } : gridHourRange(segments, base);
   const fromMin = window.startHour * 60;
   const toMin = window.endHour * 60;
 
@@ -486,7 +501,8 @@ export function buildDayGridModel(input: { day: DayInput; internal: readonly Int
 
   const empty =
     noPlace.length === 0 && allDay.length === 0 && columns.every((c) => c.placed.length === 0) && day.appointments.every((a) => !isOnGrid(a.status));
-  return { columns, noPlace, allDay, window, nowMin, empty };
+  const firstItemMin = segments.length > 0 ? Math.min(...segments.map((i) => i.startMin)) : null;
+  return { columns, noPlace, allDay, window, openStartMin: base.startHour * 60, openEndMin: base.endHour * 60, firstItemMin, nowMin, empty };
 }
 
 // ---------------------------------------------------------------------------
