@@ -2,7 +2,7 @@
  * Agenda v2 (B3): estado da página na URL. Codecs de `searchParamState` (constantes de módulo, como o hook
  * exige) e as regras puras de navegação por data. Datas são "YYYY-MM-DD" NO FUSO DA ORG (nunca `Date` local).
  *
- *   ?visao=dia|semana|lista|mes (replace; "semana" = a página de compromissos e tarefas da equipe; ausente = lista no celular, dia no computador)
+ *   ?visao=dia|semana|lista|mes (replace; ausente = a última escolhida neste aparelho, senão lista no celular e dia no computador)
  *   ?data=YYYY-MM-DD       (replace; ausente = hoje na org)
  *   ?por=sala|profissional (replace; agrupamento da grade e da lista)
  *   ?lista=hora|recurso    (replace; agrupamento da lista do dia)
@@ -10,7 +10,7 @@
  *   ?pendencias=1          (push; abre a fila de pendências)
  * `?event=` e `?task=` seguem sendo os dos compromissos e tarefas (a página é única).
  */
-import { addLocalDays, isValidLocalDate, shortDateLabel, weekdayOf, type LocalDate } from "./agendaZone";
+import { addLocalDays, isValidLocalDate, weekdayOf, weekStartOf, type LocalDate } from "./agendaZone";
 import { WEEK_STARTS_ON } from "./agendaDates";
 import { enumParam, stringParam, type ParamCodec } from "./searchParamState";
 import type { GroupBy } from "./agendaGrid";
@@ -75,9 +75,10 @@ export function shiftMonth(date: LocalDate, dir: 1 | -1): LocalDate {
   return `${first.slice(0, 8)}${String(Math.min(d, last)).padStart(2, "0")}`;
 }
 
-/** Setas do cabeçalho: um dia nas visões Dia e Lista, um mês na visão Mês. */
+/** Setas da barra: um dia nas visões Dia e Lista, sete na Semana, um mês na visão Mês. */
 export function shiftDate(date: LocalDate, view: AgendaView, dir: 1 | -1): LocalDate {
-  return view === "mes" ? shiftMonth(date, dir) : addLocalDays(date, dir);
+  if (view === "mes") return shiftMonth(date, dir);
+  return addLocalDays(date, view === "semana" ? 7 * dir : dir);
 }
 
 /** Período consultado na visão Mês: o mês inteiro (no máximo 31 dias; `listAgendaRange` aceita 35). */
@@ -91,18 +92,35 @@ export function monthLeadingBlanks(date: LocalDate): number {
 }
 
 const MONTH_NAMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"] as const;
+export const MONTH_ABBR = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."] as const;
 
-/** "Novembro de 2026" (visão Mês) ou "seg, 23/11" (Dia e Lista; sem ano, igual aos cartões da agenda). */
-export function periodLabel(date: LocalDate, view: AgendaView): string {
-  if (view === "mes") return `${MONTH_NAMES[Number(date.slice(5, 7)) - 1]} de ${date.slice(0, 4)}`;
-  return shortDateLabel(date);
+const dayOf = (d: LocalDate) => Number(d.slice(8));
+const monthIdx = (d: LocalDate) => Number(d.slice(5, 7)) - 1;
+const monthLong = (d: LocalDate) => MONTH_NAMES[monthIdx(d)].toLowerCase();
+
+/**
+ * Título do período na barra (estilo Google Agenda): Dia/Lista "26 de novembro de 2026"; Semana "23 – 29 de nov. de 2026"
+ * (cruzando mês ou ano: "30 de nov. – 6 de dez. de 2026"); Mês "Novembro de 2026". `compact` (celular) encurta Dia/Lista
+ * e Semana, sem o ano ("26 de nov.", "23 – 29 de nov.").
+ */
+export function periodLabel(date: LocalDate, view: AgendaView, compact = false): string {
+  const year = date.slice(0, 4);
+  if (view === "mes") return `${MONTH_NAMES[monthIdx(date)]} de ${year}`;
+  if (view === "semana") {
+    const first = weekStartOf(date);
+    const last = addLocalDays(first, 6);
+    const tail = compact ? "" : ` de ${last.slice(0, 4)}`;
+    if (first.slice(0, 7) === last.slice(0, 7)) return `${dayOf(first)} – ${dayOf(last)} de ${MONTH_ABBR[monthIdx(last)]}${tail}`;
+    if (first.slice(0, 4) === last.slice(0, 4)) return `${dayOf(first)} de ${MONTH_ABBR[monthIdx(first)]} – ${dayOf(last)} de ${MONTH_ABBR[monthIdx(last)]}${tail}`;
+    return `${dayOf(first)} de ${MONTH_ABBR[monthIdx(first)]} de ${first.slice(0, 4)} – ${dayOf(last)} de ${MONTH_ABBR[monthIdx(last)]} de ${last.slice(0, 4)}`;
+  }
+  return compact ? `${dayOf(date)} de ${MONTH_ABBR[monthIdx(date)]}` : `${dayOf(date)} de ${monthLong(date)} de ${year}`;
 }
 
 /**
  * Parâmetros ANTIGOS da página de compromissos como sinônimos (o Painel e favoritos antigos ainda os usam):
  * `?date=` vira `?data=` e `?view=` vira `?visao=` (week -> semana, day -> dia, month -> mes). Devolve as escritas
- * (`null` remove) ou `null` quando não há o que migrar. Com `?visao=` já presente nada muda; na visão Semana os
- * parâmetros `view` e `date` são os da própria `CalendarPage` e ficam como estão.
+ * (`null` remove) ou `null` quando não há o que migrar. Com `?visao=` já presente nada muda.
  */
 export function migrateLegacyParams(params: URLSearchParams): Record<string, string | null> | null {
   if (viewParam.parse(params.get("visao")) !== null) return null;
@@ -110,10 +128,9 @@ export function migrateLegacyParams(params: URLSearchParams): Record<string, str
   const dateRaw = params.get("date");
   const date = dateRaw !== null && isValidLocalDate(dateRaw) ? dateRaw : null;
   const hasData = params.get("data") !== null;
-  if (view === "week") return { visao: "semana" };
   const writes: Record<string, string | null> = {};
-  if (view === "day" || view === "month") {
-    writes.visao = view === "day" ? "dia" : "mes";
+  if (view === "day" || view === "month" || view === "week") {
+    writes.visao = view === "day" ? "dia" : view === "month" ? "mes" : "semana";
     writes.view = null;
   } else if (view !== null) writes.view = null;
   if (dateRaw !== null) {

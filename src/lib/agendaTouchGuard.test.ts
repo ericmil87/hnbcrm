@@ -61,11 +61,23 @@ describe("Agenda v2: alvos de toque e layout no celular", () => {
     expect(src.match(/min-h-11 w-32 rounded-field/g)).toHaveLength(2);
   });
 
-  it("a visão Semana embute a agenda antiga sem o seletor Dia/Semana/Mês dela", () => {
-    expect(read("src/components/agenda/views/AgendaPageView.tsx")).toContain("<CalendarPage embedded />");
-    const page = read("src/components/calendar/CalendarPage.tsx");
-    expect(page).toContain("showViewToggle={!embedded}");
-    expect(page).toContain('forcedView: "week"');
+  it("a visão Semana é a grade própria de 7 colunas (não embute mais a agenda antiga) e a barra tem alvos de 44 px no celular", () => {
+    const page = read("src/components/agenda/views/AgendaPageView.tsx");
+    expect(page).toContain("AgendaWeekView");
+    expect(page).not.toContain("CalendarPage");
+    const bar = read("src/components/agenda/views/AgendaToolbar.tsx");
+    // Celular: setas, hoje, pendências, visão e menu em 44 px (`!h-11 !w-11`); no computador ficam mais compactos.
+    expect(bar.match(/!h-11 !w-11/g)!.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("a página ocupa a altura da tela e só a grade rola (sem rolagem dupla)", () => {
+    const page = read("src/components/agenda/views/AgendaPageView.tsx");
+    expect(page).toContain("md:h-[calc(100dvh-4rem)]");
+    for (const f of ["ResourceDayGrid", "AgendaWeekView"]) {
+      const src = read(`src/components/agenda/views/${f}.tsx`);
+      expect(src).toContain("data-grid-scroller");
+      expect(src).toContain("sticky top-0");
+    }
   });
 
   it("o painel de Pendências tem margem lateral", () => {
