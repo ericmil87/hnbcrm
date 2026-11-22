@@ -214,6 +214,13 @@ const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HISTORY_FOR_LLM = 30;
 const DEFAULT_MAX_REPLIES_PER_CONVERSATION = 20;
 const DEFAULT_MAX_REPLIES_PER_HOUR = 10;
+/** Fim do aviso de "ferramentas demais numa rodada": a parte da consulta de horários só existe com o módulo de agenda ligado. */
+export function toolBudgetNudgeTail(schedulingOn: boolean): string {
+  return schedulingOn
+    ? "Chame só as essenciais (a consulta de horários SOZINHA; atualizar cadastro, etiquetas e notas podem esperar) e responda ao cliente."
+    : "Chame só as ferramentas essenciais (atualizar cadastro, etiquetas e notas podem esperar) e responda ao cliente.";
+}
+
 const DEFAULT_MAX_TOOL_CALLS = 6;
 // Holds que um item INICIADO POR HUMANO (coach/return_to_ai) pode atravessar.
 // NUNCA inclua opt_out (LGPD), janela_24h, tetos ou bridge_sem_aceite aqui.
@@ -4581,7 +4588,7 @@ export const internalProcessQueueItem = internalAction({
             messages.pop();
             messages.push({
               role: "user",
-              content: `Sua resposta anterior pediu ${countedCalls} ferramentas de uma vez e foi DESCARTADA sem executar nada: neste atendimento restam só ${Math.max(0, context.maxToolCalls - toolCallNames.length)}. Chame só as essenciais (a consulta de horários SOZINHA; atualizar cadastro, etiquetas e notas podem esperar) e responda ao cliente.`,
+              content: `Sua resposta anterior pediu ${countedCalls} ferramentas de uma vez e foi DESCARTADA sem executar nada: neste atendimento restam só ${Math.max(0, context.maxToolCalls - toolCallNames.length)}. ${toolBudgetNudgeTail(schedGuardOn)}`,
             });
             continue;
           }

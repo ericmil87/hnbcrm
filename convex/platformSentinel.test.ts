@@ -474,6 +474,25 @@ describe("varredura", () => {
     expect(sends(spy, "llm_error_burst")).toBe(1);
   });
 
+  test("falha do classificador da confirmação (`sched_interpret`) NÃO conta na rajada de erros de IA", async () => {
+    enableAlerts();
+    vi.stubEnv("PLATFORM_ALERT_LLM_ERROR_BURST", "3");
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = convexTest(schema, modules);
+    const plat = await seedOrg(t, "Org Plataforma");
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 6; i++) await ctx.db.insert("agentRuns", { organizationId: plat.organizationId, kind: "sched_interpret", status: "error", requestCount: 1, startedAt: Date.now() - MIN });
+    });
+    const r = await t.mutation(internal.platformSentinel.internalScanTick, {});
+    expect(r).toMatchObject({ llmErrors: 0 });
+    expect(sends(spy, "llm_error_burst")).toBe(0);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 4; i++) await ctx.db.insert("agentRuns", { organizationId: plat.organizationId, kind: "attendant", status: "error", requestCount: 1, startedAt: Date.now() - MIN });
+    });
+    await t.mutation(internal.platformSentinel.internalScanTick, {});
+    expect(sends(spy, "llm_error_burst")).toBe(1);
+  });
+
   test("sem a env a varredura não lê nada", async () => {
     const t = convexTest(schema, modules);
     const r = await t.mutation(internal.platformSentinel.internalScanTick, {});

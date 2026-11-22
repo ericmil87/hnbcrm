@@ -2344,3 +2344,103 @@ describe("correção: retratação e educação, mensagem posterior do cliente, 
     expect((await appointments(s)).find((a) => a._id === created._id)!.status).toBe("cancelled");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Ajustes da revisão final: a segunda confirmação legítima NÃO desfaz a primeira
+// ---------------------------------------------------------------------------
+
+describe("segunda confirmação legítima não é correção (revisão final)", () => {
+  const second = ["Confirmado quarta 10h", "desculpa a demora, confirmado quarta 10h"];
+  test.each(second)("[auto] terça marcada, 10 min depois o cliente pede quarta também e a equipe diz %j: terça intacta, quarta pelo caminho normal", async (reply) => {
+    const s = await seedOrg({ ai: true, mode: "auto" });
+    stubAgree();
+    await clientSays(s, "quero marcar terça às 10h", NOW - 5 * MIN);
+    await humanOnPhone(s, "Confirmado terça 10h");
+    await drain();
+    const [tue] = await appointments(s);
+    expect(tue).toMatchObject({ status: "scheduled", startTime: at(10, 0, 16) });
+    await vi.advanceTimersByTimeAsync(10 * MIN);
+    await clientSays(s, "quero marcar quarta às 10h também", Date.now());
+    await vi.advanceTimersByTimeAsync(30_000);
+    await humanOnPhone(s, reply);
+    await drain();
+    const appts = await appointments(s);
+    expect(appts.find((a) => a._id === tue._id)!.status).toBe("scheduled");
+    const rows = await interpretations(s);
+    expect(rows.some((r) => r.reason === "correcao_desfeita" || r.reason === "correcao")).toBe(false);
+    expect(rows.filter((r) => r.decision === "created").every((r) => r.outcome === undefined)).toBe(true);
+    // A quarta segue o caminho normal (criada se a frase cabe na forma fechada, senão sugestão); nunca cancela a terça.
+    expect(rows.some((r) => r.parsed.localDate === "2026-06-17" && (r.decision === "created" || r.decision === "proposed"))).toBe(true);
+    expect(appts.filter((a) => a.status === "cancelled")).toHaveLength(0);
+  });
+
+  test.each(second)("[suggest] a sugestão de terça continua ABERTA quando a equipe confirma a quarta (%j)", async (reply) => {
+    const s = await seedOrg({ ai: true, mode: "default" });
+    await clientSays(s, "quero marcar terça às 10h", NOW - 5 * MIN);
+    await humanOnPhone(s, "Confirmado terça 10h");
+    await drain();
+    await vi.advanceTimersByTimeAsync(10 * MIN);
+    await clientSays(s, "quero marcar quarta às 10h também", Date.now());
+    await vi.advanceTimersByTimeAsync(30_000);
+    await humanOnPhone(s, reply);
+    await drain();
+    const open = (await interpretations(s)).filter((r) => r.status === "open");
+    expect(open.map((r) => r.parsed.localDate).sort()).toEqual(["2026-06-16", "2026-06-17"]);
+    expect((await interpretations(s)).filter((r) => r.status === "expired")).toHaveLength(0);
+  });
+
+  test.each([["ops, terça 14h", 1], ["Corrigindo: quarta 10h", 1], ["desconsidera, mandei na conversa errada", 0]] as const)("a correção de verdade continua valendo (%j), mesmo com o cliente tendo falado antes", async (msg, expectOpen) => {
+    const s = await seedOrg({ ai: true, mode: "auto" });
+    stubAgree();
+    await clientSays(s, "quero marcar terça às 10h", NOW - 5 * MIN);
+    await humanOnPhone(s, "Confirmado terça 10h");
+    await drain();
+    await vi.advanceTimersByTimeAsync(5000);
+    await humanOnPhone(s, msg);
+    await drain();
+    expect((await appointments(s))[0].status, msg).toBe("cancelled");
+    expect((await interpretations(s)).filter((r) => r.status === "open"), msg).toHaveLength(expectOpen);
+  });
+});
+
+describe("gancho de edição/apagamento nunca derruba a mensagem (revisão final)", () => {
+  async function outboundWith(s: Seed, externalId: string) {
+    return await t.run((ctx) =>
+      ctx.db.insert("messages", {
+        organizationId: s.organizationId, conversationId: s.conversationId, leadId: s.leadId, direction: "outbound", senderType: "human",
+        content: "Ok, confirmado segunda 10h", contentType: "text", isInternal: false, createdAt: Date.now(), metadata: { via: "device" }, externalId,
+      })
+    );
+  }
+  /** `db` que falha SÓ ao consultar as interpretações (simula o gancho quebrando). */
+  const failing = (ctx: { db: unknown }) =>
+    ({
+      ...ctx,
+      db: new Proxy(ctx.db as object, {
+        get(target, prop) {
+          const v = (target as Record<string | symbol, unknown>)[prop];
+          if (prop === "query") return (table: string) => (table === "schedInterpretations" ? (() => { throw new Error("falha simulada: texto secreto da mensagem"); })() : (v as (t: string) => unknown).call(target, table));
+          return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+        },
+      }),
+    }) as never;
+
+  test("falha no descarte NÃO impede a edição nem o apagamento (e o aviso não leva o texto da mensagem)", async () => {
+    const s = await seedOrg({ ai: true, mode: "auto" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const editId = await outboundWith(s, "ed-1");
+    const revId = await outboundWith(s, "rv-1");
+    const { applyBridgeEdit, applyBridgeRevoke } = await import("./lib/bridgeMessageMutations");
+    const base = { organizationId: s.organizationId, at: Date.now(), fromMe: true } as const;
+    await t.run(async (ctx) => {
+      await applyBridgeEdit(failing(ctx), { ...base, targetExternalId: "ed-1", newContent: "Ok, confirmado terça 10h" } as never);
+      await applyBridgeRevoke(failing(ctx), { ...base, targetExternalId: "rv-1" } as never);
+    });
+    const [edited, revoked] = await t.run(async (ctx) => [await ctx.db.get(editId), await ctx.db.get(revId)]);
+    expect(edited).toMatchObject({ content: "Ok, confirmado terça 10h", metadata: { edited: true } });
+    expect(revoked?.metadata?.revoked).toBe(true);
+    expect(warn).toHaveBeenCalled();
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("texto secreto");
+    warn.mockRestore();
+  });
+});
