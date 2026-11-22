@@ -170,6 +170,9 @@ describe("contatos sem acento", () => {
         searchText: term,
       });
       expect(contacts.map((c: { _id: string }) => c._id), term).toEqual([contactId]);
+      // Contrato lido pelas telas (seletor de cliente da Agenda): o nome vem em `firstName`/`lastName`; não existe `name`.
+      expect(contacts[0]).toMatchObject({ firstName: "Antônio", lastName: "Rebouças" });
+      expect(contacts[0]).not.toHaveProperty("name");
 
       const rows = await asAdmin(t, org).query(api.conversations.searchConversationsByContact, {
         organizationId: org.organizationId,
