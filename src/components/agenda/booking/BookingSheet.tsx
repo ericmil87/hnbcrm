@@ -148,6 +148,7 @@ function useSlotSearch(input: {
   tz: string;
   rescheduleAppointmentId?: Id<"schedAppointments">;
   durationMin: number | undefined;
+  requestedTime: boolean;
 }) {
   const convex = useConvex();
   const { organizationId, state, tz, rescheduleAppointmentId } = input;
@@ -172,7 +173,7 @@ function useSlotSearch(input: {
   useEffect(() => {
     if (!onSlotStep) return;
     const now = Date.now();
-    const args = buildFindSlotsArgs({ organizationId, state: stateRef.current, tz, now, rescheduleAppointmentId });
+    const args = buildFindSlotsArgs({ organizationId, state: stateRef.current, tz, now, rescheduleAppointmentId, requestedTime: input.requestedTime });
     if (!args) return;
     const filterChanged = lastFilter.current !== filterKey;
     lastFilter.current = filterKey;
@@ -236,7 +237,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
   const durationMin = chosenDurationMin(service, state.variantKey);
   const clientName = clientLabel(who.name, who.phone ? formatPhone(who.phone) : undefined);
   const whoOk = Boolean(reschedule) || hasWho(who);
-  const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin });
+  const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin, requestedTime: initialDate !== undefined && initialTimeMin !== undefined });
   const [failure, setFailure] = useState<FailureView | null>(null);
   const dayOff = useMemo(() => {
     const w = searchWindow(state, today);

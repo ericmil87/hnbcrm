@@ -327,6 +327,15 @@ describe("BookingFlowView", () => {
     expect(first).toHaveTextContent(clicked);
   });
 
+  it("com hora pedida a busca traz mais horários, mas a lista mostra só 3 até 'Ver mais horários'", async () => {
+    const base = Math.ceil((Date.now() + 5 * HOUR) / 3_600_000) * 3_600_000;
+    const slots = [0, 1, 2, 3, 4, 5].map((h) => slot(0, { startTime: base + h * HOUR, endTime: base + (h + 1) * HOUR }));
+    render(<Harness services={[sessao]} slots={ready(slots)} initialTimeMin={0} />);
+    expect(timeButtons()).toHaveLength(3);
+    await userEvent.click(screen.getByRole("button", { name: "Ver mais horários" }));
+    expect(timeButtons()).toHaveLength(6);
+  });
+
   it("profissional de folga no dia aparece desabilitado com '(folga)' no seletor", async () => {
     const resources = [{ _id: "room1", name: "Sala 1", kind: "room" }, { _id: "eric", name: "Dr. Eric", kind: "person" }, { _id: "ana", name: "Dra. Ana", kind: "person" }];
     render(<Harness services={[corte]} resources={resources} dayOff={new Set(["eric"])} pinned={{ person: "ana" }} />);

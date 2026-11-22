@@ -55,6 +55,8 @@ export const MAX_SEARCH_DAYS = 7;
 /** Sugestões "ranqueadas" mostradas primeiro; "Ver mais horários" pede o resto. */
 export const SUGGESTED_COUNT = 3;
 export const EXPANDED_LIMIT = 24;
+/** Busca com hora pedida pela Agenda: traz mais horários para a hora clicada, se livre, estar entre eles. */
+export const REQUESTED_TIME_LIMIT = 48;
 /** Teto de acompanhantes por marcação (o servidor limita o grupo; o front não deixa crescer sem fim). */
 export const MAX_COMPANIONS = 3;
 
@@ -332,6 +334,8 @@ export function buildFindSlotsArgs(input: {
   tz: string;
   now: number;
   rescheduleAppointmentId?: string;
+  /** A Agenda pediu uma hora (clique no vazio): busca mais horários, para a hora clicada aparecer se estiver livre. */
+  requestedTime?: boolean;
 }): FindSlotsArgs | null {
   const { state } = input;
   if (!state.serviceId) return null;
@@ -351,7 +355,7 @@ export function buildFindSlotsArgs(input: {
       : {}),
     ...(partySizeOf(state) > 1 ? { partySize: partySizeOf(state) } : {}),
     audience: "staff",
-    limit: state.expanded ? EXPANDED_LIMIT : SUGGESTED_COUNT,
+    limit: input.requestedTime && !state.expanded ? REQUESTED_TIME_LIMIT : state.expanded ? EXPANDED_LIMIT : SUGGESTED_COUNT,
     now,
   };
 }

@@ -27,6 +27,7 @@ import {
   pinnableKinds,
   reviewSubmitLabel,
   splitSuggestions,
+  SUGGESTED_COUNT,
   supportsGroup,
   timeInputValue,
   violationText,
@@ -243,7 +244,12 @@ function SlotStep({
   }, [showManual]);
   const highlightStart = initialTimeMin !== undefined ? nearestSlotStart(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }) : null;
   const kinds = pinnableKinds(service);
-  const { suggested, others } = splitSuggestions(promoteRequestedSlot(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }));
+  // Com hora pedida a busca traz mais horários (para a hora clicada, se livre, aparecer); a lista só mostra os
+  // primeiros até "Ver mais horários".
+  const ranked = promoteRequestedSlot(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate });
+  const shown = state.expanded ? ranked : ranked.slice(0, SUGGESTED_COUNT);
+  const { suggested, others } = splitSuggestions(shown);
+  const canExpandList = !state.expanded && (slots.hasMore || ranked.length > shown.length);
   const canChangeService = !reschedule && services.length > 1;
 
   return (
@@ -338,7 +344,7 @@ function SlotStep({
           selectedStart={state.slot?.startTime ?? null}
           highlightStart={highlightStart}
           onPick={onPickOffered}
-          canExpand={slots.hasMore && !state.expanded}
+          canExpand={canExpandList}
           onExpand={() => dispatch({ type: "expand" })}
         />
       )}

@@ -15,6 +15,7 @@ import {
   supportsGroup,
   timeInputValue,
   buildFindSlotsArgs,
+  REQUESTED_TIME_LIMIT,
   buildRescheduleArgs,
   clientLabel,
   interpretPreview,
@@ -206,6 +207,12 @@ describe("janela e argumentos da busca", () => {
     expect(args?.fromLocalDate).toBe("2026-11-26");
     const tokyo = buildFindSlotsArgs({ organizationId: "org", state: base({ serviceId: "svc1" }), tz: "Asia/Tokyo", now: lateUtc });
     expect(tokyo?.fromLocalDate).toBe("2026-11-27");
+  });
+  it("hora pedida pela Agenda: busca mais horários (REQUESTED_TIME_LIMIT), até 'Ver mais horários'; depois o limite expandido", () => {
+    const state = base({ serviceId: "svc1" });
+    expect(buildFindSlotsArgs({ organizationId: "org", state, tz: TZ, now: NOW })?.limit).toBe(3);
+    expect(buildFindSlotsArgs({ organizationId: "org", state, tz: TZ, now: NOW, requestedTime: true })?.limit).toBe(REQUESTED_TIME_LIMIT);
+    expect(buildFindSlotsArgs({ organizationId: "org", state: { ...state, expanded: true }, tz: TZ, now: NOW, requestedTime: true })?.limit).toBe(24);
   });
   it("sem serviço não busca", () => {
     expect(buildFindSlotsArgs({ organizationId: "org", state: base(), tz: TZ, now: NOW })).toBeNull();
