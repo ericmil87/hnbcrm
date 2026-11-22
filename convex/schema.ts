@@ -86,8 +86,8 @@ export { permissionsValidator };
 // IDs de modelo CANÔNICOS — o adapter em lib/llm mapeia para o id de cada provider.
 const aiModelsValidator = v.object({
   copilot: v.string(), // default "kimi-k2.7-code"
-  attendant: v.string(), // default "deepseek-v4-flash"
-  classify: v.string(), // default "deepseek-v4-flash"
+  attendant: v.string(), // default "deepseek-flash-latest"
+  classify: v.string(), // default "deepseek-flash-latest"
   complex: v.optional(v.string()), // default "deepseek-v4-pro"
 });
 

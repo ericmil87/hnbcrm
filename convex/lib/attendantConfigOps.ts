@@ -25,6 +25,7 @@ import {
 } from "./followUpSettings";
 import { buildAuditDescription } from "./auditDescription";
 import { isTtsVoice, voiceNoticeError } from "./tts";
+import { OPENCODE_GO_MODELS, OPENROUTER_ONLY_MODELS, isRetiredModel } from "./llm/registry";
 
 // `onboarding` = aplicação do Rascunho de Operação pelo clique do usuário
 // (`onboardingSessions.applyOnboardingDraft`, ver `lib/onboardingApply.ts`).
@@ -308,6 +309,17 @@ export async function updateAgentProfileCore(
       throw new Error(
         `Teto diário de follow-ups: use um número inteiro entre 0 e ${MAX_DAILY_CAP} (0 = sem teto)`
       );
+    }
+  }
+
+  // Modelo do perfil: gravação NOVA só aceita id conhecido e não aposentado
+  // (manter o que já está gravado passa; vazio = volta ao padrão da org).
+  const profileModel = patch.model?.trim();
+  if (profileModel && profileModel !== agent.agentProfile.model) {
+    const known = ([...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[]).includes(profileModel);
+    if (!known) throw new Error(`"${profileModel}" não é um modelo de texto conhecido`);
+    if (isRetiredModel(profileModel)) {
+      throw new Error(`O modelo "${profileModel}" foi aposentado — use "deepseek-flash-latest"`);
     }
   }
 

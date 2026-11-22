@@ -164,7 +164,7 @@ export const generateAttendantDraft = action({
         runId,
         status: "done",
         provider: resp.usedRoute.providerId,
-        model,
+        model: resp.usedRoute.canonicalModel,
         requestCount: 1,
         ...finishRunCostFields(usage),
       });
