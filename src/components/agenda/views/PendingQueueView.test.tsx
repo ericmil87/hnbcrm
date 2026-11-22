@@ -32,6 +32,14 @@ describe("PendingQueueView", () => {
     fireEvent.click(within(section).getByRole("button", { name: /Abrir: Maria/ }));
     expect(h.onOpen).toHaveBeenCalledWith(a._id);
   });
+  it("grupo (mesma partyKey): uma linha só, na pessoa principal, com 'grupo de 2 pessoas'", () => {
+    const main = appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval", origin: "ai", contactName: "Maria", partyKey: "party:x" } as never);
+    const guest = appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval", origin: "ai", guestName: "Acompanhante 1", partyKey: "party:x" } as never);
+    setup(data({ approvals: [main, guest] }));
+    const section = screen.getByRole("region", { name: /Aguardando aprovação/ });
+    expect(within(section).getAllByRole("button", { name: "Aprovar" })).toHaveLength(1);
+    expect(within(section).getByText("grupo de 2 pessoas")).toBeInTheDocument();
+  });
   it("proposta vencida não oferece Aprovar, só Recusar", () => {
     const a = appt(["sala1"], NOW - 3_600_000, NOW, { status: "pending_approval" });
     setup(data({ approvals: [a] }));

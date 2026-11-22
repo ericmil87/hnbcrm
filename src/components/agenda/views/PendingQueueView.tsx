@@ -129,12 +129,20 @@ export function PendingQueueView(p: PendingQueueViewProps) {
 
   const render = (key: PendingSectionKey) => {
     switch (key) {
-      case "approvals":
-        return data.approvals.map((a) => {
+      case "approvals": {
+        // Grupo (mesmo `partyKey`): UMA linha, na pessoa principal, com "grupo de N pessoas"; aprovar/recusar vale para o grupo todo no servidor.
+        const partyOf = (a: PendingAppointment) => (a as { partyKey?: string }).partyKey;
+        const sizes = new Map<string, number>();
+        for (const a of data.approvals) if (partyOf(a)) sizes.set(partyOf(a)!, (sizes.get(partyOf(a)!) ?? 0) + 1);
+        const principal = (a: PendingAppointment) => !(a as { guestName?: string }).guestName || !partyOf(a);
+        const hasPrincipal = new Set(data.approvals.filter((a) => partyOf(a) && principal(a)).map((a) => partyOf(a)!));
+        return data.approvals
+          .filter((a) => !(partyOf(a) && !principal(a) && hasPrincipal.has(partyOf(a)!)))
+          .map((a) => {
           const expired = proposalExpired(a.status, a.startTime, p.now, a.needsAttention?.code);
           const busy = p.busyId === a._id;
           return (
-            <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} expired={expired} onOpen={() => p.onOpen(a._id)}>
+            <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} expired={expired} onOpen={() => p.onOpen(a._id)} note={partyOf(a) && (sizes.get(partyOf(a)!) ?? 1) > 1 ? `grupo de ${sizes.get(partyOf(a)!)} pessoas` : undefined}>
               {p.canEdit && (
                 <>
                   {!expired && !mustResolveBeforeApprove(a) && (
@@ -157,6 +165,7 @@ export function PendingQueueView(p: PendingQueueViewProps) {
             </Row>
           );
         });
+      }
       case "conflicts":
         return data.conflicts.map((c) =>
           c.appointment ? (

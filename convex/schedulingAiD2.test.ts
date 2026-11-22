@@ -337,3 +337,101 @@ describe("grupo pela porta de grupo (D2)", () => {
     expect((await appointments()).every((r) => r.status === "pending_approval")).toBe(true);
   });
 });
+
+describe("revisão #200: grupo pendente (aviso único, aprovar/recusar/vencer o grupo todo)", () => {
+  async function bookGroup(s: AiSeed) {
+    await find(s, s.ana, { service: "Massagem casal", dateRef: "2026-06-15", people: 2 });
+    await shownAndAnswered(s.ana);
+    const out = await book(s, s.ana, "h1");
+    expect(out.result.status).toBe("reservado_aguardando_equipe");
+    return await appointments();
+  }
+  const asAdmin = (s: AiSeed) => t.run(async (ctx) => ({ type: "human" as const, member: (await ctx.db.get(s.adminId))!, via: "app" as const }));
+
+  test("a equipe é avisada UMA vez pelo grupo, com 'grupo de 2 pessoas' (antes: um aviso por pessoa)", async () => {
+    const s = await seedAiAgenda(t);
+    await bookGroup(s);
+    const notices = (await t.run((ctx) => ctx.db.query("notifications").collect())).filter((n) => n.type === "appointment_pending_approval");
+    expect(notices).toHaveLength(1);
+    expect(notices[0].body).toContain("grupo de 2 pessoas");
+    // pedido de UMA pessoa continua avisando como sempre (sem sufixo)
+    const s2 = await seedAiAgenda(t);
+    await find(s2, s2.ana, { service: "Consulta", dateRef: "2026-06-15" });
+    await shownAndAnswered(s2.ana);
+    await book(s2, s2.ana, "h1");
+    const all = (await t.run((ctx) => ctx.db.query("notifications").collect())).filter((n) => n.type === "appointment_pending_approval");
+    expect(all).toHaveLength(2);
+    expect(all.filter((n) => n.body?.includes("grupo de"))).toHaveLength(1);
+  });
+
+  test("aprovar UM membro aprova o grupo todo, na mesma transação, pela porta", async () => {
+    const s = await seedAiAgenda(t);
+    const rows = await bookGroup(s);
+    const companion = rows.find((r) => r.guestName !== undefined)!;
+    const actor = await asAdmin(s);
+    await t.run(async (ctx) => {
+      const { setAppointmentStatusCore } = await import("./lib/schedBookingOps");
+      await setAppointmentStatusCore(ctx, { appointment: (await ctx.db.get(companion._id))!, actor, to: "scheduled", now: Date.now() });
+    });
+    expect((await appointments()).map((r) => r.status)).toEqual(["scheduled", "scheduled"]);
+  });
+
+  test("recusar a PRINCIPAL libera os acompanhantes (e as vagas)", async () => {
+    const s = await seedAiAgenda(t);
+    const rows = await bookGroup(s);
+    const main = rows.find((r) => r.guestName === undefined)!;
+    const actor = await asAdmin(s);
+    await t.run(async (ctx) => {
+      const { cancelAppointmentCore } = await import("./lib/schedBookingOps");
+      await cancelAppointmentCore(ctx, { appointment: (await ctx.db.get(main._id))!, actor, byClass: "staff", reason: "recusado", now: Date.now() });
+    });
+    expect((await appointments()).map((r) => r.status)).toEqual(["cancelled", "cancelled"]);
+    const allocs = await t.run((ctx) => ctx.db.query("schedAllocations").collect());
+    expect(allocs).toHaveLength(0);
+  });
+
+  test("proposta VENCIDA vale para o grupo inteiro (idempotente)", async () => {
+    const s = await seedAiAgenda(t);
+    const rows = await bookGroup(s);
+    const when = rows[0].startTime + 60_000;
+    await t.run(async (ctx) => {
+      const { expireProposalCore } = await import("./lib/schedBookingOps");
+      expect(await expireProposalCore(ctx, { organizationId: s.organizationId, appointmentId: rows[0]._id, now: when })).toBe(true);
+      expect(await expireProposalCore(ctx, { organizationId: s.organizationId, appointmentId: rows[1]._id, now: when })).toBe(false); // o irmão já foi marcado
+    });
+    expect((await appointments()).every((r) => r.needsAttention?.code === "proposal_expired")).toBe(true);
+  });
+
+  test("turma com 1 vaga × grupo de 2: recusa (nada pela metade)", async () => {
+    const s = await seedAiAgenda(t);
+    // turma: sala de capacidade 4 com 3 ocupadas no mesmo horário (reservas da equipe)
+    const turma = await t.run(async (ctx) => {
+      const room = await ctx.db.insert("schedResources", {
+        organizationId: s.organizationId, kind: "room", name: "Sala Turma", capacity: 4, tags: [], sortOrder: 9, active: true,
+        weekly: [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: 480, endMin: 1080 })), createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      const service = await ctx.db.insert("schedServices", {
+        organizationId: s.organizationId, name: "Turma", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0, sortOrder: 5, active: true,
+        requirements: [{ role: "Sala", kind: "room", resourceIds: [room] }], createdAt: Date.now(), updatedAt: Date.now(),
+      });
+      return { room, service };
+    });
+    for (let i = 0; i < 3; i++) {
+      const contactId = await t.run((ctx) => ctx.db.insert("contacts", { organizationId: s.organizationId, firstName: `Aluno${i}`, tags: [], createdAt: Date.now(), updatedAt: Date.now() }));
+      await staffBook(s, { ...s.bia, contactId }, aiAt(10), [turma.room], turma.service);
+    }
+    expect((await appointments()).filter((a) => a.serviceId === turma.service)).toHaveLength(3);
+    // a busca para 2 pessoas não oferece 10h (cabe 1); forja a oferta de grupo naquele horário para provar que a PORTA também recusa
+    await find(s, s.ana, { service: "Turma", dateRef: "2026-06-15" });
+    await t.run(async (ctx) => {
+      const st = await ctx.db.query("schedConversationState").withIndex("by_conversation", (q) => q.eq("conversationId", s.ana.conversationId)).first();
+      await ctx.db.patch(st!._id, { offers: [{ code: "h1", batch: 1, serviceId: turma.service, startTime: aiAt(10), resourceIds: [turma.room], issuedAt: Date.now(), expiresAt: Date.now() + 1_800_000, shownAt: Date.now(), people: 2 }], offerSeq: 1 });
+    });
+    vi.setSystemTime(Date.now() + 60_000);
+    await customerSpoke(t, s.ana.conversationId, Date.now());
+    const before = (await appointments()).length;
+    const out = await book(s, s.ana, "h1");
+    expect(out.result.error).toBe("horario_tomado");
+    expect((await appointments()).length).toBe(before);
+  });
+});
