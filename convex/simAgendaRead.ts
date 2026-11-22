@@ -121,3 +121,19 @@ export const internalSimListOrgs = internalQuery({
   },
 });
 
+/** Confirmação pelo WhatsApp (C1): linhas de interpretação da conversa + custo das leituras (classificador) da org desde `sinceMs`. */
+export const internalSimInterpretations = internalQuery({
+  args: { organizationId: v.id("organizations"), conversationId: v.id("conversations"), sinceMs: v.number() },
+  returns: v.any(),
+  handler: async (ctx, args) => {
+    await requireSimOrg(ctx, args.organizationId);
+    const rows = await ctx.db.query("schedInterpretations").withIndex("by_organization_and_created", (q) => q.eq("organizationId", args.organizationId).gte("createdAt", args.sinceMs)).take(500);
+    const runs = await ctx.db.query("agentRuns").withIndex("by_organization_and_kind_and_started", (q) => q.eq("organizationId", args.organizationId).eq("kind", "sched_interpret").gte("startedAt", args.sinceMs)).take(500);
+    return {
+      rows: rows.filter((x) => x.conversationId === args.conversationId).map((x) => ({
+        messageId: x.messageId, act: x.act, parsed: x.parsed, checks: x.checks, decision: x.decision, status: x.status, appointmentId: x.appointmentId ?? null, reason: x.reason ?? null, createdAt: x.createdAt,
+      })),
+      runs: runs.map((x) => ({ costUsd: x.costUsdEstimate ?? 0, promptTokens: x.promptTokens ?? 0, completionTokens: x.completionTokens ?? 0, status: x.status, model: x.model ?? null, startedAt: x.startedAt })),
+    };
+  },
+});

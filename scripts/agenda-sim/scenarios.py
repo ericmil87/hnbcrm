@@ -440,3 +440,8 @@ for _org in ["clinica", "barbearia", "consultorio", "advogado", "pilates"]:
         denied = bool(re.search(r"n[aã]o (?:tenho|temos|h[aá]|consigo|est[aá]|d[aá])|indispon|ocupad|lotad|sem vaga|n[aã]o tem", txt))
         cv.flag("obs", f"pediu {hm} em {d} (existe e está livre, fora do top-3): {'OFERECEU' if offered else ('NEGOU disponibilidade' if denied else 'não ofereceu nem negou')}")
         if not offered and denied: cv.flag("tool/contrato", f"horário {hm} em {d} está LIVRE e a IA disse que não há (a busca não aceita horário e só devolve 3): {cv.last_ai()[100:260]!r}")
+
+try:
+    import scenarios_r3  # noqa: F401  (rodada 2; precisa dos cenários de base acima)
+except ImportError:
+    pass

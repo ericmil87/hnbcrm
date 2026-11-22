@@ -82,6 +82,13 @@ class Cv:
         a = self.turns[-1]["appointments"] if self.turns else []
         return [x for x in a if (x["status"] in ACTIVE or not active_only)]
     def has_handoff(self): return len(self.turns[-1]["handoffs"]) > 0 if self.turns else False
+    def decide(self, decision):
+        """A equipe aprova/recusa o pedido pendente do cliente (pelos cores, como a tela)."""
+        a = [x for x in self.appts() if x["status"] == "pending_approval"][0]
+        cx("simAgendaActs:internalSimDecide", {"organizationId": self.o["organizationId"], "appointmentId": a["id"], "decision": decision}); self.decided = a["id"]
+    def expire(self):
+        a = [x for x in self.appts() if x["status"] == "pending_approval"][0]
+        return cx("simAgendaActs:internalSimExpire", {"organizationId": self.o["organizationId"], "appointmentId": a["id"]})
     def age_offers(self, minutes):
         self._ensure()
         return cx("simAgenda:internalSimAgeOffers", {"organizationId": self.o["organizationId"], "conversationId": self.c["conversationId"], "minutes": minutes})

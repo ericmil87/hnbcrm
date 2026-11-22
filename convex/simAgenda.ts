@@ -16,6 +16,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { writeAgentTexts } from "./lib/agentProfileTexts";
 import { bookAppointmentCore } from "./lib/schedBookingOps";
+import { DEFAULT_PERMISSIONS } from "./lib/permissions";
 import { setResourceDayExceptionCore } from "./lib/schedExceptionOps";
 import { updateSchedSettingsCore, upsertResourceCore, upsertServiceCore } from "./lib/schedConfigOps";
 import { addLocalDays, atLocalMinutes, localDateOf } from "./lib/schedTime";
@@ -355,10 +356,19 @@ export const internalSimSetSched = internalMutation({
     smartMode: v.optional(v.union(v.literal("off"), v.literal("rank"), v.literal("restrict"))),
     aiBook: v.optional(v.union(v.literal("off"), v.literal("propose"), v.literal("auto"))),
     firstVisitNeedsApproval: v.optional(v.boolean()),
+    /** Confirmação pelo WhatsApp (C1): modo e serviço padrão (por NOME). */
+    humanConfirmMode: v.optional(v.union(v.literal("auto"), v.literal("suggest"), v.literal("off"))),
+    defaultService: v.optional(v.string()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
     await requireSimOrg(ctx, args.organizationId);
+    let defaultServiceId: Id<"schedServices"> | undefined;
+    if (args.defaultService) {
+      const svcs = await ctx.db.query("schedServices").withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId)).take(100);
+      defaultServiceId = svcs.find((x) => x.name === args.defaultService)?._id;
+      if (!defaultServiceId) throw new ConvexError("serviço padrão desconhecido");
+    }
     const admin = await ctx.db.query("teamMembers").withIndex("by_organization_and_type", (q) => q.eq("organizationId", args.organizationId).eq("type", "human")).first();
     if (!admin) throw new ConvexError("sem admin");
     // O aceite do "marca sozinha" exige uma conta autenticada (requireAccountWithEmail): o harness grava o aceite do
@@ -372,6 +382,7 @@ export const internalSimSetSched = internalMutation({
       patch: {
         ...(args.smartMode ? { smart: { mode: args.smartMode } } : {}),
         ai: { ...(args.aiBook ? { book: args.aiBook } : {}), ...(args.firstVisitNeedsApproval !== undefined ? { firstVisitNeedsApproval: args.firstVisitNeedsApproval } : {}) },
+        ...(args.humanConfirmMode || defaultServiceId ? { humanConfirm: { ...(args.humanConfirmMode ? { mode: args.humanConfirmMode } : {}), ...(defaultServiceId ? { defaultServiceId } : {}) } } : {}),
       },
     });
     return null;
@@ -456,5 +467,20 @@ export const internalSimTurn = internalAction({
       break;
     }
     return { t0, triggerId, elapsedMs: Date.now() - t0, verdict, state: last };
+  },
+});
+
+/** Membro humano extra da org de cenário (teste de permissão do Copiloto: ex.: agenda `view_all`). */
+export const internalSimAddMember = internalMutation({
+  args: { organizationId: v.id("organizations"), name: v.string(), agenda: v.union(v.literal("none"), v.literal("view_own"), v.literal("view_all"), v.literal("edit"), v.literal("manage")) },
+  returns: v.id("teamMembers"),
+  handler: async (ctx, args) => {
+    await requireSimOrg(ctx, args.organizationId);
+    const now = Date.now();
+    const userId = await ctx.db.insert("users", { email: `${args.name.toLowerCase().replace(/\W+/g, ".")}.${now}@sim.invalid`, name: args.name });
+    return await ctx.db.insert("teamMembers", {
+      organizationId: args.organizationId, userId, name: args.name, role: "agent", type: "human", status: "active",
+      permissions: { ...DEFAULT_PERMISSIONS.agent, agenda: args.agenda }, createdAt: now, updatedAt: now,
+    });
   },
 });
