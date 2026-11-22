@@ -65,6 +65,7 @@ import { VOCAB } from "@/lib/vocab";
 import { AgendaToolbar, type WeekFilterOption } from "./AgendaToolbar";
 import { AgendaColorLegend } from "./AgendaColorLegend";
 import { AgendaDayList } from "./AgendaDayList";
+import { EmptyDayHint } from "./EmptyDayHint";
 import type { QuickActions } from "./AgendaBlocks";
 import type { ColumnAction } from "./ResourceDayGrid";
 import type { PendingAppointment, PendingConflict, PendingData } from "./PendingQueueView";
@@ -549,7 +550,7 @@ export function AgendaPageView() {
             onToggle={setMobileColumn}
           />
         )}
-        {(grid.allDay.length > 0 || grid.noPlace.length > 0 || (grid.empty && !setupIncomplete)) && (
+        {(grid.allDay.length > 0 || grid.noPlace.length > 0) && (
           <div className="shrink-0 space-y-1.5">
             {grid.allDay.length > 0 && (
               <ul className="flex flex-wrap gap-1.5" aria-label={t.grid.allDay}>
@@ -581,10 +582,11 @@ export function AgendaPageView() {
                 </ul>
               </section>
             )}
-            {grid.empty && !setupIncomplete && <p className="px-1 text-sm text-text-secondary">{t.list.empty.hint}</p>}
           </div>
         )}
-        <Suspense fallback={<ContentSkeleton />}>
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {grid.empty && !setupIncomplete && <EmptyDayHint />}
+          <Suspense fallback={<ContentSkeleton />}>
           <ResourceDayGrid
             model={grid}
             tz={dayInput.timezone}
@@ -602,7 +604,8 @@ export function AgendaPageView() {
             onInternalClick={onInternalClick}
             onColumnAction={onColumnAction}
           />
-        </Suspense>
+          </Suspense>
+        </div>
       </>
     );
   };
