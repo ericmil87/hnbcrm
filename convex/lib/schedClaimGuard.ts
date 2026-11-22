@@ -119,12 +119,13 @@ const MARKERS: Marker[] = [
   // "Então fica terça às 10h. Posso registrar?": leitura-eco que as instruções pedem; só vale com a pergunta no fim.
   { re: /\bfica\s+(?:entao\s+)?(?:na\s+|no\s+|a\s+)?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g, level: "strong", needsMention: true, readback: true },
   { re: /\b(?:esta|estao|ficou|ficaram)\s+(?:tudo\s+)?certo\b|\btudo certo\b/g, level: "strong" },
-  { re: /\bpode vir\b|\b(?:fica|ficou|continua) (?:valendo|de pe)\b|\besta de pe\b|\b(?:fica|ficou) certo\b/g, level: "strong" },
+  { re: /\bpode vir\b(?!\s+(?:com|de|usando|vestindo|sem|trazendo|na hora|que|ate))|\b(?:fica|ficou|continua) (?:valendo|de pe)\b|\besta de pe\b|\b(?:fica|ficou) certo\b/g, level: "strong" },
   { re: /\batualizad[oa]\b(?=[^.!?]*\b(?:consulta|sessao|horario|agendamento)\b)|\binscrevi\b|\bconfirmacao feita\b|\bfeit[oa] o agendamento\b|\bagendamento (?:esta )?feito\b/g, level: "strong", domain: true },
   { re: /\bte (?:espero|esperamos|vejo|aguardo|aguardamos|atende|atendo|recebo|recebe|mando)\b|\bnos (?:vemos|falamos)\b/g, level: "strong", needsMention: true, domain: true },
   // Despedida: "Até lá!" depois de "pedido registrado, aguardando a equipe" é cortesia, não confirmação (closer: só barra sem o qualificador de pendente).
   { re: /\bate (?:la|logo|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/g, level: "closer", needsMention: true, domain: true },
-  { re: /✅|✔/g, level: "strong" },
+  // ✅ sozinho é marcador de lista ("✅ roupa confortável"): só pesa com horário ou assunto de pedido na frase (`aboutBooking`).
+  { re: /✅|✔/g, level: "soft" },
   { re: /\bja esta na agenda\b|\bna agenda (?:de|para|pra|do dia)\b|\bna lista de\b/g, level: "strong", domain: true },
   { re: /\bsua (?:consulta|sessao|vaga|reserva|visita|avaliacao|presenca) (?:e|esta)\b|\bvoce sera atendid[oa]\b/g, level: "strong" },
   // "O horário é seu!" fecha a frase; "já que é sua primeira vez" não.
@@ -142,7 +143,7 @@ const MARKERS: Marker[] = [
 const HEDGE_BEFORE =
   /\b(?:nao|nem|nunca|ainda nao|sem|vou|vamos|vai|posso|podemos|pode|podem|deve|devem|preciso|precisa|quero|quer|queria|queira|gostaria|deseja|para (?:deixar|ficar|ser|estar|ver|saber)|pra (?:deixar|ficar|ser|estar|ver|saber)|assim que|quando|se|caso|ate que|antes de|depois que|apos|talvez|como|sera|seria|estara|so|nenhum|nenhuma)\b/;
 /** "nada foi marcado", "quem já está marcado": o marcador é negado ou é objeto da pergunta, só quando vem logo depois. */
-const HEDGE_RIGHT_BEFORE = /\b(?:nada\s+(?:(?:foi|esta|estava|ficou|ainda|ate agora)\s+)*|quem\s+(?:ja\s+)?(?:esta|estao|ficou|ficaram|foi)\s+|ninguem\s+(?:(?:esta|foi|ficou)\s+)?)$/;
+const HEDGE_RIGHT_BEFORE = /\b(?:nada\s+(?:(?:foi|esta|estava|ficou|ainda|ate agora)\s+)*|quem\s+(?:ja\s+)?(?:esta|estao|ficou|ficaram|foi)\s+|ninguem\s+(?:(?:esta|foi|ficou)\s+)?|que\s+(?:ja\s+)?(?:esta|estao|foi)\s+)$/;
 /** Condição que abre a frase vale até o fim dela, mesmo depois de vírgula: "Se der certo, fica marcado". */
 const CONDITION_OPENER = /\b(?:se|caso|assim que|quando|ate que|depois que|desde que)\b/;
 /** Frases que narram o que o CLIENTE disse: nunca são afirmação nem horário inventado. */
@@ -150,17 +151,17 @@ const CUSTOMER_CITATION = /^\s*(?:voce|vc|o senhor|a senhora)\s+(?:disse|falou|p
 /** "Marina, você quer…": o vocativo no começo não muda de quem a frase fala. */
 const VOCATIVE = /^\s*[A-ZÀ-Ý][\p{L}'-]+(?: [A-ZÀ-Ý][\p{L}'-]+)?,\s*/u;
 const UNAVAILABLE_CUE = /\b(?:nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem horario|nao consigo|nao da|ja passou|nao esta livre|nao esta disponivel|preenchid[oa]s?|esgotad[oa]s?|cheio|cheia|nao estao mais|nao esta mais|ja foi tomad[oa]|ja foi preenchid[oa]|nao tem (?:mais )?(?:horario|horarios|vaga|vagas|disponibilidade|como))\b/;
-const BUSINESS_CUE = /\b(?:fecha|fecho|fechar|encerro|encerramos|fechamos|fechado ate|abre|abrimos|aberto|abertos|aberta|funciona|funcionamos|funcionamento|atendemos|atende as|atende de|atende so|atende apenas|atendemos so|atendemos apenas|expediente|horario de atendimento|estacionamento)\b/;
+const BUSINESS_CUE = /\b(?:fecha|fecho|fechar|encerro|encerramos|fechamos|fechado ate|abre|abrimos|aberto|abertos|aberta|funciona|funcionamos|funcionamento|atendemos|atende as|atende de|atende so|atende apenas|atendemos so|atendemos apenas|atendimento (?:e|eh|funciona) (?:so|apenas|somente)|expediente|horario de atendimento|estacionamento)\b/;
 /** Regra de funcionamento ("o último horário começa às 17h10", "tolerância de atraso"): descreve, não oferece; só vale sem afirmar vaga. */
 const INFO_CUE = /\b(?:ultimo horario|primeiro horario|horario de entrada|toleranc\w*|atraso|chegar|chegada|chegue|antecedencia)\b/;
 /** A frase AFIRMA disponibilidade ("tenho 18h", "está livre", "consigo"). */
 const ASSERT_AVAIL = /\b(?:disponivel|disponiveis|livres?|sobrou|sobraram|restou|consigo|conseguimos|encaixo|encaixamos|tenho)\b|\b(?:temos|tem|ha)(?:\s+(?:ainda|tambem|mais|as|os|o|a|uma|um))*\s+(?:\d|horarios?|vagas?|opcao|opcoes)/;
 /** "Vou ver se temos vaga nesse horário": o horário citado é o que será verificado, não uma oferta. */
-const VERIFY_PROMISE = /\b(?:vou|vamos)\s+(?:ver|verificar|conferir|consultar|checar|olhar|confirmar)\b|\bposso\s+(?:ver|verificar|conferir|consultar|checar|olhar)\b|\bdeixa eu\s+(?:ver|verificar|conferir|consultar)\b/;
+const VERIFY_PROMISE = /\b(?:vou|vamos)\s+(?:ver|verificar|conferir|consultar|checar|olhar|confirmar)\b|\b(?:eles|elas|a equipe|nossa equipe|o time)\s+(?:vai\s+|vao\s+|ira\s+|irao\s+)?(?:ver|verifica\w*|confirma\w*|conferem|confere|ajusta\w*|checa\w*|olha\w*)\b|\bposso\s+(?:ver|verificar|conferir|consultar|checar|olhar)\b|\bdeixa eu\s+(?:ver|verificar|conferir|consultar)\b/;
 /** Pergunta que pergunta o DIA ("qual dia você prefere", "prefere outro dia"): o horário que vem junto é o do pedido. */
 const DAY_QUESTION = /\b(?:qual|que|outro)\s+dia\b|\bprefere\s+(?:outro\s+)?dia\b/;
 /** A frase fala de remarcar/cancelar e de a equipe cuidar disso. */
-const CHANGE_TOPIC = /\b(?:remarca\w*|reagend\w*|cancel\w*|troca\w*|alteracao|alterar|mudanca|mudar)\b/;
+const CHANGE_TOPIC = /\b(?:remarca\w*|reagend\w*|cancel\w*|troca\w*|ajust\w*|alteracao|alterar|mudanca|mudar)\b/;
 const TEAM_WORD = /\b(?:equipe|time|eles|elas|atendente|colegas|pessoal)\b/;
 /** Repasse para a equipe dito pela IA ("já passei seu pedido para eles", "avisei a equipe"): só vale com o repasse criado. */
 const HANDOFF_PASS = /\b(?:passei|passou|passamos|transferi|transferimos|encaminhei|encaminhamos|repassei|repassamos|deixei|avisei|avisamos|informei|comuniquei)\b[^.!?,;]{0,70}?\b(?:para|pra|com)\s+(?:a\s+|o\s+)?(?:(?:nossa|nosso|minha)\s+)?(?:equipe|time|eles|elas|atendente|atendentes|colegas|pessoal|responsaveis?|humanos?|setor)\b|\b(?:avisei|avisamos|informei|comuniquei)\s+(?:a|o)\s+(?:nossa\s+)?(?:equipe|time)\b/;
@@ -214,7 +215,7 @@ function markersIn(n: string): Hit[] {
 // ---------------------------------------------------------------------------
 
 const CHANGE_CLAIM =
-  /\b(?:remarc(?:ad[oa]\w*|amos)|remarquei|reagend(?:ad[oa]\w*|ei|amos)|troquei|trocad[oa]\w*|trocamos|mudei|mudad[oa]\w*|mudamos|passei (?:o|seu|sua|a|para|pra)|passou (?:para|pra)|transferid[oa]\w*|transferi|transferimos|adiei|adiad[oa]\w*|adiamos|antecipei|antecipad[oa]\w*)\b/g;
+  /\b(?:remarc(?:ad[oa]\w*|amos)|remarquei|reagend(?:ad[oa]\w*|ei|amos)|troquei|trocad[oa]\w*|trocamos|mudei|mudad[oa]\w*|mudamos|(?<!que )passei (?:o|seu|sua|a|para|pra)|passou (?:para|pra)|transferid[oa]\w*|transferi|transferimos|adiei|adiad[oa]\w*|adiamos|antecipei|antecipad[oa]\w*)\b/g;
 const CANCEL_CLAIM = /\b(?:cancelei|cancelad[oa]\w*|cancelamos|desmarquei|desmarcad[oa]\w*|desmarcamos)\b/g;
 const SUBJECT_FICA = /\b(?:horario|consulta|sessao|atendimento|agendamento)\b[^.!?]*\b(?:fica|ficou) (?:para|pra)\b/;
 const INSTEAD_OF = /\b(?:em vez de|ao inves de)\b/;
@@ -280,15 +281,25 @@ const NEGATES_RESOURCE = /\b(?:nao|nem|sem|ninguem|folga|ferias|ausente|ausentes
 const TITLES = new Set(["dr", "dra", "doutor", "doutora", "sr", "sra", "prof", "profa", "professor", "professora"]);
 const GENERIC_FIRST = new Set(["sala", "consultorio", "cadeira", "box", "maca", "studio", "estudio", "room", "mesa", "equipamento", "quadra", "salao", "espaco", "unidade"]);
 
-/** Formas pelas quais o cliente/IA cita o recurso: nome inteiro, sem título e o primeiro nome (se não for palavra genérica). */
-export function resourceAliases(name: string): string[] {
-  const words = norm(name).replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
-  const rest = words.filter((w) => !TITLES.has(w));
-  const out = new Set<string>();
-  if (words.length > 0) out.add(words.join(" "));
-  if (rest.length > 0) out.add(rest.join(" "));
-  if (rest.length > 0 && rest[0].length >= 3 && !GENERIC_FIRST.has(rest[0])) out.add(rest[0]);
-  return [...out];
+const wordsOf = (name: string) => norm(name).replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+
+/**
+ * Formas pelas quais o cliente/IA cita cada recurso: o nome inteiro, o nome sem título e cada PALAVRA do nome que seja só dele
+ * (≥ 3 letras, não genérica e que não apareça no nome de outro recurso). "Terapeuta Carla" vira "terapeuta carla" e "carla", nunca
+ * "terapeuta" (que serve a todas as terapeutas); "Léo Silva" e "Léo Souza" ficam com "silva" e "souza" (o "léo" sozinho é ambíguo).
+ */
+export function buildAliasIndex(names: readonly string[]): Array<{ key: string; aliases: string[] }> {
+  const count = new Map<string, number>();
+  for (const name of names) for (const w of new Set(wordsOf(name))) count.set(w, (count.get(w) ?? 0) + 1);
+  return names.map((name) => {
+    const words = wordsOf(name);
+    const rest = words.filter((w) => !TITLES.has(w));
+    const out = new Set<string>();
+    if (words.length > 0) out.add(words.join(" "));
+    if (rest.length > 0) out.add(rest.join(" "));
+    for (const w of rest) if (w.length >= 3 && !GENERIC_FIRST.has(w) && !/^\d+$/.test(w) && count.get(w) === 1) out.add(w);
+    return { key: resourceKey(name), aliases: [...out] };
+  });
 }
 
 /** Chave estável do recurso (nome normalizado inteiro): é o que a oferta nomeada carrega em `KnownTime.resource`. */
@@ -297,10 +308,10 @@ export const resourceKey = (name: string): string => norm(name).replace(/[^a-z0-
 const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Recursos citados na frase (normalizada). */
-function citedResources(n: string, names: readonly string[]): string[] {
+function citedResources(n: string, index: ReturnType<typeof buildAliasIndex>): string[] {
   const out: string[] = [];
-  for (const name of names) {
-    if (resourceAliases(name).some((a) => new RegExp(`(?:^|[^a-z0-9])${escapeRe(a)}(?![a-z0-9])`).test(n))) out.push(resourceKey(name));
+  for (const { key, aliases } of index) {
+    if (aliases.some((a) => new RegExp(`(?:^|[^a-z0-9])${escapeRe(a)}(?![a-z0-9])`).test(n))) out.push(key);
   }
   return out;
 }
@@ -411,12 +422,13 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   // 0b. Profissional/sala citado junto de um horário: só vale se a OFERTA (ou o agendamento) nomeou esse recurso. O motor
   // escolhe quem atende; sem a oferta nomear, "terça às 14h com o Léo" é promessa que ninguém verificou.
   const resourceNames = st.resourceNames ?? [];
+  const aliasIndex = buildAliasIndex(resourceNames);
   if (resourceNames.length > 0) {
     for (const s of live) {
       if (s.skip || s.mentions.length === 0) continue;
-      for (const cited of citedResources(s.n, resourceNames)) {
+      for (const cited of citedResources(s.n, aliasIndex)) {
         // "…com outro barbeiro, já que o Tato está de folga": a oração que cita o nome NEGA o vínculo (não, folga, indisponível…).
-        const clausesOfCited = s.n.split(/[,;()—:]/).filter((c) => citedResources(c, resourceNames).includes(cited));
+        const clausesOfCited = s.n.split(/[,;()—:]/).filter((c) => citedResources(c, aliasIndex).includes(cited));
         if (clausesOfCited.length > 0 && clausesOfCited.every((c) => NEGATES_RESOURCE.test(c))) continue;
         const backed = s.mentions.some((m) => [...st.booked, ...st.existing, ...st.offered].some((k) => k.resources?.includes(cited) === true && sameTime(k, m, today)));
         if (!backed) return { kind: "resource_not_offered", evidence: s.raw.slice(0, EVIDENCE_MAX) };

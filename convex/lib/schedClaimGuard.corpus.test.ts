@@ -58,4 +58,29 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
   test("e 'não tem problema' continua sem esconder afirmação indevida", () => {
     expect(detectUnbackedBookingClaim("Não tem problema, terça às 10h já está marcado!", ofertas)).not.toBeNull();
   });
+  test("2ª rodada da remedição: frases corretas que o guard barrou com o D2 já no ar", () => {
+    const terapeutas = ["Terapeuta Ana", "Terapeuta Bruno", "Terapeuta Carla", "Terapeuta Davi"];
+    // "Terapeuta" serve a todas: o apelido do recurso é a palavra SÓ dele ("carla"), nunca o papel
+    const carla = buildState({ names: terapeutas, booked: [["2026-11-23 09:00", "pending"]], offeredNamed: ["2026-11-23 09:00|Terapeuta Carla"] });
+    expect(detectUnbackedBookingClaim("Pedido registrado para segunda-feira, 23/11, às 09:00 com Terapeuta Carla, aguardando confirmação da equipe.", carla)).toBeNull();
+    expect(detectUnbackedBookingClaim("Pedido registrado para segunda, 23/11, às 09:00 com a Carla, aguardando a equipe.", carla)).toBeNull();
+    expect(detectUnbackedBookingClaim("Pedido registrado para segunda, 23/11, às 09:00 com a Ana, aguardando a equipe.", carla)?.kind).toBe("resource_not_offered");
+    expect(detectUnbackedBookingClaim("Pedido registrado para segunda, 23/11, às 09:00 com o Terapeuta Davi, aguardando a equipe.", carla)?.kind).toBe("resource_not_offered");
+    const grupo = buildState({ offered: ["2026-11-23 14:00", "2026-11-23 16:00"] });
+    // "para as duas" = para as duas PESSOAS, não 02:00
+    expect(detectUnbackedBookingClaim("Para amanhã à tarde, segunda 23/11, tenho estes horários para as duas sessões juntas: 14h e 16h.", grupo)).toBeNull();
+    expect(detectUnbackedBookingClaim("Na segunda, 23/11, tenho horários com vaga para as duas: 14h e 16h.", grupo)).toBeNull();
+    expect(detectUnbackedBookingClaim("Aí eu já vejo os horários da tarde para as duas juntas.", grupo)).toBeNull();
+    expect(detectUnbackedBookingClaim("Tenho 15h e às duas da tarde também.", grupo)).not.toBeNull(); // 14h/15h: 15h não ofertada continua barrada
+    const pend = buildState({ existing: [["2026-11-23 18:00", "pending"]] });
+    expect(detectUnbackedBookingClaim("Pode vir com roupa confortável e meias antiderrapantes.", pend)).toBeNull();
+    expect(detectUnbackedBookingClaim("✅ roupa confortável", pend)).toBeNull();
+    expect(detectUnbackedBookingClaim("Pode vir segunda às 18h, está tudo certo!", pend)).not.toBeNull();
+    const handoff = buildState({ handoff: true, existing: [["2026-11-23 15:00", "pending"]] });
+    expect(detectUnbackedBookingClaim("Eles verificam se terça-feira (24/11) às 14h está disponível e te confirmam por aqui.", handoff)).toBeNull();
+    expect(detectUnbackedBookingClaim("Eles verificam e ajustam seu horário para terça (24/11) às 13h30 e te avisam por aqui.", handoff)).toBeNull();
+    expect(detectUnbackedBookingClaim("E sobre o horário, você já viu as opções que passei pra quarta-feira, 25/11, à tarde?", buildState({}))).toBeNull();
+    expect(detectUnbackedBookingClaim("Para remarcar uma consulta que já está marcada, quem cuida disso é a nossa equipe.", buildState({}))).toBeNull();
+    expect(detectUnbackedBookingClaim("Nosso atendimento é só à tarde, das 14h às 18h, de segunda a sexta — às 9h não temos.", buildState({}))).toBeNull();
+  });
 });

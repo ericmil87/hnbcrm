@@ -45,6 +45,8 @@ export type StateSpec = {
   booked?: Array<[string, "pending" | "scheduled"]>;
   handoff?: boolean;
   knowledge?: boolean;
+  /** Nomes dos recursos da org (padrão: Léo, Tato, Rui, Dra. Helena). */
+  names?: string[];
 };
 
 export function buildState(spec: StateSpec): ClaimState {
@@ -61,7 +63,7 @@ export function buildState(spec: StateSpec): ClaimState {
       }),
     ],
     serviceNames: SERVICES,
-    resourceNames: RESOURCE_NAMES,
+    resourceNames: spec.names ?? RESOURCE_NAMES,
     ...(spec.handoff ? { handoff: true } : {}),
     ...(spec.knowledge ? { knowledgeTimes: KNOWLEDGE_TIMES } : {}),
   };

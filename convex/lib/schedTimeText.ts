@@ -115,6 +115,9 @@ function pushTimes(n: string, out: Tok[]): void {
   const tail = "(?:\\s+e\\s+(meia|quinze|trinta|quarenta e cinco|quarenta))?(?:\\s+(?:em ponto|horas?))?";
   const wordRe = new RegExp(`\\b(?:as|pras|pra as|para as|a)\\s+(${WORD_ALT})${tail}\\b(?!\\s*(?:minutos?|min|pessoas?|dias?|vezes|anos?|reais))`, "g");
   for (const m of n.matchAll(wordRe)) {
+    // "para as duas juntas", "vaga para as duas:" = para AS DUAS PESSOAS, não 2h (sem período, "e meia" nem "horas" depois).
+    if (m[1] === "duas" && /^(?:para|pra)\s/.test(m[0]) && !m[2] && !/^\s*(?:horas?\b|em ponto|da\s+(?:tarde|manha|noite|madrugada))/.test(n.slice((m.index ?? 0) + m[0].length))) continue;
+    if (m[1] === "duas" && /^\s*(?:juntas|juntos|pessoas|sessoes|aulas|vagas|opcoes|vezes|mulheres|amigas|criancas)\b/.test(n.slice((m.index ?? 0) + m[0].length))) continue;
     add(m, periodShift(NUM_WORDS[m[1]], n.slice((m.index ?? 0) + m[0].length)) * 60 + extraOf(m[2]));
   }
   // SEM "às": "quinta dez e meia", "sexta oito em ponto", "segunda oito horas, nove horas ou cinco da tarde"
