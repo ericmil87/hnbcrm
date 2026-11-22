@@ -80,7 +80,7 @@ export function Stepper({
                 <button
                   type="button"
                   onClick={() => onStepClick(step.id)}
-                  className="flex items-center gap-1.5 rounded-full coarse:min-h-11 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
+                  className="flex items-center gap-1.5 rounded-full coarse:min-h-11 coarse:min-w-11 coarse:justify-center focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-base"
                 >
                   {marker}
                   {label}

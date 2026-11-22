@@ -11,6 +11,8 @@ import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { formatPhone } from "@/components/campaigns/campaignUtils";
 import { mutationErrorMessage } from "@/lib/errors";
 import { fillVocab } from "@/lib/agendaCopy";
+import { rescheduleDefaults } from "@/lib/agendaBooking";
+import { resourcesOffInWindow, type DayOffClosure } from "@/lib/agendaDayOff";
 import { BOOKING_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday, type LocalDate } from "@/lib/agendaZone";
@@ -28,6 +30,7 @@ import {
   partySizeOf,
   pickedFromOffered,
   previewManualSlot,
+  searchWindow,
   submitBooking,
   undoFreshBooking,
   undoRefusedText,
@@ -60,7 +63,7 @@ export interface BookingSheetProps {
   /** Quem será marcado (contato, lead e/ou conversa). Obrigatório para marcar; remarcar dispensa. */
   who: BookingSheetWho;
   /** Modo remarcar: o horário atual deixa de contar como ocupado na busca; `startTime` alimenta "De X para Y". */
-  reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number };
+  reschedule?: { appointmentId: Id<"schedAppointments">; serviceId: Id<"schedServices">; variantKey?: string; startTime?: number; resourceIds?: readonly string[] };
   /** Serviço (e variação) já decididos ao marcar de novo uma proposta vencida; o passo de serviço não é repetido. */
   initialService?: { serviceId: Id<"schedServices">; variantKey?: string };
   /** Abre num dia (`YYYY-MM-DD`), ex.: "+ livre" da Agenda. */
@@ -119,6 +122,7 @@ function BookingSheetLoader(props: LoaderProps) {
       services={services}
       resources={resources}
       preferredServiceId={config?.settings.humanConfirm?.defaultServiceId ?? null}
+      closures={config?.closures ?? []}
     />
   );
 }
@@ -126,8 +130,9 @@ function BookingSheetLoader(props: LoaderProps) {
 interface FlowProps extends LoaderProps {
   tz: string;
   services: ServiceLike[];
-  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string; capacity?: number; active?: boolean }>;
+  resources: Array<{ _id: Id<"schedResources">; name: string; kind: string; capacity?: number; active?: boolean; weekly?: ReadonlyArray<{ weekday: number }> }>;
   preferredServiceId: string | null;
+  closures: ReadonlyArray<DayOffClosure>;
 }
 
 const EMPTY_SLOTS: SlotsState = { status: "loading", slots: [], hasMore: false, reason: "ok", firstPossible: null };
@@ -143,6 +148,7 @@ function useSlotSearch(input: {
   tz: string;
   rescheduleAppointmentId?: Id<"schedAppointments">;
   durationMin: number | undefined;
+  requestedTime: boolean;
 }) {
   const convex = useConvex();
   const { organizationId, state, tz, rescheduleAppointmentId } = input;
@@ -167,7 +173,7 @@ function useSlotSearch(input: {
   useEffect(() => {
     if (!onSlotStep) return;
     const now = Date.now();
-    const args = buildFindSlotsArgs({ organizationId, state: stateRef.current, tz, now, rescheduleAppointmentId });
+    const args = buildFindSlotsArgs({ organizationId, state: stateRef.current, tz, now, rescheduleAppointmentId, requestedTime: input.requestedTime });
     if (!args) return;
     const filterChanged = lastFilter.current !== filterKey;
     lastFilter.current = filterKey;
@@ -202,7 +208,7 @@ function useSlotSearch(input: {
   return { slots, reload };
 }
 
-function BookingFlow({ organizationId, onClose, who, reschedule, initialService, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, busy, setBusy }: FlowProps) {
+function BookingFlow({ organizationId, onClose, who, reschedule, initialService, initialDate, initialTimeMin, initialPinned, onOpenAppointment, onDone, tz, services, resources, preferredServiceId, closures, busy, setBusy }: FlowProps) {
   const bookAppointment = useMutation(api.schedulingMutations.bookAppointment);
   const rescheduleAppointment = useMutation(api.schedulingMutations.rescheduleAppointment);
   const undoBooking = useMutation(api.schedulingMutations.undoBooking);
@@ -213,23 +219,30 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
   const [state, dispatch] = useReducer(
     bookingReducer,
     undefined,
-    (): BookingState =>
-      initialBookingState({
+    (): BookingState => {
+      // Remarcar abre no dia do agendamento (não em "Hoje") com a sala/profissional atuais.
+      const re = reschedule ? rescheduleDefaults({ startTime: reschedule.startTime, now: Date.now(), tz, resourceIds: reschedule.resourceIds, resources }) : null;
+      return initialBookingState({
         services,
         preferredServiceId,
         serviceId: reschedule?.serviceId ?? initialService?.serviceId,
         variantKey: reschedule?.variantKey ?? initialService?.variantKey,
         idempotencyKey: newIdempotencyKey(),
-        date: initialDate,
-        pinned: initialPinned,
-      })
+        date: initialDate ?? re?.date,
+        pinned: initialPinned ?? re?.pinned,
+      });
+    }
   );
   const service = services.find((s) => s._id === state.serviceId);
   const durationMin = chosenDurationMin(service, state.variantKey);
   const clientName = clientLabel(who.name, who.phone ? formatPhone(who.phone) : undefined);
   const whoOk = Boolean(reschedule) || hasWho(who);
-  const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin });
+  const { slots, reload } = useSlotSearch({ organizationId, state, tz, rescheduleAppointmentId: reschedule?.appointmentId, durationMin, requestedTime: initialDate !== undefined && initialTimeMin !== undefined });
   const [failure, setFailure] = useState<FailureView | null>(null);
+  const dayOff = useMemo(() => {
+    const w = searchWindow(state, today);
+    return resourcesOffInWindow(resources.map((r) => ({ _id: r._id as string, kind: r.kind, weekly: r.weekly })), closures, w.from, w.to);
+  }, [resources, closures, state, today]);
   const resourceList = useMemo(() => resources.map((r) => ({ _id: r._id as string, name: r.name, kind: r.kind, capacity: r.capacity, active: r.active })), [resources]);
 
   /** Toast "Desfazer": tudo ou nada; recusa mostra o motivo e abre o painel do horário. */
@@ -327,6 +340,7 @@ function BookingFlow({ organizationId, onClose, who, reschedule, initialService,
       dispatch={dispatch}
       services={services}
       resources={resourceList}
+      dayOff={dayOff}
       tz={tz}
       today={today}
       slots={slots}

@@ -20,7 +20,7 @@ const TRACK = {
   // O pseudo-elemento amplia a área de toque para >= 44 px sem mexer no layout.
   // O estado desligado usa ring inset (não borda), que não encolhe a área de toque.
   sm: { track: "h-5 w-9 before:-inset-x-1.5 before:-inset-y-3", thumb: "h-4 w-4", on: "translate-x-4" },
-  md: { track: "h-6 w-11 before:-inset-x-0.5 before:-inset-y-2.5", thumb: "h-5 w-5", on: "translate-x-5" },
+  md: { track: "h-6 w-11 before:-inset-x-0.5 before:-inset-y-3", thumb: "h-5 w-5", on: "translate-x-5" },
 } as const;
 
 /** Interruptor ligar/desligar (`role="switch"`). */

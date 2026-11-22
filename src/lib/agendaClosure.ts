@@ -87,9 +87,11 @@ export function summarizePreview(result: ClosureResult, o: { resourceName: strin
   const sentences: string[] = [];
   if (total > 0) {
     sentences.push(
-      result.capped
-        ? fillVocab(t.headlineAtLeast, { n: total, nome: o.resourceName })
-        : fillVocab(total === 1 ? t.headline.one : t.headline.many, { n: total, nome: o.resourceName })
+      o.org
+        ? fillVocab(result.capped ? t.headlineOrg.atLeast : total === 1 ? t.headlineOrg.one : t.headlineOrg.many, { n: total })
+        : result.capped
+          ? fillVocab(t.headlineAtLeast, { n: total, nome: o.resourceName })
+          : fillVocab(total === 1 ? t.headline.one : t.headline.many, { n: total, nome: o.resourceName })
     );
     if (o.org) {
       sentences.push(fillVocab(total === 1 ? t.orgAll.one : t.orgAll.many, { n: total }));

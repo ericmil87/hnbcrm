@@ -18,7 +18,9 @@ import { RuleWarningsDialog } from "@/components/agenda/booking/RuleWarningsDial
 import { useRoundedNow } from "@/components/agenda/booking/useRoundedNow";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { useAgendaAccess } from "@/hooks/useAgendaAccess";
+import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
+import { openConversationAction } from "@/lib/agendaInbox";
 import { BOOKING_COPY, DETAIL_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday } from "@/lib/agendaZone";
@@ -36,6 +38,8 @@ export interface AppointmentDetailPanelProps {
   onClose: () => void;
   /** "Abrir conversa" (quando o agendamento tem conversa). Ausente = sem o atalho. */
   onOpenConversation?: (conversationId: Id<"conversations">) => void;
+  /** "Resolver" (agendamento sem lugar): abre o resolvedor do conflito. Ausente = sem o botão. */
+  onResolveConflict?: (appointmentId: Id<"schedAppointments">) => void;
 }
 
 /**
@@ -43,7 +47,7 @@ export interface AppointmentDetailPanelProps {
  * diálogos; a tela é `AppointmentDetailView` (por props). Remarcar reabre o `BookingSheet` em modo remarcar;
  * cancelar pede motivo opcional; mudança de status, cancelar e recusar têm "Desfazer".
  */
-export function AppointmentDetailPanel({ organizationId, appointmentId, onClose, onOpenConversation }: AppointmentDetailPanelProps) {
+export function AppointmentDetailPanel({ organizationId, appointmentId, onClose, onOpenConversation, onResolveConflict }: AppointmentDetailPanelProps) {
   // Mesma assinatura do corpo (o Convex não busca duas vezes): aqui só para o título seguir a situação.
   const data = useQuery(api.scheduling.getAppointment, appointmentId ? { appointmentId } : "skip");
   const now = useRoundedNow("minute");
@@ -55,6 +59,7 @@ export function AppointmentDetailPanel({ organizationId, appointmentId, onClose,
           organizationId={organizationId}
           appointmentId={appointmentId}
           onOpenConversation={onOpenConversation}
+          onResolveConflict={onResolveConflict}
         />
       )}
     </SlideOver>
@@ -65,14 +70,17 @@ function DetailBody({
   organizationId,
   appointmentId,
   onOpenConversation,
+  onResolveConflict,
 }: {
   organizationId: Id<"organizations">;
   appointmentId: Id<"schedAppointments">;
   onOpenConversation?: (conversationId: Id<"conversations">) => void;
+  onResolveConflict?: (appointmentId: Id<"schedAppointments">) => void;
 }) {
   const tz = useOrgTimezone(organizationId);
   const now = useRoundedNow("minute");
   const access = useAgendaAccess(organizationId);
+  const canOpenInbox = usePermissions(organizationId).can("inbox", "view_own");
   const data = useQuery(api.scheduling.getAppointment, { appointmentId });
   const config = useQuery(api.schedulingConfig.getConfig, { organizationId, closuresFrom: zonedToday(now, tz) });
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
@@ -190,8 +198,10 @@ function DetailBody({
         busy={busy}
         proposalBroken={proposalBroken}
         undoUnavailable={undoUnavailable}
+        contactPhone={data.contactPhone}
         onAction={onAction}
-        onOpenConversation={appt.conversationId && onOpenConversation ? () => onOpenConversation(appt.conversationId!) : undefined}
+        onResolve={onResolveConflict && data.openConflicts.length > 0 ? () => onResolveConflict(appointmentId) : undefined}
+        onOpenConversation={openConversationAction(appt.conversationId, canOpenInbox, onOpenConversation)}
         humanUndo={humanUndo}
         onUndoHumanConfirm={() => void doUndoHuman()}
       />
@@ -201,7 +211,7 @@ function DetailBody({
           open
           onClose={() => setRescheduling(false)}
           who={{ contactId: appt.contactId, leadId: appt.leadId, conversationId: appt.conversationId, name: clientLabel(who) }}
-          reschedule={{ appointmentId, serviceId: appt.serviceId, variantKey: appt.variantKey, startTime: appt.startTime }}
+          reschedule={{ appointmentId, serviceId: appt.serviceId, variantKey: appt.variantKey, startTime: appt.startTime, resourceIds: appt.resources.map((r) => r.resourceId) }}
         />
       )}
       {rebooking && (

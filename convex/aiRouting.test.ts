@@ -119,8 +119,8 @@ describe("setPlatformOrder + getAiStatus", () => {
       organizationId,
       models: {
         copilot: "kimi-k2.7-code",
-        attendant: "deepseek-v4-flash",
-        classify: "deepseek-v4-flash",
+        attendant: "deepseek-flash-latest",
+        classify: "deepseek-flash-latest",
       },
     });
     const status = await asAdmin.query(api.aiSettings.getAiStatus, { organizationId });

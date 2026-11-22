@@ -29,7 +29,7 @@ describe("useRangeAppointments", () => {
     pages.first = { enabled: true, appointments: [row("a")], next: null };
     const { result } = renderHook(() => useRangeAppointments("org1" as never, "2026-11-23", "2026-11-29", true));
     expect(result.current.data).toEqual({ appointments: [row("a")], truncated: false });
-    expect(calls[0]).toEqual({ organizationId: "org1", fromLocalDate: "2026-11-23", toLocalDate: "2026-11-29", limit: 100 });
+    expect(calls[0]).toEqual({ organizationId: "org1", fromLocalDate: "2026-11-23", toLocalDate: "2026-11-29", limit: 100, mode: "grid" });
     calls.length = 0;
     const off = renderHook(() => useRangeAppointments("org1" as never, "2026-11-23", "2026-11-29", false));
     expect(calls.every((c) => c === "skip")).toBe(true);

@@ -552,6 +552,20 @@ body {
   }
 }
 
+/* Ações do aviso (toast, sonner) no toque: 44 px de área real. O padrão da lib é 24 px de altura; no computador
+   (ponteiro fino) segue igual. Seletor mais específico que o da lib, que injeta o CSS depois deste. */
+@media (pointer: coarse) {
+  [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-button],
+  [data-sonner-toaster] [data-sonner-toast][data-styled='true'] [data-cancel] {
+    min-width: 44px;
+    height: 44px;
+    padding-left: 12px;
+    padding-right: 12px;
+    font-size: 14px;
+    justify-content: center;
+  }
+}
+
 /* === Kit de cena (landing/onboarding): pausar a cena congela também as animações CSS internas
    (pontos de "digitando…", pulsos), não só a linha do tempo. Ver SceneLoop. === */
 [data-scene-paused="true"] *,

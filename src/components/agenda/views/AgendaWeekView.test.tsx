@@ -97,6 +97,7 @@ describe("AgendaWeekView", () => {
     const h = setup(many);
     fireEvent.click(screen.getByRole("button", { name: /a mais, abrir o dia/ }));
     expect(h.onOpenDay).toHaveBeenCalledWith("2026-11-24");
+    expect(h.onSlotClick).not.toHaveBeenCalled();
   });
 
   it("dia fechado aparece no cabeçalho com texto, não só ícone", () => {
@@ -115,13 +116,13 @@ describe("AgendaWeekView", () => {
 
 describe("AgendaWeekView: arrastar, toque e dia fechado", () => {
   beforeAllMatchMedia();
-  it("o pedaço de compromisso que continua de um dia anterior (cruza a meia-noite) não arrasta; o do dia de início arrasta", () => {
+  it("os dois pedaços do compromisso que cruza a meia-noite arrastam (o segundo move pela diferença)", () => {
     const night = ev("n", 25, 22, { endTime: at(26, 2), title: "Plantão" });
     setup([], [night], { onMoveEvent: vi.fn() });
     const start = within(document.querySelector('[data-day="2026-11-25"]') as HTMLElement).getByRole("button", { name: /Plantão/ });
     const cont = within(document.querySelector('[data-day="2026-11-26"]') as HTMLElement).getByRole("button", { name: /Plantão/ });
     expect(start.className).toContain("cursor-grab");
-    expect(cont.className).not.toContain("cursor-grab");
+    expect(cont.className).toContain("cursor-grab");
   });
   it("alvos de toque: ficha '+N' e faixas de dia inteiro ampliadas no toque (coarse)", () => {
     setup(Array.from({ length: 5 }, (_, i) => appt(`m${i}`, 24, 10)), [ev("f", 27, 0, { allDay: true, startTime: at(27, 0), endTime: at(28, 0), title: "Feriado" })]);

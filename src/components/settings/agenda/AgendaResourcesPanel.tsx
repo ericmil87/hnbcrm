@@ -114,10 +114,8 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
           (r) => resourceEditAccept(name, r),
           ask
         );
-        if (!outcome.done) {
-          toast("Nada foi alterado");
-          return;
-        }
+        // Voltar no aviso é uma escolha da pessoa: nada a anunciar (o aviso "Nada foi alterado" confundia).
+        if (!outcome.done) return;
         const notice = capacityExcessNotice(name, outcome.result);
         if (notice) {
           toast.warning(notice.message, { duration: 12000, action: { label: notice.actionLabel, onClick: () => navigate(notice.href) } });
@@ -141,7 +139,6 @@ export function AgendaResourcesPanel({ organizationId }: SettingsPanelProps) {
         ask
       );
       if (outcome.done) toast.success(VOCAB.scheduling.config.kind[r.kind].archived);
-      else toast("Nada foi alterado");
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível arquivar."));
     }

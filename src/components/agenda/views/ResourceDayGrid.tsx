@@ -2,6 +2,9 @@ import { AlertTriangle, CalendarDays, DoorOpen, Lock, MoreVertical, Plus, UserRo
 import { useLayoutEffect, useRef } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 import { useColumnWidth } from "./useColumnWidth";
+import { blockNames } from "@/lib/agendaBlockNames";
+import { appointmentLabel } from "@/lib/agendaGrid";
+import { zonedTimeLabel } from "@/lib/agendaZone";
 import { AppointmentBlock, InternalBlock, type BlockBox, type QuickActions } from "./AgendaBlocks";
 import { VacancyIndicator } from "@/components/agenda/VacancyIndicator";
 import { Menu, type MenuItem } from "@/components/ui/Menu";
@@ -209,6 +212,8 @@ export function ResourceDayGrid({
   }, [scrollKey, hourPx]);
 
   const clickColumn = (col: GridColumn, e: MouseEvent<HTMLDivElement>) => {
+    // Evento vindo de um portal (cartão, menu) sobe pela árvore do React mas não está dentro da coluna.
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if (!canBook || col.closed || col.kind === "internal") return;
     const rect = e.currentTarget.getBoundingClientRect();
     onSlotClick(col.resource, minuteFromOffset(e.clientY - rect.top, model.window.startHour, model.window.endHour, hourPx));
@@ -237,7 +242,15 @@ export function ResourceDayGrid({
                 </span>
               ))}
             </div>
-            {columns.map((col) => (
+            {columns.map((col) => {
+              const names = blockNames(
+                col.placed.flatMap((p) =>
+                  p.item.kind === "appointment"
+                    ? [{ id: p.item.id, label: appointmentLabel(p.item.appointment), startMin: p.item.startMin, endMin: p.item.endMin, time: zonedTimeLabel(p.item.appointment.startTime, tz), widthPx: widthOf(p) }]
+                    : []
+                )
+              );
+              return (
               <div
                 key={`col:${col.key}`}
                 role="group"
@@ -334,13 +347,15 @@ export function ResourceDayGrid({
                       tone={appointmentTone(a, tone)}
                       exceptResourceId={col.resource?._id ?? null}
                       widthPx={widthOf(p)}
+                      name={names.get(item.id)}
                       onOpen={onAppointmentClick}
                       quick={quick}
                     />
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
             {nowTop !== null && (
               <div aria-hidden="true" className="pointer-events-none absolute right-0 z-10 flex items-center" style={{ top: nowTop, left: GUTTER }}>
                 <span className="-ml-[5px] h-2.5 w-2.5 rounded-full bg-semantic-error" />

@@ -1090,6 +1090,7 @@ export const internalProcessGroupTurn = internalAction({
       let requestCount = 0;
       const usage = newUsageTotals();
       let usedProvider: string | undefined;
+      let usedModel: string = context.model;
       let handoffRequestedThisRun = false;
       // Guardrail de saída (07/10/2026): `replyToGroup` com marcação técnica de
       // ferramenta vazada. A resposta NÃO é publicada (como o texto puro sem
@@ -1107,6 +1108,7 @@ export const internalProcessGroupTurn = internalAction({
         });
         requestCount += 1;
         usedProvider = resp.usedRoute.providerId;
+        usedModel = resp.usedRoute.canonicalModel;
         addUsage(usage, resp.usage, resp.usedRoute, context.model, {
           inputChars: JSON.stringify(messages).length,
           outputChars: JSON.stringify(resp.message).length,
@@ -1238,7 +1240,7 @@ export const internalProcessGroupTurn = internalAction({
         runId: context.agentRunId,
         status: "done",
         provider: usedProvider,
-        model: context.model,
+        model: usedModel,
         requestCount,
         toolCallNames,
         ...finishRunCostFields(usage),

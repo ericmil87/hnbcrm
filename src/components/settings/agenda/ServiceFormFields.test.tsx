@@ -27,6 +27,12 @@ describe("ServiceFormFields", () => {
     fireEvent.click(screen.getByRole("switch", { name: "A IA pode oferecer este serviço" }));
     expect(onChange.mock.calls[1][0].aiBookable).toBe(false);
   });
+  it("tocar no texto da linha também alterna a chave", () => {
+    const onChange = vi.fn();
+    render(<ServiceFormFields value={newServiceForm()} onChange={onChange} resources={resources} />);
+    fireEvent.click(screen.getByText("A IA pode oferecer este serviço"));
+    expect(onChange.mock.calls[0][0].aiBookable).toBe(false);
+  });
   it("mostra erro do servidor-espelho", () => {
     render(<ServiceFormFields value={newServiceForm()} onChange={() => {}} resources={resources} errors={{ name: "O nome é obrigatório." }} />);
     expect(screen.getByText("O nome é obrigatório.")).toBeInTheDocument();

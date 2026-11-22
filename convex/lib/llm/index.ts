@@ -163,6 +163,13 @@ export function resolveByoRoute(
   return makeRoute(provider, baseUrl, byo.apiKey, canonicalModel, { extraBody });
 }
 
+// O OpenCode Go devolve 400 "Request is missing x-opencode-session" (desde 09/2026,
+// a doc do Go restringe o uso a agente de código): é erro DO ELO, não do pedido,
+// então avança ao próximo. Só esta frase; os demais 400 seguem propagando.
+function isOpencodeSessionRejection(err: unknown): boolean {
+  return err instanceof LlmHttpError && err.status === 400 && /x-opencode-session/i.test(err.message);
+}
+
 // Advance to the next route on quota/availability failures: OpenCode Go signals
 // tier exhaustion with 4xx quota codes (429/402/403), plus any 5xx / timeout,
 // plus o 400 "Upstream request failed" mal-rotulado (transitório — E2E provou).
@@ -174,7 +181,8 @@ function shouldFallover(err: unknown): boolean {
       err.status === 402 ||
       err.status === 403 ||
       err.status >= 500 ||
-      isUpstreamMislabeled400(err)
+      isUpstreamMislabeled400(err) ||
+      isOpencodeSessionRejection(err)
     );
   }
   // Network / timeout wrapped as a plain Error -> try the next route.
@@ -206,7 +214,11 @@ export async function chatWithFallback(
       lastErr = e;
       failures.push({ route, error: e });
       const isLast = i === routes.length - 1;
-      if (isLast || !shouldFallover(e)) throw tagPlatformLlmFailure(e, failures);
+      if (!shouldFallover(e)) throw tagPlatformLlmFailure(e, failures);
+      // Cadeia esgotada: o erro que sobe é o do PRIMEIRO elo (o motivo real, ex.:
+      // 429 do modelo principal); o do último costuma ser ruído de elo
+      // secundário (foi o que escondeu o 429 em 19/09/2026).
+      if (isLast) throw tagPlatformLlmFailure(failures[0].error, failures);
       // else: try the next route in the chain
     }
   }

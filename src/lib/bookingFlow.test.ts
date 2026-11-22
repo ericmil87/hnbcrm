@@ -11,9 +11,11 @@ import {
   bookingReducer,
   buildBookArgs,
   nearestSlotStart,
+  promoteRequestedSlot,
   supportsGroup,
   timeInputValue,
   buildFindSlotsArgs,
+  REQUESTED_TIME_LIMIT,
   buildRescheduleArgs,
   clientLabel,
   interpretPreview,
@@ -205,6 +207,12 @@ describe("janela e argumentos da busca", () => {
     expect(args?.fromLocalDate).toBe("2026-11-26");
     const tokyo = buildFindSlotsArgs({ organizationId: "org", state: base({ serviceId: "svc1" }), tz: "Asia/Tokyo", now: lateUtc });
     expect(tokyo?.fromLocalDate).toBe("2026-11-27");
+  });
+  it("hora pedida pela Agenda: busca mais horários (REQUESTED_TIME_LIMIT), até 'Ver mais horários'; depois o limite expandido", () => {
+    const state = base({ serviceId: "svc1" });
+    expect(buildFindSlotsArgs({ organizationId: "org", state, tz: TZ, now: NOW })?.limit).toBe(3);
+    expect(buildFindSlotsArgs({ organizationId: "org", state, tz: TZ, now: NOW, requestedTime: true })?.limit).toBe(REQUESTED_TIME_LIMIT);
+    expect(buildFindSlotsArgs({ organizationId: "org", state: { ...state, expanded: true }, tz: TZ, now: NOW, requestedTime: true })?.limit).toBe(24);
   });
   it("sem serviço não busca", () => {
     expect(buildFindSlotsArgs({ organizationId: "org", state: base(), tz: TZ, now: NOW })).toBeNull();
@@ -776,6 +784,18 @@ describe("hora pedida pela Agenda", () => {
     expect(nearestSlotStart(list, { timeMin: 11 * 60 + 40, tz })).toBe(at("2026-11-26", 12));
     expect(nearestSlotStart(list, { timeMin: 11 * 60, tz })).toBe(at("2026-11-26", 10)); // 10:00 e 12:00 a 60 min? 10:00 vence por ser a mais cedo
     expect(nearestSlotStart(list, { timeMin: 0, tz })).toBe(at("2026-11-26", 9));
+  });
+  it("a hora clicada, quando livre, vira a primeira sugestão (as demais mantêm a ordem)", () => {
+    const list = [slot("2026-11-26", 9), slot("2026-11-26", 10), slot("2026-11-26", 15), slot("2026-11-26", 16)];
+    const out = promoteRequestedSlot(list, { timeMin: 15 * 60, tz, date: "2026-11-26" });
+    expect(out.map((s) => s.startTime)).toEqual([at("2026-11-26", 15), at("2026-11-26", 9), at("2026-11-26", 10), at("2026-11-26", 16)]);
+  });
+  it("hora clicada já em primeiro, ocupada, de outro dia ou ausente: ordem do servidor", () => {
+    const list = [slot("2026-11-26", 9), slot("2026-11-26", 15)];
+    expect(promoteRequestedSlot(list, { timeMin: 9 * 60, tz }).map((s) => s.startTime)).toEqual(list.map((s) => s.startTime));
+    expect(promoteRequestedSlot(list, { timeMin: 11 * 60, tz }).map((s) => s.startTime)).toEqual(list.map((s) => s.startTime));
+    expect(promoteRequestedSlot(list, { timeMin: 15 * 60, tz, date: "2026-11-27" }).map((s) => s.startTime)).toEqual(list.map((s) => s.startTime));
+    expect(promoteRequestedSlot(list, { timeMin: undefined, tz }).map((s) => s.startTime)).toEqual(list.map((s) => s.startTime));
   });
   it("só considera o dia pedido e devolve null sem sugestão", () => {
     const list = [slot("2026-11-25", 11), slot("2026-11-26", 15)];
