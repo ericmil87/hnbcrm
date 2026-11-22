@@ -131,7 +131,7 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
         }}
         onMouseEnter={hc.show}
         onMouseLeave={hc.hide}
-        className={cn(BASE, FOCUS, "transition-[filter] hover:brightness-95 dark:hover:brightness-110", tone.block, narrow && "px-1 text-[11px] leading-[13px]", over && "ring-2 ring-inset ring-semantic-error")}
+        className={cn(BASE, FOCUS, "transition-[filter] hover:brightness-95 dark:hover:brightness-110", tone.block, narrow && "px-1 text-micro", over && "ring-2 ring-inset ring-semantic-error")}
       >
         {UNDERLAY}
         {plan.compact ? (
@@ -287,7 +287,7 @@ export function InternalBlock({ item: e, tz, box, lanes = 1, onDragStart, draggi
         BASE,
         FOCUS,
         "border border-dashed border-ai-500 bg-ai-500/10 transition-[filter] hover:brightness-95 dark:hover:brightness-110",
-        narrow && "px-1 text-[11px] leading-[13px]",
+        narrow && "px-1 text-micro",
         onDragStart && "cursor-grab touch-none active:cursor-grabbing",
         dragging && "opacity-40"
       )}

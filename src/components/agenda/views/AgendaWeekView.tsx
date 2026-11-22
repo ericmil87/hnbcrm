@@ -169,6 +169,9 @@ export function AgendaWeekView({
     if (!el) return;
     const minute = initialScrollMinute({ nowMin: model.nowMin, openStartMin: model.openStartMin, openEndMin: model.openEndMin, firstItemMin: model.firstItemMin });
     el.scrollTop = scrollTopFor(minute, hourPx);
+    // Celular (colunas largas, rolagem na horizontal): começa no dia de hoje, se a semana o tem.
+    const todayCol = compact ? el.querySelector<HTMLElement>('[data-today="true"]') : null;
+    if (todayCol) el.scrollLeft = Math.max(0, todayCol.offsetLeft - 44);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrollKey, hourPx]);
 
@@ -263,6 +266,7 @@ export function AgendaWeekView({
                   role="group"
                   aria-label={shortDateLabel(d.localDate)}
                   data-day={d.localDate}
+                  data-today={d.isToday ? "true" : undefined}
                   className={cn("relative border-l border-border-subtle", bookable && "cursor-pointer", d.isToday && "bg-brand-500/5")}
                   style={{ height }}
                   onClick={(e) => clickDay(d.localDate, e)}
