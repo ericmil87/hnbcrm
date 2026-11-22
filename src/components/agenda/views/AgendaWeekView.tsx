@@ -1,14 +1,16 @@
-import { useLayoutEffect, useRef } from "react";
-import type { CSSProperties, MouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { CalendarDays, Lock } from "lucide-react";
 import { AppointmentBlock, InternalBlock, type BlockBox, type QuickActions } from "./AgendaBlocks";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { isCalendarItemDraggable } from "@/lib/agendaPermissions";
 import { appointmentTone, type ToneContext } from "@/lib/agendaColors";
 import { blockGeometry, gridHeight, hourLabels, HOUR_PX, minuteFromOffset, nowLineTop, type InternalItem } from "@/lib/agendaGrid";
 import { initialScrollMinute, scrollTopFor } from "@/lib/agendaScroll";
 import { fillVocab } from "@/lib/agendaCopy";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import type { WeekModel, WeekPlaced } from "@/lib/agendaWeekGrid";
-import { minutesLabel, weekdayOf } from "@/lib/agendaZone";
+import { minutesLabel, shortDateLabel, weekdayOf } from "@/lib/agendaZone";
 import { cn } from "@/lib/utils";
 
 const w = VIEWS_COPY.dense.weekGrid;
@@ -39,7 +41,23 @@ export interface AgendaWeekViewProps {
   onAppointmentClick: (appointmentId: string) => void;
   onInternalClick: (item: InternalItem) => void;
   onOpenDay: (localDate: string) => void;
+  /** Arrastar um compromisso da equipe para outro dia e hora (computador). Ausente = sem arrastar. */
+  onMoveEvent?: (item: InternalItem, localDate: string, minute: number) => void;
   className?: string;
+}
+
+/** Arrastar compromisso: o gesto só vale depois de mover este tanto (px), para o clique abrir o painel. */
+const DRAG_THRESHOLD_PX = 5;
+
+interface DragState {
+  item: InternalItem;
+  /** Distância (px) do ponteiro ao topo do bloco quando o gesto começou. */
+  grabOffset: number;
+  startX: number;
+  startY: number;
+  active: boolean;
+  /** Destino atual (dia e minuto), se o ponteiro está sobre uma coluna. */
+  target: { localDate: string; minute: number } | null;
 }
 
 function boxOf(p: Pick<WeekPlaced, "column" | "columns">, startMin: number, endMin: number, hourPx: number): BlockBox {
@@ -67,14 +85,84 @@ export function AgendaWeekView({
   onAppointmentClick,
   onInternalClick,
   onOpenDay,
+  onMoveEvent,
   className,
 }: AgendaWeekViewProps) {
   const height = gridHeight(WINDOW, hourPx);
   const hours = hourLabels(WINDOW);
-  const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(7, minmax(${compact ? "4.75rem" : "6.5rem"}, 1fr))` };
+  const template: CSSProperties = { gridTemplateColumns: `${GUTTER} repeat(7, minmax(${compact ? "8rem" : "6.5rem"}, 1fr))` };
   const scroller = useRef<HTMLDivElement>(null);
   const nowTop = nowLineTop(model.nowMin, WINDOW, hourPx);
   const hasAllDay = model.days.some((d) => d.allDay.length > 0);
+  const finePointer = useMediaQuery("(hover: hover) and (pointer: fine)");
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  /** O clique que o navegador dispara logo depois de soltar o arrasto não deve abrir o painel. */
+  const justDragged = useRef(false);
+  const moveRef = useRef(onMoveEvent);
+  moveRef.current = onMoveEvent;
+  const hourPxRef = useRef(hourPx);
+  hourPxRef.current = hourPx;
+
+  const startDrag = useCallback((item: InternalItem, e: ReactPointerEvent<HTMLButtonElement>, blockTop: number) => {
+    if (e.button !== 0) return;
+    const col = e.currentTarget.closest("[data-day]");
+    const rect = col?.getBoundingClientRect();
+    if (!rect) return;
+    const st: DragState = { item, grabOffset: e.clientY - rect.top - blockTop, startX: e.clientX, startY: e.clientY, active: false, target: null };
+    dragRef.current = st;
+    setDrag(st);
+  }, []);
+
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (e: PointerEvent) => {
+      const st = dragRef.current;
+      if (!st) return;
+      if (!st.active && Math.hypot(e.clientX - st.startX, e.clientY - st.startY) < DRAG_THRESHOLD_PX) return;
+      const colEl = document.elementFromPoint(e.clientX, e.clientY)?.closest<HTMLElement>("[data-day]");
+      let target: DragState["target"] = null;
+      if (colEl?.dataset.day) {
+        const rect = colEl.getBoundingClientRect();
+        target = { localDate: colEl.dataset.day, minute: minuteFromOffset(e.clientY - rect.top - st.grabOffset, WINDOW.startHour, WINDOW.endHour, hourPxRef.current) };
+      }
+      const next = { ...st, active: true, target };
+      dragRef.current = next;
+      setDrag(next);
+    };
+    const finish = (commit: boolean) => {
+      const st = dragRef.current;
+      dragRef.current = null;
+      setDrag(null);
+      if (st?.active) {
+        justDragged.current = true;
+        window.setTimeout(() => (justDragged.current = false), 80);
+        if (commit && st.target) moveRef.current?.(st.item, st.target.localDate, st.target.minute);
+      }
+    };
+    const onUp = () => finish(true);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") finish(false);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("keydown", onKey, true);
+    };
+    // Só reassina ao começar e terminar um gesto.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drag === null]);
+
+  const canDrag = (e: InternalItem) => !!onMoveEvent && finePointer && e.source === "event" && !e.allDay && isCalendarItemDraggable(e);
+  const openInternal = (e: InternalItem) => {
+    if (justDragged.current) return;
+    onInternalClick(e);
+  };
 
   useLayoutEffect(() => {
     const el = scroller.current;
@@ -85,14 +173,14 @@ export function AgendaWeekView({
   }, [scrollKey, hourPx]);
 
   const clickDay = (localDate: string, e: MouseEvent<HTMLDivElement>) => {
-    if (!canBookOn(localDate)) return;
+    if (justDragged.current || !canBookOn(localDate)) return;
     const rect = e.currentTarget.getBoundingClientRect();
     onSlotClick(localDate, minuteFromOffset(e.clientY - rect.top, WINDOW.startHour, WINDOW.endHour, hourPx));
   };
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-border bg-surface-raised", className)}>
-      <div ref={scroller} data-grid-scroller className="min-h-0 flex-1 overflow-auto overscroll-contain">
+      <div ref={scroller} data-grid-scroller className="relative min-h-0 flex-1 overflow-auto overscroll-contain">
         <div role="group" aria-label={w.ariaLabel} className="min-w-fit">
           <div className="sticky top-0 z-30 border-b border-border bg-surface-raised">
             <div className="grid" style={template}>
@@ -169,7 +257,7 @@ export function AgendaWeekView({
                 <div
                   key={`col:${d.localDate}`}
                   role="group"
-                  aria-label={d.localDate}
+                  aria-label={shortDateLabel(d.localDate)}
                   data-day={d.localDate}
                   className={cn("relative border-l border-border-subtle", bookable && "cursor-pointer", d.isToday && "bg-brand-500/5")}
                   style={{ height }}
@@ -188,7 +276,21 @@ export function AgendaWeekView({
                   ))}
                   {d.placed.map((p) => {
                     const box = boxOf(p, p.item.startMin, p.item.endMin, hourPx);
-                    if (p.item.kind === "internal") return <InternalBlock key={p.item.id} item={p.item.internal} tz={tz} box={box} onOpen={onInternalClick} />;
+                    if (p.item.kind === "internal") {
+                      const ev = p.item.internal;
+                      return (
+                        <InternalBlock
+                          key={p.item.id}
+                          item={ev}
+                          tz={tz}
+                          box={box}
+                          lanes={p.columns}
+                          dragging={drag?.active && drag.item.id === ev.id}
+                          onDragStart={canDrag(ev) ? (pe, top) => startDrag(ev, pe, top) : undefined}
+                          onOpen={openInternal}
+                        />
+                      );
+                    }
                     const a = p.item.appointment;
                     return (
                       <AppointmentBlock
@@ -199,6 +301,7 @@ export function AgendaWeekView({
                         tz={tz}
                         box={box}
                         tone={appointmentTone(a, tone)}
+                        lanes={p.columns}
                         onOpen={onAppointmentClick}
                         quick={quick}
                       />
@@ -223,6 +326,18 @@ export function AgendaWeekView({
                       </button>
                     );
                   })}
+                  {drag?.active && drag.target?.localDate === d.localDate && (
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-x-0.5 z-20 overflow-hidden rounded-md border-2 border-dashed border-brand-500 bg-brand-500/15 px-1 text-xs font-semibold text-text-primary"
+                      style={{
+                        top: (drag.target.minute / 60) * hourPx,
+                        height: Math.max(((drag.item.endTime - drag.item.startTime) / 60000 / 60) * hourPx, 22),
+                      }}
+                    >
+                      {minutesLabel(drag.target.minute)} {drag.item.title}
+                    </div>
+                  )}
                   {d.isToday && nowTop !== null && (
                     <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 z-10 flex items-center" style={{ top: nowTop }}>
                       <span className="-ml-[5px] h-2.5 w-2.5 rounded-full bg-semantic-error" />

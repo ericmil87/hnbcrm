@@ -4,7 +4,7 @@ import { appointmentTone, PALETTE_SIZE, toneAt, toneIndexOf } from "./agendaColo
 import { initialScrollMinute, scrollTopFor, visibleHours } from "./agendaScroll";
 import { DENSITY_HOUR_PX, PREFS_KEY, readPrefs, writePrefs } from "./agendaPrefs";
 import { buildMonthLines, cutMonthLines, monthMaxLines, unseenCount } from "./agendaMonthLines";
-import { buildWeekModel, MAX_LANES, type WeekResource } from "./agendaWeekGrid";
+import { buildWeekModel, FULL_LANES, LANES_WITH_MORE, type WeekResource } from "./agendaWeekGrid";
 import type { GridAppointment, InternalItem } from "./agendaGrid";
 
 const TZ = "America/Sao_Paulo";
@@ -217,12 +217,17 @@ describe("Semana", () => {
     });
     expect(buildWeekModel({ ...base, appointments: [a], internal: [] }).days[3].placed).toHaveLength(1);
   });
-  it("mais faixas que o limite viram +N", () => {
+  it("até 3 sobrepostos aparecem todos; acima disso 2 faixas e a ficha +N", () => {
+    const three = Array.from({ length: FULL_LANES }, (_, i) => appt(`t${i}`, 25, 10));
+    const d3 = buildWeekModel({ ...base, appointments: three, internal: [] }).days[2];
+    expect(d3.placed.map((p) => p.columns)).toEqual([3, 3, 3]);
+    expect(d3.overflow).toHaveLength(0);
     const many = Array.from({ length: 6 }, (_, i) => appt(`m${i}`, 25, 10));
     const day = buildWeekModel({ ...base, appointments: many, internal: [] }).days[2];
-    expect(Math.max(...day.placed.map((p) => p.column))).toBeLessThan(MAX_LANES);
+    expect(day.placed).toHaveLength(LANES_WITH_MORE);
+    expect(day.placed.every((p) => p.columns === LANES_WITH_MORE + 1)).toBe(true);
     expect(day.overflow).toHaveLength(1);
-    expect(day.overflow[0].hidden).toBe(many.length - MAX_LANES);
+    expect(day.overflow[0]).toMatchObject({ hidden: many.length - LANES_WITH_MORE, column: LANES_WITH_MORE, columns: LANES_WITH_MORE + 1 });
     expect(day.count).toBe(6);
   });
   it("filtro por recurso: só o que é dele; compromisso só do profissional dono; sala não mostra compromisso", () => {

@@ -109,7 +109,11 @@ export function periodLabel(date: LocalDate, view: AgendaView, compact = false):
   if (view === "semana") {
     const first = weekStartOf(date);
     const last = addLocalDays(first, 6);
-    const tail = compact ? "" : ` de ${last.slice(0, 4)}`;
+    if (compact) {
+      const ab = (d: LocalDate) => MONTH_ABBR[monthIdx(d)].replace(".", "");
+      return first.slice(0, 7) === last.slice(0, 7) ? `${dayOf(first)} – ${dayOf(last)} ${ab(last)}` : `${dayOf(first)} ${ab(first)} – ${dayOf(last)} ${ab(last)}`;
+    }
+    const tail = ` de ${last.slice(0, 4)}`;
     if (first.slice(0, 7) === last.slice(0, 7)) return `${dayOf(first)} – ${dayOf(last)} de ${MONTH_ABBR[monthIdx(last)]}${tail}`;
     if (first.slice(0, 4) === last.slice(0, 4)) return `${dayOf(first)} de ${MONTH_ABBR[monthIdx(first)]} – ${dayOf(last)} de ${MONTH_ABBR[monthIdx(last)]}${tail}`;
     return `${dayOf(first)} de ${MONTH_ABBR[monthIdx(first)]} de ${first.slice(0, 4)} – ${dayOf(last)} de ${MONTH_ABBR[monthIdx(last)]} de ${last.slice(0, 4)}`;

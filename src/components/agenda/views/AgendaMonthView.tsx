@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { CalendarDays, Hourglass, Lock, TriangleAlert } from "lucide-react";
 import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { Button } from "@/components/ui/Button";
@@ -48,19 +48,18 @@ export interface AgendaMonthViewProps {
   className?: string;
 }
 
-/** Altura (px) de um elemento, acompanhada por `ResizeObserver` (sem ele, o valor de reserva). */
-function useHeight<T extends HTMLElement>(fallback: number): [React.RefObject<T | null>, number] {
-  const ref = useRef<T>(null);
+/** Altura (px) de um elemento, acompanhada por `ResizeObserver` (sem ele, o valor de reserva). Ref por função: o elemento pode montar depois (esqueleto antes). */
+function useHeight<T extends HTMLElement>(fallback: number): [(el: T | null) => void, number] {
+  const [el, setEl] = useState<T | null>(null);
   const [h, setH] = useState(fallback);
   useEffect(() => {
-    const el = ref.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => setH(el.clientHeight || fallback));
     ro.observe(el);
     setH(el.clientHeight || fallback);
     return () => ro.disconnect();
-  }, [fallback]);
-  return [ref, h];
+  }, [el, fallback]);
+  return [setEl, h];
 }
 
 function lineDot(line: MonthLine, tone: ToneContext): string {
@@ -177,7 +176,7 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
 function SelectedDayList({ day, tz, now, onOpenDay, onAppointmentClick, onInternalClick }: { day: MonthGridDay; tz: string; now: number } & Pick<AgendaMonthViewProps, "onOpenDay" | "onAppointmentClick" | "onInternalClick">) {
   const label = shortDateLabel(day.localDate);
   return (
-    <section aria-label={fillVocab(d.dayList, { data: label })} className="min-h-0 flex-1 overflow-y-auto border-t border-border bg-surface-base px-1 pb-24 pt-2">
+    <section aria-label={fillVocab(d.dayList, { data: label })} className="relative min-h-0 flex-1 overflow-y-auto border-t border-border bg-surface-base px-1 pb-24 pt-2">
       <div className="mb-1 flex items-center justify-between gap-2 px-2">
         <h2 className="text-sm font-semibold text-text-primary">{label}</h2>
         <Button size="sm" variant="ghost" onClick={() => onOpenDay(day.localDate)}>
@@ -329,7 +328,7 @@ export function AgendaMonthView({
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-border bg-surface-raised", className)}>
       {notice}
-      <div role="grid" aria-label={t.ariaLabel} aria-busy={loading} className="flex min-h-0 flex-1 flex-col overflow-auto">
+      <div role="grid" aria-label={t.ariaLabel} aria-busy={loading} className="relative flex min-h-0 flex-1 flex-col overflow-auto">
         {header}
         <div className="grid min-h-0 flex-1 border-l border-border-subtle" style={{ gridTemplateRows: `repeat(${weeks.length}, minmax(6.5rem, 1fr))` }}>
           {weeks.map((week, w) => (

@@ -82,6 +82,8 @@ export interface InternalItem {
   /** Responsável e participantes (ids de membro): decidem em que coluna de profissional o item aparece. */
   memberIds: string[];
   canEdit?: boolean;
+  /** `scheduled`, `completed` ou `cancelled` (concluído e cancelado não se arrastam). */
+  status?: string;
 }
 
 /** `getEvents` devolve `any`: aceita só o que tem id, título e horário válidos. */
@@ -109,6 +111,7 @@ export function toInternalItems(raw: readonly unknown[] | undefined | null): Int
       assigneeName: typeof assignee?.name === "string" ? assignee.name : undefined,
       memberIds: [...ids],
       canEdit: typeof e.canEdit === "boolean" ? e.canEdit : undefined,
+      status: typeof e.status === "string" ? e.status : undefined,
     });
   }
   return out.sort((a, b) => a.startTime - b.startTime || a.id.localeCompare(b.id));

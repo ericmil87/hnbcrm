@@ -67,7 +67,7 @@ describe("Agenda v2: alvos de toque e layout no celular", () => {
     expect(page).not.toContain("CalendarPage");
     const bar = read("src/components/agenda/views/AgendaToolbar.tsx");
     // Celular: setas, hoje, pendências, visão e menu em 44 px (`!h-11 !w-11`); no computador ficam mais compactos.
-    expect(bar.match(/!h-11 !w-11/g)!.length).toBeGreaterThanOrEqual(6);
+    expect(bar.match(/!h-11 !w-11/g)!.length).toBeGreaterThanOrEqual(5);
   });
 
   it("a página ocupa a altura da tela e só a grade rola (sem rolagem dupla)", () => {

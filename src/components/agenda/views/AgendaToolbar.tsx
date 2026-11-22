@@ -102,7 +102,7 @@ export function AgendaToolbar(p: AgendaToolbarProps) {
     : [];
   const listItems: MenuItem[] =
     p.view === "lista"
-      ? (["hora", "recurso"] as const).map((m, i) => ({ id: `list:${m}`, label: t.listModes[m], checked: p.listMode === m, separatorBefore: i === 0, onSelect: () => p.onListModeChange(m) }))
+      ? (["hora", "recurso"] as const).map((m, i) => ({ id: `list:${m}`, label: `${t.listModeLabel}: ${t.listModes[m].toLowerCase()}`, checked: p.listMode === m, separatorBefore: i === 0, onSelect: () => p.onListModeChange(m) }))
       : [];
   const filterItems: MenuItem[] =
     week && p.weekFilter
@@ -146,9 +146,15 @@ export function AgendaToolbar(p: AgendaToolbarProps) {
   );
 
   if (p.isMobile) {
-    const mobileItems = [...viewItems, ...groupItems, ...listItems, ...filterItems.map((i, k) => ({ ...i, separatorBefore: k === 0 }))];
+    const mobileItems = [
+      ...viewItems,
+      ...groupItems,
+      ...listItems,
+      ...filterItems.map((i, k) => ({ ...i, separatorBefore: k === 0 })),
+      ...actionItems.map((i, k) => ({ ...i, separatorBefore: k === 0 })),
+      ...colorItems,
+    ];
     const CurrentIcon = VIEW_ICON[p.view];
-    const menuItems = [...actionItems, ...colorItems];
     return (
       <div role="toolbar" aria-label={t.title} className="flex items-center gap-0.5">
         {nav}
@@ -177,15 +183,6 @@ export function AgendaToolbar(p: AgendaToolbarProps) {
             </Button>
           )}
         />
-        <Menu
-          ariaLabel={t.menu}
-          items={menuItems}
-          trigger={(props) => (
-            <Button variant="ghost" iconOnly aria-label={t.menu} {...props} className="!h-11 !w-11">
-              <MoreHorizontal size={20} aria-hidden="true" />
-            </Button>
-          )}
-        />
       </div>
     );
   }
@@ -208,18 +205,6 @@ export function AgendaToolbar(p: AgendaToolbarProps) {
           options={[
             { value: "sala", label: t.groups.sala },
             { value: "profissional", label: t.groups.profissional },
-          ]}
-        />
-      )}
-      {p.view === "lista" && (
-        <SegmentedControl
-          ariaLabel={t.listModeLabel}
-          size="sm"
-          value={p.listMode}
-          onValueChange={(v) => p.onListModeChange(v as ListMode)}
-          options={[
-            { value: "hora", label: t.listModes.hora },
-            { value: "recurso", label: t.listModes.recurso },
           ]}
         />
       )}
@@ -252,7 +237,7 @@ export function AgendaToolbar(p: AgendaToolbarProps) {
       )}
       <Menu
         ariaLabel={t.menu}
-        items={[...actionItems, ...colorItems, ...densityItems]}
+        items={[...actionItems, ...listItems, ...colorItems, ...densityItems]}
         trigger={(props) => (
           <Button variant="secondary" size="sm" iconOnly aria-label={t.menu} {...props}>
             <MoreHorizontal size={16} aria-hidden="true" />

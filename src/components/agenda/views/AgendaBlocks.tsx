@@ -74,7 +74,9 @@ function useHoverCard(enabled: boolean) {
   return { open, setOpen, anchor, show, hide, keep: clear, close };
 }
 
-const BASE = "absolute overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-[15px] text-text-primary";
+const BASE = "absolute isolate overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-[15px] text-text-primary";
+/** Fundo opaco por baixo da cor suave: as linhas da grade não aparecem através do bloco. */
+const UNDERLAY = <span aria-hidden="true" className="absolute inset-0 -z-10 bg-surface-raised" />;
 const FOCUS = "focus:outline-none focus-visible:z-20 focus-visible:ring-2 focus-visible:ring-brand-500";
 
 function style(box: BlockBox): CSSProperties {
@@ -96,17 +98,20 @@ export interface AppointmentBlockProps {
   tone: Tone;
   /** Recurso da coluna: não se repete na linha "onde". */
   exceptResourceId?: string | null;
+  /** Faixas lado a lado neste trecho: com 3 ou mais o bloco é estreito (nome em até 2 linhas, só a hora de início). */
+  lanes?: number;
   onOpen: (appointmentId: string) => void;
   quick?: QuickActions;
 }
 
 /** Bloco de um agendamento com cliente: o texto muda com a altura (cliente, horário, serviço, lugar). */
-export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, onOpen, quick }: AppointmentBlockProps) {
+export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, lanes = 1, onOpen, quick }: AppointmentBlockProps) {
   const hoverable = useMediaQuery("(hover: hover)");
   const hc = useHoverCard(hoverable);
   const st = style(box);
   const plan = planBlock(Number(st.height));
-  const flags = statusFlags(a, expired);
+  const narrow = lanes >= 3;
+  const flags = statusFlags(a, expired).slice(0, narrow ? 1 : undefined);
   const title = appointmentLabel(a);
   const tip = appointmentTooltip(a, tz, expired, VOCAB.scheduling.proposalExpired) + (conflict ? ` · ${g.conflictMark}` : "") + (over ? ` · ${g.overCapacity}` : "");
   const place = placeText(a, exceptResourceId);
@@ -126,16 +131,27 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
         }}
         onMouseEnter={hc.show}
         onMouseLeave={hc.hide}
-        className={cn(BASE, FOCUS, "transition-[filter] hover:brightness-95 dark:hover:brightness-110", tone.block, over && "ring-2 ring-inset ring-semantic-error")}
+        className={cn(BASE, FOCUS, "transition-[filter] hover:brightness-95 dark:hover:brightness-110", tone.block, narrow && "px-1 text-[11px] leading-[13px]", over && "ring-2 ring-inset ring-semantic-error")}
       >
+        {UNDERLAY}
         {plan.compact ? (
           <span className="flex items-center gap-1">
             <Flags flags={flags} />
             <span className="truncate">
               <span className="font-semibold tabular-nums">{zonedTimeLabel(a.startTime, tz)}</span> <span className="font-semibold">{title}</span>
-              <span className="text-text-secondary">{a.serviceName ? ` · ${a.serviceName}` : ""}</span>
+              {!narrow && <span className="text-text-secondary">{a.serviceName ? ` · ${a.serviceName}` : ""}</span>}
             </span>
           </span>
+        ) : narrow ? (
+          <>
+            <span className="line-clamp-2 block font-semibold [overflow-wrap:anywhere]">{title}</span>
+            {plan.rows.length > 2 && (
+              <span className="flex items-center gap-1 tabular-nums text-text-secondary">
+                {zonedTimeLabel(a.startTime, tz)}
+                <Flags flags={flags} />
+              </span>
+            )}
+          </>
         ) : (
           <>
             <span className="flex items-center gap-1">
@@ -235,13 +251,20 @@ export function AppointmentHoverCard({
 
 export interface InternalBlockProps {
   item: InternalItem;
+  /** Faixas lado a lado neste trecho (3 ou mais = bloco estreito). */
+  lanes?: number;
+  /** Arrastar para outro horário (só computador, só compromisso editável): recebe o início do gesto. */
+  onDragStart?: (e: React.PointerEvent<HTMLButtonElement>, blockTopPx: number) => void;
+  /** Está sendo arrastado (fica esmaecido onde estava). */
+  dragging?: boolean;
   tz: string;
   box: BlockBox;
   onOpen: (item: InternalItem) => void;
 }
 
 /** Bloco de compromisso ou tarefa da equipe (tracejado em roxo, como no resto da Agenda). */
-export function InternalBlock({ item: e, tz, box, onOpen }: InternalBlockProps) {
+export function InternalBlock({ item: e, tz, box, lanes = 1, onDragStart, dragging, onOpen }: InternalBlockProps) {
+  const narrow = lanes >= 3;
   const st = style(box);
   const plan = planBlock(Number(st.height));
   const Icon = e.source === "task" ? CheckSquare : CalendarDays;
@@ -259,8 +282,17 @@ export function InternalBlock({ item: e, tz, box, onOpen }: InternalBlockProps) 
         ev.stopPropagation();
         onOpen(e);
       }}
-      className={cn(BASE, FOCUS, "border border-dashed border-ai-500 bg-ai-500/10 transition-[filter] hover:brightness-95 dark:hover:brightness-110")}
+      onPointerDown={onDragStart ? (ev) => onDragStart(ev, box.top) : undefined}
+      className={cn(
+        BASE,
+        FOCUS,
+        "border border-dashed border-ai-500 bg-ai-500/10 transition-[filter] hover:brightness-95 dark:hover:brightness-110",
+        narrow && "px-1 text-[11px] leading-[13px]",
+        onDragStart && "cursor-grab touch-none active:cursor-grabbing",
+        dragging && "opacity-40"
+      )}
     >
+      {UNDERLAY}
       {plan.compact ? (
         <span className="flex items-center gap-1">
           <Icon size={12} className="shrink-0 text-ai-400" aria-hidden="true" />
@@ -268,6 +300,11 @@ export function InternalBlock({ item: e, tz, box, onOpen }: InternalBlockProps) 
             <span className="font-semibold tabular-nums">{time}</span> <span className="font-semibold">{e.title}</span>
           </span>
         </span>
+      ) : narrow ? (
+        <>
+          <span className="line-clamp-2 block font-semibold [overflow-wrap:anywhere]">{e.title}</span>
+          {plan.rows.length > 2 && <span className="block truncate tabular-nums text-text-secondary">{time}</span>}
+        </>
       ) : (
         <>
           <span className="flex items-center gap-1">

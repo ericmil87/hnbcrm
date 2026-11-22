@@ -212,7 +212,7 @@ export function ResourceDayGrid({
 
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col overflow-hidden rounded-card border border-border bg-surface-raised", className)}>
-      <div ref={scroller} data-grid-scroller className="min-h-0 flex-1 overflow-auto overscroll-contain">
+      <div ref={scroller} data-grid-scroller className="relative min-h-0 flex-1 overflow-auto overscroll-contain">
         <div role="group" aria-label={fillVocab(t.ariaLabel, { por: groupLabel })} className="min-w-fit">
           <div className="sticky top-0 z-30 grid border-b border-border bg-surface-raised" style={template}>
             <div aria-hidden="true" className="sticky left-0 z-20 bg-surface-raised" />
@@ -314,7 +314,7 @@ export function ResourceDayGrid({
                     );
                   }
                   if (item.kind === "internal") {
-                    return <InternalBlock key={`blk:${item.id}`} item={item.internal} tz={tz} box={box} onOpen={onInternalClick} />;
+                    return <InternalBlock key={`blk:${item.id}`} item={item.internal} tz={tz} box={box} lanes={p.columns} onOpen={onInternalClick} />;
                   }
                   const a = item.appointment;
                   return (
@@ -328,6 +328,7 @@ export function ResourceDayGrid({
                       box={box}
                       tone={appointmentTone(a, tone)}
                       exceptResourceId={col.resource?._id ?? null}
+                      lanes={p.columns}
                       onOpen={onAppointmentClick}
                       quick={quick}
                     />

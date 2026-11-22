@@ -13,12 +13,16 @@ import {
   type InternalItem,
   type MinuteSpan,
 } from "./agendaGrid";
-import { capClusterColumns, layoutOverlaps, type LayoutItem } from "./agendaLayout";
+import { layoutOverlaps, type LayoutItem } from "./agendaLayout";
 import { isExpiredProposal } from "./agendaStatus";
 import { weekdayOf, zonedMinutes, zonedToday } from "./agendaZone";
 
-/** Faixas lado a lado antes de virar "+N" (a coluna de um dia da semana é estreita). */
-export const MAX_LANES = 3;
+/**
+ * Faixas lado a lado numa coluna de dia (estreita): até `FULL_LANES` sobrepostos aparecem todos; acima disso o grupo
+ * mostra `LANES_WITH_MORE` faixas e uma ficha "+N" (que abre o dia), para os blocos não ficarem finos demais.
+ */
+export const FULL_LANES = 3;
+export const LANES_WITH_MORE = 2;
 const DEFAULT_OPEN_START = 8 * 60;
 const DEFAULT_OPEN_END = 18 * 60;
 
@@ -77,6 +81,33 @@ export interface WeekModel {
   /** Coluna (0..6) de hoje, ou -1. */
   todayIndex: number;
   empty: boolean;
+}
+
+export interface CappedWeek {
+  visible: LayoutItem[];
+  overflow: Array<{ clusterId: number; hiddenIds: string[]; startMin: number; endMin: number; column: number; columns: number }>;
+}
+
+/** Corta os grupos de sobrepostos que passam de `FULL_LANES` em `LANES_WITH_MORE` faixas + a ficha "+N". */
+export function capWeekClusters(items: readonly LayoutItem[]): CappedWeek {
+  const visible: LayoutItem[] = [];
+  const hidden = new Map<number, LayoutItem[]>();
+  for (const i of items) {
+    if (i.columns <= FULL_LANES) visible.push(i);
+    else if (i.column < LANES_WITH_MORE) visible.push({ ...i, columns: LANES_WITH_MORE + 1 });
+    else hidden.set(i.clusterId, [...(hidden.get(i.clusterId) ?? []), i]);
+  }
+  return {
+    visible,
+    overflow: [...hidden.entries()].map(([clusterId, h]) => ({
+      clusterId,
+      hiddenIds: h.map((x) => x.id),
+      startMin: Math.min(...h.map((x) => x.startMin)),
+      endMin: Math.max(...h.map((x) => x.endMin)),
+      column: LANES_WITH_MORE,
+      columns: LANES_WITH_MORE + 1,
+    })),
+  };
 }
 
 /** Recursos que a escolha do filtro mostra: um só, ou todos os ativos. */
@@ -142,7 +173,7 @@ export function buildWeekModel(input: {
     }
     const byId = new Map(items.map((i) => [i.id, i]));
     const laid = layoutOverlaps(items.map((i) => ({ id: i.id, startMin: i.startMin, endMin: i.endMin })));
-    const { visible, overflow } = capClusterColumns(laid, MAX_LANES);
+    const { visible, overflow } = capWeekClusters(laid);
     const placed: WeekPlaced[] = visible.map((l: LayoutItem) => ({ item: byId.get(l.id)!, column: l.column, columns: l.columns }));
     for (const i of items) firstItemMin = firstItemMin === null ? i.startMin : Math.min(firstItemMin, i.startMin);
     if (items.length > 0 || allDay.length > 0) anyItem = true;

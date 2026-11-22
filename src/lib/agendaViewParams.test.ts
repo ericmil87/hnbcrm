@@ -95,7 +95,8 @@ describe("rótulo do período", () => {
     expect(periodLabel("2026-11-23", "lista")).toBe("23 de novembro de 2026");
     expect(periodLabel("2026-11-26", "dia", true)).toBe("26 de nov.");
     expect(periodLabel("2026-11-26", "semana")).toBe("23 – 29 de nov. de 2026");
-    expect(periodLabel("2026-11-26", "semana", true)).toBe("23 – 29 de nov.");
+    expect(periodLabel("2026-11-26", "semana", true)).toBe("23 – 29 nov");
+    expect(periodLabel("2026-12-02", "semana", true)).toBe("30 nov – 6 dez");
     expect(periodLabel("2026-12-02", "semana")).toBe("30 de nov. – 6 de dez. de 2026");
     expect(periodLabel("2026-12-30", "semana")).toBe("28 de dez. de 2026 – 3 de jan. de 2027");
     expect(periodLabel("2026-03-05", "mes")).toBe("Março de 2026");

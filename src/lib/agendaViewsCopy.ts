@@ -45,6 +45,8 @@ export const VIEWS_COPY = {
       empty: "Nenhum horário nesta semana",
       emptyHint: "Clique em um horário livre para marcar.",
       eventTitle: "Compromisso ou tarefa",
+      moved: "Compromisso movido",
+      moveFailed: "Não foi possível mover o compromisso.",
     },
     month: {
       more: "+{n} mais",

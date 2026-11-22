@@ -55,7 +55,7 @@ import {
   type AgendaView,
   type GroupParam,
 } from "@/lib/agendaViewParams";
-import { shortDateLabel, weekDateKeys, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
+import { shortDateLabel, weekDateKeys, zonedAtMinutes, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
 import { mutationErrorMessage } from "@/lib/errors";
 import { TAB_ROUTES } from "@/lib/routes";
 import { booleanParam } from "@/lib/searchParamState";
@@ -368,6 +368,15 @@ export function AgendaPageView() {
     [access.canEdit, organizationId, setStatus]
   );
 
+  // Arrastar um compromisso da equipe na Semana: a mesma mutation da página de compromissos (mantém a duração).
+  const rescheduleEvent = useMutation(api.calendar.rescheduleEvent);
+  const moveEvent = (item: InternalItem, localDate: LocalDate, minute: number) => {
+    rescheduleEvent({ eventId: item.id as Id<"calendarEvents">, newStartTime: zonedAtMinutes(localDate, minute, tz) }).then(
+      () => toast.success(t.dense.weekGrid.moved),
+      (e) => toast.error(mutationErrorMessage(e, t.dense.weekGrid.moveFailed))
+    );
+  };
+
   const bookingDate = isPast ? today : date;
   const startBooking = (opts: { minute?: number; resource?: DayResource; date?: LocalDate } = {}) => {
     const { date: on, ...rest } = opts;
@@ -465,7 +474,7 @@ export function AgendaPageView() {
       const hasOtherKind = !hasColumns && dayInput.resources.length > 0;
       const other = group === "sala" ? "profissional" : "sala";
       return (
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-24 md:pb-2">
+        <div className="relative min-h-0 flex-1 space-y-3 overflow-y-auto pb-24 md:pb-2">
           {view !== "lista" && hasOtherKind && (
             <EmptyState
               icon={Settings2}
@@ -806,6 +815,7 @@ export function AgendaPageView() {
                 onAppointmentClick={openAppointment}
                 onInternalClick={onInternalClick}
                 onOpenDay={goToDay}
+                onMoveEvent={access.canEdit ? moveEvent : undefined}
               />
             </Suspense>
           ) : (
