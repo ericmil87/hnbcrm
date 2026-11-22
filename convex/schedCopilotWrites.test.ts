@@ -171,7 +171,7 @@ describe("marcar (bookAppointment): duas fases", () => {
     expect(r.avisos?.length).toBeGreaterThan(0);
     expect(r.preview).toMatch(/Avisos:/);
     const pending = (await pendingOf(r.pendingActionId))!;
-    expect((pending.args as any).force).toEqual(["OUTSIDE_HOURS"]);
+    expect((pending.args as any).force).toEqual([`OUTSIDE_HOURS:${room}`]); // par código:recurso
     await confirm(s.admin, r.pendingActionId);
     const [a] = await apptList();
     expect(a.forcedRules).toEqual(["OUTSIDE_HOURS"]);

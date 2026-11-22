@@ -139,7 +139,7 @@ describe("1. a execução usa EXATAMENTE o plano mostrado", () => {
     const r = await write(s.admin, "resolveAgendaConflict", { ref: item.ref, action: "reassign", resourceName: "Sala 3" });
     expect(r.status).toBe("confirmacao_necessaria");
     expect(r.avisos?.length).toBeGreaterThan(0); // fora do expediente da Sala 3
-    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ action: { type: "resource", force: ["OUTSIDE_HOURS"] } });
+    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ action: { type: "resource", force: [`OUTSIDE_HOURS:${s3}`] } });
     await confirm(s.admin, r.pendingActionId);
     const j = (await appts()).find((a) => a.contactId === joana)!;
     expect(j.resources.map((x) => x.name)).toEqual(["Sala 3"]);

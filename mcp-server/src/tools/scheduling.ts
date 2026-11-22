@@ -31,7 +31,7 @@ const force = z
   .array(z.string())
   .max(10)
   .describe(
-    'Warning codes (severity "warn", e.g. OUTSIDE_HOURS) that a HUMAN decided to accept. Only warnings can be forced: block codes such as CAPACITY_EXCEEDED are always refused. Never force on your own.'
+    'Warning codes (severity "warn", e.g. OUTSIDE_HOURS) that a HUMAN decided to accept. Prefer the pair form CODE:resourceId (e.g. RESOURCE_CLOSED:<resourceId>, the id comes from the violation detail/plan): it accepts the warning only for that resource, so a new warning of the same code on another resource is still refused. Only warnings can be forced: block codes such as CAPACITY_EXCEEDED are always refused. Never force on your own.'
   );
 
 /** Shown to the agent on every 409 so it recovers instead of guessing. */
@@ -212,7 +212,7 @@ export function registerSchedulingTools(server: McpServer, client: HnbCrmClient)
 
   server.tool(
     "crm_book_appointment",
-    "Book an appointment (same rules as the app). Only after crm_preview_appointment succeeded and the customer agreed to that exact time. `idempotencyKey` is REQUIRED: generate a unique key per booking intent and reuse the SAME key only when retrying the identical request (the same key + same data returns the same appointment; the key also covers variantKey and, when sent, the resourceIds set; for a group (companions) the result lists every appointmentId; the same key with other data is a 409 idempotency_key_reused). On a 409 sched_rules the result has `violations` and `alternatives`: offer one of them, never retry the same time and never force a block code.",
+    "Book an appointment (same rules as the app). Only after crm_preview_appointment succeeded and the customer agreed to that exact time. `idempotencyKey` is REQUIRED: generate a unique key per booking intent and reuse the SAME key only when retrying the identical request (the same key + same data returns the same appointment; the key also covers variantKey and, when sent, the resourceIds set; for a group (companions) the result lists every appointmentId; the same key with other data is a 409 idempotency_key_reused). Caveat: with allowResourceFallback: true the first call may land on an alternative plan; retrying with the same key and the SAME resourceIds then returns 409 idempotency_key_reused, so retry without resourceIds (or read the appointment first). On a 409 sched_rules the result has `violations` and `alternatives`: offer one of them, never retry the same time and never force a block code.",
     {
       ...bookFields,
       companions: z

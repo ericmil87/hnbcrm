@@ -195,6 +195,15 @@ export function gapResourcesOfDay(day: DayView, only?: Set<string>): GapResource
     .map((r) => ({ resourceId: r._id, resourceName: r.name, kind: r.kind, capacity: r.capacity, open: r.open, busy: busyBy.get(r._id) ?? [] }));
 }
 
+/**
+ * Chave da oferta `o…`: serviço + PROFISSIONAIS do plano mostrado. Se na hora de marcar o horário só existe com outro
+ * profissional (o mostrado fechou, foi ocupado), a oferta deixa de valer: profissional nunca troca em silêncio.
+ * A sala não entra (sala equivalente pode mudar e a prévia diz).
+ */
+function offerKey(serviceId: string, resourceIds: ReadonlyArray<string>, kindById: ReadonlyMap<string, string>): string {
+  return `${serviceId}|${resourceIds.filter((id) => kindById.get(id) === "person").sort().join(",")}`;
+}
+
 function refOf(threadId: Id<"copilotThreads"> | undefined, a: { _id: string; startTime: number }): string | null {
   return threadId ? makeRef("a", a.startTime, threadId, a._id) : null;
 }
@@ -364,8 +373,9 @@ async function findFreeTimes(ctx: ReadCtx, args: Record<string, unknown>, scope:
     ...(people && people > 1 ? { partySize: people } : {}),
   });
   if (res.reason === "unverifiable") return toolErr("Não deu para verificar a agenda desse período com segurança.", "Tente um período menor.");
+  const kindById = new Map((await activeResources(ctx, scope.organizationId)).map((r) => [r._id as string, r.kind]));
   const line = (s: (typeof res.slots)[number]) => ({
-    ref: scope.threadId ? makeRef("o", s.startTime, scope.threadId, picked.service._id) : null,
+    ref: scope.threadId ? makeRef("o", s.startTime, scope.threadId, offerKey(picked.service._id, s.resourceIds, kindById)) : null,
     horario: s.label,
     duracao: durationText(Math.round((s.endTime - s.startTime) / MINUTE_MS)),
     recursos: s.resourceNames.map((n) => safeText(n)),
@@ -501,6 +511,11 @@ function failureText(r: Extract<BookResult, { ok: false }>, tz: string, now: num
  */
 const UNAVAILABLE_CODES: ReadonlySet<string> = new Set(["RESOURCE_CLOSED", "RESOURCE_BLOCKED"]);
 const unavailableOf = (violations: ReadonlyArray<Violation>) => violations.filter((v) => v.severity === "warn" && UNAVAILABLE_CODES.has(v.code));
+/** `código:recurso` quando a violação é de um recurso; senão só o código (aviso de cliente/horário). */
+const forceToken = (v: Violation): string => {
+  const id = typeof v.detail?.resourceId === "string" ? v.detail.resourceId : undefined;
+  return id ? `${v.code}:${id}` : v.code;
+};
 const resourceOfViolation = (v: Violation): string | undefined => (typeof v.detail?.resourceId === "string" ? v.detail.resourceId : undefined);
 
 /** Recurso indisponível que o membro NÃO citou: devolvido a quem chamou para trocar de recurso ou recusar. */
@@ -545,7 +560,9 @@ async function previewWithWarnings(
     }
   }
   if (blocks.length > 0) return { ok: false, result: failureText(first, tz, now, prefix) };
-  const codes = [...new Set(first.violations.filter((v) => v.severity === "warn").map((v) => v.code as string))];
+  // `force` por PAR (código:recurso): a confirmação só aceita os avisos que a prévia MOSTROU, não um aviso novo do mesmo
+  // código em outro recurso (ex.: a profissional entra de folga depois da prévia).
+  const codes = [...new Set(first.violations.filter((v) => v.severity === "warn").map(forceToken))];
   const second = await run(codes);
   if (!second.ok || !("preview" in second)) {
     return { ok: false, result: second.ok ? toolErr("Resposta inesperada da prévia.") : failureText(second, tz, now, prefix) };
@@ -657,25 +674,45 @@ async function resolveStart(
     return { ok: true, startTime: parsed.startTime, ...(preferred ? { resourceIds: preferred, cited: preferred } : {}) };
   }
   const parsed = parseRef(args.offer, "o");
-  const stale = toolErr("Oferta de horário inválida.", "Busque os horários de novo com findFreeTimes nesta conversa e use o `ref` de um deles.");
-  if (!parsed || !env.sc.threadId || !refMatches("o", parsed, env.sc.threadId, service._id)) return { ok: false, result: stale };
+  const stale = toolErr(
+    "Oferta de horário inválida ou desatualizada.",
+    "Busque os horários de novo com findFreeTimes nesta conversa e use o `ref` de um deles."
+  );
+  if (!parsed || !env.sc.threadId) return { ok: false, result: stale };
   const startTime = parsed.startMinute * MINUTE_MS;
-  if (startTime < env.now) return { ok: false, result: toolErr("Esse horário já passou.", "Busque os horários de novo com findFreeTimes.") };
+  if (startTime < env.now) return { ok: false, result: toolErr("Oferta de horário inválida ou vencida: esse horário já passou.", "Busque os horários de novo com findFreeTimes.") };
   const date = localDateOf(startTime, env.tz);
+  const search = (resourceIds?: Id<"schedResources">[]) =>
+    searchSlots(ctx, {
+      organizationId: env.sc.organizationId,
+      serviceId: service._id,
+      fromLocalDate: date,
+      toLocalDate: date,
+      audience: "staff",
+      now: Math.floor(env.now / MINUTE_MS) * MINUTE_MS,
+      limit: 50,
+      ...(ignoreAppointmentId ? { ignoreAppointmentId } : {}),
+      ...(resourceIds ? { resourceIds } : {}),
+    });
   // A oferta só vale se o horário ainda está livre agora (a mesma busca da tela, no mesmo dia).
-  const found = await searchSlots(ctx, {
-    organizationId: env.sc.organizationId,
-    serviceId: service._id,
-    fromLocalDate: date,
-    toLocalDate: date,
-    audience: "staff",
-    now: Math.floor(env.now / MINUTE_MS) * MINUTE_MS,
-    limit: 50,
-    ...(ignoreAppointmentId ? { ignoreAppointmentId } : {}),
-    ...(preferred ? { resourceIds: preferred } : restrictTo && restrictTo.length > 0 ? { resourceIds: restrictTo } : {}),
-  });
+  const restrict = preferred ?? (restrictTo && restrictTo.length > 0 ? restrictTo : undefined);
+  const found = await search(restrict);
   const slot = found.slots.find((x) => x.startTime === startTime);
   if (!slot) return { ok: false, result: toolErr("Esse horário não está mais livre.", "Busque os horários de novo com findFreeTimes.") };
+  // A referência prova que ESTE horário foi oferecido nesta conversa, para este serviço e com ESTE profissional. Com
+  // recurso fixado (citado ou o do agendamento) a prova é contra a busca sem restrição (a oferta mostrou o plano geral).
+  const proof = restrict ? (await search()).slots.find((x) => x.startTime === startTime) : slot;
+  const kindById = new Map((await activeResources(ctx, env.sc.organizationId)).map((r) => [r._id as string, r.kind]));
+  if (!proof || !refMatches("o", parsed, env.sc.threadId, offerKey(service._id, proof.resourceIds, kindById))) {
+    const alts = found.slots.filter((x) => x.startTime !== startTime).slice(0, 3).map((x) => x.label);
+    return {
+      ok: false,
+      result: toolErr(
+        "Oferta de horário inválida ou desatualizada: esse horário mudou desde a busca (outro profissional) ou a oferta não é desta conversa/serviço.",
+        alts.length ? `Busque de novo com findFreeTimes. Horários próximos agora: ${alts.join("; ")}.` : "Busque os horários de novo com findFreeTimes."
+      ),
+    };
+  }
   return { ok: true, startTime, resourceIds: slot.resourceIds, ...(preferred ? { cited: preferred } : {}) };
 }
 
@@ -691,36 +728,53 @@ function normalizedId<T extends "contacts" | "leads">(ctx: MutationCtx, table: T
 async function replaceUnavailableForBooking(
   ctx: MutationCtx,
   env: WriteEnv,
+  service: Doc<"schedServices">,
+  startTime: number,
   runWith: (ids: Id<"schedResources">[]) => (force?: string[]) => Promise<BookResult>,
   startPins: Id<"schedResources">[],
-  first: Extract<PreviewOutcome, { ok: false }>
-): Promise<PreviewOutcome & { swapNote?: string }> {
-  const pool = await activeResources(ctx, env.sc.organizationId);
-  const docs = await resourceDocsOf(ctx, env.sc.organizationId, [...startPins, ...pool.map((r) => r._id)]);
+  first: Extract<PreviewOutcome, { ok: false }>,
+  /** Plano veio de uma oferta mostrada ao membro: o profissional dela nunca é trocado aqui. */
+  keepPersons: boolean
+): Promise<PreviewOutcome & { swapNote?: string; swapLabel?: string }> {
+  const docs = await resourceDocsOf(ctx, env.sc.organizationId, [...startPins, ...(await activeResources(ctx, env.sc.organizationId)).map((r) => r._id)]);
   const exclude = new Set<string>();
   const dropped: Array<{ name: string; code: string }> = [];
   const picked = new Set<string>();
+  const tried = new Set<string>();
+  let truncated = false;
   let pins = [...startPins];
   let unprompted = first.unprompted!;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  const refused = (exhausted: boolean): typeof first => {
+    const why = exhausted
+      ? ` Não há sala/profissional/equipamento equivalente livre (testei ${tried.size}).`
+      : ` Não achei um equivalente livre entre os ${tried.size} que testei.`;
+    return { ...first, result: { ...first.result, error: `${String(first.result.error ?? "")}${why}`.trim() } };
+  };
+  for (let attempt = 0; attempt < TRIAL_CAP; attempt++) {
     const bad = [...new Set(unprompted.problems.map(resourceOfViolation).filter((id): id is string => id !== undefined))];
     if (bad.length === 0) break;
+    const kind = docs.get(bad[0])?.kind;
+    if (kind === "person" && keepPersons) return refused(true);
     for (const id of bad) {
       exclude.add(id);
       pins = pins.filter((x) => x !== id);
       const code = unprompted.problems.find((v) => resourceOfViolation(v) === id)?.code ?? "";
       if (!dropped.some((d) => d.name === safeText(docs.get(id)?.name ?? ""))) dropped.push({ name: safeText(docs.get(id)?.name ?? "recurso"), code });
     }
-    const kind = docs.get(bad[0])?.kind;
-    const cand = pool.find((r) => r.kind === kind && !exclude.has(r._id) && !pins.includes(r._id));
-    if (!cand) return first;
+    if (!kind) return refused(true);
+    const cands = await equivalentCandidates(ctx, env, service, startTime, kind, new Set([...exclude, ...pins]));
+    truncated = truncated || cands.truncated;
+    const cand = cands.list[0];
+    if (!cand) return refused(!truncated);
     pins = [...pins, cand._id];
     picked.add(cand._id);
+    tried.add(cand._id);
     const next = await previewWithWarnings(runWith(pins), env.tz, env.now, "Não dá para marcar assim:", new Set());
     if (next.ok) {
       const reasons = [...new Set(dropped.map((d) => REASON_BY_CODE[d.code] ?? "indisponível"))].join(", ");
       const names = next.plan.filter((x) => picked.has(x.resourceId)).map((x) => safeText(x.resourceName ?? "")).filter(Boolean);
-      return { ...next, swapNote: `${dropped.map((d) => d.name).join(" e ")} não serve nesse horário (${reasons}); usei ${names.join(" e ") || "outra opção"}.` };
+      const person = [...picked].some((id) => docs.get(id)?.kind === "person");
+      return { ...next, swapLabel: person ? "Ajuste de profissional" : "Ajuste de lugar", swapNote: `${dropped.map((d) => d.name).join(" e ")} não serve nesse horário (${reasons}); usei ${names.join(" e ") || "outra opção"}.` };
     }
     if (!next.unprompted) {
       exclude.add(cand._id);
@@ -729,7 +783,7 @@ async function replaceUnavailableForBooking(
     }
     unprompted = next.unprompted;
   }
-  return first;
+  return refused(false);
 }
 
 // --- Marcar ----------------------------------------------------------------
@@ -778,16 +832,16 @@ async function previewBook(ctx: MutationCtx, args: Record<string, unknown>, env:
       now: env.now,
     });
   const startPins = start.resourceIds ?? [];
-  let p: PreviewOutcome & { swapNote?: string } = await previewWithWarnings(runWith(startPins), env.tz, env.now, "Não dá para marcar assim:", new Set(start.cited ?? []));
+  let p: PreviewOutcome & { swapNote?: string; swapLabel?: string } = await previewWithWarnings(runWith(startPins), env.tz, env.now, "Não dá para marcar assim:", new Set(start.cited ?? []));
   // Sala/profissional que o membro NÃO citou e que está fechado/bloqueado/cheio: procura equivalente livre ou recusa.
-  if (!p.ok && p.unprompted) p = await replaceUnavailableForBooking(ctx, env, runWith, startPins, p);
+  if (!p.ok && p.unprompted) p = await replaceUnavailableForBooking(ctx, env, svc.service, start.startTime, runWith, startPins, p, typeof args.offer === "string" && args.offer.trim() !== "");
   if (!p.ok) return p.result;
   const attention = attentionText(p.warnings, p.plan);
   const label = formatSlotLabel(start.startTime, env.now, env.tz);
   const withWho = planNames(p.plan);
   const preview =
     `Marcar ${who}: ${safeText(svc.service.name)} em ${label} (${durationText(svc.service.durationMin)})${withWho ? ` com ${withWho}` : ""}.` +
-    (p.swapNote ? ` Ajuste de lugar: ${p.swapNote}` : "") +
+    (p.swapNote ? ` ${p.swapLabel ?? "Ajuste de lugar"}: ${p.swapNote}` : "") +
     (notes ? ` Observação: ${notes}.` : "") +
     (p.warnings.length ? ` Avisos: ${warnText(p.warnings)}.` : "") +
     " Nada é enviado ao cliente.";
@@ -850,6 +904,48 @@ function mergeCited(
   return ids;
 }
 
+const CANDIDATE_CAP = 12; // candidatas por tipo, DEPOIS do pré-filtro (serve o serviço, ativa, não fechada o dia todo)
+const TRIAL_CAP = 24; // prévias completas por troca (cada uma lê o dia)
+
+/**
+ * Salas/equipamentos que PODEM ser equivalentes: ativos, que atendem algum requisito do serviço (tipo, lista de
+ * recursos e etiqueta) e que não estão fechados o dia todo. O pré-filtro roda ANTES do corte por `CANDIDATE_CAP`, então
+ * o teto não gasta tentativas com quem já se sabe que não serve. `truncated` = sobrou candidata além do teto.
+ */
+async function equivalentCandidates(
+  ctx: MutationCtx,
+  env: WriteEnv,
+  service: Doc<"schedServices">,
+  startTime: number,
+  kind: Doc<"schedResources">["kind"],
+  exclude: ReadonlySet<string>
+): Promise<{ list: Doc<"schedResources">[]; truncated: boolean }> {
+  const day = await ctx.db
+    .query("schedExceptions")
+    .withIndex("by_organization_and_date", (q) => q.eq("organizationId", env.sc.organizationId).eq("localDate", localDateOf(startTime, env.tz)))
+    .take(200);
+  const serves = (r: Doc<"schedResources">) =>
+    service.requirements.some((q) => q.kind === r.kind && (!q.resourceIds || q.resourceIds.length === 0 || q.resourceIds.includes(r._id)) && (!q.tag || (r.tags ?? []).includes(q.tag)));
+  const closedAllDay = (r: Doc<"schedResources">) =>
+    day.some((e) => e.mode === "closed" && (e.resourceId === r._id || (e.resourceId === undefined && (e.resourceKind === undefined || e.resourceKind === r.kind)))) &&
+    !day.some((e) => e.resourceId === r._id && e.mode !== "closed"); // reabertura/horário especial: a porta decide
+  const all = (await activeResources(ctx, env.sc.organizationId)).filter((r) => r.kind === kind && !exclude.has(r._id) && serves(r) && !closedAllDay(r));
+  return { list: all.slice(0, CANDIDATE_CAP), truncated: all.length > CANDIDATE_CAP };
+}
+
+/** Tuplas de índices por soma crescente (as melhores candidatas de cada recurso primeiro), sem repetir. */
+function* indexTuples(lengths: number[]): Generator<number[]> {
+  if (lengths.some((n) => n === 0)) return;
+  const max = lengths.reduce((a, n) => a + n - 1, 0);
+  const rec = (i: number, left: number, acc: number[]): number[][] => {
+    if (i === lengths.length) return left === 0 ? [acc] : [];
+    const out: number[][] = [];
+    for (let k = 0; k < lengths[i] && k <= left; k++) out.push(...rec(i + 1, left - k, [...acc, k]));
+    return out;
+  };
+  for (let sum = 0; sum <= max; sum++) yield* rec(0, sum, []);
+}
+
 const REASON_BY_CODE: Record<string, string> = {
   RESOURCE_CLOSED: "fechado nesse dia",
   RESOURCE_BLOCKED: "bloqueado nesse horário",
@@ -906,24 +1002,38 @@ async function planReschedule(
   if (bad.some((b) => !b.doc || b.doc.kind === "person")) {
     return refuse("O profissional nunca é trocado sozinho: escolha outro horário.");
   }
-  // Candidatas equivalentes: mesmo tipo do recurso que saiu, ativas, que ainda não estão no plano, na ordem da agenda.
-  const pool = (await activeResources(ctx, env.sc.organizationId)).filter((r) => !base.includes(r._id));
-  const swaps = bad.map((b) => pool.filter((r) => r.kind === b.doc!.kind).slice(0, 6));
-  for (let k = 0; k < Math.max(...swaps.map((x) => x.length), 0); k++) {
-    const picks = swaps.map((list) => list[k]);
-    if (picks.some((x) => !x) || new Set(picks.map((x) => x!._id)).size !== picks.length) continue;
+  // Candidatas equivalentes (mesmo tipo do recurso que saiu): pré-filtradas e só depois cortadas; combinações limitadas.
+  const service = await ctx.db.get(a.serviceId);
+  if (!service) return refuse("Serviço do agendamento não encontrado.");
+  const exclude = new Set<string>(base);
+  const lists = await Promise.all(bad.map((b) => equivalentCandidates(ctx, env, service, startTime, b.doc!.kind, exclude)));
+  let trials = 0;
+  let exhaustive = !lists.some((l) => l.truncated);
+  for (const tuple of indexTuples(lists.map((l) => l.list.length))) {
+    const picks = tuple.map((k, i) => lists[i].list[k]);
+    if (new Set(picks.map((x) => x._id)).size !== picks.length) continue;
+    if (trials >= TRIAL_CAP) {
+      exhaustive = false;
+      break;
+    }
+    trials++;
     const ids = base.map((id) => {
       const i = bad.findIndex((b) => b.id === id);
-      return i >= 0 ? picks[i]!._id : id;
+      return i >= 0 ? picks[i]._id : id;
     });
     const trial = await previewWithWarnings(runWith(ids), env.tz, env.now, prefix, new Set());
     if (!trial.ok) continue;
     const from = bad.map((b) => safeText(b.doc!.name)).join(" e ");
     const reasons = [...new Set(problems.map((v) => REASON_BY_CODE[v.code] ?? "indisponível"))].join(", ");
-    const to = picks.map((x) => safeText(x!.name)).join(" e ");
+    const to = picks.map((x) => safeText(x.name)).join(" e ");
     return { ...trial, swapNote: `${from} não serve nesse horário (${reasons}); ficaria em ${to}.` };
   }
-  return refuse("Nenhuma sala/equipamento equivalente está livre nesse horário.");
+  const total = lists.reduce((n, l) => n + l.list.length, 0);
+  return refuse(
+    exhaustive
+      ? `Nenhuma sala/equipamento equivalente está livre nesse horário (testei ${total === 0 ? "todas: nenhuma serve ao serviço e está aberta" : `todas as ${total}`}).`
+      : `Não achei sala/equipamento livre entre os ${trials} arranjos que testei (há mais opções; peça um horário específico ou cite a sala).`
+  );
 }
 
 async function previewReschedule(ctx: MutationCtx, args: Record<string, unknown>, env: WriteEnv): Promise<SchedToolResult> {
@@ -1246,7 +1356,12 @@ async function assertSamePlan(ctx: MutationCtx, appointmentId: Id<"schedAppointm
 
 function assertViolations(result: { ok: boolean; violations?: Violation[]; alternatives?: Array<{ startTime: number }> }, prefix: string): void {
   if (result.ok) return;
-  raise(`${prefix} ${violationsText(result.violations ?? [])}`.trim());
+  const list = result.violations ?? [];
+  // Aviso que a prévia não mostrou (o `force` guardado é por par código:recurso): a agenda mudou, o membro precisa ver de novo.
+  if (list.length > 0 && list.every((v) => v.severity === "warn")) {
+    raise(`${prefix} a agenda mudou desde a prévia (${violationsText(list)}). Peça de novo para ver o aviso novo.`.trim());
+  }
+  raise(`${prefix} ${violationsText(list)}`.trim());
 }
 
 /**

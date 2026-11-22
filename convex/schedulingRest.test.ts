@@ -553,6 +553,28 @@ describe("recurso fechado ou cheio nunca passa em silêncio (E2)", () => {
     expect((await t.run((ctx) => ctx.db.get(forced.json.appointmentId as Id<"schedAppointments">)))?.forcedRules).toEqual(["RESOURCE_CLOSED"]);
   });
 
+  test("force por PAR código:recurso: cobre só o recurso citado; outro aviso do mesmo código segue recusado; o código puro continua valendo", async () => {
+    const { r1, r2, roomSvc } = await rooms();
+    // serviço de duas peças: as duas salas no mesmo agendamento (papéis Sala e Apoio)
+    const pairSvc = await t.run((ctx) =>
+      ctx.db.insert("schedServices", {
+        organizationId: s.orgId, name: "Dupla de salas", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0,
+        requirements: [{ role: "Sala", kind: "room", resourceIds: [r1] }, { role: "Apoio", kind: "room", resourceIds: [r2] }], sortOrder: 3, active: true, createdAt: 1, updatedAt: 1,
+      })
+    );
+    await closeDay(r1, TUE);
+    await closeDay(r2, TUE);
+    const base = { serviceId: pairSvc, startsAtLocal: `${TUE}T10:00`, resourceIds: [r1, r2] };
+    const only1 = await post("manage", "/appointments/book", { ...base, force: [`RESOURCE_CLOSED:${r1}`], requestId: "pair-1" });
+    expect(only1.status).toBe(409);
+    expect(only1.json.violations.map((v: Json) => v.code)).toContain("RESOURCE_CLOSED");
+    const both = await post("manage", "/appointments/book", { ...base, force: [`RESOURCE_CLOSED:${r1}`, `RESOURCE_CLOSED:${r2}`], requestId: "pair-2" });
+    expect(both.status).toBe(201);
+    const plain = await post("manage", "/appointments/book", { ...base, startsAtLocal: `${TUE}T14:00`, force: ["RESOURCE_CLOSED"], requestId: "pair-3" });
+    expect(plain.status).toBe(201);
+    expect(roomSvc).toBeTruthy();
+  });
+
   test("sala pedida cheia: por padrão 409 (não troca em silêncio, como a tela); só `allowResourceFallback:true` aceita o plano alternativo", async () => {
     const { r1, r2, roomSvc } = await rooms();
     const a = await bookIn(roomSvc, `${MON}T10:00`, [r1], "e2-2");

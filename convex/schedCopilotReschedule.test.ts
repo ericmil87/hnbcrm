@@ -148,7 +148,7 @@ describe("remarcar SEM citar sala: sala atual fechada/cheia no dia novo", () => 
     expect(r.preview).toMatch(/^ATENÇÃO, REGRA DA AGENDA: Sala 1 está fechado nesse dia\. Confirmar marca em Sala 1 MESMO ASSIM/);
     expect(r.atencao).toMatch(/^ATENÇÃO, REGRA DA AGENDA/);
     expect(r.avisos).toEqual(["Sala 1 está fechado nesse dia."]);
-    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ resourceIds: [room], force: ["RESOURCE_CLOSED"] });
+    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ resourceIds: [room], force: [`RESOURCE_CLOSED:${room}`] });
     await confirm(r.pendingActionId);
     const moved = (await apptList()).find((a) => a.startTime === at(TUE, 14))!;
     expect(nameOfResources(moved)).toEqual(["Sala 1"]);
@@ -304,7 +304,7 @@ describe("resolver conflito: recurso fechado só com citação", () => {
     const r = await write("resolveAgendaConflict", { ref, action: "reassign", resourceName: "Sala 1" });
     expect(r.status).toBe("confirmacao_necessaria");
     expect(r.preview).toMatch(/^ATENÇÃO, REGRA DA AGENDA: Sala 1 está fechado nesse dia/);
-    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ action: { type: "resource", resourceIds: [s1], force: ["RESOURCE_CLOSED"] } });
+    expect((await pendingOf(r.pendingActionId))!.args).toMatchObject({ action: { type: "resource", resourceIds: [s1], force: [`RESOURCE_CLOSED:${s1}`] } });
   });
 
   test("remarcar o conflito para outro dia sem citar sala: sala atual fechada nesse dia = troca para a equivalente, dita na prévia", async () => {
@@ -329,5 +329,165 @@ describe("fechar sala com gente dentro: impacto dito e aceite explícito", () =>
     // alguém marca mais um na Sala 1 depois da prévia: o impacto mudou, a confirmação recusa
     await bookDirect(svc, at(MON, 16), [room], { contactId: await mkContact("Nova") });
     await expect(confirm(r.pendingActionId)).rejects.toThrow();
+  });
+});
+
+describe("o `force` guardado é por PAR código:recurso (E2, revisão 1)", () => {
+  async function roomAndPerson() {
+    const room = await mkRes("Sala 1");
+    await mkRes("Sala 2", {}, 1);
+    const ana = await mkRes("Ana", { kind: "person" });
+    const svc = await mkSvc({ requirements: [{ role: "Sala", kind: "room" }, { role: "Terapeuta", kind: "person" }] });
+    return { room, ana, svc };
+  }
+
+  test("remarcar: prévia só da Sala 1 fechada; a profissional entra de folga depois; confirmar RECUSA e nada é gravado", async () => {
+    const { room, ana, svc } = await roomAndPerson();
+    await bookDirect(svc, at(MON, 10), [room, ana], { contactId: await mkContact("João") });
+    await closeDay(room, TUE);
+    const ref = await refOfDay(MON);
+    const r = await write("rescheduleAppointment", { ref, startLocal: `${TUE}T14:00`, resourceName: "Sala 1" });
+    expect(r.preview).toMatch(/^ATENÇÃO/);
+    expect(((await pendingOf(r.pendingActionId))!.args as any).force).toEqual([`RESOURCE_CLOSED:${room}`]);
+    await closeDay(ana, TUE); // aviso NOVO, do mesmo código, em outro recurso
+    await expect(confirm(r.pendingActionId)).rejects.toThrow(/a agenda mudou desde a prévia/);
+    expect((await apptList()).filter((a) => a.status === "scheduled")).toHaveLength(1);
+    expect((await pendingOf(r.pendingActionId))?.status).toBe("pending");
+  });
+
+  test("marcar: mesma garantia", async () => {
+    const { room, ana } = await roomAndPerson();
+    await closeDay(room, TUE);
+    const r = await write("bookAppointment", { contactId: await mkContact("Maria"), serviceName: "Sessão", startLocal: `${TUE}T14:00`, resourceName: "Sala 1" });
+    expect(r.preview).toMatch(/^ATENÇÃO/);
+    await closeDay(ana, TUE);
+    await expect(confirm(r.pendingActionId)).rejects.toThrow(/a agenda mudou desde a prévia/);
+    expect(await apptList()).toHaveLength(0);
+  });
+
+  test("a porta aceita o par e o código (compatível): par cobre só aquele recurso; código cobre qualquer um", async () => {
+    const { room, ana, svc } = await roomAndPerson();
+    await closeDay(room, TUE);
+    await closeDay(ana, TUE);
+    const maria = await mkContact("Maria");
+    const body = { organizationId: s.orgId, serviceId: svc, startTime: at(TUE, 14), resourceIds: [room, ana], contactId: maria };
+    await expect(as(s.admin).mutation(api.schedulingMutations.bookAppointment, { ...body, force: [`RESOURCE_CLOSED:${room}`] } as any)).rejects.toThrow();
+    await expect(as(s.admin).mutation(api.schedulingMutations.bookAppointment, { ...body, force: [`RESOURCE_CLOSED:${ana}`] } as any)).rejects.toThrow();
+    await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { ...body, force: [`RESOURCE_CLOSED:${room}`, `RESOURCE_CLOSED:${ana}`] } as any);
+    expect((await apptList())[0].forcedRules).toEqual(["RESOURCE_CLOSED"]);
+    // código puro continua valendo (tela)
+    await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { ...body, startTime: at(TUE, 16), force: ["RESOURCE_CLOSED"] } as any);
+  });
+});
+
+describe("marcar por oferta: profissional nunca troca em silêncio (E2, revisão 2)", () => {
+  async function twoPeople() {
+    await mkRes("Sala 1");
+    const ana = await mkRes("Ana", { kind: "person" });
+    await mkRes("Bia", { kind: "person" }, 1);
+    await mkSvc({ requirements: [{ role: "Sala", kind: "room" }, { role: "Terapeuta", kind: "person" }] });
+    return { ana };
+  }
+
+  test("a oferta mostrou a Ana; a Ana fecha; marcar com a oferta RECUSA ('mudou') em vez de sair com a Bia", async () => {
+    const { ana } = await twoPeople();
+    const maria = await mkContact("Maria");
+    const found = await read("findFreeTimes", { serviceName: "Sessão", date: "terça", limit: 50 });
+    const slot = found.itens[0];
+    expect(slot.recursos).toContain("Ana");
+    await closeDay(ana, TUE);
+    const before = await pendingCount();
+    const r = await write("bookAppointment", { contactId: maria, serviceName: "Sessão", offer: slot.ref });
+    expect(r.status).toBe("erro");
+    expect(r.error).toMatch(/Oferta de horário inválida ou desatualizada: esse horário mudou desde a busca \(outro profissional\)/);
+    expect(await pendingCount()).toBe(before);
+    // oferta sem mudança continua valendo
+    const again = await read("findFreeTimes", { serviceName: "Sessão", date: "terça", limit: 50 });
+    const ok = await write("bookAppointment", { contactId: maria, serviceName: "Sessão", offer: again.itens[0].ref });
+    expect(ok.status).toBe("confirmacao_necessaria");
+    expect(ok.preview).toContain("Bia");
+  });
+
+  test("sem oferta e sem citar: o sistema escolhe a Bia (a Ana está fechada) e a prévia DIZ quem é, com 'Ajuste de profissional'", async () => {
+    const { ana } = await twoPeople();
+    await closeDay(ana, TUE);
+    const r = await write("bookAppointment", { contactId: await mkContact("Maria"), serviceName: "Sessão", startLocal: `${TUE}T14:00` });
+    expect(r.status).toBe("confirmacao_necessaria");
+    expect(r.preview).toMatch(/com Sala 1, Bia/);
+    expect(r.preview).toMatch(/Ajuste de profissional: Ana não serve nesse horário \(fechado nesse dia\); usei Bia\./);
+  });
+
+  test("remarcar por oferta mostrada com outra profissional: a remarcação usa a do agendamento (prova contra a busca geral)", async () => {
+    const { ana } = await twoPeople();
+    const svc = (await t.run((ctx) => ctx.db.query("schedServices").collect()))[0]._id;
+    const room = (await t.run((ctx) => ctx.db.query("schedResources").collect())).find((r) => r.name === "Sala 1")!._id;
+    const bia = (await t.run((ctx) => ctx.db.query("schedResources").collect())).find((r) => r.name === "Bia")!._id;
+    await bookDirect(svc, at(MON, 10), [room, bia], { contactId: await mkContact("João") });
+    const ref = await refOfDay(MON);
+    const found = await read("findFreeTimes", { serviceName: "Sessão", date: "terça", limit: 50 });
+    const slot = found.itens[0];
+    expect(slot.recursos).toContain("Ana"); // a oferta mostrou a Ana, mas o João é da Bia
+    const r = await write("rescheduleAppointment", { ref, offer: slot.ref });
+    expect(r.status).toBe("confirmacao_necessaria");
+    expect(r.preview).toContain("Bia");
+    expect(r.preview).not.toContain("Ana");
+    void ana;
+  });
+});
+
+describe("candidatas equivalentes: pré-filtro, combinações e frase honesta (E2, revisão 3)", () => {
+  test("13 salas fechadas o dia todo não gastam tentativas: a 14ª, aberta, é achada", async () => {
+    const room = await mkRes("Sala 1");
+    const svc = await mkSvc();
+    await bookDirect(svc, at(MON, 10), [room], { contactId: await mkContact("João") });
+    await closeDay(room, TUE);
+    for (let i = 2; i <= 14; i++) await closeDay(await mkRes(`Sala ${i}`, {}, i), TUE);
+    await mkRes("Sala 15", {}, 15);
+    const r = await write("rescheduleAppointment", { ref: await refOfDay(MON), startLocal: `${TUE}T14:00` });
+    expect(r.status).toBe("confirmacao_necessaria");
+    expect(r.preview).toMatch(/ficaria em Sala 15\./);
+  });
+
+  test("candidatas além do teto (ocupadas, não fechadas): a recusa NÃO afirma que não existe sala livre", async () => {
+    const room = await mkRes("Sala 1");
+    const svc = await mkSvc();
+    await bookDirect(svc, at(MON, 10), [room], { contactId: await mkContact("João") });
+    await closeDay(room, TUE);
+    for (let i = 2; i <= 14; i++) {
+      const id = await mkRes(`Sala ${i}`, {}, i);
+      await bookDirect(svc, at(TUE, 14), [id], { contactId: await mkContact(`C${i}`) });
+    }
+    await mkRes("Sala 15", {}, 15); // livre, mas fora das 12 primeiras
+    const r = await write("rescheduleAppointment", { ref: await refOfDay(MON), startLocal: `${TUE}T14:00` });
+    expect(r.status).toBe("erro");
+    expect(r.error).toMatch(/Não achei sala\/equipamento livre entre os \d+ arranjos que testei/);
+    expect(r.error).not.toMatch(/Nenhuma sala\/equipamento equivalente está livre/);
+  });
+
+  test("tudo testado e nada serve: a frase afirma com o número testado", async () => {
+    const { room, room2 } = await joao();
+    await closeDay(room, TUE);
+    await closeDay(room2, TUE);
+    const r = await write("rescheduleAppointment", { ref: await refOfDay(MON), startLocal: `${TUE}T14:00` });
+    expect(r.error).toMatch(/Nenhuma sala\/equipamento equivalente está livre nesse horário \(testei todas/);
+  });
+
+  test("duas peças indisponíveis (sala e equipamento): testa combinações, não só a diagonal", async () => {
+    const r1 = await mkRes("Sala 1");
+    const r2 = await mkRes("Sala 2", {}, 1);
+    const r3 = await mkRes("Sala 3", {}, 2);
+    const e1 = await mkRes("Equip 1", { kind: "equipment" });
+    const e2 = await mkRes("Equip 2", { kind: "equipment" }, 1);
+    const e3 = await mkRes("Equip 3", { kind: "equipment" }, 2);
+    const svc = await mkSvc({ requirements: [{ role: "Sala", kind: "room" }, { role: "Equip", kind: "equipment" }] });
+    await bookDirect(svc, at(MON, 10), [r1, e1], { contactId: await mkContact("João") });
+    await closeDay(r1, TUE);
+    await closeDay(e1, TUE);
+    // Sala 2 ocupada e Equip 3 ocupado às 14:00: só (Sala 3, Equip 2) serve; a diagonal (2,2)/(3,3) não
+    await bookDirect(svc, at(TUE, 14), [r2, e3], { contactId: await mkContact("Outro") });
+    const r = await write("rescheduleAppointment", { ref: await refOfDay(MON), startLocal: `${TUE}T14:00` });
+    expect(r.status).toBe("confirmacao_necessaria");
+    const ids = ((await pendingOf(r.pendingActionId))!.args as any).resourceIds as string[];
+    expect([...ids].sort()).toEqual([r3, e2].sort());
   });
 });

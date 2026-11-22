@@ -3609,7 +3609,7 @@ function schedIdList<T extends string>(value: unknown): T[] | null | undefined {
 function schedStringList(value: unknown): string[] | null | undefined {
   if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value) || value.length > 10) return null;
-  return value.every((x) => typeof x === "string" && x.length > 0 && x.length <= 40) ? (value as string[]) : null;
+  return value.every((x) => typeof x === "string" && x.length > 0 && x.length <= 80) ? (value as string[]) : null;
 }
 
 async function schedBody(request: Request): Promise<Record<string, unknown> | null> {
