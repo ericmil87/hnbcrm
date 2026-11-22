@@ -94,4 +94,12 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
     expect(detectUnbackedBookingClaim("Marcado! Eles te respondem por aqui.", com)).not.toBeNull();
     expect(detectUnbackedBookingClaim("Registrei o pedido para sexta às 13h, eles te respondem por aqui.", sem)).not.toBeNull();
   });
+  test("4ª rodada da remedição: indisponibilidade dita de outro jeito ('12h30 não tem', 'não tem disponível') passa; 'não tem problema' não esconde afirmação", () => {
+    const st = buildState({ offered: ["2026-11-24 11:00", "2026-11-24 14:00"] });
+    expect(detectUnbackedBookingClaim("Aqui as sessões vão até as 12h, então 12h30 não tem", st)).toBeNull();
+    expect(detectUnbackedBookingClaim("No dia 24/11 (terça) o horário das 12h30 não tem disponível — nesse período a clínica fecha para o almoço.", st)).toBeNull();
+    expect(detectUnbackedBookingClaim("Terça às 15h não tem esse horário livre, mas tenho 14h.", st)).toBeNull();
+    expect(detectUnbackedBookingClaim("Não tem problema, terça às 11h já está marcado!", st)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("Não tem erro: quinta às 16h está garantido.", st)).not.toBeNull();
+  });
 });
