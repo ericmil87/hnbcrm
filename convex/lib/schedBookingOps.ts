@@ -1405,7 +1405,15 @@ function safeAuditMetadata(extra: Record<string, string | number | boolean> | un
 async function finalizeBooking(
   ctx: MutationCtx,
   placed: Extract<Placed, { kind: "placed" }>,
-  p: { actor: SchedActor; now: number; reschedule?: { previous: Doc<"schedAppointments"> }; auditMetadata?: Record<string, string | number | boolean> }
+  p: {
+    actor: SchedActor;
+    now: number;
+    reschedule?: { previous: Doc<"schedAppointments"> };
+    auditMetadata?: Record<string, string | number | boolean>;
+    /** Grupo: tamanho (só a pessoa principal avisa a equipe, uma vez). Acompanhante: `skipPendingNotice`. */
+    partySize?: number;
+    skipPendingNotice?: boolean;
+  }
 ): Promise<void> {
   const { appointment: a, bc } = placed;
   const label = appointmentLabel(a, bc.tz);
@@ -1444,8 +1452,8 @@ async function finalizeBooking(
   });
   // NOTIFY (D1): `appointment_pending_approval` quando status === "pending_approval" e origem IA/link.
   // (C1) `appointment_created` quando origem human_message.
-  if (a.status === "pending_approval" && (a.origin === "ai" || a.origin === "public")) {
-    await notifyPendingApproval(ctx, { appointment: a, tz: bc.tz });
+  if (a.status === "pending_approval" && (a.origin === "ai" || a.origin === "public") && !p.skipPendingNotice) {
+    await notifyPendingApproval(ctx, { appointment: a, tz: bc.tz, partySize: p.partySize });
   }
   if (placed.inConflict) {
     await ctx.db.insert(
@@ -1635,7 +1643,10 @@ export async function bookPartyCore(
       return placed.kind === "failed" ? placed.failure : { ok: false, violations: [], alternatives: [] };
     }
   }
-  for (const placed of placedList) await finalizeBooking(ctx, placed, { actor: args.actor, now });
+  for (const [i, placed] of placedList.entries()) {
+    // O aviso de pendência do grupo sai UMA vez, pela pessoa principal (a primeira), com o tamanho do grupo.
+    await finalizeBooking(ctx, placed, { actor: args.actor, now, auditMetadata: args.auditMetadata, partySize: placedList.length, skipPendingNotice: i > 0 });
+  }
   return { ok: true, appointmentIds: allIds, duplicate: anyExisting };
 }
 
@@ -1807,6 +1818,20 @@ function assertCancelClass(actor: SchedActor, byClass: "staff" | "client" | "ai"
   if (byClass === "system" && actor.type !== "system") fail("Só o sistema cancela em nome do sistema.");
 }
 
+/**
+ * Grupo (`partyKey`) em `pending_approval`: aprovar, recusar ou vencer UM membro vale para o grupo inteiro, na mesma transação (um irmão que
+ * falha derruba tudo). Devolve os OUTROS membros ainda pendentes do mesmo início e grupo.
+ */
+async function pendingPartySiblings(ctx: MutationCtx, a: Doc<"schedAppointments">): Promise<Doc<"schedAppointments">[]> {
+  if (!a.partyKey || a.status !== "pending_approval") return [];
+  const rows = await ctx.db
+    .query("schedAppointments")
+    .withIndex("by_organization_and_status_and_start", (q) => q.eq("organizationId", a.organizationId).eq("status", "pending_approval").eq("startTime", a.startTime))
+    .take(300);
+  // Lê só os PENDENTES do mesmo instante: cancelados/atendidos no mesmo horário (a faixa por início tem de tudo) não escondem um irmão.
+  return rows.filter((x) => x.partyKey === a.partyKey && x._id !== a._id);
+}
+
 export async function cancelAppointmentCore(
   ctx: MutationCtx,
   args: {
@@ -1815,11 +1840,14 @@ export async function cancelAppointmentCore(
     byClass: "staff" | "client" | "ai" | "system";
     reason?: string;
     now?: number;
+    /** Interno: chamada em cascata para os irmãos do grupo (não expande de novo). */
+    viaParty?: boolean;
   }
 ): Promise<{ lateCancel: boolean }> {
   const now = args.now ?? Date.now();
   assertCancelClass(args.actor, args.byClass);
   const a = await loadAppointment(ctx, args.appointment, args.actor);
+  const partySiblings = args.viaParty ? [] : await pendingPartySiblings(ctx, a);
   // "system" (Desfazer da criação automática) cancela como a equipe; o aviso fica por conta de quem chama.
   const machineClass = args.byClass === "system" ? "staff" : args.byClass;
   const check = checkTransition(a.status, "cancelled", machineClass, now, a.startTime);
@@ -1846,6 +1874,8 @@ export async function cancelAppointmentCore(
       status: "cancelled" as const,
       cancelledAt: now,
       cancelledByClass: args.byClass,
+      // De onde o cancelamento saiu: `pending_approval` + equipe = pedido RECUSADO (a IA diz "não foi possível"); marcado e cancelado = cancelado.
+      cancelledFromStatus: a.status,
       cancelReason: cleanText(args.reason, REASON_MAX, strict),
       lateCancel: lateCancel ? true : undefined,
       statusChangedAt: now,
@@ -1873,6 +1903,8 @@ export async function cancelAppointmentCore(
   await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Horário cancelado: ${appointmentLabel(after, tz)}`, actor: args.actor, now });
   await emitAppointmentWebhook(ctx, { event: "appointment.cancelled", appointment: after, tz });
   // NOTIFY (D1b): `appointment_changed_by_client` quando byClass é client/ai.
+  // Recusar um membro do grupo (inclusive a principal) libera os demais, na mesma transação.
+  for (const sib of partySiblings) await cancelAppointmentCore(ctx, { ...args, appointment: sib, viaParty: true });
   return { lateCancel };
 }
 
@@ -2082,9 +2114,15 @@ export async function undoHumanConfirmBookingCore(
 ): Promise<{ appointmentId: Id<"schedAppointments">; kind: "created" | "approved"; sourceMessageId?: Id<"messages"> }> {
   const now = args.now ?? Date.now();
   const { actor } = args;
-  if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
-  const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
-  if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  // Só a equipe desfaz, com uma exceção: o próprio sistema desfaz a SUA criação quando o humano corrige a mensagem logo depois
+  // ("Confirmado terça 10h", "ops, terça 14h"); ator `system`/`human_message` (as mesmas travas: criação desta via intocada, ou aprovação desta via).
+  const selfCorrection = actor.type === "system" && actor.via === "human_message";
+  if (actor.type === "human") {
+    const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
+    if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  } else if (!selfCorrection) {
+    fail("Só a equipe desfaz uma marcação.");
+  }
   const org = assertOrgModule(await ctx.db.get(args.organizationId));
   const tz = orgTimezone(org);
   const a = await ctx.db.get(args.appointmentId);
@@ -2095,6 +2133,8 @@ export async function undoHumanConfirmBookingCore(
   if (now - appt.createdAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A marcação foi feita há mais de 24 horas: use Cancelar.");
   const untouched = appt.statusChangedAt <= appt.createdAt && appt.approvedAt === undefined && appt.clientConfirmedAt === undefined;
   if (appt.status !== "scheduled" || !untouched) fail("O horário já mudou de situação: use Cancelar.");
+  // O sistema só desfaz o que NINGUÉM ajustou (troca de sala/profissional, serviço ou horário mexem em `updatedAt`).
+  if (selfCorrection && appt.updatedAt > appt.createdAt) fail("A equipe já ajustou este horário: o sistema não o desfaz.");
 
   const snapshot = await snapshotAllocations(ctx, appt._id);
   await ctx.db.patch(appt._id, {
@@ -2246,10 +2286,12 @@ async function endSupersededAppointment(
 
 export async function setAppointmentStatusCore(
   ctx: MutationCtx,
-  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; to: StatusTarget; now?: number }
+  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; to: StatusTarget; now?: number; /** Interno: cascata do grupo. */ viaParty?: boolean }
 ): Promise<void> {
   const now = args.now ?? Date.now();
   const a = await loadAppointment(ctx, args.appointment, args.actor);
+  // Aprovar (`scheduled`) um membro de grupo pendente aprova o grupo todo; qualquer outro destino vale só para o membro.
+  const partySiblings = args.viaParty || args.to !== "scheduled" ? [] : await pendingPartySiblings(ctx, a);
   const check = checkTransition(a.status, args.to, actorClassOf(args.actor), now, a.startTime);
   if (!check.ok) return statusError(check.reason);
   // A3e: proposta comum (não só a de remarcação) vencida não é aprovada: o horário já passou (a equipe recusa/cancela).
@@ -2314,6 +2356,7 @@ export async function setAppointmentStatusCore(
   const stageId =
     args.to === "scheduled" ? settings.funnel.onScheduledStageId : args.to === "completed" ? settings.funnel.onCompletedStageId : args.to === "no_show" ? settings.funnel.onNoShowStageId : undefined;
   await applyFunnel(ctx, after, stageId, args.actor, now);
+  for (const sib of partySiblings) await setAppointmentStatusCore(ctx, { ...args, appointment: sib, viaParty: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -2383,6 +2426,8 @@ export async function expireProposalCore(
   });
   await recordAppointmentActivity(ctx, { appointment: after, type: "appointment_changed", content: `Proposta vencida: ${label}`, actor, now: args.now });
   await emitAppointmentWebhook(ctx, { event: "appointment.needs_attention", appointment: after, tz });
+  // Grupo: a proposta vence para o grupo inteiro (os irmãos ainda não marcados; idempotente).
+  for (const sib of await pendingPartySiblings(ctx, a)) await expireProposalCore(ctx, { ...args, appointmentId: sib._id });
   return true;
 }
 
@@ -2395,7 +2440,7 @@ const CLEAR_ON_UNDO: Record<string, Array<keyof Doc<"schedAppointments">>> = {
   checked_in: ["checkedInAt"],
   completed: ["completedAt"],
   no_show: ["noShowAt"],
-  cancelled: ["cancelledAt", "cancelledByClass", "cancelReason", "lateCancel"],
+  cancelled: ["cancelledAt", "cancelledByClass", "cancelledFromStatus", "cancelReason", "lateCancel"],
 };
 const RANK: Partial<Record<SchedStatus, number>> = { scheduled: 1, confirmed: 2, checked_in: 3, completed: 4 };
 

@@ -62,3 +62,20 @@ describe("agendaAutomation", () => {
     expect(applyWizardAiChoice(d, "auto")).toMatchObject({ consult: true, book: "auto", reschedule: "propose" });
   });
 });
+
+describe("claimJudge (conferir as respostas da IA)", () => {
+  it("servidor sem o campo = ligado; o valor salvo vale", () => {
+    const f = automationFromSettings({ ...settings(), ai: { ...settings().ai!, claimJudge: false } } as never)!;
+    expect(f.claimJudge).toBe(false);
+    expect(automationFromSettings(settings())!.claimJudge).toBe(true);
+  });
+  it("o patch leva só o que mudou", () => {
+    const saved = automationFromSettings(settings())!;
+    expect(automationToPatch(saved, saved).patch).toEqual({});
+    expect(automationToPatch({ ...saved, claimJudge: false }, saved).patch).toEqual({ ai: { claimJudge: false } });
+    expect(automationToPatch({ ...saved, claimJudge: true }, { ...saved, claimJudge: false }).patch).toEqual({ ai: { claimJudge: true } });
+  });
+  it("o padrão do assistente é ligado", () => {
+    expect(defaultAutomationForm().claimJudge).toBe(true);
+  });
+});

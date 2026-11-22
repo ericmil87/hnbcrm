@@ -53,6 +53,11 @@ export type SearchSlotsArgs = {
   reveal?: boolean;
   /** Pessoas no mesmo horário (1–4; ausente = 1): só horários em que o grupo todo cabe (`schedParty.ts`). */
   partySize?: number;
+  /**
+   * Hora do dia pedida (minutos desde 00:00). Só AJUDA a achar e ordenar (devolve `wanted`); nunca escolhe nem grava
+   * horário: a oferta continua saindo de `slots`, e a escrita só aceita código de oferta.
+   */
+  wantTimeMin?: number;
   /** Prévia da tela de regras: sobrepõe a configuração salva. */
   override?: { mode?: SmartMode; weights?: SmartWeights; minOffer?: number };
 };
@@ -73,6 +78,10 @@ export type SearchSlotsResult = {
   truncated: boolean;
   /** `unverifiable`: sem oferta porque um teto de leitura impediu de VERIFICAR (fail-closed), não porque está cheio. */
   reason: "ok" | "service_unavailable" | "no_matching_resource" | "unverifiable";
+  /** Quantos horários distintos livres há na janela pedida (depois do modo inteligente), além dos `slots` devolvidos. */
+  totalFree: number;
+  /** Só com `wantTimeMin`: o horário pedido, se livre na janela (o mais cedo), e os mais próximos dele (até o limite). */
+  wanted?: { timeMin: number; slot: FoundSlot | undefined; nearest: FoundSlot[] };
 };
 
 const EMPTY = (earliest: number, mode: SmartMode, reason: SearchSlotsResult["reason"]): SearchSlotsResult => ({
@@ -86,6 +95,7 @@ const EMPTY = (earliest: number, mode: SmartMode, reason: SearchSlotsResult["rea
   chronological: [],
   truncated: false,
   reason,
+  totalFree: 0,
 });
 
 const PERIOD_PREF = { manha: "morning", tarde: "afternoon", noite: "evening" } as const;
@@ -269,7 +279,8 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     variantKey: args.variantKey,
     earliest,
     latest,
-    period: args.period,
+    // A hora pedida VENCE o período ("manhã" + 14:00 não pode dar 14h indisponível): com `wantTimeMin` o período não filtra.
+    period: args.wantTimeMin !== undefined ? undefined : args.period,
     resourceIds: args.resourceIds,
     ignoreAppointmentId: args.ignoreAppointmentId,
     weights,
@@ -284,10 +295,30 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
   const first = scoreDays(data, usable, datesBetween(args.fromLocalDate, to), common);
   let unverifiable = first.dropped > 0 || first.skippedDays > 0 || usable.length < data.resources.length;
   const all = first.days.flatMap((d) => d.scored);
-  const smart = applySmartMode(all, mode, minOffer, args.audience, data.tz);
+  // Com hora pedida a busca roda SEM período (a hora exata vence "manhã"), mas as ofertas e as alternativas mais próximas continuam dentro do
+  // período pedido: "de manhã, às 14h" com 14h indisponível oferece manhãs, não a tarde inteira.
+  const periodWin = args.wantTimeMin !== undefined && args.period && args.period !== "qualquer" ? periodWindow(args.period) : null;
+  const inPeriod = (c: ScoredCandidate) => {
+    if (!periodWin) return true;
+    const m = minutesOfDay(c.startTime, data.tz);
+    return m >= periodWin.startMin && m < periodWin.endMin;
+  };
+  const smart = applySmartMode(all.filter(inPeriod), mode, minOffer, args.audience, data.tz);
   const distinct = dedupeByStart(smart.list);
   const picked = effLimit <= MAX_OFFERS ? pickOffers(distinct, effLimit, data.tz) : distinct.slice(0, effLimit);
   const slots = picked.map(asSlot);
+  let wanted: SearchSlotsResult["wanted"];
+  if (args.wantTimeMin !== undefined) {
+    const at = (c: ScoredCandidate) => minutesOfDay(c.startTime, data.tz);
+    // O horário PEDIDO vale se está livre (candidato válido pelas regras), mesmo que o modo "restrict" o escondesse das ofertas
+    // padrão: o modo orienta o que a IA propõe sozinha, não recusa quem pediu aquela hora; a reserva segue pelas mesmas regras da
+    // porta e a equipe ainda aprova. As alternativas ("mais próximas") respeitam o modo.
+    const exact = dedupeByStart(applySmartMode(all, "off", minOffer, args.audience, data.tz).list).filter((c) => at(c) === args.wantTimeMin)[0];
+    const closest = [...distinct]
+      .sort((a, b) => Math.abs(at(a) - args.wantTimeMin!) - Math.abs(at(b) - args.wantTimeMin!) || a.startTime - b.startTime)
+      .slice(0, effLimit);
+    wanted = { timeMin: args.wantTimeMin, slot: exact ? asSlot(exact) : undefined, nearest: closest.map(asSlot) };
+  }
   const chronological = dedupeByStart(applySmartMode(all, "off", minOffer, args.audience, data.tz).list)
     .slice(0, MAX_OFFERS)
     .map(asSlot);
@@ -321,6 +352,9 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     chronological,
     truncated,
     reason: slots.length === 0 && unverifiable ? "unverifiable" : "ok",
+    // a hora pedida e livre conta mesmo quando o modo `restrict` a escondeu das ofertas padrão
+    totalFree: distinct.length + (wanted?.slot && !distinct.some((c) => c.startTime === wanted!.slot!.startTime) ? 1 : 0),
+    ...(wanted ? { wanted } : {}),
   };
 }
 

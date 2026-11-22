@@ -29,6 +29,8 @@ export type TimeMention = {
   sentence: number;
   /** Índice da ORAÇÃO (frase partida também por "mas/porém"): recorte da negação ("oito e meia não tenho, mas tenho 8h…"). */
   clause: number;
+  /** Posição da hora no texto normalizado (`norm(text)`, mesmo comprimento): para medir a distância até uma negação ou oferta. */
+  at: number;
 };
 
 export function norm(s: string): string {
@@ -113,6 +115,9 @@ function pushTimes(n: string, out: Tok[]): void {
   const tail = "(?:\\s+e\\s+(meia|quinze|trinta|quarenta e cinco|quarenta))?(?:\\s+(?:em ponto|horas?))?";
   const wordRe = new RegExp(`\\b(?:as|pras|pra as|para as|a)\\s+(${WORD_ALT})${tail}\\b(?!\\s*(?:minutos?|min|pessoas?|dias?|vezes|anos?|reais))`, "g");
   for (const m of n.matchAll(wordRe)) {
+    // "para as duas juntas", "vaga para as duas:" = para AS DUAS PESSOAS, não 2h (sem período, "e meia" nem "horas" depois).
+    if (m[1] === "duas" && /^(?:para|pra)\s/.test(m[0]) && !m[2] && !/^\s*(?:horas?\b|em ponto|da\s+(?:tarde|manha|noite|madrugada))/.test(n.slice((m.index ?? 0) + m[0].length))) continue;
+    if (m[1] === "duas" && /^\s*(?:juntas|juntos|pessoas|sessoes|aulas|vagas|opcoes|vezes|mulheres|amigas|criancas)\b/.test(n.slice((m.index ?? 0) + m[0].length))) continue;
     add(m, periodShift(NUM_WORDS[m[1]], n.slice((m.index ?? 0) + m[0].length)) * 60 + extraOf(m[2]));
   }
   // SEM "às": "quinta dez e meia", "sexta oito em ponto", "segunda oito horas, nove horas ou cinco da tarde"
@@ -204,7 +209,8 @@ export function extractAiTimes(text: string, opts: { keepRangeStart?: boolean } 
   const out: TimeMention[] = [];
   let day: DayRef | undefined;
   const seen = new Set<string>();
-  for (const t of toks) {
+  for (let ti = 0; ti < toks.length; ti++) {
+    const t = toks[ti];
     if (t.kind === "day") {
       day = t.day;
       continue;
@@ -213,7 +219,10 @@ export function extractAiTimes(text: string, opts: { keepRangeStart?: boolean } 
     const key = `${t.at}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ timeMin: t.timeMin, ...(day ? { day } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at) });
+    // "10h de terça ou 14h de quarta": o dia que vem DEPOIS, ligado por "de/do/da", é o da hora (não o dia da hora anterior).
+    const next = toks[ti + 1];
+    const own = next && next.kind === "day" && /^\s+(?:de|do|da|no|na)\s+$/.test(n.slice(t.end, next.at)) ? next.day : day;
+    out.push({ timeMin: t.timeMin, ...(own ? { day: own } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at), at: t.at });
   }
   return out;
 }

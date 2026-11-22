@@ -157,7 +157,8 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
       >
         <Underlay fill={toneFill} hatch={tone.hatch} />
         {wc === "tiny" ? (
-          <span className="block truncate font-semibold">{short}</span>
+          /* Bloco alto e estreito: até 2 linhas quebrando só em espaço ("Teste" / "J."), para a inicial não ser cortada. */
+          <span className={cn("block font-semibold [overflow-wrap:normal]", plan.compact ? "truncate" : "line-clamp-2")}>{short}</span>
         ) : plan.compact ? (
           <span className="flex items-center gap-1">
             <Flags flags={flags} />

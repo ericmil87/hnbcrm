@@ -161,10 +161,15 @@ function wrapNetworkError(e: unknown): Error {
 export async function chat(
   endpoint: LlmEndpoint,
   req: NormalizedRequest,
-  opts?: { timeoutMs?: number }
+  opts?: { timeoutMs?: number; signal?: AbortSignal }
 ): Promise<NormalizedResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  // Cancelamento de quem chama (ex.: teto de tempo do juiz de afirmação): aborta a requisição DE VERDADE em vez de deixá-la correr (e custar) sozinha.
+  if (opts?.signal) {
+    if (opts.signal.aborted) controller.abort();
+    else opts.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   let response: Response;
   try {
     response = await fetch(buildUrl(endpoint.baseUrl), {
@@ -368,17 +373,17 @@ export function isRetriable(err: unknown): boolean {
 export async function chatWithRetry(
   endpoint: LlmEndpoint,
   req: NormalizedRequest,
-  opts?: { timeoutMs?: number; maxAttempts?: number }
+  opts?: { timeoutMs?: number; maxAttempts?: number; signal?: AbortSignal }
 ): Promise<NormalizedResponse> {
   const maxAttempts = opts?.maxAttempts ?? 3;
   let lastErr: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      return await chat(endpoint, req, { timeoutMs: opts?.timeoutMs });
+      return await chat(endpoint, req, { timeoutMs: opts?.timeoutMs, signal: opts?.signal });
     } catch (e) {
       lastErr = e;
       const isLast = attempt === maxAttempts - 1;
-      if (isLast || !isRetriable(e)) throw e;
+      if (isLast || !isRetriable(e) || opts?.signal?.aborted) throw e;
       let waitMs = BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)];
       if (e instanceof LlmHttpError && e.status === 429 && e.retryAfterMs !== undefined) {
         waitMs = Math.min(e.retryAfterMs, RETRY_AFTER_CAP_MS);
