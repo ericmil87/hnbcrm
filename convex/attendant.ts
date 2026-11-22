@@ -123,7 +123,7 @@ import { currentOffers, issueOffers, markShown, type OffersState, resolveOffer }
 import { offersShownInText } from "./lib/schedOfferShown";
 import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
 import { buildClaimState, knowledgeTimesOf } from "./lib/schedClaimState";
-import { customerTail, customerWindow, detectCustomerIntent, isChangeIntent, mentionsGroup } from "./lib/schedIntent";
+import { customerSinceOffer, customerTail, detectCustomerIntent, isChangeIntent, mentionsGroup, mentionsOtherService } from "./lib/schedIntent";
 import { schedSafeReply } from "./lib/schedSafeText";
 import { markOffersShownFromText } from "./lib/schedAiState";
 // ── Follow-up da IA (v0.60) ──
@@ -2015,12 +2015,12 @@ export const AGENDA_TEXT_LEAK_NUDGE =
  */
 export function leakInOutgoingRound(
   message: { content?: unknown; tool_calls?: { function: { name: string; arguments: string } }[] },
-  opts: { textFallback: boolean; replyToolNames?: string[]; skipReply?: boolean; agenda?: boolean }
+  opts: { textFallback: boolean; replyToolNames?: string[]; skipReply?: boolean; agenda?: boolean; offerCodes?: readonly string[] }
 ): LeakedModelMarkup | null {
   const toolCalls = message.tool_calls ?? [];
   if (toolCalls.length === 0) {
     return opts.textFallback && typeof message.content === "string"
-      ? detectLeakedModelMarkup(message.content, { agenda: opts.agenda })
+      ? detectLeakedModelMarkup(message.content, { agenda: opts.agenda, offerCodes: opts.offerCodes })
       : null;
   }
   if (opts.skipReply) return null;
@@ -2034,7 +2034,7 @@ export function leakInOutgoingRound(
       // Argumentos que não parseiam: o JSON cru é o que poderia vazar.
       text = tc.function.arguments;
     }
-    const leak = typeof text === "string" ? detectLeakedModelMarkup(text, { agenda: opts.agenda }) : null;
+    const leak = typeof text === "string" ? detectLeakedModelMarkup(text, { agenda: opts.agenda, offerCodes: opts.offerCodes }) : null;
     if (leak) return leak;
   }
   return null;
@@ -4173,6 +4173,7 @@ export const internalProcessQueueItem = internalAction({
         booked: [] as Array<{ startTime: number; status: "pending" | "scheduled" }>,
         offered: [] as number[],
         named: [] as Array<{ startTime: number; professional: string }>,
+        codes: [] as string[],
       };
       let claimedOnce = false;
       // Horas fixas do conhecimento (turmas, funcionamento): descrevê-las não é "horário inventado". Calculado uma vez por turno.
@@ -4187,7 +4188,7 @@ export const internalProcessQueueItem = internalAction({
           serviceNames: context.sched?.services.map((sv) => sv.name) ?? [],
           guardNames: context.sched?.guardNames ?? [],
           knowledgeTimes: schedKnowledgeTimes,
-          handoff: handoffRequestedThisRun,
+          handoff: handoffRequestedThisRun || context.sched?.handoffPending === true,
         });
       // O guard liga com o módulo (não com as tools): a IA não pode afirmar marcação em nenhum turno.
       const schedGuardOn = context.schedulingOn === true;
@@ -4201,6 +4202,7 @@ export const internalProcessQueueItem = internalAction({
           customerText: customerTail(context.history),
           pendingRequest:
             schedTurn.booked.some((b) => b.status === "pending") || (context.sched?.upcoming ?? []).some((u) => u.status === "pending_approval"),
+          hasUpcoming: schedTurn.booked.length > 0 || (context.sched?.upcoming.length ?? 0) > 0,
         });
         replyText = safe.text;
         console.warn(JSON.stringify({ event: "attendantSchedSafeText", kind, situation: safe.situation }));
@@ -4353,7 +4355,9 @@ export const internalProcessQueueItem = internalAction({
             skipReply:
               roundHasReadAndReply(roundToolCalls) ||
               roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
-            agenda: schedGuardOn,
+            // só com as tools de horário na run (e 1:1: em grupo `tools.find` é falso): nenhuma regra nova para org sem a IA na agenda
+            agenda: schedGuardOn && context.sched?.tools.find === true,
+            offerCodes: [...(context.sched?.offerCodes ?? []), ...schedTurn.codes],
           });
           if (leak) {
             console.warn(
@@ -4391,7 +4395,7 @@ export const internalProcessQueueItem = internalAction({
                 roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
             },
             // `requestHandoff` na MESMA rodada vale como repasse criado ("já passei seu pedido para a equipe" é verdade).
-            { ...schedClaimState(), handoff: handoffRequestedThisRun || roundToolCalls.some((tc) => tc.function.name === "requestHandoff") }
+            { ...schedClaimState(), handoff: handoffRequestedThisRun || context.sched?.handoffPending === true || roundToolCalls.some((tc) => tc.function.name === "requestHandoff") }
           );
           if (claim) {
             console.warn(JSON.stringify({ event: "attendantSchedClaim", round, kind: claim.kind, sample: claim.evidence }));
@@ -4537,7 +4541,9 @@ export const internalProcessQueueItem = internalAction({
             } else if (
               name === FIND_TOOL &&
               (context.sched?.upcoming.length ?? 0) > 0 &&
-              isChangeIntent(detectCustomerIntent(customerTail(context.history)))
+              isChangeIntent(detectCustomerIntent(customerTail(context.history))) &&
+              // pedir horário de OUTRO serviço (tem corte marcado e quer barba) não é remarcar
+              !mentionsOtherService(customerTail(context.history), (context.sched?.services ?? []).map((sv) => sv.name), (context.sched?.upcoming ?? []).map((u) => u.serviceName))
             ) {
               // Quem já tem horário e pede para REMARCAR/CANCELAR não ganha horário novo da IA (um modelo mais fraco ofereceu): é da equipe.
               schedRoundExecuted = true;
@@ -4548,7 +4554,7 @@ export const internalProcessQueueItem = internalAction({
                 proximo_passo:
                   "O cliente quer remarcar ou cancelar um horário que já tem: isso é com a equipe. NÃO ofereça horários novos nem consulte a agenda: chame requestHandoff (diga no motivo o que ele pediu) e responda que a equipe cuida disso e retorna por aqui.",
               };
-            } else if (name === FIND_TOOL && askedForOnePersonOnly(tc.function.arguments) && mentionsGroup(customerWindow(context.history))) {
+            } else if (name === FIND_TOOL && askedForOnePersonOnly(tc.function.arguments) && mentionsGroup(customerSinceOffer(context.history))) {
               // O cliente falou em mais de uma pessoa e a busca veio sem `people`: a reserva seria de UMA só e a mensagem diria "para vocês dois"
               // (medido: modelo marcou 1 corte e confirmou "para você e seu filho"). Recusa e manda refazer com people ou repassar.
               schedRoundExecuted = true;
@@ -4557,7 +4563,7 @@ export const internalProcessQueueItem = internalAction({
                 status: "erro",
                 error: "pedido_de_grupo",
                 proximo_passo:
-                  "O cliente falou em mais de uma pessoa. Se elas vão no MESMO horário, consulte de novo passando people (2 a 4). Se for um atendimento depois do outro, em horários diferentes ou mais de 4 pessoas, NÃO ofereça horário nem marque só uma delas: chame requestHandoff e diga que a equipe organiza.",
+                  "O cliente pode ter falado em mais de uma pessoa. NÃO adivinhe: pergunte ao cliente quantas pessoas são e se vão no mesmo horário. Só depois consulte (com people, se forem 2 a 4 no mesmo horário) ou, se for um depois do outro, em horários diferentes ou mais de 4, chame requestHandoff e diga que a equipe organiza.",
               };
             } else if (schedTurn.calls >= MAX_SCHED_CALLS_PER_TURN) {
               // Modelo em laço nas tools de agenda: repasse para humano.
@@ -4610,6 +4616,7 @@ export const internalProcessQueueItem = internalAction({
                 }
                 schedTurn.offered.push(...out.control.offeredTimes);
                 if (out.control.named) schedTurn.named.push(...out.control.named);
+                if (out.control.codes) schedTurn.codes.push(...out.control.codes);
                 if (out.control.handoff) handoffRequestedThisRun = true;
                 if (out.result.status === "proposto_para_aprovacao_humana") {
                   proposedActions.push({
@@ -4829,7 +4836,10 @@ export const internalProcessQueueItem = internalAction({
       // é texto escrito por humano na configuração.
       // Trava final do guardrail de saída (defesa em profundidade): qualquer
       // caminho que tenha chegado aqui com marcação técnica falha o turno.
-      const finalLeak = detectLeakedModelMarkup(replyText, { agenda: schedGuardOn && !schedSafeFallback });
+      const finalLeak = detectLeakedModelMarkup(replyText, {
+        agenda: schedGuardOn && context.sched?.tools.find === true && !schedSafeFallback,
+        offerCodes: [...(context.sched?.offerCodes ?? []), ...schedTurn.codes],
+      });
       if (finalLeak && isAgendaTextLeak(finalLeak)) {
         console.warn(JSON.stringify({ event: "attendantLeakedMarkup", path: "final", kind: finalLeak.kind, sample: finalLeak.sample }));
         await useSafeSchedText(finalLeak.kind);
@@ -6397,7 +6407,7 @@ export const simulateAttendant = action({
         handoff: false,
       });
     const simCustomerText = customerTail(args.transcript.map((m) => ({ de: m.role === "customer" ? "cliente" : "agente", texto: m.content })));
-    const simSafeReply = (kind: string) => schedSafeReply({ kind, customerText: simCustomerText, pendingRequest: false });
+    const simSafeReply = (kind: string) => schedSafeReply({ kind, customerText: simCustomerText, pendingRequest: false, hasUpcoming: false });
 
     try {
       for (let round = 0; round < 4; round++) {
@@ -6446,7 +6456,8 @@ export const simulateAttendant = action({
             skipReply:
               (!args.group && roundHasReadAndReply(roundToolCalls)) ||
               roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
-            agenda: context.schedulingOn === true && !args.group,
+            agenda: context.schedulingOn === true && !args.group && context.sched?.tools.find === true,
+            offerCodes: simOffers.offers.map((o) => o.code),
           });
           if (leak && isAgendaTextLeak(leak)) {
             // Produção: regenera uma vez; repetiu = texto seguro por intenção + repasse (o turno não falha).
@@ -6485,7 +6496,7 @@ export const simulateAttendant = action({
                 roundHasReadAndReply(roundToolCalls) ||
                 roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
             },
-            simClaimState()
+            { ...simClaimState(), handoff: roundToolCalls.some((tc) => tc.function.name === "requestHandoff") }
           );
           if (claim) {
             if (simClaimedOnce) {

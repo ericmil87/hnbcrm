@@ -21,9 +21,13 @@ describe("schedClaimGuard — corpus rotulado (eventos reais + cego + quase-igua
 
   test("cego: nenhuma legítima barrada e só uma indevida (conhecida) passa", () => {
     expect(r.blind.falsePositives).toEqual([]);
-    // B29 ("Já passei seu pedido para a equipe e ficou tudo resolvido"): repasse afirmado sem o repasse não é detectável sem
-    // arriscar barrar o repasse legítimo de um turno anterior (documentado em docs/architecture/agenda.md).
-    expect(r.blind.leaked).toEqual(["B29"]);
+    // B29 ("Já passei seu pedido para a equipe e ficou tudo resolvido") passou a ser barrado: sem repasse no turno nem pendente na conversa
+    // (`ClaimState.handoff` já considera o repasse pendente lido do contexto), "passei para a equipe" é ação que não aconteceu.
+    expect(r.blind.leaked).toEqual([]);
+  });
+
+  test("revisão adversarial do PR #200: as 13 afirmações falsas que passavam são barradas", () => {
+    expect(r.review.leaked).toEqual([]);
   });
 
   test("quase-iguais das frases liberadas: todas continuam barradas", () => {

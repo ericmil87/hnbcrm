@@ -400,6 +400,26 @@ export const ADVERSARIAL_BAD: BlindItem[] = [
   { id: "A22", cat: "profissional", text: "Terça às 10h com o Tato", state: { offeredNamed: ["2026-11-24 10:00|Léo"] } },
 ];
 
+/**
+ * 4º conjunto: as frases da REVISÃO ADVERSARIAL do PR #200 (afirmações falsas que passavam). Conhecimento da org com turmas 7h/9h/18h/19h
+ * e NADA no banco (`knowledge`), ou estado vazio. Todas são indevidas e têm de ser barradas.
+ */
+export const REVIEW_BAD: BlindItem[] = [
+  { id: "R01", cat: "conhecimento", text: "Sua aula de pilates está confirmada para segunda às 19h.", state: { knowledge: true } },
+  { id: "R02", cat: "conhecimento", text: "Fechado! Te espero segunda às 18h.", state: { knowledge: true } },
+  { id: "R03", cat: "conhecimento", text: "Seu horário de segunda às 18h está garantido.", state: { knowledge: true } },
+  { id: "R04", cat: "conhecimento", text: "Marquei sua consulta para segunda às 9h!", state: { knowledge: true } },
+  { id: "R05", cat: "conhecimento", text: "Agendado! Segunda às 7h, te espero.", state: { knowledge: true } },
+  { id: "R06", cat: "conhecimento", text: "Agendei você para sexta às 8h.", state: { knowledge: true } },
+  { id: "R07", cat: "closer-vazio", text: "Combinado, quarta às 15h então!", state: NONE },
+  { id: "R08", cat: "closer-vazio", text: "Fechado, quarta às 15h então!", state: NONE },
+  { id: "R09", cat: "se-reflexivo", text: "Não se preocupe, terça às 10h é seu.", state: NONE },
+  { id: "R10", cat: "posse", text: "Perfeito. Seu horário é terça-feira às dez horas.", state: NONE },
+  { id: "R11", cat: "esperar", text: "Vou te esperar terça às 10h.", state: NONE },
+  { id: "R12", cat: "lembrete", text: "Não esqueça: terça às 10h, hein!", state: NONE },
+  { id: "R13", cat: "repasse-falso", text: "Já passei seu pedido para a equipe e ficou tudo resolvido, pode ficar tranquilo.", state: { ...NONE, handoff: false } },
+];
+
 // ---------------------------------------------------------------------------
 // Avaliação
 // ---------------------------------------------------------------------------
@@ -423,6 +443,7 @@ export type CorpusReport = {
   };
   blind: { badTotal: number; badBlocked: number; goodTotal: number; goodBlocked: number; leaked: string[]; falsePositives: string[] };
   adversarial: { total: number; blocked: number; leaked: string[] };
+  review: { total: number; blocked: number; leaked: string[] };
 };
 
 const blocked = (text: string, state: ClaimState) => detectUnbackedBookingClaim(text, state) !== null;
@@ -437,7 +458,9 @@ export function evaluateCorpus(): CorpusReport {
   const bad = BLIND_BAD.filter((b) => blocked(b.text, buildState(b.state)));
   const good = BLIND_GOOD.filter((b) => blocked(b.text, buildState(b.state)));
   const adv = ADVERSARIAL_BAD.filter((b) => !blocked(b.text, buildState(b.state))).map((b) => b.id);
+  const rev = REVIEW_BAD.filter((b) => !blocked(b.text, buildState(b.state))).map((b) => b.id);
   return {
+    review: { total: REVIEW_BAD.length, blocked: REVIEW_BAD.length - rev.length, leaked: rev },
     adversarial: { total: ADVERSARIAL_BAD.length, blocked: ADVERSARIAL_BAD.length - adv.length, leaked: adv },
     events: {
       total: EVENTS.length,

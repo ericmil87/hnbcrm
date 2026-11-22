@@ -986,24 +986,32 @@ describe("D2: profissional pedido, ponta a ponta", () => {
 
 describe("D2: texto seguro conforme a intenção e motivo do repasse com o que o cliente queria", () => {
   const twice = (text: string) => [reply(text), reply(text)];
-  test.each<[string, string, string, RegExp, string]>([
-    ["cancelar", "Preciso cancelar minha consulta de segunda", "Cancelei seu horário de segunda às 10h.", /^O cancelamento fica com a nossa equipe/, "Cliente quer cancelar um horário (resposta da IA barrada pelo guard)"],
-    ["remarcar", "Quero remarcar para terça", "Remarquei seu horário para terça às 10h.", /^Remarcar fica com a nossa equipe/, "Cliente quer remarcar um horário (resposta da IA barrada pelo guard)"],
-    ["presença", "Confirmo minha presença na segunda", "Anotei sua confirmação de presença para segunda às 10h.", /^Recebi a sua mensagem e já avisei a equipe/, "Cliente confirmou presença (resposta da IA barrada pelo guard)"],
-    ["grupo", "Quero marcar para mim e minha amiga na segunda às 10h", "Registrei o pedido para vocês duas na segunda às 10h.", /^Para mais de uma pessoa a equipe confirma/, "Cliente quer marcar para mais de uma pessoa (resposta da IA barrada pelo guard)"],
-    ["marcar", "Quero consulta segunda às 10h", "Marcado! Segunda às 10h.", /^Vou confirmar os horários com a equipe/, "Cliente quer marcar horário (resposta da IA barrada pelo guard de agenda)"],
-  ])("%s", async (_label, customer, claim, textRe, reason) => {
+  // remarcar/cancelar/presença só valem para quem TEM agendamento: o cenário cria um pedido antes (cliente sem agendamento recebe o texto padrão)
+  test.each<[string, string, string, RegExp, string, boolean]>([
+    ["cancelar", "Preciso cancelar minha consulta de segunda", "Cancelei seu horário de segunda às 10h.", /^O cancelamento fica com a nossa equipe/, "Cliente quer cancelar um horário (resposta da IA barrada pelo guard)", true],
+    ["remarcar", "Quero remarcar para terça", "Remarquei seu horário para terça às 10h.", /^Remarcar fica com a nossa equipe/, "Cliente quer remarcar um horário (resposta da IA barrada pelo guard)", true],
+    ["presença", "Confirmo minha presença na segunda", "Anotei sua confirmação de presença para segunda às 10h.", /^Recebi a sua mensagem e já avisei a equipe/, "Cliente confirmou presença (resposta da IA barrada pelo guard)", true],
+    ["grupo", "Quero marcar para mim e minha amiga na segunda às 10h", "Registrei o pedido para vocês duas na segunda às 10h.", /^Para mais de uma pessoa a equipe confirma/, "Cliente quer marcar para mais de uma pessoa (resposta da IA barrada pelo guard)", false],
+    ["marcar", "Quero consulta segunda às 10h", "Marcado! Segunda às 10h.", /^Vou confirmar os horários com a equipe/, "Cliente quer marcar horário (resposta da IA barrada pelo guard de agenda)", false],
+    ["cancelar SEM agendamento vira o texto padrão", "Quero cancelar minha consulta de segunda", "Cancelei seu horário de segunda às 10h.", /^Vou confirmar os horários com a equipe/, "Cliente quer marcar horário (resposta da IA barrada pelo guard de agenda)", false],
+  ])("%s", async (_label, customer, claim, textRe, reason, withBooking) => {
     const s = await seedAiAgenda(t);
-    stubModel(twice(claim));
+    if (withBooking) {
+      stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, afterBooking, ...twice(claim)]);
+      await turn(s, s.ana, "Quero consulta segunda");
+      await turn(s, s.ana, "o das 8");
+      expect(await appointments()).toHaveLength(1);
+    } else {
+      stubModel(twice(claim));
+    }
     await turn(s, s.ana, customer);
     const sent = (await outbound(s.ana)).map((x) => x.content);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatch(textRe);
+    expect(sent.at(-1)).toMatch(textRe);
     const hs = await handoffs();
     expect(hs).toHaveLength(1);
     expect(hs[0].reason).toBe(reason);
     expect(JSON.stringify(hs[0])).not.toContain(customer); // o repasse leva o rótulo, nunca o texto do cliente
-    expect(await appointments()).toHaveLength(0);
+    expect(await appointments()).toHaveLength(withBooking ? 1 : 0);
   });
 
   test("pedido pendente: 'tá confirmado?' respondido com 'confirmado' duas vezes → 'Seu pedido já está registrado e aguarda a confirmação da equipe'", async () => {

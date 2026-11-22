@@ -18,9 +18,9 @@ describe("detectCustomerIntent (léxico do cliente)", () => {
     ["Confirmo minha presença na segunda", "presenca"],
     ["vou estar lá com certeza", "presenca"],
     ["quero marcar para mim e minha amiga", "grupo"],
-    ["somos duas pessoas", "grupo"],
-    ["eu e meu filho amanhã", "grupo"],
-    ["para 2 pessoas na sexta", "grupo"],
+    ["somos duas pessoas, queremos marcar", "grupo"],
+    ["queria marcar para eu e meu filho amanhã", "grupo"],
+    ["queria marcar para 2 pessoas na sexta", "grupo"],
     ["queria um horário na quinta", "marcar"],
     ["tem vaga amanhã?", "marcar"],
     ["bom dia", null],
@@ -51,12 +51,12 @@ describe("detectCustomerIntent (léxico do cliente)", () => {
 
 describe("schedSafeReply: texto conforme a intenção, motivo com o rótulo (nunca o texto do cliente)", () => {
   const reply = (customerText: string, over: Partial<Parameters<typeof schedSafeReply>[0]> = {}) =>
-    schedSafeReply({ kind: "claim_without_booking", customerText, pendingRequest: false, ...over });
+    schedSafeReply({ kind: "claim_without_booking", customerText, pendingRequest: false, hasUpcoming: true, ...over });
   test("cada intenção tem texto próprio e verdadeiro (o repasse é criado logo depois)", () => {
     expect(reply("preciso remarcar").text).toMatch(/^Remarcar fica com a nossa equipe/);
     expect(reply("quero cancelar").text).toMatch(/^O cancelamento fica com a nossa equipe/);
     expect(reply("confirmo minha presença").text).toMatch(/^Recebi a sua mensagem e já avisei a equipe/);
-    expect(reply("eu e minha amiga amanhã").text).toMatch(/^Para mais de uma pessoa a equipe confirma/);
+    expect(reply("queria marcar eu e minha amiga amanhã").text).toMatch(/^Para mais de uma pessoa a equipe confirma/);
     expect(reply("quero marcar", { kind: "resource_not_offered" }).text).toMatch(/^Quem atende a equipe confirma/);
     expect(reply("tá marcado?", { pendingRequest: true }).text).toMatch(/^Seu pedido já está registrado e aguarda a confirmação da equipe/);
     expect(reply("quero um horário").text).toBe(SCHED_SAFE_TEXT);
@@ -112,26 +112,54 @@ describe("buildClaimState e horas do conhecimento", () => {
   });
 });
 
-import { customerWindow, mentionsGroup } from "./schedIntent";
-describe("mentionsGroup e customerWindow (a menção ao grupo costuma vir na primeira mensagem)", () => {
+import { customerSinceOffer, mentionsGroup, mentionsOtherService } from "./schedIntent";
+describe("mentionsGroup (parentesco/companhia ou número de pessoas + intenção de marcar; 'só eu' vence)", () => {
   test.each([
     ["queria um corte quinta pra mim e meu filho, um depois do outro", true],
-    ["somos em 2, eu e meu marido", true],
+    ["somos em 2, queremos marcar uma consulta", true],
     ["quero marcar para mim e minha amiga", true],
-    ["vou com minha esposa", true],
+    ["queria marcar uma aula, vou com minha esposa", true],
     ["queria um corte quinta de tarde", false],
-    ["minha amiga indicou vocês", false],
-    ["só eu mesmo", false],
+    ["minha amiga indicou vocês, queria marcar", false],
+    ["só eu mesmo, quero marcar", false],
+    // falsos positivos da revisão
+    ["Para mim é a melhor opção, quinta", false],
+    ["Meu cabelo também tá grande, queria marcar um corte", false],
+    ["Fui eu e minha mãe semana passada", false],
+    ["Meu marido também faz aqui, mas quero marcar só pra mim", false],
+    ["Eu e a Maria combinamos de nos ver, quero marcar um corte", false],
   ])("%j → %s", (text, expected) => {
     expect(mentionsGroup(text)).toBe(expected);
   });
-  test("a janela junta as mensagens do cliente (não só as do fim)", () => {
+  test("só valem as mensagens do cliente desde a última oferta da IA", () => {
     const h = [
       { de: "cliente", texto: "oi, queria marcar pra mim e meu filho" },
-      { de: "ia", texto: "claro" },
-      { de: "cliente", texto: "quinta de tarde" },
+      { de: "ia", texto: "Tenho quinta às 14h ou às 15h" },
+      { de: "cliente", texto: "pode ser as 14h" },
     ];
-    expect(mentionsGroup(customerWindow(h))).toBe(true);
-    expect(mentionsGroup(customerTail(h))).toBe(false);
+    expect(mentionsGroup(customerSinceOffer(h))).toBe(false);
+    expect(mentionsGroup(customerSinceOffer(h.slice(0, 1)))).toBe(true);
+    expect(customerSinceOffer([])).toBe("");
+  });
+  test("outro serviço que não é o do agendamento que o cliente já tem", () => {
+    expect(mentionsOtherService("queria marcar uma barba também", ["Corte", "Barba"], ["Corte"])).toBe(true);
+    expect(mentionsOtherService("preciso remarcar meu corte", ["Corte", "Barba"], ["Corte"])).toBe(false);
+  });
+});
+
+describe("intenção sem falso cancelamento e sem agendamento", () => {
+  test.each(["Não consigo ir de manhã, tem à tarde?", "Não vou poder ir sábado, tem domingo?"])("%j não é cancelar", (t) => {
+    expect(detectCustomerIntent(t)).not.toBe("cancelar");
+  });
+  test("cancelamento explícito e 'não vou poder ir' sem pedir outro dia continuam", () => {
+    expect(detectCustomerIntent("Não vou poder ir amanhã")).toBe("cancelar");
+    expect(detectCustomerIntent("Quero cancelar, não tem mais jeito")).toBe("cancelar");
+  });
+  test("sem agendamento ativo o texto seguro e o repasse nunca falam de cancelar/remarcar/presença", () => {
+    for (const t of ["quero cancelar", "preciso remarcar", "confirmo minha presença", "Não vou poder ir sábado"]) {
+      const r = schedSafeReply({ kind: "claim_without_booking", customerText: t, pendingRequest: false, hasUpcoming: false });
+      expect(r.text).not.toMatch(/cancelamento|Remarcar|presença|Recebi a sua mensagem/);
+      expect(r.reason).not.toMatch(/cancelar|remarcar|presença/);
+    }
   });
 });

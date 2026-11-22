@@ -39,6 +39,11 @@ export interface DetectLeakOptions {
    * Fora da agenda a regra fica desligada (um grupo pode legitimamente falar de "o cliente").
    */
   agenda?: boolean;
+  /**
+   * Códigos de oferta (`h1`, `h2`…) de fato EMITIDOS nesta conversa. `hN` só é vazamento se estiver aqui (e nunca dentro de URL): "o modelo
+   * h1", "plano h2" e "https://loja.com/produtos/h2" são texto de negócio. Ausente/vazio = nenhum código é barrado (só ferramenta e narração).
+   */
+  offerCodes?: readonly string[];
 }
 
 export interface LeakedModelMarkup {
@@ -75,14 +80,24 @@ const SPECIAL_TOKEN = new RegExp(`<${BAR}[A-Za-z_][\\w\\u2581.\\-]{0,40}${BAR}>`
 /** Resto de raciocínio (o bloco `<think>…</think>` completo os chamadores já tiram). */
 const REASONING_PATTERNS: RegExp[] = [/<\/?think>/i, /<\/?thinking>/i, /<\/?reasoning>/i];
 
-/** `(código h1)`, `código: h1`, `(h1)`: o código de oferta que o prompt manda esconder. */
-const OFFER_CODE_PATTERNS: RegExp[] = [/\bc[oó]digo\s*:?\s*h\d{1,4}\b/i, /\(\s*h\d{1,4}\s*\)/];
-/** `h1` solto (minúsculo, sem letra/dígito colado: "8h30", "H2O" e "14h" não casam). Só com a agenda ligada. */
-const BARE_OFFER_CODE = /(?<![A-Za-z0-9_])h[1-9]\d{0,3}(?![A-Za-z0-9_])/;
+/** `hN` como token (minúsculo, sem letra/dígito/`/`/`.`/`-` colado: "8h30", "H2O", "14h" e "…/produtos/h2" não casam). */
+const OFFER_CODE_TOKEN = /(?<![A-Za-z0-9_/.:=#-])h([1-9]\d{0,3})(?![A-Za-z0-9_/.-])/g;
+const URL_RE = /https?:\/\/\S+|www\.\S+/gi;
+/** Primeiro código EMITIDO citado no texto (fora de URL), ou `null`. */
+function emittedCodeIn(text: string, codes: readonly string[]): number | null {
+  if (codes.length === 0) return null;
+  const set = new Set(codes.map((c) => c.toLowerCase()));
+  const clean = text.replace(URL_RE, (m) => " ".repeat(m.length));
+  for (const m of clean.matchAll(OFFER_CODE_TOKEN)) if (set.has(`h${m[1]}`)) return m.index ?? 0;
+  return null;
+}
 const TOOL_NAME_IN_TEXT = /\b(?:bookOfferedTime|findAvailableTimes|replyToCustomer|requestHandoff)\b/;
-/** "O cliente escolheu…", "A cliente quer…" no começo de uma frase: o modelo falando DO cliente em vez de AO cliente. */
+/**
+ * "O cliente escolheu…", "A cliente aceitou…" no começo de uma frase: o modelo raciocinando em voz alta SOBRE A ESCOLHA do cliente. Só verbos de
+ * escolha/resposta ("precisa", "deseja", "prefere", "pode" aparecem em texto legítimo: "O cliente precisa trazer documento").
+ */
 const CLIENT_NARRATION =
-  /(?:^|[.!?\n]\s*)(?:o|a)\s+cliente\s+(?:escolheu|escolhe|quer|queria|pediu|disse|respondeu|confirmou|aceitou|perguntou|mencionou|informou|precisa|prefere|solicitou|deseja|enviou|mandou|está|esta)\b/i;
+  /(?:^|[.!?\n]\s*)(?:o|a)\s+cliente\s+(?:escolheu|selecionou|respondeu|aceitou|confirmou|pediu|solicitou|quer que eu|disse que quer)(?![a-zà-ú])/i;
 
 const JSON_TOOL_KEYS = ["tool_calls", "function_call", "tool_use"];
 const JSON_ARG_KEYS = ["arguments", "parameters", "input"];
@@ -158,8 +173,8 @@ export function detectLeakedModelMarkup(
   }
 
   if (opts.agenda === true) {
-    const code = firstMatch(trimmed, OFFER_CODE_PATTERNS) ?? (BARE_OFFER_CODE.exec(trimmed) ? { index: BARE_OFFER_CODE.exec(trimmed)!.index } : null);
-    if (code) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, code.index - 20)) };
+    const codeAt = emittedCodeIn(trimmed, opts.offerCodes ?? []);
+    if (codeAt !== null) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, codeAt - 20)) };
     const tool = TOOL_NAME_IN_TEXT.exec(trimmed);
     if (tool) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, tool.index - 20)) };
     const narration = CLIENT_NARRATION.exec(trimmed);

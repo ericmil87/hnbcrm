@@ -84,6 +84,8 @@ export type SchedToolOutcome = {
     slotText?: string;
     /** Horários devolvidos/reservados que o servidor NOMEOU (profissional pedido e honrado): o `schedClaimGuard` só deixa a IA ligar o nome a eles. */
     named?: Array<{ startTime: number; professional: string }>;
+    /** Códigos de oferta EMITIDOS neste ato: o guard de saída só trata `hN` como vazamento se for um destes (ou do estado da conversa). */
+    codes?: string[];
   };
 };
 
@@ -233,6 +235,10 @@ export type SchedRunContext = {
   timezone: string;
   /** Nomes dos recursos ativos da org: SÓ para o `schedClaimGuard` (nunca entram no prompt nem no envelope). */
   guardNames: string[];
+  /** A conversa tem repasse PENDENTE (lido pelo índice `by_conversation_and_status`): "já passei seu pedido para a equipe" é verdade. */
+  handoffPending: boolean;
+  /** Todos os códigos de oferta guardados na conversa (mostrados ou não): `hN` fora desta lista não é vazamento. */
+  offerCodes: string[];
 };
 
 const UPCOMING_STATUSES = ["pending_approval", "scheduled", "confirmed"] as const;
@@ -321,9 +327,14 @@ export async function schedContextCore(
     // fuso inválido: o guard e o prompt seguem no padrão do produto
   }
   const upcoming = contact ? await loadUpcomingOfContact(ctx, { organizationId: org._id, contactId: contact._id, now: args.now, tz }) : [];
+  const handoffPending = args.conversationId
+    ? (await ctx.db.query("handoffs").withIndex("by_conversation_and_status", (q) => q.eq("conversationId", args.conversationId).eq("status", "pending")).first()) !== null
+    : false;
   let offers: SchedCurrentOffer[] = [];
+  let offerCodes: string[] = [];
   if (access.ok && args.conversationId) {
     const state = await loadConversationState(ctx, args.conversationId);
+    offerCodes = offersStateOf(state).offers.map((o) => o.code);
     offers = currentOffers(offersStateOf(state), args.now).map((o) => ({
       code: o.code,
       label: formatSlotText(o.startTime, args.now, tz),
@@ -332,7 +343,7 @@ export async function schedContextCore(
     }));
   }
   if (!access.ok) {
-    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz, guardNames: [] };
+    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz, guardNames: [], handoffPending, offerCodes };
   }
   const listed = access.services.slice(0, MAX_SERVICES_IN_PROMPT);
   const currency = org.settings.currency;
@@ -345,6 +356,8 @@ export async function schedContextCore(
     offers,
     timezone: access.tz,
     guardNames: access.resources.map((r) => r.name),
+    handoffPending,
+    offerCodes,
   };
 }
 
@@ -582,7 +595,7 @@ export async function findAvailableTimesCore(
       ...(searched.wanted ? { wanted: searched.wanted } : {}),
       ...(searched.professional ? { professional: searched.professional } : {}),
     }),
-    { offeredTimes: issued.issued.map((o) => o.startTime), ...namedOf(issued.issued) }
+    { offeredTimes: issued.issued.map((o) => o.startTime), codes: issued.issued.map((o) => o.code), ...namedOf(issued.issued) }
   );
 }
 
@@ -833,7 +846,7 @@ async function slotTaken(
             ? `Diga que esse horário acabou de ser ocupado e consulte outro dia com findAvailableTimes (people: ${offer.people}).`
             : "Diga que esse horário acabou de ser ocupado e consulte outra data com findAvailableTimes.",
     },
-    { offeredTimes: next.issued.map((o) => o.startTime) }
+    { offeredTimes: next.issued.map((o) => o.startTime), codes: next.issued.map((o) => o.code) }
   );
 }
 
@@ -865,6 +878,7 @@ export const schedToolOutcomeValidator = v.object({
     handoff: v.boolean(),
     slotText: v.optional(v.string()),
     named: v.optional(v.array(v.object({ startTime: v.number(), professional: v.string() }))),
+    codes: v.optional(v.array(v.string())),
   }),
 });
 export const schedContextValidator = v.union(
@@ -887,5 +901,7 @@ export const schedContextValidator = v.union(
     offers: v.array(v.object({ code: v.string(), label: v.string(), startTime: v.number(), professional: v.optional(v.string()) })),
     timezone: v.string(),
     guardNames: v.array(v.string()),
+    handoffPending: v.boolean(),
+    offerCodes: v.array(v.string()),
   })
 );

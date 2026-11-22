@@ -132,11 +132,11 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect((src.match(/schedSafeReply\(/g) ?? []).length).toBe(2);
     expect(src).not.toMatch(/reply = SCHED_SAFE_TEXT/);
     expect(src).not.toMatch(/replyText = SCHED_SAFE_TEXT/);
-    expect(src).toMatch(/agenda: schedGuardOn/);
-    expect(src).toMatch(/agenda: context\.schedulingOn === true && !args\.group/);
+    expect(src).toMatch(/agenda: schedGuardOn && context\.sched\?\.tools\.find === true/);
+    expect(src).toMatch(/agenda: context\.schedulingOn === true && !args\.group && context\.sched\?\.tools\.find === true/);
     expect(src).toMatch(/isAgendaTextLeak\(leak\)/);
     // requestHandoff na mesma rodada vale como repasse criado para o guard ("já passei seu pedido para a equipe")
-    expect(src).toMatch(/handoff: handoffRequestedThisRun \|\| roundToolCalls\.some\(\(tc\) => tc\.function\.name === "requestHandoff"\)/);
+    expect(src).toMatch(/handoff: handoffRequestedThisRun \|\| context\.sched\?\.handoffPending === true \|\| roundToolCalls\.some\(\(tc\) => tc\.function\.name === "requestHandoff"\)/);
     // a busca recusa quem pede para remarcar/cancelar com horário já marcado (no servidor, sem leitura a mais)
     expect(src).toMatch(/remarcacao_e_com_a_equipe/);
   });

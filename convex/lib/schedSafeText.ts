@@ -29,8 +29,12 @@ export function schedSafeReply(input: {
   customerText: string;
   /** Há pedido aguardando a equipe (existente ou registrado neste turno). */
   pendingRequest: boolean;
+  /** O contato tem agendamento ativo (existente ou criado no turno). Remarcar, cancelar e presença só fazem sentido com ele. */
+  hasUpcoming: boolean;
 }): SafeReply {
-  const intent: CustomerIntent | null = detectCustomerIntent(input.customerText);
+  const detected: CustomerIntent | null = detectCustomerIntent(input.customerText);
+  // Sem agendamento não há o que remarcar/cancelar/confirmar: o cliente quer marcar (texto padrão), não "cancelamento fica com a equipe".
+  const intent: CustomerIntent | null = !input.hasUpcoming && (detected === "remarcar" || detected === "cancelar" || detected === "presenca") ? "marcar" : detected;
   if (intent === "remarcar") {
     return {
       text: "Remarcar fica com a nossa equipe: já avisei eles e te respondem por aqui.",
