@@ -379,6 +379,36 @@ describe("resolver conflito (4 vias)", () => {
     expect((await conflicts())[0].status).toBe("resolved");
   });
 
+  test("sugestão no MESMO horário com outro profissional: troca de recurso (ação resource ou reschedule sem mudar o horário)", async () => {
+    const mkPro = (name: string, order: number) => mkRes(name, { kind: "person" }, order);
+    const p1 = await mkPro("Ana", 0);
+    const p2 = await mkPro("Carla", 1);
+    const svc = await mkSvc({ requirements: [{ role: "Pro", kind: "person" }] });
+    for (const via of ["resource", "reschedule"] as const) {
+      const a = await bookId(svc, at(via === "resource" ? MON : TUE, 10), [p1]);
+      const date = via === "resource" ? MON : TUE;
+      await close(s.admin, { ...closeArgs(p1, { acceptAffected: true }), fromLocalDate: date });
+      const c = (await conflicts()).find((x) => x.appointmentId === a)!;
+      // Profissional não é trocado sozinho: fica sem lugar, com a sugestão do mesmo horário gravada no conflito.
+      expect(c.status).toBe("open");
+      const same = c.suggestions!.find((x) => x.startTime === at(date, 10))!;
+      expect(same.resourceIds).toEqual([p2]);
+      const action = via === "resource" ? { type: "resource", resourceIds: same.resourceIds } : { type: "reschedule", startTime: same.startTime, resourceIds: same.resourceIds };
+      expect(await resolve(s.agent, c._id, action)).toBeNull();
+      const after = (await apptOf(a))!;
+      expect(after.status).toBe("scheduled"); // não virou "rescheduled": o horário é o mesmo
+      expect(after.startTime).toBe(at(date, 10));
+      expect((await allocOf(a)).map((x) => x.resourceId)).toEqual([p2]);
+      expect((await conflicts()).find((x) => x._id === c._id)).toMatchObject({ status: "resolved", resolution: "resource_changed" });
+      await as(s.admin).mutation(api.schedulingMutations.cancelAppointment, { organizationId: s.orgId, appointmentId: a });
+    }
+    // Remarcar para o mesmo horário SEM recurso continua recusado.
+    const b = await bookId(svc, at(MON, 15), [p2]);
+    await close(s.admin, { ...closeArgs(p2, { acceptAffected: true }) });
+    const cb = (await conflicts()).find((x) => x.appointmentId === b && x.status === "open")!;
+    await expect(resolve(s.agent, cb._id, { type: "reschedule", startTime: at(MON, 15) })).rejects.toThrow(/igual ao atual/);
+  });
+
   test("cancelando", async () => {
     const { a, c } = await conflictFixture();
     await resolve(s.manager, c._id, { type: "cancel", reason: "cliente desistiu" });

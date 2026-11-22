@@ -70,6 +70,21 @@ export type ConflictAction =
   | { type: "cancel"; reason?: string }
   | { type: "manual"; note?: string };
 
+/**
+ * Ação de uma sugestão do servidor. Sugestão no MESMO horário do agendamento só muda o lugar: é troca de
+ * recurso (`resource`, com a lista da sugestão); remarcar (`reschedule`) recusa horário igual ao atual. Só vira
+ * remarcação quando o horário muda.
+ */
+export function suggestionAction(
+  suggestion: { startTime: number; resourceIds: readonly string[] },
+  appointmentStartTime: number
+): ConflictAction {
+  if (suggestion.startTime === appointmentStartTime && suggestion.resourceIds.length > 0) {
+    return { type: "resource", resourceIds: [...suggestion.resourceIds] };
+  }
+  return { type: "reschedule", startTime: suggestion.startTime, resourceIds: [...suggestion.resourceIds] };
+}
+
 const clean = (s: string) => {
   const v = s.trim();
   return v.length > 0 ? v : undefined;

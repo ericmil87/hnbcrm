@@ -8,6 +8,7 @@ import {
   rulesErrorMessage,
   applyReplacements,
   missingGroups,
+  suggestionAction,
   suggestionRows,
   type ConflictAction,
   type ResourceLite,
@@ -67,7 +68,7 @@ export function ConflictResolverSheet({ organizationId, conflict, resources, tz,
           const ids = Object.values(choices);
           void run({ type: "resource", resourceIds: ids.length === 1 ? ids : applyReplacements(appt.resources, choices) });
         }}
-        onPickSuggestion={(s) => void run({ type: "reschedule", startTime: s.startTime, resourceIds: s.resourceIds })}
+        onPickSuggestion={(s) => void run(suggestionAction(s, appt.startTime))}
         onReschedule={() => onReschedule(conflict)}
         onCancel={(reason) => void run(cancelAction(reason))}
         onManual={(note) => void run(manualAction(note))}
