@@ -173,3 +173,108 @@ describe("bloco do prompt", () => {
     expect(rows).toEqual([{ ref: "a1", horario: "quinta-feira, 26/11, às 10:00", servico: "Consulta", situacao: "aguardando confirmação da equipe" }]);
   });
 });
+
+// ── D2: hora pedida, profissional pedido, contagem, prompt ──
+import { findSlotsResult, matchResource, noSlotsResult, parseTimeArg } from "./schedAttendantTools";
+
+describe("D2 — hora e profissional nos argumentos", () => {
+  test.each([
+    ["14:00", 840], ["14h", 840], ["14h30", 870], ["9", 540], ["9:30", 570], ["às 14h", 840], ["08h", 480], ["0:00", 0], ["23:59", 1439],
+  ])("hora %s → %i minutos", (raw, min) => {
+    expect(parseTimeArg(raw)).toBe(min);
+  });
+  test.each(["", "24:00", "14:60", "tarde", "14 horas e meia", "1430", "-1", "14:5"])("hora inválida %j", (raw) => {
+    expect(parseTimeArg(raw)).toBeNull();
+  });
+  test("parseFindArgs: time e professional entram; vazio é omitido; lixo vira erro acionável", () => {
+    expect(parseFindArgs('{"service":"Corte","dateRef":"amanha","time":"14h","professional":" o Léo "}')).toMatchObject({ ok: true, args: { timeMin: 840, professional: "o Léo" } });
+    expect(parseFindArgs('{"service":"Corte","dateRef":"amanha","time":"","professional":""}')).toMatchObject({ ok: true, args: { timeMin: undefined, professional: undefined } });
+    expect(parseFindArgs('{"service":"Corte","dateRef":"amanha","time":"tarde"}')).toMatchObject({ ok: false, error: "hora_invalida" });
+    expect(parseFindArgs('{"service":"Corte","dateRef":"amanha","time":1400}')).toMatchObject({ ok: false, error: "hora_invalida" });
+    expect(parseFindArgs('{"service":"Corte","dateRef":"amanha","professional":42}')).toMatchObject({ ok: false, error: "profissional_invalido" });
+  });
+  test("a spec da busca expõe time e professional (nunca id) e a reserva continua só com o código", () => {
+    const find = SCHED_ATTENDANT_TOOLS.find((x) => x.name === FIND_TOOL)!;
+    const props = Object.keys((find.parameters as { properties: Record<string, unknown> }).properties);
+    expect(props).toEqual(["service", "dateRef", "period", "people", "time", "professional"]);
+    const book = SCHED_ATTENDANT_TOOLS.find((x) => x.name === BOOK_TOOL)!;
+    expect(Object.keys((book.parameters as { properties: Record<string, unknown> }).properties)).toEqual(["offer"]);
+  });
+});
+
+describe("D2 — matchResource (o servidor resolve o nome para um recurso)", () => {
+  const rs = [
+    { id: "r1", name: "Dra. Helena" },
+    { id: "r2", name: "Léo Silva" },
+    { id: "r3", name: "Léo Souza" },
+    { id: "r4", name: "Tato" },
+    { id: "r5", name: "Sala Rosa" },
+  ];
+  test.each([
+    ["Tato", "r4"], ["o tato", "r4"], ["com o TATO", "r4"], ["Helena", "r1"], ["dra helena", "r1"], ["doutora Helena", "r1"],
+    ["Léo Silva", "r2"], ["leo souza", "r3"], ["Souza", "r3"], ["sala rosa", "r5"], ["barbeiro Tato", "r4"],
+  ])("%s → %s", (input, id) => {
+    expect(matchResource(rs, input)).toEqual({ kind: "found", resource: expect.objectContaining({ id }) });
+  });
+  test("ambíguo, desconhecido e vazio: sem filtro", () => {
+    expect(matchResource(rs, "Léo")).toEqual({ kind: "ambiguous" });
+    expect(matchResource(rs, "Zeca")).toEqual({ kind: "none" });
+    expect(matchResource(rs, "o")).toEqual({ kind: "none" });
+    expect(matchResource(rs, "")).toEqual({ kind: "none" });
+    expect(matchResource([], "Tato")).toEqual({ kind: "none" });
+  });
+  test("nome parcial de palavra não casa ('Hel' não é 'Helena')", () => {
+    expect(matchResource(rs, "Hel")).toEqual({ kind: "none" });
+  });
+});
+
+describe("D2 — textos da busca", () => {
+  const base = { echo: "seg, 15/06/2026", period: undefined, people: 1, lines: ["h1 — a", "h2 — b", "h3 — c"], hasMore: true };
+  test("contagem: amostra × todos", () => {
+    expect(findSlotsResult({ ...base, total: 11 }).resultado).toContain("Há 11 horários livres neste pedido; os 3 abaixo são só uma amostra");
+    expect(findSlotsResult({ ...base, hasMore: false, total: 3 }).resultado).toContain("Estes são TODOS os horários livres neste pedido (3)");
+  });
+  test("hora pedida: disponível × indisponível", () => {
+    expect(findSlotsResult({ ...base, total: 5, wanted: { timeMin: 840, available: true } }).resultado).toContain("Horário pedido (14:00) DISPONÍVEL: é o primeiro da lista");
+    const no = findSlotsResult({ ...base, total: 5, wanted: { timeMin: 840, available: false } }).resultado!;
+    expect(no).toContain("Horário pedido (14:00) INDISPONÍVEL neste pedido");
+    expect(no).toContain("alternativas mais próximas");
+    expect(noSlotsResult({ echo: "x", period: undefined, people: 1, wanted: { timeMin: 870 } }).resultado).toContain("Horário pedido (14:30) INDISPONÍVEL");
+  });
+  test("cada nota de profissional diz exatamente o que vale e nunca o nome de quem não foi pedido", () => {
+    const r = (professional: Parameters<typeof findSlotsResult>[0]["professional"]) => findSlotsResult({ ...base, total: 3, professional }).resultado!;
+    expect(r({ kind: "filtered", name: "Léo" })).toContain("SÃO com Léo");
+    expect(r({ kind: "not_found" })).toContain("NÃO são com ele");
+    expect(r({ kind: "ambiguous" })).toContain("mais de um profissional");
+    expect(r({ kind: "not_available", name: "Léo" })).toContain("NÃO diga que são com Léo");
+    expect(r({ kind: "not_for_service", name: "Léo" })).toContain("não faz esse serviço");
+    expect(r({ kind: "ignored_group" })).toContain("grupo não escolhe profissional");
+  });
+  test("linha da oferta só ganha '(com Nome)' quando o servidor nomeou", () => {
+    expect(formatOfferLine("h1", at("2026-11-26T13:00:00Z"), NOW, TZ)).toBe("h1 — quinta-feira, 26/11, às 10:00");
+    expect(formatOfferLine("h1", at("2026-11-26T13:00:00Z"), NOW, TZ, "Léo")).toBe("h1 — quinta-feira, 26/11, às 10:00 (com Léo)");
+  });
+  test("reserva de grupo e de profissional dizem isso na frase (e nunca 'marcado' com pedido pendente)", () => {
+    const g = bookedResult("pending", "terça-feira, 24/11, às 10:00", false, { people: 2 });
+    expect(g.resultado).toContain("para 2 pessoas, aguardando confirmação da equipe");
+    expect(bookedResult("pending", "x", false, { professional: "Léo" }).resultado).toContain("com Léo, aguardando");
+    expect(g.proximo_passo).toContain('NUNCA diga "confirmado"');
+  });
+});
+
+describe("D2 — o prompt traz as regras medidas", () => {
+  const block = buildSchedPromptBlock({ services: [{ name: "Corte", durationMin: 30 }], moreServices: false, tools: { find: true, book: true }, book: "propose" });
+  test("profissional: não atribuir horário a quem a oferta não trouxe; passar professional; dizer quando não pôde atender", () => {
+    expect(block).toContain("NUNCA atribua um horário a um profissional");
+    expect(block).toContain("professional");
+    expect(block).toContain("ofereça só as alternativas que vieram");
+  });
+  test("hora pedida, grupo, remarcar e códigos", () => {
+    expect(block).toContain("Hora pedida");
+    expect(block).toContain("Nunca diga que um horário não existe sem ter consultado com time");
+    expect(block).toContain("Grupo: para 2 a 4 pessoas");
+    expect(block).toContain("REMARCAR ou CANCELAR");
+    expect(block).toContain("NÃO ofereça horários novos");
+    expect(block).toContain("nunca escreva códigos de oferta (h1)");
+  });
+});

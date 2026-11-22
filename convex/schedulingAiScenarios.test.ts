@@ -897,3 +897,160 @@ describe("guard fora do assunto agenda (P13) e formatos de oferta (P9)", () => {
     expect(await appointments()).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// D2: correções medidas na simulação com modelo real
+// ---------------------------------------------------------------------------
+
+async function addPersonNamed(s: AiSeed, name: string, weekdays = [1, 2, 3, 4, 5]) {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("schedResources", {
+      organizationId: s.organizationId, kind: "person", name, capacity: 1, tags: [], sortOrder: 5, active: true,
+      weekly: weekdays.map((weekday) => ({ weekday, startMin: 480, endMin: 1080 })), createdAt: Date.now(), updatedAt: Date.now(),
+    })
+  );
+}
+const handoffTool = (reason: string): ToolCall => ({ name: "requestHandoff", args: { reason, summary: reason } });
+
+describe("D2: remarcar ou cancelar quem já tem horário é da equipe (a busca recusa; a IA repassa)", () => {
+  test("'preciso remarcar': findAvailableTimes recusa sem oferecer horário novo; a resposta com 'já passei seu pedido para a equipe' sai (repasse na mesma rodada)", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([
+      find("Consulta", "2026-06-15"),
+      offering(),
+      bookFirst,
+      afterBooking,
+      // 3º turno: o modelo mais fraco oferecia horários novos; agora a busca recusa
+      find("Consulta", "2026-06-16"),
+      (req) => {
+        expect(toolResults(req).at(-1)).toMatchObject({ status: "erro", error: "remarcacao_e_com_a_equipe" });
+        return { tools: [handoffTool("Cliente quer remarcar a consulta"), { name: "replyToCustomer", args: { text: "Remarcação é com a nossa equipe, então já passei seu pedido para eles. Eles te respondem por aqui." } }] };
+      },
+    ]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await turn(s, s.ana, "o das 8");
+    expect(await appointments()).toHaveLength(1);
+    const offersBefore = (await stateOffers(s.ana)).length;
+    await turn(s, s.ana, "Oi, preciso remarcar minha consulta para outro dia");
+    expect((await stateOffers(s.ana)).length).toBe(offersBefore); // nenhuma oferta nova
+    const out = (await outbound(s.ana)).map((x) => x.content);
+    expect(out.at(-1)).toBe("Remarcação é com a nossa equipe, então já passei seu pedido para eles. Eles te respondem por aqui.");
+    expect(await handoffs()).toHaveLength(1);
+    expect(await appointments()).toHaveLength(1);
+    expect(m.calls().some((c) => JSON.stringify(c.messages.at(-1)).includes("DESCARTADA"))).toBe(false); // o guard não barrou o repasse legítimo
+  });
+
+  test("cliente SEM horário que diz 'remarcar' não é bloqueado (a busca segue: nada a remarcar no sistema)", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([find("Consulta", "2026-06-15"), offering()]);
+    await turn(s, s.ana, "Queria remarcar a consulta que marquei por telefone, pode ser segunda?");
+    expect(toolResults(m.calls()[1]).at(-1)).toMatchObject({ status: "ok" });
+  });
+});
+
+describe("D2: profissional pedido, ponta a ponta", () => {
+  test("pede o Léo: a IA passa professional, a oferta nomeia o Léo e a mensagem 'com o Léo' PASSA o guard", async () => {
+    const s = await seedAiAgenda(t);
+    const leo = await addPersonNamed(s, "Léo");
+    const m = stubModel([
+      find("Consulta", "2026-06-15", { professional: "Léo" }),
+      (req) => reply(`Tenho ${offeredTexts(req).slice(0, 2).join(" ou ")}. Qual prefere?`),
+      bookFirst,
+      afterBooking,
+    ]);
+    await turn(s, s.ana, "Quero consulta com o Léo na segunda");
+    const sent = (await outbound(s.ana)).map((x) => x.content);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/\(com Léo\)/);
+    await turn(s, s.ana, "o primeiro");
+    const [row] = await appointments();
+    expect(row.resources.map((r) => r.resourceId)).toEqual([leo]);
+    expect(m.calls().some((c) => JSON.stringify(c.messages.at(-1)).includes("DESCARTADA"))).toBe(false);
+  });
+
+  test("a IA atribui o horário ao Léo SEM a oferta nomeá-lo: o guard barra, a nova tentativa sai sem nome", async () => {
+    const s = await seedAiAgenda(t);
+    await addPersonNamed(s, "Léo");
+    const m = stubModel([
+      find("Consulta", "2026-06-15"), // sem professional
+      (req) => reply(`Tenho ${offeredTexts(req)[0]} com o Léo. Pode ser?`),
+      (req) => reply(`Tenho ${offeredTexts(req).slice(0, 2).join(" ou ")}. A equipe confirma quem atende. Qual prefere?`),
+    ]);
+    await turn(s, s.ana, "Quero consulta com o Léo na segunda");
+    const sent = (await outbound(s.ana)).map((x) => x.content);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).not.toContain("Léo");
+    expect(JSON.stringify(m.calls()[2].messages.at(-1))).toContain("DESCARTADA");
+  });
+});
+
+describe("D2: texto seguro conforme a intenção e motivo do repasse com o que o cliente queria", () => {
+  const twice = (text: string) => [reply(text), reply(text)];
+  test.each<[string, string, string, RegExp, string]>([
+    ["cancelar", "Preciso cancelar minha consulta de segunda", "Cancelei seu horário de segunda às 10h.", /^O cancelamento fica com a nossa equipe/, "Cliente quer cancelar um horário (resposta da IA barrada pelo guard)"],
+    ["remarcar", "Quero remarcar para terça", "Remarquei seu horário para terça às 10h.", /^Remarcar fica com a nossa equipe/, "Cliente quer remarcar um horário (resposta da IA barrada pelo guard)"],
+    ["presença", "Confirmo minha presença na segunda", "Anotei sua confirmação de presença para segunda às 10h.", /^Recebi a sua mensagem e já avisei a equipe/, "Cliente confirmou presença (resposta da IA barrada pelo guard)"],
+    ["grupo", "Quero marcar para mim e minha amiga na segunda às 10h", "Registrei o pedido para vocês duas na segunda às 10h.", /^Para mais de uma pessoa a equipe confirma/, "Cliente quer marcar para mais de uma pessoa (resposta da IA barrada pelo guard)"],
+    ["marcar", "Quero consulta segunda às 10h", "Marcado! Segunda às 10h.", /^Vou confirmar os horários com a equipe/, "Cliente quer marcar horário (resposta da IA barrada pelo guard de agenda)"],
+  ])("%s", async (_label, customer, claim, textRe, reason) => {
+    const s = await seedAiAgenda(t);
+    stubModel(twice(claim));
+    await turn(s, s.ana, customer);
+    const sent = (await outbound(s.ana)).map((x) => x.content);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(textRe);
+    const hs = await handoffs();
+    expect(hs).toHaveLength(1);
+    expect(hs[0].reason).toBe(reason);
+    expect(JSON.stringify(hs[0])).not.toContain(customer); // o repasse leva o rótulo, nunca o texto do cliente
+    expect(await appointments()).toHaveLength(0);
+  });
+
+  test("pedido pendente: 'tá confirmado?' respondido com 'confirmado' duas vezes → 'Seu pedido já está registrado e aguarda a confirmação da equipe'", async () => {
+    const s = await seedAiAgenda(t);
+    stubModel([find("Consulta", "2026-06-15"), offering(), bookFirst, afterBooking, reply("Sim, está confirmado para segunda às 08:00!"), reply("Confirmadíssimo, segunda às 08:00.")]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await turn(s, s.ana, "o das 8");
+    await turn(s, s.ana, "então está tudo certo?");
+    const sent = (await outbound(s.ana)).map((x) => x.content);
+    expect(sent.at(-1)).toBe("Seu pedido já está registrado e aguarda a confirmação da equipe, que te responde por aqui.");
+    expect((await handoffs())[0].reason).toBe("Cliente com pedido aguardando a equipe (resposta da IA barrada pelo guard)");
+  });
+});
+
+describe("D2: vazamento de código de oferta e raciocínio do modelo", () => {
+  test("'O cliente escolheu… (código h1)' é descartado e regenerado UMA vez; o cliente só vê a mensagem boa", async () => {
+    const s = await seedAiAgenda(t);
+    const m = stubModel([
+      find("Consulta", "2026-06-15"),
+      offering(),
+      reply("O cliente escolheu o horário das 08:00 (código h1). Vou confirmar com ele antes de marcar.\n\nAna, só pra confirmar: segunda-feira, 15/06, às 08:00. Posso registrar?"),
+      reply("Ana, só pra confirmar: segunda-feira, 15/06, às 08:00. Posso registrar?"),
+    ]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    await turn(s, s.ana, "o das 8");
+    const sent = (await outbound(s.ana)).map((x) => x.content);
+    expect(sent.at(-1)).toBe("Ana, só pra confirmar: segunda-feira, 15/06, às 08:00. Posso registrar?");
+    expect(sent.join("\n")).not.toMatch(/código|O cliente escolheu|\bh1\b/);
+    expect(JSON.stringify(m.calls().at(-1)!.messages.at(-1))).toContain("DESCARTADA");
+    expect(await handoffs()).toHaveLength(0);
+  });
+
+  test("vazou duas vezes: cai no texto seguro com repasse (o turno NÃO falha e nada vaza)", async () => {
+    const s = await seedAiAgenda(t);
+    const leak = "O cliente quer marcar segunda (código h1). Vou chamar findAvailableTimes.";
+    stubModel([reply(leak), reply(leak)]);
+    await turn(s, s.ana, "Quero consulta segunda");
+    const sent = (await outbound(s.ana)).map((x) => x.content);
+    expect(sent).toEqual([SCHED_SAFE_TEXT]);
+    expect(await handoffs()).toHaveLength(1);
+    expect((await failedItems()).filter((i) => i.status === "failed")).toHaveLength(0);
+  });
+
+  test("módulo de agenda DESLIGADO: nenhuma regra nova (o texto com 'O cliente…' segue o caminho de sempre)", async () => {
+    const s = await seedAiAgenda(t, { scheduling: false });
+    stubModel([reply("O cliente quer saber o preço? Custa R$ 150.")]);
+    await turn(s, s.ana, "Quanto custa?");
+    expect((await outbound(s.ana)).map((x) => x.content)).toEqual(["O cliente quer saber o preço? Custa R$ 150."]);
+  });
+});

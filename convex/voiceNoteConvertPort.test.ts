@@ -51,7 +51,7 @@ describe("portas de voz", () => {
     expect(sources.find((f) => f.rel === "lib/tts.ts")!.src).toMatch(/planAttendantVoice[\s\S]*planVoiceReply\(\{/);
     expect(attendant).toMatch(/internal\.voiceReplyNode\.internalSynthesizeVoiceNote/);
     // A decisão vem DEPOIS da trava final do guard e da formatação por canal.
-    const guard = attendant.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
+    const guard = attendant.indexOf("const finalLeak = detectLeakedModelMarkup(replyText, {");
     const format = attendant.indexOf("replyText = formatReplyForTransport(replyText");
     const decide = attendant.indexOf("const voice = await prepareVoiceReply(");
     const commit = attendant.indexOf("internal.attendant.internalCommitAiReply, {", decide);

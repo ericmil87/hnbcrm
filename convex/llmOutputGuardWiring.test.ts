@@ -87,7 +87,8 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     const claimRound = runtime.indexOf("claimInOutgoingRound(");
     expect(leakRound).toBeGreaterThan(-1);
     expect(claimRound).toBeGreaterThan(leakRound);
-    const finalLeak = runtime.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
+    const finalLeak = runtime.indexOf("const finalLeak = detectLeakedModelMarkup(replyText, {");
+    expect(finalLeak).toBeGreaterThan(-1);
     const finalClaim = runtime.indexOf("detectUnbackedBookingClaim(replyText");
     const format = runtime.indexOf("replyText = formatReplyForTransport(replyText");
     expect(finalClaim).toBeGreaterThan(finalLeak);

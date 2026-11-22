@@ -393,7 +393,7 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
     SCHEDULE_NOUN.test(s.n) ||
     mentionsService(s.n) ||
     hits.some((h) => h.domain) ||
-    (hits.length > 0 && /\b(?:seu|sua|voce|pra voce|para voce|no seu nome)\b/.test(s.n));
+    (hits.length > 0 && /\b(?:seu|sua|seus|suas|voce|voces|vcs|pra voce|para voce|no seu nome)\b/.test(s.n));
   const lastIsRealQuestion = !!last && last.question && !last.tagQuestion;
 
   // Uma afirmação de agenda em qualquer frase ("Marcado!") vale para o dia e hora citados nas outras ("Quinta às 15h.").

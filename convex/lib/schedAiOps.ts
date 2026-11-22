@@ -16,8 +16,12 @@
  *
  * CUSTO DE LEITURA por chamada (documentos): `findAvailableTimes` = acesso (org, settings, conversa, lead, contato,
  * ≤ 101 serviços, ≤ 101 recursos, estado da conversa) + `searchSlots` (`loadWindow`: ≈ 40–60 documentos para 1 dia,
- * 80–250 para 7 dias; + uma segunda janela de até 7 dias só quando a pedida veio vazia). `bookOfferedTime` = acesso +
- * estado + 1 leitura por idempotência + a leitura da porta (≈ 15–25 documentos; até 45 com fallback). O contexto do
+ * 80–250 para 7 dias; + uma segunda janela de até 7 dias só quando a pedida veio vazia). D2: hora pedida e contagem não leem
+ * nada a mais (saem da mesma busca); profissional pedido que existe e tem horário = a MESMA busca com o filtro (custo igual);
+ * profissional sem horário, que não faz o serviço ou grupo com profissional = uma SEGUNDA busca sem filtro (+ o custo da janela,
+ * 40–60 para 1 dia), só nesses casos. `bookOfferedTime` = acesso + estado + 1 leitura por idempotência + a leitura da porta (≈ 15–25
+ * documentos; até 45 com fallback; grupo de N pessoas ≈ N vezes a porta, tudo na mesma mutation; uma leitura a mais só no retry
+ * de grupo, para achar o `#0` da chave). O contexto do
  * prompt (`schedContextCore`) lê o acesso + o estado da conversa + até 100 linhas de agendamento do contato (lotes de 20). Nada disso assina (mutation/query avulsa).
  */
 import { ConvexError, v } from "convex/values";
@@ -426,12 +430,18 @@ export async function runFindSearch(
     const m = matchResource(access.resources.map((r) => ({ id: r._id as string, name: r.name })), args.professional);
     if (m.kind === "found") {
       const filtered = await searchSlots(ctx, { ...base, resourceIds: [m.resource.id as Id<"schedResources">] });
-      if (filtered.slots.length > 0 || filtered.reason === "unverifiable") {
+      // "Honrado" = o recurso pedido FAZ PARTE do plano de cada horário (uma sala pedida para um serviço que só usa profissional não
+      // restringe nada: dizer "com a Sala Rosa" seria falso).
+      const honored = filtered.slots.length > 0 && filtered.slots.every((x) => x.resourceIds.includes(m.resource.id as Id<"schedResources">));
+      if (honored || (filtered.slots.length === 0 && filtered.reason === "unverifiable")) {
         found = filtered;
         professional = { kind: "filtered", name: m.resource.name };
         named = m.resource.name;
       } else {
-        professional = filtered.reason === "no_matching_resource" ? { kind: "not_for_service", name: m.resource.name } : { kind: "not_available", name: m.resource.name };
+        professional =
+          filtered.reason === "no_matching_resource" || filtered.slots.length > 0
+            ? { kind: "not_for_service", name: m.resource.name }
+            : { kind: "not_available", name: m.resource.name };
         found = await searchSlots(ctx, base);
       }
     } else {

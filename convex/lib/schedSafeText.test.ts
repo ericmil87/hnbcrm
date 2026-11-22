@@ -1,0 +1,113 @@
+import { describe, expect, test } from "vitest";
+import { SCHED_SAFE_TEXT } from "./schedClaimGuard";
+import { buildClaimState, knowledgeTimesOf } from "./schedClaimState";
+import { customerTail, detectCustomerIntent, isChangeIntent } from "./schedIntent";
+import { schedSafeReply } from "./schedSafeText";
+
+describe("detectCustomerIntent (léxico do cliente)", () => {
+  test.each<[string, string | null]>([
+    ["Preciso remarcar minha consulta", "remarcar"],
+    ["queria trocar o horário de amanhã", "remarcar"],
+    ["dá pra mudar o dia da minha sessão?", "remarcar"],
+    ["Quero reagendar", "remarcar"],
+    ["preciso adiar", "remarcar"],
+    ["Quero cancelar", "cancelar"],
+    ["não vou poder ir amanhã", "cancelar"],
+    ["não consigo mais comparecer", "cancelar"],
+    ["desmarca por favor", "cancelar"],
+    ["Confirmo minha presença na segunda", "presenca"],
+    ["vou estar lá com certeza", "presenca"],
+    ["quero marcar para mim e minha amiga", "grupo"],
+    ["somos duas pessoas", "grupo"],
+    ["eu e meu filho amanhã", "grupo"],
+    ["para 2 pessoas na sexta", "grupo"],
+    ["queria um horário na quinta", "marcar"],
+    ["tem vaga amanhã?", "marcar"],
+    ["bom dia", null],
+    ["qual o endereço?", null],
+    ["", null],
+  ])("%j → %s", (text, intent) => {
+    expect(detectCustomerIntent(text)).toBe(intent);
+  });
+  test("remarcar/cancelar vêm antes de marcar ('cancelar e marcar outro')", () => {
+    expect(detectCustomerIntent("quero cancelar essa e marcar outro horário")).toBe("cancelar");
+    expect(isChangeIntent(detectCustomerIntent("quero cancelar"))).toBe(true);
+    expect(isChangeIntent(detectCustomerIntent("quero marcar"))).toBe(false);
+    expect(isChangeIntent(null)).toBe(false);
+  });
+  test("customerTail junta só as mensagens do cliente depois da última fala da IA", () => {
+    expect(
+      customerTail([
+        { de: "cliente", texto: "oi" },
+        { de: "ia", texto: "olá" },
+        { de: "cliente", texto: "preciso remarcar" },
+        { de: "cliente", texto: "a de segunda" },
+      ])
+    ).toBe("preciso remarcar a de segunda");
+    expect(customerTail([{ de: "ia", texto: "oi" }])).toBe("");
+    expect(customerTail([])).toBe("");
+  });
+});
+
+describe("schedSafeReply: texto conforme a intenção, motivo com o rótulo (nunca o texto do cliente)", () => {
+  const reply = (customerText: string, over: Partial<Parameters<typeof schedSafeReply>[0]> = {}) =>
+    schedSafeReply({ kind: "claim_without_booking", customerText, pendingRequest: false, ...over });
+  test("cada intenção tem texto próprio e verdadeiro (o repasse é criado logo depois)", () => {
+    expect(reply("preciso remarcar").text).toMatch(/^Remarcar fica com a nossa equipe/);
+    expect(reply("quero cancelar").text).toMatch(/^O cancelamento fica com a nossa equipe/);
+    expect(reply("confirmo minha presença").text).toMatch(/^Recebi a sua mensagem e já avisei a equipe/);
+    expect(reply("eu e minha amiga amanhã").text).toMatch(/^Para mais de uma pessoa a equipe confirma/);
+    expect(reply("quero marcar", { kind: "resource_not_offered" }).text).toMatch(/^Quem atende a equipe confirma/);
+    expect(reply("tá marcado?", { pendingRequest: true }).text).toMatch(/^Seu pedido já está registrado e aguarda a confirmação da equipe/);
+    expect(reply("quero um horário").text).toBe(SCHED_SAFE_TEXT);
+    expect(reply("").text).toBe(SCHED_SAFE_TEXT);
+  });
+  test("a intenção do cliente vale mais que o pedido pendente (quem quer cancelar não ouve 'seu pedido está registrado')", () => {
+    expect(reply("quero cancelar", { pendingRequest: true }).text).toMatch(/^O cancelamento/);
+    expect(reply("quero remarcar", { pendingRequest: true }).situation).toBe("remarcar");
+  });
+  test("motivo e resumo dizem o que o cliente queria, sem copiar o texto dele", () => {
+    const cliente = "Quero cancelar a consulta da Maria, meu CPF é 123.456.789-00";
+    const r = reply(cliente);
+    expect(r.reason).toBe("Cliente quer cancelar um horário (resposta da IA barrada pelo guard)");
+    expect(r.reason.length).toBeLessThanOrEqual(200);
+    expect(r.summary.length).toBeLessThanOrEqual(1000);
+    for (const field of [r.reason, r.summary, r.text]) {
+      expect(field).not.toContain("123.456");
+      expect(field).not.toContain("Maria");
+    }
+  });
+  test("'pedido registrado' nunca sai sem pedido pendente conhecido", () => {
+    for (const text of ["quero um horário", "tá confirmado?", "oi"]) expect(reply(text).text).not.toMatch(/já está registrado/);
+  });
+});
+
+describe("buildClaimState e horas do conhecimento", () => {
+  test("knowledgeTimesOf: turmas fixas entram; faixas de funcionamento não", () => {
+    const k = "Turmas de segunda a sexta às 7h, 9h, 18h e 19h. Funcionamos das 6h às 21h.";
+    expect(knowledgeTimesOf(k).sort((a, b) => a - b)).toEqual([420, 540, 1080, 1140]);
+    expect(knowledgeTimesOf(null)).toEqual([]);
+    expect(knowledgeTimesOf("")).toEqual([]);
+  });
+  test("o nome do recurso só liga aos horários que o servidor nomeou (oferta vigente, oferta do turno, reserva e agendamento existente)", () => {
+    const T = new Date("2026-11-24T13:00:00Z").getTime(); // terça 10:00 em SP
+    const T2 = new Date("2026-11-24T17:00:00Z").getTime(); // terça 14:00
+    const st = buildClaimState({
+      now: new Date("2026-11-21T12:00:00Z").getTime(),
+      tz: "America/Sao_Paulo",
+      upcoming: [{ ref: "a1", label: "x", startTime: T2, serviceName: "Corte", status: "pending_approval", resourceNames: ["Dra. Helena", "Sala Rosa"] }],
+      offers: [{ code: "h1", label: "x", startTime: T, professional: "Léo" }],
+      turn: { booked: [{ startTime: T, status: "pending" }], offered: [T2], named: [{ startTime: T2, professional: "Tato" }] },
+      serviceNames: ["Corte"],
+      guardNames: ["Léo", "Tato"],
+      knowledgeTimes: [],
+      handoff: true,
+    });
+    expect(st.existing[0].resources).toEqual(["dra helena", "sala rosa"]);
+    expect(st.booked[0].resources).toEqual(["leo"]);
+    expect(st.offered.find((o) => o.timeMin === 600)!.resources).toEqual(["leo"]);
+    expect(st.offered.find((o) => o.timeMin === 840)!.resources).toEqual(["tato"]);
+    expect(st.handoff).toBe(true);
+    expect(st.knowledgeTimes).toBeUndefined();
+  });
+});
