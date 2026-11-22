@@ -20,6 +20,7 @@ import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { useAgendaAccess } from "@/hooks/useAgendaAccess";
 import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
+import { openConversationAction } from "@/lib/agendaInbox";
 import { BOOKING_COPY, DETAIL_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday } from "@/lib/agendaZone";
@@ -184,7 +185,7 @@ function DetailBody({
         contactPhone={data.contactPhone}
         onAction={onAction}
         onResolve={onResolveConflict && data.openConflicts.length > 0 ? () => onResolveConflict(appointmentId) : undefined}
-        onOpenConversation={appt.conversationId && onOpenConversation && canOpenInbox ? () => onOpenConversation(appt.conversationId!) : undefined}
+        onOpenConversation={openConversationAction(appt.conversationId, canOpenInbox, onOpenConversation)}
       />
       {rescheduling && (
         <BookingSheet

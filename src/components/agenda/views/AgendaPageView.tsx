@@ -379,7 +379,7 @@ export function AgendaPageView() {
   const quick: QuickActions = useMemo(
     () => ({
       contact: (a, onDone) => (
-        <QuickContactPhone appointmentId={a._id} conversationId={canOpenInbox ? a.conversationId : undefined} onOpenConversation={(id) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`)} onDone={onDone} />
+        <QuickContactPhone appointmentId={a._id} conversationId={a.conversationId} canOpenInbox={canOpenInbox} onOpenConversation={(id) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`)} onDone={onDone} />
       ),
       canEdit: access.canEdit,
       onStatus: (appointmentId, to) => {
