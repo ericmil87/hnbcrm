@@ -2544,7 +2544,12 @@ const applicationTables = {
       // Agenda v2 (A3c) — agendamento ficou sem recurso (fechamento/remoção): fila de conflitos. `data.closureKey`.
       v.literal("appointment_conflict"),
       // Agenda v2 (A4) — resumo diário: atendimentos de ontem ainda sem desfecho (equipe com `agenda:edit`+).
-      v.literal("appointment_no_outcome")
+      v.literal("appointment_no_outcome"),
+      // Agenda v2 (D1) — a IA (ou o link público) registrou uma proposta `pending_approval`; `data.appointmentId`.
+      v.literal("appointment_pending_approval"),
+      // Agenda v2 (C1) — criação automática pela mensagem do humano / proposta de 1 toque.
+      v.literal("appointment_created"),
+      v.literal("appointment_suggestion")
     ),
     title: v.string(),
     body: v.optional(v.string()),
@@ -2785,6 +2790,9 @@ const applicationTables = {
     agendaConflict: v.optional(v.boolean()),
     // Agenda v2 (A4) — resumo diário "sem desfecho" (sino; sem e-mail).
     agendaActivity: v.optional(v.boolean()),
+    // Agenda v2 — `agendaApproval` cobre DOIS usos: proposta da IA aguardando aprovação (`appointment_pending_approval`, D1)
+    // e sugestão de 1 toque da confirmação do humano pelo WhatsApp (`appointment_suggestion`, C1). Sino + push + Telegram.
+    agendaApproval: v.optional(v.boolean()),
     // C1 — todos opcionais; ausente = comportamento de antes (flags valem para todos os canais).
     channels: v.optional(notifChannelFlagsValidator),
     preset: v.optional(notifPresetValidator),
@@ -3256,7 +3264,11 @@ const applicationTables = {
       // Onboarding conversacional v2 (P2.4): custo de aquisição medido à parte.
       v.literal("onboarding"),
       // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
-      v.literal("tts")
+      v.literal("tts"),
+      // Agenda v2 (C1): segunda leitura (classificador) da confirmação que o humano mandou.
+      v.literal("sched_interpret"),
+      // Agenda v2 (D3): juiz de afirmação (segunda camada do guard; extrai o que a resposta da IA afirma).
+      v.literal("sched_claim_judge")
     ),
     status: v.union(
       v.literal("running"),
@@ -4782,6 +4794,7 @@ const applicationTables = {
       firstVisitNeedsApproval: v.optional(v.boolean()), // ausente = true (vale mesmo em "auto")
       maxAiBookingsPerContactPerDay: v.optional(v.number()), // ausente = 2
       autoAck: v.optional(v.object({ by: v.id("teamMembers"), at: v.number() })), // aceite do "marca sozinha"
+      claimJudge: v.optional(v.boolean()),        // juiz de afirmação (D3); ausente = true (com a IA na agenda ligada)
     })),
     humanConfirm: v.optional(v.object({
       mode: v.optional(v.union(v.literal("auto"), v.literal("suggest"), v.literal("off"))), // ausente = "auto"
@@ -4913,6 +4926,7 @@ const applicationTables = {
     cancelledAt: v.optional(v.number()),
     cancelledByClass: v.optional(v.union(v.literal("staff"), v.literal("client"), v.literal("ai"), v.literal("system"))),
     cancelReason: v.optional(v.string()),
+    cancelledFromStatus: v.optional(schedStatus),  // status de que o cancelamento SAIU (pending_approval + staff = recusado); ausente = desconhecido
     lateCancel: v.optional(v.boolean()),
     reminder: v.optional(v.object({               // fase F
       token: v.string(), nextAt: v.optional(v.number()),
@@ -5012,8 +5026,12 @@ const applicationTables = {
       startTime: v.number(), resourceIds: v.array(v.id("schedResources")),
       rescheduleOfId: v.optional(v.id("schedAppointments")),
       issuedAt: v.number(), expiresAt: v.number(),
+      people: v.optional(v.number()),             // D1: busca para 2–4 pessoas; a reserva carrega o tamanho do grupo da OFERTA (D2: bookPartyCore, sempre aguardando a equipe)
+      professional: v.optional(v.string()),       // D2: nome do profissional/sala que o CLIENTE pediu e a busca honrou (filtro + reserva sem troca); ausente = a oferta não nomeia ninguém
+      shownAt: v.optional(v.number()),            // D1: instante em que a mensagem com este horário FOI ENVIADA (sem isso a oferta não vale)
     })),
     slotTakenCount: v.optional(v.number()),       // repasse automático no 2º
+    findCalls: v.optional(v.object({ windowStart: v.number(), count: v.number() })), // D1: teto de consultas por hora
     pendingCancel: v.optional(v.object({ appointmentId: v.id("schedAppointments"), at: v.number() })),
     proposal: v.optional(v.object({               // horário proposto pelo humano, aguardando o cliente
       localDate: v.optional(v.string()), timeMin: v.optional(v.number()),
@@ -5030,17 +5048,29 @@ const applicationTables = {
     messageId: v.id("messages"),
     act: v.string(),                              // confirmou|propos|remarcou|cancelou|informativo|nenhum
     parsed: v.object({ localDate: v.optional(v.string()), timeMin: v.optional(v.number()), serviceId: v.optional(v.id("schedServices")) }),
-    checks: v.object({ parser: v.boolean(), llm: v.optional(v.boolean()), agree: v.optional(v.boolean()) }),
+    checks: v.object({
+      parser: v.boolean(), llm: v.optional(v.boolean()), agree: v.optional(v.boolean()),
+      // C1: demais condições do §8.1 (proposta coincidente; serviço inequívoco).
+      proposal: v.optional(v.boolean()), service: v.optional(v.boolean()),
+    }),
+    // C1: `pending` = aguardando a segunda leitura (LLM); nunca aparece na fila da equipe.
     decision: v.union(v.literal("created"), v.literal("approved_existing"), v.literal("confirmed_existing"),
-                      v.literal("proposed"), v.literal("proposal_saved"), v.literal("ignored")),
-    status: v.union(v.literal("open"), v.literal("accepted"), v.literal("dismissed"), v.literal("expired"), v.literal("done")),
+                      v.literal("proposed"), v.literal("proposal_saved"), v.literal("ignored"), v.literal("pending")),
+    status: v.union(v.literal("open"), v.literal("accepted"), v.literal("dismissed"), v.literal("expired"), v.literal("done"), v.literal("pending")),
+    // Criado: o agendamento novo. Proposta de remarcar/cancelar: o agendamento-alvo (quando único).
     appointmentId: v.optional(v.id("schedAppointments")),
-    outcome: v.optional(v.union(v.literal("kept"), v.literal("edited"), v.literal("undone"))),
+    outcome: v.optional(v.union(v.literal("kept"), v.literal("edited"), v.literal("undone"), v.literal("accepted"), v.literal("dismissed"))),
+    // C1: por que NÃO criou sozinho (código curto, sem texto de mensagem).
+    reason: v.optional(v.string()),
+    answeredBy: v.optional(v.id("teamMembers")),
+    answeredAt: v.optional(v.number()),
     createdAt: v.number(),
   })
     .index("by_message", ["messageId"])
     .index("by_conversation_and_status", ["conversationId", "status"])
-    .index("by_organization_and_created", ["organizationId", "createdAt"]),
+    .index("by_organization_and_created", ["organizationId", "createdAt"])
+    // C1: a lista geral de sugestões abertas não pode se perder entre as linhas `ignored`/`done` (a org com muita conversa).
+    .index("by_organization_and_status_and_created", ["organizationId", "status", "createdAt"]),
 };
 
 export default defineSchema({

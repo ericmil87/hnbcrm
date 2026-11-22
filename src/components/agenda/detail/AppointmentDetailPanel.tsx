@@ -24,6 +24,7 @@ import { openConversationAction } from "@/lib/agendaInbox";
 import { BOOKING_COPY, DETAIL_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
 import { zonedToday } from "@/lib/agendaZone";
+import { HUMAN_UNDO_COPY, humanConfirmUndoKind } from "@/lib/agendaHumanConfirm";
 import { STATUS_TARGET, STATUS_TOAST, detailPanelTitle, type DetailAction } from "@/lib/appointmentActions";
 import { clientLabel, isProposalFailure, parseSchedRulesError, type ViolationView } from "@/lib/bookingFlow";
 import { AppointmentDetailView } from "./AppointmentDetailView";
@@ -86,6 +87,7 @@ function DetailBody({
   const cancel = useMutation(api.schedulingMutations.cancelAppointment);
   const undo = useMutation(api.schedulingMutations.undoAppointmentStatus);
   const reassign = useMutation(api.schedulingMutations.reassignResources);
+  const undoHuman = useMutation(api.schedulingInterpret.undoHumanConfirmBooking);
 
   const [busy, setBusy] = useState(false);
   const [proposalBroken, setProposalBroken] = useState(false);
@@ -123,6 +125,20 @@ function DetailBody({
     }
   };
   const undoAction = { label: VOCAB.scheduling.undo, onClick: () => void doUndo() };
+  // C1: "Desfazer" do que o sistema marcou/aprovou por uma confirmação no WhatsApp (via própria, 24 h).
+  const humanUndo = humanConfirmUndoKind({ ...appt, statusActors: data.statusActors }, now);
+  const doUndoHuman = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await undoHuman({ organizationId, appointmentId });
+      toast.success(HUMAN_UNDO_COPY.toastDone);
+    } catch (e) {
+      toast.error(mutationErrorMessage(e, HUMAN_UNDO_COPY.toastFailed));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const run = async (action: DetailAction) => {
     if (busy) return;
@@ -186,6 +202,8 @@ function DetailBody({
         onAction={onAction}
         onResolve={onResolveConflict && data.openConflicts.length > 0 ? () => onResolveConflict(appointmentId) : undefined}
         onOpenConversation={openConversationAction(appt.conversationId, canOpenInbox, onOpenConversation)}
+        humanUndo={humanUndo}
+        onUndoHumanConfirm={() => void doUndoHuman()}
       />
       {rescheduling && (
         <BookingSheet

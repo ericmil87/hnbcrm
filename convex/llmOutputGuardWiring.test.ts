@@ -57,7 +57,7 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(src).not.toMatch(/toPlainChatText\(reply/);
 
     // Runtime: trava final do guard → formatação → commit.
-    const finalGuard = src.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
+    const finalGuard = src.indexOf("const finalLeak = detectLeakedModelMarkup(replyText, {");
     const runtimeFormat = src.indexOf("replyText = formatReplyForTransport(replyText");
     const commitBase = src.indexOf("const commitArgsBase = {");
     expect(finalGuard).toBeGreaterThan(-1);
@@ -70,5 +70,92 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     const simFormat = sim.indexOf("formatReplyForTransport(reply, simulatedTransport)");
     expect(simGuard).toBeGreaterThan(-1);
     expect(simFormat).toBeGreaterThan(simGuard);
+  });
+
+  // Agenda v2 (D1): `schedClaimGuard` — a IA não pode AFIRMAR horário marcado/confirmado sem reserva. Mesmo funil do
+  // vazamento: descarta a rodada, uma nova tentativa, depois falha; vale no runtime E no simulador.
+  test("atendente: schedClaimGuard ligado no funil (rodada, trava final e simulador), depois do guard de vazamento", () => {
+    const src = read("attendant.ts");
+    expect(/import\s*\{[^}]*\bdetectUnbackedBookingClaim\b[^}]*\}\s*from\s*["']\.\/lib\/schedClaimGuard["']/.test(src)).toBe(true);
+    // rodada (runtime e simulador) por `claimInOutgoingRound`; trava final (runtime e simulador) direto
+    expect((src.match(/\bclaimInOutgoingRound\(/g) ?? []).length).toBeGreaterThanOrEqual(3); // definição + runtime + simulador
+    expect((src.match(/\bdetectUnbackedBookingClaim\(/g) ?? []).length).toBeGreaterThanOrEqual(3); // helper + trava final + simulador
+
+    // Runtime: o guard de afirmação vem DEPOIS do de vazamento na rodada e a trava final antes da formatação por canal.
+    const runtime = src.slice(src.indexOf("export const internalProcessQueueItem"), src.indexOf("export const simulateAttendant"));
+    const leakRound = runtime.indexOf("leakInOutgoingRound(");
+    const claimRound = runtime.indexOf("claimInOutgoingRound(");
+    expect(leakRound).toBeGreaterThan(-1);
+    expect(claimRound).toBeGreaterThan(leakRound);
+    const finalLeak = runtime.indexOf("const finalLeak = detectLeakedModelMarkup(replyText, {");
+    expect(finalLeak).toBeGreaterThan(-1);
+    const finalClaim = runtime.indexOf("detectUnbackedBookingClaim(replyText");
+    const format = runtime.indexOf("replyText = formatReplyForTransport(replyText");
+    expect(finalClaim).toBeGreaterThan(finalLeak);
+    expect(format).toBeGreaterThan(finalClaim);
+
+    // Liga com o MÓDULO de agendamento (não com as tools: o turno de follow-up não tem tools e não pode afirmar marcação).
+    expect(runtime.slice(claimRound - 1200, claimRound)).toMatch(/schedGuardOn/); // (D3: a montagem das opções e do estado da rodada vem entre o `if` e a chamada)
+    expect(runtime).toMatch(/const schedGuardOn = context\.schedulingOn === true/);
+
+    // Simulador: o guard da rodada e a trava final vêm antes da formatação devolvida.
+    const sim = src.slice(src.indexOf("export const simulateAttendant"));
+    expect(sim.indexOf("claimInOutgoingRound(")).toBeGreaterThan(sim.indexOf("leakInOutgoingRound("));
+    expect(sim.indexOf("detectUnbackedBookingClaim(reply")).toBeLessThan(sim.indexOf("formatReplyForTransport(reply, simulatedTransport)"));
+  });
+
+  test("D3: o juiz de afirmação só roda DEPOIS do léxico (rodada e trava final) e só com a IA na agenda ligada", () => {
+    const src = read("attendant.ts");
+    const runtime = src.slice(src.indexOf("export const internalProcessQueueItem"), src.indexOf("export const simulateAttendant"));
+    const lexRound = runtime.indexOf("let claim = claimInOutgoingRound(");
+    const judgeRound = runtime.indexOf("claim = await claimJudgeFor(");
+    expect(lexRound).toBeGreaterThan(-1);
+    expect(judgeRound).toBeGreaterThan(lexRound);
+    expect(runtime).toMatch(/detectUnbackedBookingClaim\(replyText, finalState\) \?\? \(await claimJudgeFor\(replyText, finalState\)\)/);
+    // as condições do juiz: guard ligado, tools de horário (1:1), fora do rascunho (`suggest`: humano revisa), interruptor por org + global, gatilho
+    expect(runtime).toMatch(/!schedGuardOn \|\|\s*context\.sched\?\.tools\.find !== true \|\|\s*effectiveMode === "suggest" \|\|\s*!claimJudgeOn\(context\.sched\.claimJudge, SCHED_CLAIM_JUDGE_ENABLED\) \|\|\s*!shouldJudge\(text\)/);
+    // o simulador não chama o juiz
+    expect(src.slice(src.indexOf("export const simulateAttendant"))).not.toMatch(/claimJudgeFor|runClaimJudge/);
+    // o módulo do juiz roda só pela action do atendente e não escreve em tabelas de agenda
+    const judge = read("lib/schedClaimJudgeRun.ts");
+    expect(judge).not.toMatch(/schedAppointments|schedAllocations/);
+    expect(read("lib/schedClaimJudge.ts")).not.toMatch(/from\s+["']\.\.?\/_generated|Date\.now\(/);
+  });
+
+  test("a regra de afirmação é pura e fica fora do funil de vazamento (sem imports de servidor)", () => {
+    const guard = read("lib/schedClaimGuard.ts");
+    expect(guard).not.toMatch(/from\s+["']\.\.?\/_generated/);
+    expect(guard).not.toMatch(/Date\.now\(/);
+  });
+
+  // Agenda v2 (D1): com o módulo de agenda DESLIGADO, commit e aprovação não leem nada a mais (marcar ofertas como mostradas).
+  test("markOffersShownFromText só roda com o módulo ligado (commit: arg do claim; aprovação: aiDraft.schedulingOn)", () => {
+    const src = read("attendant.ts");
+    expect(src).toMatch(/if \(args\.schedulingOn === true\) \{\s*await markOffersShownFromText\(/);
+    expect(src).toMatch(/\(aiDraft as \{ schedulingOn\?: boolean \}\)\.schedulingOn === true\) \{\s*await markOffersShownFromText\(/);
+    expect((src.match(/markOffersShownFromText\(/g) ?? []).length).toBe(2);
+    expect(src).toMatch(/\.\.\.\(context\.schedulingOn === true \? \{ schedulingOn: true \} : \{\}\)/);
+  });
+
+  test("o prompt manda remarcar/cancelar para repasse e o guard barra a afirmação de remarcação (`reschedule_claim`)", () => {
+    expect(read("lib/schedAttendantTools.ts")).toMatch(/REMARCAR ou CANCELAR[^"']*requestHandoff/);
+    expect(read("lib/schedClaimGuard.ts")).toContain('"reschedule_claim"');
+  });
+
+  // Agenda v2 (D2): o estado do guard sai de UMA montagem (produção e simulador), o texto seguro é por intenção e os vazamentos da agenda
+  // (código de oferta, "O cliente escolheu…") regeneram uma vez e caem no texto seguro; a regra só existe com o módulo ligado.
+  test("agenda D2: buildClaimState e schedSafeReply nos dois caminhos; vazamento de agenda só com a agenda ligada", () => {
+    const src = read("attendant.ts");
+    expect((src.match(/buildClaimState\(/g) ?? []).length).toBe(2);
+    expect((src.match(/schedSafeReply\(/g) ?? []).length).toBe(2);
+    expect(src).not.toMatch(/reply = SCHED_SAFE_TEXT/);
+    expect(src).not.toMatch(/replyText = SCHED_SAFE_TEXT/);
+    expect(src).toMatch(/agenda: schedGuardOn && context\.sched\?\.tools\.find === true/);
+    expect(src).toMatch(/agenda: context\.schedulingOn === true && !args\.group && context\.sched\?\.tools\.find === true/);
+    expect(src).toMatch(/isAgendaTextLeak\(leak\)/);
+    // requestHandoff na mesma rodada vale como repasse criado para o guard ("já passei seu pedido para a equipe")
+    expect(src).toMatch(/handoff: handoffRequestedThisRun \|\| context\.sched\?\.handoffPending === true \|\| roundToolCalls\.some\(\(tc\) => tc\.function\.name === "requestHandoff"\)/);
+    // a busca recusa quem pede para remarcar/cancelar com horário já marcado (no servidor, sem leitura a mais)
+    expect(src).toMatch(/remarcacao_e_com_a_equipe/);
   });
 });

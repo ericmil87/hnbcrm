@@ -141,6 +141,11 @@ export const TELEGRAM_TEMPLATES: Partial<Record<NotificationType, TemplateKind>>
   appointment_conflict: "generic", // Agenda v2 (A3c)
   // Agenda v2 (A4): resumo diário "sem desfecho" (cartão genérico, sem botão).
   appointment_no_outcome: "generic",
+  // Agenda v2 (D1): proposta da IA aguardando aprovação (cartão genérico; o botão Aprovar vem com o Copiloto/E1).
+  appointment_pending_approval: "generic",
+  // Agenda v2 (C1): cartão genérico (sem botão; Desfazer e Marcar são na tela).
+  appointment_created: "generic",
+  appointment_suggestion: "generic",
 };
 
 /** Types deliberately NOT sent to Telegram (none in F1; add with a reason). */
@@ -870,6 +875,9 @@ const GENERIC_EMOJI: Partial<Record<NotificationType, string>> = {
   campaign_completed: "📣",
   campaign_paused: "⏸",
   appointment_no_outcome: "📋",
+  appointment_pending_approval: "🗓",
+  appointment_created: "📅",
+  appointment_suggestion: "📅",
 };
 
 function genericCard(n: NotificationInput, ctx: CardContext): CardOutput {

@@ -80,6 +80,11 @@ export const PREFERENCE_FLAG: Record<NotificationType, string> = {
   appointment_conflict: "agendaConflict",
   // Agenda v2 (A4): resumo diário de agendamentos sem desfecho.
   appointment_no_outcome: "agendaActivity",
+  // Agenda v2 (D1): proposta de horário da IA (ou do link) aguardando a equipe.
+  appointment_pending_approval: "agendaApproval",
+  // Agenda v2 (C1)
+  appointment_created: "agendaActivity",
+  appointment_suggestion: "agendaApproval",
 };
 
 /** `eventType` de e-mail que compartilha o flag de outro evento. */
@@ -110,6 +115,10 @@ export const ACTIONABLE_TYPES: readonly NotificationType[] = [
   "ai_followup_needs_human",
   // Agenda v2 (A3c): alguém precisa resolver o agendamento sem recurso
   "appointment_conflict",
+  // Agenda v2 (D1): alguém precisa aprovar a proposta da IA
+  "appointment_pending_approval",
+  // Agenda v2 (C1): alguém precisa tocar para marcar
+  "appointment_suggestion",
 ];
 export const ACTIONABLE_FLAGS: readonly string[] = Array.from(
   new Set(ACTIONABLE_TYPES.map((t) => PREFERENCE_FLAG[t]))

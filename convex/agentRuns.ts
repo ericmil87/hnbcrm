@@ -33,7 +33,11 @@ export const internalStartRun = internalMutation({
       // Onboarding conversacional v2 (P2.4).
       v.literal("onboarding"),
       // P4.1: síntese de voz da resposta em áudio do atendente.
-      v.literal("tts")
+      v.literal("tts"),
+      // Agenda v2 (C1): segunda leitura da confirmação de horário enviada pelo humano.
+      v.literal("sched_interpret"),
+      // Agenda v2 (D3): juiz de afirmação da resposta da IA.
+      v.literal("sched_claim_judge")
     ),
     conversationId: v.optional(v.id("conversations")),
     leadId: v.optional(v.id("leads")),

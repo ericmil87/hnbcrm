@@ -45,7 +45,12 @@ export type NotificationType =
   | "plan_refunded"
   // Agenda v2 (A3c)
   | "appointment_conflict"
-  | "appointment_no_outcome";
+  | "appointment_no_outcome"
+  // Agenda v2 (D1)
+  | "appointment_pending_approval"
+  // Agenda v2 (C1)
+  | "appointment_created"
+  | "appointment_suggestion";
 
 // Tipo → flag de preferência: `PREFERENCE_FLAG` mora em `lib/notificationPolicy.ts` (pura).
 
@@ -192,6 +197,8 @@ export async function createNotification(
     channel?: string;
     actorId?: Id<"teamMembers">;
     coalesce?: CoalesceOptions;
+    /** Só o sino: sem push nem Telegram (aviso de baixa certeza, ex.: sugestão sem intenção reconhecida). */
+    bellOnly?: boolean;
     /** E1: e-mail de reserva (+10/+30 min, só se ainda não lido). Ignorado num patch. */
     email?: EmailFallback;
   }
@@ -305,6 +312,7 @@ export async function createNotification(
     prefs,
     isPatch: false,
     email: args.email,
+    bellOnly: args.bellOnly,
   });
   // O relógio do renotify só começa quando o push de fato saiu do servidor.
   if (co && pushScheduled) {

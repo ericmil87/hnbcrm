@@ -782,6 +782,7 @@ export const settingsPatchValidator = v.object({
       cancel: v.optional(v.union(v.literal("handoff"), v.literal("auto"))),
       firstVisitNeedsApproval: v.optional(v.boolean()),
       maxAiBookingsPerContactPerDay: v.optional(v.number()),
+      claimJudge: v.optional(v.boolean()),
     })
   ),
   humanConfirm: v.optional(

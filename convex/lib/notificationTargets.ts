@@ -31,7 +31,12 @@ export function notificationTargetPath(type: NotificationType | string, d: Notif
     }
     case "appointment_no_outcome":
     case "appointment_conflict":
+    case "appointment_pending_approval":
       return "/app/calendario?pendencias=1";
+    // Agenda v2 (C1): abre a conversa de onde veio a confirmação.
+    case "appointment_created":
+    case "appointment_suggestion":
+      return conversation ?? "/app/calendario?pendencias=1";
     case "ai_followup_needs_human":
       return d.taskId ? `/app/tarefas?task=${d.taskId}` : (conversation ?? "/app/tarefas");
     default:

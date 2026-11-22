@@ -35,13 +35,15 @@ const LEVELS = (verb: string): Array<{ value: AiLevel; title: string; hint: stri
 ];
 
 const CONFIRM: Array<{ value: HumanConfirmMode; title: string; hint: string }> = [
-  { value: "auto", title: "Marcar sozinho", hint: "Quando você confirma um horário na conversa, o sistema marca." },
-  { value: "suggest", title: "Só sugerir", hint: "O sistema mostra a sugestão e você toca para marcar." },
+  { value: "suggest", title: "Só sugerir (recomendado)", hint: "O sistema mostra a sugestão e você toca para marcar." },
+  { value: "auto", title: "Marcar sozinho quando tiver certeza (experimental)", hint: "Experimental: pode marcar errado. Você é avisado e tem 24 h para Desfazer." },
   { value: "off", title: "Desligado", hint: "O sistema não interpreta suas mensagens." },
 ];
 
 const INTERPRET_EXPLAIN =
-  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e marca para você. Na dúvida, ele só sugere: nunca marca por conta própria sem ter certeza.";
+  "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e sugere a marcação: você toca para marcar. Nada é marcado sozinho, a menos que você ligue a opção experimental.";
+const AUTO_RISK =
+  "Marcar sozinho é experimental: o sistema pode marcar errado (por exemplo, um horário que não era de atendimento). Você é avisado a cada marcação e pode desfazer em até 24 horas; nada é enviado ao cliente.";
 
 const INTERPRET_EXPLAIN_NO_AI =
   "Quando você escreve para o cliente “fechado, quinta às 10h”, o sistema entende o horário e mostra a sugestão. Sem a IA ativa ele só sugere: você toca para marcar.";
@@ -79,7 +81,7 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
         </div>
         <Switch
           checked={value.humanConfirmMode !== "off"}
-          onCheckedChange={(on) => set({ humanConfirmMode: on ? "auto" : "off" })}
+          onCheckedChange={(on) => set({ humanConfirmMode: on ? "suggest" : "off" })}
           label="Interpretar minhas confirmações pelo WhatsApp"
           hideLabel
           disabled={disabled}
@@ -90,6 +92,11 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
         <p className="text-sm font-medium text-text-primary">Interpretar minhas confirmações pelo WhatsApp</p>
         <p className="text-sm text-text-muted">{INTERPRET_EXPLAIN}</p>
         <ChoiceCards label="Interpretar minhas confirmações pelo WhatsApp" options={CONFIRM} value={value.humanConfirmMode} disabled={disabled} onChange={(humanConfirmMode) => set({ humanConfirmMode })} />
+        {value.humanConfirmMode === "auto" && (
+          <p role="note" className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 text-sm text-text-primary">
+            {AUTO_RISK}
+          </p>
+        )}
       </div>
     );
 
@@ -156,6 +163,14 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
               <span className="block text-sm text-text-muted">Mesmo com a IA marcando sozinha, quem nunca veio antes passa pela sua aprovação.</span>
             </label>
             <Switch id={`${switchId}-first`} checked={value.firstVisitNeedsApproval} onCheckedChange={(firstVisitNeedsApproval) => set({ firstVisitNeedsApproval })} label="Primeira visita sempre com aprovação" hideLabel disabled={disabled} />
+          </div>
+
+          <div className="flex items-center justify-between gap-4">
+            <label htmlFor={`${switchId}-judge`} className="min-w-0 flex-1 cursor-pointer">
+              <span className="block text-sm font-medium text-text-primary">Conferir as respostas da IA contra a agenda (recomendado)</span>
+              <span className="block text-sm text-text-muted">Antes de enviar, o sistema confere se a IA não disse que um horário está marcado, remarcado ou cancelado sem ser verdade. Custa centésimos de centavo por mensagem.</span>
+            </label>
+            <Switch id={`${switchId}-judge`} checked={value.claimJudge} onCheckedChange={(claimJudge) => set({ claimJudge })} label="Conferir as respostas da IA contra a agenda" hideLabel disabled={disabled} />
           </div>
 
           <FormField label="Limite de marcações da IA por cliente, por dia" error={errors.maxAiBookingsPerContactPerDay}>

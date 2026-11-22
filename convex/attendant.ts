@@ -92,13 +92,44 @@ import { modulesOf } from "./lib/orgModules";
 import {
   describeLeakedModelMarkup,
   detectLeakedModelMarkup,
+  isAgendaTextLeak,
   type LeakedModelMarkup,
 } from "./lib/llmOutputGuard";
 import {
   buildCurrentDateTimeBlock,
   resolveAgentTimezone,
+  SCHEDULING_NEXT_DAYS,
   shouldIncludeCurrentDateTime,
 } from "./lib/promptDateTime";
+// Agenda v2 (D1): tools de horário do atendente (consulta e proposta) e a regra do output guard.
+import { bookOfferedTimeCore, type SchedRunContext } from "./lib/schedAiOps";
+import {
+  BOOK_TOOL,
+  proposedResult,
+  buildSchedPromptBlock,
+  FIND_TOOL,
+  findSlotsResult,
+  formatOfferLine,
+  formatSlotText,
+  isSchedTool,
+  MAX_SCHED_CALLS_PER_TURN,
+  offersForEnvelope,
+  parseBookArgs,
+  PERIODS,
+  type SchedPeriod,
+  upcomingForEnvelope,
+} from "./lib/schedAttendantTools";
+import { currentOffers, issueOffers, markShown, type OffersState, resolveOffer } from "./lib/schedOffers";
+import { offersShownInText } from "./lib/schedOfferShown";
+import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
+import { buildClaimState, knowledgeTimesOf } from "./lib/schedClaimState";
+import { claimJudgeOn, judgeViolation, shouldJudge } from "./lib/schedClaimJudge";
+import { type JudgeCallResult, runClaimJudge } from "./lib/schedClaimJudgeRun";
+import { SCHED_CLAIM_JUDGE_ENABLED } from "./lib/schedConstants";
+import { localDateOf } from "./lib/schedTime";
+import { customerTail, customerTextForGroup, detectCustomerIntent, iaAskedHowMany, isChangeIntent, mentionsGroup, mentionsOtherService } from "./lib/schedIntent";
+import { type SafeFacts, schedSafeReply } from "./lib/schedSafeText";
+import { markOffersShownFromText } from "./lib/schedAiState";
 // ── Follow-up da IA (v0.60) ──
 // `isWithinSchedule` MUDOU DE CASA para lib/agentSchedule.ts (módulo puro, com
 // os conversores de hora local que a tool nova precisa); o re-export abaixo
@@ -183,6 +214,13 @@ const SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 const HISTORY_FOR_LLM = 30;
 const DEFAULT_MAX_REPLIES_PER_CONVERSATION = 20;
 const DEFAULT_MAX_REPLIES_PER_HOUR = 10;
+/** Fim do aviso de "ferramentas demais numa rodada": a parte da consulta de horários só existe com o módulo de agenda ligado. */
+export function toolBudgetNudgeTail(schedulingOn: boolean): string {
+  return schedulingOn
+    ? "Chame só as essenciais (a consulta de horários SOZINHA; atualizar cadastro, etiquetas e notas podem esperar) e responda ao cliente."
+    : "Chame só as ferramentas essenciais (atualizar cadastro, etiquetas e notas podem esperar) e responda ao cliente.";
+}
+
 const DEFAULT_MAX_TOOL_CALLS = 6;
 // Holds que um item INICIADO POR HUMANO (coach/return_to_ai) pode atravessar.
 // NUNCA inclua opt_out (LGPD), janela_24h, tetos ou bridge_sem_aceite aqui.
@@ -527,6 +565,8 @@ export const APPROVABLE_DRAFT_ACTIONS: readonly string[] = [
   "qualifyThisLead",
   "updateThisContact",
   "updateThisLeadInfo",
+  // Agenda v2 (D1): reserva proposta no rascunho (política `auto` com o atendente em modo sugestão). Roda na aprovação.
+  BOOK_TOOL,
 ];
 
 export function describeAttendantAction(
@@ -600,6 +640,8 @@ export function describeAttendantAction(
       }
       return `Atualizar lead: ${parts.length > 0 ? parts.join(" · ") : "dados da conversa"}`;
     }
+    case BOOK_TOOL:
+      return `Reservar o horário oferecido${effectiveWhen ? `: ${effectiveWhen}` : ""} — ao aprovar, o horário é registrado`;
     case "flagAutomatedSender": {
       let reason = "";
       try {
@@ -1777,7 +1819,9 @@ export const internalClaimForProcessing = internalMutation({
         dateTimeBlock: shouldIncludeCurrentDateTime(profile)
           ? buildCurrentDateTimeBlock(
               now,
-              resolveAgentTimezone(profile.schedule?.timezone, org!.settings.timezone)
+              resolveAgentTimezone(profile.schedule?.timezone, org!.settings.timezone),
+              // Régua de 14 dias SÓ com o módulo de agendamento ligado (o padrão de 7 não muda).
+              modulesOf(org).scheduling ? { nextDays: SCHEDULING_NEXT_DAYS } : undefined
             )
           : null,
         // Campanha: a conversa nasceu de um disparo ativo? (entra no envelope)
@@ -1812,6 +1856,7 @@ export const internalClaimForProcessing = internalMutation({
         // decrypt acontece na action (mesmo padrão do BYO em lib/agentRoutes).
         externalAgenda: externalAgendaForRun(profile.externalAgenda),
         botGuardEnabled: resolveBotGuardSettings(profile).enabled,
+        schedulingOn: modulesOf(org).scheduling === true,
         // Meta Messaging F3: decide o formato da saída (texto puro no IG/Messenger).
         transport: transportOf(channelConfig),
         channelLabel: channelLabelFor(transportOf(channelConfig)),
@@ -1922,6 +1967,8 @@ type AttendantToolExecArgs = {
    * o que já existia quando o turno começou.
    */
   turnStartedAt?: number;
+  /** Relógio do chamador (a aprovação do rascunho lê UMA vez e passa adiante). */
+  now?: number;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -1947,6 +1994,20 @@ export function isTruncatedResponse(
 }
 
 /**
+ * A busca veio sem o tamanho do grupo? `people` AUSENTE (ou ilegível) sempre; `people: 1` explícito só conta como "sem tamanho" enquanto
+ * a IA ainda não perguntou quantas pessoas são (depois da pergunta, `1` é a resposta do cliente e vale: senão a recusa não tem saída).
+ */
+function askedWithoutPeople(argsJson: string, iaAsked: boolean): boolean {
+  try {
+    const p = (JSON.parse(argsJson || "{}") as { people?: unknown }).people;
+    if (typeof p !== "number") return true;
+    return p <= 1 && !iaAsked;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Guardrail de SAÍDA (incidente de 07/10/2026): pedido de refação quando o
  * texto que IA ia mandar ao cliente trazia marcação técnica de ferramenta
  * (DSML, `<tool_call>`, `<|…|>`, JSON de função) em vez de texto. Genérico.
@@ -1954,6 +2015,11 @@ export function isTruncatedResponse(
 export const LEAKED_MARKUP_NUDGE =
   "Sua resposta anterior continha marcação técnica de ferramenta em vez de texto e foi descartada inteira. " +
   "Use as ferramentas pela interface de tool-calls e escreva só texto para o cliente.";
+
+/** Agenda (D2): a mensagem mostrava o código da oferta (h1) ou narrava o raciocínio sobre o cliente. */
+export const AGENDA_TEXT_LEAK_NUDGE =
+  "Sua resposta anterior foi DESCARTADA: ela mostrava um código interno (h1, h2…), um nome de ferramenta ou o seu raciocínio sobre o cliente em terceira pessoa (\"O cliente escolheu…\"). " +
+  "Escreva só a mensagem para o cliente, falando COM ele (\"você\"), sem códigos e sem explicar o que você vai fazer.";
 
 /**
  * O texto que ESTA rodada mandaria ao cliente (ou gravaria como rascunho), e o
@@ -1964,12 +2030,12 @@ export const LEAKED_MARKUP_NUDGE =
  */
 export function leakInOutgoingRound(
   message: { content?: unknown; tool_calls?: { function: { name: string; arguments: string } }[] },
-  opts: { textFallback: boolean; replyToolNames?: string[]; skipReply?: boolean }
+  opts: { textFallback: boolean; replyToolNames?: string[]; skipReply?: boolean; agenda?: boolean; offerCodes?: readonly string[] }
 ): LeakedModelMarkup | null {
   const toolCalls = message.tool_calls ?? [];
   if (toolCalls.length === 0) {
     return opts.textFallback && typeof message.content === "string"
-      ? detectLeakedModelMarkup(message.content)
+      ? detectLeakedModelMarkup(message.content, { agenda: opts.agenda, offerCodes: opts.offerCodes })
       : null;
   }
   if (opts.skipReply) return null;
@@ -1983,8 +2049,62 @@ export function leakInOutgoingRound(
       // Argumentos que não parseiam: o JSON cru é o que poderia vazar.
       text = tc.function.arguments;
     }
-    const leak = typeof text === "string" ? detectLeakedModelMarkup(text) : null;
+    const leak = typeof text === "string" ? detectLeakedModelMarkup(text, { agenda: opts.agenda, offerCodes: opts.offerCodes }) : null;
     if (leak) return leak;
+  }
+  return null;
+}
+
+/**
+ * Agenda v2 (D1): a regra `schedClaimGuard` aplicada ao texto que ESTA rodada mandaria ao cliente (mesma extração do
+ * `leakInOutgoingRound`: só o `text` do `replyToCustomer` que não vai ser descartado, ou o texto puro quando o
+ * fallback está ligado). Só vale com as tools de agenda na run.
+ */
+export function claimInOutgoingRound(
+  message: { content?: unknown; tool_calls?: { function: { name: string; arguments: string } }[] },
+  opts: { textFallback: boolean; skipReply?: boolean; replyToolNames?: string[] },
+  state: ClaimState
+): ClaimViolation | null {
+  const toolCalls = message.tool_calls ?? [];
+  if (toolCalls.length === 0) {
+    return opts.textFallback && typeof message.content === "string" ? detectUnbackedBookingClaim(message.content, state) : null;
+  }
+  if (opts.skipReply) return null;
+  const replyNames = opts.replyToolNames ?? ["replyToCustomer"];
+  for (const tc of toolCalls) {
+    if (!replyNames.includes(tc.function.name)) continue;
+    let text: unknown = null;
+    try {
+      text = (JSON.parse(tc.function.arguments || "{}") as { text?: unknown }).text;
+    } catch {
+      text = null; // argumento que não parseia não vira mensagem
+    }
+    const claim = typeof text === "string" ? detectUnbackedBookingClaim(text, state) : null;
+    if (claim) return claim;
+  }
+  return null;
+}
+
+/**
+ * O texto que ESTA rodada mandaria ao cliente (mesma extração de `claimInOutgoingRound`): é o que o juiz de afirmação (D3) lê.
+ * `null` = a rodada não manda texto (só tools, ou resposta que será descartada).
+ */
+export function outgoingReplyText(
+  message: { content?: unknown; tool_calls?: { function: { name: string; arguments: string } }[] },
+  opts: { textFallback: boolean; skipReply?: boolean; replyToolNames?: string[] }
+): string | null {
+  const toolCalls = message.tool_calls ?? [];
+  if (toolCalls.length === 0) return opts.textFallback && typeof message.content === "string" && message.content.trim() ? message.content : null;
+  if (opts.skipReply) return null;
+  const replyNames = opts.replyToolNames ?? ["replyToCustomer"];
+  for (const tc of toolCalls) {
+    if (!replyNames.includes(tc.function.name)) continue;
+    try {
+      const text = (JSON.parse(tc.function.arguments || "{}") as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim()) return text;
+    } catch {
+      // argumento que não parseia não vira mensagem
+    }
   }
   return null;
 }
@@ -2162,6 +2282,23 @@ function parseFollowUpDueAt(
   return { dueAt: now + DAY_MS }; // compat com a v1 da tool (default 24h)
 }
 
+/** Mensagem da TELA quando a aprovação do rascunho não consegue registrar o horário (a aprovação inteira aborta). */
+function bookingApprovalErrorMessage(code: string): string {
+  switch (code) {
+    case "oferta_expirada":
+      return "A oferta de horário venceu (vale 30 minutos). Gere uma nova resposta para o cliente.";
+    case "horario_tomado":
+      return "O horário não está mais disponível. Gere uma nova resposta para o cliente.";
+    case "ja_tem_marcado":
+      return "O cliente já tem horário marcado nesse período. Gere uma nova resposta ou assuma a conversa.";
+    case "aguarde_resposta_do_cliente":
+    case "oferta_desconhecida":
+      return "A oferta de horário não vale mais. Gere uma nova resposta para o cliente.";
+    default:
+      return "Não foi possível registrar o horário. Gere uma nova resposta ou assuma a conversa.";
+  }
+}
+
 export async function executeAttendantToolCore(
   ctx: MutationCtx,
   args: AttendantToolExecArgs
@@ -2188,7 +2325,7 @@ export async function executeAttendantToolCore(
   } catch {
     return { error: "Argumentos inválidos" };
   }
-  const now = Date.now();
+  const now = args.now ?? Date.now();
 
     switch (args.name) {
       case "moveThisLead": {
@@ -2746,6 +2883,22 @@ export async function executeAttendantToolCore(
         return projectToolResult(spec, { status: "atualizado", updated });
       }
 
+      case BOOK_TOOL: {
+        // Aprovação humana do rascunho (política `auto` no modo sugestão): MESMO executor do runtime, que reconfere
+        // módulo, política, oferta (30 min; emitida antes da última mensagem do cliente) e passa pela porta.
+        const booked = await bookOfferedTimeCore(ctx, {
+          organizationId: args.organizationId,
+          agentMemberId: agent._id,
+          conversationId: args.conversationId,
+          argsJson: args.argsJson,
+          mode: "commit",
+          now,
+          ...(args.approvedBy ? { approvedBy: args.approvedBy } : {}),
+        });
+        // `error` leva o CÓDIGO (oferta_expirada, horario_tomado…): quem aprova vê a mensagem da tela, não a do modelo.
+        return projectToolResult(spec, booked.result);
+      }
+
       default:
         return { error: `Tool não executável aqui: ${args.name}` };
     }
@@ -2845,6 +2998,8 @@ export const internalCommitAiReply = internalMutation({
     needsDisclosure: v.boolean(),
     disclosure: v.string(),
     allowPendingHandoff: v.boolean(), // a própria run pediu handoff neste turno
+    // Agenda v2 (D1): módulo `scheduling` ligado (o claim já sabe). Desligado = o commit NÃO lê o estado de ofertas.
+    schedulingOn: v.optional(v.boolean()),
     humanInitiated: v.optional(v.boolean()), // turno pedido por humano (return_to_ai)
     // v0.64 — flyer da agenda externa: linha de `files` já preparada pela
     // action (sem messageId); o texto vira a LEGENDA.
@@ -3081,6 +3236,17 @@ export const internalCommitAiReply = internalMutation({
     // Tradução automática (D6): a resposta saiu no idioma do lead; a equipe a
     // lê na língua dela por uma tradução de EXIBIÇÃO assíncrona (no-op sem o módulo).
     await scheduleMessageTranslation(ctx, { messageId, role: "display", conversation });
+    // Agenda v2 (D1): a mensagem SAIU, então o cliente viu os horários que ela cita (`shownAt`): só a partir daqui as
+    // ofertas valem. Turno que falhou e rascunho não aprovado nunca chegam aqui.
+    // Só com o módulo ligado (`args.schedulingOn`, vindo do claim): módulo desligado = zero leitura a mais.
+    if (args.schedulingOn === true) {
+      await markOffersShownFromText(ctx, {
+        organizationId: conversation.organizationId,
+        conversationId: conversation._id,
+        text: `${text}\n${args.textAfterVoice ?? ""}`,
+        now,
+      });
+    }
     if (queueItem?.followUpId) {
       const followUp = await ctx.db.get(queueItem.followUpId);
       if (followUp) {
@@ -3152,6 +3318,8 @@ export const internalCommitAiSuggestion = internalMutation({
     runId: v.string(),
     agentRunId: v.id("agentRuns"),
     text: v.string(),
+    // Agenda v2 (D1): módulo ligado (gravado no rascunho; a aprovação só marca ofertas como mostradas se for `true`).
+    schedulingOn: v.optional(v.boolean()),
     proposedActions: v.array(
       v.object({ name: v.string(), argsJson: v.string(), label: v.string() })
     ),
@@ -3251,6 +3419,7 @@ export const internalCommitAiSuggestion = internalMutation({
           status: "pending",
           agentRunId: args.agentRunId,
           proposedActions: args.proposedActions,
+          ...(args.schedulingOn === true ? { schedulingOn: true } : {}),
           ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
           ...(args.instruction ? { instruction: args.instruction } : {}),
           ...(args.instructedBy ? { instructedBy: args.instructedBy } : {}),
@@ -3494,8 +3663,10 @@ function externalAgendaForRun(
 function roundHasReadAndReply(toolCalls: { function: { name: string } }[]): boolean {
   const names = toolCalls.map((tc) => tc.function.name);
   if (!names.includes("replyToCustomer")) return false;
+  // Agenda v2 (D1): as tools de horário (consulta E reserva) também valem: o texto da resposta depende do resultado
+  // delas ("marcado" × "aguardando a equipe"), então a resposta escrita na mesma rodada é descartada.
   return names.some(
-    (n) => ATTENDANT_TOOLS.find((t) => t.name === n)?.effect === "read"
+    (n) => isSchedTool(n) || ATTENDANT_TOOLS.find((t) => t.name === n)?.effect === "read"
   );
 }
 
@@ -3577,6 +3748,15 @@ type RunContext = {
   externalAgenda: ExternalAgendaRunConfig | null;
   /** Guardrail anti-bot ligado (v0.65) — oferece `flagAutomatedSender` + REGRA 11. */
   botGuardEnabled: boolean;
+  /**
+   * Agenda v2 (D1): contexto das tools de horário (`schedulingAi.internalContextBlock`), preenchido na action DEPOIS
+   * do claim. `null`/ausente = as tools de agenda NÃO entram nesta run (módulo desligado, sem serviço, política…).
+   */
+  sched?: SchedRunContext | null;
+  /** Módulo `scheduling` ligado na org (barato: já vem do claim). Desligado = nem consulta o contexto de agenda. */
+  schedulingOn?: boolean;
+  /** Turno proativo (follow-up): o guard de afirmação segue ligado, mas as tools de agenda não entram. */
+  schedToolsOff?: boolean;
   /** Transporte da conversa (F3): `instagram`/`messenger` saem em texto puro. */
   transport?: ChannelTransport | null;
   /** Nome do canal na persona padrão ("WhatsApp", "Instagram", "Messenger"). */
@@ -3699,7 +3879,7 @@ type PromptContext = Pick<
   | "followUp"
   | "pendingFollowUps"
   | "channelLabel"
-> & { externalAgenda?: ExternalAgendaRunConfig | null; botGuardEnabled?: boolean };
+> & { externalAgenda?: ExternalAgendaRunConfig | null; botGuardEnabled?: boolean; sched?: SchedRunContext | null; schedToolsOff?: boolean };
 
 // P4: allowMoveStages:false remove moveThisLead das tools da run (subtração do
 // registry estático — nunca adição). O executor recusa por conta própria também.
@@ -3707,6 +3887,9 @@ function attendantToolsFor(
   context: Pick<RunContext, "allowMoveStages" | "followUp" | "pendingFollowUps"> & {
     externalAgenda?: ExternalAgendaRunConfig | null;
     botGuardEnabled?: boolean;
+    sched?: SchedRunContext | null;
+    /** Turno proativo (follow-up): o guard de afirmação fica ligado, mas as tools de agenda não entram. */
+    schedToolsOff?: boolean;
   }
 ) {
   let base = context.allowMoveStages
@@ -3717,6 +3900,15 @@ function attendantToolsFor(
   // Guardrail anti-bot (v0.65): com o guard desligado no perfil, a tool some
   // junto com a REGRA 11 — o operador que desligou não quer a IA parando.
   if (context.botGuardEnabled !== true) base = base.filter((t) => t.name !== "flagAutomatedSender");
+  // Agenda v2 (D1): as tools de horário só existem com o contexto liberado pelo servidor (módulo, IA, política,
+  // serviço e recurso ativos, contato que é cliente). O executor reconfere tudo: isto só tira o convite.
+  base = base.filter((t) => {
+    if (!isSchedTool(t.name)) return true;
+    if (context.schedToolsOff) return false;
+    if (t.name === FIND_TOOL) return context.sched?.tools.find === true;
+    if (t.name === BOOK_TOOL) return context.sched?.tools.book === true;
+    return false; // remarcar/cancelar/confirmar presença (D1b/F1) ainda não existem: nunca por omissão
+  });
   // Sem follow-up do turno e sem pendentes na conversa, `resolveFollowUp` não
   // tem alvo possível: oferecê-la só convida o modelo a inventar um índice.
   const hasFollowUpTarget = context.followUp !== null || context.pendingFollowUps.length > 0;
@@ -3853,6 +4045,16 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
           "A lista numerada está no bloco de dados (campo \"follow_ups_pendentes\"). Se algum deles já não fizer sentido depois do que o cliente acabou de dizer, chame resolveFollowUp com o NÚMERO do item (index) e outcome \"not_needed\"; se ele pediu outra data, use outcome \"reschedule\". Nunca invente números fora da lista.",
         ].join("\n")
       : "",
+    // Agenda v2 (D1): instruções + serviços que a IA pode oferecer. Parte ESTÁVEL (depende só da configuração da
+    // org), por isso fica ANTES do carimbo de data/hora. Os próximos horários DO CONTATO vão no envelope.
+    context.sched?.tools.find && !context.schedToolsOff
+      ? buildSchedPromptBlock({
+          services: context.sched.services,
+          moreServices: context.sched.moreServices,
+          tools: context.sched.tools,
+          book: context.sched.book,
+        })
+      : "",
     // ÚLTIMO de propósito: é a única parte do prompt que muda a cada minuto, e
     // no fim tudo que vem antes continua servindo de prefixo cacheável.
     context.dateTimeBlock ?? "",
@@ -3908,11 +4110,39 @@ export const internalProcessQueueItem = internalAction({
       );
       if (routes.length === 0) throw new Error("Nenhum provider de IA disponível");
 
+      // Agenda v2 (D1): contexto de agenda. O servidor decide se as tools existem nesta run (módulo, IA, política,
+      // serviço e recurso ativos, contato que é cliente) e entrega os dados do guard de afirmação (agendamentos do
+      // contato e ofertas vigentes), que fica LIGADO com o módulo mesmo sem as tools (ex.: turno de follow-up, que
+      // nunca recebe as tools). Falha na leitura = sem as tools, nunca turno quebrado.
+      context.sched = null;
+      context.schedToolsOff = context.followUp !== null;
+      if (context.schedulingOn) {
+        try {
+          context.sched = await ctx.runQuery(internal.schedulingAi.internalContextBlock, {
+            organizationId: context.organizationId,
+            agentMemberId: context.agentMemberId,
+            conversationId: context.conversationId,
+            now: Date.now(),
+          });
+        } catch (e) {
+          console.warn(JSON.stringify({ event: "schedContextFailed", error: e instanceof Error ? e.message.slice(0, 120) : "erro" }));
+        }
+      }
+
       const envelope = wrapUntrustedJson("contexto do atendimento", {
         lead: context.lead,
         contato: context.contact,
         historico: context.history,
         ...(context.campaignContext ? { campanha: context.campaignContext } : {}),
+        // Agenda v2 (D1): próximos horários DESTE contato (a1, a2…), dado do sistema dentro do envelope.
+        // Com a situação REAL de cada um e o que dizer; inclui as decisões das últimas 72 h (recusado, vencido, cancelado).
+        ...(context.sched?.tools.find && !context.schedToolsOff && context.sched.upcoming.length + context.sched.decided.length > 0
+          ? { horarios_do_cliente: upcomingForEnvelope(context.sched.upcoming.slice(0, 3), context.sched.decided.slice(0, 2)) }
+          : {}),
+        // Ofertas VIGENTES: as que o cliente já VIU (mensagem enviada) e não venceram. Só estes códigos valem.
+        ...(context.sched?.tools.book && !context.schedToolsOff && context.sched.offers.length > 0
+          ? { ofertas_vigentes: offersForEnvelope(context.sched.offers) }
+          : {}),
         // Título e nota do follow-up são texto que o CLIENTE influenciou ("me
         // chama amanhã e manda o link X") e vão ser relidos num turno sem
         // mensagem nova contradizendo — é dado não-confiável, nunca instrução.
@@ -3975,6 +4205,132 @@ export const internalProcessQueueItem = internalAction({
       // cliente — mesma política da resposta cortada (descarta a rodada
       // inteira, pede de novo UMA vez, depois falha com retry).
       let leakedOnce = false;
+      // Agenda v2 (D2): vazamento de código de oferta/raciocínio sobre o cliente (regenera uma vez; depois, texto seguro).
+      let agendaLeakedOnce = false;
+      // Agenda v2 (D1): estado do turno para a regra `schedClaimGuard` e os tetos das tools de horário. E = agendamentos
+      // do contato, R = reserva desta rodada, O = ofertas vigentes + emitidas neste turno + prévia do modo sugestão.
+      const schedTz = context.sched?.timezone ?? context.timezone;
+      const schedTurn = {
+        calls: 0,
+        booked: [] as Array<{ startTime: number; status: "pending" | "scheduled" }>,
+        offered: [] as number[],
+        named: [] as Array<{ startTime: number; professional: string }>,
+        codes: [] as string[],
+      };
+      let claimedOnce = false;
+      // Uma regeneração quando a rodada pede mais ferramentas do que o orçamento da run (a rodada inteira é descartada sem executar).
+      let toolBudgetNudged = false;
+      // Horas fixas do conhecimento (turmas, funcionamento): descrevê-las não é "horário inventado". Calculado uma vez por turno.
+      const schedKnowledgeTimes = context.schedulingOn === true ? knowledgeTimesOf(context.knowledge) : [];
+      // O que o servidor sabe do cliente (para o texto seguro de situação): ativos, reserva desta rodada e decisões das últimas 72 h.
+      const schedSafeFacts = (): SafeFacts => {
+        const label = (startTime: number) => formatSlotText(startTime, Date.now(), schedTz);
+        const upcoming = context.sched?.upcoming ?? [];
+        const booked = schedTurn.booked.filter((b) => !upcoming.some((u) => u.startTime === b.startTime));
+        return {
+          scheduled: [...upcoming.filter((u) => u.status !== "pending_approval").map((u) => u.label), ...booked.filter((b) => b.status === "scheduled").map((b) => label(b.startTime))],
+          pending: [...upcoming.filter((u) => u.status === "pending_approval").map((u) => u.label), ...booked.filter((b) => b.status === "pending").map((b) => label(b.startTime))],
+          declined: (context.sched?.decided ?? []).filter((d) => d.kind === "declined").map((d) => d.label),
+          expired: (context.sched?.decided ?? []).filter((d) => d.kind === "expired").map((d) => d.label),
+          cancelled: (context.sched?.decided ?? []).filter((d) => d.kind === "cancelled").map((d) => d.label),
+        };
+      };
+      const schedClaimState = (): ClaimState =>
+        buildClaimState({
+          now: Date.now(),
+          tz: schedTz,
+          upcoming: context.sched?.upcoming ?? [],
+          decided: context.sched?.decided ?? [],
+          offers: context.sched?.offers ?? [],
+          turn: schedTurn,
+          serviceNames: context.sched?.services.map((sv) => sv.name) ?? [],
+          guardNames: context.sched?.guardNames ?? [],
+          knowledgeTimes: schedKnowledgeTimes,
+          handoff: handoffRequestedThisRun || context.sched?.handoffPending === true,
+        });
+      // O guard liga com o módulo (não com as tools): a IA não pode afirmar marcação em nenhum turno.
+      const schedGuardOn = context.schedulingOn === true;
+      let schedSafeFallback = false;
+      const useSafeSchedText = async (kind: string) => {
+        schedSafeFallback = true;
+        // Texto conforme a INTENÇÃO do cliente (remarcar, cancelar, presença, grupo, profissional, pedido pendente, verificar) e motivo
+        // do repasse com o que ele queria (rótulo, sem o texto dele).
+        const safe = schedSafeReply({
+          kind,
+          customerText: customerTail(context.history),
+          pendingRequest:
+            schedTurn.booked.some((b) => b.status === "pending") || (context.sched?.upcoming ?? []).some((u) => u.status === "pending_approval"),
+          hasUpcoming: schedTurn.booked.length > 0 || (context.sched?.upcoming.length ?? 0) > 0,
+          facts: schedSafeFacts(),
+        });
+        replyText = safe.text;
+        console.warn(JSON.stringify({ event: "attendantSchedSafeText", kind, situation: safe.situation }));
+        // Texto de SITUAÇÃO (já diz o estado real): não abre repasse.
+        if (safe.handoff === false) return;
+        try {
+          await ctx.runMutation(internal.handoffs.internalRequestHandoff, {
+            leadId: context.leadId,
+            conversationId: context.conversationId,
+            reason: safe.reason,
+            summary: safe.summary,
+            suggestedActions: ["Conferir a agenda e responder o cliente sobre o horário"],
+            teamMemberId: context.agentMemberId,
+            origin: "ai_tool",
+          });
+        } catch {
+          // repasse pendente já existe: a equipe já foi avisada
+        }
+        handoffRequestedThisRun = true;
+      };
+      // Agenda v2 (D3): juiz de afirmação, SEGUNDA camada depois do léxico. Só roda com o léxico já satisfeito, com a IA na agenda (1:1,
+      // `tools.find`: vale também em follow-up que vai ao cliente), org e global ligados e gatilho (dia/hora/período ou verbo de compromisso).
+      // NÃO roda em rascunho (`suggest`: um humano revisa o texto antes de sair). Falha do juiz = vale o léxico (nunca trava).
+      // Guarda a EXTRAÇÃO por texto (a chamada custa; o estado muda entre a rodada e a trava final), e `judgeViolation` é recalculado com o estado de agora.
+      const judgeCache = new Map<string, JudgeCallResult>();
+      const claimJudgeFor = async (text: string, state: ClaimState): Promise<ClaimViolation | null> => {
+        if (
+          !schedGuardOn ||
+          context.sched?.tools.find !== true ||
+          effectiveMode === "suggest" ||
+          !claimJudgeOn(context.sched.claimJudge, SCHED_CLAIM_JUDGE_ENABLED) ||
+          !shouldJudge(text)
+        ) {
+          return null;
+        }
+        const key = text.trim();
+        let res = judgeCache.get(key);
+        const fresh = res === undefined;
+        if (!res) {
+          res = await runClaimJudge(ctx, {
+            organizationId: context.organizationId,
+            conversationId: context.conversationId,
+            providerConfig: context.providerConfig,
+            text,
+            today: localDateOf(state.now, state.tz),
+          });
+          judgeCache.set(key, res);
+        }
+        if (!res.ok) {
+          // Métrica de falha (só na chamada real): o léxico já tinha passado a mensagem, então ela segue.
+          if (fresh) console.warn(JSON.stringify({ event: "attendantClaimJudge", outcome: "failed", reason: res.reason }));
+          return null;
+        }
+        const violation = judgeViolation(res.verdict, state);
+        if (fresh) {
+          console.log(
+            JSON.stringify({
+              event: "attendantClaimJudge",
+              outcome: violation ? "blocked" : "passed",
+              kind: violation?.kind,
+              promptTokens: res.promptTokens,
+              completionTokens: res.completionTokens,
+              costUsd: res.costUsd,
+              latencyMs: res.latencyMs,
+            })
+          );
+        }
+        return violation;
+      };
       // Agenda externa (v0.64): eventos que a IA de fato VIU neste turno — a
       // única fonte aceita para `replyToCustomer.imageUrl`.
       const agendaEventsSeen: AgendaEvent[] = [];
@@ -4111,14 +4467,61 @@ export const internalProcessQueueItem = internalAction({
             skipReply:
               roundHasReadAndReply(roundToolCalls) ||
               roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+            // só com as tools de horário na run (e 1:1: em grupo `tools.find` é falso): nenhuma regra nova para org sem a IA na agenda
+            agenda: schedGuardOn && context.sched?.tools.find === true,
+            offerCodes: [...(context.sched?.offerCodes ?? []), ...schedTurn.codes],
           });
           if (leak) {
             console.warn(
               JSON.stringify({ event: "attendantLeakedMarkup", round, kind: leak.kind, sample: leak.sample })
             );
+            if (isAgendaTextLeak(leak)) {
+              // Código de oferta ou raciocínio em terceira pessoa: texto do modelo, não marcação técnica. Regenera UMA vez; se repetir,
+              // sai o texto seguro (por intenção) com repasse, como no guard de afirmação: nunca falha o turno nem sai o vazamento.
+              if (agendaLeakedOnce) {
+                await useSafeSchedText(leak.kind);
+                break;
+              }
+              agendaLeakedOnce = true;
+              messages.push({ role: "user", content: AGENDA_TEXT_LEAK_NUDGE });
+              continue;
+            }
             if (leakedOnce) throw new Error(describeLeakedModelMarkup(leak));
             leakedOnce = true;
             messages.push({ role: "user", content: LEAKED_MARKUP_NUDGE });
+            continue;
+          }
+        }
+
+        // Agenda v2 (D1) — `schedClaimGuard`: o texto não pode AFIRMAR horário marcado/confirmado sem reserva neste
+        // turno. Mesma política do vazamento: descarta a rodada inteira, pede de novo UMA vez, depois o turno falha.
+        // Só avalia o texto que de fato sairia (rodada com tool de horário + resposta já descarta a resposta).
+        if (schedGuardOn) {
+          const roundToolCalls = resp.message.tool_calls ?? [];
+          const claimOpts = {
+            textFallback: !replyText && !context.followUp,
+            skipReply:
+              roundHasReadAndReply(roundToolCalls) ||
+              roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+          };
+          // `requestHandoff` na MESMA rodada vale como repasse criado ("já passei seu pedido para a equipe" é verdade).
+          const roundClaimState = { ...schedClaimState(), handoff: handoffRequestedThisRun || context.sched?.handoffPending === true || roundToolCalls.some((tc) => tc.function.name === "requestHandoff") };
+          let claim = claimInOutgoingRound(resp.message, claimOpts, roundClaimState);
+          if (!claim) {
+            // Segunda camada (D3): o léxico deixou passar; o juiz lê o que a mensagem AFIRMA e o servidor compara com o estado.
+            const outgoing = outgoingReplyText(resp.message, claimOpts);
+            if (outgoing) claim = await claimJudgeFor(outgoing, roundClaimState);
+          }
+          if (claim) {
+            console.warn(JSON.stringify({ event: "attendantSchedClaim", round, kind: claim.kind, sample: claim.evidence }));
+            if (claimedOnce) {
+              // Barrado duas vezes: nunca falha o turno (a fila repetiria 4x pagando o modelo e terminaria em
+              // `ai_failure` sem o cliente receber nada). Sai um texto seguro fixo + repasse, uma vez.
+              await useSafeSchedText(claim.kind);
+              break;
+            }
+            claimedOnce = true;
+            messages.push({ role: "user", content: claimNudge(claim.kind) });
             continue;
           }
         }
@@ -4177,9 +4580,23 @@ export const internalProcessQueueItem = internalAction({
             ? toolCalls.filter((tc) => tc.function.name !== "replyToCustomer").length
             : toolCalls.length;
         if (toolCallNames.length + countedCalls > context.maxToolCalls) {
+          // Medido (rodada 2, grupo): o modelo pediu 7 ferramentas na MESMA rodada (consulta + cadastro + marcas + resposta). Nada desta rodada foi
+          // executado, então descarta a mensagem do modelo e pede UMA vez de novo com o orçamento que resta (antes: a run falhava e a fila
+          // repetia o turno inteiro pagando o modelo). Estourou de novo: falha como antes (a fila repete; o estado já gravado entra no contexto).
+          if (!toolBudgetNudged) {
+            toolBudgetNudged = true;
+            messages.pop();
+            messages.push({
+              role: "user",
+              content: `Sua resposta anterior pediu ${countedCalls} ferramentas de uma vez e foi DESCARTADA sem executar nada: neste atendimento restam só ${Math.max(0, context.maxToolCalls - toolCallNames.length)}. ${toolBudgetNudgeTail(schedGuardOn)}`,
+            });
+            continue;
+          }
           throw new Error("Limite de tool calls por run excedido");
         }
 
+        // Agenda v2 (D1): uma tool de horário por rodada (nunca em paralelo; reservar na mesma rodada da consulta não vale).
+        let schedRoundExecuted = false;
         for (const tc of roundCalls) {
           const name = tc.function.name;
           if (roundFlagsBot && (name !== "flagAutomatedSender" || botFlaggedThisRun)) {
@@ -4231,6 +4648,120 @@ export const internalProcessQueueItem = internalAction({
             );
             agendaEventsSeen.push(...agenda.events);
             result = projectToolResult(toolSpecByName("consultarAgenda")!, agenda.result);
+          } else if (isSchedTool(name)) {
+            const offeredInRun =
+              !context.schedToolsOff &&
+              (name === FIND_TOOL ? context.sched?.tools.find === true : name === BOOK_TOOL ? context.sched?.tools.book === true : false);
+            if (!offeredInRun) {
+              // Chamada de uma tool que NÃO foi oferecida nesta run (alucinada, ou turno de follow-up): o executor recusa.
+              result = {
+                status: "erro",
+                error: "ferramenta_indisponivel",
+                proximo_passo: "Esta ferramenta não está disponível agora. Se o cliente quer marcar horário, diga que a equipe confirma e chame requestHandoff.",
+              };
+            } else if (schedRoundExecuted) {
+              result = {
+                status: "descartado",
+                motivo:
+                  "chame UMA ferramenta de horários por rodada, sozinha, e espere o resultado; a reserva só vale depois que o cliente responder à oferta",
+              };
+            } else if (
+              name === FIND_TOOL &&
+              (context.sched?.upcoming.length ?? 0) > 0 &&
+              isChangeIntent(detectCustomerIntent(customerTail(context.history))) &&
+              // pedir horário de OUTRO serviço (tem corte marcado e quer barba) não é remarcar
+              !mentionsOtherService(customerTail(context.history), (context.sched?.services ?? []).map((sv) => sv.name), (context.sched?.upcoming ?? []).map((u) => u.serviceName))
+            ) {
+              // Quem já tem horário e pede para REMARCAR/CANCELAR não ganha horário novo da IA (um modelo mais fraco ofereceu): é da equipe.
+              schedRoundExecuted = true;
+              schedTurn.calls += 1;
+              result = {
+                status: "erro",
+                error: "remarcacao_e_com_a_equipe",
+                proximo_passo:
+                  "O cliente quer remarcar ou cancelar um horário que já tem: isso é com a equipe. NÃO ofereça horários novos nem consulte a agenda: chame requestHandoff (diga no motivo o que ele pediu) e responda que a equipe cuida disso e retorna por aqui.",
+              };
+            } else if (name === FIND_TOOL && askedWithoutPeople(tc.function.arguments, iaAskedHowMany(context.history)) && mentionsGroup(customerTextForGroup(context.history))) {
+              // O cliente falou em mais de uma pessoa e a busca veio sem `people`: a reserva seria de UMA só e a mensagem diria "para vocês dois"
+              // (medido: modelo marcou 1 corte e confirmou "para você e seu filho"). Recusa e manda refazer com people ou repassar.
+              schedRoundExecuted = true;
+              schedTurn.calls += 1;
+              result = {
+                status: "erro",
+                error: "pedido_de_grupo",
+                proximo_passo:
+                  "O cliente pode ter falado em mais de uma pessoa. NÃO adivinhe: pergunte ao cliente quantas pessoas são e se vão no mesmo horário. Só depois consulte (com people, se forem 2 a 4 no mesmo horário) ou, se for um depois do outro, em horários diferentes ou mais de 4, chame requestHandoff e diga que a equipe organiza.",
+              };
+            } else if (schedTurn.calls >= MAX_SCHED_CALLS_PER_TURN) {
+              // Modelo em laço nas tools de agenda: repasse para humano.
+              try {
+                await ctx.runMutation(internal.handoffs.internalRequestHandoff, {
+                  leadId: context.leadId,
+                  conversationId: context.conversationId,
+                  reason: "A IA fez muitas consultas de agenda no mesmo atendimento",
+                  summary: "A IA usou as ferramentas de horário várias vezes sem fechar um horário com o cliente.",
+                  suggestedActions: ["Conferir a agenda e responder o cliente sobre o horário"],
+                  teamMemberId: context.agentMemberId,
+                  origin: "ai_tool",
+                });
+              } catch {
+                // repasse pendente já existe: o objetivo (humano avisado) está cumprido
+              }
+              handoffRequestedThisRun = true;
+              result = {
+                status: "erro",
+                error: "limite_de_consultas",
+                proximo_passo: "Foram muitas consultas de horário. Diga ao cliente que a equipe vai ajudar com o horário; um repasse foi criado.",
+              };
+            } else {
+              schedRoundExecuted = true;
+              schedTurn.calls += 1;
+              const schedSpec = toolSpecByName(name)!;
+              try {
+                // Modo sugestão (qualquer política): a reserva vira ação proposta do rascunho, validada em `preview`, e só
+                // grava quando o humano aprova o rascunho. Autopilot grava na hora.
+                const out =
+                  name === FIND_TOOL
+                    ? await ctx.runMutation(internal.schedulingAi.internalFindAvailableTimes, {
+                        organizationId: context.organizationId,
+                        agentMemberId: context.agentMemberId,
+                        conversationId: context.conversationId,
+                        argsJson: tc.function.arguments,
+                      })
+                    : await ctx.runMutation(internal.schedulingAi.internalBookOfferedTime, {
+                        organizationId: context.organizationId,
+                        agentMemberId: context.agentMemberId,
+                        conversationId: context.conversationId,
+                        argsJson: tc.function.arguments,
+                        agentRunId: context.agentRunId,
+                        // Modo sugestão: a reserva NUNCA grava na hora (rascunho descartado deixaria agendamento órfão);
+                        // vira ação proposta e só roda quando o humano aprova o rascunho. Autopilot grava na hora.
+                        mode: effectiveMode === "suggest" ? "preview" : "commit",
+                      });
+                if (out.control.booked && out.control.bookedStartTime !== undefined) {
+                  schedTurn.booked.push({ startTime: out.control.bookedStartTime, status: out.control.booked });
+                }
+                schedTurn.offered.push(...out.control.offeredTimes);
+                if (out.control.named) schedTurn.named.push(...out.control.named);
+                if (out.control.codes) schedTurn.codes.push(...out.control.codes);
+                if (out.control.handoff) handoffRequestedThisRun = true;
+                if (out.result.status === "proposto_para_aprovacao_humana") {
+                  proposedActions.push({
+                    name,
+                    argsJson: tc.function.arguments,
+                    label: describeAttendantAction(name, tc.function.arguments, out.control.slotText),
+                  });
+                }
+                result = projectToolResult(schedSpec, out.result);
+              } catch (e) {
+                console.warn(JSON.stringify({ event: "schedToolFailed", tool: name, error: e instanceof Error ? e.message.slice(0, 160) : "erro" }));
+                result = {
+                  status: "erro",
+                  error: "agenda_indisponivel",
+                  proximo_passo: "Não consegui usar a agenda agora. Diga ao cliente que a equipe confirma o horário e chame requestHandoff.",
+                };
+              }
+            }
           } else if (name === "flagAutomatedSender") {
             // Executa NOS DOIS modos, como o requestHandoff: parar de falar com
             // um robô é sempre seguro. Diferente do requestHandoff — cujo
@@ -4432,8 +4963,25 @@ export const internalProcessQueueItem = internalAction({
       // é texto escrito por humano na configuração.
       // Trava final do guardrail de saída (defesa em profundidade): qualquer
       // caminho que tenha chegado aqui com marcação técnica falha o turno.
-      const finalLeak = detectLeakedModelMarkup(replyText);
-      if (finalLeak) throw new Error(describeLeakedModelMarkup(finalLeak));
+      const finalLeak = detectLeakedModelMarkup(replyText, {
+        agenda: schedGuardOn && context.sched?.tools.find === true && !schedSafeFallback,
+        offerCodes: [...(context.sched?.offerCodes ?? []), ...schedTurn.codes],
+      });
+      if (finalLeak && isAgendaTextLeak(finalLeak)) {
+        console.warn(JSON.stringify({ event: "attendantLeakedMarkup", path: "final", kind: finalLeak.kind, sample: finalLeak.sample }));
+        await useSafeSchedText(finalLeak.kind);
+      } else if (finalLeak) {
+        throw new Error(describeLeakedModelMarkup(finalLeak));
+      }
+      // Agenda v2 (D1): trava final da regra de afirmação de horário (cobre também o texto da recuperação sem tools).
+      if (schedGuardOn && !schedSafeFallback) {
+        const finalState = schedClaimState();
+        const finalClaim = detectUnbackedBookingClaim(replyText, finalState) ?? (await claimJudgeFor(replyText, finalState));
+        if (finalClaim) {
+          console.warn(JSON.stringify({ event: "attendantSchedClaim", path: "final", kind: finalClaim.kind, sample: finalClaim.evidence }));
+          await useSafeSchedText(finalClaim.kind);
+        }
+      }
       // Formato por canal (F3): WhatsApp entende `*x*`; Instagram e Messenger
       // não entendem formatação nenhuma — texto puro. Sempre DEPOIS do guard.
       replyText = formatReplyForTransport(replyText, context.transport ?? null);
@@ -4498,6 +5046,7 @@ export const internalProcessQueueItem = internalAction({
           ? await ctx.runMutation(internal.attendant.internalCommitAiSuggestion, {
               ...commitArgsBase,
               proposedActions,
+              ...(context.schedulingOn === true ? { schedulingOn: true } : {}),
               // Loop de coaching: o commit tolera a pausa (humano pediu) e faz
               // o supersede transacional do rascunho de origem (TOCTOU).
               ...(context.humanInitiated ? { humanInstructed: true } : {}),
@@ -4511,6 +5060,7 @@ export const internalProcessQueueItem = internalAction({
               ...voiceCommitArgs,
               runStartedAt: context.runStartedAt,
               allowPendingHandoff: handoffRequestedThisRun,
+              ...(context.schedulingOn === true ? { schedulingOn: true } : {}),
               ...(context.humanInitiated ? { humanInitiated: true } : {}),
             });
 
@@ -4671,6 +5221,8 @@ export const acceptAiDraft = mutation({
     draftMessageId: v.id("messages"),
     editedText: v.optional(v.string()),
     actionIndexes: v.optional(v.array(v.number())),
+    // Agenda v2 (D1): "enviar mesmo assim" quando o rascunho propõe reservar um horário e a ação NÃO foi marcada.
+    sendWithoutBooking: v.optional(v.boolean()),
   },
   returns: v.id("messages"),
   handler: async (ctx, args) => {
@@ -4685,6 +5237,7 @@ export const acceptAiDraft = mutation({
       member,
       editedText: args.editedText,
       actionIndexes: args.actionIndexes,
+      sendWithoutBooking: args.sendWithoutBooking,
     });
   },
 });
@@ -4702,6 +5255,8 @@ export async function acceptAiDraftCore(
     member: Doc<"teamMembers">;
     editedText?: string;
     actionIndexes?: number[];
+    /** Só a tela: o humano viu o aviso e escolheu enviar o texto SEM registrar o horário. */
+    sendWithoutBooking?: boolean;
     via?: "telegram" | "telegram_auto" | "copilot";
   }
 ): Promise<Id<"messages">> {
@@ -4746,6 +5301,43 @@ export async function acceptAiDraftCore(
     });
 
   const now = Date.now();
+  // Agenda v2 (D1): a RESERVA proposta no rascunho roda ANTES de enviar a mensagem. Se a porta recusar (oferta vencida,
+  // horário tomado), a mensagem que promete o registro NÃO sai: a aprovação inteira aborta com erro claro para a tela
+  // (o rascunho segue pendente para gerar outra resposta). Erro inesperado da porta também aborta (não é engolido).
+  const proposedActionsRaw = Array.isArray(aiDraft.proposedActions) ? aiDraft.proposedActions : [];
+  const approvedIndexes = [...new Set(args.actionIndexes ?? [])].filter(
+    (i) => Number.isInteger(i) && i >= 0 && i < proposedActionsRaw.length
+  );
+  // Aviso ANTES de enviar: o rascunho propõe reservar e a ação não foi marcada. O texto promete o registro ("vou registrar
+  // o horário…") e ele não será feito. A tela mostra o aviso com editar / enviar mesmo assim (`sendWithoutBooking`).
+  // Só no app: Telegram/Copiloto seguem sem este passo (pendente, documentado).
+  const unselectedBooking = proposedActionsRaw.some(
+    (a, i) => !approvedIndexes.includes(i) && typeof a === "object" && a !== null && (a as { name?: unknown }).name === BOOK_TOOL
+  );
+  if (unselectedBooking && !args.via && !args.sendWithoutBooking) {
+    throw new ConvexError({
+      code: "booking_action_not_selected",
+      message: "Esta resposta promete registrar um horário, mas o registro não será feito. Marque a ação de reservar, edite o texto ou envie mesmo assim.",
+    });
+  }
+  const bookingResults = new Map<number, { label: string }>();
+  for (const index of approvedIndexes) {
+    const action = proposedActionsRaw[index] as Partial<ProposedAction> | string;
+    if (typeof action !== "object" || !action || action.name !== BOOK_TOOL || typeof action.argsJson !== "string") continue;
+    if (!conversation.leadId || !draft.senderId) throw new ConvexError("Esta conversa não permite registrar horário.");
+    const result = (await executeAttendantToolCore(ctx, {
+      name: BOOK_TOOL,
+      argsJson: action.argsJson,
+      organizationId: conversation.organizationId,
+      agentMemberId: draft.senderId,
+      conversationId: conversation._id,
+      leadId: conversation.leadId,
+      approvedBy: member._id,
+      now,
+    })) as { error?: unknown };
+    if (result.error) throw new ConvexError(bookingApprovalErrorMessage(String(result.error)));
+    bookingResults.set(index, { label: typeof action.label === "string" ? action.label : BOOK_TOOL });
+  }
   // Conversa de GRUPO (F4): as menções que o agente escolheu ficaram
   // gravadas na linha do rascunho. Sem copiá-las aqui, o "@Fulano" sairia no
   // texto e o WhatsApp não destacaria nem notificaria ninguém.
@@ -4810,6 +5402,16 @@ export async function acceptAiDraftCore(
   });
   // Tradução automática (D6): tradução de exibição da resposta aprovada.
   await scheduleMessageTranslation(ctx, { messageId, role: "display", conversation });
+  // Agenda v2 (D1): a mensagem aprovada SAIU (texto final, possivelmente editado): o cliente viu os horários citados.
+  // Só se o módulo estava ligado quando o rascunho foi gerado (`aiDraft.schedulingOn`): sem leitura a mais com o módulo desligado.
+  if ((aiDraft as { schedulingOn?: boolean }).schedulingOn === true) {
+    await markOffersShownFromText(ctx, {
+      organizationId: conversation.organizationId,
+      conversationId: conversation._id,
+      text: finalText,
+      now,
+    });
+  }
 
   // Executa as ações aprovadas (best-effort por ação: falha vira relato no
   // metadata, nunca desfaz o envio). Só ações ESTRUTURADAS e aprováveis.
@@ -4825,6 +5427,11 @@ export async function acceptAiDraftCore(
       (i) => Number.isInteger(i) && i >= 0 && i < proposed.length
     );
     for (const index of uniq) {
+      const done = bookingResults.get(index);
+      if (done) {
+        appliedActions.push({ index, label: done.label, ok: true });
+        continue;
+      }
       const action = proposed[index] as Partial<ProposedAction> | string;
       if (
         typeof action !== "object" ||
@@ -5594,6 +6201,23 @@ const MAX_EPOCH_MS = 8.64e15;
 const SIMULATOR_AI_OFF_MESSAGE =
   "Ative a IA da organização (e aceite os termos de IA) para testar o atendente.";
 
+/** Ofertas do simulador (sem recursos: o simulador nunca reserva). */
+const simSchedStateValidator = v.object({
+  offerSeq: v.number(),
+  offers: v.array(
+    v.object({
+      code: v.string(),
+      batch: v.number(),
+      serviceId: v.id("schedServices"),
+      startTime: v.number(),
+      issuedAt: v.number(),
+      expiresAt: v.number(),
+      shownAt: v.optional(v.number()),
+      professional: v.optional(v.string()),
+    })
+  ),
+});
+
 export const simulateAttendant = action({
   args: {
     organizationId: v.id("organizations"),
@@ -5644,6 +6268,10 @@ export const simulateAttendant = action({
     // Com `voice`: o aviso de voz sintética já foi falado num áudio anterior
     // desta conversa de teste (produção: `conversations.aiVoiceNoticeAt`).
     voiceNoticeSpoken: v.optional(v.boolean()),
+    // Agenda v2 (D1): ofertas (`h1`…) que a simulação ANTERIOR deixou, devolvidas em `schedState`. O simulador não grava
+    // nada; quem encadeia as falas (a tela, um teste) reenvia o estado, com `simulatedNow` maior que o anterior (a oferta
+    // só vale se foi MOSTRADA numa resposta anterior e o cliente falou depois, como em produção).
+    schedState: v.optional(simSchedStateValidator),
     // Presente = simula o AGENTE DE GRUPO: outro prompt, outras tools, outras
     // regras. Ausente = atendimento 1:1 de sempre.
     group: v.optional(
@@ -5662,6 +6290,8 @@ export const simulateAttendant = action({
     imageUrl: v.optional(v.union(v.string(), v.null())),
     // Só com `voice:true` e resposta: o que a resposta em áudio faria.
     voice: v.optional(simulatedVoiceValidator),
+    // Agenda v2 (D1): estado das ofertas depois desta fala (reenviar na próxima).
+    schedState: v.optional(simSchedStateValidator),
   }),
   handler: async (ctx, args) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -5731,6 +6361,7 @@ export const simulateAttendant = action({
       lead: Record<string, unknown>;
       contact: Record<string, unknown> | null;
       includeCurrentDateTime: boolean;
+      schedulingOn?: boolean;
       timezone: string;
     };
     // `simulatedNow` existe SÓ aqui: é o que permite testar "e se hoje fosse
@@ -5744,8 +6375,43 @@ export const simulateAttendant = action({
         ? simulated
         : Date.now();
     context.dateTimeBlock = context.includeCurrentDateTime
-      ? buildCurrentDateTimeBlock(simulatedNow, context.timezone)
+      ? buildCurrentDateTimeBlock(
+          simulatedNow,
+          context.timezone,
+          context.schedulingOn ? { nextDays: SCHEDULING_NEXT_DAYS } : undefined
+        )
       : null;
+    // Agenda v2 (D1): as MESMAS condições do runtime, sem conversa nem contato (o simulador não tem).
+    context.sched = null;
+    context.schedToolsOff = args.followUp !== undefined;
+    // Ofertas da simulação anterior (o simulador não guarda estado): só valem as mostradas e não vencidas.
+    let simOffers: OffersState = {
+      offerSeq: args.schedState?.offerSeq ?? 0,
+      offers: (args.schedState?.offers ?? []).map((o) => ({ ...o, resourceIds: [] })),
+    };
+    if (!args.group && context.schedulingOn) {
+      try {
+        context.sched = await ctx.runQuery(internal.schedulingAi.internalContextBlock, {
+          organizationId: args.organizationId,
+          agentMemberId: args.agentMemberId,
+          now: simulatedNow,
+        });
+        if (context.sched) {
+          const tzSim = context.sched.timezone;
+          context.sched = {
+            ...context.sched,
+            offers: currentOffers(simOffers, simulatedNow).map((o) => ({
+              code: o.code,
+              label: formatSlotText(o.startTime, simulatedNow, tzSim),
+              startTime: o.startTime,
+              ...(o.professional ? { professional: o.professional } : {}),
+            })),
+          };
+        }
+      } catch {
+        context.sched = null;
+      }
+    }
     // Grupo só existe no WhatsApp: o transporte simulado vale para o 1:1.
     const simulatedTransport: ChannelTransport | null = args.group ? null : (args.transport ?? null);
     context.channelLabel = channelLabelFor(simulatedTransport);
@@ -5802,6 +6468,9 @@ export const simulateAttendant = action({
               lead: context.lead,
               contato: context.contact,
               historico: history,
+              ...(context.sched?.tools.book && !context.schedToolsOff && context.sched.offers.length > 0
+                ? { ofertas_vigentes: offersForEnvelope(context.sched.offers) }
+                : {}),
               ...(context.followUp ? { follow_up_de_agora: context.followUp } : {}),
             })}\n\n${
               context.followUp
@@ -5841,6 +6510,32 @@ export const simulateAttendant = action({
     const agendaEventsSeen: AgendaEvent[] = [];
     let truncatedOnce = false;
     let leakedOnce = false;
+    // Agenda v2 (D1): estado do turno simulado (ofertas em memória: o simulador não grava nada e não tem conversa).
+    const simSched = {
+      calls: 0,
+      offered: [] as number[],
+      named: [] as Array<{ startTime: number; professional: string }>,
+    };
+    let simClaimedOnce = false;
+    let simAgendaLeakedOnce = false;
+    let simSafeText = false;
+    const simTz = context.sched?.timezone ?? context.timezone;
+    const simKnowledgeTimes = context.schedulingOn === true ? knowledgeTimesOf(context.knowledge) : [];
+    // O simulador roda em modo sugestão: a reserva nunca grava e nunca vira "marcado"; só "proposta" (O, não R).
+    const simClaimState = (): ClaimState =>
+      buildClaimState({
+        now: simulatedNow,
+        tz: simTz,
+        upcoming: [],
+        offers: context.sched?.offers ?? [],
+        turn: { booked: [], offered: simSched.offered, named: simSched.named },
+        serviceNames: context.sched?.services.map((sv) => sv.name) ?? [],
+        guardNames: context.sched?.guardNames ?? [],
+        knowledgeTimes: simKnowledgeTimes,
+        handoff: false,
+      });
+    const simCustomerText = customerTail(args.transcript.map((m) => ({ de: m.role === "customer" ? "cliente" : "agente", texto: m.content })));
+    const simSafeReply = (kind: string) => schedSafeReply({ kind, customerText: simCustomerText, pendingRequest: false, hasUpcoming: false });
 
     try {
       for (let round = 0; round < 4; round++) {
@@ -5889,7 +6584,21 @@ export const simulateAttendant = action({
             skipReply:
               (!args.group && roundHasReadAndReply(roundToolCalls)) ||
               roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+            agenda: context.schedulingOn === true && !args.group && context.sched?.tools.find === true,
+            offerCodes: simOffers.offers.map((o) => o.code),
           });
+          if (leak && isAgendaTextLeak(leak)) {
+            // Produção: regenera uma vez; repetiu = texto seguro por intenção + repasse (o turno não falha).
+            if (simAgendaLeakedOnce) {
+              reply = simSafeReply(leak.kind).text;
+              simSafeText = true;
+              actions.push(`A resposta mostrou código de oferta ou raciocínio sobre o cliente duas vezes (${leak.kind}): em produção sai o texto padrão e um repasse é criado`);
+              break;
+            }
+            simAgendaLeakedOnce = true;
+            messages.push({ role: "user", content: AGENDA_TEXT_LEAK_NUDGE });
+            continue;
+          }
           if (leak) {
             if (leakedOnce) {
               simFailed = true;
@@ -5901,6 +6610,32 @@ export const simulateAttendant = action({
             }
             leakedOnce = true;
             messages.push({ role: "user", content: LEAKED_MARKUP_NUDGE });
+            continue;
+          }
+        }
+        // Agenda v2 (D1): mesma regra `schedClaimGuard` do runtime (descarta a rodada, uma nova tentativa, depois falha).
+        if (context.schedulingOn) {
+          const roundToolCalls = resp.message.tool_calls ?? [];
+          const claim = claimInOutgoingRound(
+            resp.message,
+            {
+              textFallback: !reply && !context.followUp,
+              skipReply:
+                roundHasReadAndReply(roundToolCalls) ||
+                roundToolCalls.some((tc) => tc.function.name === "flagAutomatedSender"),
+            },
+            { ...simClaimState(), handoff: roundToolCalls.some((tc) => tc.function.name === "requestHandoff") }
+          );
+          if (claim) {
+            if (simClaimedOnce) {
+              // Produção: barrado duas vezes = texto seguro fixo + repasse (o turno não falha).
+              reply = simSafeReply(claim.kind).text;
+              simSafeText = true;
+              actions.push(`O guard de agenda barrou a resposta duas vezes (${claim.kind}): em produção sai o texto padrão e um repasse é criado`);
+              break;
+            }
+            simClaimedOnce = true;
+            messages.push({ role: "user", content: claimNudge(claim.kind) });
             continue;
           }
         }
@@ -5917,6 +6652,7 @@ export const simulateAttendant = action({
         // Mesma regra do runtime: consulta + resposta na mesma rodada = a
         // resposta foi escrita sem os dados; descarta e pede de novo.
         const discardReply = !args.group && roundHasReadAndReply(toolCalls);
+        let simRoundSched = false;
         for (const tc of toolCalls) {
           if (discardReply && tc.function.name === "replyToCustomer") {
             messages.push({
@@ -5949,6 +6685,88 @@ export const simulateAttendant = action({
               tool_call_id: tc.id,
               content: JSON.stringify({ status: "ok", ...(replyImageUrl ? { imageUrl: replyImageUrl } : {}) }),
             });
+          } else if (isSchedTool(tc.function.name) && !args.group) {
+            // Agenda v2 (D1): a busca lê a agenda REAL da org com o `simulatedNow`; a reserva NUNCA grava (o simulador não
+            // tem conversa nem contato para a porta) e responde como a produção responderia.
+            const name = tc.function.name;
+            let simResult: Record<string, unknown>;
+            const simOffered =
+              !context.schedToolsOff &&
+              (name === FIND_TOOL ? context.sched?.tools.find === true : name === BOOK_TOOL ? context.sched?.tools.book === true : false);
+            if (!simOffered) {
+              simResult = { status: "erro", error: "ferramenta_indisponivel", proximo_passo: "Esta ferramenta não está disponível agora." };
+            } else if (simRoundSched || simSched.calls >= MAX_SCHED_CALLS_PER_TURN) {
+              simResult = { status: "descartado", motivo: "chame UMA ferramenta de horários por rodada, sozinha, e espere o resultado" };
+            } else {
+              simRoundSched = true;
+              simSched.calls += 1;
+              if (name === FIND_TOOL) {
+                const found = await ctx.runQuery(internal.schedulingAi.internalSimulateFind, {
+                  organizationId: args.organizationId,
+                  agentMemberId: args.agentMemberId,
+                  argsJson: tc.function.arguments,
+                  now: simulatedNow,
+                });
+                if (found.found) {
+                  const f = found.found;
+                  const issued = issueOffers(
+                    simOffers,
+                    f.startTimes.map((startTime) => ({ serviceId: f.serviceId, startTime, resourceIds: [], ...(f.named ? { professional: f.named } : {}) })),
+                    simulatedNow
+                  );
+                  simOffers = issued.state;
+                  simSched.offered.push(...issued.issued.map((o) => o.startTime));
+                  if (f.named) simSched.named.push(...issued.issued.map((o) => ({ startTime: o.startTime, professional: f.named as string })));
+                  const period = (PERIODS as readonly string[]).includes(f.period ?? "") ? (f.period as SchedPeriod) : undefined;
+                  simResult = projectToolResult(
+                    toolSpecByName(name)!,
+                    findSlotsResult({
+                      echo: f.echo,
+                      period,
+                      people: f.people,
+                      lines: issued.issued.map((o) => formatOfferLine(o.code, o.startTime, simulatedNow, f.timezone, o.professional)),
+                      hasMore: f.hasMore,
+                      total: f.total,
+                      ...(f.wanted ? { wanted: f.wanted } : {}),
+                      ...(f.professional ? { professional: f.professional } : {}),
+                    })
+                  );
+                  actions.push(`Consultou horários livres (${f.startTimes.length} oferta(s))`);
+                } else {
+                  simResult = projectToolResult(toolSpecByName(name)!, found.result ?? { status: "erro" });
+                  actions.push("Consultou horários livres: sem oferta");
+                }
+              } else {
+                const parsedBook = parseBookArgs(tc.function.arguments);
+                if (!parsedBook.ok) {
+                  simResult = { status: "erro", error: parsedBook.error, proximo_passo: parsedBook.proximo_passo };
+                } else {
+                  // Mesma regra de produção: só vale a oferta MOSTRADA ao cliente (`shownAt`) antes da fala dele (agora).
+                  const resolved = resolveOffer(simOffers, parsedBook.offer, simulatedNow, simulatedNow);
+                  if (!resolved.ok) {
+                    simResult = {
+                      status: "erro",
+                      error:
+                        resolved.error === "desconhecida"
+                          ? "oferta_desconhecida"
+                          : resolved.error === "expirada"
+                            ? "oferta_expirada"
+                            : "aguarde_resposta_do_cliente",
+                      proximo_passo:
+                        resolved.error === "sem_resposta_do_cliente"
+                          ? "O cliente ainda não respondeu a esta oferta. Apresente os horários e espere a escolha dele."
+                          : "Consulte os horários de novo com findAvailableTimes.",
+                    };
+                  } else {
+                    const slotText = formatSlotText(resolved.offer.startTime, simulatedNow, simTz);
+                    simSched.offered.push(resolved.offer.startTime);
+                    simResult = projectToolResult(toolSpecByName(name)!, proposedResult(slotText));
+                    actions.push(`Simulou a reserva de ${slotText} (nada foi gravado; em produção ela é uma ação proposta do rascunho)`);
+                  }
+                }
+              }
+            }
+            messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(simResult) });
           } else if (tc.function.name === "consultarAgenda" && !args.group) {
             // Leitura pura: o simulador consulta de verdade.
             const agenda = await runConsultarAgenda(
@@ -5997,6 +6815,13 @@ export const simulateAttendant = action({
         simFailed = true;
         return { reply: null, actions, error: "O modelo não produziu resposta nesta tentativa — tente de novo." };
       }
+      if (reply !== null && context.schedulingOn && !simSafeText) {
+        const finalClaim = detectUnbackedBookingClaim(reply, simClaimState());
+        if (finalClaim) {
+          reply = simSafeReply(finalClaim.kind).text;
+          actions.push(`O guard de agenda barrou a resposta (${finalClaim.kind}): em produção sai o texto padrão e um repasse é criado`);
+        }
+      }
       const finalReply = reply === null ? null : formatReplyForTransport(reply, simulatedTransport);
       // Resposta em áudio (teste): mesma decisão do runtime, DEPOIS do guard e
       // da formatação por canal, como em `prepareVoiceReply`.
@@ -6022,10 +6847,31 @@ export const simulateAttendant = action({
               noticeAlreadySpoken: args.voiceNoticeSpoken === true,
             })
           : undefined;
+      // Agenda v2 (D1): a resposta simulada "saiu": as ofertas que ela cita passam a valer (shownAt) na próxima fala.
+      if (finalReply !== null && simOffers.offers.length > 0) {
+        simOffers = markShown(simOffers, offersShownInText(simOffers, finalReply, { now: simulatedNow, tz: simTz }), simulatedNow);
+      }
       return {
         reply: finalReply,
         actions,
         error: null,
+        ...(simOffers.offers.length > 0
+          ? {
+              schedState: {
+                offerSeq: simOffers.offerSeq,
+                offers: simOffers.offers.map((o) => ({
+                  code: o.code,
+                  batch: o.batch,
+                  serviceId: o.serviceId as Id<"schedServices">,
+                  startTime: o.startTime,
+                  issuedAt: o.issuedAt,
+                  expiresAt: o.expiresAt,
+                  ...(o.shownAt !== undefined ? { shownAt: o.shownAt } : {}),
+                  ...(o.professional ? { professional: o.professional } : {}),
+                })),
+              },
+            }
+          : {}),
         imageUrl: reply === null ? null : replyImageUrl,
         ...(voice ? { voice } : {}),
       };
@@ -6158,6 +7004,8 @@ export const internalGetSimulatorSetup = internalQuery({
       externalAgenda: externalAgendaForRun(profile.externalAgenda),
       botGuardEnabled: resolveBotGuardSettings(profile).enabled,
       includeCurrentDateTime: shouldIncludeCurrentDateTime(profile),
+      // Agenda v2 (D1): módulo ligado = régua de 14 dias e as tools de horário (a action consulta o contexto).
+      schedulingOn: modulesOf(org).scheduling === true,
       timezone: resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone),
       // Teste da resposta em áudio: voz e aviso da org (simulação = conversa
       // nova, então o aviso entra no primeiro áudio, como em produção).

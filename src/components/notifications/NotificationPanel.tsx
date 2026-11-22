@@ -18,6 +18,8 @@ import {
   Users,
   CalendarClock,
   CalendarX,
+  CalendarCheck,
+  CalendarPlus,
   TrendingUp,
   FileText,
   Bot,
@@ -118,6 +120,11 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   appointment_conflict: CalendarX,
   // Agenda v2 (A4) — resumo diário de atendimentos sem desfecho.
   appointment_no_outcome: ClipboardCheck,
+  // Agenda v2 (D1) — proposta de horário da IA aguardando aprovação.
+  appointment_pending_approval: CalendarCheck,
+  // Agenda v2 (C1)
+  appointment_created: CalendarCheck,
+  appointment_suggestion: CalendarPlus,
 };
 
 /** Canal gravado pelo servidor em `data.channel` nos avisos de conversa; ausente nos antigos. */

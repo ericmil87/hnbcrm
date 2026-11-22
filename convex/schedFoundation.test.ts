@@ -150,7 +150,7 @@ describe("padrões de schedSettings", () => {
       gridMinutes: 30, minNoticeMin: 120, maxAdvanceDays: 60,
       smart: { mode: "rank", weights: DEFAULT_SMART_WEIGHTS, minOffer: 3 },
       ai: { consult: true, book: "propose", reschedule: "propose", cancel: "handoff", firstVisitNeedsApproval: true, maxAiBookingsPerContactPerDay: 2 },
-      humanConfirm: { mode: "auto" },
+      humanConfirm: { mode: "suggest" },
       reminders: { enabled: false, dayBeforeAtMin: 600, mentionService: false },
     });
     expect(r.ai.autoAck).toBeUndefined();

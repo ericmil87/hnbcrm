@@ -18,6 +18,7 @@ import { VOCAB } from "@/lib/vocab";
 import type { GridAppointment } from "@/lib/agendaGrid";
 import type { SchedAppointmentView } from "@/lib/agendaTypes";
 import { conflictKindText, mustResolveBeforeApprove } from "@/lib/agendaConflict";
+import { parsedWhenLabel, SUGGESTION_COPY, suggestionCanAccept, suggestionKind, suggestionReasonText } from "@/lib/agendaHumanConfirm";
 
 const t = VIEWS_COPY.pendingQueue;
 
@@ -39,7 +40,11 @@ export interface PendingSuggestion {
   _id: string;
   conversationId: string;
   act: string;
-  parsed: { localDate?: string; timeMin?: number };
+  parsed: { localDate?: string; timeMin?: number; serviceId?: string };
+  /** Por que o sistema não marcou sozinho (código curto do servidor). */
+  reason?: string;
+  /** Remarcar/cancelar/aprovar: o agendamento-alvo. */
+  appointmentId?: string;
   createdAt: number;
 }
 
@@ -68,6 +73,9 @@ export interface PendingQueueViewProps {
   onOutcome: (appointmentId: string, outcome: "attended" | "noShow") => void;
   onResolve: (conflictId: string, appointmentId: string | null) => void;
   onOpenConversation: (conversationId: string) => void;
+  /** Sugestão de 1 toque (C1): "Marcar" (aceite) e "Dispensar". Ausentes = só "Abrir conversa". */
+  onAcceptSuggestion?: (interpretationId: string) => void;
+  onDismissSuggestion?: (interpretationId: string) => void;
 }
 
 function Row({ appointment, tz, children, onOpen, note, expired = false }: { appointment: PendingAppointment; tz: string; children?: React.ReactNode; onOpen: () => void; note?: string; expired?: boolean }) {
@@ -121,21 +129,35 @@ export function PendingQueueView(p: PendingQueueViewProps) {
 
   const render = (key: PendingSectionKey) => {
     switch (key) {
-      case "approvals":
-        return data.approvals.map((a) => {
+      case "approvals": {
+        // Grupo (mesmo `partyKey`): UMA linha, na pessoa principal, com "grupo de N pessoas"; aprovar/recusar vale para o grupo todo no servidor.
+        const partyOf = (a: PendingAppointment) => (a as { partyKey?: string }).partyKey;
+        const sizes = new Map<string, number>();
+        for (const a of data.approvals) if (partyOf(a)) sizes.set(partyOf(a)!, (sizes.get(partyOf(a)!) ?? 0) + 1);
+        const principal = (a: PendingAppointment) => !(a as { guestName?: string }).guestName || !partyOf(a);
+        const hasPrincipal = new Set(data.approvals.filter((a) => partyOf(a) && principal(a)).map((a) => partyOf(a)!));
+        // Aprovar vale para o grupo todo: se QUALQUER membro precisa de conflito resolvido, a linha do grupo também precisa.
+        const groupMustResolve = (a: PendingAppointment) => {
+          const key = partyOf(a);
+          const members = key ? data.approvals.filter((x) => partyOf(x) === key) : [a];
+          return members.some((x) => mustResolveBeforeApprove(x));
+        };
+        return data.approvals
+          .filter((a) => !(partyOf(a) && !principal(a) && hasPrincipal.has(partyOf(a)!)))
+          .map((a) => {
           const expired = proposalExpired(a.status, a.startTime, p.now, a.needsAttention?.code);
           const busy = p.busyId === a._id;
           return (
-            <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} expired={expired} onOpen={() => p.onOpen(a._id)}>
+            <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} expired={expired} onOpen={() => p.onOpen(a._id)} note={partyOf(a) && (sizes.get(partyOf(a)!) ?? 1) > 1 ? `grupo de ${sizes.get(partyOf(a)!)} pessoas` : undefined}>
               {p.canEdit && (
                 <>
-                  {!expired && !mustResolveBeforeApprove(a) && (
+                  {!expired && !groupMustResolve(a) && (
                     <Button size="sm" loading={busy} onClick={() => p.onApprove(a._id)}>
                       {t.approve}
                     </Button>
                   )}
                   {expired && <p className="basis-full text-caption text-text-secondary">{t.expired}</p>}
-                  {!expired && mustResolveBeforeApprove(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
+                  {!expired && groupMustResolve(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
                   <Button size="sm" variant={expired ? "primary" : "secondary"} disabled={busy} onClick={() => p.onDecline(a._id)}>
                     {expired ? t.declineProposal : t.decline}
                   </Button>
@@ -149,6 +171,7 @@ export function PendingQueueView(p: PendingQueueViewProps) {
             </Row>
           );
         });
+      }
       case "conflicts":
         return data.conflicts.map((c) =>
           c.appointment ? (
@@ -186,17 +209,39 @@ export function PendingQueueView(p: PendingQueueViewProps) {
           );
         });
       case "suggestions":
-        return data.suggestions.map((s) => (
-          <li key={`suggestion:${s._id}`} className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-border-subtle bg-surface-raised p-3">
-            <span className="min-w-0 text-sm text-text-primary">
-              {t.suggestionRow}
-              <span className="block text-caption text-text-secondary">{zonedWhenPhrase(s.createdAt, p.tz)}</span>
-            </span>
-            <Button size="sm" variant="secondary" onClick={() => p.onOpenConversation(s.conversationId)}>
-              {t.openConversation}
-            </Button>
-          </li>
-        ));
+        return data.suggestions.map((s) => {
+          const kind = suggestionKind(s);
+          const when = parsedWhenLabel(s.parsed);
+          const why = suggestionReasonText(s.reason);
+          const acceptable = suggestionCanAccept(s);
+          const busy = p.busyId === s._id;
+          return (
+            <li key={`suggestion:${s._id}`} className="space-y-2 rounded-card border border-border-subtle bg-surface-raised p-3">
+              <div className="min-w-0 text-sm text-text-primary">
+                <span className="font-semibold">{SUGGESTION_COPY.headline[kind]}</span>
+                {when && <span className="block text-caption tabular-nums text-text-secondary">{when}</span>}
+                {why && <span className="block text-caption text-text-muted">{why}</span>}
+                <span className="block text-caption text-text-muted">{zonedWhenPhrase(s.createdAt, p.tz)}</span>
+                {p.canEdit && !acceptable && <span className="block text-caption font-medium text-semantic-warning">{SUGGESTION_COPY.needsWhen}</span>}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {p.canEdit && p.onAcceptSuggestion && acceptable && (
+                  <Button size="sm" loading={busy} onClick={() => p.onAcceptSuggestion!(s._id)}>
+                    {SUGGESTION_COPY.accept[kind]}
+                  </Button>
+                )}
+                {p.canEdit && p.onDismissSuggestion && (
+                  <Button size="sm" variant="secondary" disabled={busy} onClick={() => p.onDismissSuggestion!(s._id)}>
+                    {SUGGESTION_COPY.dismiss}
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" onClick={() => p.onOpenConversation(s.conversationId)}>
+                  {t.openConversation}
+                </Button>
+              </div>
+            </li>
+          );
+        });
     }
   };
 

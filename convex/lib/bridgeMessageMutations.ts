@@ -17,6 +17,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { phoneLookupCandidates } from "./phone";
 import { refreshLastMessagePreviewIfLast } from "./conversationListFields";
 import { findParticipant } from "./groupParticipantsStore";
+import { dismissOpenInterpretationOfMessage } from "./schedInterpretOps";
 
 export const EDIT_PREVIOUS_CONTENT_MAX = 2000;
 export const EDIT_CONTENT_MAX = 65536;
@@ -120,6 +121,19 @@ async function resolveTarget(
   return { ok: true, message };
 }
 
+/**
+ * Gancho da agenda (C1) em edição/apagamento: roda para TODA mensagem enviada de TODA org, então NUNCA lança (como o gancho de
+ * envio): se falhar, a edição/apagamento segue e o log não leva texto de mensagem. A org não está em memória aqui; o custo é uma
+ * leitura indexada por mensagem (`by_message`), que não acha nada em org sem agenda.
+ */
+async function safeDismissInterpretation(ctx: MutationCtx, message: Parameters<typeof dismissOpenInterpretationOfMessage>[1], opts: { edited?: boolean } = {}): Promise<void> {
+  try {
+    await dismissOpenInterpretationOfMessage(ctx, message, opts);
+  } catch (e) {
+    console.warn("[schedInterpret] descarte da leitura da mensagem falhou (a edição/apagamento segue):", e instanceof Error ? e.name : "erro desconhecido");
+  }
+}
+
 /** Marca a mensagem como apagada para todos. Devolve o id ou null (ignorado). */
 export async function applyBridgeRevoke(
   ctx: MutationCtx,
@@ -136,6 +150,8 @@ export async function applyBridgeRevoke(
   if (message.metadata?.revoked === true) return message._id;
   const metadata = { ...(message.metadata ?? {}), revoked: true, revokedAt: args.at };
   await ctx.db.patch(message._id, { metadata });
+  // Agenda v2 (C1): mensagem apagada no aparelho só descarta a proposta aberta dela.
+  await safeDismissInterpretation(ctx, message);
   // Era a última mensagem: a lista do inbox passa a dizer "Mensagem apagada".
   await refreshLastMessagePreviewIfLast(ctx, { ...message, metadata });
   return message._id;
@@ -162,6 +178,8 @@ export async function applyBridgeEdit(
     typeof prior === "string" ? prior : message.content.slice(0, EDIT_PREVIOUS_CONTENT_MAX);
   const metadata = { ...(message.metadata ?? {}), edited: true, editedAt: args.at, previousContent };
   await ctx.db.patch(message._id, withMessageSearchPatch(message, { content: newContent, metadata }));
+  // Agenda v2 (C1): mensagem editada no aparelho só descarta a proposta aberta dela.
+  await safeDismissInterpretation(ctx, message, { edited: true });
   await refreshLastMessagePreviewIfLast(ctx, { ...message, content: newContent, metadata });
   return message._id;
 }

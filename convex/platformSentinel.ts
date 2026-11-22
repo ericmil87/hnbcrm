@@ -404,6 +404,9 @@ export const internalScanTick = internalMutation({
     for (const r of errors) {
       // Org com chave própria (BYO) paga e resolve a própria conta: fora da contagem.
       if ((await orgName(ctx, orgs, r.organizationId)).byo) continue;
+      // O juiz de afirmação (timeout, JSON inválido) falha de propósito sem travar a conversa: não é falha de IA do produto.
+      // Idem o classificador da confirmação pelo WhatsApp (`sched_interpret`): falha vira sugestão, nunca trava a conversa.
+      if (r.kind === "sched_claim_judge" || r.kind === "sched_interpret") continue;
       platformErrors++;
       byKind.set(r.kind, (byKind.get(r.kind) ?? 0) + 1);
       errorOrgs.add(r.organizationId);

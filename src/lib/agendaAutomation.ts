@@ -31,6 +31,8 @@ export interface AutomationForm {
   cancel: AiCancelLevel;
   firstVisitNeedsApproval: boolean;
   maxAiBookingsPerContactPerDay: string;
+  /** Conferir as respostas da IA contra a agenda (juiz de afirmação, `schedSettings.ai.claimJudge`; ausente no servidor = ligado). */
+  claimJudge: boolean;
   humanConfirmMode: HumanConfirmMode;
   /** O aceite do "marca sozinha" já está gravado no servidor (por quem e quando vem em `ackAt`). */
   hasAck: boolean;
@@ -65,6 +67,7 @@ export function automationFromSettings(s: SettingsView): AutomationForm | undefi
     cancel: s.ai.cancel,
     firstVisitNeedsApproval: s.ai.firstVisitNeedsApproval,
     maxAiBookingsPerContactPerDay: String(s.ai.maxAiBookingsPerContactPerDay),
+    claimJudge: s.ai.claimJudge ?? true,
     humanConfirmMode: s.humanConfirm.mode,
     hasAck: s.ai.autoAck !== undefined,
     ackAt: s.ai.autoAck?.at,
@@ -121,6 +124,7 @@ export interface AutomationPatch {
     cancel?: AiCancelLevel;
     firstVisitNeedsApproval?: boolean;
     maxAiBookingsPerContactPerDay?: number;
+    claimJudge?: boolean;
   };
   humanConfirm?: { mode: HumanConfirmMode };
 }
@@ -158,6 +162,7 @@ export function automationToPatch(f: AutomationForm, saved: AutomationForm): { p
   if (f.maxAiBookingsPerContactPerDay.trim() !== saved.maxAiBookingsPerContactPerDay.trim()) {
     ai.maxAiBookingsPerContactPerDay = Number(f.maxAiBookingsPerContactPerDay);
   }
+  if (f.claimJudge !== saved.claimJudge) ai.claimJudge = f.claimJudge;
   if (Object.keys(ai).length > 0) patch.ai = ai;
   if (f.humanConfirmMode !== saved.humanConfirmMode) patch.humanConfirm = { mode: f.humanConfirmMode };
 
@@ -228,7 +233,8 @@ export function defaultAutomationForm(): AutomationForm {
     cancel: "handoff",
     firstVisitNeedsApproval: true,
     maxAiBookingsPerContactPerDay: "2",
-    humanConfirmMode: "auto",
+    claimJudge: true,
+    humanConfirmMode: "suggest",
     hasAck: false,
     ackAcceptedNow: false,
   };

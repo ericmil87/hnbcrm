@@ -82,7 +82,11 @@ export type CopyInput =
   | { type: "plan_cancel_scheduled"; endsAt: string }
   | { type: "plan_canceled" }
   | { type: "plan_refunded"; amountBrl?: string; duplicate?: boolean }
-  | { type: "appointment_no_outcome"; count: number; capped?: boolean };
+  | { type: "appointment_no_outcome"; count: number; capped?: boolean }
+  | { type: "appointment_pending_approval"; label?: string }
+  // Agenda v2 (C1): `whenLabel` já vem no formato "qui, 27/11 às 10:00" (fuso da org).
+  | { type: "appointment_created"; contactName?: string; whenLabel: string; inConflict?: boolean; /** Aprovou um pedido que já existia (não criou). */ approved?: boolean }
+  | { type: "appointment_suggestion"; kind: "confirmou" | "remarcou" | "cancelou" | "aprovar" | "substituir" | "correcao"; contactName?: string; whenLabel?: string; /** Substituir: o horário do pedido antigo. */ fromLabel?: string };
 
 export type CopyOptions = { timeZone?: string | null; now?: number };
 
@@ -513,6 +517,49 @@ export function notificationCopy(input: CopyInput, opts: CopyOptions = {}): Noti
           : `${n} atendimentos de ontem ainda sem desfecho`;
       return { title, body: "Marque como concluído, falta ou cancelado para a agenda ficar em dia." };
     }
+    case "appointment_pending_approval":
+      return {
+        title: "A IA reservou um horário e aguarda você",
+        body: input.label
+          ? `${input.label}. Aprove, escolha outro horário ou recuse na fila de pendências da Agenda.`
+          : "Aprove, escolha outro horário ou recuse na fila de pendências da Agenda.",
+      };
+    case "appointment_created": {
+      const when = entity(input.whenLabel, "o horário");
+      const who = contactLabel(input.contactName);
+      const tail = "Se não era isso, abra o horário na Agenda e toque em Desfazer.";
+      if (input.approved) {
+        return { title: `Aprovei o pedido de ${who} para ${when} a partir de uma confirmação no WhatsApp`, body: tail };
+      }
+      return {
+        title: `Marquei ${who} para ${when} a partir de uma confirmação no WhatsApp`,
+        body: input.inConflict ? `O horário já estava ocupado: foi para a fila de conflitos da Agenda. ${tail}` : tail,
+      };
+    }
+    case "appointment_suggestion": {
+      const who = contactLabel(input.contactName);
+      const when = input.whenLabel ? entity(input.whenLabel, "") : "";
+      switch (input.kind) {
+        case "remarcou":
+          return { title: `Parece que você remarcou ${who}`, body: `${when ? `Novo horário: ${when}. ` : ""}Abra Pendências para aplicar na Agenda.` };
+        case "cancelou":
+          return { title: `Parece que você cancelou ${who}`, body: "Abra Pendências para cancelar também na Agenda." };
+        case "aprovar":
+          return { title: `Parece que você confirmou o pedido de ${who}`, body: `${when ? `Pedido de ${when}. ` : ""}Abra Pendências para aprovar.` };
+        case "substituir":
+          return {
+            title: `${who} já tem um pedido: substituir?`,
+            body: `${input.fromLabel ? `Pedido de ${entity(input.fromLabel, "")}` : "Pedido em outro horário"}${when ? `; você confirmou ${when}` : ""}. Abra Pendências para trocar.`,
+          };
+        case "correcao":
+          return { title: `Parece que você corrigiu o horário de ${who}`, body: `${when ? `Novo horário: ${when}. ` : ""}Abra Pendências para aplicar.` };
+        default:
+          return {
+            title: "Parece uma confirmação de horário",
+            body: when ? `Marcar ${who} ${when}? Abra Pendências para marcar.` : `Marcar ${who}? Abra Pendências para escolher dia e hora.`,
+          };
+      }
+    }
     case "lead_assigned": {
       const lead = contactLabel(input.leadTitle);
       return {
@@ -579,4 +626,7 @@ export const COPY_TYPES = [
   "plan_refunded",
   "appointment_conflict",
   "appointment_no_outcome",
+  "appointment_pending_approval",
+  "appointment_created",
+  "appointment_suggestion",
 ] as const satisfies readonly CopyInput["type"][];

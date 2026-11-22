@@ -74,6 +74,7 @@ export const FLAG_COPY: Record<
   agendaConflict: { label: "Conflito na agenda", desc: "Quando um agendamento fica sem sala ou profissional (fechamento ou remoção)" },
   planAlert: { label: "Avisos do plano", desc: "Para administradores: franquia de atendimentos e envios, teto do excedente e fim do teste" },
   agendaActivity: { label: "Agenda: atendimentos sem desfecho", desc: "Resumo diário, para quem gerencia a agenda, dos atendimentos do dia anterior que ainda não foram concluídos, cancelados ou marcados como falta" },
+  agendaApproval: { label: "Agenda: horários para aprovar", desc: "Quando a IA registra um horário para você aprovar, ou quando o sistema percebe uma confirmação de horário na conversa e pede um toque para marcar" },
   dailyDigest: { label: "Resumo diário", desc: "Resumo das atividades do dia anterior, às 08:00", channels: ["email"], bell: false },
 };
 

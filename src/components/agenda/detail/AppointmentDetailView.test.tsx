@@ -39,6 +39,28 @@ function setup(over: Partial<AppointmentDetailViewProps> = {}, appt: Record<stri
   return { onAction };
 }
 
+describe("AppointmentDetailView: Desfazer do que veio de uma confirmação no WhatsApp (C1)", () => {
+  it("criado pela confirmação: mostra o aviso e 'Desfazer'; o clique chama o desfazer", async () => {
+    const onUndoHumanConfirm = vi.fn();
+    setup({ humanUndo: "created", onUndoHumanConfirm }, { origin: "human_message" });
+    expect(screen.getByText(/marcou este horário a partir de uma confirmação no WhatsApp/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Desfazer \(veio de uma confirmação no WhatsApp\)/ }));
+    expect(onUndoHumanConfirm).toHaveBeenCalledTimes(1);
+  });
+  it("aprovado pelo sistema: 'Desfazer a aprovação'; sem janela ou sem permissão: nada", async () => {
+    setup({ humanUndo: "approved", onUndoHumanConfirm: vi.fn() });
+    expect(screen.getByRole("button", { name: "Desfazer a aprovação" })).toBeInTheDocument();
+  });
+  it("sem permissão de editar ou fora da janela, não aparece", () => {
+    setup({ humanUndo: "created", onUndoHumanConfirm: vi.fn(), canEdit: false }, { origin: "human_message" });
+    expect(screen.queryByText(/Desfazer \(veio/)).toBeNull();
+  });
+  it("ocupado desabilita o botão", () => {
+    setup({ humanUndo: "created", onUndoHumanConfirm: vi.fn(), busy: true }, { origin: "human_message" });
+    expect(screen.getByRole("button", { name: /Desfazer \(veio/ })).toBeDisabled();
+  });
+});
+
 describe("AppointmentDetailView: Resolver (sem lugar)", () => {
   it("com needsAttention mostra Resolver e abre o resolvedor", async () => {
     const onResolve = vi.fn();
