@@ -25,6 +25,8 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Mês como no Google.** Cada dia lista os horários ("09:00 Maria") e o "+N mais" abre a lista do dia. Dias de outros meses ficam esmaecidos. No celular, pontos nos dias e a lista do dia escolhido logo abaixo.
 - **Cores e densidade à escolha.** No menu ⋯: colorir por situação, por sala ou profissional, ou por serviço (com legenda, 10 cores), e densidade compacta, padrão ou confortável. Sua visão, agrupamento e escolhas ficam lembrados neste aparelho. Atalhos: T (hoje), D, S, M, L e as setas.
 
+- **Semana e Mês mais completos.** Um atendimento que começa antes da meia-noite (dom 23:00 até seg 01:00) aparece na primeira coluna a partir de 00:00; cancelados e remarcados deixam de ocupar a leitura; os dias de outros meses no Mês mostram seus horários; o cadeado de dia fechado vale também para dias passados e considera a reabertura parcial. O compromisso que cruza a meia-noite agora também arrasta pelo segundo pedaço. No cartão ao passar o mouse e no painel do atendimento aparece o telefone do cliente, com "Abrir conversa" quando há conversa.
+
 ### Agenda: segurança, permissões e recorrência
 
 - **A agenda tem permissão própria.** Quem tem "ver a minha" enxerga só os compromissos em que é criador, responsável ou participante; "ver todas" enxerga todos sem alterar; "marcar e editar" cria e altera qualquer compromisso da organização. Administrador nasce com "configurar"; gerente, atendente e IA com "marcar e editar". Tarefas mostradas na agenda continuam seguindo a permissão de Tarefas. Na API, as rotas de `calendar/events` passam a exigir `agenda` (leitura: ver a minha; escrita: marcar e editar); chaves antigas herdam o acesso a partir do que tinham em Tarefas.

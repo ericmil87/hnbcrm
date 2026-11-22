@@ -18,6 +18,7 @@ import { RuleWarningsDialog } from "@/components/agenda/booking/RuleWarningsDial
 import { useRoundedNow } from "@/components/agenda/booking/useRoundedNow";
 import { useOrgTimezone } from "@/hooks/useOrgTimezone";
 import { useAgendaAccess } from "@/hooks/useAgendaAccess";
+import { usePermissions } from "@/hooks/usePermissions";
 import { mutationErrorMessage } from "@/lib/errors";
 import { BOOKING_COPY, DETAIL_COPY } from "@/lib/bookingCopy";
 import { VOCAB } from "@/lib/vocab";
@@ -72,6 +73,7 @@ function DetailBody({
   const tz = useOrgTimezone(organizationId);
   const now = useRoundedNow("minute");
   const access = useAgendaAccess(organizationId);
+  const canOpenInbox = usePermissions(organizationId).can("inbox", "view_own");
   const data = useQuery(api.scheduling.getAppointment, { appointmentId });
   const config = useQuery(api.schedulingConfig.getConfig, { organizationId, closuresFrom: zonedToday(now, tz) });
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
@@ -174,8 +176,9 @@ function DetailBody({
         busy={busy}
         proposalBroken={proposalBroken}
         undoUnavailable={undoUnavailable}
+        contactPhone={data.contactPhone}
         onAction={onAction}
-        onOpenConversation={appt.conversationId && onOpenConversation ? () => onOpenConversation(appt.conversationId!) : undefined}
+        onOpenConversation={appt.conversationId && onOpenConversation && canOpenInbox ? () => onOpenConversation(appt.conversationId!) : undefined}
       />
       {rescheduling && (
         <BookingSheet

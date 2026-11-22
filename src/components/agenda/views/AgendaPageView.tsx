@@ -34,13 +34,13 @@ import {
 } from "@/lib/agendaGrid";
 import { isExpiredProposal } from "@/lib/agendaStatus";
 import { buildMonthCells } from "@/lib/agendaMonth";
-import { closedResourcesByDay, syntheticRange } from "@/lib/agendaClosedDays";
+import { closedResourcesByDay, mergeClosedDays, syntheticRange } from "@/lib/agendaClosedDays";
 import { UNDO_TARGETS, type SchedStatus } from "../../../../convex/lib/schedStatus";
 import { buildMonthGrid, buildMonthLines, monthGridDates } from "@/lib/agendaMonthLines";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
 import { DENSITY_HOUR_PX, readPrefs, writePrefs, type AgendaPrefs, type Density } from "@/lib/agendaPrefs";
 import type { ColorScheme, ToneContext } from "@/lib/agendaColors";
-import { buildWeekModel, LANES_DESKTOP, LANES_MOBILE, type WeekResource } from "@/lib/agendaWeekGrid";
+import { buildWeekModel, LANES_DESKTOP, LANES_MOBILE, movedEventStart, type WeekResource } from "@/lib/agendaWeekGrid";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import {
   dateKeyParam,
@@ -57,7 +57,7 @@ import {
   type AgendaView,
   type GroupParam,
 } from "@/lib/agendaViewParams";
-import { shortDateLabel, weekDateKeys, zonedAtMinutes, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
+import { shortDateLabel, weekDateKeys, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
 import { mutationErrorMessage } from "@/lib/errors";
 import { TAB_ROUTES } from "@/lib/routes";
 import { booleanParam } from "@/lib/searchParamState";
@@ -69,6 +69,7 @@ import type { QuickActions } from "./AgendaBlocks";
 import type { ColumnAction } from "./ResourceDayGrid";
 import type { PendingAppointment, PendingConflict, PendingData } from "./PendingQueueView";
 import type { ClosureTarget } from "./ResourceDaySheet";
+import { QuickContactPhone } from "./QuickContactPhone";
 import { useRangeAppointments } from "./useRangeAppointments";
 import { useFillHeight } from "./useFillHeight";
 import { shortcutBlocked } from "@/lib/agendaShortcuts";
@@ -216,10 +217,10 @@ export function AgendaPageView() {
   /** Dias cobertos pelas leituras de Semana e Mês (Mês: semanas inteiras, com os dias vizinhos). */
   const span = useMemo(() => {
     if (week) return { from: weekDates[0], to: weekDates[6] };
-    // Mês: do dia 1 (os dias do mês anterior que aparecem esmaecidos não gastam leitura) até o fim da última semana.
-    if (month) return { from: monthArgs.fromLocalDate, to: monthDates[monthDates.length - 1] };
+    // Mês: semanas inteiras, com os dias vizinhos esmaecidos (a leitura é só dos status da grade, então o teto aguenta).
+    if (month) return { from: monthDates[0], to: monthDates[monthDates.length - 1] };
     return { from: date, to: date };
-  }, [week, month, weekDates, monthDates, monthArgs, date]);
+  }, [week, month, weekDates, monthDates, date]);
 
   // --- dados ---
   const canQuery = access.canView;
@@ -273,10 +274,24 @@ export function AgendaPageView() {
   const activeResources = useMemo(() => (config?.resources ?? []).filter((r) => r.active), [config]);
   const activeServices = useMemo(() => (config?.services ?? []).filter((s) => s.active), [config]);
   const apptsInRange = rangeAppts.data?.appointments;
-  const closedByDay = useMemo(() => {
-    const dates = (week ? weekDates : monthDates).filter((d) => d >= today);
-    return closedResourcesByDay(config?.closures ?? [], activeResources, dates);
-  }, [week, weekDates, monthDates, today, config, activeResources]);
+  // Cadeado de dia fechado: o servidor diz (passado inclusive, reabertura parcial descontada); até chegar, a aproximação
+  // de `getConfig.closures` (hoje em diante, só `closed`).
+  const closedArgs = useMemo(() => {
+    const dates = week ? weekDates : monthDates;
+    return { organizationId, fromLocalDate: dates[0], toLocalDate: dates[dates.length - 1] };
+  }, [week, weekDates, monthDates, organizationId]);
+  const closedDates = week ? weekDates : monthDates;
+  // Só a resposta do intervalo ATUAL vale (nunca a anterior, que esconderia o cadeado ao trocar de semana).
+  const serverClosed = useQuery(api.scheduling.listClosedDays, canQuery && rangeView ? closedArgs : "skip");
+  const closedByDay = useMemo(
+    () =>
+      mergeClosedDays(
+        closedDates,
+        serverClosed?.enabled ? serverClosed : undefined,
+        closedResourcesByDay(config?.closures ?? [], activeResources, closedDates.filter((d) => d >= today))
+      ),
+    [closedDates, today, config, activeResources, serverClosed]
+  );
   const monthRangeData = useMemo(() => {
     if (!month) return undefined;
     if (range?.enabled && rangeAppts.data?.truncated) return range;
@@ -359,8 +374,12 @@ export function AgendaPageView() {
   // Ações rápidas do cartão do passar do mouse (Confirmar, Chegou): a mesma mutation do painel.
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
   const undoStatus = useMutation(api.schedulingMutations.undoAppointmentStatus);
+  const canOpenInbox = perms.can("inbox", "view_own");
   const quick: QuickActions = useMemo(
     () => ({
+      contact: (a, onDone) => (
+        <QuickContactPhone appointmentId={a._id} conversationId={canOpenInbox ? a.conversationId : undefined} onOpenConversation={(id) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`)} onDone={onDone} />
+      ),
       canEdit: access.canEdit,
       onStatus: (appointmentId, to) => {
         const id = appointmentId as Id<"schedAppointments">;
@@ -385,13 +404,14 @@ export function AgendaPageView() {
         );
       },
     }),
-    [access.canEdit, organizationId, setStatus, undoStatus]
+    [access.canEdit, organizationId, setStatus, undoStatus, navigate, canOpenInbox]
   );
 
   // Arrastar um compromisso da equipe na Semana: a mesma mutation da página de compromissos (mantém a duração).
   const rescheduleEvent = useMutation(api.calendar.rescheduleEvent);
-  const moveEvent = (item: InternalItem, localDate: LocalDate, minute: number) => {
-    rescheduleEvent({ eventId: item.id as Id<"calendarEvents">, newStartTime: zonedAtMinutes(localDate, minute, tz) }).then(
+  const moveEvent = (item: InternalItem, localDate: LocalDate, minute: number, pieceDate: LocalDate) => {
+    // Pedaço que continua da véspera: move pela diferença (`startTime + delta`); a duração se mantém.
+    rescheduleEvent({ eventId: item.id as Id<"calendarEvents">, newStartTime: movedEventStart(item, pieceDate, localDate, minute, tz) }).then(
       () => toast.success(t.dense.weekGrid.moved),
       (e) => toast.error(mutationErrorMessage(e, t.dense.weekGrid.moveFailed))
     );

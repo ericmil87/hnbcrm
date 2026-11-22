@@ -43,7 +43,8 @@ export interface AgendaWeekViewProps {
   onInternalClick: (item: InternalItem) => void;
   onOpenDay: (localDate: string) => void;
   /** Arrastar um compromisso da equipe para outro dia e hora (computador). Ausente = sem arrastar. */
-  onMoveEvent?: (item: InternalItem, localDate: string, minute: number) => void;
+  /** `pieceDate` = dia do pedaço pego (difere do dia de início no pedaço que continua da véspera). */
+  onMoveEvent?: (item: InternalItem, localDate: string, minute: number, pieceDate: string) => void;
   className?: string;
 }
 
@@ -52,6 +53,8 @@ const DRAG_THRESHOLD_PX = 5;
 
 interface DragState {
   item: InternalItem;
+  /** Dia (coluna) do pedaço pego. */
+  pieceDate: string;
   /** Distância (px) do ponteiro ao topo do bloco quando o gesto começou. */
   grabOffset: number;
   startX: number;
@@ -111,12 +114,12 @@ export function AgendaWeekView({
   const hourPxRef = useRef(hourPx);
   hourPxRef.current = hourPx;
 
-  const startDrag = useCallback((item: InternalItem, e: ReactPointerEvent<HTMLButtonElement>, blockTop: number) => {
+  const startDrag = useCallback((item: InternalItem, e: ReactPointerEvent<HTMLButtonElement>, blockTop: number, pieceDate: string) => {
     if (e.button !== 0) return;
     const col = e.currentTarget.closest("[data-day]");
     const rect = col?.getBoundingClientRect();
     if (!rect) return;
-    const st: DragState = { item, grabOffset: e.clientY - rect.top - blockTop, startX: e.clientX, startY: e.clientY, active: false, target: null };
+    const st: DragState = { item, pieceDate, grabOffset: e.clientY - rect.top - blockTop, startX: e.clientX, startY: e.clientY, active: false, target: null };
     dragRef.current = st;
     setDrag(st);
   }, []);
@@ -144,7 +147,7 @@ export function AgendaWeekView({
       if (st?.active) {
         justDragged.current = true;
         window.setTimeout(() => (justDragged.current = false), 80);
-        if (commit && st.target) moveRef.current?.(st.item, st.target.localDate, st.target.minute);
+        if (commit && st.target) moveRef.current?.(st.item, st.target.localDate, st.target.minute, st.pieceDate);
       }
     };
     const onUp = () => finish(true);
@@ -165,9 +168,8 @@ export function AgendaWeekView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drag === null]);
 
-  // O pedaço que continua de um dia anterior (cruza a meia-noite) não arrasta: o início real é de outro dia.
-  const canDrag = (e: InternalItem, localDate: string) =>
-    !!onMoveEvent && finePointer && e.source === "event" && !e.allDay && isCalendarItemDraggable(e) && e.startTime >= zonedDayBounds(localDate, tz).start;
+  // O pedaço que continua de um dia anterior também arrasta: o compromisso se move pela diferença (`movedEventStart`).
+  const canDrag = (e: InternalItem) => !!onMoveEvent && finePointer && e.source === "event" && !e.allDay && isCalendarItemDraggable(e);
   const openInternal = (e: InternalItem) => {
     if (justDragged.current) return;
     onInternalClick(e);
@@ -307,7 +309,7 @@ export function AgendaWeekView({
                           widthPx={widthOf(p)}
                           muted={p.item.dimmed}
                           dragging={drag?.active && drag.item.id === ev.id}
-                          onDragStart={canDrag(ev, d.localDate) ? (pe, top) => startDrag(ev, pe, top) : undefined}
+                          onDragStart={canDrag(ev) ? (pe, top) => startDrag(ev, pe, top, d.localDate) : undefined}
                           onOpen={openInternal}
                         />
                       );
@@ -354,7 +356,7 @@ export function AgendaWeekView({
                       className="pointer-events-none absolute inset-x-0.5 z-20 overflow-hidden rounded-md border-2 border-dashed border-brand-500 bg-brand-500/15 px-1 text-xs font-semibold text-text-primary"
                       style={{
                         top: (drag.target.minute / 60) * hourPx,
-                        height: Math.max(((drag.item.endTime - drag.item.startTime) / 60000 / 60) * hourPx, 22),
+                        height: Math.max(((drag.item.endTime - Math.max(drag.item.startTime, zonedDayBounds(drag.pieceDate, tz).start)) / 60000 / 60) * hourPx, 22),
                       }}
                     >
                       {minutesLabel(drag.target.minute)} {drag.item.title}

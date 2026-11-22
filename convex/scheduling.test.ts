@@ -810,3 +810,165 @@ describe("findSlots com acompanhantes (partySize) e a regra de grupo da porta", 
     await expect(bookParty({ serviceId: svc, startTime: at(MON, 11), companions: [{ guestName: "G" }] })).rejects.toThrow();
   });
 });
+
+describe("limites da grade (modo grid, cruzamento, telefone, dias fechados)", () => {
+  const SUN = "2026-06-14";
+  const ana = () => [R(clinic.pros.ana, "Profissional", "Ana")];
+  const list = (p: Person, extra: Record<string, unknown> = {}) =>
+    as(p).query(api.scheduling.listAgendaAppointments, { organizationId: s.orgId, fromLocalDate: MON, toLocalDate: "2026-06-21", mode: "grid", ...extra } as any);
+
+  test("cancelados e remarcados não gastam leitura nem página; sem mode, a Lista continua vendo tudo", async () => {
+    for (let i = 0; i < 6; i++) await book({ start: at(MON, 8 + i), status: i % 2 ? "cancelled" : "scheduled", resources: ana() });
+    await book({ start: at(MON, 15), status: "rescheduled", resources: ana() });
+    await book({ start: at(MON, 16), status: "completed", resources: ana() });
+    await book({ start: at(MON, 17), status: "pending_approval", resources: ana() });
+    const p1 = await list(s.admin, { limit: 3 });
+    assertMatchesReturns(p1, sched.listAgendaAppointments);
+    expect(p1.appointments.map((a) => a.status)).toEqual(["scheduled", "scheduled", "scheduled"]);
+    expect(p1.next).not.toBeNull();
+    const p2 = await list(s.admin, { limit: 3, after: p1.next });
+    expect(p2.appointments.map((a) => a.status)).toEqual(["completed", "pending_approval"]);
+    expect(p2.next).toBeNull();
+    const all = [...p1.appointments, ...p2.appointments];
+    expect(all.map((a) => a.startTime)).toEqual([...all.map((a) => a.startTime)].sort((x, y) => x - y));
+    const plain = await as(s.admin).query(api.scheduling.listAgendaAppointments, { organizationId: s.orgId, fromLocalDate: MON, toLocalDate: "2026-06-21" });
+    expect(plain.appointments).toHaveLength(9);
+  });
+
+  test("agendamento que começou antes do período e cruza o primeiro instante entra na primeira página, sem repetir", async () => {
+    const crossingId = await book({ start: at(SUN, 23), durationMin: 120, localDate: SUN, resources: ana() });
+    await book({ start: at(SUN, 20), durationMin: 60, localDate: SUN, resources: ana() }); // termina antes: fora
+    await book({ start: at(SUN, 23), durationMin: 120, status: "cancelled", localDate: SUN, resources: ana() }); // cancelado: fora
+    await book({ start: at(MON, 9), resources: ana() });
+    await book({ start: at(MON, 10), resources: ana() });
+    const p1 = await list(s.admin, { limit: 1 });
+    expect(p1.appointments.map((a) => a._id)[0]).toBe(crossingId);
+    expect(p1.appointments).toHaveLength(2); // o que cruza + a página de 1
+    const p2 = await list(s.admin, { limit: 1, after: p1.next });
+    const ids = [...p1.appointments, ...p2.appointments].map((a) => a._id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toHaveLength(3);
+    // sem mode: comportamento antigo (nada de cruzamento)
+    const plain = await as(s.admin).query(api.scheduling.listAgendaAppointments, { organizationId: s.orgId, fromLocalDate: MON, toLocalDate: "2026-06-21" });
+    expect(plain.appointments.map((a) => a._id)).not.toContain(crossingId);
+  });
+
+  test("cruzamento respeita view_own e o limite de 8 h antes do período", async () => {
+    // Bia (viewOwn) é o recurso; o de Ana não aparece para ela
+    const mine = await book({ start: at(SUN, 23), durationMin: 120, localDate: SUN, resources: [R(clinic.pros.bia, "Profissional", "Bia")] });
+    await book({ start: at(SUN, 23, 30), durationMin: 90, localDate: SUN, resources: ana() });
+    const own = await list(s.viewOwn);
+    expect(own.appointments.map((a) => a._id)).toEqual([mine]);
+    const all = await list(s.admin);
+    expect(all.appointments).toHaveLength(2);
+    // começou 9 h antes e dura 8 h (480 min): termina 1 h antes do período, fora; nada de varrer mais longe
+    await book({ start: at(SUN, 15), durationMin: 480, localDate: SUN, resources: ana() });
+    expect((await list(s.admin)).appointments).toHaveLength(2);
+  });
+
+  test("modo grid devolve o que a leitura sem modo devolve para os status da grade (paridade) e cruza páginas na ordem do índice", async () => {
+    const statuses = ["scheduled", "confirmed", "pending_approval", "checked_in", "scheduled", "completed", "confirmed"] as const;
+    for (let i = 0; i < statuses.length; i++) await book({ start: at(MON, 9 + (i % 3)), status: statuses[i], resources: ana() });
+    const grid: string[] = [];
+    let after: unknown;
+    for (let guard = 0; guard < 10; guard++) {
+      const p: any = await list(s.admin, { limit: 2, ...(after ? { after } : {}) });
+      grid.push(...p.appointments.map((a: any) => a._id));
+      after = p.next;
+      if (!p.next) break;
+    }
+    const plain = await as(s.admin).query(api.scheduling.listAgendaAppointments, { organizationId: s.orgId, fromLocalDate: MON, toLocalDate: "2026-06-21", limit: 100 });
+    expect(grid).toHaveLength(statuses.length);
+    expect(new Set(grid)).toEqual(new Set(plain.appointments.map((a) => a._id)));
+    expect(new Set(grid).size).toBe(grid.length);
+  });
+
+  test("telefone do contato: detalhe e cartão rápido formatados; sem contato/sem permissão = ausente", async () => {
+    await t.run((ctx) => ctx.db.patch(s.contactId, { phone: "5585988887777" }));
+    const withContact = await book({ start: at(MON, 9), contactId: s.contactId, resources: ana() });
+    const bare = await book({ start: at(MON, 11), resources: ana() });
+    const detail = await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: withContact });
+    assertMatchesReturns(detail, sched.getAppointment);
+    expect(detail!.contactPhone).toBe("+55 (85) 98888-7777");
+    const noContact = await as(s.admin).query(api.scheduling.getAppointment, { appointmentId: bare });
+    assertMatchesReturns(noContact, sched.getAppointment);
+    expect(noContact).not.toHaveProperty("contactPhone");
+    expect(await as(s.admin).query(api.scheduling.getAppointmentContactPhone, { appointmentId: withContact })).toBe("+55 (85) 98888-7777");
+    expect(await as(s.admin).query(api.scheduling.getAppointmentContactPhone, { appointmentId: bare })).toBeNull();
+    // viewOwn não vê o agendamento da Ana: nem o telefone; sem login/outra org também não
+    expect(await as(s.viewOwn).query(api.scheduling.getAppointmentContactPhone, { appointmentId: withContact })).toBeNull();
+    expect(await as(s.outsider).query(api.scheduling.getAppointmentContactPhone, { appointmentId: withContact })).toBeNull();
+    expect(await t.query(api.scheduling.getAppointmentContactPhone, { appointmentId: withContact })).toBeNull();
+    // contato de outra org nunca vaza
+    await t.run((ctx) => ctx.db.patch(withContact, { contactId: undefined }));
+    expect(await as(s.admin).query(api.scheduling.getAppointmentContactPhone, { appointmentId: withContact })).toBeNull();
+    // as listas continuam sem telefone
+    const day = await as(s.admin).query(api.scheduling.listAgendaDay, { organizationId: s.orgId, localDate: MON });
+    for (const a of day.appointments) expect(a).not.toHaveProperty("contactPhone");
+  });
+
+  test("listClosedDays: passado, dia fechado por recurso, reabertura parcial descontada e permissão", async () => {
+    const put = (o: Record<string, unknown>) =>
+      t.run((ctx) => ctx.db.insert("schedExceptions", { organizationId: s.orgId, mode: "closed", reasonCode: "holiday", source: "manual", createdAt: 1, ...o } as any));
+    await put({ localDate: "2026-06-02", resourceId: clinic.rooms.r1 }); // passado (NOW = 12/06)
+    await put({ localDate: "2026-06-16" }); // agenda toda
+    await put({ localDate: "2026-06-17", resourceKind: "room" });
+    await put({ localDate: "2026-06-16", resourceId: clinic.pros.ana, mode: "custom", intervals: [{ startMin: 600, endMin: 660 }] }); // Ana reabre
+    const res = await as(s.admin).query(api.scheduling.listClosedDays, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-07-12" });
+    assertMatchesReturns(res, sched.listClosedDays);
+    const by = Object.fromEntries(res.days.map((d) => [d.localDate, d.closedResources]));
+    expect(by["2026-06-02"]).toBe(1);
+    expect(by["2026-06-16"]).toBe(res.totalResources - 1); // reabertura parcial de Ana
+    expect(by["2026-06-17"]).toBe(3);
+    expect(by["2026-06-18"]).toBeUndefined();
+    await expect(as(s.admin).query(api.scheduling.listClosedDays, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-07-20" })).rejects.toThrow(/no máximo 42 dias/);
+    for (const c of [as(s.none), as(s.outsider), t]) {
+      const r = await c.query(api.scheduling.listClosedDays, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-06-30" });
+      expect(r).toMatchObject({ enabled: false, days: [] });
+      assertMatchesReturns(r, sched.listClosedDays);
+    }
+  });
+  test("sem `contacts: view` o telefone não sai (detalhe nem cartão), mesmo com agenda view_all", async () => {
+    await t.run((ctx) => ctx.db.patch(s.contactId, { phone: "5585988887777" }));
+    const id = await book({ start: at(MON, 9), contactId: s.contactId, resources: ana() });
+    await t.run(async (ctx) => {
+      const m = await ctx.db.get(s.viewAll.memberId);
+      await ctx.db.patch(s.viewAll.memberId, { permissions: { ...m!.permissions!, agenda: "view_all", contacts: "none" } });
+    });
+    const detail = await as(s.viewAll).query(api.scheduling.getAppointment, { appointmentId: id });
+    assertMatchesReturns(detail, sched.getAppointment);
+    expect(detail).not.toBeNull();
+    expect(detail).not.toHaveProperty("contactPhone");
+    expect(await as(s.viewAll).query(api.scheduling.getAppointmentContactPhone, { appointmentId: id })).toBeNull();
+    expect(await as(s.admin).query(api.scheduling.getAppointmentContactPhone, { appointmentId: id })).toBe("+55 (85) 98888-7777");
+  });
+
+  test("faixa antes do período lê só status ativos: cancelados não consomem o teto, e cortar sinaliza", async () => {
+    for (let i = 0; i < 51; i++) await book({ start: at(SUN, 22) + i, durationMin: 20, status: "cancelled", localDate: SUN, resources: ana() });
+    const crossingId = await book({ start: at(SUN, 23), durationMin: 120, localDate: SUN, resources: ana() });
+    const r = await list(s.admin);
+    assertMatchesReturns(r, sched.listAgendaAppointments);
+    expect(r.appointments.map((a) => a._id)).toEqual([crossingId]);
+    expect(r).not.toHaveProperty("crossingCapped");
+    for (let i = 0; i < 51; i++) await book({ start: at(SUN, 22) + i, durationMin: 240, localDate: SUN, resources: ana() });
+    const capped = await list(s.admin);
+    assertMatchesReturns(capped, sched.listAgendaAppointments);
+    expect((capped as { crossingCapped?: boolean }).crossingCapped).toBe(true);
+  });
+
+  test("listClosedDays com teto de exceções: só avalia até o dia anterior ao último lido e devolve completeThrough", async () => {
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 1001; i++) {
+        await ctx.db.insert("schedExceptions", {
+          organizationId: s.orgId, localDate: i < 600 ? "2026-06-02" : i < 1000 ? "2026-06-03" : "2026-06-04", resourceId: clinic.rooms.r1, mode: "closed", reasonCode: "holiday", source: "manual", createdAt: 1,
+        });
+      }
+    });
+    const r = await as(s.admin).query(api.scheduling.listClosedDays, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-06-10" });
+    assertMatchesReturns(r, sched.listClosedDays);
+    expect(r.capped).toBe(true);
+    // a última lida (a 1000ª) é de 03/06: esse dia pode estar incompleto, então só vale até 02/06
+    expect((r as { completeThrough?: string }).completeThrough).toBe("2026-06-02");
+    expect(r.days.map((d) => d.localDate)).toEqual(["2026-06-02"]);
+  });
+});

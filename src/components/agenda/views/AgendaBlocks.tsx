@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { AlertTriangle, Bot, CalendarCheck, CalendarDays, CalendarX, CheckCheck, CheckSquare, Hourglass, UserCheck, UserX, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Popover } from "@/components/ui/Popover";
@@ -99,6 +99,8 @@ function style(box: BlockBox): CSSProperties {
 export interface QuickActions {
   canEdit: boolean;
   onStatus: (appointmentId: string, to: "confirmed" | "checked_in") => void;
+  /** Linha do telefone do contato (e "Abrir conversa") no cartão; ausente = sem ela. Lê só quando o cartão abre. */
+  contact?: (a: GridAppointment, onDone: () => void) => ReactNode;
 }
 
 export interface AppointmentBlockProps {
@@ -240,6 +242,7 @@ export function AppointmentHoverCard({
         <div>
           <dd className="text-text-primary">{a.serviceName}</dd>
         </div>
+        {quick?.contact?.(a, onDone)}
         {place && (
           <div>
             <dt className="sr-only">{card.place}</dt>
