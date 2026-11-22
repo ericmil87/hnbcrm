@@ -274,6 +274,9 @@ function classify(m: TimeMention, st: ClaimState, today: string, n: string): Mat
 // Profissional/sala citado junto do horário
 // ---------------------------------------------------------------------------
 
+/** Oração que cita o profissional para dizer que ele NÃO atende ("o Tato está de folga", "com o Léo não tenho"). */
+const NEGATES_RESOURCE = /\b(?:nao|nem|sem|ninguem|folga|ferias|ausente|ausentes|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|exceto|menos)\b/;
+
 const TITLES = new Set(["dr", "dra", "doutor", "doutora", "sr", "sra", "prof", "profa", "professor", "professora"]);
 const GENERIC_FIRST = new Set(["sala", "consultorio", "cadeira", "box", "maca", "studio", "estudio", "room", "mesa", "equipamento", "quadra", "salao", "espaco", "unidade"]);
 
@@ -410,8 +413,11 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   const resourceNames = st.resourceNames ?? [];
   if (resourceNames.length > 0) {
     for (const s of live) {
-      if (s.skip || s.mentions.length === 0 || /\b(?:nao|nem|sem|ninguem)\b/.test(s.n)) continue;
+      if (s.skip || s.mentions.length === 0) continue;
       for (const cited of citedResources(s.n, resourceNames)) {
+        // "…com outro barbeiro, já que o Tato está de folga": a oração que cita o nome NEGA o vínculo (não, folga, indisponível…).
+        const clausesOfCited = s.n.split(/[,;()—:]/).filter((c) => citedResources(c, resourceNames).includes(cited));
+        if (clausesOfCited.length > 0 && clausesOfCited.every((c) => NEGATES_RESOURCE.test(c))) continue;
         const backed = s.mentions.some((m) => [...st.booked, ...st.existing, ...st.offered].some((k) => k.resources?.includes(cited) === true && sameTime(k, m, today)));
         if (!backed) return { kind: "resource_not_offered", evidence: s.raw.slice(0, EVIDENCE_MAX) };
       }

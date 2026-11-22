@@ -48,6 +48,13 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
   ])("passa: %s", (text, state) => {
     expect(detectUnbackedBookingClaim(text, state)).toBeNull();
   });
+  test("profissional citado só para dizer que NÃO atende (folga) não é promessa; misturado com outro horário dele, é", () => {
+    const st = buildState({ offered: ["2026-11-24 13:00", "2026-11-24 14:00"] });
+    expect(detectUnbackedBookingClaim("Nesse dia à tarde tenho 13h e 14h com outros barbeiros, já que o Tato está de folga.", st)).toBeNull();
+    expect(detectUnbackedBookingClaim("Com o Léo não tenho horário na terça, mas tenho 13h e 14h com outro barbeiro.", st)).toBeNull();
+    expect(detectUnbackedBookingClaim("Tenho 13h com outro barbeiro, e 14h com o Tato.", st)?.kind).toBe("resource_not_offered");
+    expect(detectUnbackedBookingClaim("O Tato está de folga, mas tenho 14h com o Léo.", st)?.kind).toBe("resource_not_offered");
+  });
   test("e 'não tem problema' continua sem esconder afirmação indevida", () => {
     expect(detectUnbackedBookingClaim("Não tem problema, terça às 10h já está marcado!", ofertas)).not.toBeNull();
   });
