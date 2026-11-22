@@ -31,7 +31,12 @@
 import { dayMatches, extractAiTimes, norm, splitSentences, type TimeMention, todayOf } from "./schedTimeText";
 import { localDateOf, minutesOfDay } from "./schedTime";
 
-export type KnownTime = { localDate: string; timeMin: number };
+export type KnownTime = {
+  localDate: string;
+  timeMin: number;
+  /** Profissional/sala que a OFERTA nomeou ao modelo (nome normalizado; só quando o plano o determina). Ausente = nenhum. */
+  resource?: string;
+};
 export type KnownBooking = KnownTime & { status: "pending" | "scheduled" };
 export type ClaimState = {
   now: number;
@@ -44,6 +49,12 @@ export type ClaimState = {
   offered: KnownTime[];
   /** Nomes dos serviços ativos da org: citar um deles torna a frase "de agenda". */
   serviceNames?: string[];
+  /** Um repasse para a equipe foi criado neste turno ou vai na MESMA rodada (`requestHandoff`): "já passei para a equipe" é verdade. */
+  handoff?: boolean;
+  /** Horas do dia (minutos) que o CONHECIMENTO da org cita (turmas fixas, funcionamento): descrever uma delas não é horário inventado. */
+  knowledgeTimes?: number[];
+  /** Nomes (qualquer forma) dos profissionais e salas ATIVOS da org: citar um com um horário só vale se a oferta o nomeou. */
+  resourceNames?: string[];
 };
 export type ClaimViolation = {
   kind: "claim_without_booking" | "confirmed_but_pending" | "time_not_offered" | "reschedule_claim";
