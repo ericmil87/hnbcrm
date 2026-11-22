@@ -605,6 +605,21 @@ export function nearestSlotStart(
   return best ? best.start : null;
 }
 
+/**
+ * A hora que a pessoa clicou na Agenda vem como PRIMEIRA sugestão quando está livre (um horário que começa
+ * exatamente nela, no dia pedido); entre vários lugares para a mesma hora, o mais bem ranqueado. Sem horário
+ * livre na hora exata, a ordem do servidor fica como está.
+ */
+export function promoteRequestedSlot<T extends Pick<OfferedSlot, "startTime" | "localDate">>(
+  slots: readonly T[],
+  input: { timeMin: number | undefined; tz: string; date?: string | null }
+): T[] {
+  if (input.timeMin === undefined) return [...slots];
+  const i = slots.findIndex((s) => (!input.date || s.localDate === input.date) && zonedMinutes(s.startTime, input.tz) === input.timeMin);
+  if (i <= 0) return [...slots];
+  return [slots[i], ...slots.slice(0, i), ...slots.slice(i + 1)];
+}
+
 /** Valor do campo de hora ("HH:mm") para minutos do dia; fora de 0–1439 não pré-preenche. */
 export function timeInputValue(timeMin: number | undefined): string {
   if (timeMin === undefined || !Number.isFinite(timeMin) || timeMin < 0 || timeMin >= 1440) return "";

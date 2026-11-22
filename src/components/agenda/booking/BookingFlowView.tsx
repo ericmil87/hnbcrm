@@ -22,6 +22,7 @@ import {
   longRangePhrase,
   longWhenPhrase,
   nearestSlotStart,
+  promoteRequestedSlot,
   partySizeOf,
   pinnableKinds,
   reviewSubmitLabel,
@@ -239,7 +240,7 @@ function SlotStep({
   }, [showManual]);
   const highlightStart = initialTimeMin !== undefined ? nearestSlotStart(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }) : null;
   const kinds = pinnableKinds(service);
-  const { suggested, others } = splitSuggestions(slots.slots);
+  const { suggested, others } = splitSuggestions(promoteRequestedSlot(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }));
   const canChangeService = !reschedule && services.length > 1;
 
   return (

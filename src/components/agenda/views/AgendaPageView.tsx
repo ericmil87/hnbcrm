@@ -474,7 +474,7 @@ export function AgendaPageView() {
   const columnKeys = grid?.columns.map((c) => c.key) ?? [];
   const activeColumn = mobileColumn && columnKeys.includes(mobileColumn) ? mobileColumn : (columnKeys[0] ?? null);
 
-  const bookingContext = (b: Booking) => bookingContextParts(shortDateLabel(b.date), b.resource?.name);
+  const bookingContext = (b: Booking) => bookingContextParts(shortDateLabel(b.date), b.resource?.name, b.minute);
   const periodText = periodLabel(date, view, isMobile);
   const atToday = week ? weekDates.includes(today) : isToday;
 

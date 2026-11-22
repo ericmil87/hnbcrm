@@ -3,15 +3,15 @@
  * O minuto (do dia, no fuso da org) fica no estado da página até a folha abrir e vira a prop
  * `initialTimeMin` do `BookingSheet` (que só a usa junto de `initialDate`).
  */
-import { zonedDateKey, zonedToday, type LocalDate } from "./agendaZone";
+import { minutesLabel, zonedDateKey, zonedToday, type LocalDate } from "./agendaZone";
 
 export function bookingSheetExtraProps(minute: number | undefined): { initialTimeMin?: number } {
   return minute === undefined ? {} : { initialTimeMin: minute };
 }
 
-/** Texto do seletor de cliente: dia e lugar, sem prometer a hora enquanto a folha não a recebe. */
-export function bookingContextParts(dateLabel: string, resourceName: string | undefined): string {
-  return resourceName ? `${dateLabel} · ${resourceName}` : dateLabel;
+/** Texto do seletor de cliente: dia, hora clicada (quando houve) e lugar: "seg, 14/12 · 15:00 · Sala 1". */
+export function bookingContextParts(dateLabel: string, resourceName: string | undefined, minute?: number): string {
+  return [dateLabel, minute !== undefined ? minutesLabel(minute) : undefined, resourceName].filter(Boolean).join(" · ");
 }
 
 /**

@@ -6,9 +6,11 @@ describe("agendaBooking", () => {
     expect(bookingSheetExtraProps(870)).toEqual({ initialTimeMin: 870 });
     expect(bookingSheetExtraProps(undefined)).toEqual({});
   });
-  it("contexto sem hora", () => {
+  it("contexto: dia, hora clicada (quando há) e lugar", () => {
     expect(bookingContextParts("qui, 26/11", "Sala 2")).toBe("qui, 26/11 · Sala 2");
     expect(bookingContextParts("qui, 26/11", undefined)).toBe("qui, 26/11");
+    expect(bookingContextParts("qui, 26/11", "Sala 2", 900)).toBe("qui, 26/11 · 15:00 · Sala 2");
+    expect(bookingContextParts("qui, 26/11", undefined, 545)).toBe("qui, 26/11 · 09:05");
   });
   it("marcar de novo: mesmo cliente e serviço; sem serviço ou sem cliente, nada", () => {
     expect(rebookTarget({ serviceId: "s1", variantKey: "60", contactId: "c1", leadId: "l1", contactName: " Maria " })).toEqual({
