@@ -13,8 +13,12 @@
 
 export const DEFAULT_MODELS = {
   copilot: "kimi-k2.7-code",
-  attendant: "deepseek-v4-flash",
-  classify: "deepseek-v4-flash",
+  // 22/11/2026: `deepseek-flash-latest` (só OpenRouter) no lugar do
+  // `deepseek-v4-flash`, que em simulação com modelo real mandou raciocínio
+  // interno ao cliente em 3 de 245 mensagens (o novo: 0 de 918). Rede de
+  // segurança da cadeia: `MODEL_FALLBACKS`. O id antigo é `RETIRED_MODEL_ALIASES`.
+  attendant: "deepseek-flash-latest",
+  classify: "deepseek-flash-latest",
   complex: "deepseek-v4-pro",
   // Passe de visão: melhor em acurácia (7/7), latência (3,8 s) E custo
   // (495 tokens de imagem, 5,6x menos que os demais) na medição de 2026-08-27.
@@ -112,6 +116,41 @@ export const OPENROUTER_ONLY_MODELS: readonly string[] = [
   "deepseek-v4-flash-0731",
   "deepseek-flash-latest",
 ];
+
+// Modelos APOSENTADOS (22/11/2026): continuam em MODEL_EQUIVALENCE, OPENCODE_GO_MODELS,
+// MODEL_CAPABILITIES e MODEL_PRICES (runs antigas seguem precificadas, ids de
+// provider seguem canonicalizados), mas NÃO são oferecidos na tela de IA e
+// `setModels` recusa-os como escolha nova. Org com o id ainda gravado segue
+// funcionando: `resolveOrgRoutes` o resolve pelo alias abaixo.
+export const RETIRED_MODEL_ALIASES: Readonly<Record<string, string>> = {
+  "deepseek-v4-flash": "deepseek-flash-latest",
+  "deepseek-v4-flash-0731": "deepseek-flash-latest",
+};
+
+export function isRetiredModel(id: string): boolean {
+  return Object.prototype.hasOwnProperty.call(RETIRED_MODEL_ALIASES, id);
+}
+
+/** Id efetivo em tempo de execução: o antigo vira o alvo do alias; o resto passa igual. */
+export function resolveRetiredModel(id: string): string {
+  return isRetiredModel(id) ? RETIRED_MODEL_ALIASES[id] : id;
+}
+
+// Rede de segurança de MODELO no modo plataforma (depois dos elos do próprio
+// modelo): o padrão só existe no OpenRouter, então um 429/5xx ali deixaria a
+// cadeia com elo único. O `deepseek-v4-flash` tem elo no OpenCode Go (rede
+// independente) e no OpenRouter. Só entra como ÚLTIMO recurso, nunca como
+// escolha. Não se aplica a BYO (a org paga a própria conta, sem fallback).
+export const MODEL_FALLBACKS: Readonly<Record<string, readonly string[]>> = {
+  "deepseek-flash-latest": ["deepseek-v4-flash"],
+};
+
+// BYO com chave que NÃO é do OpenRouter: o alias `deepseek-flash-latest` não
+// existe lá (o id seguiria cru e viraria 4xx). Usa o modelo equivalente que o
+// provedor conhece, o mesmo que a org usava antes da troca do padrão.
+export const BYO_NON_OPENROUTER_MODEL: Readonly<Record<string, string>> = {
+  "deepseek-flash-latest": "deepseek-v4-flash",
+};
 
 // Ids confirmed present on OpenCode Go's /v1/models (identical to canonical).
 // Lista completa (31 ids) conferida contra o GET /v1/models da API VIVA em
