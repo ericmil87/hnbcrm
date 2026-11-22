@@ -337,13 +337,20 @@ async function writeRow(ctx: MutationCtx, c: Case, existing: Doc<"schedInterpret
 }
 
 /** Proposta de 1 toque nova: as abertas mais velhas do MESMO ato na conversa envelhecem (a equipe vê só a atual). */
-async function supersedeOlderOpen(ctx: MutationCtx, c: Case, act: string, keep: Id<"schedInterpretations">): Promise<void> {
+async function supersedeOlderOpen(ctx: MutationCtx, c: Case, act: string, keep: Id<"schedInterpretations">, parsed: Parsed): Promise<void> {
   const open = await ctx.db
     .query("schedInterpretations")
     .withIndex("by_conversation_and_status", (q) => q.eq("conversationId", c.conversation._id).eq("status", "open"))
     .take(SUGGESTION_SWEEP);
   for (const r of open) {
-    if (r._id !== keep && r.act === act && r.organizationId === c.org._id) await ctx.db.patch(r._id, { status: "expired", reason: "substituida" });
+    if (r._id === keep || r.act !== act || r.organizationId !== c.org._id) continue;
+    // Outro horário completo = outra marcação (uma segunda confirmação legítima): a anterior continua aberta. Só o MESMO horário (ou
+    // sugestão sem horário) envelhece.
+    const rp = r.parsed as Parsed;
+    const sameSlot = rp.localDate === parsed.localDate && rp.timeMin === parsed.timeMin;
+    const bothComplete = rp.localDate !== undefined && rp.timeMin !== undefined && parsed.localDate !== undefined && parsed.timeMin !== undefined;
+    if (bothComplete && !sameSlot) continue;
+    await ctx.db.patch(r._id, { status: "expired", reason: "substituida" });
   }
 }
 
@@ -431,7 +438,7 @@ async function propose(
 ): Promise<Id<"schedInterpretations">> {
   const { fromStart, bellOnly, ...rowPart } = p;
   const id = await writeRow(ctx, c, existing, { ...rowPart, decision: "proposed", status: "open" });
-  await supersedeOlderOpen(ctx, c, p.act, id);
+  await supersedeOlderOpen(ctx, c, p.act, id, p.parsed);
   await notifySuggestion(ctx, c, { interpretationId: id, act: p.act, parsed: p.parsed, reason: p.reason, fromStart, bellOnly });
   return id;
 }
@@ -522,11 +529,22 @@ async function findRecentInterpretation(ctx: MutationCtx, c: Case): Promise<Doc<
  * Em todos os casos o horário novo vira PROPOSTA de 1 toque; a correção nunca cria nem remarca sozinha (a "correção" não tem
  * proposta do cliente por trás, então as quatro condições do `auto` não valem para ela).
  */
-async function planCorrection(ctx: MutationCtx, c: Case, recent: Doc<"schedInterpretations">): Promise<Plan | null> {
+/** "também", "além", "mais um", "outra sessão": o cliente está pedindo um horário ADICIONAL, não trocando. */
+const ADDITIVE_RE = /\b(tambem|alem|mais um|mais uma|outra sessao|outro horario|outra consulta|outro atendimento)\b/;
+
+async function planCorrection(ctx: MutationCtx, c: Case, recent: Doc<"schedInterpretations">, collection: ReturnType<typeof collectProposals>, lite: ReadonlyArray<MessageLite>): Promise<Plan | null> {
+  // Só é correção se a mensagem PARECE correção ("ops", "corrigindo", "desconsidera", "desculpa, terça 14h"…). Outro dia/hora sozinho
+  // ("Confirmado quarta 10h") é confirmação nova: a leitura anterior fica intacta.
+  if (!looksLikeCorrection(c.message.content)) return null;
   // "Corrigindo: quarta 10h": o parser lê "Palavra:" no começo como transcrição e bloqueia a mensagem; a etiqueta sai antes de ler.
   const text = c.message.content.replace(/^\s*(corrigindo|corre[cç][aã]o|corrigido|ops|opa|desculpa|desculpe|desculpas|perd[aã]o|errei|me confundi|na verdade)\s*[:,\-–.!]*\s*/i, "");
   const rp = recent.parsed as Parsed;
   const mentions = extractDateTimeMentions(text, { now: c.message.createdAt, tz: c.tz });
+  // O cliente PEDIU o horário novo depois da leitura anterior ("quero marcar quarta às 10h também"): é confirmação nova (adicional),
+  // não correção; "também/além/mais um" reforça (basta o mesmo dia).
+  const clientAsked = collection.candidates.filter((x) => x.by === "cliente" && x.at > recent.createdAt - 1);
+  const additive = lite.some((m) => m.direction === "inbound" && m.senderType === "contact" && m.createdAt > recent.createdAt - 1 && ADDITIVE_RE.test(textOfMessage(m).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase()));
+  if (mentions.some((m) => m.localDate !== undefined && clientAsked.some((x) => x.localDate === m.localDate && (m.timeMin === undefined || x.timeMin === m.timeMin || additive)))) return null;
   const repeats = mentions.some((m) => m.localDate === rp.localDate && m.timeMin === rp.timeMin && m.localDate !== undefined);
   if (repeats) return null;
   const differs = mentions.filter((m) => (m.localDate !== undefined && m.localDate !== rp.localDate) || (m.timeMin !== undefined && m.timeMin !== rp.timeMin));
@@ -635,7 +653,7 @@ export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messa
   const parsed = parseConfirmation<string>(text, { now: c.message.createdAt, tz: c.tz, services: refs, proposal: collection.lastClient });
   // Correção do que ESTA via fez há pouco (remarcar/cancelar têm o fluxo próprio; confirmação IGUAL à anterior não é correção).
   if (recent && parsed.act !== "remarcou" && parsed.act !== "cancelou") {
-    const correction = await planCorrection(ctx, c, recent);
+    const correction = await planCorrection(ctx, c, recent, collection, lite);
     if (correction?.kind === "propose") {
       await propose(ctx, c, null, correction);
       return { status: "final", reason: correction.reason };

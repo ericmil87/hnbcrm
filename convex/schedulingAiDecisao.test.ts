@@ -12,6 +12,7 @@ import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { JUDGE_SYSTEM } from "./lib/schedClaimJudge";
 import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
+import { toolBudgetNudgeTail } from "./attendant";
 import { type AiSeed, AI_NOW, seedAiAgenda } from "./lib/schedAiTestSeed.test-helper";
 import * as ai from "./schedulingAi";
 
@@ -464,6 +465,30 @@ describe("D3: contexto da agenda (decisões recentes) e limite de tool calls", (
     // nada foi executado na rodada descartada: sem ofertas gravadas
     const st = await t.run((ctx) => ctx.db.query("schedConversationState").first());
     expect(st?.offers ?? []).toHaveLength(0);
+  });
+
+  test("org SEM o módulo de agenda: a regeneração acontece uma vez, com aviso neutro (sem 'consulta de horários'); estourar de novo falha como antes", async () => {
+    const s = await seedAiAgenda(t, { scheduling: false });
+    const many: Value = { tools: Array.from({ length: 7 }, () => ({ name: "updateThisLeadInfo", args: { notes: "x" } })) };
+    const m = stubLlm([many, reply("Olá! Como posso ajudar?")]);
+    await turn(s, s.ana, "Oi");
+    expect(m.attendantCalls()).toBe(2);
+    const nudge = JSON.stringify(m.requests[1].messages.at(-1));
+    expect(nudge).toContain("pediu 7 ferramentas de uma vez e foi DESCARTADA sem executar nada");
+    expect(nudge).not.toMatch(/consulta de horários|horários/);
+    expect(await lastReply(s.ana)).toBe("Olá! Como posso ajudar?");
+    // Estourar de novo: falha como antes (nada pela metade), também sem agenda.
+    const s2 = await seedAiAgenda(t, { scheduling: false });
+    stubLlm([many]);
+    await turn(s2, s2.ana, "Oi");
+    expect((await outbound(s2.ana)).length).toBe(0);
+    const runs = await t.run(async (ctx) => (await ctx.db.query("agentRuns").collect()).filter((r) => r.kind === "attendant" && r.organizationId === s2.organizationId));
+    expect(runs.some((r) => r.status === "error")).toBe(true);
+  });
+
+  test("com agenda o aviso continua falando da consulta de horários", () => {
+    expect(toolBudgetNudgeTail(true)).toContain("consulta de horários SOZINHA");
+    expect(toolBudgetNudgeTail(false)).not.toContain("horários");
   });
 
   test("estourou de novo depois da regeneração: falha como antes (a fila repete; nada pela metade)", async () => {
