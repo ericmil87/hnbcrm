@@ -103,10 +103,17 @@ const foldText = (s: string) =>
 /** "Queria marcar segunda 10h" é intenção, não passado: o parser lê "queria" como pretérito. */
 export function prepClientText(text: string): string {
   return text
+    // "Minha amiga me falou de vocês, pode ser quinta 10h?": o relato de quem indicou vira "relato" no parser e derruba o pedido; sai a oração do relato.
+    .replace(/^[^,.!?]*\b(?:me (?:falou|disse|indicou|recomendou|passou|deu)|disse que|falou que|indicou|recomendou|vim por indica[cç][aã]o)\b[^,.!?]*[,.]\s*(?=\S)/i, "")
+    // "quinta às 10h funciona pra mim": aceite do horário (o parser leria "funciona" como expediente).
+    .replace(/\b(?:funciona|funcionam|serve|servem)(?: (?:pra|para) (?:mim|nós|nos|a gente))?(?=\s*[?!.,]|\s*$)/gi, "pode ser")
     .replace(/\b(queria|gostaria)\b/gi, "quero")
     // "Vou querer agendar quinta 10h", "vou marcar quinta 10h": o parser lê "vou" como plano de outra pessoa; do cliente é pedido.
     .replace(/\bvou querer\b/gi, "quero")
-    .replace(/\bvou (agendar|marcar)\b/gi, "quero $1");
+    // "vou marcar a reunião quinta 10h" não é pedido: só com o dia/hora logo depois do verbo.
+    .replace(/\bvou (agendar|marcar)(?=\s+(?:para |pra |na |no |dia |as |às )?(?:segunda|ter[cç]a|quarta|quinta|sexta|s[aá]bado|domingo|amanh[aã]|hoje|\d))/gi, "quero $1")
+    // O parser lê "posso marcar" como plano da equipe; do cliente é pedido.
+    .replace(/\b(?:posso|podemos) (agendar|marcar|reservar)\b/gi, "quero $1");
 }
 
 /**
@@ -123,6 +130,8 @@ const INTENT_RE =
 /** Parentesco, terceiros, bichos: o horário não é do cliente. */
 const THIRD_PARTY_RE =
   /\b(mae|pai|filh[oa]s?|marido|esposo|esposa|mulher|sogr[oa]|vo|vovo|vovos|avo|avos|neto|neta|irma|irmao|primo|prima|tio|tia|sobrin\w+|menino|menina|crianca|bebe|namorad[oa]|amig[oa]|colega|cunhad[oa]|genro|nora|vizinh[oa]|cachorro|cachorra|gato|gata|pet|cadela|aqui e (o|a)|uso o (whats|zap|whatsapp))\b/;
+/** "Aqui é o João" / "uso o whats da minha mãe": quem escreve pode não ser o cliente (só vale para criar sozinho). */
+const INTRO_RE = /\b(aqui e (o|a)|uso o (whats|zap|whatsapp))\b/;
 /** Assunto que não é "marcar atendimento para mim" (entrega, funcionamento, pagamento, evento, trabalho). */
 const SUBJECT_DENY_RE =
   /\b(entreg\w*|motoboy|entregador|retirar|retirada|buscar|instalar|instalacao|tecnico|visita|abrem|abre|abertos?|funcionando|funcionam|atendem|recebem|palestra|evento|pix|pagamento|pagar|parcela|comprovante|fica pronto|ficam prontos|pronto|apresentar|apresentacao|catalogo|reuniao|representante|mercadoria|encomenda|equipe|funcionari[oa]|entrevista|emprego|vaga de|contrato|assinar|resultado|devolucao|troca|call|conserto|vistoria|orcamento)\b/;
@@ -140,7 +149,7 @@ const PRA_WHEN_RE = /\b(pra|pro|para)\s+(?:o |a |as |os |dia )?(?:segunda|terca|
 const TIME_TOKEN_RE = /\d{1,2}\s?(?:h|hs|horas)(?:\s?\d{2})?\b|\d{1,2}:\d{2}\b/g;
 /** Palavras que podem vir DEPOIS do horário sem mudar o assunto. */
 const TRAILING_FILLER = new Set([
-  "pode", "ser", "da", "serve", "tem", "vaga", "tudo", "bem", "ne", "ok", "por", "favor", "pf", "obrigado", "obrigada", "valeu", "tambem", "mesmo", "entao", "ta", "certo",
+  "pode", "ser", "da", "serve", "funciona", "otimo", "perfeito", "beleza", "bom", "boa", "tem", "vaga", "tudo", "bem", "ne", "ok", "por", "favor", "pf", "obrigado", "obrigada", "valeu", "tambem", "mesmo", "entao", "ta", "certo",
   "ai", "ai", "pra", "mim", "pode", "consegue", "conseguem", "voces", "vc", "vcs", "ne", "oi", "ola", "e", "ou", "a", "as", "o", "os", "de", "do", "da", "no", "na", "em", "um", "uma", "hein", "kkk",
 ]);
 
@@ -153,7 +162,7 @@ export function clientBookingIntent(text: string, serviceNames: ReadonlyArray<st
   if (text.length > MAX_CLIENT_INTENT_CHARS) return false;
   const f = foldText(text);
   if (!INTENT_RE.test(f)) return false;
-  if (THIRD_PARTY_RE.test(f) || SUBJECT_DENY_RE.test(f) || INJECTION_RE.test(f) || SELF_CHANGE_RE.test(text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return false;
+  if (thirdPartyBeneficiary(text, serviceNames) || INTRO_RE.test(f) || SUBJECT_DENY_RE.test(f) || INJECTION_RE.test(f) || SELF_CHANGE_RE.test(text.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, ""))) return false;
   const services = serviceNames.map((n) => foldText(n)).filter((n) => n.length >= 3);
   const mentionsService = (s: string) => services.some((n) => new RegExp(`(?<![a-z0-9])${escapeRe(n)}s?(?![a-z0-9])`).test(s));
   // "pra <algo>" que não é dia/hora nem "pra mim": finalidade ou outra pessoa.
@@ -188,31 +197,69 @@ export const mentionsThirdParty = (text: string): boolean => THIRD_PARTY_RE.test
 
 /**
  * ASSUNTO da mensagem do cliente quando ele NÃO está pedindo atendimento para si (rodada 2: "Vocês abrem segunda às 10h?" +
- * "Confirmado segunda 10h" virava sugestão; "minha mãe pode ir quinta às 10h?" também). Uma proposta com este assunto não
- * é proposta de marcar: nem sugere (sugestão indevida é ruído que ensina a equipe a ignorar a fila) nem cria.
+ * "Confirmado segunda 10h" virava sugestão). Funcionamento e entrega/pagamento: a proposta não é pedido (nem sugere, nem cria).
+ * Terceiro: o BENEFICIÁRIO do horário é outra pessoa; vira sugestão ROTULADA ("para outra pessoa: confira o nome"), nunca criação.
+ * Menção a parente ou vocativo NÃO é terceiro ("meu marido me indicou, quero marcar…", "oi amiga, tem quinta 10h?").
  */
 export type ClientSubject = "funcionamento" | "entrega_pagamento" | "terceiro";
-/** Funcionamento/expediente/abertura ("abre" só na pergunta; "abre um horário pra mim" é pedido). */
+const REL =
+  "mae|pai|filh[oa]s?|marido|esposo|esposa|mulher|sogr[oa]|vo|vovo|avo|neto|neta|irma|irmao|primo|prima|tio|tia|sobrin\\w+|menino|menina|crianca|bebe|namorad[oa]|noiv[oa]|amig[oa]|colega|cunhad[oa]|genro|nora|vizinh[oa]|cachorro|cachorra|gato|gata|pet|cadela|cavalo|coelho|periquito|papagaio|passarinho";
+/** Vocativo no começo ou no fim ("oi amiga,", "Tia, tem vaga…", "…, meninas?"): quem fala COM a equipe, nunca o beneficiário. */
+function stripVocatives(text: string): string {
+  return text
+    .replace(/^\s*(?:(?:oi+|ola|opa|e ai|bom dia|boa tarde|boa noite)[\s,!.]*)?(?:amig[oa]s?|tia|tio|meninas?|meninos?|gente|querid[oa]s?|moça|moço|doutor[a]?|dra|dr)\b[\s,!.:]*/i, "")
+    .replace(/[,!]\s*(?:amig[oa]s?|tia|tio|meninas?|meninos?|gente|querid[oa]s?)\s*[?!.]*\s*$/i, "");
+}
+/** Destino do horário: "pro/pra/para (o/a) (meu/minha) <parente>" ("é pro meu filho", "pra minha esposa"). */
+const THIRD_DEST_RE = new RegExp(`\\b(?:pro|pra|para|prao)\\s+(?:o |a |os |as )?(?:meu |minha |meus |minhas |seu |sua )?(?:${REL})\\b`);
+/** O parente é o SUJEITO de ir/fazer ("minha mãe pode ir quinta", "meu pai precisa de um horário"); "vai me levar", "me acompanha" não. */
+const THIRD_SUBJECT_RE = new RegExp(`\\b(?:meu|minha|meus|minhas) (?:${REL})\\s+(?:\\w+\\s+){0,2}?(?:pode ir|podem ir|pode vir|pode comparecer|pode passar|quer|querem|precisa|precisam|gostaria|vai ir|vai fazer|vai passar|vai comparecer|tem que ir|precisa ir|consegue ir)\\b`);
+/** O parente é o OBJETO do pedido ("consegue encaixar minha mãe segunda 10h?", "marca meu marido quinta"). */
+const THIRD_OBJECT_RE = new RegExp(`\\b(?:encaixar|encaixa|marcar|marca|agendar|agenda|atender|atende|colocar|coloca|reservar|reserva|incluir|inclui)\\s+(?:o |a |os |as )?(?:meu|minha|meus|minhas) (?:${REL})\\b`);
+/** "Minha mãe vai segunda 10h": o parente vai (e não "vai me levar"). */
+const THIRD_GOES_RE = new RegExp(`\\b(?:meu|minha|meus|minhas) (?:${REL}) vai (?:(?:na|no|dia|as|a)\\s+)?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|\\d)`);
+const PRA_MIM_RE = /\b(?:so |apenas )?(?:pra|para) (?:mim|eu)\b/;
+/** Nome próprio como beneficiário (texto ORIGINAL, com maiúscula): "marca pra Ana", "pode ser quinta 10h pro João?", "o Pedrinho pode ir quinta?". */
+const NOT_A_NAME = new Set(["Dra", "Dr", "Doutor", "Doutora", "Segunda", "Terça", "Terca", "Quarta", "Quinta", "Sexta", "Sábado", "Sabado", "Domingo", "Hoje", "Amanhã", "Amanha", "Mim", "Eu", "Voce", "Você", "Vocês", "Voces", "Equipe", "Clínica", "Clinica", "Consulta", "Dona", "Seu"]);
+const NAME_DEST_RE = /\b(?:pro|pra|para)\s+(?:o\s+|a\s+)?([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\p{L}]+)/gu;
+const NAME_SUBJECT_RE = /\b(?:o|a)\s+([A-ZÁÉÍÓÚÂÊÔÃÕÇ][\p{L}]+)\s+(?:pode ir|podem ir|pode vir|vai ir|vai fazer|quer|precisa|gostaria de ir)\b/gu;
+/** O horário é para OUTRA pessoa (o beneficiário, não uma simples menção). */
+export function thirdPartyBeneficiary(text: string, serviceNames: ReadonlyArray<string> = []): boolean {
+  const t = stripVocatives(text);
+  const f = foldText(t);
+  if (PRA_MIM_RE.test(f)) return false; // "pra mim" vence
+  if (THIRD_DEST_RE.test(f) || THIRD_SUBJECT_RE.test(f) || THIRD_OBJECT_RE.test(f) || THIRD_GOES_RE.test(f)) return true;
+  const services = new Set(serviceNames.map((n) => n.toLowerCase()));
+  for (const re of [NAME_DEST_RE, NAME_SUBJECT_RE]) {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(t)) !== null) if (!NOT_A_NAME.has(m[1]) && !services.has(m[1].toLowerCase())) return true;
+  }
+  return false;
+}
+/** Funcionamento/expediente/abertura ("abre" só na pergunta; "abre um horário pra mim" é pedido; "funciona pra mim" é aceite). */
 const FUNCTIONING_RE =
-  /\b(abrem|abre(?! (um|uma|uns|vaga|horario|agenda|espaco))|abrir|abrimos|fecham|fecha (as|aos?|na|no|em)|fechamos|funciona|funcionam|funcionando|funcionamento|expediente|horario de (funcionamento|atendimento)|(estao|esta|ta|tao) abert[oa]s?|trabalham|trabalhando|plantao)\b/;
-/** Entrega, pagamento, evento, trabalho: o horário citado não é de atendimento do cliente. */
-const DELIVERY_PAY_RE =
-  /\b(entreg\w*|motoboy|entregador|encomenda|mercadoria|pix|pagamento|pagar|pago|parcela|comprovante|boleto|fica pronto|ficam prontos|retirar|retirada|palestra|evento|emprego|entrevista)\b/;
-/** Pedido explícito de atendimento: com ele, funcionamento/entrega/pagamento na mesma frase não derrubam a proposta (só terceiro derruba). */
-const OWN_BOOKING_VERB_RE = /\b(marcar|agendar|reservar|remarcar|consulta|sessao)\b/;
-/** Terceiro SEM "aqui é o/a" (apresentação: "oi, aqui é o João, quero marcar…") nem "uso o whats". */
-const THIRD_BLOCK_RE =
-  /\b(mae|pai|filh[oa]s?|marido|esposo|esposa|mulher|sogr[oa]|vo|vovo|vovos|avo|avos|neto|neta|irma|irmao|primo|prima|tio|tia|sobrin\w+|menino|menina|crianca|bebe|namorad[oa]|amig[oa]|colega|cunhad[oa]|genro|nora|vizinh[oa]|cachorro|cachorra|gato|gata|pet|cadela)\b/;
-export function clientSubjectBlock(text: string): ClientSubject | undefined {
-  const f = foldText(text);
-  if (THIRD_BLOCK_RE.test(f)) return "terceiro";
-  const own = OWN_BOOKING_VERB_RE.test(f);
-  if (!own && FUNCTIONING_RE.test(f)) return "funcionamento";
-  if (!own && DELIVERY_PAY_RE.test(f)) return "entrega_pagamento";
+  /\b(abrem|abre(?! (um|uma|uns|vaga|horario|agenda|espaco))|abrir|abrimos|fecham|fecha (as|aos?)|fechamos|funciona|funcionam|funcionando|funcionamento|expediente|horario de (funcionamento|atendimento)|(estao|esta|ta|tao) abert[oa]s?|trabalham|trabalhando|plantao)\b/;
+/** "quinta às 10h funciona pra mim", "…, funciona?": é aceite do horário, não pergunta de expediente. */
+const FUNCTIONS_FOR_ME_RE = /\b(?:funciona|funcionam|serve|servem)(?: (?:pra|para) (?:mim|nos|a gente|mim mesmo))?\s*$|\b(?:funciona|funcionam) (?:pra|para) (?:mim|nos|a gente)\b/;
+/** Entrega e afins: nunca é atendimento do cliente, mesmo com intenção na frase. */
+const DELIVERY_RE = /\b(entreg\w*|motoboy|entregador|encomenda|mercadoria|fica pronto|ficam prontos|retirar|retirada|palestra|evento|emprego|entrevista)\b/;
+/** Pagamento: só derruba sem intenção de marcar na mesma mensagem ("posso ir quinta 10h? pago no pix" é pedido). */
+const PAYMENT_RE = /\b(pix|pagamento|pagar|pago|parcela|comprovante|boleto)\b/;
+/** Pedido explícito de atendimento para si na mesma mensagem: com ele, funcionamento e pagamento não derrubam a proposta. */
+const OWN_BOOKING_VERB_RE = /\b(marcar|agendar|reservar|remarcar|consulta|sessao|fecha na|fecha no|fecha em|fecha pra|fecha para|fechar)\b/;
+export function clientSubjectBlock(text: string, serviceNames: ReadonlyArray<string> = []): ClientSubject | undefined {
+  if (thirdPartyBeneficiary(text, serviceNames)) return "terceiro";
+  const f = foldText(stripVocatives(text));
+  if (DELIVERY_RE.test(f)) return "entrega_pagamento";
+  const own = OWN_BOOKING_VERB_RE.test(f) || INTENT_RE.test(f) || PRA_MIM_RE.test(f);
+  const fn = f.replace(FUNCTIONS_FOR_ME_RE, " ");
+  if (!own && FUNCTIONING_RE.test(fn)) return "funcionamento";
+  if (!own && PAYMENT_RE.test(f)) return "entrega_pagamento";
   return undefined;
 }
 /** A PRÓPRIA mensagem do humano diz que o horário é de outra pessoa ("pro seu filho", "sua mãe"). */
-const HUMAN_THIRD_RE = new RegExp(`\\b(seu|sua|teu|tua|dele|dela|pro|pra|para)\\s+(?:o |a |os |as )?(?:${THIRD_BLOCK_RE.source.slice(3, -3)})\\b`);
+const HUMAN_THIRD_RE = new RegExp(`\\b(seu|sua|teu|tua|dele|dela|pro|pra|para)\\s+(?:o |a |os |as )?(?:${REL})\\b`);
 export const humanSpeaksOfThirdParty = (text: string): boolean => HUMAN_THIRD_RE.test(foldText(text));
 export const looksInjected = (text: string): boolean => INJECTION_RE.test(foldText(text));
 /** A resposta do cliente aceita a oferta que veio antes ("pode ser", "sim", "quero"). */
@@ -222,10 +269,23 @@ export const clientAccepts = (text: string): boolean => {
 };
 export const humanRefuses = (text: string): boolean => REFUSAL_RE.test(foldText(text));
 /** Palavras-chave de correção ("ops", "corrigindo", "na verdade", "não vai dar"): usadas só para olhar a conversa. */
-export const CORRECTION_RE = /\b(ops|corrigindo|correcao|na verdade|errei|errado|desconsidere|mudou|remarc\w*|troca\w*)\b/;
+export const CORRECTION_RE = /\b(ops|corrigindo|correcao|corrigido|na verdade|errei|errad[oa]|engano|desconsider\w*|ignor[ae]\w*|me confundi|nao era (pra|para) (voce|vc|ti)|conversa errada|mudou|remarc\w*|troca\w*)\b/;
+/** Educação ("desculpa, terça 14h"): só vale como correção com dia/hora na mesma mensagem ("desculpa a demora" não custa nada). */
+const POLITE_RE = /\b(opa|desculp[ae]\w*|perd[aã]o)\b/;
+/** Retratação sem horário novo ("desconsidera, mandei na conversa errada"): desfaz a leitura anterior e não propõe nada. */
+export const RETRACT_RE = /\b(desconsider\w*|engano|conversa errada|mensagem errada|mandei errado|nao era (pra|para) (voce|vc|ti)|ignor[ae] (a|essa|esta|isso))\b/;
+/** Palavras que, SEM horário novo, bastam para tratar a mensagem como correção ("opa", "desculpa" sozinhos não: "desculpa a demora"). */
+const STRONG_CORRECTION_RE = /\b(ops|corrigindo|correcao|corrigido|na verdade|errei|errad[oa]|me confundi)\b/;
 const CHANGE_RE = /\b(melhor|entao|mudou|troc\w*)\b|\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b[^.?!]{0,20}\bnao\b/;
 const HOUR_RE = /\b\d{1,2}\s?(h|hs|horas)\b|\b\d{1,2}:\d{2}\b/;
-export const hasCorrectionWords = (text: string): boolean => CORRECTION_RE.test(foldText(text));
+export const hasCorrectionWords = (text: string): boolean => STRONG_CORRECTION_RE.test(foldText(text)) || RETRACT_RE.test(foldText(text));
+/** O CLIENTE recusa ou muda depois da confirmação ("não, quinta não dá", "desisti", "pode cancelar"). Só rebaixa para sugestão. */
+const CLIENT_NEG_RE = /\b(nao|nunca|infelizmente|desisti|cancel\w*|mudei|melhor|na verdade)\b/;
+export function clientRetracts(text: string): boolean {
+  const f = foldText(text);
+  return f.length <= 160 && CLIENT_NEG_RE.test(f) && (DAY_HOUR_MARK_RE.test(f) || /\b(cancel\w*|desisti|mudei)\b/.test(f));
+}
+export const isRetraction = (text: string): boolean => RETRACT_RE.test(foldText(text));
 /**
  * Pode ser uma correção do que foi dito há pouco: palavra de correção explícita, ou mudança ("não", "melhor", "então")
  * junto de uma hora. Barato e sem banco: é o que deixa o gancho olhar a conversa (sem isso "Atendemos das 8h às 18h" ou
@@ -233,7 +293,7 @@ export const hasCorrectionWords = (text: string): boolean => CORRECTION_RE.test(
  */
 export function looksLikeCorrection(text: string): boolean {
   const f = foldText(text);
-  return CORRECTION_RE.test(f) || (CHANGE_RE.test(f) && HOUR_RE.test(text.toLowerCase()));
+  return CORRECTION_RE.test(f) || (POLITE_RE.test(f) && DAY_HOUR_MARK_RE.test(f)) || (CHANGE_RE.test(f) && HOUR_RE.test(text.toLowerCase()));
 }
 const WEAK_REPLY_RE = /^(ok|okay|sim|beleza|blz|combinado|fechado|certo|perfeito|show|pode ser|confirmado|tudo certo|tá bom|ta bom)$/;
 /** Resposta curta ("ok", "👍", "sim"): o pré-filtro puro as barra, o gancho as deixa chegar ao início (que confere a conversa). */
@@ -301,16 +361,15 @@ export function collectProposals(args: {
   const refusals = before.filter((m) => m.direction === "outbound" && m.senderType === "human" && humanRefuses(textOfMessage(m))).map((m) => m.createdAt);
   const refusedAfter = (at: number) => refusals.some((r) => r > at);
 
-  // Parentesco/terceiro nas últimas mensagens do cliente ("meu filho pode ir… e eu, pode ser?"): não sustenta criação sozinha.
-  const thirdPartyContext = before
-    .filter((m) => m.direction === "inbound" && m.senderType === "contact" && fresh(m.createdAt))
-    .slice(0, 3)
-    .some((m) => mentionsThirdParty(textOfMessage(m)));
-  // Terceiro em qualquer das últimas mensagens do cliente (sem a regra de "aqui é o/a"): derruba a proposta de qualquer modo.
-  const thirdBlockContext = before
-    .filter((m) => m.direction === "inbound" && m.senderType === "contact" && fresh(m.createdAt))
-    .slice(0, 3)
-    .some((m) => clientSubjectBlock(textOfMessage(m)) === "terceiro");
+  // Terceiro só pela mensagem do horário e pelas IMEDIATAMENTE ligadas a ela (a anterior e a seguinte do cliente, até 10 min de
+  // diferença: "quinta às 10h pode?" + "é pro meu filho"), nunca por 48 h de conversa. O que conta é o BENEFICIÁRIO, não a menção.
+  const clientMsgs = before.filter((m) => m.direction === "inbound" && m.senderType === "contact");
+  const LINK_MS = 10 * 60_000;
+  const linkedThird = (m: MessageLite): boolean => {
+    const k = clientMsgs.findIndex((x) => x._id === m._id);
+    if (k < 0) return false;
+    return [clientMsgs[k - 1], clientMsgs[k + 1]].some((n) => n !== undefined && Math.abs(n.createdAt - m.createdAt) <= LINK_MS && thirdPartyBeneficiary(textOfMessage(n), args.serviceNames));
+  };
   let clientSeen = 0;
   let humanSeen = 0;
   let lastClientDone = false;
@@ -328,14 +387,14 @@ export function collectProposals(args: {
       const asCandidates = ms.map((x): ProposalCandidate => ({ localDate: x.localDate, timeMin: x.timeMin, by: "cliente", at: m.createdAt }));
       // Assunto que não é "marcar para mim": o horário citado não vira proposta (nem sugestão). Terceiro vale também pelo
       // contexto ("é pro meu filho" na mensagem seguinte).
-      const subject: ClientSubject | undefined = clientSubjectBlock(text) ?? (thirdBlockContext && asCandidates.length > 0 ? "terceiro" : undefined);
+      const subject: ClientSubject | undefined = clientSubjectBlock(text, args.serviceNames) ?? (asCandidates.length > 0 && linkedThird(m) ? "terceiro" : undefined);
       if (subject && asCandidates.length > 0) {
         for (const x of asCandidates) blocked.push({ localDate: x.localDate!, timeMin: x.timeMin!, subject });
         continue;
       }
       candidates.push(...asCandidates);
       if (isLast && asCandidates.length === 1 && !injected) lastClient = asCandidates[0];
-      if (isLast && asCandidates.length === 1 && !thirdPartyContext && clientBookingIntent(text, args.serviceNames) && !refusedAfter(m.createdAt)) strict.push({ ...asCandidates[0], strict: true });
+      if (isLast && asCandidates.length === 1 && clientBookingIntent(text, args.serviceNames) && !refusedAfter(m.createdAt)) strict.push({ ...asCandidates[0], strict: true });
     } else if (m.direction === "outbound" && m.senderType === "human") {
       if (humanSeen >= INTERPRET_HUMAN_MESSAGES) continue;
       humanSeen++;
@@ -356,7 +415,7 @@ export function collectProposals(args: {
   // O humano ofereceu e o cliente ESCOLHEU ("segunda", "a primeira", "pode ser"): a escolha é a proposta (preenche a sugestão).
   if (!lastClient) {
     const lastMsg = before.find((m) => m.direction === "inbound" && m.senderType === "contact");
-    if (lastMsg && fresh(lastMsg.createdAt) && !clientSubjectBlock(textOfMessage(lastMsg)) && !thirdBlockContext) {
+    if (lastMsg && fresh(lastMsg.createdAt) && !clientSubjectBlock(textOfMessage(lastMsg), args.serviceNames) && !linkedThird(lastMsg)) {
       const offer = humanOffers.filter((o) => o.at < lastMsg.createdAt).sort((a, b) => b.at - a.at)[0];
       const pick = offer ? chooseOffered(textOfMessage(lastMsg), offer.options, { now: lastMsg.createdAt, tz: args.tz }) : undefined;
       if (pick) {

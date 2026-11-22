@@ -345,24 +345,18 @@ describe("criar sozinho (§8.1)", () => {
     expect(await interpretations(s)).toHaveLength(1);
   });
 
-  test("conflito de horário na criação automática: cria, vai para a fila de conflitos e a ocupação não passa da capacidade", async () => {
+  test("a vaga foi tomada: a criação automática NÃO nasce em conflito (ninguém viu); vira sugestão com o código da regra e a ocupação não passa da capacidade", async () => {
     const s = await seedOrg({ ai: true , mode: "auto" });
     stubLlm(GOOD);
     await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(10), contactId: s.otherContactId, idempotencyKey: "pre-1" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
     await humanOnPhone(s, CONFIRM);
     await drain();
-    const appts = (await appointments(s)).filter((a) => a.origin === "human_message");
-    expect(appts).toHaveLength(1);
-    expect(appts[0].resources.every((r) => r.allocated === false)).toBe(true);
-    const open = await conflicts();
-    expect(open).toHaveLength(1);
-    expect(open[0]).toMatchObject({ kind: "human_confirm", status: "open", appointmentId: appts[0]._id });
+    expect((await appointments(s)).filter((a) => a.origin === "human_message")).toHaveLength(0);
+    expect(await conflicts()).toHaveLength(0);
     const row = await onlyRow(s);
-    expect(row.decision).toBe("created");
-    const created = await notificationsOf(s, "appointment_created");
-    expect(created[0].body).toContain("fila de conflitos");
-    expect(created[0].data?.inConflict).toBe(true);
+    expect(row).toMatchObject({ decision: "proposed", status: "open" });
+    expect(row.reason).toMatch(/^regra:/);
     expect(await schedInvariantProblems(t, s.organizationId, NOW)).toEqual([]);
   });
 
@@ -1066,14 +1060,17 @@ describe("desfazer a criação automática", () => {
     expect(await schedInvariantProblems(t, s.organizationId, NOW)).toEqual([]);
   });
 
-  test("a criação que foi para a fila de conflitos: desfazer fecha a linha do conflito", async () => {
+  test("o agendamento criado em conflito (porta com `conflictToQueue`): desfazer fecha a linha do conflito", async () => {
     const s = await seedOrg({ ai: true , mode: "auto" });
-    stubLlm(GOOD);
     await as(s.admin).mutation(api.schedulingMutations.bookAppointment, { organizationId: s.organizationId, serviceId: s.consulta, startTime: at(10), contactId: s.otherContactId, idempotencyKey: "pre-7" });
     await clientSays(s, CLIENT_ASKS, NOW - 30 * MIN);
-    await humanOnPhone(s, CONFIRM);
-    await drain();
+    const messageId = (await humanOnPhone(s, CONFIRM))!;
+    await t.mutation(internal.schedulingMutations.internalBookAppointment, {
+      organizationId: s.organizationId, serviceId: s.consulta, startTime: at(10), contactId: s.contactId, leadId: s.leadId, conversationId: s.conversationId,
+      actor: { type: "system", via: "human_message" }, origin: "human_message", initialStatus: "scheduled", conflictToQueue: true, idempotencyKey: `hm:${messageId}`, sourceMessageId: messageId,
+    });
     const appt = (await appointments(s)).find((a) => a.origin === "human_message")!;
+    expect((await conflicts())).toHaveLength(1);
     await as(s.admin).mutation(api.schedulingInterpret.undoHumanConfirmBooking, { organizationId: s.organizationId, appointmentId: appt._id });
     expect((await conflicts())[0].status).toBe("resolved");
     expect(await schedInvariantProblems(t, s.organizationId, NOW)).toEqual([]);
@@ -2200,5 +2197,150 @@ describe("correção logo depois: a criação automática é desfeita ou nem che
     await humanOnPhone(s2, FIRST);
     await drainOnce();
     expect((await interpretations(s2))[0]).toMatchObject({ decision: "proposed", status: "open" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Revisão adversarial do PR #204: retratação, educação, segunda passada, linha trocada, "intocado", índice por conversa
+// ---------------------------------------------------------------------------
+
+describe("correção: retratação e educação, mensagem posterior do cliente, linha trocada, intocado, índice (revisão do PR)", () => {
+  const FIRST = "Confirmado terça 10h";
+  async function start() {
+    const s = await seedOrg({ ai: true, mode: "auto" });
+    stubAgree();
+    await clientSays(s, "quero marcar terça às 10h", NOW - 5 * MIN);
+    return s;
+  }
+  const docs = (s: Seed) => t.run(async (ctx) => (await ctx.db.query("schedAppointments").collect()).filter((a) => a.organizationId === s.organizationId));
+  const open = async (s: Seed) => (await interpretations(s)).filter((r) => r.status === "open");
+
+  test.each([
+    ["Desculpa, terça 14h", "2026-06-16", 840],
+    ["é terça 14h, me confundi", "2026-06-16", 840],
+    ["Perdão, quarta 10h", "2026-06-17", 600],
+    ["opa, terça 14h", "2026-06-16", 840],
+  ])("%s DEPOIS dos 60 s: desfaz a criação e propõe o horário NOVO", async (second, date, timeMin) => {
+    const s = await start();
+    await humanOnPhone(s, FIRST);
+    await drain();
+    const [created] = await appointments(s);
+    expect(created.status).toBe("scheduled");
+    await vi.advanceTimersByTimeAsync(5000);
+    await humanOnPhone(s, second);
+    await drain();
+    expect((await appointments(s)).find((a) => a._id === created._id)).toMatchObject({ status: "cancelled", cancelledByClass: "system" });
+    const o = await open(s);
+    expect(o).toHaveLength(1);
+    expect(o[0]).toMatchObject({ act: "confirmou", reason: "correcao_desfeita", parsed: { localDate: date, timeMin } });
+  });
+
+  test.each([
+    ["Desculpa, terça 14h", 840],
+    ["é terça 14h, me confundi", 840],
+  ])("%s DENTRO dos 60 s: nunca existe agendamento e a proposta é a do horário NOVO, não a do antigo", async (second, timeMin) => {
+    const s = await start();
+    await humanOnPhone(s, FIRST);
+    await drainOnce();
+    await vi.advanceTimersByTimeAsync(4000);
+    await humanOnPhone(s, second);
+    await drain();
+    expect(await docs(s)).toHaveLength(0);
+    const o = await open(s);
+    expect(o).toHaveLength(1);
+    expect(o[0].parsed).toMatchObject({ localDate: "2026-06-16", timeMin });
+  });
+
+  test("'desconsidera, mandei na conversa errada': desfaz a criação (ou a descarta) e NÃO propõe nada", async () => {
+    // depois de criado
+    let s = await start();
+    await humanOnPhone(s, FIRST);
+    await drain();
+    await vi.advanceTimersByTimeAsync(5000);
+    await humanOnPhone(s, "desconsidera, mandei na conversa errada");
+    await drain();
+    expect((await appointments(s)).filter((a) => a.status === "scheduled")).toHaveLength(0);
+    expect(await open(s)).toEqual([]);
+    expect((await interpretations(s)).find((r) => r.decision === "created")).toMatchObject({ outcome: "undone" });
+    // dentro da janela
+    t = convexTest(schema, modules);
+    s = await start();
+    await humanOnPhone(s, FIRST);
+    await drainOnce();
+    await vi.advanceTimersByTimeAsync(4000);
+    await humanOnPhone(s, "desconsidera, mandei na conversa errada");
+    await drain();
+    expect(await docs(s)).toHaveLength(0);
+    expect(await open(s)).toEqual([]);
+  });
+
+  test("'desculpa a demora, confirmado quinta 10h' SEM confirmação anterior não é correção; 'desculpa a demora' sozinho nem chega à interpretação", async () => {
+    const s = await seedOrg({ ai: true, mode: "default" });
+    await clientSays(s, "pode ser quinta às 10h?", NOW - 5 * MIN);
+    await humanOnPhone(s, "desculpa a demora, confirmado quinta 10h");
+    await humanOnPhone(s, "Desculpa a demora");
+    await drain();
+    const rows = await interpretations(s);
+    expect(rows.some((r) => r.reason === "correcao" || r.reason === "correcao_desfeita" || r.reason === "retratacao")).toBe(false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ decision: "proposed", parsed: { localDate: "2026-06-18", timeMin: 600 } });
+  });
+
+  test.each(["ah, é pro meu filho", "não, terça não dá", "pode ser quarta às 10h então?"])("mensagem POSTERIOR do cliente (%s) antes da criação: não cria, vira proposta", async (later) => {
+    const s = await start();
+    await humanOnPhone(s, FIRST);
+    await drainOnce();
+    await vi.advanceTimersByTimeAsync(3000);
+    await clientSays(s, later, Date.now());
+    await drain();
+    expect(await docs(s)).toHaveLength(0);
+    const rows = await interpretations(s);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ decision: "proposed", status: "open", reason: "mensagem_posterior" });
+  });
+
+  test("passada retida com o `rowId` de OUTRA linha (mensagem editada e linha refeita): o veredito antigo é ignorado", async () => {
+    const s = await start();
+    const messageId = (await humanOnPhone(s, FIRST))!;
+    await drainOnce();
+    const [row] = await interpretations(s);
+    expect(row.status).toBe("pending");
+    const other = await t.run((ctx) => ctx.db.insert("schedInterpretations", { organizationId: s.organizationId, conversationId: s.otherConversationId, messageId, act: "confirmou", parsed: {}, checks: { parser: false }, decision: "ignored", status: "done", createdAt: Date.now() }));
+    const verdict = { status: "ok" as const, ato: "confirmou" as const, dia: "2026-06-16", hora: "10:00", servicoId: null, assunto: "agendamento_proprio" as const };
+    expect(await t.mutation(internal.schedulingInterpret.internalDecide, { messageId, llm: verdict, held: true, rowId: other })).toMatchObject({ decision: "noop", reason: "linha_substituida" });
+    expect((await interpretations(s)).find((r) => r._id === row._id)!.status).toBe("pending");
+    expect(await docs(s)).toHaveLength(0);
+  });
+
+  test("o sistema não desfaz o que a equipe ajustou (troca de sala/profissional mexe em `updatedAt`): cai na sugestão de remarcar", async () => {
+    const s = await start();
+    await humanOnPhone(s, FIRST);
+    await drain();
+    const [created] = await appointments(s);
+    await t.run((ctx) => ctx.db.patch(created._id, { updatedAt: created.createdAt + 5000 }));
+    await vi.advanceTimersByTimeAsync(5000);
+    await humanOnPhone(s, "ops, terça 14h");
+    await drain();
+    expect((await appointments(s)).find((a) => a._id === created._id)!.status).toBe("scheduled");
+    const o = await open(s);
+    expect(o).toHaveLength(1);
+    expect(o[0]).toMatchObject({ act: "remarcou", reason: "correcao", appointmentId: created._id });
+  });
+
+  test("a leitura anterior é achada pela CONVERSA: dezenas de linhas de outras conversas da org não a escondem", async () => {
+    const s = await start();
+    await humanOnPhone(s, FIRST);
+    await drain();
+    const [created] = await appointments(s);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 60; i++) {
+        const mid = await ctx.db.insert("messages", { organizationId: s.organizationId, conversationId: s.otherConversationId, leadId: s.otherLeadId, direction: "outbound", senderType: "human", content: `x${i}`, contentType: "text", isInternal: false, createdAt: Date.now() });
+        await ctx.db.insert("schedInterpretations", { organizationId: s.organizationId, conversationId: s.otherConversationId, messageId: mid, act: "nenhum", parsed: {}, checks: { parser: false }, decision: "ignored", status: "done", createdAt: Date.now() + i });
+      }
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    await humanOnPhone(s, "ops, terça 14h");
+    await drain();
+    expect((await appointments(s)).find((a) => a._id === created._id)!.status).toBe("cancelled");
   });
 });

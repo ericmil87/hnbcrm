@@ -1299,6 +1299,8 @@ export function extractDateTimeMentions(raw: string, ctx: { now: number; tz: str
         // dias seguidos sem "ou/e/vírgula" entre si descrevem o MESMO dia ("quinta 26/11", "quinta (26)")
         const sameDay = lastKind === "d" && !/\b(?:ou|e)\b/.test(between);
         if (!sameDay && cur.days.length > 0) flush();
+        // "segunda, 10h e terça, 15h": uma hora e, depois de "e/ou", OUTRO dia: o dia novo não herda a hora anterior.
+        if (lastKind === "t" && cur.time && cur.days.length === 0 && /\b(?:ou|e)\b/.test(between)) flush();
         cur.days.push(tk.d);
         lastEnd = tk.at + tk.d.lit.length;
         lastKind = "d";
@@ -1339,21 +1341,31 @@ export function extractDateTimeMentions(raw: string, ctx: { now: number; tz: str
 const MENTION_GLUE_RE = /^[\s,;:\-–—]*(?:(?:de |da |pela |a )?(?:manha|tarde|noite)\s*[,;:\-–—]*\s*)?(?:(?:as|a|por volta d[ae]s?) )?$/;
 
 /**
- * "terça, 15h" e "terça de tarde, 15h" saem do segmentador como um dia sem hora e uma hora sem dia. Se a mensagem tem exatamente esses
- * dois e nada mais, e o trecho entre eles é só cola (vírgula, período, "às"), é uma menção só. Qualquer outra coisa entre eles
- * ("terça eu não posso, 15h"), ou mais menções, deixa como está.
+ * "terça, 15h" e "terça de tarde, 15h" saem do segmentador como um dia sem hora e uma hora sem dia. Quando um dia sem hora é seguido
+ * de uma hora sem dia e o trecho entre eles é só cola (vírgula, período, "às"), é uma menção só ("segunda, 10h e terça, 15h" são
+ * duas). Qualquer outra coisa no meio ("terça eu não posso, 15h") deixa como está.
  */
 function mergeSplitMention(out: DateTimeMention[], text: string): DateTimeMention[] {
-  if (out.length !== 2) return out;
-  const day = out.find((m) => m.localDate !== undefined && m.timeMin === undefined);
-  const time = out.find((m) => m.timeMin !== undefined && m.localDate === undefined);
-  if (!day || !time) return out;
-  const dayLit = day.evidence[day.evidence.length - 1];
-  const timeLit = time.evidence[0];
+  if (out.length < 2) return out;
   const lowered = fold(text);
-  const a = lowered.indexOf(fold(dayLit));
-  const b = lowered.indexOf(fold(timeLit));
-  if (a < 0 || b < 0 || b < a + fold(dayLit).length) return out;
-  if (!MENTION_GLUE_RE.test(lowered.slice(a + fold(dayLit).length, b))) return out;
-  return [{ localDate: day.localDate, timeMin: time.timeMin, evidence: [...day.evidence, ...time.evidence] }];
+  const merged: DateTimeMention[] = [];
+  let cursor = 0;
+  for (let i = 0; i < out.length; i++) {
+    const day = out[i];
+    const time = out[i + 1];
+    if (day.localDate !== undefined && day.timeMin === undefined && time && time.timeMin !== undefined && time.localDate === undefined) {
+      const dayLit = fold(day.evidence[day.evidence.length - 1]);
+      const timeLit = fold(time.evidence[0]);
+      const a = lowered.indexOf(dayLit, cursor);
+      const b = a < 0 ? -1 : lowered.indexOf(timeLit, a + dayLit.length);
+      if (a >= 0 && b >= 0 && MENTION_GLUE_RE.test(lowered.slice(a + dayLit.length, b))) {
+        merged.push({ localDate: day.localDate, timeMin: time.timeMin, evidence: [...day.evidence, ...time.evidence] });
+        cursor = b + timeLit.length;
+        i++;
+        continue;
+      }
+    }
+    merged.push(day);
+  }
+  return merged;
 }

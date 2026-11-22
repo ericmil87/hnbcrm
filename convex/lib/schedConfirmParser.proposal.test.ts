@@ -236,6 +236,13 @@ describe("extractDateTimeMentions (mensagens do cliente, sem marcador de confirm
     expect(ex("terça. Preciso de 15h de trabalho")).not.toEqual([["2026-11-24", hm(15)]]);
   });
 
+  it("'segunda, 10h e terça, 15h' são DUAS menções (a hora não passa para o dia seguinte da lista)", () => {
+    expect(ex("segunda, 10h e terça, 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+    expect(ex("segunda, às 10h e terça, às 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+    expect(ex("segunda 10h e terça 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+    expect(ex("segunda 10h ou terça 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+  });
+
   it("entradas vazias, longas ou não-string devolvem vazio", () => {
     expect(ex("")).toEqual([]);
     expect(ex(`quinta 10h ${"a ".repeat(400)}`)).toEqual([]);

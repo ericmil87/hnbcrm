@@ -61,6 +61,10 @@ import {
   hasCorrectionWords,
   humanRefuses,
   humanSpeaksOfThirdParty,
+  isRetraction,
+  clientRetracts,
+  thirdPartyBeneficiary,
+  clientSubjectBlock,
   isWeakReply,
   looksLikeCorrection,
   previousLooksLikeProposal,
@@ -479,24 +483,32 @@ const CORRECTION_WINDOW_MS = 30 * MINUTE_MS;
 
 const localMinutesOf = (ms: number, tz: string): number => Math.round((ms - atLocalMinutes(localDateOf(ms, tz), 0, tz)) / MINUTE_MS);
 
-/** A marcação/sugestão mais recente DESTA via na conversa, nos últimos 30 min (para a correção "ops, terça 10h"). */
+/**
+ * A marcação/sugestão mais recente DESTA via na conversa, nos últimos 30 min (para a correção "ops, terça 10h"). Lê pelo índice da
+ * CONVERSA (por situação), não pela org inteira: org com muita conversa não perde a linha entre as de outras.
+ */
 async function findRecentInterpretation(ctx: MutationCtx, c: Case): Promise<Doc<"schedInterpretations"> | null> {
-  const rows = await ctx.db
-    .query("schedInterpretations")
-    .withIndex("by_organization_and_created", (q) => q.eq("organizationId", c.org._id).gte("createdAt", c.now - CORRECTION_WINDOW_MS))
-    .order("desc")
-    .take(30);
+  const since = c.now - CORRECTION_WINDOW_MS;
+  const rows: Doc<"schedInterpretations">[] = [];
+  for (const status of ["pending", "open", "done"] as const) {
+    rows.push(
+      ...(await ctx.db
+        .query("schedInterpretations")
+        .withIndex("by_conversation_and_status", (q) => q.eq("conversationId", c.conversation._id).eq("status", status))
+        .order("desc")
+        .take(15))
+    );
+  }
   return (
-    rows.find(
-      (r) =>
-        r.conversationId === c.conversation._id &&
-        r.messageId !== c.message._id &&
-        (r.decision === "created" ||
-          r.decision === "approved_existing" ||
-          (r.decision === "proposed" && r.status === "open") ||
-          // Ainda esperando a janela da criação automática (ou a segunda leitura): a correção a derruba antes de existir agendamento.
-          (r.decision === "pending" && r.status === "pending"))
-    ) ?? null
+    rows
+      .filter(
+        (r) =>
+          r.organizationId === c.org._id &&
+          r.createdAt >= since &&
+          r.messageId !== c.message._id &&
+          (r.decision === "created" || r.decision === "approved_existing" || (r.decision === "proposed" && r.status === "open") || (r.decision === "pending" && r.status === "pending"))
+      )
+      .sort((a, b) => b.createdAt - a.createdAt)[0] ?? null
   );
 }
 
@@ -512,7 +524,7 @@ async function findRecentInterpretation(ctx: MutationCtx, c: Case): Promise<Doc<
  */
 async function planCorrection(ctx: MutationCtx, c: Case, recent: Doc<"schedInterpretations">): Promise<Plan | null> {
   // "Corrigindo: quarta 10h": o parser lê "Palavra:" no começo como transcrição e bloqueia a mensagem; a etiqueta sai antes de ler.
-  const text = c.message.content.replace(/^\s*(corrigindo|corre[cç][aã]o|corrigido|ops|opa|desculpa|desculpe|errei|na verdade)\s*[:,\-–]\s*/i, "");
+  const text = c.message.content.replace(/^\s*(corrigindo|corre[cç][aã]o|corrigido|ops|opa|desculpa|desculpe|desculpas|perd[aã]o|errei|me confundi|na verdade)\s*[:,\-–.!]*\s*/i, "");
   const rp = recent.parsed as Parsed;
   const mentions = extractDateTimeMentions(text, { now: c.message.createdAt, tz: c.tz });
   const repeats = mentions.some((m) => m.localDate === rp.localDate && m.timeMin === rp.timeMin && m.localDate !== undefined);
@@ -520,6 +532,28 @@ async function planCorrection(ctx: MutationCtx, c: Case, recent: Doc<"schedInter
   const differs = mentions.filter((m) => (m.localDate !== undefined && m.localDate !== rp.localDate) || (m.timeMin !== undefined && m.timeMin !== rp.timeMin));
   const pick = differs.find((m) => m.localDate !== undefined && m.timeMin !== undefined) ?? differs[0];
   if (!pick && !hasCorrectionWords(c.message.content)) return null;
+  // "Desconsidera, mandei na conversa errada": retira a leitura anterior e não propõe nada (não há horário novo).
+  if (!pick && isRetraction(c.message.content)) {
+    const done = (reason: string): Plan => ({ kind: "final", row: { act: "nenhum", parsed: {}, checks: { parser: false }, decision: "ignored", status: "done", reason } });
+    if (recent.decision === "pending") {
+      await ctx.db.patch(recent._id, { decision: "ignored", status: "done", reason: "corrigida_antes" });
+      return done("retratacao");
+    }
+    if (recent.decision === "proposed") {
+      await ctx.db.patch(recent._id, { status: "expired", reason: "retratada" });
+      return done("retratacao");
+    }
+    if (recent.appointmentId && recent.outcome === undefined) {
+      try {
+        await ctx.runMutation(internal.schedulingInterpret.internalUndoOwnBooking, { organizationId: c.org._id, appointmentId: recent.appointmentId });
+        await ctx.db.patch(recent._id, { outcome: "undone", answeredAt: c.now });
+        await resolveEntityNotifications(ctx, { organizationId: c.org._id, target: { conversationId: c.conversation._id }, reason: "undone", types: ["appointment_created"], scanLimit: 50 });
+        return done("retratacao");
+      } catch {
+        // não deu para desfazer: segue como correção sem horário (sugestão de remarcar)
+      }
+    }
+  }
   // "ops, 14h" corrige só a hora; "quarta mesmo" só o dia: o que a correção não cita vem da leitura anterior.
   const parsed: Parsed = compact({ localDate: pick?.localDate ?? (pick ? rp.localDate : undefined), timeMin: pick?.timeMin ?? (pick ? rp.timeMin : undefined), serviceId: rp.serviceId });
   const replacement = (reason: "correcao_desfeita"): Plan => ({ kind: "propose", act: "confirmou", parsed, checks: { parser: false }, reason });
@@ -606,6 +640,10 @@ export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messa
       await propose(ctx, c, null, correction);
       return { status: "final", reason: correction.reason };
     }
+    if (correction?.kind === "final") {
+      await writeRow(ctx, c, null, correction.row);
+      return { status: "final", reason: correction.row.reason };
+    }
   }
   if (!passes && !weak) return { status: "skipped", reason: "sem_correcao" };
   const plan = await planInterpretation(ctx, c, parsed, collection, lite);
@@ -674,8 +712,8 @@ async function planInterpretation(
   }
 
   // ── confirmou
-  // A própria mensagem do humano diz que o horário é de outra pessoa ("pro seu filho"): nunca é o agendamento deste contato.
-  if (humanSpeaksOfThirdParty(c.message.content)) return ignored("terceiro");
+  // A própria mensagem do humano diz que o horário é de outra pessoa ("pro seu filho"): sugestão ROTULADA, nunca criação.
+  const humanThird = humanSpeaksOfThirdParty(c.message.content);
   const hasDate = p.localDate !== undefined;
   const hasTime = p.timeMin !== undefined;
   const startTime = hasDate && hasTime ? atLocalMinutes(p.localDate!, p.timeMin!, c.tz) : undefined;
@@ -736,21 +774,37 @@ async function planInterpretation(
   const matched: ProposalCandidate | undefined = strictFind.match;
   // SÓ SUGERE quando existe proposta coincidente na conversa (mesmo dia e hora: do cliente, oferta do humano/IA escolhida
   // pelo cliente). Sem ela a mensagem fica `ignored` com o motivo (medimos, sem avisar ninguém).
+  const resolveSvc = (proposalServiceId?: string) =>
+    resolveServiceForConversation({
+      activeServices: c.services.map((s) => ({ _id: s._id, name: s.name })),
+      parserServiceId: p.serviceId,
+      parserAmbiguous: p.negatives.includes("servico_ambiguo"),
+      proposalServiceId,
+      conversationTexts: lite.filter((m) => c.now - m.createdAt < SUGGESTION_TTL_MS).map((m) => textOfMessage(m)).filter((t) => t.length > 0),
+      defaultServiceId: c.settings.humanConfirm.defaultServiceId,
+    });
+  /** Horário para OUTRA pessoa: em vez de descartar, sugere com o rótulo "para outra pessoa: confira o nome" (só o sino; nunca cria). */
+  const forThirdParty = (): Plan => {
+    const svc = resolveSvc(undefined);
+    return {
+      kind: "propose",
+      act: "confirmou",
+      parsed: compact({ ...parsed, serviceId: (svc.serviceId ?? parsed.serviceId) as Id<"schedServices"> | undefined }),
+      checks: { ...base, proposal: false, service: svc.ok },
+      reason: "para_outra_pessoa",
+      bellOnly: true,
+    };
+  };
   if (looseFind.match === undefined) {
-    // O cliente citou esse dia e hora, mas em pergunta de funcionamento, de entrega/pagamento ou para outra pessoa: não é pedido
-    // de atendimento dele. Fica `ignored` com o assunto (medido, sem avisar ninguém): sugestão indevida ensina a ignorar a fila.
+    // O cliente citou esse dia e hora, mas em pergunta de funcionamento ou de entrega/pagamento: não é pedido de atendimento dele
+    // (`ignored` com o assunto, sem avisar ninguém: sugestão indevida ensina a ignorar a fila). Para outra pessoa: sugestão rotulada.
     const subject = collection.blocked.find((b) => b.localDate === p.fromMessage.localDate && b.timeMin === p.fromMessage.timeMin)?.subject;
+    if (subject === "terceiro") return forThirdParty();
     if (subject) return ignored(`assunto_${subject}`, parsed);
     return ignored(strictFind.reason === "sem_proposta" ? "sem_proposta" : "sem_proposta_coincidente", parsed);
   }
-  const service = resolveServiceForConversation({
-    activeServices: c.services.map((s) => ({ _id: s._id, name: s.name })),
-    parserServiceId: p.serviceId,
-    parserAmbiguous: p.negatives.includes("servico_ambiguo"),
-    proposalServiceId: (matched ?? looseFind.match)?.serviceId,
-    conversationTexts: lite.filter((m) => c.now - m.createdAt < SUGGESTION_TTL_MS).map((m) => textOfMessage(m)).filter((t) => t.length > 0),
-    defaultServiceId: c.settings.humanConfirm.defaultServiceId,
-  });
+  if (humanThird) return forThirdParty();
+  const service = resolveSvc((matched ?? looseFind.match)?.serviceId);
   const checks: Checks = { ...base, proposal: matched !== undefined, service: service.ok };
   const withService: Parsed = compact({ ...parsed, serviceId: (service.serviceId ?? parsed.serviceId) as Id<"schedServices"> | undefined });
   // Intenção de marcar reconhecida (última mensagem do cliente com intenção, ou oferta da IA aceita) = sugestão com aviso
@@ -861,30 +915,38 @@ const LLM_REASON: Record<Exclude<LlmVerdict["status"], "ok">, string> = {
 };
 
 /**
- * Mensagem POSTERIOR do humano na conversa que muda o que esta leu (palavra de correção, recusa, ou OUTRO dia/hora): rede de
- * segurança para a corrida em que a correção chegou antes de a leitura desta ficar pronta. Pura leitura indexada (≤ 10 mensagens).
+ * Mensagem POSTERIOR na conversa que muda o que esta leu: rede de segurança para a corrida em que a correção chegou antes de a
+ * leitura ficar pronta. Do HUMANO: palavra de correção, recusa ou OUTRO dia/hora. Do CLIENTE: outro beneficiário ("ah, é pro meu
+ * filho"), recusa ou mudança ("não, quinta não dá") ou outro dia/hora. Leitura indexada (≤ 15 mensagens).
  */
-async function laterHumanMessageCorrects(ctx: MutationCtx, c: Case, parsed: Parsed): Promise<boolean> {
+async function laterMessageChangesIt(ctx: MutationCtx, c: Case, parsed: Parsed): Promise<boolean> {
   const later = await ctx.db
     .query("messages")
     .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", c.conversation._id).gt("createdAt", c.message.createdAt))
-    .take(10);
+    .take(15);
+  const differs = (text: string, at: number) =>
+    extractDateTimeMentions(text, { now: at, tz: c.tz }).some((x) => (x.localDate !== undefined && x.localDate !== parsed.localDate) || (x.timeMin !== undefined && x.timeMin !== parsed.timeMin));
   for (const m of later) {
-    if (m._id === c.message._id || m.direction !== "outbound" || m.senderType !== "human" || m.isInternal || m.metadata?.revoked === true) continue;
-    const text = m.content ?? "";
-    if (looksLikeCorrection(text) || humanRefuses(text)) return true;
-    const ms = extractDateTimeMentions(text, { now: m.createdAt, tz: c.tz });
-    if (ms.some((x) => (x.localDate !== undefined && x.localDate !== parsed.localDate) || (x.timeMin !== undefined && x.timeMin !== parsed.timeMin))) return true;
+    if (m._id === c.message._id || m.isInternal || m.metadata?.revoked === true) continue;
+    const text = textOfMessage(m);
+    if (!text) continue;
+    if (m.direction === "outbound" && m.senderType === "human") {
+      if (looksLikeCorrection(text) || humanRefuses(text) || differs(text, m.createdAt)) return true;
+    } else if (m.direction === "inbound" && m.senderType === "contact") {
+      if (thirdPartyBeneficiary(text, c.services.map((x) => x.name)) || clientSubjectBlock(text) !== undefined || clientRetracts(text) || differs(text, m.createdAt)) return true;
+    }
   }
   return false;
 }
 
-export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"messages">, llm: LlmVerdict | undefined, opts: { held?: boolean } = {}): Promise<DecideResult> {
+export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"messages">, llm: LlmVerdict | undefined, opts: { held?: boolean; rowId?: Id<"schedInterpretations"> } = {}): Promise<DecideResult> {
   const row = await ctx.db
     .query("schedInterpretations")
     .withIndex("by_message", (q) => q.eq("messageId", messageId))
     .first();
   if (!row || row.status !== "pending") return { decision: "noop" };
+  // Passada retida: o veredito foi dado para UMA linha. Mensagem editada refaz a linha (outro `_id`): o veredito antigo não vale.
+  if (opts.rowId !== undefined && opts.rowId !== row._id) return { decision: "noop", reason: "linha_substituida" };
   const gate = await loadCase(ctx, messageId, { fresh: false });
   if (!gate.ok) {
     await ctx.db.patch(row._id, { decision: "ignored", status: "done", reason: gate.reason });
@@ -910,14 +972,15 @@ export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"mess
       await writeRow(ctx, c, row, { act, parsed, checks, decision: "ignored", status: "done", reason });
       return { decision: "ignored", reason };
     }
-    await propose(ctx, c, row, { act, parsed, checks, reason });
+    await propose(ctx, c, row, { act, parsed, checks, reason, bellOnly: reason === "para_outra_pessoa" });
     return { decision: "proposed", reason };
   };
 
   if (c.settings.humanConfirm.mode !== "auto") return await fallback("modo_sugerir");
   if (!agree) {
     // O modelo leu o assunto do cliente e NÃO é pedido de atendimento dele (funcionamento, terceiro, entrega/pagamento): nem sugere.
-    if (verdict.status === "ok" && verdict.ato === "confirmou" && verdict.assunto !== undefined && verdict.assunto !== "agendamento_proprio" && verdict.assunto !== "outro") {
+    if (verdict.status === "ok" && verdict.ato === "confirmou" && verdict.assunto === "terceiro" && hasWhen) return await fallback("para_outra_pessoa");
+    if (verdict.status === "ok" && verdict.ato === "confirmou" && verdict.assunto !== undefined && verdict.assunto !== "agendamento_proprio" && verdict.assunto !== "outro" && verdict.assunto !== "terceiro") {
       const reason = `assunto_${verdict.assunto}`;
       await writeRow(ctx, c, row, { act, parsed, checks, decision: "ignored", status: "done", reason });
       return { decision: "ignored", reason };
@@ -930,11 +993,11 @@ export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"mess
   if (!opts.held) {
     const dueAt = row.createdAt + AUTO_CREATE_DELAY_MS;
     if (c.now < dueAt) {
-      await ctx.scheduler.runAfter(Math.max(dueAt - c.now, 1), internal.schedulingInterpret.internalDecide, { messageId, llm: verdict, held: true });
+      await ctx.scheduler.runAfter(Math.max(dueAt - c.now, 1), internal.schedulingInterpret.internalDecide, { messageId, llm: verdict, held: true, rowId: row._id });
       return { decision: "noop", reason: "aguardando_janela_de_correcao" };
     }
   }
-  if (await laterHumanMessageCorrects(ctx, c, parsed)) return await fallback("mensagem_posterior");
+  if (await laterMessageChangesIt(ctx, c, parsed)) return await fallback("mensagem_posterior");
 
   // Aprovar o pendente (a IA ou o link propuseram; o humano confirmou).
   if (approveId) {
@@ -999,7 +1062,8 @@ async function bookViaPort(ctx: MutationCtx, c: Case, p: { serviceId: Id<"schedS
     actor: { type: "system", via: "human_message" },
     origin: "human_message",
     initialStatus: "scheduled",
-    conflictToQueue: true,
+    // Ninguém viu esta marcação: se a vaga foi tomada (na janela de 60 s ou antes), NÃO nasce em conflito; vira sugestão com o código da regra.
+    conflictToQueue: false,
     idempotencyKey: `hm:${c.message._id}`,
     sourceMessageId: c.message._id,
   });

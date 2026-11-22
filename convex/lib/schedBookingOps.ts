@@ -2085,6 +2085,8 @@ export async function undoHumanConfirmBookingCore(
   if (now - appt.createdAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A marcação foi feita há mais de 24 horas: use Cancelar.");
   const untouched = appt.statusChangedAt <= appt.createdAt && appt.approvedAt === undefined && appt.clientConfirmedAt === undefined;
   if (appt.status !== "scheduled" || !untouched) fail("O horário já mudou de situação: use Cancelar.");
+  // O sistema só desfaz o que NINGUÉM ajustou (troca de sala/profissional, serviço ou horário mexem em `updatedAt`).
+  if (selfCorrection && appt.updatedAt > appt.createdAt) fail("A equipe já ajustou este horário: o sistema não o desfaz.");
 
   const snapshot = await snapshotAllocations(ctx, appt._id);
   await ctx.db.patch(appt._id, {

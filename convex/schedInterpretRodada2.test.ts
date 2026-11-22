@@ -11,7 +11,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { parseConfirmation } from "./lib/schedConfirmParser";
 import { addLocalDays, localDateOf, weekdayOf } from "./lib/schedTime";
-import { BLIND_SET, type BlindCase, REAL_CASES, type RealCase, type Subject, type Turn } from "../src/test/schedInterpretRodada2Fixtures";
+import { BLIND_SET, type BlindCase, PROBE_HUMAN, PROBE_LEGIT, PROBE_NEG, REAL_CASES, type RealCase, type Subject, type Turn } from "../src/test/schedInterpretRodada2Fixtures";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 const TZ = "America/Sao_Paulo";
@@ -181,6 +181,8 @@ async function run(turns: Turn[], mode: "suggest" | "auto", who: string) {
   return { s, rows: await rowsOf(s), appts: await apptsOf(s) };
 }
 
+/** Sugestão rotulada "para outra pessoa: confira o nome" (só o sino; nunca cria): não conta como indevida. */
+const LABEL = "para_outra_pessoa";
 const WHO = ["a Ana", "o Rui", "a Dra. Helena"];
 
 function nextWeekday(now: number, wd: number): string {
@@ -214,7 +216,8 @@ function judgeReal(cs: RealCase, mode: "suggest" | "auto", now: number, out: Awa
     return open.every((r) => at(r, date, cs.correction!.hour)) ? "corrigiu para o horário novo (certo)" : "sugeriu INDEVIDO";
   }
   if (out.appts.length > 0) return "CRIOU INDEVIDO";
-  return open.length > 0 ? "sugeriu INDEVIDO" : "ficou quieto (certo)";
+  if (open.some((r) => r.reason !== LABEL)) return "sugeriu INDEVIDO";
+  return open.length > 0 ? "sugeriu rotulado (outra pessoa)" : "ficou quieto (certo)";
 }
 
 function judgeBlind(cs: BlindCase, mode: "suggest" | "auto", out: Awaited<ReturnType<typeof run>>): string {
@@ -229,7 +232,8 @@ function judgeBlind(cs: BlindCase, mode: "suggest" | "auto", out: Awaited<Return
   }
   if (out.appts.length > 0) return "CRIOU INDEVIDO";
   if (cs.correctionTo) return open.every((r) => hit(r, cs.correctionTo!.date, cs.correctionTo!.hour)) ? "ok" : "sugeriu INDEVIDO";
-  return open.length > 0 ? "sugeriu INDEVIDO" : "ficou quieto (certo)";
+  if (open.some((r) => r.reason !== LABEL)) return "sugeriu INDEVIDO";
+  return open.length > 0 ? "sugeriu rotulado (outra pessoa)" : "ficou quieto (certo)";
 }
 
 const fmt = (tl: Tally) => Object.entries(tl).sort().map(([k, v]) => `${k}=${v}`).join("; ");
@@ -273,7 +277,7 @@ async function replayBlind(mode: "suggest" | "auto", kind: LlmKind) {
     const out = await run(cs.turns, mode, "a Ana");
     const j = judgeBlind(cs, mode, out);
     bump(cs.kind === "pos" ? pos : neg, j);
-    const good = cs.kind === "pos" ? j === "sugeriu" || j === "criou certo" : j === "ficou quieto (certo)" || j === "ok";
+    const good = cs.kind === "pos" ? j === "sugeriu" || j === "criou certo" : j === "ficou quieto (certo)" || j === "ok" || j === "sugeriu rotulado (outra pessoa)";
     if (!good) bad.push(`${cs.id}:${j}`);
   }
   if (REPORT) console.log(`BLIND ${mode}/${kind}\n  POS: ${fmt(pos)}\n  NEG: ${fmt(neg)}\n  ERROS: ${bad.join(" ")}`);
@@ -383,7 +387,7 @@ describe("pergunta de funcionamento não é pedido de horário (nos dois modos)"
   });
 });
 
-describe("horário para outra pessoa não vira agendamento do contato (opção escolhida: não sugerir)", () => {
+describe("horário para outra pessoa: sugestão ROTULADA \"para outra pessoa: confira o nome\", nunca criação", () => {
   const CASES: Turn[][] = [
     [c("minha mãe pode ir quinta às 10h?"), h("Pode sim, confirmado quinta 10h")],
     [c("pode ser terça às 10h pro meu marido?"), h("Confirmado terça 10h")],
@@ -392,6 +396,9 @@ describe("horário para outra pessoa não vira agendamento do contato (opção e
     [c("quinta às 10h pode?"), c("é pro meu filho"), h("Confirmado quinta 10h")],
     [c("minha esposa quer quinta às 10h"), h("Fechado, quinta 10h")],
     [c("pode ser quinta às 10h?"), h("Confirmado quinta 10h pro seu filho")],
+    [c("pode ser quinta 10h pro João?"), h("Confirmado quinta 10h")],
+    [c("marca pra Ana quinta 10h"), h("Confirmado quinta 10h")],
+    [c("o Pedrinho pode ir quinta 10h?"), h("Confirmado quinta 10h")],
   ];
   test.each(CASES)("%j", async (...turns) => {
     stubLlm();
@@ -401,8 +408,12 @@ describe("horário para outra pessoa não vira agendamento do contato (opção e
       t = convexTest(schema, modules);
       llmKind = "naive";
       const out = await run(turns, mode, "a Ana");
-      expect(await suggestionsOf(out.s)).toEqual([]);
+      const open = await suggestionsOf(out.s);
+      expect(open.length, mode).toBe(1);
+      expect(open[0].reason, mode).toBe("para_outra_pessoa");
       expect(out.appts).toEqual([]);
+      // Só o sino (sem push nem Telegram).
+      expect((await notesOf(out.s, "appointment_suggestion")).every((n) => n.data?.bellOnly === true)).toBe(true);
     }
   });
 });
@@ -429,7 +440,13 @@ describe("o classificador devolve o assunto (campo fechado) e só `agendamento_p
     expect(out.appts).toHaveLength(1); // concordando em tudo, cria
   });
 
-  test.each(["funcionamento", "terceiro", "entrega_pagamento"] as const)("modelo diz `%s`: nem sugere, nem cria", async (subject) => {
+  test("modelo diz `terceiro`: sugestão rotulada para outra pessoa, nunca cria", async () => {
+    const { out } = await runWith("truth", "terceiro");
+    expect(out.appts).toEqual([]);
+    expect(out.rows[0]).toMatchObject({ decision: "proposed", status: "open", reason: "para_outra_pessoa" });
+  });
+
+  test.each(["funcionamento", "entrega_pagamento"] as const)("modelo diz `%s`: nem sugere, nem cria", async (subject) => {
     const { out } = await runWith("truth", subject);
     expect(out.appts).toEqual([]);
     expect(await suggestionsOf(out.s)).toEqual([]);
@@ -472,5 +489,60 @@ describe("\"amanhã às 15h\" vira proposta (rodada 2: 6 de 6 perdidos)", () => 
     const out = await run(turns, "suggest", "a Ana");
     expect(await suggestionsOf(out.s)).toEqual([]);
     expect(out.rows[0]).toMatchObject({ decision: "ignored", reason: "sem_proposta" });
+  });
+});
+
+// ───────────────────────── sondagem 2 (revisão do PR #204): parente, vocativo e pagamento na frase ─────────────────────────
+
+async function probe(mode: "suggest" | "auto") {
+  stubLlm();
+  const legit: Tally = {};
+  const neg: Tally = {};
+  const missed: string[] = [];
+  const leaked: string[] = [];
+  const cases: Array<{ text: string; legit: boolean; kind?: string }> = [...PROBE_LEGIT.map((text) => ({ text, legit: true })), ...PROBE_NEG.map((n) => ({ text: n.text, legit: false, kind: n.kind }))];
+  for (const cs of cases) {
+    vi.clearAllTimers();
+    vi.setSystemTime(FRI_NOW);
+    t = convexTest(schema, modules);
+    llmKind = "naive";
+    const out = await run([c(cs.text), h(PROBE_HUMAN)], mode, "a Ana");
+    const open = await suggestionsOf(out.s);
+    const plain = open.filter((r) => r.reason !== LABEL);
+    if (cs.legit) {
+      const ok = plain.length > 0 || out.appts.length > 0;
+      bump(legit, out.appts.length > 0 ? "criou" : ok ? "sugeriu" : open.length > 0 ? "rotulado (errado)" : "perdido");
+      if (!ok) missed.push(cs.text);
+    } else {
+      const bad = plain.length > 0 || out.appts.length > 0;
+      bump(neg, out.appts.length > 0 ? "CRIOU" : bad ? "sugeriu sem rótulo" : open.length > 0 ? "rotulado" : "quieto");
+      if (bad) leaked.push(`${cs.kind}: ${cs.text}`);
+    }
+  }
+  if (REPORT) console.log(`SONDAGEM ${mode}\n  LEGÍTIMOS (${PROBE_LEGIT.length}): ${fmt(legit)}\n  PERDIDOS: ${missed.join(" | ")}\n  NEGATIVOS (${PROBE_NEG.length}): ${fmt(neg)}\n  VAZARAM: ${leaked.join(" | ")}`);
+  return { legit, neg, missed, leaked };
+}
+
+describe("sondagem 2: 40 pedidos legítimos com parente, vocativo ou pagamento × 40 horários de outra pessoa, funcionamento ou pagamento", () => {
+  test.each(["suggest", "auto"] as const)("modo %s: >= 85% dos legítimos viram sugestão; >= 90% dos demais não viram agendamento sem rótulo; nenhum criado", async (mode) => {
+    const { legit, neg, missed, leaked } = await probe(mode);
+    const okLegit = (legit["sugeriu"] ?? 0) + (legit["criou"] ?? 0);
+    expect(okLegit / PROBE_LEGIT.length, `perdidos: ${missed.join(" | ")}`).toBeGreaterThanOrEqual(0.85);
+    expect(1 - leaked.length / PROBE_NEG.length, `vazaram: ${leaked.join(" | ")}`).toBeGreaterThanOrEqual(0.9);
+    expect(neg["CRIOU"] ?? 0).toBe(0);
+  }, 600_000);
+});
+
+describe("'vou marcar' do cliente só vale com o dia/hora logo depois (revisão do PR)", () => {
+  test("'vou marcar a reunião/o médico quinta 10h' não é pedido de atendimento; 'posso marcar quinta 10h?' é", async () => {
+    stubLlm();
+    for (const [text, expected] of [["vou marcar a reunião quinta 10h", 0], ["vou marcar o médico quinta 10h", 0], ["posso marcar quinta 10h?", 1], ["posso agendar quinta às 10h?", 1], ["vou marcar quinta 10h", 1]] as const) {
+      vi.clearAllTimers();
+      vi.setSystemTime(FRI_NOW);
+      t = convexTest(schema, modules);
+      llmKind = "naive";
+      const out = await run([c(text), h("Confirmado quinta 10h")], "suggest", "a Ana");
+      expect((await suggestionsOf(out.s)).length, text).toBe(expected);
+    }
   });
 });

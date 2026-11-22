@@ -130,3 +130,59 @@ export const BLIND_SET: BlindCase[] = [
   N("B59", [c("tem horário quinta às 10h?"), h("quinta 10h tá lotado")], "agendamento_proprio"),
   { id: "B60", kind: "neg", turns: [c("terça às 10h?"), h("Confirmado terça 10h"), h("ops, terça 14h")], subject: "agendamento_proprio", correctionTo: { date: "2026-06-16", hour: 14 } },
 ];
+
+// ───────────────────────── sondagem 2: pedido legítimo com parente/vocativo/pagamento × terceiro/funcionamento/pagamento ─────────────────────────
+// Revisão adversarial do PR #204: o bloqueio de assunto derrubava 18 de 20 pedidos legítimos com parente, vocativo ou pagamento na frase.
+// Relógio: sexta 12/06/2026 09:00; a equipe sempre responde "Confirmado quinta 10h" (18/06 10:00).
+
+export const PROBE_HUMAN = "Confirmado quinta 10h";
+/** Pedidos LEGÍTIMOS (o horário é do próprio cliente). Meta: >= 85% viram sugestão sem rótulo. */
+export const PROBE_LEGIT: string[] = [
+  "meu marido me indicou, quero marcar quinta 10h",
+  "minha filha fez com vocês e adorou, tem quinta 10h pra mim?",
+  "Oi amiga, tem quinta 10h?",
+  "Tia, tem vaga quinta 10h?",
+  "quinta às 10h funciona pra mim",
+  "posso ir quinta 10h? pago no pix",
+  "tem vaga quinta 10h? posso pagar no cartão?",
+  "então fecha na quinta às 10h",
+  "minha mãe vai me levar, pode ser quinta 10h?",
+  "quinta às 10h tá ótimo, minha irmã fica com as crianças",
+  "prefiro quinta 10h, é que de tarde busco meu filho",
+  "Oi meninas, tem quinta 10h?",
+  "minha amiga me falou de vocês, pode ser quinta às 10h?",
+  "meu esposo vai me buscar depois, consigo quinta 10h?",
+  "quinta 10h pra mim, por favor",
+  "só pra mim: quinta às 10h",
+  "Bom dia! Tem como quinta às 10h? Qualquer coisa me avisa, amiga",
+  "minha prima indicou, queria marcar quinta 10h",
+  "pode ser quinta 10h? vou pagar no pix",
+  "quero marcar quinta às 10h, o meu cachorro fica em casa mesmo",
+  "minha vizinha recomendou, tem quinta 10h?",
+  "posso marcar quinta às 10h? pago na hora",
+  "quinta 10h funciona?",
+  "Dona Maria aqui, tem vaga quinta 10h?",
+  "meu irmão me deu o contato, quero agendar quinta às 10h",
+  "minha tia disse que vocês são ótimos, pode ser quinta 10h?",
+  "se a minha mãe puder ficar com o bebê, quinta 10h pra mim funciona",
+  "Oi gente, consegue quinta 10h?",
+  "pode ser quinta às 10h? Meu marido te passou meu número",
+  "quero marcar quinta 10h, vim por indicação da minha colega",
+  "queria quinta às 10h, e se der pago no débito",
+  "quinta 10h está bom, deixo as crianças com meu pai",
+  "olá amigo, posso ir quinta às 10h?",
+  "fecha comigo quinta às 10h",
+  "quinta às 10h funciona pra mim, obrigada",
+  "posso agendar quinta 10h?",
+  "vou querer agendar quinta às 10h",
+  "posso marcar quinta às 10h, tia?",
+  "Dr., tem quinta 10h pra mim?",
+  "minha sogra me indicou vocês, pode ser quinta 10h?",
+];
+export type ProbeNeg = { text: string; kind: "terceiro" | "funcionamento" | "pagamento" };
+/** Horário que NÃO é atendimento do próprio cliente. Meta: >= 90% não viram agendamento do contato sem rótulo. */
+export const PROBE_NEG: ProbeNeg[] = [
+  ...["pode ser quinta 10h pro João?", "marca pra Ana quinta 10h", "o Pedrinho pode ir quinta 10h?", "minha mãe pode ir quinta às 10h?", "é pro meu filho, quinta 10h", "pode ser quinta 10h pra minha esposa?", "meu marido precisa de horário quinta 10h", "quero marcar pro meu cachorro quinta às 10h", "consegue encaixar minha filha quinta 10h?", "minha irmã quer quinta às 10h", "pode marcar pra Marina quinta 10h?", "a minha avó pode ir quinta 10h?", "é pra minha vizinha, quinta às 10h"].map((text) => ({ text, kind: "terceiro" as const })),
+  ...["Vocês abrem quinta às 10h?", "abre quinta às 10h?", "estão abertos quinta às 10h?", "Vocês funcionam quinta às 10h?", "o consultório fecha quinta às 18h?", "tem expediente quinta às 10h?", "vocês trabalham quinta às 10h?", "abrem na quinta às 10h, né?", "funcionam quinta de manhã? às 10h", "será que abrem quinta 10h", "abre quinta 10h?", "o horário de funcionamento quinta é a partir das 10h?", "vocês estão funcionando quinta 10h?", "expediente quinta 10h?"].map((text) => ({ text, kind: "funcionamento" as const })),
+  ...["faço o pix quinta às 10h", "pago a parcela quinta 10h", "o motoboy chega quinta 10h?", "a encomenda chega quinta às 10h?", "posso pagar o boleto quinta 10h", "vou retirar o pedido quinta às 10h", "o comprovante do pix sai quinta 10h", "a entrega fica pronta quinta 10h?", "o evento é quinta às 10h?", "a palestra é quinta 10h?", "pagamento quinta às 10h", "faço o pagamento quinta 10h", "retirada quinta às 10h?"].map((text) => ({ text, kind: "pagamento" as const })),
+];

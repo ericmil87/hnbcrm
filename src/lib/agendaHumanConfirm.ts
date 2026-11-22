@@ -74,6 +74,8 @@ export const SUGGESTION_COPY = {
     substituir_pendente: "O cliente já tinha pedido outro horário.",
     correcao: "Você corrigiu o que tinha confirmado há pouco.",
     correcao_desfeita: "Você corrigiu o horário logo depois: vale o novo (a marcação automática do horário antigo foi desfeita).",
+    para_outra_pessoa: "Parece que o horário é para outra pessoa: confira o nome antes de marcar.",
+    retratacao: "Você desconsiderou a mensagem anterior.",
     mensagem_posterior: "Você mandou outra mensagem logo depois: confira se o horário continua valendo.",
     ia_assunto_incerto: "A IA não teve certeza de que o pedido era do próprio cliente.",
     ia_indisponivel: "A leitura da IA falhou.",

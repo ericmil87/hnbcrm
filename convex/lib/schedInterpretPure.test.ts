@@ -14,6 +14,7 @@ import {
   type MessageLite,
   prepClientText,
   resolveServiceForConversation,
+  thirdPartyBeneficiary,
   servicesCitedIn,
   textOfMessage,
   validateClassifierReply,
@@ -277,5 +278,54 @@ describe("assunto do cliente (funcionamento, entrega/pagamento, terceiro): rodad
     expect(prepClientText("Vou querer agendar quinta 10h")).toBe("quero agendar quinta 10h");
     expect(prepClientText("vou marcar quinta 10h")).toBe("quero marcar quinta 10h");
     expect(prepClientText("Queria marcar quinta 10h")).toBe("quero marcar quinta 10h");
+  });
+});
+
+describe("beneficiário do horário (revisão do PR #204): menção a parente ou vocativo NÃO é terceiro", () => {
+  it("terceiro só quando o parente/nome é o beneficiário", () => {
+    for (const t of ["pode ser quinta 10h pro João?", "marca pra Ana quinta 10h", "o Pedrinho pode ir quinta 10h?", "minha mãe pode ir quinta às 10h?", "é pro meu filho", "pode ser quinta 10h pra minha esposa?", "meu marido precisa de horário quinta 10h", "consegue encaixar minha filha quinta 10h?", "minha irmã quer quinta às 10h", "Minha mãe vai segunda 10h, tudo bem?"]) {
+      expect(thirdPartyBeneficiary(t), t).toBe(true);
+    }
+    for (const t of [
+      "meu marido me indicou, quero marcar quinta 10h",
+      "minha filha fez com vocês e adorou, tem quinta 10h pra mim?",
+      "Oi amiga, tem quinta 10h?",
+      "Tia, tem vaga quinta 10h?",
+      "Oi meninas, tem quinta 10h?",
+      "minha mãe vai me levar, pode ser quinta 10h?",
+      "quinta às 10h tá ótimo, minha irmã fica com as crianças",
+      "prefiro quinta 10h, é que de tarde busco meu filho",
+      "quinta 10h pra mim, por favor",
+      "só pra mim: quinta às 10h",
+      "marca pra Dra. Helena quinta 10h",
+      "marca pra Quinta 10h",
+      "o Rui pode quinta 10h?",
+    ]) {
+      expect(thirdPartyBeneficiary(t), t).toBe(false);
+    }
+    // O nome de um serviço não é pessoa.
+    expect(thirdPartyBeneficiary("marca pra Massagem quinta 10h", ["Massagem"])).toBe(false);
+  });
+
+  it("funciona pra mim é aceite; pagamento e funcionamento só derrubam sem intenção de marcar", () => {
+    expect(clientSubjectBlock("quinta às 10h funciona pra mim")).toBeUndefined();
+    expect(clientSubjectBlock("quinta 10h funciona?")).toBeUndefined();
+    expect(clientSubjectBlock("então fecha na quinta às 10h")).toBeUndefined();
+    expect(clientSubjectBlock("posso ir quinta 10h? pago no pix")).toBeUndefined();
+    expect(clientSubjectBlock("tem vaga quinta 10h? posso pagar no cartão?")).toBeUndefined();
+    expect(clientSubjectBlock("o consultório funciona quinta às 10h?")).toBe("funcionamento");
+    expect(clientSubjectBlock("faço o pix quinta às 10h")).toBe("entrega_pagamento");
+    expect(clientSubjectBlock("o motoboy chega quinta 10h?")).toBe("entrega_pagamento");
+    expect(clientSubjectBlock("pode ser quinta 10h pro João?")).toBe("terceiro");
+  });
+
+  it("prepClientText: relato, 'funciona', 'posso marcar', 'vou marcar' só com o horário logo depois", () => {
+    expect(prepClientText("minha amiga me falou de vocês, pode ser quinta às 10h?")).toBe("pode ser quinta às 10h?");
+    expect(prepClientText("quinta às 10h funciona pra mim")).toBe("quinta às 10h pode ser");
+    expect(prepClientText("posso marcar quinta 10h?")).toBe("quero marcar quinta 10h?");
+    expect(prepClientText("posso agendar quinta às 10h?")).toBe("quero agendar quinta às 10h?");
+    expect(prepClientText("vou marcar quinta 10h")).toBe("quero marcar quinta 10h");
+    expect(prepClientText("vou marcar a reunião quinta 10h")).toBe("vou marcar a reunião quinta 10h");
+    expect(prepClientText("vou marcar o médico quinta 10h")).toBe("vou marcar o médico quinta 10h");
   });
 });

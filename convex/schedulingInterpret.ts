@@ -200,10 +200,10 @@ export const internalClassify = internalAction({
  */
 export const internalDecide = internalMutation({
   // `held`: esta é a segunda passada, depois da janela da criação automática (não espera de novo).
-  args: { messageId: v.id("messages"), llm: v.optional(llmVerdictValidator), held: v.optional(v.boolean()) },
+  args: { messageId: v.id("messages"), llm: v.optional(llmVerdictValidator), held: v.optional(v.boolean()), rowId: v.optional(v.id("schedInterpretations")) },
   returns: decideResultValidator,
   handler: async (ctx, args) => {
-    return await decideInterpretation(ctx, args.messageId, args.llm, { held: args.held });
+    return await decideInterpretation(ctx, args.messageId, args.llm, { held: args.held, rowId: args.rowId });
   },
 });
 
