@@ -221,6 +221,8 @@ export const VIEWS_COPY = {
     orgAll: { one: "O horário deste período fica sem lugar e vai para a fila de pendências.", many: "Todos os {n} horários deste período ficam sem lugar e vão para a fila de pendências." },
     orgNone: "Todos os recursos ficam fechados. Nada é passado para outro lugar sozinho.",
     headlineAtLeast: "Pelo menos {n} horários marcados em {nome} neste período",
+    // Agenda inteira: "em Toda a agenda" soava errado; a frase leva o artigo.
+    headlineOrg: { one: "1 horário marcado na agenda inteira neste período", many: "{n} horários marcados na agenda inteira neste período", atLeast: "Pelo menos {n} horários marcados na agenda inteira neste período" },
     assurance: "Nada é cancelado e nenhuma mensagem é enviada ao cliente.",
     from: "De",
     to: "Até",

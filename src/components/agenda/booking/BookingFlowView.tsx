@@ -546,7 +546,7 @@ function ReviewStep({
   ];
   return (
     <div className="space-y-4">
-      <h3 className="text-base font-semibold text-text-primary">{t.review.heading}</h3>
+      <h3 className="text-base font-semibold text-text-primary">{reschedule ? t.review.headingReschedule : t.review.heading}</h3>
       {/* Avisos no topo, acima do resumo: ficavam abaixo da dobra do modal. Recebem o foco ao abrir a revisão. */}
       {slot.warnings.length > 0 && (
         <div ref={warnRef} tabIndex={-1} className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" role="alert">

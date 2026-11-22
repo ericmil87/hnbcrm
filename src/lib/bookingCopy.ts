@@ -54,6 +54,7 @@ export const BOOKING_COPY = {
   },
   review: {
     heading: "Confira e marque",
+    headingReschedule: "Confira e remarque",
     who: "Cliente",
     service: "Serviço",
     when: "Quando",

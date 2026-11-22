@@ -315,12 +315,24 @@ describe("BookingFlowView", () => {
     expect(screen.getByText("Cliente desta conversa")).toBeInTheDocument();
   });
 
+  it("a hora clicada na Agenda, quando livre, é a primeira sugestão", () => {
+    const base = Math.ceil((Date.now() + 5 * HOUR) / 3_600_000) * 3_600_000;
+    const slots = [0, 1, 2, 3].map((h) => slot(0, { startTime: base + h * HOUR, endTime: base + (h + 1) * HOUR }));
+    const clicked = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: TZ }).format(new Date(base + 3 * HOUR));
+    const [hh, mm] = clicked.split(":").map(Number);
+    render(<Harness services={[sessao]} slots={ready(slots)} initialTimeMin={hh * 60 + mm} date={undefined} />);
+    const first = timeButtons()[0];
+    expect(first).toHaveTextContent(clicked);
+  });
+
   it("remarcar mostra 'De X para Y'", async () => {
     const from = Date.now() + 48 * HOUR;
     render(<Harness services={[sessao]} reschedule={{ fromStartTime: from }} />);
     await userEvent.click(timeButtons()[0]);
     expect(screen.getByText("De")).toBeInTheDocument();
     expect(screen.getByText("Para")).toBeInTheDocument();
+    expect(screen.getByText("Confira e remarque")).toBeInTheDocument();
+    expect(screen.queryByText("Confira e marque")).toBeNull();
     expect(screen.getByRole("button", { name: "Remarcar" })).toBeInTheDocument();
     // Botões da revisão empilhados no celular: `flex-1` em coluna zera a base e o botão principal ficava com 24 px.
     expect(screen.getByRole("button", { name: "Remarcar" }).className).not.toMatch(/(^| )flex-1( |$)/);
