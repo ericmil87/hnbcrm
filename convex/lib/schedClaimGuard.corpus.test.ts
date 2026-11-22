@@ -30,3 +30,25 @@ describe("schedClaimGuard — corpus rotulado (eventos reais + cego + quase-igua
     expect(r.adversarial.leaked).toEqual([]);
   });
 });
+
+/**
+ * Falsos positivos achados NA REMEDIÇÃO com modelo real (depois das correções do D2): frases corretas que o guard barrou. Entram aqui
+ * para não voltarem; a lista cresce só com frase lida numa conversa de verdade.
+ */
+import { detectUnbackedBookingClaim } from "./schedClaimGuard";
+import { buildState } from "./schedClaimGuard.corpus.test-helper";
+
+describe("schedClaimGuard — falsos positivos da remedição com modelo real", () => {
+  const nada = buildState({});
+  const ofertas = buildState({ offered: ["2026-11-24 10:00", "2026-11-24 14:00"] });
+  test.each<[string, ReturnType<typeof buildState>]>([
+    ["Amanhã (segunda, 23/11) às 9h não tem horário com o Dr. Marcos, ele está de folga.", ofertas],
+    ["Na terça, 24/11, às 9h não tem vaga, mas tenho às 10h.", ofertas],
+    ["Às 16h não tem mais horário nesse dia.", nada],
+  ])("passa: %s", (text, state) => {
+    expect(detectUnbackedBookingClaim(text, state)).toBeNull();
+  });
+  test("e 'não tem problema' continua sem esconder afirmação indevida", () => {
+    expect(detectUnbackedBookingClaim("Não tem problema, terça às 10h já está marcado!", ofertas)).not.toBeNull();
+  });
+});
