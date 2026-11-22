@@ -10,7 +10,7 @@
  * sai quando há pedido pendente conhecido (agendamento aguardando a equipe, existente ou criado no turno).
  */
 import { type ClaimViolation, SCHED_SAFE_TEXT } from "./schedClaimGuard";
-import { type CustomerIntent, detectCustomerIntent } from "./schedIntent";
+import { asksPedidoStatus, type CustomerIntent, detectCustomerIntent } from "./schedIntent";
 
 export type SafeReply = {
   text: string;
@@ -18,8 +18,31 @@ export type SafeReply = {
   reason: string;
   summary: string;
   /** Rótulo da situação, para log. */
-  situation: "remarcar" | "cancelar" | "presenca" | "grupo" | "profissional" | "pedido_pendente" | "verificar";
+  situation: "remarcar" | "cancelar" | "presenca" | "grupo" | "profissional" | "pedido_pendente" | "verificar" | "situacao";
+  /** `false` = o texto já responde com o estado real e a equipe não precisa ser chamada (padrão: abre repasse). */
+  handoff?: boolean;
 };
+
+/** O que o SERVIDOR sabe do cliente (rótulos "segunda-feira, 23/11, às 15:00"): o texto seguro de situação só diz isto. */
+export type SafeFacts = { scheduled: string[]; pending: string[]; declined: string[]; expired: string[]; cancelled: string[] };
+
+const asLabels = (xs: readonly string[]) => (xs.length <= 1 ? (xs[0] ?? "") : `${xs.slice(0, -1).join(", ")} e ${xs[xs.length - 1]}`);
+
+/**
+ * Resposta de SITUAÇÃO montada só com o estado (nunca esconde o que o cliente perguntou): marcado diz o horário, pendente diz que aguarda,
+ * recusado/vencido/cancelado dizem que não foi possível e que dá para consultar outros horários. `null` = nada a dizer.
+ */
+export function statusReplyText(f: SafeFacts): string | null {
+  const parts: string[] = [];
+  if (f.scheduled.length > 0) parts.push(`Seu horário está marcado para ${asLabels(f.scheduled.slice(0, 2))}.`);
+  if (f.pending.length > 0) parts.push(`Seu pedido para ${asLabels(f.pending.slice(0, 2))} está registrado e aguarda a confirmação da equipe.`);
+  if (parts.length === 0) {
+    if (f.declined.length > 0) parts.push(`Não foi possível confirmar o horário de ${asLabels(f.declined.slice(0, 2))}: a equipe não conseguiu aprovar esse pedido. Posso consultar outros horários para você.`);
+    else if (f.expired.length > 0) parts.push(`O pedido para ${asLabels(f.expired.slice(0, 2))} venceu sem resposta da equipe e não foi marcado. Posso consultar outros horários para você.`);
+    else if (f.cancelled.length > 0) parts.push(`O horário de ${asLabels(f.cancelled.slice(0, 2))} foi cancelado. Se quiser, posso consultar outros horários para você.`);
+  }
+  return parts.length > 0 ? parts.join(" ") : null;
+}
 
 const TEAM_ACTION = "Conferir a agenda e responder o cliente";
 
@@ -31,6 +54,8 @@ export function schedSafeReply(input: {
   pendingRequest: boolean;
   /** O contato tem agendamento ativo (existente ou criado no turno). Remarcar, cancelar e presença só fazem sentido com ele. */
   hasUpcoming: boolean;
+  /** Estado do cliente conhecido pelo servidor (marcado, pendente, recusado, vencido, cancelado). */
+  facts?: SafeFacts;
 }): SafeReply {
   const detected: CustomerIntent | null = detectCustomerIntent(input.customerText);
   // Sem agendamento não há o que remarcar/cancelar/confirmar: o cliente quer marcar (texto padrão), não "cancelamento fica com a equipe".
@@ -58,6 +83,20 @@ export function schedSafeReply(input: {
       summary: "O cliente confirmou presença. A IA não registra presença e tentou afirmar que anotou; enviei um aviso padrão. A equipe precisa registrar a confirmação e responder.",
       situation: "presenca",
     };
+  }
+  // "E aí, confirmou?" / "Que dia é o meu?": o texto seguro diz a situação REAL (nunca esconde a informação pedida).
+  // (ou o guard barrou "ainda aguardando" com o estado já decidido: `stale_pending`, o cliente quer a situação mesmo sem ter perguntado assim)
+  if (input.facts && (asksPedidoStatus(input.customerText) || input.kind === "stale_pending")) {
+    const text = statusReplyText(input.facts);
+    if (text) {
+      return {
+        text,
+        reason: "Cliente perguntou da situação do pedido (resposta da IA barrada pelo guard)",
+        summary: "O cliente perguntou como ficou o pedido de horário. A resposta da IA foi barrada pelo guard e enviei a situação real que o sistema tem. Nenhuma ação é necessária.",
+        situation: "situacao",
+        handoff: false,
+      };
+    }
   }
   if (intent === "grupo") {
     return {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { detectUnbackedBookingClaim } from "./schedClaimGuard";
 import { buildState } from "./schedClaimGuard.corpus.test-helper";
-import { JUDGE_HOLDOUT_BAD, JUDGE_HOLDOUT_GOOD, JUDGE_NEW_BAD, JUDGE_NEW_GOOD } from "./schedClaimJudge.corpus.test-helper";
+import { JUDGE_HOLDOUT_BAD, JUDGE_HOLDOUT_GOOD, JUDGE_NEW_BAD, JUDGE_NEW_GOOD, JUDGE_STATE_BAD, JUDGE_STATE_GOOD } from "./schedClaimJudge.corpus.test-helper";
 import { shouldJudge } from "./schedClaimJudge";
 
 /**
@@ -29,5 +29,24 @@ describe("juiz de afirmação: corpus novo (60 + 40 holdout), só o léxico", ()
   });
   test("todas as indevidas que o léxico deixa passar disparam o gatilho do juiz (senão ele nem seria chamado)", () => {
     for (const b of bad.filter((x) => KNOWN_LEXICAL_LEAKS.includes(x.id))) expect(shouldJudge(b.text), b.text).toBe(true);
+  });
+});
+
+/**
+ * D3 (decisão da equipe): 30 + 30 frases de "ainda aguardando"/"marcado"/"cancelado" contra o estado real. O léxico não tem como saber que o
+ * pedido já foi aprovado/recusado/vencido: 20 das 30 indevidas passam por ele (o juiz pegou 30 de 30; `temp/.../juiz/`), e nenhuma legítima é barrada.
+ */
+describe("juiz de afirmação: corpus do estado decidido (60), só o léxico", () => {
+  const blocked = (b: { text: string; state: Parameters<typeof buildState>[0] }) => detectUnbackedBookingClaim(b.text, buildState(b.state)) !== null;
+  const KNOWN = ["S01", "S02", "S03", "S04", "S05", "S06", "S07", "S08", "S11", "S12", "S15", "S21", "S23", "S24", "S25", "S26", "S27", "S28", "S29", "S30"];
+  test("tamanhos e o que o léxico deixa passar", () => {
+    expect([JUDGE_STATE_BAD.length, JUDGE_STATE_GOOD.length]).toEqual([30, 30]);
+    expect(JUDGE_STATE_BAD.filter((b) => !blocked(b)).map((b) => b.id)).toEqual(KNOWN);
+  });
+  test("nenhuma legítima é barrada pelo léxico", () => {
+    expect(JUDGE_STATE_GOOD.filter(blocked).map((b) => b.id)).toEqual([]);
+  });
+  test("todas as indevidas que passam disparam o gatilho do juiz", () => {
+    for (const b of JUDGE_STATE_BAD.filter((x) => KNOWN.includes(x.id))) expect(shouldJudge(b.text), b.text).toBe(true);
   });
 });

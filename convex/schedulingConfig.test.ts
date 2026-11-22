@@ -9,7 +9,8 @@ import { api } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import * as config from "./schedulingConfig";
-import { assertMatchesReturns } from "./lib/assertMatchesValidator.test-helper";
+import { assertMatchesReturns, assertMatchesValidator } from "./lib/assertMatchesValidator.test-helper";
+import { settingsViewValidator } from "./lib/schedViews";
 import { type AgendaSeed, identityOf, seedAgenda, type Person } from "./lib/schedTestSeed.test-helper";
 import { schedInvariantProblems } from "./lib/schedInvariants.test-helper";
 import { MAX_RESOURCES_PER_ORG, MAX_SERVICES_PER_ORG } from "./lib/schedConstants";
@@ -433,6 +434,18 @@ describe("configurações (schedSettings)", () => {
     expect(c.ai).toMatchObject({ book: "propose", reschedule: "propose", cancel: "handoff" });
     expect(c.ai!.autoAck).toBeUndefined();
     expect((await audits("schedSettings")).filter((l) => l.severity === "high")).toHaveLength(2);
+  });
+
+  test("juiz de afirmação (interruptor por org): ausente = ligado na leitura; a tela grava false e true; a leitura devolve o valor (e confere o validator)", async () => {
+    expect((await cfg()).ai!.claimJudge).toBe(true);
+    await upd(s.admin, { ai: { claimJudge: false } });
+    const off = await cfg();
+    expect(off.ai!.claimJudge).toBe(false);
+    assertMatchesValidator(off, settingsViewValidator);
+    await upd(s.admin, { ai: { claimJudge: true } });
+    expect((await cfg()).ai!.claimJudge).toBe(true);
+    const doc = await t.run((ctx) => ctx.db.query("schedSettings").first());
+    expect(doc?.ai?.claimJudge).toBe(true);
   });
 });
 

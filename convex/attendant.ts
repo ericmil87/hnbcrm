@@ -128,7 +128,7 @@ import { runClaimJudge } from "./lib/schedClaimJudgeRun";
 import { SCHED_CLAIM_JUDGE_ENABLED } from "./lib/schedConstants";
 import { localDateOf } from "./lib/schedTime";
 import { customerTail, customerTextForGroup, detectCustomerIntent, iaAskedHowMany, isChangeIntent, mentionsGroup, mentionsOtherService } from "./lib/schedIntent";
-import { schedSafeReply } from "./lib/schedSafeText";
+import { type SafeFacts, schedSafeReply } from "./lib/schedSafeText";
 import { markOffersShownFromText } from "./lib/schedAiState";
 // ── Follow-up da IA (v0.60) ──
 // `isWithinSchedule` MUDOU DE CASA para lib/agentSchedule.ts (módulo puro, com
@@ -4128,8 +4128,9 @@ export const internalProcessQueueItem = internalAction({
         historico: context.history,
         ...(context.campaignContext ? { campanha: context.campaignContext } : {}),
         // Agenda v2 (D1): próximos horários DESTE contato (a1, a2…), dado do sistema dentro do envelope.
-        ...(context.sched?.tools.find && !context.schedToolsOff && context.sched.upcoming.length > 0
-          ? { horarios_do_cliente: upcomingForEnvelope(context.sched.upcoming.slice(0, 3)) }
+        // Com a situação REAL de cada um e o que dizer; inclui as decisões das últimas 72 h (recusado, vencido, cancelado).
+        ...(context.sched?.tools.find && !context.schedToolsOff && context.sched.upcoming.length + context.sched.decided.length > 0
+          ? { horarios_do_cliente: upcomingForEnvelope(context.sched.upcoming.slice(0, 3), context.sched.decided.slice(0, 2)) }
           : {}),
         // Ofertas VIGENTES: as que o cliente já VIU (mensagem enviada) e não venceram. Só estes códigos valem.
         ...(context.sched?.tools.book && !context.schedToolsOff && context.sched.offers.length > 0
@@ -4208,13 +4209,29 @@ export const internalProcessQueueItem = internalAction({
         codes: [] as string[],
       };
       let claimedOnce = false;
+      // Uma regeneração quando a rodada pede mais ferramentas do que o orçamento da run (a rodada inteira é descartada sem executar).
+      let toolBudgetNudged = false;
       // Horas fixas do conhecimento (turmas, funcionamento): descrevê-las não é "horário inventado". Calculado uma vez por turno.
       const schedKnowledgeTimes = context.schedulingOn === true ? knowledgeTimesOf(context.knowledge) : [];
+      // O que o servidor sabe do cliente (para o texto seguro de situação): ativos, reserva desta rodada e decisões das últimas 72 h.
+      const schedSafeFacts = (): SafeFacts => {
+        const label = (startTime: number) => formatSlotText(startTime, Date.now(), schedTz);
+        const upcoming = context.sched?.upcoming ?? [];
+        const booked = schedTurn.booked.filter((b) => !upcoming.some((u) => u.startTime === b.startTime));
+        return {
+          scheduled: [...upcoming.filter((u) => u.status !== "pending_approval").map((u) => u.label), ...booked.filter((b) => b.status === "scheduled").map((b) => label(b.startTime))],
+          pending: [...upcoming.filter((u) => u.status === "pending_approval").map((u) => u.label), ...booked.filter((b) => b.status === "pending").map((b) => label(b.startTime))],
+          declined: (context.sched?.decided ?? []).filter((d) => d.kind === "declined").map((d) => d.label),
+          expired: (context.sched?.decided ?? []).filter((d) => d.kind === "expired").map((d) => d.label),
+          cancelled: (context.sched?.decided ?? []).filter((d) => d.kind === "cancelled").map((d) => d.label),
+        };
+      };
       const schedClaimState = (): ClaimState =>
         buildClaimState({
           now: Date.now(),
           tz: schedTz,
           upcoming: context.sched?.upcoming ?? [],
+          decided: context.sched?.decided ?? [],
           offers: context.sched?.offers ?? [],
           turn: schedTurn,
           serviceNames: context.sched?.services.map((sv) => sv.name) ?? [],
@@ -4235,9 +4252,12 @@ export const internalProcessQueueItem = internalAction({
           pendingRequest:
             schedTurn.booked.some((b) => b.status === "pending") || (context.sched?.upcoming ?? []).some((u) => u.status === "pending_approval"),
           hasUpcoming: schedTurn.booked.length > 0 || (context.sched?.upcoming.length ?? 0) > 0,
+          facts: schedSafeFacts(),
         });
         replyText = safe.text;
         console.warn(JSON.stringify({ event: "attendantSchedSafeText", kind, situation: safe.situation }));
+        // Texto de SITUAÇÃO (já diz o estado real): não abre repasse.
+        if (safe.handoff === false) return;
         try {
           await ctx.runMutation(internal.handoffs.internalRequestHandoff, {
             leadId: context.leadId,
@@ -4536,6 +4556,18 @@ export const internalProcessQueueItem = internalAction({
             ? toolCalls.filter((tc) => tc.function.name !== "replyToCustomer").length
             : toolCalls.length;
         if (toolCallNames.length + countedCalls > context.maxToolCalls) {
+          // Medido (rodada 2, grupo): o modelo pediu 7 ferramentas na MESMA rodada (consulta + cadastro + marcas + resposta). Nada desta rodada foi
+          // executado, então descarta a mensagem do modelo e pede UMA vez de novo com o orçamento que resta (antes: a run falhava e a fila
+          // repetia o turno inteiro pagando o modelo). Estourou de novo: falha como antes (a fila repete; o estado já gravado entra no contexto).
+          if (!toolBudgetNudged) {
+            toolBudgetNudged = true;
+            messages.pop();
+            messages.push({
+              role: "user",
+              content: `Sua resposta anterior pediu ${countedCalls} ferramentas de uma vez e foi DESCARTADA sem executar nada: neste atendimento restam só ${Math.max(0, context.maxToolCalls - toolCallNames.length)}. Chame só as essenciais (a consulta de horários SOZINHA; atualizar cadastro, etiquetas e notas podem esperar) e responda ao cliente.`,
+            });
+            continue;
+          }
           throw new Error("Limite de tool calls por run excedido");
         }
 

@@ -140,3 +140,44 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
     expect(detectUnbackedBookingClaim("Tenho terça às 14h, com o profissional que estiver livre.", st)).toBeNull();
   });
 });
+
+describe("schedClaimGuard — pedido decidido pela equipe (recusado, vencido, cancelado): D3", () => {
+  const withDecided = (kind: "declined" | "expired" | "cancelled", at: string, base: Parameters<typeof buildState>[0] = {}) => {
+    const [d, hhmm] = at.split(" ");
+    return { ...buildState(base), decided: [{ localDate: d, timeMin: Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5)), kind }] };
+  };
+  const declined = withDecided("declined", "2026-11-25 14:00");
+  test.each([
+    "Infelizmente a equipe não conseguiu confirmar o pedido de quarta às 14h. Quer que eu consulte outros horários?",
+    "Seu pedido de quarta às 14h foi recusado pela equipe, desculpe. Posso consultar outros horários?",
+    "Peço desculpas, o pedido de quarta, 25/11, às 14h foi cancelado. Quer ver outros horários?",
+    "Não foi possível confirmar a quarta às 14h, desculpa! Quer que eu veja outros horários?",
+    "O pedido de quarta às 14h não foi aprovado. Posso consultar de novo?",
+  ])("dizer a verdade sobre o horário recusado passa: %s", (text) => {
+    expect(detectUnbackedBookingClaim(text, declined)).toBeNull();
+  });
+  test.each([
+    "Seu horário de quarta às 14h está confirmado!",
+    "Pronto, marcado para quarta às 14h!",
+    "Tudo certo para quarta às 14h, te espero!",
+    "Cancelei seu pedido de quarta às 14h.", // 1ª pessoa: a IA não cancela
+  ])("dizer que o horário recusado está marcado (ou que a IA cancelou) barra: %s", (text) => {
+    expect(detectUnbackedBookingClaim(text, declined)).not.toBeNull();
+  });
+  test("vencido e cancelado: mesma regra", () => {
+    const exp = withDecided("expired", "2026-11-24 10:00");
+    expect(detectUnbackedBookingClaim("O pedido de terça às 10h venceu sem resposta da equipe. Posso consultar os horários de novo?", exp)).toBeNull();
+    expect(detectUnbackedBookingClaim("Seu horário de terça às 10h está garantido!", exp)).not.toBeNull();
+    const canc = withDecided("cancelled", "2026-11-24 10:00");
+    expect(detectUnbackedBookingClaim("O horário de terça às 10h foi cancelado, quer outro?", canc)).toBeNull();
+  });
+  test("sem o estado decidido o horário continua desconhecido (a regra antiga: 'cancelado' com horário barra)", () => {
+    expect(detectUnbackedBookingClaim("Peço desculpas, o pedido de quarta, 25/11, às 14h foi cancelado. Quer ver outros horários?", buildState({}))?.kind).toBe("reschedule_claim");
+  });
+  test("o horário do PRÓPRIO cliente com lastro passa ('seu horário é quinta às 10h')", () => {
+    const sch = buildState({ existing: [["2026-11-26 10:00", "scheduled"]] });
+    expect(detectUnbackedBookingClaim("Seu horário é quinta às 10h.", sch)).toBeNull();
+    expect(detectUnbackedBookingClaim("Seu horário está marcado para quinta às 10h. Pode vir!", sch)).toBeNull();
+    expect(detectUnbackedBookingClaim("Seu horário é quinta às 11h.", sch)).not.toBeNull();
+  });
+});

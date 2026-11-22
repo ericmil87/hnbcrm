@@ -45,7 +45,7 @@ const book = (offer: string): AttendantTurn => ({ tools: [{ name: "bookOfferedTi
 
 type JudgeJson = Record<string, unknown>;
 const NOTHING: JudgeJson = {
-  afirma_marcado: false, afirma_remarcado: false, afirma_cancelado: false, afirma_presenca_confirmada: false, afirma_repassado_equipe: false, afirma_pedido_registrado: false,
+  afirma_marcado: false, afirma_remarcado: false, afirma_cancelado: false, afirma_presenca_confirmada: false, afirma_repassado_equipe: false, afirma_pedido_registrado: false, afirma_aguardando_equipe: false,
   horarios_afirmados: [], profissional_afirmado: null,
 };
 const judgeSaying = (x: Partial<JudgeJson>): JudgeJson => ({ ...NOTHING, ...x });

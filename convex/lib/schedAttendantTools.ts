@@ -465,11 +465,43 @@ export type SchedUpcoming = {
   resourceNames?: string[];
 };
 
+/** Decisão recente sobre um pedido do cliente (cancelado pela equipe sem nunca ter sido aprovado, vencido, cancelado). Sem motivo nem quem decidiu. */
+export type SchedDecided = {
+  ref: string;
+  label: string;
+  startTime: number;
+  serviceName: string;
+  kind: "declined" | "expired" | "cancelled";
+};
+
 export const UPCOMING_STATUS_LABEL: Record<SchedUpcoming["status"], string> = {
   pending_approval: "aguardando confirmação da equipe",
   scheduled: "marcado",
   confirmed: "confirmado",
 };
+
+export const DECIDED_LABEL: Record<SchedDecided["kind"], string> = {
+  declined: "recusado pela equipe",
+  expired: "venceu sem resposta da equipe",
+  cancelled: "cancelado",
+};
+
+/** O que dizer ao cliente em cada estado (frase curta e fechada, escrita pelo servidor; vai no envelope ao lado da situação). */
+export function whatToSay(status: SchedUpcoming["status"] | SchedDecided["kind"], label: string): string {
+  switch (status) {
+    case "scheduled":
+    case "confirmed":
+      return `pode confirmar ao cliente: está ${status === "confirmed" ? "confirmado" : "marcado"} para ${label}`;
+    case "pending_approval":
+      return "aguardando a equipe: não diga que está marcado; diga que o pedido segue registrado e a equipe confirma";
+    case "declined":
+      return "foi recusado pela equipe: peça desculpas, diga que não foi possível confirmar este horário e ofereça consultar outros horários";
+    case "expired":
+      return "o pedido venceu sem resposta da equipe: não está marcado; ofereça consultar os horários de novo";
+    case "cancelled":
+      return "foi cancelado: não está mais marcado; se o cliente quiser, ofereça consultar outro horário";
+  }
+}
 
 /** Serviços que a IA pode oferecer (parte ESTÁVEL do prompt: depende só da configuração da org). */
 export function buildServicesBlock(services: readonly SchedPromptService[], more: boolean): string {
@@ -502,6 +534,7 @@ export function buildSchedPromptBlock(input: {
     `Para oferecer horários, chame findAvailableTimes SOZINHA (service pelo nome exato, dateRef pela régua "Próximos dias") e espere o resultado; ofereça no máximo ${MAX_OFFERS}, citando dia da semana, data e hora, e NUNCA mostre o código (h1, h2…) ao cliente.`,
     'Hora pedida: se o cliente citar uma hora ("quinta às 14h"), passe em time; o resultado diz "Horário pedido … DISPONÍVEL" (é o primeiro da lista) ou "INDISPONÍVEL" (com as alternativas mais próximas) e quantos horários livres há. Nunca diga que um horário não existe sem ter consultado com time.',
     'Profissional: você NÃO sabe quem vai atender. NUNCA atribua um horário a um profissional ou sala (nem diga "com o Léo", "o Léo atende") se a linha do resultado não trouxe "(com Nome)". Se o cliente pedir alguém pelo nome, passe em professional: o resultado diz se os horários são mesmo com essa pessoa. Se disser que ela NÃO tem horário (ou que não foi identificada), diga isso ao cliente, ofereça só as alternativas que vieram e diga que a equipe confirma quem atende.',
+    'Em horarios_do_cliente (quando houver) cada horário traz a situação REAL, escrita pelo sistema agora, e o_que_dizer: quando o cliente perguntar do pedido ("e aí, confirmou?", "deu certo?", "que dia é o meu?"), responda com ela, que vale mais do que o que você disse antes na conversa (a equipe pode ter decidido depois). Só diga "marcado" ou "confirmado" para o horário cuja situação é marcado/confirmado, e diga o dia e a hora dele. Se foi recusado, venceu ou foi cancelado, peça desculpas, diga que não foi possível confirmar e ofereça consultar outros horários (findAvailableTimes). Nunca fale do motivo da decisão nem de quem decidiu.',
     "Grupo: para 2 a 4 pessoas no MESMO horário passe SEMPRE people na busca (sem people a reserva é de UMA pessoa só); a reserva é do grupo todo e fica sempre aguardando a equipe (diga que o pedido foi registrado para as N pessoas). Mais de 4 pessoas, ou pessoas EM SEQUÊNCIA (\"um depois do outro\") ou em horários diferentes: não marque nem ofereça horário, chame requestHandoff e diga que a equipe organiza.",
   ];
   if (input.tools.book) {
@@ -509,7 +542,7 @@ export function buildSchedPromptBlock(input: {
       'No bloco de dados, "ofertas_vigentes" traz os horários que você JÁ mostrou ao cliente, cada um com o seu código. Quando o cliente escolher um deles, repita o dia e a hora e peça a confirmação explícita; só depois da resposta dele use bookOfferedTime com o código da oferta que corresponde ao que ele escolheu, SOZINHA, numa rodada própria (nunca junto da consulta). Se a escolha for ambígua ("o primeiro", "pode ser", "qualquer um"), PERGUNTE qual horário ele quer em vez de escolher por ele; nunca use um código que não esteja em ofertas_vigentes (se não houver, consulte os horários de novo e espere a resposta).',
       input.book === "auto"
         ? 'Depois de bookOfferedTime responda com a frase do resultado, sem mudar dia nem hora: só diga "marcado" quando o status for "marcado"; se for "reservado_aguardando_equipe", diga que o pedido foi registrado e a equipe confirma.'
-        : 'Neste negócio a equipe aprova cada horário: depois de bookOfferedTime responda com a frase do resultado (pedido registrado, aguardando a confirmação da equipe), sem mudar dia nem hora. NUNCA diga "confirmado", "marcado", "agendado" ou "garantido".'
+        : 'Neste negócio a equipe aprova cada horário: depois de bookOfferedTime responda com a frase do resultado (pedido registrado, aguardando a confirmação da equipe), sem mudar dia nem hora. Logo depois de bookOfferedTime NUNCA diga "confirmado", "marcado", "agendado" ou "garantido" (a equipe ainda não decidiu); quando ela decidir, vale a situação de horarios_do_cliente (veja acima).'
     );
   }
   lines.push(
@@ -527,6 +560,12 @@ export function offersForEnvelope(offers: readonly SchedCurrentOffer[]): Array<{
   return offers.map((o) => ({ codigo: o.code, horario: o.label, ...(o.professional ? { profissional: o.professional } : {}) }));
 }
 
-export function upcomingForEnvelope(upcoming: readonly SchedUpcoming[]): Array<{ ref: string; horario: string; servico: string; situacao: string }> {
-  return upcoming.map((u) => ({ ref: u.ref, horario: u.label, servico: u.serviceName, situacao: UPCOMING_STATUS_LABEL[u.status] }));
+export function upcomingForEnvelope(
+  upcoming: readonly SchedUpcoming[],
+  decided: readonly SchedDecided[] = []
+): Array<{ ref: string; horario: string; servico: string; situacao: string; o_que_dizer: string }> {
+  return [
+    ...upcoming.map((u) => ({ ref: u.ref, horario: u.label, servico: u.serviceName, situacao: UPCOMING_STATUS_LABEL[u.status], o_que_dizer: whatToSay(u.status, u.label) })),
+    ...decided.map((d) => ({ ref: d.ref, horario: d.label, servico: d.serviceName, situacao: DECIDED_LABEL[d.kind], o_que_dizer: whatToSay(d.kind, d.label) })),
+  ];
 }

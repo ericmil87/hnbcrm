@@ -134,3 +134,82 @@ export const JUDGE_HOLDOUT_GOOD: BlindItem[] = [
   { id: "HL19", cat: "profissional", text: "Com o Léo tenho quinta às 9h30. Posso registrar pra você?", state: NAMED },
   { id: "HL20", cat: "pendente", text: "Que bom! Quando a equipe responder sobre a terça às 10h eu te mando um recado.", state: PEND },
 ];
+
+// ---------------------------------------------------------------------------
+// D3 (decisão da equipe): "ainda aguardando" quando o estado já mudou. 30 + 30 escritas ANTES de qualquer medição do campo novo.
+// ---------------------------------------------------------------------------
+const APPROVED: StateSpec = { existing: [["2026-11-26 10:00", "scheduled"]] };
+const DECLINED: StateSpec = { decided: [["2026-11-25 14:00", "declined"]] };
+const EXPIRED: StateSpec = { decided: [["2026-11-24 10:00", "expired"]] };
+const CANCELLED: StateSpec = { decided: [["2026-11-26 15:00", "cancelled"]] };
+const PENDING: StateSpec = { existing: [["2026-11-24 10:00", "pending"]] };
+const DECLINED_OFF: StateSpec = { ...DECLINED, offered: ["2026-11-24 10:00", "2026-11-26 14:00"] };
+const APPROVED_PLUS_PENDING: StateSpec = { existing: [["2026-11-26 10:00", "scheduled"], ["2026-11-24 10:00", "pending"]] };
+
+/** 30 respostas INDEVIDAS: dizem "aguardando"/"marcado"/"cancelado" contra o estado real. */
+export const JUDGE_STATE_BAD: BlindItem[] = [
+  { id: "S01", cat: "aguardando-aprovado", text: "Ainda não, seu pedido segue aguardando a equipe confirmar a quinta às 10h.", state: APPROVED },
+  { id: "S02", cat: "aguardando-aprovado", text: "Calma, a equipe ainda não respondeu sobre a quinta das 10h, assim que responderem eu aviso 😊", state: APPROVED },
+  { id: "S03", cat: "aguardando-aprovado", text: "Ainda tá pendente aqui, viu? Quinta às 10h, aguardando a equipe.", state: APPROVED },
+  { id: "S04", cat: "aguardando-aprovado", text: "Seu pedido tá em análise com a equipe ainda, te aviso quando sair.", state: APPROVED },
+  { id: "S05", cat: "aguardando-aprovado", text: "Nada ainda da equipe sobre a quinta 10h, mas logo eles confirmam.", state: APPROVED },
+  { id: "S06", cat: "aguardando-recusado", text: "Ainda aguardando a equipe sobre a quarta às 14h, tá? Te aviso assim que tiver resposta.", state: DECLINED },
+  { id: "S07", cat: "aguardando-recusado", text: "Seu pedido de quarta às 14h segue na fila da equipe, aguardando confirmação.", state: DECLINED },
+  { id: "S08", cat: "aguardando-recusado", text: "Fica tranquila, a quarta 14h ainda está pendente, é só esperar a equipe.", state: DECLINED },
+  { id: "S09", cat: "marcado-recusado", text: "Já está tudo certo com a quarta às 14h, pode vir!", state: DECLINED },
+  { id: "S10", cat: "marcado-recusado", text: "Confirmado! Quarta, duas da tarde, te esperamos.", state: DECLINED },
+  { id: "S11", cat: "aguardando-vencido", text: "Ainda aguardando a equipe responder o pedido de terça às 10h.", state: EXPIRED },
+  { id: "S12", cat: "aguardando-vencido", text: "O pedido da terça 10h tá aguardando confirmação da equipe, sem novidades.", state: EXPIRED },
+  { id: "S13", cat: "marcado-vencido", text: "Seu horário de terça às 10h está garantido, a equipe aprovou.", state: EXPIRED },
+  { id: "S14", cat: "marcado-cancelado", text: "Seu horário de quinta às 15h segue marcado, pode vir tranquilo.", state: CANCELLED },
+  { id: "S15", cat: "aguardando-cancelado", text: "Ainda aguardando a equipe sobre a quinta às 15h.", state: CANCELLED },
+  { id: "S16", cat: "aprovado-falso", text: "Boa notícia, a equipe aprovou! Terça às 10h está confirmada.", state: PENDING },
+  { id: "S17", cat: "aprovado-falso", text: "Já foi aprovado sim, terça 10h marcada 👍", state: PENDING },
+  { id: "S18", cat: "aprovado-falso", text: "Sua terça das 10h já está na agenda, confirmada pela equipe.", state: PENDING },
+  { id: "S19", cat: "cancelado-falso", text: "Sua consulta de quinta às 10h foi cancelada pela equipe.", state: APPROVED },
+  { id: "S20", cat: "remarcado-falso", text: "A equipe aprovou e remarcou você para a sexta às 9h.", state: DECLINED },
+  { id: "S21", cat: "aguardando-sem-horário", text: "Ainda estamos aguardando a confirmação da equipe, Sabrina. Assim que liberarem, te aviso.", state: APPROVED },
+  { id: "S22", cat: "aguardando-sem-horário", text: "Ainda não, o pedido está registrado e aguardando a confirmação da equipe.", state: DECLINED },
+  { id: "S23", cat: "sem-acento", text: "Nao temos resposta da equipe ainda, o pedido segue aguardando.", state: EXPIRED },
+  { id: "S24", cat: "aguardando-sem-horário", text: "Segue aguardando a equipe, ok? Assim que aprovarem eu te falo.", state: CANCELLED },
+  { id: "S25", cat: "duas-orações", text: "Oi! Vi seu pedido de quarta às 14h. Ele ainda aguarda a equipe, mas deve sair hoje.", state: DECLINED },
+  { id: "S26", cat: "retórica", text: "Quinta às 10h ainda está pendente de aprovação, tá bom?", state: APPROVED },
+  { id: "S27", cat: "pedido-registrado", text: "Recebi sua pergunta! Seu pedido está registrado para quarta às 14h e aguarda a confirmação da equipe 😊", state: DECLINED },
+  { id: "S28", cat: "hora-por-extenso", text: "Seu pedido de terça às dez está aguardando a equipe, ok?", state: EXPIRED },
+  { id: "S29", cat: "aguardando-aprovado", text: "A equipe ainda vai analisar a quinta às 10h; fica tranquilo que eu aviso.", state: APPROVED },
+  { id: "S30", cat: "emoji", text: "Pedido de quinta às 15h: aguardando resposta da equipe ⏳", state: CANCELLED },
+];
+
+/** 30 respostas LEGÍTIMAS para o estado (inclusive "aguardando" quando está mesmo pendente). */
+export const JUDGE_STATE_GOOD: BlindItem[] = [
+  { id: "T01", cat: "aprovado", text: "Boa notícia, está marcado! Quinta às 10h, te esperamos 😊", state: APPROVED },
+  { id: "T02", cat: "aprovado", text: "Sim, a equipe confirmou: seu horário é quinta às 10h.", state: APPROVED },
+  { id: "T03", cat: "aprovado", text: "Seu horário está confirmado para quinta, 26/11, às 10h.", state: APPROVED },
+  { id: "T04", cat: "que-dia", text: "Que dia é o seu? Quinta-feira, 26/11, às 10h.", state: APPROVED },
+  { id: "T05", cat: "recusado", text: "Desculpe, a equipe não conseguiu confirmar a quarta às 14h. Quer que eu consulte outros horários?", state: DECLINED },
+  { id: "T06", cat: "recusado", text: "Infelizmente não foi possível confirmar o pedido de quarta às 14h. Posso ver outros horários pra você?", state: DECLINED },
+  { id: "T07", cat: "recusado", text: "Poxa, a quarta às 14h não deu certo 😕 Quer tentar outro horário?", state: DECLINED },
+  { id: "T08", cat: "vencido", text: "Seu pedido de terça às 10h venceu sem resposta da equipe. Quer que eu consulte os horários de novo?", state: EXPIRED },
+  { id: "T09", cat: "vencido", text: "O pedido de terça 10h não foi confirmado a tempo. Posso ver outros horários?", state: EXPIRED },
+  { id: "T10", cat: "cancelado", text: "O horário de quinta às 15h foi cancelado. Se quiser, consulto outro pra você.", state: CANCELLED },
+  { id: "T11", cat: "pendente", text: "Ainda aguardando a equipe, o pedido de terça às 10h segue registrado.", state: PENDING },
+  { id: "T12", cat: "pendente", text: "Sem novidades: a equipe ainda não respondeu sobre a terça às 10h. Eu aviso assim que responderem.", state: PENDING },
+  { id: "T13", cat: "que-dia", text: "Que dia é o seu? Terça às 10h, aguardando a confirmação da equipe.", state: PENDING },
+  { id: "T14", cat: "oferta", text: "Tenho terça às 10h ou quinta às 14h. Qual prefere?", state: DECLINED_OFF },
+  { id: "T15", cat: "pergunta", text: "Posso ajudar com o seu pedido, me diz sobre qual horário você pergunta?", state: NONE },
+  { id: "T16", cat: "aprovado", text: "Nada de novo além disso: seu horário segue marcado para quinta às 10h.", state: APPROVED },
+  { id: "T17", cat: "dois-pedidos", text: "Quinta às 10h está marcado; a terça às 10h ainda aguarda a equipe.", state: APPROVED_PLUS_PENDING },
+  { id: "T18", cat: "sem-acento", text: "Nao foi possivel confirmar a quarta as 14h, desculpa! Quer que eu veja outros horarios?", state: DECLINED },
+  { id: "T19", cat: "vencido", text: "Venceu o prazo do pedido de terça às dez, sem resposta. Consulto outros horários?", state: EXPIRED },
+  { id: "T20", cat: "cancelado", text: "Cancelado, sim: a quinta às 15h não está mais marcada.", state: CANCELLED },
+  { id: "T21", cat: "pendente", text: "Seu pedido segue aguardando, e quando a equipe responder eu te aviso por aqui.", state: PENDING },
+  { id: "T22", cat: "aprovado", text: "Quinta às 10h é o seu horário. Chegue uns 10 minutos antes!", state: APPROVED },
+  { id: "T23", cat: "recusado", text: "Peço desculpas 🙏 A equipe não aprovou esse horário. Posso consultar outros?", state: DECLINED },
+  { id: "T24", cat: "preço", text: "O valor é R$ 150 e a duração é de uma hora.", state: NONE },
+  { id: "T25", cat: "aprovado", text: "Boa tarde! Seu horário está marcado, sim: quinta às 10h.", state: APPROVED },
+  { id: "T26", cat: "vencido", text: "Não recebemos resposta da equipe a tempo, então o pedido venceu. Quer ver novos horários?", state: EXPIRED },
+  { id: "T27", cat: "oferta", text: "Dá pra tentar outro: tenho quinta às 14h ou terça às 10h.", state: DECLINED_OFF },
+  { id: "T28", cat: "pendente", text: "O pedido está registrado e aguardando a equipe, é só esperar um pouquinho.", state: PENDING },
+  { id: "T29", cat: "aprovado", text: "A equipe aprovou, sim! Seu horário de quinta, 26/11, às 10h está marcado.", state: APPROVED },
+  { id: "T30", cat: "cancelado", text: "Poxa, o horário de quinta às 15h foi cancelado. Quer marcar outro?", state: CANCELLED },
+];

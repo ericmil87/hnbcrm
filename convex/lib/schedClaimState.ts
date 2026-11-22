@@ -6,7 +6,7 @@
  * org e os nomes dos recursos (para barrar "terça às 14h com o Léo" quando a oferta não nomeou o Léo).
  */
 import { type ClaimState, knownTime, resourceKey } from "./schedClaimGuard";
-import type { SchedCurrentOffer, SchedUpcoming } from "./schedAttendantTools";
+import type { SchedCurrentOffer, SchedDecided, SchedUpcoming } from "./schedAttendantTools";
 import { extractAiTimes } from "./schedTimeText";
 
 /** Hora do dia (minutos) de cada horário que o CONHECIMENTO cita (turmas, funcionamento). Faixas ("das 8 às 18h") não entram. */
@@ -26,6 +26,8 @@ export function buildClaimState(input: {
   now: number;
   tz: string;
   upcoming: readonly SchedUpcoming[];
+  /** Decisões recentes (recusado, vencido, cancelado): horário conhecido que NÃO está marcado. */
+  decided?: readonly SchedDecided[];
   offers: readonly SchedCurrentOffer[];
   turn: ClaimTurnState;
   serviceNames: readonly string[];
@@ -60,6 +62,7 @@ export function buildClaimState(input: {
     offered: [...input.offers.map((o) => o.startTime), ...input.turn.offered].map(withNames),
     serviceNames: [...input.serviceNames],
     resourceNames: [...input.guardNames],
+    ...((input.decided?.length ?? 0) > 0 ? { decided: input.decided!.map((d) => ({ ...knownTime(d.startTime, tz), kind: d.kind })) } : {}),
     ...(input.handoff ? { handoff: true } : {}),
     ...(input.knowledgeTimes.length > 0 ? { knowledgeTimes: [...input.knowledgeTimes] } : {}),
   };

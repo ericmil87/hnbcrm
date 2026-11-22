@@ -170,7 +170,29 @@ describe("bloco do prompt", () => {
   });
   test("próximos horários do contato vão com referência curta, sem id", () => {
     const rows = upcomingForEnvelope([{ ref: "a1", label: "quinta-feira, 26/11, às 10:00", startTime: 1, serviceName: "Consulta", status: "pending_approval" }]);
-    expect(rows).toEqual([{ ref: "a1", horario: "quinta-feira, 26/11, às 10:00", servico: "Consulta", situacao: "aguardando confirmação da equipe" }]);
+    expect(rows).toEqual([{ ref: "a1", horario: "quinta-feira, 26/11, às 10:00", servico: "Consulta", situacao: "aguardando confirmação da equipe", o_que_dizer: expect.stringMatching(/não diga que está marcado/) }]);
+  });
+  test("decisões recentes vão com situação fechada e o que dizer, sem motivo nem quem decidiu", () => {
+    const rows = upcomingForEnvelope(
+      [{ ref: "a1", label: "quinta, 26/11, às 10:00", startTime: 1, serviceName: "Consulta", status: "scheduled" }],
+      [
+        { ref: "d1", label: "quarta, 25/11, às 14:00", startTime: 2, serviceName: "Consulta", kind: "declined" },
+        { ref: "d2", label: "terça, 24/11, às 10:00", startTime: 3, serviceName: "Consulta", kind: "expired" },
+        { ref: "d3", label: "sexta, 27/11, às 9:00", startTime: 4, serviceName: "Consulta", kind: "cancelled" },
+      ]
+    );
+    expect(rows.map((r) => r.situacao)).toEqual(["marcado", "recusado pela equipe", "venceu sem resposta da equipe", "cancelado"]);
+    expect(rows[0].o_que_dizer).toBe("pode confirmar ao cliente: está marcado para quinta, 26/11, às 10:00");
+    expect(rows[1].o_que_dizer).toMatch(/peça desculpas.*ofereça consultar outros horários/);
+    expect(rows[2].o_que_dizer).toMatch(/venceu sem resposta.*consultar os horários de novo/);
+    expect(rows[3].o_que_dizer).toMatch(/não está mais marcado/);
+    expect(JSON.stringify(rows)).not.toMatch(/motivo|decidiu|aprovado por|staff/);
+  });
+  test("o prompt manda seguir a situação de horarios_do_cliente e não proíbe mais 'marcado' depois da decisão", () => {
+    const block = buildSchedPromptBlock({ services, moreServices: false, tools: { find: true, book: true }, book: "propose" });
+    expect(block).toContain("horarios_do_cliente (quando houver) cada horário traz a situação REAL");
+    expect(block).toContain("Logo depois de bookOfferedTime NUNCA diga");
+    expect(block).not.toMatch(/responda com a frase do resultado[^.]*\. NUNCA diga "confirmado"/);
   });
 });
 

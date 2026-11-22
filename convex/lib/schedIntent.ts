@@ -46,6 +46,16 @@ export function mentionsGroup(text: string): boolean {
   return GRUPO_KIN.test(n) && BOOKING_INTENT.test(n);
 }
 
+/**
+ * O cliente pergunta como ficou o pedido/horário dele ("e aí, confirmou?", "deu certo meu horário?", "que dia é mesmo o meu?", "já está
+ * marcado?"). Só serve para escolher o texto seguro montado a partir do ESTADO (nunca decide reserva).
+ */
+const STATUS_ASK =
+  /\b(?:confirm(?:ou|aram|ado|ada)|aprov(?:ou|aram|ado|ada)|deu certo|alguma novidade|novidade|ja (?:esta|ta) (?:marcad|confirmad)\w*|ficou (?:(?:marcad|confirmad)\w*|tudo certo)|foi (?:marcad|confirmad|aprovad)\w*|(?:e|ja) (?:ai|saiu)|como ficou|que dia\b|qual (?:e )?(?:o )?(?:dia|horario)|quando (?:e|eh|vai ser|sera)|meu (?:dia|horario))\b/;
+export function asksPedidoStatus(text: string): boolean {
+  return STATUS_ASK.test(norm(text));
+}
+
 /** A primeira intenção de agenda do texto, na ordem de gravidade (remarcar e cancelar antes de marcar). `null` = nenhuma. */
 export function detectCustomerIntent(text: string): CustomerIntent | null {
   const n = norm(text);

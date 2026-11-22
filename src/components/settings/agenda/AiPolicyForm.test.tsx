@@ -93,3 +93,34 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     expect(screen.getByText(/Ana aceitou/)).toBeInTheDocument();
   });
 });
+
+describe("AiPolicyForm: conferir as respostas da IA contra a agenda", () => {
+  it("vem ligada por padrão (servidor sem o campo = ligado) e é recomendada", () => {
+    render(<AiPolicyForm value={base()} onChange={() => {}} />);
+    expect(screen.getByText("Conferir as respostas da IA contra a agenda (recomendado)")).toBeInTheDocument();
+    const sw = screen.getByRole("switch", { name: "Conferir as respostas da IA contra a agenda" });
+    expect(sw).toBeChecked();
+  });
+  it("desligar muda só esse campo; religar volta", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<AiPolicyForm value={base()} onChange={onChange} />);
+    fireEvent.click(screen.getByRole("switch", { name: "Conferir as respostas da IA contra a agenda" }));
+    expect(onChange).toHaveBeenCalledWith({ ...base(), claimJudge: false });
+    rerender(<AiPolicyForm value={{ ...base(), claimJudge: false }} onChange={onChange} />);
+    expect(screen.getByRole("switch", { name: "Conferir as respostas da IA contra a agenda" })).not.toBeChecked();
+    fireEvent.click(screen.getByRole("switch", { name: "Conferir as respostas da IA contra a agenda" }));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), claimJudge: true });
+  });
+  it("tocar no texto também liga e desliga, e a chave respeita o desabilitado", () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<AiPolicyForm value={base()} onChange={onChange} />);
+    fireEvent.click(screen.getByText("Conferir as respostas da IA contra a agenda (recomendado)"));
+    expect(onChange).toHaveBeenCalledWith({ ...base(), claimJudge: false });
+    rerender(<AiPolicyForm value={base()} onChange={onChange} disabled />);
+    expect(screen.getByRole("switch", { name: "Conferir as respostas da IA contra a agenda" })).toBeDisabled();
+  });
+  it("o assistente não mostra a chave (só o painel)", () => {
+    render(<AiPolicyForm variant="wizard" value={base()} onChange={() => {}} />);
+    expect(screen.queryByRole("switch", { name: "Conferir as respostas da IA contra a agenda" })).toBeNull();
+  });
+});

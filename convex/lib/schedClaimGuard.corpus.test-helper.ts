@@ -47,6 +47,8 @@ export type StateSpec = {
   knowledge?: boolean;
   /** Nomes dos recursos da org (padrão: Léo, Tato, Rui, Dra. Helena). */
   names?: string[];
+  /** Pedidos decididos nas últimas 72 h: `["2026-11-25 14:00", "declined"]`. */
+  decided?: Array<[string, "declined" | "expired" | "cancelled"]>;
   /** Nomes dos serviços (padrão: corte, massoterapia, avaliação, consulta jurídica, pilates). */
   services?: string[];
 };
@@ -66,6 +68,7 @@ export function buildState(spec: StateSpec): ClaimState {
     ],
     serviceNames: spec.services ?? SERVICES,
     resourceNames: spec.names ?? RESOURCE_NAMES,
+    ...((spec.decided ?? []).length > 0 ? { decided: spec.decided!.map(([t, kind]) => ({ ...at(t), kind })) } : {}),
     ...(spec.handoff ? { handoff: true } : {}),
     ...(spec.knowledge ? { knowledgeTimes: KNOWLEDGE_TIMES } : {}),
   };

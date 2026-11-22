@@ -56,11 +56,16 @@ export type ClaimState = {
   handoff?: boolean;
   /** Horas do dia (minutos) que o CONHECIMENTO da org cita (turmas fixas, funcionamento): descrever uma delas não é horário inventado. */
   knowledgeTimes?: number[];
+  /**
+   * Pedidos do cliente decididos nas últimas 72 h (recusado pela equipe, vencido, cancelado): o horário é CONHECIDO (não é "inventado"),
+   * dizer que foi recusado/venceu é verdade, e dizer "marcado/confirmado" para ele é afirmação falsa.
+   */
+  decided?: Array<KnownTime & { kind: "declined" | "expired" | "cancelled" }>;
   /** Nomes (qualquer forma) dos profissionais e salas ATIVOS da org: citar um com um horário só vale se a oferta o nomeou. */
   resourceNames?: string[];
 };
 export type ClaimViolation = {
-  kind: "claim_without_booking" | "confirmed_but_pending" | "time_not_offered" | "reschedule_claim" | "resource_not_offered" | "handoff_claim";
+  kind: "claim_without_booking" | "confirmed_but_pending" | "time_not_offered" | "reschedule_claim" | "resource_not_offered" | "handoff_claim" | "stale_pending";
   /** Trecho da frase (≤ 80 caracteres) para log; nunca o texto inteiro. */
   evidence: string;
 };
@@ -281,7 +286,7 @@ const SUBJECT_FICA = /\b(?:horario|consulta|sessao|atendimento|agendamento)\b[^.
 const INSTEAD_OF = /\b(?:em vez de|ao inves de)\b/;
 
 /** A frase AFIRMA mudança ou cancelamento de um agendamento (nunca passa: a IA não remarca nem cancela neste bloco). */
-function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean, handoff: boolean): boolean {
+function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean, handoff: boolean, decidedOk = false): boolean {
   const nounOrTime = SCHEDULE_NOUN.test(n) || hasMention;
   // "Já passei seu pedido para a equipe" com o repasse criado é verdade: o alvo de "passei/transferi" é a equipe, não outro horário.
   const handoffMatch = handoff ? HANDOFF_PASS.exec(n) : null;
@@ -291,6 +296,8 @@ function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean, han
     re.lastIndex = 0;
     for (const m of n.matchAll(re)) {
       if (isHedged(n, m.index ?? 0)) continue;
+      // "O pedido de quarta às 14h foi cancelado" quando o estado MESMO diz que foi recusado/cancelado/venceu: é verdade (só não vale em 1ª pessoa).
+      if (decidedOk && re === CANCEL_CLAIM && !FIRST_PERSON_CHANGE.test(m[0])) continue;
       if (
         handoffAt >= 0 &&
         re === CHANGE_CLAIM &&
@@ -314,7 +321,7 @@ function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean, han
 // Horários citados × horários conhecidos
 // ---------------------------------------------------------------------------
 
-type Match = "inventado" | "oferta" | "pendente" | "marcado" | "conhecimento";
+type Match = "inventado" | "oferta" | "pendente" | "marcado" | "conhecimento" | "decidido";
 
 function sameTime(k: KnownTime, m: TimeMention, today: string): boolean {
   return k.timeMin === m.timeMin && (m.day === undefined || dayMatches(m.day, k.localDate, today));
@@ -327,6 +334,7 @@ function classify(m: TimeMention, st: ClaimState, today: string, n: string, clos
   const hit = r.length > 0 ? r : e;
   if (hit.length > 0) return hit.some((k) => k.status === "scheduled") ? "marcado" : "pendente";
   if (st.offered.some((k) => sameTime(k, m, today))) return "oferta";
+  if (st.decided?.some((k) => sameTime(k, m, today))) return "decidido";
   // Hora fixa do CONHECIMENTO da org (turmas, funcionamento): descrevê-la não é oferecer vaga; "tenho 18h" continua barrado.
   // Só DESCREVE quando a frase não fecha nem afirma nada: com marcador de fechamento a hora do conhecimento vale como inventada.
   if (!closing && st.knowledgeTimes?.includes(m.timeMin) && !ASSERT_AVAIL.test(n)) return "conhecimento";
@@ -491,7 +499,8 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   // 0. Remarcação ou cancelamento AFIRMADOS: sempre barrado (a IA não tem tool de remarcar/cancelar; é repasse para humano).
   for (const s of live) {
     if (s.skip || (s.question && !s.tagQuestion)) continue;
-    if (claimsChange(s.n, s.mentions.length > 0 || mentionsAnyTime(s.raw), OFFER_VERB.test(s.n), st.handoff === true)) return { kind: "reschedule_claim", evidence: s.raw.slice(0, EVIDENCE_MAX) };
+    const decidedOk = (st.decided?.length ?? 0) > 0 && s.mentions.every((m) => classify(m, st, today, s.n) === "decidido");
+    if (claimsChange(s.n, s.mentions.length > 0 || mentionsAnyTime(s.raw), OFFER_VERB.test(s.n), st.handoff === true, decidedOk)) return { kind: "reschedule_claim", evidence: s.raw.slice(0, EVIDENCE_MAX) };
   }
 
   // 0a. "Já passei seu pedido para a equipe" SEM repasse (nem neste turno nem pendente na conversa): a IA afirma uma ação que não fez.
@@ -558,6 +567,8 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
       const matches = own.length > 0 ? own : messageMatches;
       if (matches.length > 0) {
         if (matches.includes("oferta")) return { kind: "claim_without_booking", evidence };
+        // "Seu horário de quarta às 14h está confirmado" quando a equipe recusou/venceu/cancelou: afirmação falsa.
+        if (matches.includes("decidido") && definitive(hits)) return { kind: "claim_without_booking", evidence };
         if (matches.includes("pendente") && (definitive(hits) || !pendingQualified)) return { kind: "confirmed_but_pending", evidence };
       } else if (!bookedScheduled) {
         // Fechamento SEM horário citado.
@@ -602,6 +613,8 @@ export function claimNudge(kind: ClaimViolation["kind"]): string {
       return "Sua resposta anterior foi DESCARTADA: ela citava um dia e hora que o sistema não devolveu. Cite somente os horários retornados por findAvailableTimes (ou listados em ofertas_vigentes / horarios_do_cliente), ou consulte de novo.";
     case "handoff_claim":
       return "Sua resposta anterior foi DESCARTADA: ela dizia que o pedido foi passado para a equipe, mas nenhum repasse foi criado. Chame requestHandoff (com o motivo) NESTA rodada, junto da resposta, ou não diga que passou para a equipe.";
+    case "stale_pending":
+      return "Sua resposta anterior foi DESCARTADA: ela dizia que o pedido ainda aguarda a equipe, mas a situação já mudou. Olhe horarios_do_cliente (situacao e o_que_dizer) e responda com a situação REAL: marcado/confirmado, recusado, vencido ou cancelado, sem inventar motivo.";
     case "resource_not_offered":
       return "Sua resposta anterior foi DESCARTADA: ela ligava um horário a um profissional (ou sala) que o sistema NÃO confirmou para esse horário. Só diga que o horário é com alguém se a oferta trouxe essa pessoa (consulte de novo com o campo profissional); senão ofereça o horário sem nome e diga que a equipe confirma quem atende.";
   }

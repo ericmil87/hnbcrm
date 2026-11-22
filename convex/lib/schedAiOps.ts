@@ -53,6 +53,7 @@ import {
   proposedResult,
   type SchedCurrentOffer,
   type SchedPromptService,
+  type SchedDecided,
   type SchedUpcoming,
   serviceListText,
   type ToolText,
@@ -231,6 +232,8 @@ export type SchedRunContext = {
   moreServices: boolean;
   /** Próximos agendamentos ativos do contato (até 10; o prompt mostra 3). Alimentam o `schedClaimGuard` (E). */
   upcoming: SchedUpcoming[];
+  /** Decisões das últimas 72 h sobre pedidos DESTE contato (recusado pela equipe, vencido, cancelado; até 3): a IA responde "e aí, confirmou?" com o estado real. */
+  decided: SchedDecided[];
   /** Ofertas VIGENTES da conversa: já MOSTRADAS ao cliente (`shownAt`) e não vencidas. Só estes códigos valem. */
   offers: SchedCurrentOffer[];
   timezone: string;
@@ -255,18 +258,33 @@ function priceLabel(cents: number | undefined, currency: string): string | undef
   return currency === "BRL" ? `R$ ${value}` : `${currency} ${value}`;
 }
 
+/** Decisão recente da equipe (ou vencimento) que o cliente pode perguntar: o que a IA precisa saber para responder certo. */
+const DECIDED_WINDOW_MS = 72 * 3_600_000;
+const DECIDED_SHOWN = 3;
+
+/** `declined` = cancelado pela equipe a partir de pedido que nunca foi aprovado; `cancelled` = qualquer outro cancelamento; `expired` = proposta vencida. */
+function decidedKindOf(r: Doc<"schedAppointments">): SchedDecided["kind"] | null {
+  if (r.status === "cancelled") return r.cancelledByClass === "staff" && r.approvedAt === undefined ? "declined" : "cancelled";
+  if (r.status === "pending_approval" && r.needsAttention?.code === "proposal_expired") return "expired";
+  return null;
+}
+
 /**
- * Próximos agendamentos ativos do contato. O índice por contato não filtra status: lê em lotes de 20 por início
- * (até 5 lotes = 100 linhas) e para ao juntar `limit`; cancelados/remarcados no meio não escondem os seguintes.
+ * Agendamentos do contato para a IA: os ATIVOS futuros (`upcoming`, até 10) e as decisões das últimas 72 h (`decided`, até 3: recusado pela
+ * equipe, vencido, cancelado), para a IA responder "e aí, confirmou?" com o estado real. Uma leitura só pelo índice por contato, em lotes de
+ * 20 por início a partir de `agora − 72 h` (até 5 lotes = 100 linhas, como antes): o custo a mais é só as linhas do contato na janela de 72 h
+ * para trás (tipicamente 0 a 3 documentos). Cancelados/remarcados no meio não escondem os seguintes. Proposta vencida NÃO é ativa.
  */
-export async function loadUpcomingOfContact(
+export async function loadContactAgenda(
   ctx: ReadCtx,
   args: { organizationId: Id<"organizations">; contactId: Id<"contacts">; now: number; tz: string; limit?: number }
-): Promise<SchedUpcoming[]> {
+): Promise<{ upcoming: SchedUpcoming[]; decided: SchedDecided[] }> {
   const limit = args.limit ?? UPCOMING_SHOWN;
   const active: Doc<"schedAppointments">[] = [];
+  const decided: Array<{ row: Doc<"schedAppointments">; kind: SchedDecided["kind"]; at: number }> = [];
   const seen = new Set<string>();
-  let from = args.now;
+  const windowStart = args.now - DECIDED_WINDOW_MS;
+  let from = windowStart;
   let inclusive = true;
   for (let page = 0; page < UPCOMING_PAGES && active.length < limit; page++) {
     const rows = await ctx.db
@@ -278,13 +296,18 @@ export async function loadUpcomingOfContact(
     for (const r of rows) {
       if (seen.has(r._id)) continue;
       seen.add(r._id);
-      if (r.organizationId === args.organizationId && (UPCOMING_STATUSES as readonly string[]).includes(r.status)) active.push(r);
+      if (r.organizationId !== args.organizationId) continue;
+      const kind = decidedKindOf(r);
+      if (kind) {
+        const at = kind === "expired" ? (r.needsAttention?.at ?? r.statusChangedAt) : (r.cancelledAt ?? r.statusChangedAt);
+        if (at >= windowStart) decided.push({ row: r, kind, at });
+      } else if (r.startTime >= args.now && (UPCOMING_STATUSES as readonly string[]).includes(r.status)) active.push(r);
     }
     if (rows.length < UPCOMING_PAGE_SIZE) break;
     from = rows[rows.length - 1].startTime;
     inclusive = false;
   }
-  return active.slice(0, limit).map((r, i) => ({
+  const upcoming = active.slice(0, limit).map((r, i) => ({
     ref: `a${i + 1}`,
     label: formatSlotText(r.startTime, args.now, args.tz),
     startTime: r.startTime,
@@ -293,6 +316,25 @@ export async function loadUpcomingOfContact(
     // Nomes do retrato do agendamento: só o `schedClaimGuard` os lê (ligar "com o Léo" ao horário que de fato é com ele).
     resourceNames: r.resources.map((x) => x.name),
   }));
+  const recent = decided
+    .sort((a, b) => b.at - a.at)
+    .slice(0, DECIDED_SHOWN)
+    .map((d, i) => ({
+      ref: `d${i + 1}`,
+      label: formatSlotText(d.row.startTime, args.now, args.tz),
+      startTime: d.row.startTime,
+      serviceName: d.row.serviceName,
+      kind: d.kind,
+    }));
+  return { upcoming, decided: recent };
+}
+
+/** Próximos agendamentos ativos do contato (sem as decisões recentes). */
+export async function loadUpcomingOfContact(
+  ctx: ReadCtx,
+  args: { organizationId: Id<"organizations">; contactId: Id<"contacts">; now: number; tz: string; limit?: number }
+): Promise<SchedUpcoming[]> {
+  return (await loadContactAgenda(ctx, args)).upcoming;
 }
 
 /** Contato da conversa 1:1 (sem exigir IA, serviço nem recurso): o guard de afirmação precisa dos agendamentos dele. */
@@ -329,7 +371,9 @@ export async function schedContextCore(
   } catch {
     // fuso inválido: o guard e o prompt seguem no padrão do produto
   }
-  const upcoming = contact ? await loadUpcomingOfContact(ctx, { organizationId: org._id, contactId: contact._id, now: args.now, tz }) : [];
+  const { upcoming, decided } = contact
+    ? await loadContactAgenda(ctx, { organizationId: org._id, contactId: contact._id, now: args.now, tz })
+    : { upcoming: [] as SchedUpcoming[], decided: [] as SchedDecided[] };
   const handoffPending = args.conversationId
     ? (await ctx.db.query("handoffs").withIndex("by_conversation_and_status", (q) => q.eq("conversationId", args.conversationId).eq("status", "pending")).first()) !== null
     : false;
@@ -346,7 +390,7 @@ export async function schedContextCore(
     }));
   }
   if (!access.ok) {
-    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz, guardNames: [], handoffPending, offerCodes, claimJudge: false };
+    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, decided, offers, timezone: tz, guardNames: [], handoffPending, offerCodes, claimJudge: false };
   }
   const listed = access.services.slice(0, MAX_SERVICES_IN_PROMPT);
   const currency = org.settings.currency;
@@ -356,6 +400,7 @@ export async function schedContextCore(
     services: listed.map((sv) => ({ name: sv.name, durationMin: sv.durationMin, ...(priceLabel(sv.priceCents, currency) ? { priceLabel: priceLabel(sv.priceCents, currency) } : {}) })),
     moreServices: access.services.length > MAX_SERVICES_IN_PROMPT,
     upcoming,
+    decided,
     offers,
     timezone: access.tz,
     guardNames: access.resources.map((r) => r.name),
@@ -919,6 +964,15 @@ export const schedContextValidator = v.union(
         serviceName: v.string(),
         status: v.union(v.literal("pending_approval"), v.literal("scheduled"), v.literal("confirmed")),
         resourceNames: v.optional(v.array(v.string())),
+      })
+    ),
+    decided: v.array(
+      v.object({
+        ref: v.string(),
+        label: v.string(),
+        startTime: v.number(),
+        serviceName: v.string(),
+        kind: v.union(v.literal("declined"), v.literal("expired"), v.literal("cancelled")),
       })
     ),
     offers: v.array(v.object({ code: v.string(), label: v.string(), startTime: v.number(), professional: v.optional(v.string()) })),

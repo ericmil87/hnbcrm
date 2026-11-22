@@ -177,3 +177,50 @@ describe("intenção sem falso cancelamento e sem agendamento", () => {
     }
   });
 });
+
+import { statusReplyText } from "./schedSafeText";
+import { asksPedidoStatus } from "./schedIntent";
+describe("texto seguro de SITUAÇÃO (D3): montado pelo servidor a partir do estado, nunca esconde o que o cliente perguntou", () => {
+  const none = { scheduled: [], pending: [], declined: [], expired: [], cancelled: [] };
+  const L = "segunda-feira, 15/06, às 08:00";
+  test.each([
+    ["e aí, confirmou?", true],
+    ["deu certo meu horário?", true],
+    ["que dia é mesmo o meu horário?", true],
+    ["já está marcado?", true],
+    ["alguma novidade?", true],
+    ["quando é a minha consulta?", true],
+    ["quanto custa?", false],
+    ["onde fica a clínica?", false],
+  ])("%j pergunta da situação? %s", (text, expected) => expect(asksPedidoStatus(text)).toBe(expected));
+
+  test("aprovado diz o horário; pendente diz que aguarda; recusado/vencido/cancelado dizem que não foi possível e oferecem outros", () => {
+    expect(statusReplyText({ ...none, scheduled: [L] })).toBe(`Seu horário está marcado para ${L}.`);
+    expect(statusReplyText({ ...none, pending: [L] })).toBe(`Seu pedido para ${L} está registrado e aguarda a confirmação da equipe.`);
+    expect(statusReplyText({ ...none, declined: [L] })).toMatch(/^Não foi possível confirmar o horário de .*não conseguiu aprovar esse pedido\. Posso consultar outros horários para você\.$/);
+    expect(statusReplyText({ ...none, expired: [L] })).toMatch(/venceu sem resposta da equipe e não foi marcado\. Posso consultar outros horários/);
+    expect(statusReplyText({ ...none, cancelled: [L] })).toMatch(/foi cancelado\. Se quiser, posso consultar outros horários/);
+    expect(statusReplyText(none)).toBeNull();
+  });
+  test("marcado + pendente: diz os dois; marcado vence recusado antigo", () => {
+    expect(statusReplyText({ ...none, scheduled: [L], pending: ["terça-feira, 16/06, às 10:00"] })).toBe(`Seu horário está marcado para ${L}. Seu pedido para terça-feira, 16/06, às 10:00 está registrado e aguarda a confirmação da equipe.`);
+    expect(statusReplyText({ ...none, scheduled: [L], declined: ["x"] })).toBe(`Seu horário está marcado para ${L}.`);
+  });
+  const base = { kind: "claim_without_booking", pendingRequest: false, hasUpcoming: true };
+  test("schedSafeReply: pergunta de situação usa o texto de situação e NÃO abre repasse; sem fatos, o texto de antes", () => {
+    const r = schedSafeReply({ ...base, customerText: "e aí, confirmou?", facts: { ...none, declined: [L] } });
+    expect(r.situation).toBe("situacao");
+    expect(r.handoff).toBe(false);
+    expect(r.text).toMatch(/^Não foi possível confirmar/);
+    expect(schedSafeReply({ ...base, customerText: "e aí, confirmou?" }).situation).not.toBe("situacao");
+    expect(schedSafeReply({ ...base, customerText: "e aí, confirmou?", facts: none }).situation).not.toBe("situacao");
+  });
+  test("kind stale_pending ('ainda aguardando' com o estado decidido) usa o texto de situação mesmo sem a pergunta típica", () => {
+    const r = schedSafeReply({ ...base, kind: "stale_pending", customerText: "ok, obrigada", facts: { ...none, scheduled: [L] } });
+    expect(r.situation).toBe("situacao");
+    expect(r.text).toBe(`Seu horário está marcado para ${L}.`);
+  });
+  test("remarcar/cancelar/presença continuam antes da situação (a equipe cuida)", () => {
+    expect(schedSafeReply({ ...base, customerText: "quero cancelar, confirmou?", facts: { ...none, scheduled: [L] } }).situation).toBe("cancelar");
+  });
+});

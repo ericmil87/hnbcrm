@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { buildState, CORPUS_NOW } from "./schedClaimGuard.corpus.test-helper";
 import { buildJudgePrompt, claimJudgeOn, JUDGE_SYSTEM, type JudgeVerdict, judgeViolation, shouldJudge, validateJudgeReply } from "./schedClaimJudge";
 
-const NONE: JudgeVerdict = { marcado: false, remarcado: false, cancelado: false, presenca: false, repassado: false, pedido: false, horarios: [], profissional: null };
+const NONE: JudgeVerdict = { marcado: false, remarcado: false, cancelado: false, presenca: false, repassado: false, pedido: false, aguardando: false, horarios: [], profissional: null };
 const v = (x: Partial<JudgeVerdict>): JudgeVerdict => ({ ...NONE, ...x });
 const TUE_10 = { dia: "terca" as const, timeMin: 600 };
 
@@ -23,7 +23,7 @@ describe("shouldJudge (gatilho: data/hora OU verbo de compromisso; senão zero c
 });
 
 describe("validateJudgeReply (campo a campo; inválido = o juiz falhou)", () => {
-  const ok = { afirma_marcado: true, afirma_remarcado: false, afirma_cancelado: false, afirma_presenca_confirmada: false, afirma_repassado_equipe: false, afirma_pedido_registrado: false, horarios_afirmados: [{ dia: "terca", hora: "10:00" }], profissional_afirmado: "Léo" };
+  const ok = { afirma_marcado: true, afirma_remarcado: false, afirma_cancelado: false, afirma_presenca_confirmada: false, afirma_repassado_equipe: false, afirma_pedido_registrado: false, afirma_aguardando_equipe: false, horarios_afirmados: [{ dia: "terca", hora: "10:00" }], profissional_afirmado: "Léo" };
   test("resposta válida (inclusive em cerca ```json e com campo extra ignorado)", () => {
     expect(validateJudgeReply(JSON.stringify(ok))).toEqual(v({ marcado: true, horarios: [TUE_10], profissional: "Léo" }));
     expect(validateJudgeReply("```json\n" + JSON.stringify({ ...ok, extra: 1 }) + "\n```")?.marcado).toBe(true);
@@ -39,6 +39,7 @@ describe("validateJudgeReply (campo a campo; inválido = o juiz falhou)", () => 
     ["flag faltando", { ...ok, afirma_marcado: undefined }],
     ["flag de tipo errado", { ...ok, afirma_marcado: "sim" }],
     ["flag do pedido registrado faltando", { ...ok, afirma_pedido_registrado: undefined }],
+    ["flag 'aguardando a equipe' faltando", { ...ok, afirma_aguardando_equipe: undefined }],
     ["lista ausente", { ...ok, horarios_afirmados: undefined }],
     ["lista grande demais", { ...ok, horarios_afirmados: Array(7).fill({ dia: "terca", hora: "10:00" }) }],
     ["dia fora do enum", { ...ok, horarios_afirmados: [{ dia: "semana que vem", hora: "10:00" }] }],
@@ -106,6 +107,46 @@ describe("judgeViolation (o servidor compara o que o juiz leu com o estado; o ju
     expect(judgeViolation(v({ pedido: true }), bookedNow)).toBeNull();
     // marcado + pedido sobre pendente continua barrando (o 'marcado' não tem lastro)
     expect(judgeViolation(v({ pedido: true, marcado: true, horarios: [TUE_10] }), pending)?.kind).toBe("confirmed_but_pending");
+  });
+  test("AINDA AGUARDANDO a equipe: só com pedido pendente; aprovado, recusado, vencido ou cancelado = stale_pending (afirmação falsa no outro sentido)", () => {
+    const ag = v({ aguardando: true, horarios: [TUE_10] });
+    expect(judgeViolation(ag, pending)).toBeNull();
+    expect(judgeViolation(ag, buildState({ booked: [["2026-11-24 10:00", "pending"]] }))).toBeNull();
+    expect(judgeViolation(ag, scheduled)?.kind).toBe("stale_pending");
+    expect(judgeViolation(ag, bookedNow)?.kind).toBe("stale_pending");
+    const dec = (kind: "declined" | "expired" | "cancelled") => ({ ...buildState({}), decided: [{ localDate: "2026-11-24", timeMin: 600, kind }] });
+    for (const k of ["declined", "expired", "cancelled"] as const) expect(judgeViolation(ag, dec(k))?.kind).toBe("stale_pending");
+    // horário que o estado nem conhece: nada a contradizer (quem confere "pedido registrado" é o campo `pedido`)
+    expect(judgeViolation(ag, buildState({}))).toBeNull();
+    // sem horário dito: precisa existir ALGUM pedido pendente
+    expect(judgeViolation(v({ aguardando: true }), pending)).toBeNull();
+    expect(judgeViolation(v({ aguardando: true }), scheduled)?.kind).toBe("stale_pending");
+    expect(judgeViolation(v({ aguardando: true }), dec("declined"))?.kind).toBe("stale_pending");
+    expect(judgeViolation(v({ aguardando: true }), buildState({}))).toBeNull();
+    expect(judgeViolation(v({ aguardando: true }), offers)).toBeNull();
+    // com repasse criado, "a equipe vai te responder" não é afirmação sobre pedido
+    expect(judgeViolation(v({ aguardando: true }), buildState({ handoff: true }))).toBeNull();
+    // um marcado + um pendente: falar do pendente é verdade
+    const two = buildState({ existing: [["2026-11-26 15:00", "scheduled"], ["2026-11-24 10:00", "pending"]] });
+    expect(judgeViolation(v({ aguardando: true, horarios: [TUE_10] }), two)).toBeNull();
+    // "A está marcado; B ainda aguarda": a lista junta os dois horários e basta um com pedido pendente (T17 da medição)
+    expect(judgeViolation(v({ aguardando: true, marcado: true, horarios: [{ dia: "quinta", timeMin: 900 }, TUE_10] }), two)).toBeNull();
+    // mas se NENHUM horário citado tem pedido pendente, contradiz
+    expect(judgeViolation(v({ aguardando: true, marcado: true, horarios: [{ dia: "quinta", timeMin: 900 }] }), two)?.kind).toBe("stale_pending");
+  });
+  test("CANCELADO: relato de pedido recusado/cancelado passa; fora disso a IA não cancela (barra)", () => {
+    const dec = (kind: "declined" | "expired" | "cancelled") => ({ ...buildState({}), decided: [{ localDate: "2026-11-24", timeMin: 600, kind }] });
+    expect(judgeViolation(v({ cancelado: true, horarios: [TUE_10] }), dec("cancelled"))).toBeNull();
+    expect(judgeViolation(v({ cancelado: true, horarios: [TUE_10] }), dec("declined"))).toBeNull();
+    expect(judgeViolation(v({ cancelado: true }), dec("cancelled"))).toBeNull();
+    expect(judgeViolation(v({ cancelado: true, horarios: [{ dia: "quinta", timeMin: 840 }] }), dec("cancelled"))?.kind).toBe("reschedule_claim");
+    expect(judgeViolation(v({ cancelado: true, horarios: [TUE_10] }), dec("expired"))?.kind).toBe("reschedule_claim");
+    expect(judgeViolation(v({ cancelado: true }), buildState({}))?.kind).toBe("reschedule_claim");
+    expect(judgeViolation(v({ cancelado: true, horarios: [TUE_10] }), scheduled)?.kind).toBe("reschedule_claim");
+  });
+  test("'marcado' para um horário recusado barra como sem lastro (o guard e o juiz concordam)", () => {
+    const dec = { ...buildState({}), decided: [{ localDate: "2026-11-24", timeMin: 600, kind: "declined" as const }] };
+    expect(judgeViolation(v({ marcado: true, horarios: [TUE_10] }), dec)?.kind).toBe("claim_without_booking");
   });
   test("remarcado, cancelado e presença confirmada: sempre barra (a IA não tem tool para isso)", () => {
     for (const st of [buildState({}), scheduled, pending, bookedNow]) {

@@ -165,6 +165,14 @@ export function AiPolicyForm({ value, onChange, disabled, errors = {}, variant =
             <Switch id={`${switchId}-first`} checked={value.firstVisitNeedsApproval} onCheckedChange={(firstVisitNeedsApproval) => set({ firstVisitNeedsApproval })} label="Primeira visita sempre com aprovação" hideLabel disabled={disabled} />
           </div>
 
+          <div className="flex items-center justify-between gap-4">
+            <label htmlFor={`${switchId}-judge`} className="min-w-0 flex-1 cursor-pointer">
+              <span className="block text-sm font-medium text-text-primary">Conferir as respostas da IA contra a agenda (recomendado)</span>
+              <span className="block text-sm text-text-muted">Antes de enviar, o sistema confere se a IA não disse que um horário está marcado, remarcado ou cancelado sem ser verdade. Custa centésimos de centavo por mensagem.</span>
+            </label>
+            <Switch id={`${switchId}-judge`} checked={value.claimJudge} onCheckedChange={(claimJudge) => set({ claimJudge })} label="Conferir as respostas da IA contra a agenda" hideLabel disabled={disabled} />
+          </div>
+
           <FormField label="Limite de marcações da IA por cliente, por dia" error={errors.maxAiBookingsPerContactPerDay}>
             {(aria) => <Input {...aria} type="number" inputMode="numeric" min={1} max={50} value={value.maxAiBookingsPerContactPerDay} disabled={disabled} onChange={(e) => set({ maxAiBookingsPerContactPerDay: e.target.value })} />}
           </FormField>
