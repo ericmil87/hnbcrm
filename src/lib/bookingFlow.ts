@@ -365,7 +365,7 @@ export function buildFindSlotsArgs(input: {
  * (só os forçáveis; para não confirmar o mesmo aviso duas vezes). Nunca inclui bloqueio.
  */
 function mergeForce(extra: readonly string[] | undefined, seen: readonly ViolationView[]): string[] | undefined {
-  const codes = new Set<string>([...(extra ?? []), ...seen.filter(isForceable).map((v) => v.code)]);
+  const codes = new Set<string>([...(extra ?? []), ...forceTokens(seen.filter(isForceable))]);
   return codes.size > 0 ? [...codes] : undefined;
 }
 
@@ -728,8 +728,10 @@ export function isForceable(v: ViolationView): boolean {
 export interface RulesOutcome {
   blocks: ViolationView[];
   warnings: ViolationView[];
-  /** Códigos a mandar em `force`: só os avisos MOSTRADOS, e só quando não há bloqueio. */
+  /** Códigos dos avisos mostrados (sem recurso). Para `force` use `forceTokens`. */
   forceCodes: string[];
+  /** Itens de `force`: `CÓDIGO:resourceId` (só aquele recurso) ou o código puro; só os MOSTRADOS, e só sem bloqueio. */
+  forceTokens: string[];
   canForce: boolean;
 }
 
@@ -737,7 +739,41 @@ export function classifyViolations(violations: readonly ViolationView[]): RulesO
   const blocks = violations.filter((v) => !isForceable(v));
   const warnings = violations.filter(isForceable);
   const canForce = blocks.length === 0 && warnings.length > 0;
-  return { blocks, warnings, forceCodes: canForce ? [...new Set(warnings.map((w) => w.code))] : [], canForce };
+  return {
+    blocks,
+    warnings,
+    forceCodes: canForce ? [...new Set(warnings.map((w) => w.code))] : [],
+    forceTokens: canForce ? forceTokens(warnings) : [],
+    canForce,
+  };
+}
+
+/** Limite de tamanho de cada item de `force` no servidor. */
+const FORCE_TOKEN_MAX = 80;
+
+/**
+ * Item de `force` de UM aviso: o par `CÓDIGO:resourceId` quando o aviso é de um recurso (o aceite vale só para ele;
+ * outro recurso que feche depois da tela mostrada volta como aviso novo), senão o código puro (regra do
+ * agendamento inteiro: fora do expediente da org, antecedência, sobreposição do cliente).
+ */
+export function forceTokenOf(v: Pick<ViolationView, "code" | "detail">): string {
+  const rid = typeof v.detail?.resourceId === "string" ? v.detail.resourceId : "";
+  const pair = rid ? `${v.code}:${rid}` : v.code;
+  return pair.length <= FORCE_TOKEN_MAX ? pair : v.code;
+}
+
+/** Itens de `force` (sem repetição) dos avisos dados. */
+export function forceTokens(warnings: ReadonlyArray<Pick<ViolationView, "code" | "detail">>): string[] {
+  return [...new Set(warnings.map(forceTokenOf))];
+}
+
+/**
+ * Avisos que a pessoa AINDA não aceitou: os de `shown` cujo item de `force` (nem o código puro) não está em
+ * `accepted`. Depois de "Marcar mesmo assim", o que sobra é aviso novo (a agenda mudou no meio do caminho).
+ */
+export function unacceptedWarnings(shown: readonly ViolationView[], accepted: readonly string[]): ViolationView[] {
+  const done = new Set(accepted);
+  return shown.filter((v) => isForceable(v) && !done.has(forceTokenOf(v)) && !done.has(v.code));
 }
 
 /** Texto de uma violação para a equipe: vocabulário da tela, com o nome do recurso quando se sabe. */
@@ -936,8 +972,7 @@ export async function previewManualSlot(
 ): Promise<PreviewVerdict> {
   const first = interpretPreview(await call(undefined), ctx);
   if (first.kind !== "warn") return first;
-  const codes = [...new Set(first.warnings.map((w) => w.code))];
-  const second = interpretPreview(await call(codes), ctx);
+  const second = interpretPreview(await call(forceTokens(first.warnings)), ctx);
   if (second.kind === "ok") return { ...second, warnings: second.warnings.length > 0 ? second.warnings : first.warnings };
   // Aceitar os avisos revelou outro aviso ou um bloqueio: vale o resultado mais recente.
   return second;

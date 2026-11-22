@@ -4,7 +4,8 @@ import { internalMutation, mutation, type MutationCtx } from "./_generated/serve
 import { isMembershipRevoked, requirePermission } from "./lib/auth";
 import { slotValidator } from "./lib/schedViews";
 import { assertModule } from "./lib/orgModules";
-import { hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { completeLegacyPermissions, hasPermission, resolvePermissions, type Permissions, type Role } from "./lib/permissions";
+import { permissionsValidator } from "./schema";
 import {
   type BookFailure,
   type BookResult,
@@ -104,6 +105,11 @@ const actorArgV = v.union(
     type: v.literal("human"),
     memberId: v.id("teamMembers"),
     via: v.optional(v.union(v.literal("app"), v.literal("copilot"), v.literal("telegram"), v.literal("rest"), v.literal("mcp"))),
+    /**
+     * REST/MCP: permissões da CHAVE (já completas), que vencem as do membro (mesmo modelo de `calendar/events` e das leituras
+     * em `schedulingRest.ts`). Ausente = as do membro. Sempre passa por `completeLegacyPermissions`.
+     */
+    permissions: v.optional(permissionsValidator),
   }),
   v.object({ type: v.literal("ai"), memberId: v.id("teamMembers"), conversationId: v.id("conversations") }),
   v.object({ type: v.literal("system"), via: v.union(v.literal("human_message"), v.literal("public_link"), v.literal("job")) })
@@ -190,7 +196,10 @@ async function resolveActor(
     return { type: "ai", member, conversationId: arg.conversationId };
   }
   if (member.type === "ai") throw new ConvexError("O ator humano precisa ser um membro humano.");
-  const permissions = resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
+  const permissions =
+    arg.permissions !== undefined
+      ? (completeLegacyPermissions(arg.permissions) as Permissions)
+      : resolvePermissions(member.role as Role, member.permissions as Permissions | undefined);
   if (!hasPermission(permissions, "agenda", "edit")) throw new Error("Permissão insuficiente");
   return { type: "human", member, via: arg.via };
 }
@@ -443,7 +452,7 @@ export const internalBookAppointment = internalMutation({
     if (rescheduleAppointmentId) {
       if (args.mode !== "preview") throw new ConvexError("Para remarcar de fato, use internalRescheduleAppointment.");
       return flatten(
-        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force })
+        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force })
       );
     }
     await assertEntitiesInOrg(ctx, args.organizationId, rest);
@@ -461,6 +470,8 @@ export const internalRescheduleAppointment = internalMutation({
     actor: actorArgV,
     startTime: v.number(),
     resourceIds: v.optional(v.array(v.id("schedResources"))),
+    /** `false` = o recurso pedido (ou, sem `resourceIds`, o atual) nunca é trocado por outro (REST/MCP mandam `false` por padrão). */
+    allowResourceFallback: v.optional(v.boolean()),
     force: v.optional(v.array(v.string())),
     idempotencyKey: v.optional(v.string()),
   },
@@ -470,7 +481,7 @@ export const internalRescheduleAppointment = internalMutation({
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
     await assertEntitiesInOrg(ctx, args.organizationId, { resourceIds: args.resourceIds });
     return flatten(
-      await rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force, idempotencyKey: args.idempotencyKey, now })
+      await rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force, idempotencyKey: args.idempotencyKey, now })
     );
   },
 });
@@ -482,11 +493,16 @@ export const internalCancelAppointment = internalMutation({
     actor: actorArgV,
     byClass: v.union(v.literal("staff"), v.literal("client"), v.literal("ai"), v.literal("system")),
     reason: v.optional(v.string()),
+    /** Recusar proposta (REST `action: reject`): só vale se o agendamento está neste status; outro = recusa clara, nada gravado. */
+    expectStatus: v.optional(v.literal("pending_approval")),
   },
   returns: cancelResultValidator,
   handler: async (ctx, args) => {
     const { actor, now } = await enterInternal(ctx, args.organizationId, args.actor);
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
+    if (args.expectStatus !== undefined && appointment.status !== args.expectStatus) {
+      throw new ConvexError("Este agendamento não é uma proposta pendente; use cancelar.");
+    }
     return await cancelAppointmentCore(ctx, { appointment, actor, byClass: args.byClass, reason: args.reason, now });
   },
 });
@@ -529,5 +545,31 @@ export const internalReassignResources = internalMutation({
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
     await assertEntitiesInOrg(ctx, args.organizationId, { resourceIds: args.resourceIds });
     return flatten(await changeResourceCore(ctx, { appointment, actor, resourceIds: args.resourceIds, force: args.force, now }));
+  },
+});
+
+/**
+ * Marcar em GRUPO (pessoa principal + 1 a 3 acompanhantes, tudo ou nada) por REST/MCP: a mesma `bookPartyCore` da tela,
+ * com ator explícito e origem `api`. Idempotência por grupo (`idempotencyKey` vira `…#0`, `…#1`, … na porta).
+ */
+export const internalBookParty = internalMutation({
+  args: { ...bookFields, actor: actorArgV, origin: originV, companions: v.array(companionV) },
+  returns: v.object({
+    ok: v.boolean(),
+    appointmentIds: v.array(v.id("schedAppointments")),
+    duplicate: v.boolean(),
+    violations: v.array(violationV),
+    alternatives: v.array(alternativeV),
+  }),
+  handler: async (ctx, args) => {
+    const { actor: actorArg, companions, ...rest } = args;
+    const { actor, now } = await enterInternal(ctx, args.organizationId, actorArg);
+    await assertEntitiesInOrg(ctx, args.organizationId, {
+      ...rest,
+      resourceIds: [...(args.resourceIds ?? []), ...companions.flatMap((c) => c.resourceIds ?? [])],
+    });
+    const result = await bookPartyCore(ctx, { ...rest, companions, actor, now });
+    if (!result.ok) return { ok: false, appointmentIds: [], duplicate: false, violations: result.violations, alternatives: result.alternatives };
+    return { ok: true, appointmentIds: result.appointmentIds, duplicate: result.duplicate, violations: [], alternatives: [] };
   },
 });

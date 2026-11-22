@@ -14,7 +14,8 @@ HNBCRM is an open-source, multi-tenant CRM built on Convex with real-time collab
 ## Quick Links
 
 - REST API: /api/v1/* endpoints authenticated via X-API-Key header
-- MCP Server: npx hnbcrm-mcp (68 tools for AI agents)
+- MCP Server: npx hnbcrm-mcp (87 tools for AI agents)
+- Scheduling (Agenda v2): /api/v1/scheduling/* — services, resources, free slots, appointments (book, reschedule, cancel, status), close a resource with a preview, resolve conflicts; same rules as the app screens; details in /llms-full.txt
 - Agent Skill: .claude/skills/hnbcrm/ — portable skill that teaches AI agents how to operate as CRM team members
 - Channels: whatsapp, telegram, email, webchat, internal, instagram, messenger (Instagram/Messenger: see "Instagram & Messenger" below)
 - Auth: API key passed in X-API-Key header (SHA-256 hashed, stored per team member)
@@ -123,8 +124,9 @@ Paths below omit the \`/api/v1\` prefix:
 | \`reports: view\` | GET /dashboard |
 | \`settings: manage\` | POST /exports, GET /exports, GET /exports/get, GET /exports/download, POST /imports, GET /imports, GET /imports/get, POST /imports/mapping, POST /imports/preview, POST /imports/confirm, POST /imports/rollback, GET /imports/failed-rows, POST /groups/monitor, POST /groups/sync |
 | \`tasks: view_own\` | GET /tasks, GET /tasks/get, GET /tasks/my, GET /tasks/overdue, GET /tasks/search, POST /tasks/create, POST /tasks/update, POST /tasks/complete, POST /tasks/delete, POST /tasks/assign, POST /tasks/snooze, POST /tasks/bulk, GET /tasks/comments, POST /tasks/comments/add |
-| \`agenda: view_own\` | GET /calendar/events, GET /calendar/events/get (view_all sees everyone's events) |
-| \`agenda: edit\` | POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete, POST /calendar/events/cancel (edit changes ANY event of the org; legacy keys without \`agenda\` inherit it from \`tasks\`: edit_own/edit_all/full become edit) |
+| \`agenda: view_own\` | GET /calendar/events, GET /calendar/events/get (view_all sees everyone's events), GET /scheduling/services, GET /scheduling/resources, GET /scheduling/slots, GET /scheduling/appointments, GET /scheduling/appointments/get, GET /scheduling/pending (view_own sees only the appointments where the key's member is the professional or the creator; view_all and up see all) |
+| \`agenda: view_all\` | GET /scheduling/closures/get |
+| \`agenda: edit\` | POST /calendar/events/create, POST /calendar/events/update, POST /calendar/events/delete, POST /calendar/events/reschedule, POST /calendar/events/complete, POST /calendar/events/cancel, POST /scheduling/appointments/preview, POST /scheduling/appointments/book, POST /scheduling/appointments/reschedule, POST /scheduling/appointments/cancel, POST /scheduling/appointments/status, POST /scheduling/appointments/undo-status, POST /scheduling/appointments/resources, POST /scheduling/resources/day, POST /scheduling/resources/reopen, POST /scheduling/conflicts/resolve (edit changes ANY event of the org; legacy keys without \`agenda\` inherit it from \`tasks\`: edit_own/edit_all/full become edit; closing or reopening the WHOLE agenda or a resource type, i.e. without \`resourceId\`, also needs \`agenda: manage\`) |
 | valid API key only | GET /team-members, GET /notifications/preferences, PUT /notifications/preferences (self-scoped — mirrors the app, which requires only membership for these) |
 
 Public \`/api/v1\` routes (no API key, no permission): GET /forms/public, POST /forms/public/submit, POST /forms/public/partial, POST /forms/experiment/view, GET /embed.js, GET /openapi.json, POST /webhooks/resend (Resend signature).
@@ -1159,6 +1161,57 @@ Mark a scheduled calendar event as cancelled.
 
 **Response:** \`{ success: true }\`
 
+### Scheduling Endpoints (Agenda v2)
+
+Appointments for services that use resources (people, rooms, equipment), with the SAME rules as the app screens (capacity, hours, buffers, closures, notice). The organization needs the optional **Scheduling** module on: otherwise every route answers \`400 { error: "Módulo não habilitado: Agenda" }\`. The key's member is the actor (origin \`api\`); keys of AI members can read but writing is \`403 "Chaves de agentes de IA só leem a agenda por esta API"\`.
+
+**Permissions model.** The key's own permissions apply (when stored on the key; otherwise the member's), the same on reads and writes; a key can never do more than it declares, and closing the whole agenda needs \`agenda: manage\`. **Limits (read cost):** appointment lists span at most 31 days per request (400 above; paginate with \`cursor\`), slots default to a 3-day window (max 7), \`pending\` takes \`limit\` (default 20, max 50 per section); a query that exceeds the server read cap is a 400 asking to narrow the window/resources. Appointment rows are an API projection (no \`organizationId\`, \`_creationTime\`, \`blockStart/End\`, \`createdBy\`).
+
+**Dates.** Inputs accept \`startsAt\` (ISO 8601 WITH offset, e.g. \`2026-11-27T14:30:00-03:00\`), \`startsAtLocal\` (\`YYYY-MM-DDTHH:mm\` in the organization timezone) or \`startTime\` (epoch ms, what a Slot returns); send one (several must be the same instant). A local time that does not exist (daylight-saving jump) is a 400. Every output carries \`startsAt\`, \`startsAtLocal\`, \`endsAt\`, \`endsAtLocal\` and \`timezone\` next to the epoch values; day filters (\`from\`, \`to\`) are local dates \`YYYY-MM-DD\`.
+
+**Never invent a time.** Use the times returned by \`GET /scheduling/slots\`; always call \`POST /scheduling/appointments/preview\` before \`book\`.
+
+| Route | Permission | What it does |
+|-------|-----------|--------------|
+| GET /scheduling/services | agenda: view_own | Active services (duration, variants, requirements, price) |
+| GET /scheduling/resources | agenda: view_own | Active resources (person, room, equipment) with the weekly hours |
+| GET /scheduling/slots | agenda: view_own | Free times: \`serviceId\`, \`from\` [, \`to\` up to 7 days], \`period\` (manha, tarde, noite, qualquer), \`resourceIds\` (comma list), \`partySize\` (1-4), \`rescheduleAppointmentId\`, \`variantKey\`, \`limit\` (default 3, max 50) |
+| GET /scheduling/appointments | agenda: view_own | By local date range (\`from\` [, \`to\`], \`status\`, \`limit\` 1-100, \`cursor\`) → \`{ timezone, appointments, hasMore, nextCursor }\` (stable cursor) |
+| GET /scheduling/appointments/get | agenda: view_own | One appointment (\`id\`): open conflicts, who booked, status history. 404 is identical for missing, other-org and not-visible |
+| GET /scheduling/pending | agenda: view_own | \`{ approvals, conflicts, noOutcome, suggestions, capped }\` (up to 50 each; suggestions need view_all) |
+| POST /scheduling/appointments/preview | agenda: edit | Dry run of a booking (or of a reschedule with \`rescheduleAppointmentId\`); writes nothing |
+| POST /scheduling/appointments/book | agenda: edit | Book. **Idempotency required** |
+| POST /scheduling/appointments/reschedule | agenda: edit | New appointment + the old one \`rescheduled\`, atomically |
+| POST /scheduling/appointments/cancel | agenda: edit | \`{ appointmentId, reason?, cancelledBy?: staff|client }\` → \`{ lateCancel }\` |
+| POST /scheduling/appointments/status | agenda: edit | \`{ appointmentId, to: scheduled(approve) | confirmed | checked_in | completed | no_show }\` or \`{ action: approve | reject }\` (reject refuses a PENDING proposal = cancel; on any other status it is a 400 "use cancelar" and nothing changes) |
+| POST /scheduling/appointments/undo-status | agenda: edit | Undo the last status change → \`{ restoredTo }\` |
+| POST /scheduling/appointments/resources | agenda: edit | Change room/professional/equipment (\`resourceIds\`, \`force?\`) |
+| POST /scheduling/resources/day | agenda: edit (manage without \`resourceId\`) | Close a resource/day (or \`kind: custom | extra | block\` with \`intervals\`); \`mode: preview\` (default) or \`commit\` |
+| POST /scheduling/resources/reopen | agenda: edit (manage without \`resourceId\`) | Remove manual exceptions; same preview |
+| GET /scheduling/closures/get | agenda: view_all | Progress of a batched closure (\`runId\`) |
+| POST /scheduling/conflicts/resolve | agenda: edit | \`{ conflictId, action: { type: resource | reschedule | cancel | manual, ... } }\` |
+
+**Slots.** A key with \`agenda: edit\` or higher gets the staff audience (\`resourceNames\`, \`reasons\`, \`reasonCodes\`, \`score\`); lower keys get the same times with those fields empty. Slot = \`{ startTime, endTime, localDate, label, resourceIds, resourceNames, score, reasons, reasonCodes, startsAt, startsAtLocal, endsAt, endsAtLocal, timezone }\`. \`reasonCodes\` (staff audience): \`ADJACENT\`, \`ADJACENT_BEFORE\`, \`ADJACENT_AFTER\`, \`EDGE_OF_DAY\`, \`DEAD_GAP\`, \`NEW_RESOURCE\`, \`EARLY\`, \`BALANCE\`, \`PREFERENCE\`. \`reason\` ≠ \`ok\` explains an empty list: \`service_unavailable\`, \`no_matching_resource\`, \`unverifiable\` (a read cap stopped it from being checked safely: the time is NOT offered), \`appointment_unavailable\`. A slot is a hint, not a lock: another booking can take it before you book, so handle the 409 below.
+
+**Group booking.** \`companions: [{ guestName, resourceIds? }]\` (1 to 3) books the main person plus companions all-or-nothing (e.g. a couple in a double room); idempotent per group; the response adds \`appointmentIds\` and \`partySize\`.
+
+**Book body.** \`{ serviceId, startsAt|startsAtLocal|startTime, contactId?, leadId?, conversationId?, resourceIds? (the Slot's plan), variantKey?, force?, notes?, requestId? }\` plus the header \`Idempotency-Key\`. Response \`201 { success, appointmentId, status, created, duplicate, inConflict, warnings }\`. **Idempotency:** the key (header \`Idempotency-Key\` OR body \`requestId\`, 1-128 chars of letters, digits, \`. _ : -\`) is REQUIRED, otherwise 400. The same key with the same data returns the SAME appointment (\`200\`, \`created: false\`); the same key with different data (service, start, contact/lead/conversation, \`variantKey\` or, when sent, the set of \`resourceIds\`) is \`409 { error, code: "idempotency_key_reused" }\` (a different \`notes\` is not: it returns the existing appointment). Reschedule accepts the key too (optional).
+
+**409 on a rule (\`sched_rules\`).** Capacity taken, outside hours, closed resource, etc.:
+\`\`\`json
+{
+  "error": "Esse horário não está disponível.",
+  "code": "sched_rules",
+  "violations": [{ "code": "CAPACITY_EXCEEDED", "severity": "block", "message": "..." }],
+  "alternatives": [{ "startTime": 1781528400000, "endTime": 1781532000000, "localDate": "2026-06-15", "label": "seg, 15/06 às 11:00", "resourceIds": ["..."], "resourceNames": ["..."], "score": 0.8, "reasons": [], "reasonCodes": [], "startsAt": "2026-06-15T11:00:00-03:00", "startsAtLocal": "2026-06-15T11:00", "endsAt": "2026-06-15T12:00:00-03:00", "endsAtLocal": "2026-06-15T12:00", "timezone": "America/Sao_Paulo" }]
+}
+\`\`\`
+\`alternatives\` has up to 3 same-day times in the Slot format; book one of them (send its \`startsAtLocal\` and \`resourceIds\`) instead of guessing. \`severity: "warn"\` violations (e.g. \`OUTSIDE_HOURS\`, \`BUFFER_OVERLAP\`, \`RESOURCE_CLOSED\`, \`CLIENT_OVERLAP\`, \`MAX_ACTIVE_PER_CONTACT\`) can be accepted by a human decision with \`force: ["CODE"]\`; \`severity: "block"\` (\`CAPACITY_EXCEEDED\`, \`DURATION_TOO_LONG\`, \`WRONG_ORG_OR_INACTIVE\`) NEVER passes, even if listed in \`force\`. Other errors: 400 (malformed id, invalid date or body), 401, 403 (\`Permissão insuficiente\`), 404 (not found or not yours, same body), 429.
+
+**Closing a resource (safe flow).** \`POST /scheduling/resources/day { resourceId, fromLocalDate, toLocalDate?, kind?, intervals?, reasonCode?, reason? }\` answers a PREVIEW by default (\`mode: "preview"\`): \`affected\`, \`reallocated\`, \`conflicts\`, \`items[]\` (appointment, outcome \`reallocated\`/\`conflict\`, target resource). Then repeat with \`mode: "commit"\`, \`acceptAffected: true\` and \`expectedAffected\` = the preview's \`affected\` (a different count is refused). Rooms/equipment are reallocated; people become open conflicts (\`GET /scheduling/pending\`, resolve with \`POST /scheduling/conflicts/resolve\`). Above 40 affected the work continues in batches: poll \`GET /scheduling/closures/get?runId=\`. Closing the whole agenda (no \`resourceId\`) needs \`agenda: manage\`.
+
+**Side effects (same as the app).** Audit log (\`schedAppointment\`, \`via: "rest"\`, \`origin: "api"\`), activity on the lead timeline when \`leadId\` is set (\`appointment_booked\`, \`appointment_changed\`, \`appointment_completed\`) and webhooks (see **Webhook Events**: \`appointment.*\`).
+
 ### File Storage Endpoints
 
 #### POST /api/v1/files/upload-url
@@ -1394,7 +1447,7 @@ HNBCRM ships an open-standard Agent Skill at \`.claude/skills/hnbcrm/\` that tea
 
 ## MCP Server Tools
 
-The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 68 tools for AI agents:
+The HNBCRM MCP server (\`npx hnbcrm-mcp\`) exposes 87 tools for AI agents:
 
 ### Lead Management
 
@@ -1673,6 +1726,81 @@ Reschedule a calendar event to a new time.
 - **newStartTime** (number, required): New start timestamp (ms)
 - **newEndTime** (number, optional): New end timestamp (auto-calculated if omitted)
 
+#### calendar_complete_event
+Mark a calendar event as completed (a recurring event generates its next instance).
+- **eventId** (string, required): Event ID
+
+#### calendar_cancel_event
+Mark a scheduled calendar event as cancelled.
+- **eventId** (string, required): Event ID
+
+### Scheduling (Agenda v2)
+
+Tools for appointments that use resources (people, rooms, equipment); they call \`/api/v1/scheduling/*\` with the SAME rules as the app screens. All dates are LOCAL (\`YYYY-MM-DDTHH:mm\` in the organization timezone). Rules for agents: **never invent a time** (use only times returned by \`crm_find_slots\`), **always preview before booking** (\`crm_preview_appointment\`), **handle a 409** by offering one of its \`alternatives\` (the tool result carries \`violations\` and \`alternatives\`), and **always send an \`idempotencyKey\`** when booking (reuse the SAME key when retrying the same request). Needs the Scheduling module on and \`agenda\` permission on the key (view_own to read, edit to write, manage to close the whole agenda).
+
+#### crm_list_scheduling_services
+List the active services (duration, variants, requirements, price). No parameters.
+
+#### crm_list_scheduling_resources
+List the active resources (people, rooms, equipment) with their weekly hours. No parameters.
+
+#### crm_find_slots
+Find free times for a service (window of up to 7 days). The only valid source of times to offer or book.
+- **serviceId** (string, required)
+- **from** (string, required): First day, \`YYYY-MM-DD\`
+- **to** (string, optional): Last day (max 7 days)
+- **period** (string, optional): manha, tarde, noite, qualquer
+- **resourceIds** (string[], optional): Restrict to these resources
+- **partySize** (number, optional): People at the same time (1-4)
+- **rescheduleAppointmentId** (string, optional): When rescheduling, the appointment being moved
+- **variantKey**, **limit** (optional)
+
+#### crm_list_agenda
+List appointments of a day or date range (stable cursor).
+- **from** (string, required), **to** (string, optional), **status**, **limit**, **cursor** (optional)
+
+#### crm_get_appointment
+Get one appointment with open conflicts and status history. **appointmentId** (string, required)
+
+#### crm_list_scheduling_pending
+Approvals, open conflicts, appointments without an outcome and one-tap suggestions. No parameters.
+
+#### crm_preview_appointment
+Dry run of a booking: resource plan and warnings, nothing is written. Always call before \`crm_book_appointment\`.
+- **serviceId** (string, required), **startsAtLocal** (string, required)
+- **contactId**, **leadId**, **conversationId**, **resourceIds**, **variantKey**, **force**, **notes**, **rescheduleAppointmentId** (optional)
+
+#### crm_book_appointment
+Book an appointment. **idempotencyKey** (string, required) plus the preview fields. Returns the appointment; a retry with the same key returns the same appointment.
+
+#### crm_reschedule_appointment
+Move an appointment to a new time (new appointment + old one rescheduled, atomically). **appointmentId**, **startsAtLocal** (required); **resourceIds**, **force**, **idempotencyKey** (optional)
+
+#### crm_cancel_appointment
+Cancel an appointment. **appointmentId** (required); **reason**, **cancelledBy** (staff | client) (optional)
+
+#### crm_set_appointment_status
+Change status. **appointmentId**, **action** (required): approve (accept a pending proposal), confirm, check_in, complete, no_show, reject (refuse a proposal = cancel); **reason** (optional, with reject)
+
+#### crm_undo_appointment_status
+Undo the last status change. **appointmentId** (required)
+
+#### crm_change_appointment_resources
+Change room/professional/equipment. **appointmentId**, **resourceIds** (required); **force** (optional)
+
+#### crm_close_resource
+Close a resource (or hours) on a date range. Defaults to a PREVIEW: read \`affected\`/\`items\`, then repeat with \`mode: "commit"\`, \`acceptAffected: true\` and \`expectedAffected\` = the preview's \`affected\`. Closing the whole agenda (no resourceId) needs \`agenda: manage\`.
+- **fromLocalDate** (required), **toLocalDate**, **resourceId**, **resourceKind**, **kind** (closed | custom | extra | block), **intervals**, **reasonCode**, **reason**, **mode**, **acceptAffected**, **expectedAffected**
+
+#### crm_reopen_resource
+Reopen (remove manual exceptions). Same preview/commit flow. **fromLocalDate** (required); **toLocalDate**, **resourceId**, **resourceKind**, **kind**, **mode**, **acceptAffected**, **expectedAffected**
+
+#### crm_get_closure_run
+Progress of a batched closure. **runId** (string, required)
+
+#### crm_resolve_conflict
+Resolve an open conflict. **conflictId**, **action** (required): resource (+ **resourceIds**), reschedule (+ **startsAtLocal**, optional **resourceIds**), cancel (+ **reason**), manual (+ **note**); **force** (optional)
+
 ### Campaigns (WhatsApp bulk messaging)
 
 #### crm_list_campaigns
@@ -1786,8 +1914,24 @@ Webhooks can be configured per organization. Events are triggered after mutation
 | group.post.failed | A scheduled group post could not run — generation error, no valid group, channel down (payload: groupPostId, name, reason, slotKey?, stage?) |
 | group.post.paused | A scheduled group post was paused, manually or automatically (payload: groupPostId, name, reason, automatic) |
 | group.post.ended | A scheduled group post ended (payload: groupPostId, name, reason, stats) |
+| appointment.created | Appointment booked (any channel: app, API/MCP, AI, public link, WhatsApp message from the team). Payload: appointmentId, status, origin, serviceName, startsAt (ISO with offset), startsAtLocal, timezone, resources [{ name, role }], leadId?, contactId?, previousAppointmentId? — no phone, no e-mail, no notes |
+| appointment.approved | A pending proposal was approved (status → scheduled) |
+| appointment.confirmed | Appointment confirmed |
+| appointment.rescheduled | Moved to a new time (payload is the NEW appointment; previousAppointmentId = the old one) |
+| appointment.cancelled | Cancelled (also when a proposal is refused) |
+| appointment.completed | Marked as done |
+| appointment.no_show | Marked as no-show |
+| appointment.needs_attention | The appointment lost its resource or hit a conflict (closed resource, capacity, removed resource, expired proposal) and needs a human |
+| appointment.undone | A just-made booking was undone (not a cancellation; no late-cancel count) |
+| appointment.restored | The old appointment of an undone reschedule is back (previousAppointmentId = the undone new one) |
+| calendar_event.created | Internal calendar event created (payload: eventId, title, eventType, startTime, endTime, assignedTo) |
+| calendar_event.updated | Calendar event edited (payload: eventId, changes) |
+| calendar_event.rescheduled | Calendar event moved (payload: eventId, oldStartTime, newStartTime, newEndTime) |
+| calendar_event.completed | Calendar event completed (payload: eventId, title) |
+| calendar_event.cancelled | Calendar event cancelled (payload: eventId, title) |
+| calendar_event.deleted | Calendar event deleted (payload: eventId, title) |
 
-Webhook payloads include \`{ event, organizationId, payload, timestamp }\`. Each webhook has a secret for HMAC signature verification.
+Webhook deliveries are POSTed as \`{ event, timestamp, data }\` (headers \`X-Webhook-Event\` and an HMAC \`sha256=\` signature made with the webhook secret). Subscribe with the exact event names (or \`"*"\` for all); the \`appointment.*\` and \`calendar_event.*\` groups are subscribable like any other name.
 
 ---
 
@@ -1937,7 +2081,7 @@ Two native AI products, opt-in per organization (\`aiConfig.enabled\` defaults t
 \`daily\` | \`weekly\` | \`biweekly\` | \`monthly\`
 
 ### Activity Type
-\`note\` | \`call\` | \`email_sent\` | \`stage_change\` | \`assignment\` | \`handoff\` | \`qualification_update\` | \`created\` | \`message_sent\` | \`event_created\` | \`event_completed\`
+\`note\` | \`call\` | \`email_sent\` | \`stage_change\` | \`assignment\` | \`handoff\` | \`qualification_update\` | \`created\` | \`message_sent\` | \`event_created\` | \`event_completed\` | \`appointment_booked\` | \`appointment_changed\` | \`appointment_completed\`
 
 ### Calendar Event Type
 \`call\` | \`meeting\` | \`follow_up\` | \`demo\` | \`task\` | \`reminder\` | \`other\`

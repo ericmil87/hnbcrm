@@ -1224,7 +1224,7 @@ export async function openCapacityExcessConflictsCore(
 
 export type ResolveConflictAction =
   | { type: "resource"; resourceIds: Id<"schedResources">[]; force?: string[] }
-  | { type: "reschedule"; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[] }
+  | { type: "reschedule"; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[]; allowResourceFallback?: boolean }
   | { type: "cancel"; reason?: string }
   | { type: "manual"; note?: string };
 
@@ -1279,7 +1279,7 @@ export async function resolveConflictCore(
     const result = await changeResourceCore(ctx, { appointment, actor: args.actor, resourceIds: finalIds, force: act.force, now: args.now });
     if (!result.ok) return result;
   } else if (act.type === "reschedule") {
-    const result = await rescheduleAppointmentCore(ctx, { appointment, actor: args.actor, startTime: act.startTime, resourceIds: act.resourceIds, force: act.force, now: args.now });
+    const result = await rescheduleAppointmentCore(ctx, { appointment, actor: args.actor, startTime: act.startTime, resourceIds: act.resourceIds, force: act.force, allowResourceFallback: act.allowResourceFallback, now: args.now });
     if (!result.ok) return result;
   } else if (act.type === "cancel") {
     await cancelAppointmentCore(ctx, { appointment, actor: args.actor, byClass: "staff", reason: act.reason, now: args.now });

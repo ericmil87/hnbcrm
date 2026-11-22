@@ -239,7 +239,7 @@ describe("BookingFlowView", () => {
     expect(screen.getByText("Fora do horário de atendimento: Sala 1")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Marcar mesmo assim" }));
     await waitFor(() => expect(book).toHaveBeenCalledTimes(2));
-    expect(book.mock.calls[1][0].force).toEqual(["OUTSIDE_HOURS"]);
+    expect(book.mock.calls[1][0].force).toEqual(["OUTSIDE_HOURS:room1"]);
     expect(book.mock.calls[1][0].idempotencyKey).toBe(book.mock.calls[0][0].idempotencyKey);
   });
 
@@ -296,7 +296,7 @@ describe("BookingFlowView", () => {
     expect(title.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(submit);
     await waitFor(() => expect(book).toHaveBeenCalledTimes(1));
-    expect(book.mock.calls[0][0].force).toEqual(["OUTSIDE_HOURS"]);
+    expect(book.mock.calls[0][0].force).toEqual(["OUTSIDE_HOURS:room1"]);
     expect(book.mock.calls[0][0].resourceIds).toEqual(["room1"]);
   });
 

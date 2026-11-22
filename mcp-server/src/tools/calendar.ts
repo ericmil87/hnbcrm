@@ -193,4 +193,38 @@ export function registerCalendarTools(server: McpServer, client: HnbCrmClient) {
       }
     }
   );
+
+  server.tool(
+    "calendar_complete_event",
+    "Mark a scheduled calendar event as completed. A recurring event generates its next occurrence automatically. Only a scheduled event can be completed. Needs agenda: edit.",
+    {
+      eventId: z.string().describe("ID of the event to complete"),
+    },
+    { destructiveHint: false },
+    async (args) => {
+      try {
+        const result = await client.post("/api/v1/calendar/events/complete", args);
+        return successResult(result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.tool(
+    "calendar_cancel_event",
+    "Mark a scheduled calendar event as cancelled (the event stays in the calendar with status cancelled; use calendar_delete_event to remove it). Needs agenda: edit.",
+    {
+      eventId: z.string().describe("ID of the event to cancel"),
+    },
+    { destructiveHint: true },
+    async (args) => {
+      try {
+        const result = await client.post("/api/v1/calendar/events/cancel", args);
+        return successResult(result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
 }

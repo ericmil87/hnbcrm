@@ -67,7 +67,9 @@ If `crm_*` tools are available in your environment, use them directly. They hand
 
 > **AI follow-ups (v0.60):** `crm_get_task` (and `GET /api/v1/tasks/get`) now returns an `aiFollowUp` field on the task. When it is non-null, the AI attendant that owns the task is going to re-read the conversation and act on it (send a message, or decide none is needed) at `aiFollowUp.dueAt` — this is a *different* mechanism from a normal reminder task. Read `aiFollowUp.status` before touching the task: `scheduled`/`queued`/`drafted` mean the follow-up is still live (editing `dueDate` or reassigning it changes when/whether a customer gets contacted — do this deliberately, not as routine cleanup); `done`/`not_needed` mean it already ran (the outcome is in `aiFollowUp.reason`); `needs_human` means the AI could not execute it (reason in `aiFollowUp.reason`) and the task is now yours like any other; `canceled` means it is a plain task again. There is no MCP tool or REST endpoint to schedule or resolve a follow-up yet — that only happens through the attendant itself or the app UI.
 
-**Calendar tools**: `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_reschedule_event`
+**Calendar tools**: `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_reschedule_event`, `calendar_complete_event`, `calendar_cancel_event`
+
+**Scheduling tools** (Agenda v2, see `references/API_REFERENCE.md`): `crm_list_scheduling_services`, `crm_list_scheduling_resources`, `crm_find_slots`, `crm_list_agenda`, `crm_get_appointment`, `crm_list_scheduling_pending`, `crm_preview_appointment`, `crm_book_appointment`, `crm_reschedule_appointment`, `crm_cancel_appointment`, `crm_set_appointment_status`, `crm_undo_appointment_status`, `crm_change_appointment_resources`, `crm_close_resource`, `crm_reopen_resource`, `crm_get_closure_run`, `crm_resolve_conflict`. Never invent a time, preview before booking, handle 409 with the alternatives, always send an `idempotencyKey`.
 
 ### REST API (Fallback)
 
@@ -186,7 +188,8 @@ Use this to reach out first (a human asked you to contact someone) instead of wa
 | Pipeline | `crm_list_boards`, `crm_list_team`, `crm_get_dashboard` |
 | Activities | `crm_get_activities`, `crm_create_activity` |
 | Tasks | `crm_list_tasks`, `crm_get_task`, `crm_list_my_tasks`, `crm_search_tasks`, `crm_create_task`, `crm_update_task`, `crm_complete_task`, `crm_delete_task`, `crm_snooze_task`, `crm_bulk_complete_tasks`, `crm_list_task_comments`, `crm_add_task_comment` |
-| Calendar | `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_reschedule_event` |
+| Calendar | `calendar_list_events`, `calendar_get_event`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_reschedule_event`, `calendar_complete_event`, `calendar_cancel_event` |
+| Scheduling (Agenda v2) | `crm_list_scheduling_services`, `crm_list_scheduling_resources`, `crm_find_slots`, `crm_list_agenda`, `crm_get_appointment`, `crm_list_scheduling_pending`, `crm_preview_appointment`, `crm_book_appointment`, `crm_reschedule_appointment`, `crm_cancel_appointment`, `crm_set_appointment_status`, `crm_undo_appointment_status`, `crm_change_appointment_resources`, `crm_close_resource`, `crm_reopen_resource`, `crm_get_closure_run`, `crm_resolve_conflict` |
 
 ## Further Reading
 

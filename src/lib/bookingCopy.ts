@@ -82,6 +82,9 @@ export const BOOKING_COPY = {
   rulesDialog: {
     warnTitle: "Antes de marcar",
     warnHint: "Dá para marcar mesmo assim. A decisão é sua.",
+    changedTitle: "A agenda mudou: confira o aviso novo",
+    changedHint: "Apareceu um aviso que você ainda não tinha visto. Marque só se estiver de acordo com ele.",
+    newBadge: "Novo",
     blockTitle: "Não dá para marcar neste horário",
     takenTitle: "Esse horário acabou de ser ocupado",
     notFreeTitle: "Esse horário não está livre",

@@ -17,6 +17,7 @@
  * - `internalBuildReportData` (ONE query): every section bounded by an index
  *   range + `.take`, `capped` → "50+".
  */
+import { buildAgendaMorningSummary } from "./lib/schedCopilotOps";
 import { v } from "convex/values";
 import { internalAction, internalMutation, internalQuery, type ActionCtx, type QueryCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
@@ -95,6 +96,17 @@ const morningValidator = v.object({
   }),
   unread: v.object(counted),
   channels: v.object({ total: v.number(), down: v.array(v.string()) }),
+  // Agenda v2 (E1): linha da agenda do dia e das pendências; ausente com o módulo desligado ou sem `agenda`.
+  agenda: v.optional(
+    v.object({
+      today: v.number(),
+      nextTimes: v.array(v.string()),
+      approvals: v.number(),
+      conflicts: v.number(),
+      noOutcome: v.number(),
+      capped: v.boolean(),
+    })
+  ),
 });
 
 const eveningValidator = v.object({
@@ -323,6 +335,9 @@ async function buildMorning(
     .filter((c) => c.status === "error" || (c.bridgeSessionState !== undefined && DOWN_BRIDGE_STATES.has(c.bridgeSessionState)))
     .map((c) => c.displayName ?? c.channel);
 
+  // Agenda v2 (E1): só com o módulo ligado e conforme a permissão `agenda` do membro; contagens e horários, sem nome de cliente.
+  const agenda = await buildAgendaMorningSummary(db, org, member, now, tz);
+
   return {
     handoffs: {
       ...count(pending, pendingPage.capped),
@@ -340,6 +355,7 @@ async function buildMorning(
     },
     unread: count(unreadRows, unreadPage.capped),
     channels: { total: configs.length, down },
+    ...(agenda ? { agenda } : {}),
   };
 }
 

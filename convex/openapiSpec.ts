@@ -1,7 +1,8 @@
 // OpenAPI 3.1.0 specification for the ClawCRM REST API
 // Served at /api/v1/openapi.json
+import { SCHEDULING_PATHS, SCHEDULING_SCHEMAS, SCHEDULING_TAG, SCHEDULING_WEBHOOKS } from "./openapiScheduling";
 
-export const OPENAPI_SPEC = `{
+const OPENAPI_BASE = `{
   "openapi": "3.1.0",
   "info": {
     "title": "ClawCRM API",
@@ -2961,3 +2962,23 @@ export const OPENAPI_SPEC = `{
     }
   }
 }`;
+
+/**
+ * Spec servida: o texto acima + a Agenda v2 (I1), montada como objeto em `openapiScheduling.ts` (sem escape de aspas).
+ * Serializada UMA vez no carregamento do módulo; `openapiSpec.test.ts` valida o JSON e o casamento com `ROUTE_PERMISSIONS`.
+ */
+function buildSpec(): string {
+  const spec = JSON.parse(OPENAPI_BASE) as {
+    tags: unknown[];
+    paths: Record<string, unknown>;
+    webhooks?: Record<string, unknown>;
+    components: { schemas: Record<string, unknown> };
+  };
+  spec.tags.push(SCHEDULING_TAG);
+  Object.assign(spec.paths, SCHEDULING_PATHS);
+  Object.assign(spec.components.schemas, SCHEDULING_SCHEMAS);
+  spec.webhooks = { ...(spec.webhooks ?? {}), ...SCHEDULING_WEBHOOKS };
+  return JSON.stringify(spec, null, 2);
+}
+
+export const OPENAPI_SPEC = buildSpec();

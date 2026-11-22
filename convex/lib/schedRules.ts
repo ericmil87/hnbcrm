@@ -318,20 +318,29 @@ export type ForceResolution = {
   kind: "normal" | "fit_in";
 };
 
-/** `warn` só passa se o código vier em `force`, e só `staff` pode forçar; `block` nunca passa. */
+/**
+ * `warn` só passa se o código vier em `force`, e só `staff` pode forçar; `block` nunca passa. `force` aceita o CÓDIGO
+ * (`RESOURCE_CLOSED`: vale para qualquer recurso, compatível com a tela) ou o PAR `CÓDIGO:resourceId`
+ * (`RESOURCE_CLOSED:<id>`: só aquele recurso; o Copiloto guarda pares para não aceitar aviso novo de outro recurso).
+ */
 export function applyForce(violations: Violation[], force: string[] | undefined, origin: SchedOrigin): ForceResolution {
   const canForce = originClass(origin) === "staff";
   const requested = new Set(force ?? []);
+  const used = new Set<string>();
   const blocking: Violation[] = [];
   const forced: RuleCode[] = [];
   for (const v of violations) {
-    if (v.severity === "warn" && canForce && requested.has(v.code)) {
+    const rid = typeof v.detail?.resourceId === "string" ? v.detail.resourceId : undefined;
+    const pair = rid !== undefined ? `${v.code}:${rid}` : undefined;
+    const token = v.severity === "warn" && canForce ? (requested.has(v.code) ? v.code : pair !== undefined && requested.has(pair) ? pair : undefined) : undefined;
+    if (token !== undefined) {
+      used.add(token);
       if (!forced.includes(v.code)) forced.push(v.code);
     } else {
       blocking.push(v);
     }
   }
-  const ignoredForce = [...requested].filter((c) => !forced.includes(c as RuleCode));
+  const ignoredForce = [...requested].filter((c) => !used.has(c));
   const kind = forced.some((c) => FIT_IN_CODES.includes(c)) ? "fit_in" : "normal";
   return { blocking, forced, ignoredForce, kind };
 }

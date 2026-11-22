@@ -132,7 +132,20 @@ const GUEST_NAME_MAX = 80;
 const REASON_MAX = 200;
 const UNDO_AUDIT_SCAN = 20;
 const UNAVAILABLE = "Esse horário não está disponível.";
-const IDEMPOTENCY_REUSED = "Esta chave de idempotência já foi usada com outros dados.";
+export const IDEMPOTENCY_REUSED_MESSAGE = "Esta chave de idempotência já foi usada com outros dados.";
+const IDEMPOTENCY_REUSED = IDEMPOTENCY_REUSED_MESSAGE;
+
+/**
+ * Chave de idempotência: quando o pedido NOMEIA recursos, o conjunto (ordem não importa) tem de ser o do agendamento
+ * existente. Pedido sem `resourceIds` (a porta escolheu) não restringe. Limite: se a 1ª chamada caiu no plano alternativo
+ * (`allowResourceFallback`), repetir com os mesmos `resourceIds` pedidos dá `idempotency_key_reused`; repita sem eles.
+ */
+export function sameResourceSet(existing: ReadonlyArray<{ resourceId: string }>, requested: readonly string[] | undefined): boolean {
+  if (requested === undefined || requested.length === 0) return true;
+  const a = new Set(existing.map((r) => r.resourceId));
+  const b = new Set(requested);
+  return a.size === b.size && [...a].every((id) => b.has(id));
+}
 
 /** Códigos que dependem do RECURSO escolhido: trocar de recurso pode resolver. */
 const RESOURCE_CODES: readonly RuleCode[] = [
@@ -1305,7 +1318,10 @@ async function prepareAttempt(
         hit.startTime === args.startTime &&
         (args.contactId === undefined || hit.contactId === args.contactId) &&
         (args.leadId === undefined || hit.leadId === args.leadId) &&
-        (args.conversationId === undefined || hit.conversationId === args.conversationId);
+        (args.conversationId === undefined || hit.conversationId === args.conversationId) &&
+        hit.variantKey === args.variantKey &&
+        sameResourceSet(hit.resources, args.resourceIds);
+      // `notes` diferente NÃO vira 409 (texto interno; a repetição devolve o agendamento já criado).
       if (!sameData) fail(IDEMPOTENCY_REUSED);
       return { done: { kind: "existing", appointment: hit, duplicate: false } };
     }
@@ -1665,7 +1681,7 @@ export async function rescheduleAppointmentCore(
     actor: SchedActor;
     startTime: number;
     resourceIds?: Id<"schedResources">[];
-    /** Ver `BookArgs.allowResourceFallback` (só vale com `resourceIds` informado). */
+    /** Ver `BookArgs.allowResourceFallback`. Sem `resourceIds`, `false` fixa os recursos ATUAIS do agendamento (Copiloto executa o plano da prévia). */
     allowResourceFallback?: boolean;
     force?: string[];
     idempotencyKey?: string;
@@ -1710,7 +1726,7 @@ export async function rescheduleAppointmentCore(
       guestName: old.guestName,
       partyKey: old.partyKey,
       resourceIds: args.resourceIds ?? old.resources.map((r) => r.resourceId),
-      allowResourceFallback: args.resourceIds ? args.allowResourceFallback : undefined,
+      ...(args.allowResourceFallback !== undefined ? { allowResourceFallback: args.allowResourceFallback } : {}),
       force: args.force,
       notes: old.notes,
       idempotencyKey: preview ? undefined : args.idempotencyKey,
@@ -2449,6 +2465,21 @@ async function previousStatusFromAudit(
   return null;
 }
 
+/**
+ * Leitura PURA para a prévia do Desfazer (Copiloto, E1): para que situação o agendamento voltaria, ou `null` se não
+ * há o que desfazer. Não grava nada; o desfazer de verdade é `undoAppointmentStatusCore` (que revalida tudo).
+ */
+export async function peekUndoTargetCore(
+  ctx: MutationCtx,
+  appointment: Doc<"schedAppointments">,
+  actor: SchedActor
+): Promise<SchedStatus | null> {
+  const a = await loadAppointment(ctx, appointment, actor);
+  const previous = await previousStatusFromAudit(ctx, a);
+  if (!previous || !canUndo(a.status, previous.status, actorClassOf(actor))) return null;
+  return previous.status;
+}
+
 export async function undoAppointmentStatusCore(
   ctx: MutationCtx,
   args: { appointment: Doc<"schedAppointments">; actor: SchedActor; now?: number }
@@ -2655,7 +2686,7 @@ async function markRestoreSkipped(
 
 export async function changeResourceCore(
   ctx: MutationCtx,
-  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; resourceIds: Id<"schedResources">[]; force?: string[]; now?: number }
+  args: { appointment: Doc<"schedAppointments">; actor: SchedActor; resourceIds: Id<"schedResources">[]; force?: string[]; /** E1: `preview` avalia as MESMAS regras (capacidade incluída) e devolve o plano sem gravar. */ mode?: "commit" | "preview"; now?: number }
 ): Promise<BookResult> {
   const now = args.now ?? Date.now();
   const a = await loadAppointment(ctx, args.appointment, args.actor);
@@ -2685,6 +2716,14 @@ export async function changeResourceCore(
   if (resolution.blocking.length > 0) {
     const view = await loadDayView(ctx, rb, bc, reads, { startTime: a.startTime, preferred: requested.items.map((i) => i.resource._id), ignoreAppointmentId: a._id });
     return done(computeAlternatives(bc, view, { origin, now, startTime: a.startTime, variantKey: a.variantKey, current: requested.items.map((i) => i.resource._id) }));
+  }
+  if (args.mode === "preview") {
+    return {
+      ok: true,
+      preview: true,
+      plan: requested.items.map((i) => ({ role: i.role, resourceId: i.resource._id, units: i.units, resourceName: i.resource.name })),
+      warnings: violations.filter((v) => resolution.forced.includes(v.code)),
+    };
   }
   const alloc = await assertCapacityAndAllocate(ctx, {
     appointmentId: a._id,
