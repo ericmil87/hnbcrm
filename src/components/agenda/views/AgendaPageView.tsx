@@ -1,11 +1,11 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useOutletContext, useSearchParams } from "react-router";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { Plus, Settings2, TriangleAlert } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import type { AppOutletContext } from "@/components/layout/AuthLayout";
-import { CalendarPage } from "@/components/calendar/CalendarPage";
 import { CalendarEventModal } from "@/components/calendar/CalendarEventModal";
 import { EventDetailSlideOver } from "@/components/calendar/EventDetailSlideOver";
 import { TaskQuickView } from "@/components/calendar/TaskQuickView";
@@ -26,7 +26,6 @@ import { buildDayList, summarizeResources } from "@/lib/agendaDayList";
 import {
   buildDayGridModel,
   filterInternalForDay,
-  internalCountsByDay,
   nextHalfHour,
   toInternalItems,
   type DayInput,
@@ -35,15 +34,17 @@ import {
 } from "@/lib/agendaGrid";
 import { isExpiredProposal } from "@/lib/agendaStatus";
 import { buildMonthCells } from "@/lib/agendaMonth";
+import { buildMonthGrid, buildMonthLines, monthGridDates } from "@/lib/agendaMonthLines";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
-import { fillVocab } from "@/lib/agendaCopy";
+import { DENSITY_HOUR_PX, readPrefs, writePrefs, type AgendaPrefs, type Density } from "@/lib/agendaPrefs";
+import type { ColorScheme, ToneContext } from "@/lib/agendaColors";
+import { buildWeekModel, type WeekResource } from "@/lib/agendaWeekGrid";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import {
   dateKeyParam,
   defaultView,
   groupByOf,
   groupParam,
-  groupParamOf,
   idParam,
   listModeParam,
   migrateLegacyParams,
@@ -51,17 +52,21 @@ import {
   periodLabel,
   shiftDate,
   viewParam,
+  type AgendaView,
   type GroupParam,
 } from "@/lib/agendaViewParams";
-import { shortDateLabel, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
+import { shortDateLabel, weekDateKeys, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
+import { mutationErrorMessage } from "@/lib/errors";
 import { TAB_ROUTES } from "@/lib/routes";
 import { booleanParam } from "@/lib/searchParamState";
 import { VOCAB } from "@/lib/vocab";
-import { AgendaHeader } from "./AgendaHeader";
+import { AgendaToolbar, type WeekFilterOption } from "./AgendaToolbar";
 import { AgendaDayList } from "./AgendaDayList";
+import type { QuickActions } from "./AgendaBlocks";
 import type { ColumnAction } from "./ResourceDayGrid";
 import type { PendingAppointment, PendingConflict, PendingData } from "./PendingQueueView";
 import type { ClosureTarget } from "./ResourceDaySheet";
+import { useRangeAppointments } from "./useRangeAppointments";
 import { isManualNoPlace } from "@/lib/agendaConflict";
 import { bookingContextParts, bookingSheetExtraProps, rebookTarget } from "@/lib/agendaBooking";
 import type { PickedClient } from "./ClientPickerSheet";
@@ -70,6 +75,7 @@ const t = VIEWS_COPY;
 
 // Pedaços pesados ou raros: só baixam quando a visão ou a folha aparece.
 const ResourceDayGrid = lazy(() => import("./ResourceDayGrid").then((m) => ({ default: m.ResourceDayGrid })));
+const AgendaWeekView = lazy(() => import("./AgendaWeekView").then((m) => ({ default: m.AgendaWeekView })));
 const AgendaMonthView = lazy(() => import("./AgendaMonthView").then((m) => ({ default: m.AgendaMonthView })));
 const PendingQueuePanel = lazy(() => import("./PendingQueuePanel").then((m) => ({ default: m.PendingQueuePanel })));
 const ClientPickerSheet = lazy(() => import("./ClientPickerSheet").then((m) => ({ default: m.ClientPickerSheet })));
@@ -112,12 +118,20 @@ function ClearParam({ onClear }: { onClear: () => void }) {
   return null;
 }
 
+/** Quem digita não dispara atalho (campo, área de texto, menu aberto, diálogo). */
+function isTypingTarget(el: EventTarget | null): boolean {
+  const n = el as HTMLElement | null;
+  if (!n || !n.tagName) return false;
+  return n.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(n.tagName) || n.closest('[role="dialog"],[role="menu"]') !== null;
+}
+
 /**
  * Corpo da página da Agenda com o módulo `scheduling` LIGADO (o `AgendaPage` é só o casco lazy; ver lá). Contêiner: lê a URL
  * (`?visao= ?data= ?por= ?lista= ?appt= ?pendencias=`, mais `?event=` dos compromissos), assina só as
  * queries da visão aberta e entrega modelos prontos às telas por props (`ResourceDayGrid`, `AgendaDayList`,
- * `AgendaMonthView`, `PendingQueueView`). Compromissos e tarefas entram junto, em estilo próprio, filtrados UMA vez
- * pelo dia da org; a visão Semana é a `CalendarPage` de hoje por inteira (filtros, arrastar, criar com hora).
+ * `AgendaWeekView`, `AgendaMonthView`, `PendingQueueView`). Compromissos e tarefas entram junto, em estilo próprio, filtrados
+ * UMA vez pelo dia da org. Semana e Mês leem o intervalo inteiro com uma leitura por página (nunca uma por bloco). A página
+ * ocupa a altura da tela: barra única no topo e só a grade rola. Visão, agrupamento, cores e densidade ficam lembrados.
  */
 export function AgendaPageView() {
   usePageTitle(VOCAB.agenda.title);
@@ -132,6 +146,16 @@ export function AgendaPageView() {
   const hourNow = useRoundedNow("hour");
   const today = zonedToday(now, tz);
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // --- preferências deste aparelho (visão, agrupamento, cores, densidade, filtro da Semana) ---
+  const [prefs, setPrefs] = useState<AgendaPrefs>(() => readPrefs(organizationId));
+  const savePref = useCallback(
+    (patch: Parameters<typeof writePrefs>[1]) => setPrefs(writePrefs(organizationId, patch)),
+    [organizationId]
+  );
+  const color: ColorScheme = prefs.color ?? "status";
+  const density: Density = prefs.density ?? "padrao";
+  const hourPx = DENSITY_HOUR_PX[density];
 
   // --- URL ---
   const viewState = useSearchParamState("visao", viewParam);
@@ -159,12 +183,14 @@ export function AgendaPageView() {
     );
   }, [searchParams, setSearchParams]);
 
-  const view = viewState.value ?? defaultView(isMobile);
+  const view: AgendaView = viewState.value ?? prefs.view ?? defaultView(isMobile);
   const date = dateState.value ?? today;
-  const group: GroupParam = groupState.value;
+  const group: GroupParam = searchParams.has("por") ? groupState.value : (prefs.group ?? "sala");
   const groupBy = groupByOf(group);
   const listMode = listState.value;
   const week = view === "semana";
+  const month = view === "mes";
+  const rangeView = week || month;
   const isToday = date === today;
   const isPast = date < today;
 
@@ -179,25 +205,40 @@ export function AgendaPageView() {
   const [rescheduling, setRescheduling] = useState<PendingConflict | null>(null);
   const [rebooking, setRebooking] = useState<NonNullable<ReturnType<typeof rebookTarget>> | null>(null);
 
-  // --- dados ---
-  const canQuery = access.canView && !week;
-  const config = useQuery(api.schedulingConfig.getConfig, access.canView ? { organizationId, closuresFrom: today } : "skip");
-  const rawDay = useQuery(api.scheduling.listAgendaDay, canQuery && view !== "mes" ? { organizationId, localDate: date } : "skip");
-  const day = useKeepPrevious(rawDay, organizationId);
+  // --- período visível ---
+  const weekDates = useMemo(() => weekDateKeys(date), [date]);
+  const monthDates = useMemo(() => monthGridDates(date), [date]);
   const monthArgs = useMemo(() => {
     const { from, to } = monthRange(date);
     return { organizationId, fromLocalDate: from, toLocalDate: to };
   }, [organizationId, date]);
-  const rawRange = useQuery(api.scheduling.listAgendaRange, canQuery && view === "mes" ? monthArgs : "skip");
+  /** Dias cobertos pelas leituras de Semana e Mês (Mês: semanas inteiras, com os dias vizinhos). */
+  const span = useMemo(() => {
+    if (week) return { from: weekDates[0], to: weekDates[6] };
+    if (month) return { from: monthDates[0], to: monthDates[monthDates.length - 1] };
+    return { from: date, to: date };
+  }, [week, month, weekDates, monthDates, date]);
+
+  // --- dados ---
+  const canQuery = access.canView;
+  const config = useQuery(api.schedulingConfig.getConfig, access.canView ? { organizationId, closuresFrom: today } : "skip");
+  const rawDay = useQuery(api.scheduling.listAgendaDay, canQuery && !rangeView ? { organizationId, localDate: date } : "skip");
+  const day = useKeepPrevious(rawDay, organizationId);
+  // Contagens e fechamentos por dia: o mês inteiro (até 31 dias) ou os 7 dias da semana.
+  const rangeArgs = useMemo(
+    () => (week ? { organizationId, fromLocalDate: weekDates[0], toLocalDate: weekDates[6] } : monthArgs),
+    [week, organizationId, weekDates, monthArgs]
+  );
+  const rawRange = useQuery(api.scheduling.listAgendaRange, canQuery && rangeView ? rangeArgs : "skip");
   const range = useKeepPrevious(rawRange, organizationId);
+  const rangeAppts = useRangeAppointments(organizationId, span.from, span.to, canQuery && rangeView);
   const pending = useQuery(api.scheduling.listPending, access.canView ? { organizationId, now: hourNow } : "skip");
 
   const eventArgs = useMemo(() => {
     // Como na página de compromissos: recua um dia para trazer o que começou ontem e cruza a meia-noite
     // (o recorte pelo dia da org é feito depois, uma vez só, em `filterInternalForDay`).
-    const { from, to } = view === "mes" ? { from: monthArgs.fromLocalDate, to: monthArgs.toLocalDate } : { from: date, to: date };
-    return { organizationId, startDate: zonedDayBounds(from, tz).start - DAY_MS, endDate: zonedDayBounds(to, tz).end, includeTasks: true };
-  }, [organizationId, date, tz, view, monthArgs]);
+    return { organizationId, startDate: zonedDayBounds(span.from, tz).start - DAY_MS, endDate: zonedDayBounds(span.to, tz).end, includeTasks: true };
+  }, [organizationId, tz, span]);
   const rawEvents = useQuery(api.calendar.getEvents, canQuery ? eventArgs : "skip");
   const events = useKeepPrevious(rawEvents, organizationId);
   const allInternal = useMemo(() => toInternalItems(events), [events]);
@@ -218,12 +259,8 @@ export function AgendaPageView() {
   const shownDate = dayInput?.localDate ?? date;
   // Filtro pelo dia: UMA vez aqui; a mesma lista vai para a grade, a lista e os chips "Dia inteiro".
   const internal = useMemo(() => filterInternalForDay(allInternal, shownDate, tz), [allInternal, shownDate, tz]);
-  const internalCounts = useMemo(
-    () => (view === "mes" ? internalCountsByDay(allInternal, monthArgs.fromLocalDate, monthArgs.toLocalDate, tz) : {}),
-    [view, allInternal, monthArgs, tz]
-  );
 
-  const grid = useMemo(() => (dayInput ? buildDayGridModel({ day: dayInput, internal, groupBy, now }) : null), [dayInput, internal, groupBy, now]);
+  const grid = useMemo(() => (dayInput ? buildDayGridModel({ day: dayInput, internal, groupBy, now, fullDay: true }) : null), [dayInput, internal, groupBy, now]);
   const hasColumns = !!grid && grid.columns.some((c) => c.kind === "resource");
   const groups = useMemo(
     () =>
@@ -240,6 +277,50 @@ export function AgendaPageView() {
     [monthArgs, range, config, activeResources]
   );
 
+  // Cores: a ordem da configuração fixa a cor de cada sala, profissional e serviço.
+  const tone: ToneContext = useMemo(
+    () => ({ scheme: color, resourceOrder: activeResources.map((r) => r._id as string), serviceOrder: activeServices.map((s) => s._id as string) }),
+    [color, activeResources, activeServices]
+  );
+  const apptsInRange = rangeAppts.data?.appointments;
+
+  // Semana: filtro por sala/profissional (lembrado), modelo de 7 colunas e fechamentos por dia.
+  const weekFilterOptions: WeekFilterOption[] = useMemo(
+    () => activeResources.map((r) => ({ id: r._id as string, label: r.name, kind: r.kind })),
+    [activeResources]
+  );
+  const weekFilter = prefs.resource && weekFilterOptions.some((o) => o.id === prefs.resource) ? prefs.resource : null;
+  const weekModel = useMemo(
+    () =>
+      week
+        ? buildWeekModel({
+            dates: weekDates,
+            tz,
+            now,
+            appointments: apptsInRange ?? [],
+            internal: allInternal,
+            resources: activeResources as unknown as WeekResource[],
+            filterResourceId: weekFilter,
+          })
+        : null,
+    [week, weekDates, tz, now, apptsInRange, allInternal, activeResources, weekFilter]
+  );
+  const dayStatus = useMemo(() => {
+    const out: Record<string, { closed: number; all: boolean }> = {};
+    if (!range?.enabled) return out;
+    for (const d of range.days) {
+      if (d.closedResources > 0) out[d.localDate] = { closed: d.closedResources, all: activeResources.length > 0 && d.closedResources >= activeResources.length };
+    }
+    return out;
+  }, [range, activeResources]);
+
+  // Mês: linhas por dia (uma leitura por intervalo) completadas pela contagem do servidor quando cortou.
+  const monthWeeks = useMemo(() => {
+    if (!month) return [];
+    const lines = buildMonthLines({ dates: monthDates, tz, appointments: apptsInRange ?? [], internal: allInternal });
+    return buildMonthGrid({ date, cells, lines, truncated: !!rangeAppts.data?.truncated });
+  }, [month, monthDates, tz, apptsInRange, allInternal, date, cells, rangeAppts.data?.truncated]);
+
   const pendingData = pending?.enabled ? (pending as PendingData) : undefined;
   const pendingTotals = pendingData
     ? pendingTotal(
@@ -254,24 +335,45 @@ export function AgendaPageView() {
     : null;
 
   // --- ações ---
-  const changeView = (next: typeof view) => {
+  const changeView = (next: AgendaView) => {
     if (next === view) return;
-    if (next === "semana") {
-      // A `CalendarPage` lê `?date=` e `?view=` dela.
-      viewState.set("semana", { also: { view: null, date: isToday ? null : date } });
-    } else if (week) {
-      const cal = dateKeyParam.parse(searchParams.get("date"));
-      viewState.set(next, { also: { view: null, date: null, data: cal && cal !== today ? cal : null } });
-    } else viewState.set(next);
+    viewState.set(next);
+    savePref({ view: next });
   };
-  const goToDay = (d: LocalDate) => viewState.set("dia", { also: { data: d === today ? null : d } });
+  const changeGroup = (g: GroupParam) => {
+    groupState.set(g);
+    savePref({ group: g });
+  };
+  const goToDay = (d: LocalDate) => {
+    viewState.set("dia", { also: { data: d === today ? null : d } });
+    savePref({ view: "dia" });
+  };
   const openAppointment = useCallback((id: string) => apptState.set(id, { history: "push", preventScrollReset: true }), [apptState]);
   const closeAppointment = () => apptState.set(null, { history: "replace", preventScrollReset: true });
   const openConversation = (id: string) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`);
   const closeEvent = () => eventState.set(null, { history: "replace", preventScrollReset: true });
 
+  // Ações rápidas do cartão do passar do mouse (Confirmar, Chegou): a mesma mutation do painel.
+  const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
+  const quick: QuickActions = useMemo(
+    () => ({
+      canEdit: access.canEdit,
+      onStatus: (appointmentId, to) => {
+        setStatus({ organizationId, appointmentId: appointmentId as Id<"schedAppointments">, to }).then(
+          () => toast.success(to === "confirmed" ? t.dense.quick.confirmed : t.dense.quick.arrivedDone),
+          (e) => toast.error(mutationErrorMessage(e, t.dense.quick.failed))
+        );
+      },
+    }),
+    [access.canEdit, organizationId, setStatus]
+  );
+
   const bookingDate = isPast ? today : date;
-  const startBooking = (opts: { minute?: number; resource?: DayResource } = {}) => setBooking({ stage: "pick", date: bookingDate, ...opts });
+  const startBooking = (opts: { minute?: number; resource?: DayResource; date?: LocalDate } = {}) => {
+    const { date: on, ...rest } = opts;
+    const target = on ?? bookingDate;
+    setBooking({ stage: "pick", date: target < today ? today : target, ...rest });
+  };
   const onColumnAction = (resource: DayResource, action: ColumnAction) => {
     if (action === "book") startBooking({ resource });
     else {
@@ -294,6 +396,14 @@ export function AgendaPageView() {
     const { hour, minute } = nextHalfHour(now, tz);
     setEventModal({ date: new Date(y, m - 1, d, hour, minute), hour, minute });
   };
+  /** Marcar horário num dia e hora da Semana; com um filtro de sala ou profissional, ele já vem fixado. */
+  const bookFromWeek = (localDate: LocalDate, minute: number) => {
+    const r = weekFilter ? activeResources.find((x) => x._id === weekFilter) : undefined;
+    const resource: DayResource | undefined = r
+      ? { _id: r._id, kind: r.kind, name: r.name, capacity: r.capacity, sortOrder: r.sortOrder, open: [], closed: false, blocks: [] }
+      : undefined;
+    startBooking({ date: localDate, minute, resource });
+  };
 
   // --- estados especiais ---
   const noResources = config != null && config.enabled && activeResources.length === 0;
@@ -306,7 +416,28 @@ export function AgendaPageView() {
   const activeColumn = mobileColumn && columnKeys.includes(mobileColumn) ? mobileColumn : (columnKeys[0] ?? null);
 
   const bookingContext = (b: Booking) => bookingContextParts(shortDateLabel(b.date), b.resource?.name);
-  const periodText = periodLabel(date, view);
+  const periodText = periodLabel(date, view, isMobile);
+  const atToday = week ? weekDates.includes(today) : isToday;
+
+  // Atalhos de teclado (computador): T hoje, D/S/M/L visão, setas anterior e próximo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey || isTypingTarget(e.target) || apptState.value || pendingState.value || booking || closure) return;
+      const k = e.key.toLowerCase();
+      if (k === "t") dateState.set(null);
+      else if (k === "d") changeView("dia");
+      else if (k === "s") changeView("semana");
+      else if (k === "m") changeView("mes");
+      else if (k === "l") changeView("lista");
+      else if (e.key === "ArrowLeft") dateState.set(shiftDate(date, view, -1));
+      else if (e.key === "ArrowRight") dateState.set(shiftDate(date, view, 1));
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, view, apptState.value, pendingState.value, booking, closure]);
 
   const renderDay = () => {
     if (!dayInput || !grid) {
@@ -334,14 +465,14 @@ export function AgendaPageView() {
       const hasOtherKind = !hasColumns && dayInput.resources.length > 0;
       const other = group === "sala" ? "profissional" : "sala";
       return (
-        <div className="space-y-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pb-24 md:pb-2">
           {view !== "lista" && hasOtherKind && (
             <EmptyState
               icon={Settings2}
               size="sm"
               title={t.noColumns[groupBy].title}
               description={t.noColumns[groupBy].hint}
-              action={{ label: t.noColumns.switchTo[groupBy], onClick: () => groupState.set(other) }}
+              action={{ label: t.noColumns.switchTo[groupBy], onClick: () => changeGroup(other) }}
             />
           )}
           <AgendaDayList {...listProps} />
@@ -349,7 +480,7 @@ export function AgendaPageView() {
       );
     }
     return (
-      <div className="space-y-3">
+      <>
         {isMobile && grid.columns.length > 1 && (
           <FilterChips
             ariaLabel={t.groupLabel}
@@ -357,37 +488,41 @@ export function AgendaPageView() {
             onToggle={setMobileColumn}
           />
         )}
-        {grid.allDay.length > 0 && (
-          <ul className="flex flex-wrap gap-2" aria-label={t.grid.allDay}>
-            {grid.allDay.map((e) => (
-              <li key={`allday:${e.id}`}>
-                <button
-                  type="button"
-                  onClick={() => onInternalClick(e)}
-                  className="min-h-11 rounded-full border border-dashed border-ai-500 bg-ai-500/10 px-3 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
-                >
-                  {e.title}
-                </button>
-              </li>
-            ))}
-          </ul>
+        {(grid.allDay.length > 0 || grid.noPlace.length > 0 || (grid.empty && !setupIncomplete)) && (
+          <div className="shrink-0 space-y-1.5">
+            {grid.allDay.length > 0 && (
+              <ul className="flex flex-wrap gap-1.5" aria-label={t.grid.allDay}>
+                {grid.allDay.map((e) => (
+                  <li key={`allday:${e.id}`}>
+                    <button
+                      type="button"
+                      onClick={() => onInternalClick(e)}
+                      className="min-h-8 coarse:min-h-11 rounded-full border border-dashed border-ai-500 bg-ai-500/10 px-3 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500"
+                    >
+                      {t.grid.allDayShort}: {e.title}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {grid.noPlace.length > 0 && (
+              <section aria-label={t.grid.noPlace} className="rounded-card border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2">
+                <h2 className="text-sm font-semibold text-text-primary">{t.grid.noPlace}</h2>
+                <p className="text-caption text-text-secondary">{t.grid.noPlaceHint}</p>
+                <ul className="mt-1.5 flex flex-wrap gap-2">
+                  {grid.noPlace.map((a) => (
+                    <li key={`noplace:${a._id}`}>
+                      <Button size="sm" variant="secondary" onClick={() => openAppointment(a._id)}>
+                        {isExpiredProposal(a, now) ? VOCAB.scheduling.proposalExpired : isManualNoPlace(a) ? t.conflict.undefinedPlace[group] : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+            {grid.empty && !setupIncomplete && <p className="px-1 text-sm text-text-secondary">{t.list.empty.hint}</p>}
+          </div>
         )}
-        {grid.noPlace.length > 0 && (
-          <section aria-label={t.grid.noPlace} className="rounded-card border border-semantic-warning/40 bg-semantic-warning/10 p-3">
-            <h2 className="text-sm font-semibold text-text-primary">{t.grid.noPlace}</h2>
-            <p className="text-caption text-text-secondary">{t.grid.noPlaceHint}</p>
-            <ul className="mt-2 flex flex-wrap gap-2">
-              {grid.noPlace.map((a) => (
-                <li key={`noplace:${a._id}`}>
-                  <Button size="sm" variant="secondary" onClick={() => openAppointment(a._id)}>
-                    {isExpiredProposal(a, now) ? VOCAB.scheduling.proposalExpired : isManualNoPlace(a) ? t.conflict.undefinedPlace[group] : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-        {grid.empty && !setupIncomplete && <p className="px-1 text-sm text-text-secondary">{t.list.empty.hint}</p>}
         <Suspense fallback={<ContentSkeleton />}>
           <ResourceDayGrid
             model={grid}
@@ -397,26 +532,30 @@ export function AgendaPageView() {
             canClose={access.canEdit}
             isToday={isToday}
             visibleKeys={isMobile && activeColumn ? [activeColumn] : undefined}
+            hourPx={hourPx}
+            tone={tone}
+            quick={quick}
+            scrollKey={groupBy}
             onSlotClick={(resource, minute) => startBooking({ resource: resource ?? undefined, minute })}
             onAppointmentClick={openAppointment}
             onInternalClick={onInternalClick}
             onColumnAction={onColumnAction}
           />
         </Suspense>
-      </div>
+      </>
     );
   };
 
   const header = (
-    <AgendaHeader
+    <AgendaToolbar
       view={view}
       onViewChange={changeView}
       group={group}
-      onGroupChange={(g) => groupState.set(g)}
+      onGroupChange={changeGroup}
       listMode={listMode}
       onListModeChange={(m) => listState.set(m)}
       dateLabel={periodText}
-      isToday={isToday}
+      atToday={atToday}
       onPrev={() => dateState.set(shiftDate(date, view, -1))}
       onNext={() => dateState.set(shiftDate(date, view, 1))}
       onToday={() => dateState.set(null)}
@@ -430,6 +569,12 @@ export function AgendaPageView() {
       pendingLabel={pendingTotals ? pendingBadgeLabel(pendingTotals) : null}
       pendingTotal={pendingTotals?.total ?? 0}
       onOpenPending={() => pendingState.set(true, { history: "push", preventScrollReset: true })}
+      weekFilter={week ? { options: weekFilterOptions, value: weekFilter, onChange: (id) => savePref({ resource: id }) } : null}
+      color={color}
+      onColorChange={(c) => savePref({ color: c })}
+      density={density}
+      onDensityChange={(x) => savePref({ density: x })}
+      isMobile={isMobile}
     />
   );
 
@@ -586,35 +731,16 @@ export function AgendaPageView() {
     );
   }
 
-  if (week) {
-    // Visão Semana: a `CalendarPage` de hoje por inteira. Ela mostra só compromissos e tarefas da equipe.
-    return (
-      <div className="flex h-full min-h-0 flex-col">
-        <div className="space-y-3 p-3 md:px-6 md:pt-4">
-          {header}
-          <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text-secondary">
-            <span>
-              <span className="font-medium text-text-primary">{t.week.title}.</span> {t.week.hint}
-            </span>
-            <Button size="sm" variant="ghost" onClick={() => changeView("dia")}>
-              {t.week.back}
-            </Button>
-          </p>
-        </div>
-        <div className="min-h-0 flex-1">
-          <CalendarPage embedded />
-        </div>
-        {overlays}
-      </div>
-    );
-  }
+  const weekCapped = week && rangeAppts.data?.truncated;
+  const stale = dayStale || rangeAppts.stale;
 
   return (
-    <div className="mx-auto w-full max-w-[1600px] space-y-4 p-3 pb-28 md:p-6 md:pb-6">
+    // Ocupa a altura da tela (cancela o respiro da área de conteúdo): barra única no topo e só a grade rola.
+    <div className="-m-4 flex h-[calc(100dvh-3.5rem-env(safe-area-inset-top)-5rem)] min-h-[28rem] flex-col gap-2 px-2 pb-1 pt-2 md:-m-6 md:h-[calc(100dvh-4rem)] md:px-3 md:pb-3">
       {header}
 
       {setupIncomplete && (
-        <section className="rounded-card border border-border bg-surface-raised p-4">
+        <section className="shrink-0 rounded-card border border-border bg-surface-raised p-3">
           {noResources ? (
             <EmptyState
               icon={Settings2}
@@ -636,26 +762,55 @@ export function AgendaPageView() {
         </section>
       )}
 
-      {day?.enabled && day.capped && view !== "mes" && (
-        <p role="status" className="flex items-start gap-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-2 text-sm text-text-primary">
+      {((day?.enabled && day.capped && !rangeView) || weekCapped) && (
+        <p role="status" className="flex shrink-0 items-start gap-2 rounded-card border border-semantic-warning/40 bg-semantic-warning/10 px-3 py-1.5 text-sm text-text-primary">
           <TriangleAlert size={16} className="mt-0.5 shrink-0 text-semantic-warning" aria-hidden="true" />
-          {t.capped}
+          {weekCapped ? t.dense.weekGrid.capped : t.capped}
         </p>
       )}
 
-      <div aria-busy={dayStale} className={dayStale ? "opacity-60 transition-opacity" : undefined}>
-        {view === "mes" ? (
+      <div aria-busy={stale} className={`flex min-h-0 flex-1 flex-col gap-2 ${stale ? "opacity-60 transition-opacity" : ""}`}>
+        {month ? (
           <Suspense fallback={<ContentSkeleton />}>
             <AgendaMonthView
-              cells={cells}
+              weeks={monthWeeks}
+              tz={tz}
+              now={now}
               today={today}
               selected={date}
-              loading={rawRange === undefined}
-              internalCounts={internalCounts}
+              loading={rangeAppts.data === undefined || rawRange === undefined}
+              tone={tone}
+              isMobile={isMobile}
               partialFrom={range?.enabled && range.capped ? { through: range.completeThrough } : null}
-              onPickDay={goToDay}
+              truncated={rangeAppts.data?.truncated}
+              onOpenDay={goToDay}
+              onSelectDay={(d) => dateState.set(d === today ? null : d)}
+              onAppointmentClick={openAppointment}
+              onInternalClick={onInternalClick}
             />
           </Suspense>
+        ) : week ? (
+          weekModel && rangeAppts.data !== undefined ? (
+            <Suspense fallback={<ContentSkeleton />}>
+              <AgendaWeekView
+                model={weekModel}
+                tz={tz}
+                hourPx={hourPx}
+                tone={tone}
+                canBookOn={(d) => access.canEdit && !setupIncomplete && d >= today}
+                quick={quick}
+                dayStatus={dayStatus}
+                compact={isMobile}
+                scrollKey={`${weekFilter ?? "todos"}`}
+                onSlotClick={bookFromWeek}
+                onAppointmentClick={openAppointment}
+                onInternalClick={onInternalClick}
+                onOpenDay={goToDay}
+              />
+            </Suspense>
+          ) : (
+            <ContentSkeleton />
+          )
         ) : (
           renderDay()
         )}
