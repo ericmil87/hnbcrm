@@ -97,6 +97,7 @@ describe("AgendaWeekView", () => {
     const h = setup(many);
     fireEvent.click(screen.getByRole("button", { name: /a mais, abrir o dia/ }));
     expect(h.onOpenDay).toHaveBeenCalledWith("2026-11-24");
+    expect(h.onSlotClick).not.toHaveBeenCalled();
   });
 
   it("dia fechado aparece no cabeçalho com texto, não só ícone", () => {

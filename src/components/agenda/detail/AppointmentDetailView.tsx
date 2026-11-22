@@ -46,6 +46,8 @@ export interface AppointmentDetailViewProps {
   onAction: (action: DetailAction) => void;
   /** "Abrir conversa" (ausente = sem o atalho). */
   onOpenConversation?: () => void;
+  /** "Resolver" no topo, para agendamento com `needsAttention` (sem lugar); ausente = sem o botão. */
+  onResolve?: () => void;
   /** Telefone do contato já formatado pelo servidor (ausente = sem contato ou sem número). */
   contactPhone?: string;
 }
@@ -62,6 +64,7 @@ export function AppointmentDetailView({
   undoUnavailable,
   onAction,
   onOpenConversation,
+  onResolve,
   contactPhone,
 }: AppointmentDetailViewProps) {
   const expired = isProposalExpired(appt.status, appt.startTime, now, appt.needsAttention?.code);
@@ -113,6 +116,11 @@ export function AppointmentDetailView({
       {expired && notice(t.proposalExpired, "alert")}
       {proposalBroken && !expired && notice(t.proposalBroken, "alert")}
       {openConflicts > 0 && notice(t.conflict, "status")}
+      {onResolve && canEdit && !expired && (appt.needsAttention || openConflicts > 0) && (
+        <Button type="button" disabled={busy} onClick={onResolve}>
+          {t.resolve}
+        </Button>
+      )}
       {undoUnavailable && <p role="status" className="text-sm text-text-secondary">{t.undoUnavailable}</p>}
 
       <dl className="space-y-3">

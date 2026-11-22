@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, SyntheticEvent } from "react";
 import { AlertTriangle, Bot, CalendarCheck, CalendarDays, CalendarX, CheckCheck, CheckSquare, Hourglass, UserCheck, UserX, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Popover } from "@/components/ui/Popover";
@@ -73,6 +73,8 @@ function useHoverCard(enabled: boolean) {
   }, []);
   return { open, setOpen, anchor, show, hide, keep: clear, close };
 }
+
+const stop = (e: SyntheticEvent) => e.stopPropagation();
 
 const BASE = "absolute isolate overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-[15px] text-text-primary";
 /** Fundo opaco por baixo da cor suave: as linhas da grade não aparecem através do bloco. */
@@ -191,7 +193,8 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
       </button>
       {hc.open && (
         <Popover open onOpenChange={hc.setOpen} anchor={hc.anchor} side="bottom" align="start" trapEscape={false} role="dialog" aria-label={title} className="w-72">
-          <div onMouseEnter={hc.keep} onMouseLeave={hc.hide}>
+          {/* O cartão está num portal, mas o React faz o evento subir pela árvore até a coluna (clique no vazio = "Marcar horário"). */}
+          <div onMouseEnter={hc.keep} onMouseLeave={hc.hide} onClick={stop} onPointerDown={stop} onMouseDown={stop}>
             <AppointmentHoverCard
               appointment={a}
               tz={tz}

@@ -36,6 +36,8 @@ export interface AppointmentDetailPanelProps {
   onClose: () => void;
   /** "Abrir conversa" (quando o agendamento tem conversa). Ausente = sem o atalho. */
   onOpenConversation?: (conversationId: Id<"conversations">) => void;
+  /** "Resolver" (agendamento sem lugar): abre o resolvedor do conflito. Ausente = sem o botão. */
+  onResolveConflict?: (appointmentId: Id<"schedAppointments">) => void;
 }
 
 /**
@@ -43,7 +45,7 @@ export interface AppointmentDetailPanelProps {
  * diálogos; a tela é `AppointmentDetailView` (por props). Remarcar reabre o `BookingSheet` em modo remarcar;
  * cancelar pede motivo opcional; mudança de status, cancelar e recusar têm "Desfazer".
  */
-export function AppointmentDetailPanel({ organizationId, appointmentId, onClose, onOpenConversation }: AppointmentDetailPanelProps) {
+export function AppointmentDetailPanel({ organizationId, appointmentId, onClose, onOpenConversation, onResolveConflict }: AppointmentDetailPanelProps) {
   // Mesma assinatura do corpo (o Convex não busca duas vezes): aqui só para o título seguir a situação.
   const data = useQuery(api.scheduling.getAppointment, appointmentId ? { appointmentId } : "skip");
   const now = useRoundedNow("minute");
@@ -55,6 +57,7 @@ export function AppointmentDetailPanel({ organizationId, appointmentId, onClose,
           organizationId={organizationId}
           appointmentId={appointmentId}
           onOpenConversation={onOpenConversation}
+          onResolveConflict={onResolveConflict}
         />
       )}
     </SlideOver>
@@ -65,10 +68,12 @@ function DetailBody({
   organizationId,
   appointmentId,
   onOpenConversation,
+  onResolveConflict,
 }: {
   organizationId: Id<"organizations">;
   appointmentId: Id<"schedAppointments">;
   onOpenConversation?: (conversationId: Id<"conversations">) => void;
+  onResolveConflict?: (appointmentId: Id<"schedAppointments">) => void;
 }) {
   const tz = useOrgTimezone(organizationId);
   const now = useRoundedNow("minute");
@@ -178,6 +183,7 @@ function DetailBody({
         undoUnavailable={undoUnavailable}
         contactPhone={data.contactPhone}
         onAction={onAction}
+        onResolve={onResolveConflict && data.openConflicts.length > 0 ? () => onResolveConflict(appointmentId) : undefined}
         onOpenConversation={appt.conversationId && onOpenConversation && canOpenInbox ? () => onOpenConversation(appt.conversationId!) : undefined}
       />
       {rescheduling && (

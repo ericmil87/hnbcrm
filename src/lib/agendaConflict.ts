@@ -155,3 +155,17 @@ export function applyReplacements(
 ): string[] {
   return appointmentResources.map((r) => choices[r.resourceId] ?? r.resourceId);
 }
+
+/**
+ * Para onde vai o clique num agendamento "sem lugar": o resolvedor do conflito aberto dele, ou (sem conflito
+ * aberto, ou proposta vencida, que só pode ser recusada) o painel do agendamento.
+ */
+export function noPlaceTarget(
+  appointmentId: string,
+  conflicts: ReadonlyArray<{ _id: string; appointment: { _id: string } | null }>,
+  expired: boolean
+): { kind: "resolve"; conflictId: string } | { kind: "open" } {
+  if (expired) return { kind: "open" };
+  const conflict = conflicts.find((c) => c.appointment?._id === appointmentId);
+  return conflict ? { kind: "resolve", conflictId: conflict._id } : { kind: "open" };
+}

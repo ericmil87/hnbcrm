@@ -127,6 +127,7 @@ export const DETAIL_COPY = {
   proposalExpired: "Proposta vencida: o horário já passou, então ela não pode mais ser aprovada. Recuse a proposta ou marque de novo para o mesmo cliente e serviço.",
   undoUnavailable: "Não há mais o que desfazer neste horário.",
   conflict: "Este horário está sem sala ou profissional e aguarda uma decisão.",
+  resolve: "Resolver",
   history: {
     title: "Histórico",
     created: "Marcado ({origem})",

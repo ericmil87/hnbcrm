@@ -209,6 +209,8 @@ export function ResourceDayGrid({
   }, [scrollKey, hourPx]);
 
   const clickColumn = (col: GridColumn, e: MouseEvent<HTMLDivElement>) => {
+    // Evento vindo de um portal (cartão, menu) sobe pela árvore do React mas não está dentro da coluna.
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if (!canBook || col.closed || col.kind === "internal") return;
     const rect = e.currentTarget.getBoundingClientRect();
     onSlotClick(col.resource, minuteFromOffset(e.clientY - rect.top, model.window.startHour, model.window.endHour, hourPx));

@@ -73,7 +73,7 @@ import { QuickContactPhone } from "./QuickContactPhone";
 import { useRangeAppointments } from "./useRangeAppointments";
 import { useFillHeight } from "./useFillHeight";
 import { shortcutBlocked } from "@/lib/agendaShortcuts";
-import { isManualNoPlace } from "@/lib/agendaConflict";
+import { isManualNoPlace, noPlaceTarget } from "@/lib/agendaConflict";
 import { bookingContextParts, bookingSheetExtraProps, rebookTarget } from "@/lib/agendaBooking";
 import type { PickedClient } from "./ClientPickerSheet";
 
@@ -436,6 +436,16 @@ export function AgendaPageView() {
     }
   };
   const resolving = pendingData?.conflicts.find((c) => c._id === resolvingId);
+  // Faixa "Sem lugar": abre o resolvedor do conflito (não o painel); sem conflito aberto ou vencida, o painel.
+  const openNoPlace = (a: { _id: string; status: string; startTime: number; needsAttention?: { code: string } }) => {
+    const target = noPlaceTarget(a._id, pendingData?.conflicts ?? [], isExpiredProposal(a, now));
+    if (target.kind === "resolve") setResolvingId(target.conflictId);
+    else openAppointment(a._id);
+  };
+  const conflictOf = (appointmentId: string) => {
+    const target = noPlaceTarget(appointmentId, pendingData?.conflicts ?? [], false);
+    return target.kind === "resolve" ? target.conflictId : null;
+  };
   const onInternalClick = (item: InternalItem) => {
     if (item.source === "task") setTaskId(item.id);
     else eventState.set(item.id, { history: "push" });
@@ -563,7 +573,7 @@ export function AgendaPageView() {
                 <ul className="mt-1.5 flex flex-wrap gap-2">
                   {grid.noPlace.map((a) => (
                     <li key={`noplace:${a._id}`}>
-                      <Button size="sm" variant="secondary" onClick={() => openAppointment(a._id)}>
+                      <Button size="sm" variant="secondary" onClick={() => openNoPlace(a)}>
                         {isExpiredProposal(a, now) ? VOCAB.scheduling.proposalExpired : isManualNoPlace(a) ? t.conflict.undefinedPlace[group] : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
                       </Button>
                     </li>
@@ -669,6 +679,10 @@ export function AgendaPageView() {
             appointmentId={apptState.value as Id<"schedAppointments">}
             onClose={closeAppointment}
             onOpenConversation={(id) => openConversation(id)}
+            onResolveConflict={(id) => {
+              const conflictId = conflictOf(id);
+              if (conflictId) setResolvingId(conflictId);
+            }}
           />
         </Suspense>
       )}

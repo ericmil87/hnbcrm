@@ -187,6 +187,8 @@ export function AgendaWeekView({
   }, [scrollKey, hourPx]);
 
   const clickDay = (localDate: string, e: MouseEvent<HTMLDivElement>) => {
+    // Evento vindo de um portal (cartão, menu) sobe pela árvore do React mas não está dentro da coluna.
+    if (!e.currentTarget.contains(e.target as Node)) return;
     if (justDragged.current || !canBookOn(localDate)) return;
     const rect = e.currentTarget.getBoundingClientRect();
     onSlotClick(localDate, minuteFromOffset(e.clientY - rect.top, WINDOW.startHour, WINDOW.endHour, hourPx));

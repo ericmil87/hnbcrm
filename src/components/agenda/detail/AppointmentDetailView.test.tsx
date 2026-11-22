@@ -39,6 +39,24 @@ function setup(over: Partial<AppointmentDetailViewProps> = {}, appt: Record<stri
   return { onAction };
 }
 
+describe("AppointmentDetailView: Resolver (sem lugar)", () => {
+  it("com needsAttention mostra Resolver e abre o resolvedor", async () => {
+    const onResolve = vi.fn();
+    setup({ onResolve, openConflicts: 1 }, { needsAttention: { code: "resource_closed" } });
+    await userEvent.click(screen.getByRole("button", { name: "Resolver" }));
+    expect(onResolve).toHaveBeenCalledTimes(1);
+  });
+  it("sem needsAttention nem conflito: nada de Resolver", () => {
+    const onResolve = vi.fn();
+    setup({ onResolve }, {});
+    expect(screen.queryByRole("button", { name: "Resolver" })).toBeNull();
+  });
+  it("só leitura não vê Resolver", () => {
+    setup({ onResolve: vi.fn(), canEdit: false, openConflicts: 1 }, { needsAttention: { code: "resource_closed" } });
+    expect(screen.queryByRole("button", { name: "Resolver" })).toBeNull();
+  });
+});
+
 describe("AppointmentDetailView", () => {
   it("mostra dados, status, origem, recursos e histórico", () => {
     setup({}, { status: "confirmed" });
