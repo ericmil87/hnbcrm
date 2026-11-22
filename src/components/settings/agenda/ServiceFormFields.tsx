@@ -1,3 +1,4 @@
+import { useId } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
@@ -29,13 +30,15 @@ interface ServiceFormFieldsProps {
 const DURATION_PRESETS = [15, 30, 45, 60, 90];
 
 function SwitchRow({ title, description, checked, onChange, disabled }: { title: string; description?: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+  const id = useId();
   return (
     <div className="flex items-center justify-between gap-4">
-      <div className="min-w-0">
-        <p className="text-sm font-medium text-text-primary">{title}</p>
-        {description && <p className="mt-0.5 text-sm text-text-muted">{description}</p>}
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} label={title} hideLabel disabled={disabled} />
+      {/* O texto é o rótulo da chave: tocar nele também liga e desliga. */}
+      <label htmlFor={id} className={disabled ? "min-w-0 flex-1" : "min-w-0 flex-1 cursor-pointer"}>
+        <span className="block text-sm font-medium text-text-primary">{title}</span>
+        {description && <span className="mt-0.5 block text-sm text-text-muted">{description}</span>}
+      </label>
+      <Switch id={id} checked={checked} onCheckedChange={onChange} label={title} hideLabel disabled={disabled} />
     </div>
   );
 }
