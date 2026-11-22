@@ -115,7 +115,7 @@ function DayCell({ day, today, selected, maxLines, tz, now, tone, onOpenDay, onA
       onClick={() => onOpenDay(day.localDate)}
       className={cn(
         "flex min-h-0 min-w-0 cursor-pointer flex-col overflow-hidden border-b border-r border-border-subtle p-0.5",
-        !day.inMonth && "bg-surface-sunken/60",
+        !day.inMonth && "bg-surface-sunken",
         day.allClosed && "bg-surface-sunken",
         selected && "outline outline-2 -outline-offset-2 outline-brand-500"
       )}
