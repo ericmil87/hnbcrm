@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import { CalendarDays, Lock } from "lucide-react";
+import { blockNames } from "@/lib/agendaBlockNames";
+import { appointmentLabel } from "@/lib/agendaGrid";
+import { zonedTimeLabel } from "@/lib/agendaZone";
 import { AppointmentBlock, InternalBlock, type BlockBox, type QuickActions } from "./AgendaBlocks";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { isCalendarItemDraggable } from "@/lib/agendaPermissions";
@@ -276,6 +279,13 @@ export function AgendaWeekView({
             </div>
             {model.days.map((d) => {
               const bookable = canBookOn(d.localDate);
+              const names = blockNames(
+                d.placed.flatMap((p) =>
+                  p.item.kind === "appointment"
+                    ? [{ id: p.item.id, label: appointmentLabel(p.item.appointment), startMin: p.item.startMin, endMin: p.item.endMin, time: zonedTimeLabel(p.item.appointment.startTime, tz), widthPx: widthOf(p) }]
+                    : []
+                )
+              );
               return (
                 <div
                   key={`col:${d.localDate}`}
@@ -327,6 +337,7 @@ export function AgendaWeekView({
                         box={box}
                         tone={appointmentTone(a, tone)}
                         widthPx={widthOf(p)}
+                        name={names.get(p.item.id)}
                         onOpen={onAppointmentClick}
                         quick={quick}
                       />

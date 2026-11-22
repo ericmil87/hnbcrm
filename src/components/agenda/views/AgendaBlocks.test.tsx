@@ -120,6 +120,21 @@ describe("AppointmentBlock: texto por altura", () => {
   });
 });
 
+describe("AppointmentBlock: rótulo do bloco estreito", () => {
+  it("bloco muito estreito mostra o rótulo calculado (primeiro nome + inicial) e não só o primeiro nome", () => {
+    mount({ contactName: "Teste Ana" }, 28, { widthPx: 50, name: { text: "Teste A.", withTime: false } });
+    expect(screen.getByRole("button")).toHaveTextContent("Teste A.");
+  });
+  it("sem rótulo calculado, volta ao primeiro nome", () => {
+    mount({ contactName: "Teste Ana" }, 28, { widthPx: 50 });
+    expect(screen.getByRole("button").textContent).toBe("Teste");
+  });
+  it("homônimo ao lado: o bloco estreito e alto mostra a hora", () => {
+    mount({ contactName: "Teste Ana" }, 40, { widthPx: 70, name: { text: "Teste A. 11:00", withTime: true } });
+    expect(screen.getByRole("button")).toHaveTextContent("Teste A. 11:00");
+  });
+});
+
 describe("AppointmentBlock: cartão ao passar o mouse (computador)", () => {
   it("abre depois de uma pausa, com cliente, serviço, horário, lugar, situação e origem", () => {
     hover(true);

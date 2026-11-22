@@ -6,6 +6,7 @@ import { Popover } from "@/components/ui/Popover";
 import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { appointmentTooltip, firstName, placeText, planBlock, quickStatusAction, statusFlags, timeRangeLabel, widthClass, type StatusFlag } from "@/lib/agendaBlockText";
+import type { BlockName } from "@/lib/agendaBlockNames";
 import { PENDING_HATCH, type Tone } from "@/lib/agendaColors";
 import { appointmentLabel, type GridAppointment, type InternalItem } from "@/lib/agendaGrid";
 import { originLabel } from "@/lib/agendaStatus";
@@ -117,12 +118,14 @@ export interface AppointmentBlockProps {
   exceptResourceId?: string | null;
   /** Largura do bloco em px (mede-se na grade): decide o texto sem nunca quebrar palavra. Ausente = larga. */
   widthPx?: number;
+  /** Rótulo do bloco estreito (primeiro nome + inicial, ou com a hora quando há homônimo ao lado); ausente = só o primeiro nome. */
+  name?: BlockName;
   onOpen: (appointmentId: string) => void;
   quick?: QuickActions;
 }
 
 /** Bloco de um agendamento com cliente: o texto muda com a altura (cliente, horário, serviço, lugar). */
-export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, widthPx, onOpen, quick }: AppointmentBlockProps) {
+export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, widthPx, name, onOpen, quick }: AppointmentBlockProps) {
   const hoverable = useMediaQuery("(hover: hover)");
   const hc = useHoverCard(hoverable);
   const st = style(box);
@@ -130,6 +133,7 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
   const wc = widthClass(widthPx);
   const flags = wc === "tiny" || wc === "narrow" ? [] : statusFlags(a, expired);
   const title = appointmentLabel(a);
+  const short = name?.text ?? firstName(title);
   const tip = appointmentTooltip(a, tz, expired, VOCAB.scheduling.proposalExpired) + (conflict ? ` · ${g.conflictMark}` : "") + (over ? ` · ${g.overCapacity}` : "");
   const place = placeText(a, exceptResourceId);
   const { rest: toneBorder, fill: toneFill } = splitTone(tone.block);
@@ -153,20 +157,20 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
       >
         <Underlay fill={toneFill} hatch={tone.hatch} />
         {wc === "tiny" ? (
-          <span className="block truncate font-semibold">{firstName(title)}</span>
+          <span className="block truncate font-semibold">{short}</span>
         ) : plan.compact ? (
           <span className="flex items-center gap-1">
             <Flags flags={flags} />
             <span className="truncate">
               {wc !== "narrow" && <span className="font-semibold tabular-nums">{zonedTimeLabel(a.startTime, tz)} </span>}
-              <span className="font-semibold">{wc === "narrow" ? firstName(title) : title}</span>
+              <span className="font-semibold">{wc === "narrow" ? short : title}</span>
               {wc === "wide" && <span className="text-text-secondary">{a.serviceName ? ` · ${a.serviceName}` : ""}</span>}
             </span>
           </span>
         ) : wc === "narrow" ? (
           <>
-            <span className="block truncate font-semibold">{title}</span>
-            {plan.rows.length > 2 && <span className="block truncate tabular-nums text-text-secondary">{zonedTimeLabel(a.startTime, tz)}</span>}
+            <span className="block truncate font-semibold">{name ? short : title}</span>
+            {(plan.rows.length > 2 || name?.withTime) && <span className="block truncate tabular-nums text-text-secondary">{zonedTimeLabel(a.startTime, tz)}</span>}
           </>
         ) : wc === "medium" ? (
           <>
