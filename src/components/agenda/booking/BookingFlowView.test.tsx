@@ -1,5 +1,5 @@
 import { useReducer, useState } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConvexError } from "convex/values";
@@ -14,6 +14,12 @@ import {
   type SubmitOutcome,
 } from "@/lib/bookingFlow";
 import { BookingFlowView, type FailureView, type ManualPreviewResult, type SlotsState } from "./BookingFlowView";
+
+const scrollSpy = vi.fn();
+beforeEach(() => {
+  scrollSpy.mockClear();
+  Element.prototype.scrollIntoView = scrollSpy;
+});
 
 const HOUR = 3_600_000;
 const TZ = "America/Sao_Paulo";
@@ -149,6 +155,11 @@ describe("BookingFlowView", () => {
     await userEvent.click(screen.getByRole("button", { name: "Conferir horário" }));
     expect(await screen.findByText("Não dá para marcar neste horário.")).toBeInTheDocument();
     expect(screen.getByText("Sala dupla não tem mais vaga neste horário.")).toBeInTheDocument();
+    // A recusa nasce abaixo da dobra do modal: é um alerta, recebe o foco e a vista é levada até ele.
+    const refusal = screen.getByRole("alert");
+    expect(refusal).toHaveTextContent("Sala dupla não tem mais vaga neste horário.");
+    expect(refusal).toHaveFocus();
+    expect(scrollSpy).toHaveBeenCalled();
     expect(screen.queryByText("Confira e marque")).toBeNull(); // não foi para a revisão
     const option = screen.getByRole("button", { name: /Sala dupla e Ana/ });
     await userEvent.click(option);
@@ -275,9 +286,12 @@ describe("BookingFlowView", () => {
     expect(screen.getByText("Sala 1")).toBeInTheDocument(); // "Com quem e onde" com o lugar real, não "Escolhido pelo sistema"
     expect(screen.queryByRole("button", { name: "Marcar horário" })).toBeNull();
     const submit = screen.getByRole("button", { name: "Marcar mesmo assim" });
-    // Os avisos ficam logo antes do botão (depois da observação).
+    // Os avisos ficam no topo da revisão, acima do resumo (abaixo da dobra do modal ninguém os via), com o foco.
+    const alert = screen.getByRole("alert");
+    expect(alert).toContainElement(title);
+    expect(alert).toHaveFocus();
+    expect(alert.compareDocumentPosition(screen.getByText("Cliente")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(title.compareDocumentPosition(submit) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByLabelText("Observação (opcional)").compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await userEvent.click(submit);
     await waitFor(() => expect(book).toHaveBeenCalledTimes(1));
     expect(book.mock.calls[0][0].force).toEqual(["OUTSIDE_HOURS"]);
