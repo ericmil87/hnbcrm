@@ -34,8 +34,11 @@ import { localDateOf, minutesOfDay } from "./schedTime";
 export type KnownTime = {
   localDate: string;
   timeMin: number;
-  /** Profissional/sala que a OFERTA nomeou ao modelo (nome normalizado; só quando o plano o determina). Ausente = nenhum. */
-  resource?: string;
+  /**
+   * Recursos (chaves de `resourceKey`) que este horário TEM de verdade e que a IA pode citar: a oferta nomeada pelo servidor
+   * (profissional pedido e honrado) ou os recursos do agendamento já existente. Ausente = nenhum nome pode ser ligado ao horário.
+   */
+  resources?: string[];
 };
 export type KnownBooking = KnownTime & { status: "pending" | "scheduled" };
 export type ClaimState = {
@@ -409,7 +412,7 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
     for (const s of live) {
       if (s.skip || s.mentions.length === 0 || /\b(?:nao|nem|sem|ninguem)\b/.test(s.n)) continue;
       for (const cited of citedResources(s.n, resourceNames)) {
-        const backed = s.mentions.some((m) => [...st.booked, ...st.existing, ...st.offered].some((k) => k.resource === cited && sameTime(k, m, today)));
+        const backed = s.mentions.some((m) => [...st.booked, ...st.existing, ...st.offered].some((k) => k.resources?.includes(cited) === true && sameTime(k, m, today)));
         if (!backed) return { kind: "resource_not_offered", evidence: s.raw.slice(0, EVIDENCE_MAX) };
       }
     }

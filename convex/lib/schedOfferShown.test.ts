@@ -113,3 +113,51 @@ describe("26 formatos cegos de oferta mostrada", () => {
     expect([...offersShownInText(st, text, { now: NOW, tz: TZ })].sort()).toEqual(expected);
   });
 });
+
+// ── D2: reoferta depois de "horário tomado" (corpus real da simulação com modelo real) ──
+import { REAL_REOFFERS } from "./schedOfferShown.corpus.test-helper";
+
+describe("reoferta depois de 'horário tomado' marca as ofertas novas como mostradas", () => {
+  /** Domingo 22/11/2026 02:30 em São Paulo (o relógio da simulação). */
+  const NOW_SIM = new Date("2026-11-22T05:30:00Z").getTime();
+  const local = (s: string) => {
+    const [d, h] = s.split(" ");
+    const [y, mo, da] = d.split("-").map(Number);
+    const [hh, mm] = h.split(":").map(Number);
+    return Date.UTC(y, mo - 1, da, hh + 3, mm);
+  };
+
+  // Duas das reofertas reais não listam horário nenhum (a IA só avisa que chamou a equipe): nada a marcar como mostrado.
+  const listed = REAL_REOFFERS.map((r, i) => [i, r[0].slice(0, 70), r] as const).filter(([, , r]) => !/chamei a equipe|pedi pra nossa equipe/.test(r[0]));
+  test.each(listed)("real #%i: %s", (_i, _label, [text, offers]) => {
+    const issued = issueOffers(empty, offers.map((o) => ({ serviceId: "s", startTime: local(o), resourceIds: [] })), NOW_SIM);
+    const got = [...offersShownInText(issued.state, text, { now: NOW_SIM, tz: TZ })].sort();
+    expect(got).toEqual(issued.issued.map((o) => o.code).sort());
+  });
+
+  test("reoferta que só avisa o repasse (nenhum horário listado) não marca nada", () => {
+    for (const [text, offers] of REAL_REOFFERS.filter((r) => /chamei a equipe|pedi pra nossa equipe/.test(r[0]))) {
+      const issued = issueOffers(empty, offers.map((o) => ({ serviceId: "s", startTime: local(o), resourceIds: [] })), NOW_SIM);
+      expect([...offersShownInText(issued.state, text, { now: NOW_SIM, tz: TZ })]).toEqual([]);
+    }
+  });
+
+  test("a oferta do horário que a mensagem diz ter sido ocupado NÃO vira mostrada, e as novas sim (mesma frase, sem pontuação no meio)", () => {
+    const issued = issueOffers(
+      empty,
+      [local("2026-11-25 10:00"), local("2026-11-25 11:00"), local("2026-11-25 15:00")].map((startTime) => ({ serviceId: "s", startTime, resourceIds: [] })),
+      NOW_SIM
+    );
+    const text = "Daniela, o horário das 10h acabou de ser ocupado aqui na agenda 😕 Para quarta, 25/11, ainda tenho 11h e 15h com massoterapia. Qual prefere?";
+    expect([...offersShownInText(issued.state, text, { now: NOW_SIM, tz: TZ })].sort()).toEqual(["h2", "h3"]);
+  });
+
+  test("negação continua valendo para o horário que ela cobre (antes ou depois da hora) e não contamina a oferta ao lado", () => {
+    const issued = issueOffers(empty, [local("2026-11-25 10:00"), local("2026-11-25 11:00")].map((startTime) => ({ serviceId: "s", startTime, resourceIds: [] })), NOW_SIM);
+    const sh = (t: string) => [...offersShownInText(issued.state, t, { now: NOW_SIM, tz: TZ })].sort();
+    expect(sh("Na quarta, 25/11, não tenho às 10h, só às 11h.")).toEqual(["h2"]);
+    expect(sh("Na quarta, 25/11, às 10h está ocupado, mas às 11h está livre.")).toEqual(["h2"]);
+    expect(sh("Na quarta, 25/11, às 10h está ocupado e às 11h também.")).toEqual([]);
+    expect(sh("Na quarta, 25/11, às 10h não tenho mais.")).toEqual([]);
+  });
+});

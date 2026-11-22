@@ -32,7 +32,7 @@ const KNOWLEDGE_TIMES = [7 * 60, 9 * 60, 18 * 60, 19 * 60];
 const hm = (s: string) => Number(s.slice(0, 2)) * 60 + Number(s.slice(3, 5));
 const at = (spec: string, resource?: string): KnownTime => {
   const [localDate, hhmm] = spec.split(" ");
-  return { localDate, timeMin: hm(hhmm), ...(resource ? { resource } : {}) };
+  return { localDate, timeMin: hm(hhmm), ...(resource ? { resources: [resource] } : {}) };
 };
 const bk = (spec: string, status: "pending" | "scheduled"): KnownBooking => ({ ...at(spec), status });
 

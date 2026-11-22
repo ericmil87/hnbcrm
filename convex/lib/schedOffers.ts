@@ -28,8 +28,10 @@ export type OfferRecord = {
    * autopilot ou aprovação do rascunho). Ausente = o cliente nunca viu: a oferta não vale (nem aparece no prompt).
    */
   shownAt?: number;
-  /** Busca para 2–4 pessoas (D1): a oferta lembra, a IA não marca grupo (vira repasse). */
+  /** Busca para 2–4 pessoas: a oferta lembra o tamanho do grupo e a reserva o usa (a IA nunca o informa na escrita). */
   people?: number;
+  /** Profissional/sala que o cliente pediu e a busca honrou (nome para exibir; a reserva fixa o recurso do plano, sem troca). */
+  professional?: string;
 };
 export type OffersState = { offerSeq: number; offers: OfferRecord[] };
 export type OfferPick = {
@@ -39,6 +41,7 @@ export type OfferPick = {
   resourceIds: SchedId[];
   rescheduleOfId?: SchedId;
   people?: number;
+  professional?: string;
 };
 
 /** `OFFER_TTL_MS` e `OFFERS_KEPT` do plano (A1). UNIFICAR com `schedConstants`. */
@@ -73,6 +76,7 @@ export function issueOffers(
     if (p.variantKey !== undefined) rec.variantKey = p.variantKey;
     if (p.rescheduleOfId !== undefined) rec.rescheduleOfId = p.rescheduleOfId;
     if (p.people !== undefined && p.people > 1) rec.people = p.people;
+    if (p.professional !== undefined) rec.professional = p.professional;
     return rec;
   });
   const offers = [...state.offers, ...issued].slice(-keep);

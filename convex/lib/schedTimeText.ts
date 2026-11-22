@@ -29,6 +29,8 @@ export type TimeMention = {
   sentence: number;
   /** Índice da ORAÇÃO (frase partida também por "mas/porém"): recorte da negação ("oito e meia não tenho, mas tenho 8h…"). */
   clause: number;
+  /** Posição da hora no texto normalizado (`norm(text)`, mesmo comprimento): para medir a distância até uma negação ou oferta. */
+  at: number;
 };
 
 export function norm(s: string): string {
@@ -213,7 +215,7 @@ export function extractAiTimes(text: string, opts: { keepRangeStart?: boolean } 
     const key = `${t.at}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ timeMin: t.timeMin, ...(day ? { day } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at) });
+    out.push({ timeMin: t.timeMin, ...(day ? { day } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at), at: t.at });
   }
   return out;
 }

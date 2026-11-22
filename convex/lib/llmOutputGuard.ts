@@ -25,7 +25,21 @@ export type LeakedModelMarkupKind =
   | "tool_call_markup"
   | "special_token"
   | "json_tool_call"
-  | "reasoning_leftover";
+  | "reasoning_leftover"
+  /** Agenda (D2): código de oferta (`h1`) ou nome de ferramenta no texto ao cliente. */
+  | "offer_code"
+  /** Agenda (D2): o modelo narrou o raciocínio sobre o cliente em terceira pessoa ("O cliente escolheu…"). */
+  | "reasoning_narration";
+
+export interface DetectLeakOptions {
+  /**
+   * Texto ao CLIENTE de um atendente com a agenda ligada: além da marcação técnica, barra o código da oferta que o prompt manda esconder
+   * (`h1`, "código h1") e o raciocínio em terceira pessoa sobre o cliente. Medido com `deepseek-v4-flash`: 3 de 245 mensagens
+   * saíram com "O cliente escolheu o horário das 08h30 (código h1). Vou confirmar com ele antes de marcar." na frente.
+   * Fora da agenda a regra fica desligada (um grupo pode legitimamente falar de "o cliente").
+   */
+  agenda?: boolean;
+}
 
 export interface LeakedModelMarkup {
   kind: LeakedModelMarkupKind;
@@ -60,6 +74,15 @@ const SPECIAL_TOKEN = new RegExp(`<${BAR}[A-Za-z_][\\w\\u2581.\\-]{0,40}${BAR}>`
 
 /** Resto de raciocínio (o bloco `<think>…</think>` completo os chamadores já tiram). */
 const REASONING_PATTERNS: RegExp[] = [/<\/?think>/i, /<\/?thinking>/i, /<\/?reasoning>/i];
+
+/** `(código h1)`, `código: h1`, `(h1)`: o código de oferta que o prompt manda esconder. */
+const OFFER_CODE_PATTERNS: RegExp[] = [/\bc[oó]digo\s*:?\s*h\d{1,4}\b/i, /\(\s*h\d{1,4}\s*\)/];
+/** `h1` solto (minúsculo, sem letra/dígito colado: "8h30", "H2O" e "14h" não casam). Só com a agenda ligada. */
+const BARE_OFFER_CODE = /(?<![A-Za-z0-9_])h[1-9]\d{0,3}(?![A-Za-z0-9_])/;
+const TOOL_NAME_IN_TEXT = /\b(?:bookOfferedTime|findAvailableTimes|replyToCustomer|requestHandoff)\b/;
+/** "O cliente escolheu…", "A cliente quer…" no começo de uma frase: o modelo falando DO cliente em vez de AO cliente. */
+const CLIENT_NARRATION =
+  /(?:^|[.!?\n]\s*)(?:o|a)\s+cliente\s+(?:escolheu|escolhe|quer|queria|pediu|disse|respondeu|confirmou|aceitou|perguntou|mencionou|informou|precisa|prefere|solicitou|deseja|enviou|mandou|está|esta)\b/i;
 
 const JSON_TOOL_KEYS = ["tool_calls", "function_call", "tool_use"];
 const JSON_ARG_KEYS = ["arguments", "parameters", "input"];
@@ -112,7 +135,8 @@ function detectJsonToolCall(text: string): boolean {
  * Ordem: marcação de tool → JSON-tool-call → token especial → raciocínio.
  */
 export function detectLeakedModelMarkup(
-  text: string | null | undefined
+  text: string | null | undefined,
+  opts: DetectLeakOptions = {}
 ): LeakedModelMarkup | null {
   if (typeof text !== "string") return null;
   const trimmed = text.trim();
@@ -132,13 +156,29 @@ export function detectLeakedModelMarkup(
   if (reasoning) {
     return { kind: "reasoning_leftover", sample: sampleAround(trimmed, reasoning.index) };
   }
+
+  if (opts.agenda === true) {
+    const code = firstMatch(trimmed, OFFER_CODE_PATTERNS) ?? (BARE_OFFER_CODE.exec(trimmed) ? { index: BARE_OFFER_CODE.exec(trimmed)!.index } : null);
+    if (code) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, code.index - 20)) };
+    const tool = TOOL_NAME_IN_TEXT.exec(trimmed);
+    if (tool) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, tool.index - 20)) };
+    const narration = CLIENT_NARRATION.exec(trimmed);
+    if (narration) return { kind: "reasoning_narration", sample: sampleAround(trimmed, narration.index) };
+  }
   return null;
 }
+
+/** Os vazamentos da agenda são TEXTO do modelo (não marcação técnica): regeneram uma vez e, se repetirem, caem no texto seguro. */
+export const isAgendaTextLeak = (leak: LeakedModelMarkup): boolean => leak.kind === "offer_code" || leak.kind === "reasoning_narration";
 
 /** Frase única para run/log: "Saída com marcação de ferramenta vazada (kind): sample". */
 export function describeLeakedModelMarkup(leak: LeakedModelMarkup): string {
   const label =
-    leak.kind === "reasoning_leftover"
+    leak.kind === "offer_code"
+      ? "Saída com código de oferta ou nome de ferramenta vazado"
+      : leak.kind === "reasoning_narration"
+        ? "Saída com raciocínio em terceira pessoa sobre o cliente"
+        : leak.kind === "reasoning_leftover"
       ? "Saída com raciocínio do modelo vazado"
       : leak.kind === "special_token"
         ? "Saída com token especial do modelo vazado"

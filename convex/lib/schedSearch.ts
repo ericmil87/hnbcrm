@@ -53,6 +53,11 @@ export type SearchSlotsArgs = {
   reveal?: boolean;
   /** Pessoas no mesmo horário (1–4; ausente = 1): só horários em que o grupo todo cabe (`schedParty.ts`). */
   partySize?: number;
+  /**
+   * Hora do dia pedida (minutos desde 00:00). Só AJUDA a achar e ordenar (devolve `wanted`); nunca escolhe nem grava
+   * horário: a oferta continua saindo de `slots`, e a escrita só aceita código de oferta.
+   */
+  wantTimeMin?: number;
   /** Prévia da tela de regras: sobrepõe a configuração salva. */
   override?: { mode?: SmartMode; weights?: SmartWeights; minOffer?: number };
 };
@@ -73,6 +78,10 @@ export type SearchSlotsResult = {
   truncated: boolean;
   /** `unverifiable`: sem oferta porque um teto de leitura impediu de VERIFICAR (fail-closed), não porque está cheio. */
   reason: "ok" | "service_unavailable" | "no_matching_resource" | "unverifiable";
+  /** Quantos horários distintos livres há na janela pedida (depois do modo inteligente), além dos `slots` devolvidos. */
+  totalFree: number;
+  /** Só com `wantTimeMin`: o horário pedido, se livre na janela (o mais cedo), e os mais próximos dele (até o limite). */
+  wanted?: { timeMin: number; slot: FoundSlot | undefined; nearest: FoundSlot[] };
 };
 
 const EMPTY = (earliest: number, mode: SmartMode, reason: SearchSlotsResult["reason"]): SearchSlotsResult => ({
@@ -86,6 +95,7 @@ const EMPTY = (earliest: number, mode: SmartMode, reason: SearchSlotsResult["rea
   chronological: [],
   truncated: false,
   reason,
+  totalFree: 0,
 });
 
 const PERIOD_PREF = { manha: "morning", tarde: "afternoon", noite: "evening" } as const;
@@ -288,6 +298,15 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
   const distinct = dedupeByStart(smart.list);
   const picked = effLimit <= MAX_OFFERS ? pickOffers(distinct, effLimit, data.tz) : distinct.slice(0, effLimit);
   const slots = picked.map(asSlot);
+  let wanted: SearchSlotsResult["wanted"];
+  if (args.wantTimeMin !== undefined) {
+    const at = (c: ScoredCandidate) => minutesOfDay(c.startTime, data.tz);
+    const exact = distinct.filter((c) => at(c) === args.wantTimeMin).sort((a, b) => a.startTime - b.startTime)[0];
+    const closest = [...distinct]
+      .sort((a, b) => Math.abs(at(a) - args.wantTimeMin!) - Math.abs(at(b) - args.wantTimeMin!) || a.startTime - b.startTime)
+      .slice(0, effLimit);
+    wanted = { timeMin: args.wantTimeMin, slot: exact ? asSlot(exact) : undefined, nearest: closest.map(asSlot) };
+  }
   const chronological = dedupeByStart(applySmartMode(all, "off", minOffer, args.audience, data.tz).list)
     .slice(0, MAX_OFFERS)
     .map(asSlot);
@@ -321,6 +340,8 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     chronological,
     truncated,
     reason: slots.length === 0 && unverifiable ? "unverifiable" : "ok",
+    totalFree: distinct.length,
+    ...(wanted ? { wanted } : {}),
   };
 }
 

@@ -266,7 +266,7 @@ describe("o guard barra afirmação sem reserva", () => {
     expect(m.calls()).toHaveLength(2); // a original + UMA nova tentativa; nada de laço pago
     const hs = await handoffs();
     expect(hs).toHaveLength(1);
-    expect(hs[0].reason).toBe("Resposta da IA sobre horário barrada pelo guard de agenda");
+    expect(hs[0].reason).toBe("Cliente quer marcar horário (resposta da IA barrada pelo guard de agenda)");
     const runs = await t.run((ctx) => ctx.db.query("agentRuns").collect());
     expect(runs.some((r) => r.status === "error")).toBe(false);
     expect((await failedItems()).filter((i) => i.status === "failed")).toHaveLength(0);

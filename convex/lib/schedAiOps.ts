@@ -39,10 +39,12 @@ import {
   MAX_FIND_CALLS_PER_HOUR,
   FIND_WINDOW_MS,
   MAX_SERVICES_IN_PROMPT,
+  matchResource,
   matchService,
   noSlotsResult,
   parseBookArgs,
   parseFindArgs,
+  type ProfessionalNote,
   proposedResult,
   type SchedCurrentOffer,
   type SchedPromptService,
@@ -52,11 +54,11 @@ import {
   toolError,
 } from "./schedAttendantTools";
 import { loadConversationState, offersStateOf, saveConversationState } from "./schedAiState";
-import { type Alternative, bookAppointmentCore } from "./schedBookingOps";
+import { type Alternative, type BookFailure, type BookResult, bookAppointmentCore, bookPartyCore } from "./schedBookingOps";
 import { MAX_RESOURCES_PER_ORG, MAX_SERVICES_PER_ORG } from "./schedConstants";
 import { consumeOffer, currentOffers, invalidateOffers, issueOffers, type OfferPick, type OfferRecord, resolveOffer } from "./schedOffers";
 import { resolveDateRef } from "./schedRelativeDates";
-import { searchSlots } from "./schedSearch";
+import { type SearchSlotsResult, searchSlots } from "./schedSearch";
 import { resolveSchedSettings, type ResolvedSchedSettings } from "./schedSettingsDefaults";
 import { assertValidTimezone } from "./schedTime";
 import type { Slot } from "./schedViews";
@@ -76,7 +78,14 @@ export type SchedToolOutcome = {
     handoff: boolean;
     /** Só na prévia (`mode:"preview"`): o horário em texto, para o rótulo da ação proposta no rascunho. */
     slotText?: string;
+    /** Horários devolvidos/reservados que o servidor NOMEOU (profissional pedido e honrado): o `schedClaimGuard` só deixa a IA ligar o nome a eles. */
+    named?: Array<{ startTime: number; professional: string }>;
   };
+};
+
+const namedOf = (offers: ReadonlyArray<{ startTime: number; professional?: string }>): { named?: Array<{ startTime: number; professional: string }> } => {
+  const named = offers.flatMap((o) => (o.professional ? [{ startTime: o.startTime, professional: o.professional }] : []));
+  return named.length > 0 ? { named } : {};
 };
 
 const outcome = (result: ToolText, extra: Partial<SchedToolOutcome["control"]> = {}): SchedToolOutcome => ({
@@ -114,6 +123,8 @@ export type SchedAiAccess =
       lead: Doc<"leads"> | null;
       contact: Doc<"contacts"> | null;
       services: Doc<"schedServices">[];
+      /** Recursos ATIVOS da org (já lidos para o gate `sem_recurso`): a busca resolve o profissional pedido por eles. */
+      resources: Doc<"schedResources">[];
       /** Política de reserva EFETIVA: `auto` só com o aceite do dono (`autoAck`); sem ele vale `propose`. */
       bookPolicy: "propose" | "auto";
       canBook: boolean;
@@ -176,11 +187,12 @@ export async function loadSchedAiAccess(
     .query("schedResources")
     .withIndex("by_organization", (q) => q.eq("organizationId", org._id))
     .take(MAX_RESOURCES_PER_ORG + 1);
-  if (!resources.some((r) => r.active)) return { ok: false, reason: "sem_recurso" };
+  const activeResources = resources.filter((r) => r.active);
+  if (activeResources.length === 0) return { ok: false, reason: "sem_recurso" };
 
   const tz = assertValidTimezone(org.settings.timezone);
   const bookPolicy = settings.ai.book === "auto" && settings.ai.autoAck !== undefined ? "auto" : "propose";
-  return { ok: true, org, tz, settings, agent, conversation, lead, contact, services, bookPolicy, canBook };
+  return { ok: true, org, tz, settings, agent, conversation, lead, contact, services, resources: activeResources, bookPolicy, canBook };
 }
 
 const ACCESS_MESSAGE: Record<SchedAiReason, string> = {
@@ -215,6 +227,8 @@ export type SchedRunContext = {
   /** Ofertas VIGENTES da conversa: já MOSTRADAS ao cliente (`shownAt`) e não vencidas. Só estes códigos valem. */
   offers: SchedCurrentOffer[];
   timezone: string;
+  /** Nomes dos recursos ativos da org: SÓ para o `schedClaimGuard` (nunca entram no prompt nem no envelope). */
+  guardNames: string[];
 };
 
 const UPCOMING_STATUSES = ["pending_approval", "scheduled", "confirmed"] as const;
@@ -263,6 +277,8 @@ export async function loadUpcomingOfContact(
     startTime: r.startTime,
     serviceName: r.serviceName,
     status: r.status as SchedUpcoming["status"],
+    // Nomes do retrato do agendamento: só o `schedClaimGuard` os lê (ligar "com o Léo" ao horário que de fato é com ele).
+    resourceNames: r.resources.map((x) => x.name),
   }));
 }
 
@@ -308,10 +324,11 @@ export async function schedContextCore(
       code: o.code,
       label: formatSlotText(o.startTime, args.now, tz),
       startTime: o.startTime,
+      ...(o.professional ? { professional: o.professional } : {}),
     }));
   }
   if (!access.ok) {
-    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz };
+    return { tools: { find: false, book: false }, book: "propose", services: [], moreServices: false, upcoming, offers, timezone: tz, guardNames: [] };
   }
   const listed = access.services.slice(0, MAX_SERVICES_IN_PROMPT);
   const currency = org.settings.currency;
@@ -323,6 +340,7 @@ export async function schedContextCore(
     upcoming,
     offers,
     timezone: access.tz,
+    guardNames: access.resources.map((r) => r.name),
   };
 }
 
@@ -340,11 +358,20 @@ export type FindSearchOutcome =
       echo: string;
       tz: string;
       now: number;
+      /** Os horários a oferecer, na ordem (o pedido, quando livre, vem primeiro). */
       slots: Slot[];
       hasMore: boolean;
+      /** Horários livres distintos na janela pedida. */
+      total: number;
+      /** Hora pedida: `available` = o primeiro de `slots` é o horário pedido. */
+      wanted?: { timeMin: number; available: boolean };
+      /** O que o servidor fez com o profissional/sala pedido (só com `args.professional`). */
+      professional?: ProfessionalNote;
+      /** Nome do recurso que TODAS as ofertas têm (filtro honrado); as ofertas e a reserva o fixam. */
+      named?: string;
     };
 
-/** Leitura pura da busca (serve ao executor e ao simulador): serviço, data, `searchSlots` com audiência `ai`. */
+/** Leitura pura da busca (serve ao executor e ao simulador): serviço, data, profissional, hora, `searchSlots` com audiência `ai`. */
 export async function runFindSearch(
   ctx: ReadCtx,
   access: Extract<SchedAiAccess, { ok: true }>,
@@ -374,17 +401,46 @@ export async function runFindSearch(
   const maxAdvanceDays = service.maxAdvanceDays ?? access.settings.maxAdvanceDays;
   const when = resolveDateRef(args.dateRef, now, access.tz, { maxAdvanceDays });
   if (!when.ok) return { kind: "error", result: toolError("data_invalida", when.error) };
-  const found = await searchSlots(ctx, {
+  const base = {
     organizationId: access.org._id,
     serviceId: service._id,
     fromLocalDate: when.from,
     toLocalDate: when.to,
     period: args.period,
-    audience: "ai",
+    audience: "ai" as const,
     now,
     limit: 3,
     ...(args.people > 1 ? { partySize: args.people } : {}),
-  });
+    ...(args.timeMin !== undefined ? { wantTimeMin: args.timeMin } : {}),
+  };
+
+  // Profissional/sala pedido: o SERVIDOR resolve o nome para um recurso ativo da org (nunca id vindo do modelo). Achou um só: a busca
+  // filtra por ele e a oferta o nomeia. Ambíguo, desconhecido, que não faz o serviço ou sem horário: busca sem filtro e a resposta diz isso.
+  let found: SearchSlotsResult;
+  let professional: ProfessionalNote | undefined;
+  let named: string | undefined;
+  if (args.professional && args.people > 1) {
+    professional = { kind: "ignored_group" };
+    found = await searchSlots(ctx, base);
+  } else if (args.professional) {
+    const m = matchResource(access.resources.map((r) => ({ id: r._id as string, name: r.name })), args.professional);
+    if (m.kind === "found") {
+      const filtered = await searchSlots(ctx, { ...base, resourceIds: [m.resource.id as Id<"schedResources">] });
+      if (filtered.slots.length > 0 || filtered.reason === "unverifiable") {
+        found = filtered;
+        professional = { kind: "filtered", name: m.resource.name };
+        named = m.resource.name;
+      } else {
+        professional = filtered.reason === "no_matching_resource" ? { kind: "not_for_service", name: m.resource.name } : { kind: "not_available", name: m.resource.name };
+        found = await searchSlots(ctx, base);
+      }
+    } else {
+      professional = m.kind === "ambiguous" ? { kind: "ambiguous" } : { kind: "not_found" };
+      found = await searchSlots(ctx, base);
+    }
+  } else {
+    found = await searchSlots(ctx, base);
+  }
   if (found.reason === "unverifiable" && found.slots.length === 0) {
     return {
       kind: "error",
@@ -396,13 +452,50 @@ export async function runFindSearch(
   }
   if (found.slots.length === 0) {
     const next = found.firstPossible ? formatDayLabel(found.firstPossible.startTime, now, access.tz) : undefined;
-    return { kind: "none", result: noSlotsResult({ echo: when.echo, period: args.period, people: args.people, nextDateLabel: next }) };
+    return {
+      kind: "none",
+      result: noSlotsResult({
+        echo: when.echo,
+        period: args.period,
+        people: args.people,
+        nextDateLabel: next,
+        ...(args.timeMin !== undefined ? { wanted: { timeMin: args.timeMin } } : {}),
+        ...(professional ? { professional } : {}),
+      }),
+    };
   }
-  return { kind: "slots", service, args, echo: when.echo, tz: access.tz, now, slots: found.slots, hasMore: found.hasMore };
+  // Hora pedida e livre: vem como PRIMEIRA oferta; senão as mais próximas dela (e a resposta diz que o pedido está indisponível).
+  let slots = found.slots;
+  let wanted: { timeMin: number; available: boolean } | undefined;
+  if (found.wanted) {
+    const hit = found.wanted.slot;
+    wanted = { timeMin: found.wanted.timeMin, available: hit !== undefined };
+    slots = hit ? [hit, ...found.slots.filter((x) => x.startTime !== hit.startTime)].slice(0, 3) : found.wanted.nearest.length > 0 ? found.wanted.nearest : found.slots;
+  }
+  return {
+    kind: "slots",
+    service,
+    args,
+    echo: when.echo,
+    tz: access.tz,
+    now,
+    slots,
+    hasMore: found.totalFree > slots.length,
+    total: found.totalFree,
+    ...(wanted ? { wanted } : {}),
+    ...(professional ? { professional } : {}),
+    ...(named ? { named } : {}),
+  };
 }
 
-const picksOf = (service: Doc<"schedServices">, slots: readonly Slot[], people: number): OfferPick[] =>
-  slots.map((s) => ({ serviceId: service._id, startTime: s.startTime, resourceIds: s.resourceIds, ...(people > 1 ? { people } : {}) }));
+const picksOf = (service: Doc<"schedServices">, slots: readonly Slot[], people: number, professional?: string): OfferPick[] =>
+  slots.map((s) => ({
+    serviceId: service._id,
+    startTime: s.startTime,
+    resourceIds: s.resourceIds,
+    ...(people > 1 ? { people } : {}),
+    ...(professional ? { professional } : {}),
+  }));
 
 async function openHandoff(
   ctx: MutationCtx,
@@ -459,7 +552,7 @@ export async function findAvailableTimesCore(
   if (searched.kind !== "slots") return outcome(searched.result);
 
   const fresh = await loadConversationState(ctx, args.conversationId);
-  const issued = issueOffers(offersStateOf(fresh), picksOf(searched.service, searched.slots, parsed.args.people), now);
+  const issued = issueOffers(offersStateOf(fresh), picksOf(searched.service, searched.slots, parsed.args.people, searched.named), now);
   await saveConversationState(ctx, {
     organizationId: args.organizationId,
     conversationId: args.conversationId,
@@ -467,10 +560,19 @@ export async function findAvailableTimesCore(
     patch: { offers: issued.state },
     now,
   });
-  const lines = issued.issued.map((o) => formatOfferLine(o.code, o.startTime, now, searched.tz));
+  const lines = issued.issued.map((o) => formatOfferLine(o.code, o.startTime, now, searched.tz, o.professional));
   return outcome(
-    findSlotsResult({ echo: searched.echo, period: parsed.args.period, people: parsed.args.people, lines, hasMore: searched.hasMore }),
-    { offeredTimes: issued.issued.map((o) => o.startTime) }
+    findSlotsResult({
+      echo: searched.echo,
+      period: parsed.args.period,
+      people: parsed.args.people,
+      lines,
+      hasMore: searched.hasMore,
+      total: searched.total,
+      ...(searched.wanted ? { wanted: searched.wanted } : {}),
+      ...(searched.professional ? { professional: searched.professional } : {}),
+    }),
+    { offeredTimes: issued.issued.map((o) => o.startTime), ...namedOf(issued.issued) }
   );
 }
 
@@ -551,22 +653,34 @@ export async function bookOfferedTimeCore(
   const state = await loadConversationState(ctx, args.conversationId);
   const offers = offersStateOf(state);
   const resolved = resolveOffer(offers, code, now, conversation.lastInboundAt);
-  if (!resolved.ok) return outcome(OFFER_ERROR_TEXT[resolved.error]);
+  if (!resolved.ok) {
+    // Retry de um GRUPO já reservado: a oferta foi consumida e o 1º agendamento do grupo guarda a chave com o sufixo `#0` da porta.
+    if (resolved.error === "desconhecida") {
+      const party = await ctx.db
+        .query("schedAppointments")
+        .withIndex("by_organization_and_idempotency", (q) => q.eq("organizationId", args.organizationId).eq("idempotencyKey", `${key}#0`))
+        .first();
+      if (party && party.conversationId === args.conversationId && (ACTIVE_BOOKED as readonly string[]).includes(party.status)) {
+        const kind = party.status === "pending_approval" ? "pending" : "scheduled";
+        return outcome(bookedResult(kind, formatSlotText(party.startTime, now, access.tz), true), { booked: kind, bookedStartTime: party.startTime, offeredTimes: [party.startTime] });
+      }
+    }
+    return outcome(OFFER_ERROR_TEXT[resolved.error]);
+  }
   const offer = resolved.offer;
 
-  if ((offer.people ?? 1) > 1) {
-    const handoff = await openHandoff(ctx, access, args.conversationId, "Marcação para mais de uma pessoa", "O cliente escolheu um horário para mais de uma pessoa. A equipe precisa marcar o grupo.");
-    return outcome(
-      toolError("precisa_de_pessoa", "Marcação para mais de uma pessoa fica com a equipe: um repasse foi criado. Diga ao cliente que a equipe confirma o horário."),
-      { handoff }
-    );
-  }
-
-  const result = await bookAppointmentCore(ctx, {
+  const people = offer.people ?? 1;
+  const auditMetadata = {
+    conversationId: args.conversationId,
+    offer: code,
+    ...(people > 1 ? { people } : {}),
+    ...(args.agentRunId ? { agentRunId: args.agentRunId } : {}),
+    ...(args.approvedBy ? { approvedBy: args.approvedBy } : {}),
+  };
+  const book = {
     organizationId: args.organizationId,
-    actor: { type: "ai", member: access.agent, conversationId: args.conversationId },
-    origin: "ai",
-    mode: args.mode,
+    actor: { type: "ai" as const, member: access.agent, conversationId: args.conversationId },
+    origin: "ai" as const,
     serviceId: offer.serviceId as Id<"schedServices">,
     variantKey: offer.variantKey,
     startTime: offer.startTime,
@@ -574,25 +688,42 @@ export async function bookOfferedTimeCore(
     leadId: access.lead?._id,
     conversationId: args.conversationId,
     resourceIds: offer.resourceIds as Id<"schedResources">[],
-    // Só `auto` com aceite pede `scheduled`; a porta ainda recusa (vira pending) em primeira visita ou com aviso.
-    initialStatus: access.bookPolicy === "auto" ? "scheduled" : "pending_approval",
     idempotencyKey: key,
-    auditMetadata: {
-      conversationId: args.conversationId,
-      offer: code,
-      ...(args.agentRunId ? { agentRunId: args.agentRunId } : {}),
-      ...(args.approvedBy ? { approvedBy: args.approvedBy } : {}),
-    },
+    auditMetadata,
     now,
-  });
+  };
+
+  // Grupo (2–4 pessoas): o tamanho vem da OFERTA (o servidor o guardou na busca; a IA não o informa na escrita). A porta de grupo
+  // (`bookPartyCore`) aloca uma pessoa por vez, tudo ou nada, com a mesma checagem de capacidade; o grupo da IA SEMPRE fica
+  // aguardando a equipe (nunca `scheduled`), e os acompanhantes entram com nome genérico (a IA não tem o nome de terceiros).
+  let result: BookResult | { ok: true; party: true; duplicate: boolean } | BookFailure;
+  if (people > 1 && args.mode === "commit") {
+    const party = await bookPartyCore(ctx, {
+      ...book,
+      initialStatus: "pending_approval",
+      companions: Array.from({ length: people - 1 }, (_, i) => ({ guestName: `Acompanhante ${i + 1}` })),
+    });
+    result = party.ok ? { ok: true, party: true, duplicate: party.duplicate } : party;
+  } else {
+    result = await bookAppointmentCore(ctx, {
+      ...book,
+      mode: args.mode,
+      // Só `auto` com aceite pede `scheduled`; a porta ainda recusa (vira pending) em primeira visita ou com aviso. Grupo: sempre a equipe.
+      initialStatus: people === 1 && access.bookPolicy === "auto" ? "scheduled" : "pending_approval",
+      // Reserva = o plano da OFERTA: o recurso que a busca mostrou (e, se nomeado, que o cliente pediu) não é trocado em silêncio;
+      // se ele foi tomado, é "horário tomado" com alternativas, não outro profissional. Grupo só marca a pessoa principal na prévia.
+      ...(people === 1 && offer.resourceIds.length > 0 ? { allowResourceFallback: false } : {}),
+    });
+  }
 
   if (result.ok) {
+    const professionalLabel = offer.professional;
     if ("preview" in result) {
       const slotText = formatSlotText(offer.startTime, now, access.tz);
-      return outcome(proposedResult(slotText), { slotText, offeredTimes: [offer.startTime] });
+      return outcome(proposedResult(slotText, { people, professional: professionalLabel }), { slotText, offeredTimes: [offer.startTime], ...namedOf([{ startTime: offer.startTime, professional: professionalLabel }]) });
     }
     const slotText = formatSlotText(offer.startTime, now, access.tz);
-    const kind = result.status === "pending_approval" ? "pending" : "scheduled";
+    const kind = "party" in result || result.status === "pending_approval" ? "pending" : "scheduled";
     await saveConversationState(ctx, {
       organizationId: args.organizationId,
       conversationId: args.conversationId,
@@ -601,7 +732,12 @@ export async function bookOfferedTimeCore(
       patch: { offers: consumeOffer(offers, code), slotTakenCount: 0 },
       now,
     });
-    return outcome(bookedResult(kind, slotText, result.duplicate), { booked: kind, bookedStartTime: offer.startTime, offeredTimes: [offer.startTime] });
+    return outcome(bookedResult(kind, slotText, result.duplicate, { people, professional: professionalLabel }), {
+      booked: kind,
+      bookedStartTime: offer.startTime,
+      offeredTimes: [offer.startTime],
+      ...namedOf([{ startTime: offer.startTime, professional: professionalLabel }]),
+    });
   }
 
   const codes = new Set(result.violations.map((x) => x.code as string));
@@ -648,7 +784,9 @@ async function slotTaken(
   }
 ): Promise<SchedToolOutcome> {
   const { access, args, offer, now } = input;
-  const picks: OfferPick[] = input.alternatives.slice(0, 2).map((s) => ({ serviceId: offer.serviceId, variantKey: offer.variantKey, startTime: s.startTime, resourceIds: s.resourceIds }));
+  // Grupo: as alternativas da porta são de UMA pessoa; para o grupo a IA consulta de novo (`findAvailableTimes` com people).
+  const group = (offer.people ?? 1) > 1;
+  const picks: OfferPick[] = group ? [] : input.alternatives.slice(0, 2).map((s) => ({ serviceId: offer.serviceId, variantKey: offer.variantKey, startTime: s.startTime, resourceIds: s.resourceIds }));
   const cleared = invalidateOffers(input.offers);
   const next = picks.length > 0 ? issueOffers(cleared, picks, now) : { state: cleared, issued: [] as OfferRecord[] };
   const takenCount = (input.state?.slotTakenCount ?? 0) + 1;
@@ -667,7 +805,12 @@ async function slotTaken(
       { handoff }
     );
   }
-  const alt = lines.length > 0 ? `Alternativas livres (os códigos antigos deixaram de valer):\n${lines.join("\n")}` : "Não há alternativas livres no mesmo dia.";
+  const alt =
+    lines.length > 0
+      ? `Alternativas livres (os códigos antigos deixaram de valer):\n${lines.join("\n")}`
+      : group
+        ? `Não há alternativa livre para o grupo de ${offer.people} pessoas neste horário.`
+        : "Não há alternativas livres no mesmo dia.";
   return outcome(
     {
       status: "erro",
@@ -675,8 +818,10 @@ async function slotTaken(
       resultado: alt,
       proximo_passo:
         lines.length > 0
-          ? "Diga que esse horário acabou de ser ocupado, ofereça as alternativas (sem o código) e espere o cliente escolher; só então reserve."
-          : "Diga que esse horário acabou de ser ocupado e consulte outra data com findAvailableTimes.",
+          ? `Diga que esse horário acabou de ser ocupado, ofereça as alternativas (sem o código) e espere o cliente escolher; só então reserve.${offer.professional ? ` Estas alternativas NÃO são com ${offer.professional}: diga que a equipe confirma quem atende.` : ""}`
+          : group
+            ? `Diga que esse horário acabou de ser ocupado e consulte outro dia com findAvailableTimes (people: ${offer.people}).`
+            : "Diga que esse horário acabou de ser ocupado e consulte outra data com findAvailableTimes.",
     },
     { offeredTimes: next.issued.map((o) => o.startTime) }
   );
@@ -686,6 +831,14 @@ async function slotTaken(
 // Validators de retorno das internas (o convex-test não valida `returns`: ver os testes)
 // ---------------------------------------------------------------------------
 
+export const professionalNoteValidator = v.union(
+  v.object({ kind: v.literal("filtered"), name: v.string() }),
+  v.object({ kind: v.literal("not_found") }),
+  v.object({ kind: v.literal("ambiguous") }),
+  v.object({ kind: v.literal("not_available"), name: v.string() }),
+  v.object({ kind: v.literal("not_for_service"), name: v.string() }),
+  v.object({ kind: v.literal("ignored_group"), name: v.optional(v.string()) })
+);
 export const toolTextValidator = v.object({
   status: v.string(),
   resultado: v.optional(v.string()),
@@ -701,6 +854,7 @@ export const schedToolOutcomeValidator = v.object({
     bookedStartTime: v.optional(v.number()),
     handoff: v.boolean(),
     slotText: v.optional(v.string()),
+    named: v.optional(v.array(v.object({ startTime: v.number(), professional: v.string() }))),
   }),
 });
 export const schedContextValidator = v.union(
@@ -717,9 +871,11 @@ export const schedContextValidator = v.union(
         startTime: v.number(),
         serviceName: v.string(),
         status: v.union(v.literal("pending_approval"), v.literal("scheduled"), v.literal("confirmed")),
+        resourceNames: v.optional(v.array(v.string())),
       })
     ),
-    offers: v.array(v.object({ code: v.string(), label: v.string(), startTime: v.number() })),
+    offers: v.array(v.object({ code: v.string(), label: v.string(), startTime: v.number(), professional: v.optional(v.string()) })),
     timezone: v.string(),
+    guardNames: v.array(v.string()),
   })
 );

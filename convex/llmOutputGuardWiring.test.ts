@@ -57,7 +57,7 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(src).not.toMatch(/toPlainChatText\(reply/);
 
     // Runtime: trava final do guard → formatação → commit.
-    const finalGuard = src.indexOf("const finalLeak = detectLeakedModelMarkup(replyText)");
+    const finalGuard = src.indexOf("const finalLeak = detectLeakedModelMarkup(replyText, {");
     const runtimeFormat = src.indexOf("replyText = formatReplyForTransport(replyText");
     const commitBase = src.indexOf("const commitArgsBase = {");
     expect(finalGuard).toBeGreaterThan(-1);

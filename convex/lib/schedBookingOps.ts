@@ -1619,7 +1619,7 @@ export async function bookPartyCore(
       return placed.kind === "failed" ? placed.failure : { ok: false, violations: [], alternatives: [] };
     }
   }
-  for (const placed of placedList) await finalizeBooking(ctx, placed, { actor: args.actor, now });
+  for (const placed of placedList) await finalizeBooking(ctx, placed, { actor: args.actor, now, auditMetadata: args.auditMetadata });
   return { ok: true, appointmentIds: allIds, duplicate: anyExisting };
 }
 
