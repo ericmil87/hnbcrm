@@ -367,6 +367,7 @@ async function callJsonModel(
   const model = getOnboardingModel(role);
   const usage = newUsageTotals();
   let provider: string | undefined;
+  let usedModel = model;
   try {
     const routes = await resolveOrgRoutes(
       ctx,
@@ -387,11 +388,12 @@ async function callJsonModel(
       { timeoutMs: LLM_TIMEOUT_MS },
     );
     provider = resp.usedRoute.providerId;
+    usedModel = resp.usedRoute.canonicalModel;
     addUsage(usage, resp.usage, resp.usedRoute, model, {
       inputChars: JSON.stringify(messages).length,
       outputChars: JSON.stringify(resp.message).length,
     });
-    await record(ctx, b, role, { status: "done", provider, model, requestCount: 1, ...finishRunCostFields(usage) });
+    await record(ctx, b, role, { status: "done", provider, model: usedModel, requestCount: 1, ...finishRunCostFields(usage) });
     if (resp.finishReason === "length") {
       // Resposta cortada: JSON incompleto não é aproveitado.
       return { ok: false, refused: false, message: "A resposta da IA veio cortada." };
@@ -399,7 +401,7 @@ async function callJsonModel(
     return { ok: true, content: typeof resp.message.content === "string" ? resp.message.content : "", finishReason: resp.finishReason };
   } catch (e) {
     const message = sanitizeLlmError(e instanceof Error ? e.message : "Erro inesperado");
-    await record(ctx, b, role, { status: "error", provider, model, requestCount: 1, ...finishRunCostFields(usage) });
+    await record(ctx, b, role, { status: "error", provider, model: usedModel, requestCount: 1, ...finishRunCostFields(usage) });
     return { ok: false, refused: false, message };
   }
 }

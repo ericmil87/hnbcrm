@@ -31,6 +31,7 @@ import {
   DEFAULT_STORED_MODELS,
   OPENCODE_GO_MODELS,
   OPENROUTER_ONLY_MODELS,
+  isRetiredModel,
   routeInfo,
   supportsVision,
   visionModelOptions,
@@ -838,58 +839,137 @@ export const internalSetFollowUpMode = internalMutation({
   },
 });
 
+function providerConfigPinned(
+  aiConfig: Doc<"organizations">["settings"]["aiConfig"],
+  product: "telegramCopilot" | "translation" | string
+): string | undefined {
+  const products = aiConfig?.providerConfig?.products as Record<string, { model?: string } | undefined> | undefined;
+  return products?.[product]?.model;
+}
+
+const MODEL_ROLES = ["copilot", "attendant", "classify", "complex"] as const;
+
+/**
+ * Núcleo da troca de modelo numa org (compartilhado por `internalReplaceOrgModel`
+ * e `internalReplaceModelAllOrgs`). `onlyStored`: org SEM modelos gravados usa o
+ * padrão do código e não é tocada (a troca em massa não grava ruído).
+ * Com `dryRun` não escreve nada. Devolve os papéis trocados.
+ */
+async function replaceModelInOrg(
+  ctx: MutationCtx,
+  org: Doc<"organizations">,
+  from: string,
+  to: string,
+  opts: { dryRun: boolean; onlyStored: boolean }
+): Promise<string[]> {
+  const current = org.settings.aiConfig;
+  if (!current) return [];
+  const stored = current.providerConfig?.models;
+  if (!stored && opts.onlyStored) return [];
+  const before = stored ?? { ...DEFAULT_STORED_MODELS };
+  const after = { ...before };
+  const changed: string[] = [];
+  for (const role of MODEL_ROLES) {
+    if (after[role] === from) {
+      after[role] = to;
+      changed.push(role);
+    }
+  }
+  if (changed.length === 0 || opts.dryRun) return changed;
+  const now = Date.now();
+  await ctx.db.patch(org._id, {
+    settings: {
+      ...org.settings,
+      aiConfig: {
+        ...current,
+        providerConfig: {
+          ...current.providerConfig,
+          mode: current.providerConfig?.mode ?? ("platform" as const),
+          zdr: current.providerConfig?.zdr ?? true,
+          models: after,
+        },
+      },
+    },
+  });
+  await ctx.db.insert("auditLogs", {
+    organizationId: org._id,
+    entityType: "organization",
+    entityId: org._id,
+    action: "update",
+    actorType: "system",
+    changes: { before: { models: before }, after: { models: after } },
+    metadata: { via: "ops", aiModels: true },
+    description: `Ops trocou o modelo de IA '${from}' por '${to}' (${changed.join(", ")})`,
+    severity: "medium",
+    createdAt: now,
+  });
+  return changed;
+}
+
+function assertKnownTargetModel(to: string): void {
+  if (isRetiredModel(to)) throw new Error(`O modelo "${to}" foi aposentado — escolha outro destino`);
+  const known = [...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[];
+  if (!known.includes(to)) throw new Error(`Modelo desconhecido: ${to}`);
+}
+
 /**
  * Ops: troca um modelo por outro em TODOS os papéis da org que o usam
  * (`setModels` exige sessão de usuário). Só aceita destino conhecido do registry.
- *   npx convex run aiSettings:internalReplaceOrgModel '{"organizationId":"…","from":"deepseek-v4-flash","to":"deepseek-v4-flash-0731"}'
+ *   npx convex run aiSettings:internalReplaceOrgModel '{"organizationId":"…","from":"deepseek-v4-flash","to":"deepseek-flash-latest"}'
  */
 export const internalReplaceOrgModel = internalMutation({
   args: { organizationId: v.id("organizations"), from: v.string(), to: v.string() },
   returns: v.array(v.string()),
   handler: async (ctx, args) => {
-    const known = [...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[];
-    if (!known.includes(args.to)) throw new Error(`Modelo desconhecido: ${args.to}`);
+    assertKnownTargetModel(args.to);
     const org = await ctx.db.get(args.organizationId);
-    const current = org?.settings.aiConfig;
-    if (!org || !current) throw new Error("Org sem IA configurada");
-    const before = current.providerConfig?.models ?? { ...DEFAULT_STORED_MODELS };
-    const after = { ...before };
-    const changed: string[] = [];
-    for (const role of ["copilot", "attendant", "classify", "complex"] as const) {
-      if (after[role] === args.from) {
-        after[role] = args.to;
-        changed.push(role);
-      }
+    if (!org?.settings.aiConfig) throw new Error("Org sem IA configurada");
+    return await replaceModelInOrg(ctx, org, args.from, args.to, { dryRun: false, onlyStored: false });
+  },
+});
+
+/**
+ * Ops: troca `from` por `to` em TODAS as orgs que o tenham GRAVADO (uma página
+ * por chamada; repita com `continueCursor` até `isDone`). `dryRun` default TRUE.
+ * Cada org trocada ganha seu `auditLogs`. Devolve só slug + papéis (sem dados
+ * pessoais). Org sem modelos gravados usa o padrão do código e não aparece.
+ *   npx convex run aiSettings:internalReplaceModelAllOrgs '{"from":"deepseek-v4-flash","to":"deepseek-flash-latest"}'
+ */
+export const internalReplaceModelAllOrgs = internalMutation({
+  args: {
+    from: v.string(),
+    to: v.string(),
+    dryRun: v.optional(v.boolean()),
+    cursor: v.optional(v.union(v.string(), v.null())),
+    pageSize: v.optional(v.number()),
+  },
+  returns: v.object({
+    dryRun: v.boolean(),
+    scanned: v.number(),
+    affected: v.array(v.object({ slug: v.string(), roles: v.array(v.string()) })),
+    isDone: v.boolean(),
+    continueCursor: v.string(),
+  }),
+  handler: async (ctx, args) => {
+    assertKnownTargetModel(args.to);
+    if (args.from === args.to) throw new Error("`from` e `to` são iguais");
+    const dryRun = args.dryRun !== false;
+    const pageSize = Math.min(Math.max(Math.floor(args.pageSize ?? 50), 1), 100);
+    const page = await ctx.db
+      .query("organizations")
+      .paginate({ numItems: pageSize, cursor: args.cursor ?? null });
+    const affected: { slug: string; roles: string[] }[] = [];
+    for (const org of page.page) {
+      const roles = await replaceModelInOrg(ctx, org, args.from, args.to, { dryRun, onlyStored: true });
+      if (roles.length > 0) affected.push({ slug: org.slug, roles });
     }
-    if (changed.length === 0) return changed;
-    const now = Date.now();
-    await ctx.db.patch(org._id, {
-      settings: {
-        ...org.settings,
-        aiConfig: {
-          ...current,
-          providerConfig: {
-            ...current.providerConfig,
-            mode: current.providerConfig?.mode ?? ("platform" as const),
-            zdr: current.providerConfig?.zdr ?? true,
-            models: after,
-          },
-        },
-      },
-    });
-    await ctx.db.insert("auditLogs", {
-      organizationId: org._id,
-      entityType: "organization",
-      entityId: org._id,
-      action: "update",
-      actorType: "system",
-      changes: { before: { models: before }, after: { models: after } },
-      metadata: { via: "ops", aiModels: true },
-      description: `Ops trocou o modelo de IA '${args.from}' por '${args.to}' (${changed.join(", ")})`,
-      severity: "medium",
-      createdAt: now,
-    });
-    return changed;
+    return {
+      dryRun,
+      scanned: page.page.length,
+      affected,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 
@@ -1140,10 +1220,20 @@ export const getModelOptions = query({
   returns: v.any(),
   handler: async (ctx, args) => {
     await requirePermission(ctx, args.organizationId, "settings", "view");
+    // Aposentados (RETIRED_MODEL_ALIASES) não são oferecidos, EXCETO o que a org
+    // ainda tem gravado (o seletor precisa mostrar o valor atual; sai quando ela trocar).
+    const org = await ctx.db.get(args.organizationId);
+    const pc = org?.settings.aiConfig?.providerConfig;
+    const stored = new Set<string | undefined>([
+      ...Object.values(pc?.models ?? {}),
+      pc?.products?.telegramCopilot?.model,
+      pc?.products?.translation?.model,
+    ]);
+    const offered = (id: string) => !isRetiredModel(id) || stored.has(id);
     return [
-      ...OPENCODE_GO_MODELS.map((id) => ({ id, route: routeInfo("opencode-go", id) })),
+      ...OPENCODE_GO_MODELS.filter(offered).map((id) => ({ id, route: routeInfo("opencode-go", id) })),
       // Só no OpenRouter (a cadeia pula o elo do OpenCode Go para eles).
-      ...OPENROUTER_ONLY_MODELS.map((id) => ({ id, route: routeInfo("openrouter", id) })),
+      ...OPENROUTER_ONLY_MODELS.filter(offered).map((id) => ({ id, route: routeInfo("openrouter", id) })),
     ];
   },
 });
@@ -1173,6 +1263,18 @@ export const setModels = mutation({
       args.models.classify,
       ...(args.models.complex ? [args.models.complex] : []),
     ];
+    // Modelo aposentado não é escolha nova; manter o que já está gravado no
+    // MESMO papel é permitido (salvar outro campo não pode falhar por isso).
+    // A UI manda `classify = attendant`: vale manter qualquer id aposentado que a
+    // org já tem gravado em QUALQUER papel (senão trocar só o copiloto seria barrado).
+    const storedModels = current.providerConfig?.models;
+    const storedIds = new Set<string | undefined>(Object.values(storedModels ?? {}));
+    for (const role of MODEL_ROLES) {
+      const next = args.models[role];
+      if (next && isRetiredModel(next) && !storedIds.has(next)) {
+        throw new Error(`O modelo "${next}" foi aposentado — use "deepseek-flash-latest"`);
+      }
+    }
     const nonZdrRoutes = chosen.filter((m) => !routeInfo("opencode-go", m).zdrCapable);
     const zdrOn = current.providerConfig?.zdr !== false;
     let nonZdrAck = current.providerConfig?.nonZdrAck;
@@ -1196,6 +1298,9 @@ export const setModels = mutation({
     }
 
     const providerConfig = {
+      // Espalha o atual: `products` (rota/modelo por produto) e qualquer campo
+      // futuro não podem sumir ao trocar só os modelos.
+      ...current.providerConfig,
       mode: current.providerConfig?.mode ?? ("platform" as const),
       byo: current.providerConfig?.byo,
       zdr: zdrOn,
@@ -1300,6 +1405,7 @@ export const setProviderMode = mutation({
     }
 
     const providerConfig = {
+      ...current.providerConfig,
       mode: args.mode,
       byo: args.mode === "byo" ? byo : undefined,
       zdr: current.providerConfig?.zdr ?? true,
@@ -1457,6 +1563,9 @@ export const setProductRouting = mutation({
     if (pinned && (args.product === "telegramCopilot" || args.product === "translation")) {
       const known = ([...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[]).includes(pinned);
       if (!known) throw new Error(`"${pinned}" não é um modelo de texto conhecido`);
+      if (isRetiredModel(pinned) && providerConfigPinned(current, args.product) !== pinned) {
+        throw new Error(`O modelo "${pinned}" foi aposentado — use "deepseek-flash-latest"`);
+      }
     }
 
     const providerConfig = current.providerConfig ?? {

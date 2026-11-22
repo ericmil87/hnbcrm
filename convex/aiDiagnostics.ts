@@ -9,7 +9,7 @@ import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { chatWithFallback, resolvePlatformChain, ResolvedRoute, withReasoningEffort } from "./lib/llm";
-import { resolveOrgRoutes, OrgProviderConfig } from "./lib/agentRoutes";
+import { resolveOrgRoutes, OrgProviderConfig, platformChainWithModelFallback } from "./lib/agentRoutes";
 import { DEFAULT_MODELS } from "./lib/llm/registry";
 import { sanitizeLlmError } from "./lib/llm/sanitize";
 
@@ -159,11 +159,8 @@ export const pingChain = internalAction({
   returns: v.array(hopResultValidator),
   handler: async (ctx, args) => {
     const model = args.model ?? DEFAULT_MODELS.attendant;
-    const routes = resolvePlatformChain(model, {
-      opencodeGoKey: process.env.OPENCODE_GO_API,
-      openrouterKey: process.env.OPENROUTER_API_KEY,
-    });
-    return await pingRoutes(routes);
+    // Inclui os elos da rede de modelo (ex.: alias → deepseek-v4-flash).
+    return await pingRoutes(platformChainWithModelFallback(model));
   },
 });
 

@@ -1,7 +1,8 @@
 /**
  * Resolve as rotas LLM de uma org para o runtime (copiloto/atendente/simulador).
  *
- * - platform (default): cadeia OpenCode Go → OpenRouter (inativo sem a key).
+ * - platform (default): cadeia OpenCode Go → OpenRouter (inativo sem a key), mais a
+ *   rede de modelo `MODEL_FALLBACKS` (o padrão só-OpenRouter cai no deepseek-v4-flash).
  * - byo: a key da org (orgSecrets, cifrada) — decrypt SÓ aqui, em contexto de
  *   action; SEM fallback para as keys da plataforma (a org paga a própria conta).
  * - strictZdr filtra rotas não-ZDR nos dois modos (o "aviso vira bloqueio").
@@ -10,7 +11,13 @@ import { internal } from "../_generated/api";
 import { Id } from "../_generated/dataModel";
 import { decryptSecret } from "./secretCrypto";
 import { resolvePlatformChain, resolveByoRoute, ResolvedRoute } from "./llm";
-import { DEFAULT_MODELS } from "./llm/registry";
+import {
+  BYO_NON_OPENROUTER_MODEL,
+  DEFAULT_MODELS,
+  MODEL_FALLBACKS,
+  isRetiredModel,
+  resolveRetiredModel,
+} from "./llm/registry";
 
 export type PlatformOrder = "auto" | "openrouter-first" | "opencode-only" | "openrouter-only";
 
@@ -155,20 +162,54 @@ export async function resolveProductRoutes(
   product: ModelPinnedProduct
 ): Promise<{ routes: ResolvedRoute[]; canonicalModel: string }> {
   const { model, fallback } = productModel(providerConfig, product);
-  const routes = await resolveOrgRoutes(ctx, organizationId, providerConfig, model, product);
+  // Copiloto no Telegram mantém o fallback próprio (modelo do Copiloto): só a
+  // tradução herda a rede de modelo (`MODEL_FALLBACKS`), que substitui o antigo
+  // fallback `classify` (agora é o mesmo alias).
+  // Telegram fixado num id APOSENTADO (vira o alias) também ganha a rede.
+  const routes = await resolveOrgRoutes(ctx, organizationId, providerConfig, model, product, {
+    modelFallback: product !== "telegramCopilot" || isRetiredModel(model),
+  });
   if (routes.length > 0 || fallback === model) return { routes, canonicalModel: model };
   const fallbackRoutes = await resolveOrgRoutes(ctx, organizationId, providerConfig, fallback, product);
   return { routes: fallbackRoutes, canonicalModel: fallback };
+}
+
+/**
+ * Cadeia da plataforma de um modelo + a rede de modelo (`MODEL_FALLBACKS`) depois
+ * dos elos do próprio modelo. Sem OPENROUTER_API_KEY o modelo só-OpenRouter não
+ * tem elo e a cadeia cai direto no fallback. Nos elos do FALLBACK o OpenRouter vem
+ * primeiro e o OpenCode Go por último, em todo modo de ordem: o Go pode estar
+ * recusando tudo (400 x-opencode-session) e é o elo mais fraco.
+ */
+export function platformChainWithModelFallback(canonicalModel: string, withFallback = true): ResolvedRoute[] {
+  const keys = {
+    opencodeGoKey: process.env.OPENCODE_GO_API,
+    openrouterKey: process.env.OPENROUTER_API_KEY,
+  };
+  const chain = resolvePlatformChain(canonicalModel, keys);
+  if (withFallback) {
+    for (const fb of MODEL_FALLBACKS[canonicalModel] ?? []) {
+      const links = resolvePlatformChain(fb, keys);
+      chain.push(
+        ...links.filter((r) => r.providerId === "openrouter"),
+        ...links.filter((r) => r.providerId !== "openrouter")
+      );
+    }
+  }
+  return chain;
 }
 
 export async function resolveOrgRoutes(
   ctx: RunQueryCtx,
   organizationId: Id<"organizations">,
   providerConfig: OrgProviderConfig | null | undefined,
-  canonicalModel: string,
-  product?: AiProduct
+  requestedModel: string,
+  product?: AiProduct,
+  opts?: { modelFallback?: boolean }
 ): Promise<ResolvedRoute[]> {
   let routes: ResolvedRoute[];
+  // Id aposentado gravado na org (ou fixado por env) roda como o alias.
+  const canonicalModel = resolveRetiredModel(requestedModel);
 
   if (providerConfig?.mode === "byo" && providerConfig.byo) {
     const encrypted = await ctx.runQuery(internal.orgSecrets.internalGetOrgSecretEncrypted, {
@@ -184,17 +225,15 @@ export async function resolveOrgRoutes(
           baseUrl: providerConfig.byo.baseUrl,
           apiKey,
         },
-        canonicalModel
+        // Chave que não é do OpenRouter não fala o alias: usa o equivalente.
+        providerConfig.byo.provider === "openrouter"
+          ? canonicalModel
+          : (BYO_NON_OPENROUTER_MODEL[canonicalModel] ?? canonicalModel)
       ),
     ];
   } else {
-    routes = applyPlatformOrder(
-      resolvePlatformChain(canonicalModel, {
-        opencodeGoKey: process.env.OPENCODE_GO_API,
-        openrouterKey: process.env.OPENROUTER_API_KEY,
-      }),
-      effectivePlatformOrder(providerConfig, product)
-    );
+    const chain = platformChainWithModelFallback(canonicalModel, opts?.modelFallback !== false);
+    routes = applyPlatformOrder(chain, effectivePlatformOrder(providerConfig, product));
   }
 
   if (providerConfig?.strictZdr) {
