@@ -80,7 +80,7 @@ const objectSchema = (properties: Record<string, unknown>, required: string[]) =
 });
 
 export const SCHED_READ_RESULT_FIELDS = ["status", "resumo", "itens", "vagas", "contagens", "ha_mais", "error", "proximo_passo"];
-export const SCHED_WRITE_RESULT_FIELDS = ["status", "error", "proximo_passo", "pendingActionId", "preview", "avisos", "message"];
+export const SCHED_WRITE_RESULT_FIELDS = ["status", "error", "proximo_passo", "pendingActionId", "preview", "avisos", "atencao", "message"];
 
 const DATE_HELP =
   "'hoje', 'amanha', 'depois_de_amanha', 'ontem', um dia da semana ('segunda'...'domingo' = a próxima ocorrência a partir de hoje) ou AAAA-MM-DD. O servidor calcula a data no fuso da organização: NUNCA calcule datas você mesmo.";
@@ -161,6 +161,9 @@ export const SCHED_COPILOT_READ_TOOLS: AgentToolSpec[] = [
   },
 ];
 
+const RESOURCE_NAME_HELP =
+  "SÓ se o usuário pediu essa sala/profissional/equipamento com as palavras dele; nunca por conta própria. Omitido, o sistema mantém o profissional, usa a sala atual e, se ela estiver fechada, bloqueada ou cheia, a prévia propõe outra sala equivalente livre (e diz a troca) ou recusa. Citado e fechado: a prévia mostra ATENÇÃO e a confirmação vale como exceção consciente.";
+
 const WRITE_NOTE =
   " Escrita em DUAS FASES: esta ferramenta só monta a prévia e devolve confirmacao_necessaria; nada muda até o usuário confirmar no cartão. Avisos de regra aparecem na prévia e a decisão é dele. Nenhuma mensagem é enviada ao cliente.";
 
@@ -176,7 +179,7 @@ export const SCHED_COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
         leadId: { type: "string", description: "id do lead (listLeads), alternativa ao contactId" },
         serviceName: { type: "string", description: "Nome do serviço" },
         ...START_PROPS,
-        resourceName: { type: "string", description: "Opcional: sala/profissional preferido" },
+        resourceName: { type: "string", description: RESOURCE_NAME_HELP },
         notes: { type: "string", description: "Opcional: observação interna curta" },
       },
       ["serviceName"]
@@ -189,7 +192,7 @@ export const SCHED_COPILOT_WRITE_TOOLS: AgentToolSpec[] = [
   {
     name: "rescheduleAppointment",
     description: `Remarca um agendamento (de → para). ${REF_HELP} ${START_HELP}` + WRITE_NOTE,
-    parameters: objectSchema({ ref: { type: "string", description: REF_HELP }, ...START_PROPS, resourceName: { type: "string", description: "Opcional: sala/profissional" } }, ["ref"]),
+    parameters: objectSchema({ ref: { type: "string", description: REF_HELP }, ...START_PROPS, resourceName: { type: "string", description: RESOURCE_NAME_HELP } }, ["ref"]),
     permission: { category: "agenda", level: "edit" },
     audience: "copilot",
     effect: "write",
@@ -326,7 +329,7 @@ export function schedPromptBlock(info: SchedSessionInfo | undefined): string {
   const base =
     "AGENDA: você consulta a agenda de agendamentos de clientes (getAgendaDay, listAgendaPending, findFreeTimes, findAgendaGaps). Não calcule datas: passe 'hoje', 'amanha', dia da semana ou AAAA-MM-DD e o servidor resolve no fuso da organização. Responda com dia da semana e horário (ex.: qui, 27/11 às 14:30).";
   if (!info.canEdit) return `${base} O usuário só pode consultar a agenda.`;
-  return `${base} Para marcar, remarcar, cancelar, aprovar, mudar situação, fechar sala/profissional ou resolver conflito, use as ferramentas de escrita: elas só montam a PRÉVIA e o usuário confirma no cartão (nada é enviado ao cliente). Marque só com o id vindo de searchContacts/listLeads; se houver mais de um candidato, pergunte. Use a referência (ref) devolvida pelas leituras desta conversa para remarcar/cancelar/aprovar, e o horário de findFreeTimes (offer). Avisos de regra: mostre ao usuário, a decisão é dele.`;
+  return `${base} Para marcar, remarcar, cancelar, aprovar, mudar situação, fechar sala/profissional ou resolver conflito, use as ferramentas de escrita: elas só montam a PRÉVIA e o usuário confirma no cartão (nada é enviado ao cliente). Marque só com o id vindo de searchContacts/listLeads; se houver mais de um candidato, pergunte. Use a referência (ref) devolvida pelas leituras desta conversa para remarcar/cancelar/aprovar, e o horário de findFreeTimes (offer). Avisos de regra: mostre ao usuário, a decisão é dele; se a prévia trouxer ATENÇÃO (recurso fechado que ELE pediu) ou \"Troca de lugar\", repita isso com clareza antes de pedir a confirmação. Só cite sala/profissional (resourceName) quando o usuário pedir.`;
 }
 
 // ---------------------------------------------------------------------------

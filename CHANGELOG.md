@@ -7,8 +7,10 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 ### Agendamento: Copiloto, API e MCP
 
 - **Peça ao Copiloto.** "O que tenho hoje?", "tem buraco na quinta?", "marca a Maria quinta às 10 na sala 2", "fecha a sala 2 amanhã": o Copiloto consulta a agenda e prepara a ação, mostra exatamente o que vai acontecer e só executa quando você confirma no botão (no sistema ou no Telegram). Ele respeita a sua permissão de Agenda e nunca envia nada ao cliente.
+- **O Copiloto não leva o cliente para sala fechada.** Ao remarcar ou marcar sem você citar a sala, ele mantém o profissional e, se a sala estiver fechada ou cheia no horário novo, propõe outra sala equivalente livre e diz isso no cartão ("Sala 1 não serve nesse horário; ficaria em Sala 2"); sem sala equivalente, recusa com horários próximos. Só mantém a sala fechada se você pedir aquela sala, e o cartão mostra "ATENÇÃO" antes de confirmar.
 - **Resumo da manhã com a agenda do dia.** Quem recebe o resumo diário passa a ver quantos atendimentos há hoje e o que está pendente.
 - **API e MCP da agenda.** Novas rotas em `/api/v1/scheduling/…` para consultar serviços, salas, horários livres e agendamentos, marcar (com chave de idempotência), remarcar, cancelar, mudar status, fechar e reabrir sala e resolver conflitos, com as mesmas regras das telas; conflito de regra responde 409 com alternativas. O servidor MCP (0.6.0) ganhou as ferramentas correspondentes. Webhooks `appointment.*` e `calendar_event.*` documentados.
+- **API: sala pedida não é trocada em silêncio.** Em marcar, prévia, remarcar e resolver conflito, `resourceIds` agora fixa o recurso (como a tela); remarcar sem `resourceIds` mantém os recursos atuais. Novo campo opcional `allowResourceFallback: true` aceita o plano alternativo.
 - **Vagas do dia consideram os compromissos do profissional.** O resumo de vagas da Agenda desconta reuniões e folgas de quem atende.
 
 ### Agendamento: a IA consulta horários e a confirmação pelo WhatsApp vira sugestão

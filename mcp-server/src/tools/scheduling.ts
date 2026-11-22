@@ -22,6 +22,11 @@ const resourceIds = z
   .array(z.string())
   .max(10)
   .describe("Resource IDs of the plan (copy the resourceIds of the chosen crm_find_slots slot or 409 alternative)");
+const allowResourceFallback = z
+  .boolean()
+  .describe(
+    "Default false when resourceIds is sent (and ALWAYS when rescheduling, which starts from the current resources): the requested room/professional is never swapped silently. A closed or blocked resource is a 409 with severity warn (only a human may force it); a full one is a 409 with alternatives. true = accept an alternative plan for the same start (the server may pick another equivalent room/equipment; never do this without telling the user)."
+  );
 const force = z
   .array(z.string())
   .max(10)
@@ -185,6 +190,7 @@ export function registerSchedulingTools(server: McpServer, client: HnbCrmClient)
     leadId: z.string().optional().describe("Customer lead ID (adds the booking to the lead timeline)"),
     conversationId: z.string().optional().describe("Conversation the booking came from"),
     resourceIds: resourceIds.optional(),
+    allowResourceFallback: allowResourceFallback.optional(),
     variantKey: z.string().optional().describe("Service variant key"),
     force: force.optional(),
     notes: z.string().max(500).optional().describe("Internal note (never shown to the customer)"),
@@ -234,11 +240,12 @@ export function registerSchedulingTools(server: McpServer, client: HnbCrmClient)
 
   server.tool(
     "crm_reschedule_appointment",
-    "Move an appointment to a new time: creates the new appointment and closes the old one (rescheduled) atomically. Get the new time from crm_find_slots (with rescheduleAppointmentId) and preview it first (crm_preview_appointment with rescheduleAppointmentId). A 409 carries alternatives. Send an idempotencyKey to make a retry safe.",
+    "Move an appointment to a new time: creates the new appointment and closes the old one (rescheduled) atomically. Get the new time from crm_find_slots (with rescheduleAppointmentId) and preview it first (crm_preview_appointment with rescheduleAppointmentId). Without resourceIds it keeps the CURRENT resources and never swaps them: if the current room/professional is closed or blocked at the new time the result is a 409 (severity warn, only a human may force it) and if it is full a 409 with alternatives; to move to another room pass the resourceIds of a crm_find_slots slot. A 409 carries alternatives. Send an idempotencyKey to make a retry safe.",
     {
       appointmentId: z.string().describe("Appointment to move"),
       startsAtLocal: localTime("New start."),
       resourceIds: resourceIds.optional(),
+      allowResourceFallback: allowResourceFallback.optional(),
       force: force.optional(),
       idempotencyKey: z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/).optional().describe("Recommended: makes a retry return the same result"),
     },
@@ -402,6 +409,7 @@ export function registerSchedulingTools(server: McpServer, client: HnbCrmClient)
       conflictId: z.string().describe("Conflict ID"),
       action: z.enum(["resource", "reschedule", "cancel", "manual"]).describe("How to resolve"),
       resourceIds: z.array(z.string()).max(10).optional().describe("For resource (required) and reschedule (optional): the resources to use"),
+      allowResourceFallback: allowResourceFallback.optional().describe("For reschedule only: see the rule above (default false: resources are never swapped silently)"),
       startsAtLocal: z
         .string()
         .regex(LOCAL_TIME, "Use YYYY-MM-DDTHH:mm")

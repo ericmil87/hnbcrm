@@ -37,7 +37,8 @@ const BOOK_PROPS = {
   contactId: str("Contato do cliente"),
   leadId: str("Lead do cliente (gera atividade na linha do tempo)"),
   conversationId: str("Conversa de origem, quando há"),
-  resourceIds: { type: "array", maxItems: 10, items: { type: "string" }, description: "Plano preferido (de um Slot). Com o plano tomado a porta tenta o primeiro recurso que couber" },
+  resourceIds: { type: "array", maxItems: 10, items: { type: "string" }, description: "Plano de recursos (de um Slot). Fixa o que foi pedido: recurso cheio = 409 com alternativas, recurso fechado/bloqueado = 409 de aviso (só passa com force). Troca por outro recurso só com allowResourceFallback: true" },
+  allowResourceFallback: { type: "boolean", description: "Padrão: false quando resourceIds é enviado (e SEMPRE na remarcação, que parte dos recursos atuais): o recurso pedido nunca é trocado em silêncio, igual à tela. true = aceita o plano alternativo do mesmo início quando o pedido está cheio (a porta pode escolher outra sala/equipamento equivalente). Sem resourceIds ao marcar, a porta escolhe o plano" },
   force: { type: "array", maxItems: 10, items: { type: "string" }, description: "Códigos de AVISO (severity warn) que a equipe aceita, ex.: OUTSIDE_HOURS. Códigos de bloqueio (capacidade, duração, serviço inativo) nunca passam" },
   notes: str("Observação interna (até 500 caracteres)"),
 };
@@ -212,11 +213,11 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
   "/api/v1/scheduling/appointments/reschedule": {
     post: op(
       "Remarcar",
-      `Cria o novo agendamento e encerra o antigo (rescheduled) na mesma transação. Idempotency-Key/requestId opcional (recomendado para repetição segura). Regra impeditiva = 409. ${key("edit")}`,
+      `Cria o novo agendamento e encerra o antigo (rescheduled) na mesma transação. Idempotency-Key/requestId opcional (recomendado para repetição segura). Sem resourceIds, mantém os recursos ATUAIS e nunca os troca: sala/profissional fechado ou bloqueado no novo horário = 409 de aviso (violations com severity warn; só passa com force explícito), cheio = 409 com alternatives; para mudar de sala envie resourceIds (de um Slot) ou allowResourceFallback: true. Regra impeditiva = 409. ${key("edit")}`,
       "schedulingReschedule",
       {
         parameters: [IDEMPOTENCY_HEADER],
-        requestBody: body(["appointmentId"], { appointmentId: str("Agendamento a remarcar"), ...WHEN_PROPS, resourceIds: BOOK_PROPS.resourceIds, force: BOOK_PROPS.force, requestId: str("Chave de idempotência") }),
+        requestBody: body(["appointmentId"], { appointmentId: str("Agendamento a remarcar"), ...WHEN_PROPS, resourceIds: BOOK_PROPS.resourceIds, allowResourceFallback: BOOK_PROPS.allowResourceFallback, force: BOOK_PROPS.force, requestId: str("Chave de idempotência") }),
         responses: { "200": ok("Remarcado (appointmentId = o novo)", ref("SchedBooked")), ...READ_ERRORS, "404": NOT_FOUND, "409": RULES_409 },
       }
     ),
@@ -298,7 +299,7 @@ export const SCHEDULING_PATHS: Record<string, Json> = {
     post: op("Resolver conflito", `action.type: resource (escolher outro recurso), reschedule (novo horário), cancel ou manual (marcar como resolvido, com nota). Regra impeditiva = 409. ${key("edit")}`, "schedulingResolveConflict", {
       requestBody: body(["conflictId", "action"], {
         conflictId: str("Conflito (de GET /scheduling/pending)"),
-        action: { type: "object", required: ["type"], properties: { type: { type: "string", enum: ["resource", "reschedule", "cancel", "manual"] }, resourceIds: BOOK_PROPS.resourceIds, ...WHEN_PROPS, force: BOOK_PROPS.force, reason: str("Em cancel"), note: str("Em manual") } },
+        action: { type: "object", required: ["type"], properties: { type: { type: "string", enum: ["resource", "reschedule", "cancel", "manual"] }, resourceIds: BOOK_PROPS.resourceIds, allowResourceFallback: BOOK_PROPS.allowResourceFallback, ...WHEN_PROPS, force: BOOK_PROPS.force, reason: str("Em cancel"), note: str("Em manual") } },
       }),
       responses: { "200": ok("Resolvido", { type: "object", properties: { success: { type: "boolean" } } }), ...READ_ERRORS, "404": NOT_FOUND, "409": RULES_409 },
     }),

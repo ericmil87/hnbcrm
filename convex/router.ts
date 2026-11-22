@@ -3698,6 +3698,17 @@ function schedIdemKey(request: Request, body: Record<string, unknown>) {
 }
 
 /** Campos comuns de prévia e criação. Devolve a `Response` 400 quando algo é inválido. */
+/**
+ * `allowResourceFallback` (REST/MCP): `false` = o recurso pedido nunca é trocado por outro (a tela manda `false` sempre
+ * que manda `resourceIds`). Ausente: com `resourceIds` (ou na remarcação, que parte dos recursos atuais) vale `false`;
+ * `true` só por pedido explícito (plano alternativo do mesmo início). Sem `resourceIds` ao marcar, a porta escolhe.
+ */
+function schedFallbackFlag(raw: unknown, pinnedByDefault: boolean): { ok: true; value: boolean | undefined } | { ok: false } {
+  if (raw === undefined || raw === null) return { ok: true, value: pinnedByDefault ? false : undefined };
+  if (typeof raw !== "boolean") return { ok: false };
+  return { ok: true, value: raw };
+}
+
 async function schedBookParts(ctx: any, organizationId: Id<"organizations">, body: Record<string, unknown>) {
   const serviceId = schedId<Id<"schedServices">>(body.serviceId);
   if (!serviceId) return errorResponse("serviceId inválido ou ausente", 400);
@@ -3716,9 +3727,12 @@ async function schedBookParts(ctx: any, organizationId: Id<"organizations">, bod
   if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
   if (body.variantKey !== undefined && typeof body.variantKey !== "string") return errorResponse("variantKey inválido", 400);
   const notes = cleanBodyText(body.notes, 500);
+  const fallback = schedFallbackFlag(body.allowResourceFallback, resourceIds !== undefined && resourceIds.length > 0);
+  if (!fallback.ok) return errorResponse("allowResourceFallback deve ser booleano", 400);
   return {
     serviceId,
     startTime: when.startTime,
+    ...(fallback.value !== undefined ? { allowResourceFallback: fallback.value } : {}),
     ...(typeof body.variantKey === "string" ? { variantKey: body.variantKey } : {}),
     ...(contactId ? { contactId: contactId as Id<"contacts"> } : {}),
     ...(leadId ? { leadId: leadId as Id<"leads"> } : {}),
@@ -3977,7 +3991,8 @@ http.route({
         actor: schedActor(auth),
         origin: "api",
         mode: "preview",
-        ...(rescheduleAppointmentId ? { rescheduleAppointmentId } : {}),
+        // Simular remarcação parte dos recursos atuais e não os troca (igual à remarcação de verdade).
+        ...(rescheduleAppointmentId ? { rescheduleAppointmentId, allowResourceFallback: parts.allowResourceFallback ?? false } : {}),
       });
       return await schedOutcome(ctx, auth.organizationId, result, () =>
         jsonResponse({ preview: true, plan: result.plan, warnings: schedViolations(result.warnings), ...(result.duplicateOf ? { duplicateOf: result.duplicateOf } : {}) })
@@ -4068,6 +4083,8 @@ http.route({
       if (resourceIds === null) return errorResponse("resourceIds inválido (lista de até 10 ids)", 400);
       const force = schedStringList(body.force);
       if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
+      const fallback = schedFallbackFlag(body.allowResourceFallback, true);
+      if (!fallback.ok) return errorResponse("allowResourceFallback deve ser booleano", 400);
       const rawKey = request.headers.get("Idempotency-Key") ?? body.requestId;
       const key = rawKey === undefined || rawKey === null ? undefined : schedIdemKey(request, body);
       if (key && !key.ok) return errorResponse(key.error, 400);
@@ -4077,6 +4094,7 @@ http.route({
         actor: schedActor(auth),
         startTime: when.startTime,
         ...(resourceIds ? { resourceIds } : {}),
+        ...(fallback.value !== undefined ? { allowResourceFallback: fallback.value } : {}),
         ...(force ? { force } : {}),
         ...(key && key.ok ? { idempotencyKey: key.key } : {}),
       });
@@ -4368,7 +4386,7 @@ http.route({
       if (force === null) return errorResponse("force inválido (lista de códigos de aviso)", 400);
       let action:
         | { type: "resource"; resourceIds: Id<"schedResources">[]; force?: string[] }
-        | { type: "reschedule"; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[] }
+        | { type: "reschedule"; startTime: number; resourceIds?: Id<"schedResources">[]; force?: string[]; allowResourceFallback?: boolean }
         | { type: "cancel"; reason?: string }
         | { type: "manual"; note?: string };
       if (act.type === "resource") {
@@ -4377,7 +4395,9 @@ http.route({
       } else if (act.type === "reschedule") {
         const when = await schedWhen(ctx, auth.organizationId, act);
         if (when instanceof Response) return when;
-        action = { type: "reschedule", startTime: when.startTime, ...(resourceIds ? { resourceIds } : {}), ...(force ? { force } : {}) };
+        const fallback = schedFallbackFlag(act.allowResourceFallback, true);
+        if (!fallback.ok) return errorResponse("allowResourceFallback deve ser booleano", 400);
+        action = { type: "reschedule", startTime: when.startTime, ...(resourceIds ? { resourceIds } : {}), ...(fallback.value !== undefined ? { allowResourceFallback: fallback.value } : {}), ...(force ? { force } : {}) };
       } else if (act.type === "cancel") {
         const reason = cleanBodyText(act.reason, 200);
         action = { type: "cancel", ...(reason ? { reason } : {}) };

@@ -513,6 +513,100 @@ describe("remarcar, cancelar, status, desfazer e trocar recurso", () => {
   });
 });
 
+describe("recurso fechado ou cheio nunca passa em silêncio (E2)", () => {
+  const TUE = "2026-06-16";
+  async function rooms() {
+    return await t.run(async (ctx) => {
+      const mk = (name: string, sortOrder: number) =>
+        ctx.db.insert("schedResources", { organizationId: s.orgId, kind: "room", name, capacity: 1, weekly, tags: [], sortOrder, active: true, createdAt: 1, updatedAt: 1 });
+      const r1 = await mk("Sala A", 10);
+      const r2 = await mk("Sala B", 11);
+      const roomSvc = await ctx.db.insert("schedServices", {
+        organizationId: s.orgId, name: "Sessão de sala", durationMin: 60, bufferBeforeMin: 0, bufferAfterMin: 0,
+        requirements: [{ role: "Sala", kind: "room", resourceIds: [r1, r2] }], sortOrder: 2, active: true, createdAt: 1, updatedAt: 1,
+      });
+      return { r1, r2, roomSvc };
+    });
+  }
+  const closeDay = (resourceId: string, date: string) => post("manage", "/resources/day", { resourceId, fromLocalDate: date, mode: "commit", acceptAffected: true });
+  const bookIn = (roomSvc: string, local: string, ids: string[], requestId: string) => post("manage", "/appointments/book", { serviceId: roomSvc, startsAtLocal: local, resourceIds: ids, requestId });
+  const roomOf = async (id: string) => (await t.run((ctx) => ctx.db.get(id as Id<"schedAppointments">)))?.resources.map((r) => r.name);
+
+  test("remarcar sem resourceIds para dia com a sala atual FECHADA: 409 (aviso exige force); force explícito mantém a sala; resourceIds troca", async () => {
+    const { r1, r2, roomSvc } = await rooms();
+    const a = await bookIn(roomSvc, `${MON}T10:00`, [r1], "e2-1");
+    expect(a.status).toBe(201);
+    await closeDay(r1, TUE);
+
+    const refused = await post("edit", "/appointments/reschedule", { appointmentId: a.json.appointmentId, startsAtLocal: `${TUE}T14:00` });
+    expect(refused.status).toBe(409);
+    expect(refused.json.code).toBe("sched_rules");
+    expect(refused.json.violations.map((v: Json) => `${v.code}:${v.severity}`)).toContain("RESOURCE_CLOSED:warn");
+    expect((await appts()).filter((x) => x.status === "scheduled")).toHaveLength(1);
+
+    const other = await post("edit", "/appointments/reschedule", { appointmentId: a.json.appointmentId, startsAtLocal: `${TUE}T14:00`, resourceIds: [r2] });
+    expect(other.status).toBe(200);
+    expect(await roomOf(other.json.appointmentId)).toEqual(["Sala B"]);
+
+    const forced = await post("edit", "/appointments/reschedule", { appointmentId: other.json.appointmentId, startsAtLocal: `${TUE}T16:00`, resourceIds: [r1], force: ["RESOURCE_CLOSED"] });
+    expect(forced.status).toBe(200);
+    expect((await t.run((ctx) => ctx.db.get(forced.json.appointmentId as Id<"schedAppointments">)))?.forcedRules).toEqual(["RESOURCE_CLOSED"]);
+  });
+
+  test("sala pedida cheia: por padrão 409 (não troca em silêncio, como a tela); só `allowResourceFallback:true` aceita o plano alternativo", async () => {
+    const { r1, r2, roomSvc } = await rooms();
+    const a = await bookIn(roomSvc, `${MON}T10:00`, [r1], "e2-2");
+    await bookIn(roomSvc, `${TUE}T14:00`, [r1], "e2-3");
+    const body = { appointmentId: a.json.appointmentId, startsAtLocal: `${TUE}T14:00` };
+
+    const pinnedCurrent = await post("edit", "/appointments/reschedule", body);
+    expect(pinnedCurrent.status).toBe(409);
+    expect(pinnedCurrent.json.violations.map((v: Json) => v.code)).toContain("CAPACITY_EXCEEDED");
+    const pinnedNamed = await post("edit", "/appointments/reschedule", { ...body, resourceIds: [r1] });
+    expect(pinnedNamed.status).toBe(409);
+    expect((await appts()).filter((x) => x.status === "scheduled" && x.startTime !== NOW)).toHaveLength(2); // nada foi remarcado
+
+    // prévia da remarcação com o mesmo comportamento
+    const preview = await post("edit", "/appointments/preview", { serviceId: roomSvc, startsAtLocal: `${TUE}T14:00`, rescheduleAppointmentId: a.json.appointmentId });
+    expect(preview.status).toBe(409);
+
+    const swapped = await post("edit", "/appointments/reschedule", { ...body, allowResourceFallback: true });
+    expect(swapped.status).toBe(200);
+    expect(await roomOf(swapped.json.appointmentId)).toEqual(["Sala B"]);
+    expect(r2).toBeTruthy();
+  });
+
+  test("marcar com resourceIds cheio: 409 por padrão; allowResourceFallback inválido = 400", async () => {
+    const { r1, roomSvc } = await rooms();
+    await bookIn(roomSvc, `${MON}T10:00`, [r1], "e2-4");
+    const clash = await bookIn(roomSvc, `${MON}T10:00`, [r1], "e2-5");
+    expect(clash.status).toBe(409);
+    const fallback = await post("manage", "/appointments/book", { serviceId: roomSvc, startsAtLocal: `${MON}T10:00`, resourceIds: [r1], allowResourceFallback: true, requestId: "e2-6" });
+    expect(fallback.status).toBe(201);
+    expect(await roomOf(fallback.json.appointmentId)).toEqual(["Sala B"]);
+    for (const path of ["/appointments/book", "/appointments/preview", "/appointments/reschedule"]) {
+      const bad = await post("manage", path, { serviceId: roomSvc, appointmentId: fallback.json.appointmentId, startsAtLocal: `${MON}T11:00`, allowResourceFallback: "sim", requestId: "e2-7" });
+      expect(bad.status).toBe(400);
+      expect(bad.json.error ?? "").toMatch(/allowResourceFallback/);
+    }
+  });
+
+  test("conflito: remarcar pela ação `reschedule` não troca sala em silêncio (padrão) e aceita `allowResourceFallback:true`", async () => {
+    const { r1, r2, roomSvc } = await rooms();
+    const a = await bookIn(roomSvc, `${MON}T10:00`, [r1], "e2-8");
+    await bookIn(roomSvc, `${MON}T10:00`, [r2], "e2-8b");
+    await bookIn(roomSvc, `${TUE}T14:00`, [r1], "e2-9");
+    await closeDay(r1, MON); // Sala B também está ocupada às 10:00: o cliente da Sala A fica sem lugar
+    const conflict = await t.run(async (ctx) => (await ctx.db.query("schedConflicts").collect()).find((c) => c.appointmentId === (a.json.appointmentId as Id<"schedAppointments">) && c.status === "open"));
+    expect(conflict).toBeTruthy();
+    const clash = await post("manage", "/conflicts/resolve", { conflictId: conflict!._id, action: { type: "reschedule", startsAtLocal: `${TUE}T14:00` } });
+    expect(clash.status).toBe(409);
+    expect(clash.json.violations.map((v: Json) => v.code)).toContain("CAPACITY_EXCEEDED");
+    const ok = await post("manage", "/conflicts/resolve", { conflictId: conflict!._id, action: { type: "reschedule", startsAtLocal: `${TUE}T14:00`, allowResourceFallback: true } });
+    expect(ok.status).toBe(200);
+  });
+});
+
 describe("fechar e reabrir recurso, conflitos", () => {
   const close = (key: string, body: Json) => post(key, "/resources/day", { fromLocalDate: MON, ...body });
 

@@ -452,7 +452,7 @@ export const internalBookAppointment = internalMutation({
     if (rescheduleAppointmentId) {
       if (args.mode !== "preview") throw new ConvexError("Para remarcar de fato, use internalRescheduleAppointment.");
       return flatten(
-        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force })
+        await previewRescheduleAs(ctx, actor, now, { organizationId: args.organizationId, appointmentId: rescheduleAppointmentId, serviceId: args.serviceId, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force })
       );
     }
     await assertEntitiesInOrg(ctx, args.organizationId, rest);
@@ -470,6 +470,8 @@ export const internalRescheduleAppointment = internalMutation({
     actor: actorArgV,
     startTime: v.number(),
     resourceIds: v.optional(v.array(v.id("schedResources"))),
+    /** `false` = o recurso pedido (ou, sem `resourceIds`, o atual) nunca é trocado por outro (REST/MCP mandam `false` por padrão). */
+    allowResourceFallback: v.optional(v.boolean()),
     force: v.optional(v.array(v.string())),
     idempotencyKey: v.optional(v.string()),
   },
@@ -479,7 +481,7 @@ export const internalRescheduleAppointment = internalMutation({
     const appointment = await loadAppointmentInOrg(ctx, args.organizationId, args.appointmentId);
     await assertEntitiesInOrg(ctx, args.organizationId, { resourceIds: args.resourceIds });
     return flatten(
-      await rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, force: args.force, idempotencyKey: args.idempotencyKey, now })
+      await rescheduleAppointmentCore(ctx, { appointment, actor, startTime: args.startTime, resourceIds: args.resourceIds, allowResourceFallback: args.allowResourceFallback, force: args.force, idempotencyKey: args.idempotencyKey, now })
     );
   },
 });

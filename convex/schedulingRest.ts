@@ -405,7 +405,14 @@ export const internalReopenResourceDay = internalMutation({
 
 const resolveActionV = v.union(
   v.object({ type: v.literal("resource"), resourceIds: v.array(v.id("schedResources")), force: v.optional(v.array(v.string())) }),
-  v.object({ type: v.literal("reschedule"), startTime: v.number(), resourceIds: v.optional(v.array(v.id("schedResources"))), force: v.optional(v.array(v.string())) }),
+  v.object({
+    type: v.literal("reschedule"),
+    startTime: v.number(),
+    resourceIds: v.optional(v.array(v.id("schedResources"))),
+    /** `false` = os recursos pedidos (ou, sem `resourceIds`, os atuais) nunca são trocados por outro (ver `BookArgs.allowResourceFallback`). */
+    allowResourceFallback: v.optional(v.boolean()),
+    force: v.optional(v.array(v.string())),
+  }),
   v.object({ type: v.literal("cancel"), reason: v.optional(v.string()) }),
   v.object({ type: v.literal("manual"), note: v.optional(v.string()) })
 );
