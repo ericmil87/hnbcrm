@@ -2098,9 +2098,15 @@ export async function undoHumanConfirmBookingCore(
 ): Promise<{ appointmentId: Id<"schedAppointments">; kind: "created" | "approved"; sourceMessageId?: Id<"messages"> }> {
   const now = args.now ?? Date.now();
   const { actor } = args;
-  if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
-  const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
-  if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  // Só a equipe desfaz, com uma exceção: o próprio sistema desfaz a SUA criação quando o humano corrige a mensagem logo depois
+  // ("Confirmado terça 10h", "ops, terça 14h"); ator `system`/`human_message` (as mesmas travas: criação desta via intocada, ou aprovação desta via).
+  const selfCorrection = actor.type === "system" && actor.via === "human_message";
+  if (actor.type === "human") {
+    const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
+    if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  } else if (!selfCorrection) {
+    fail("Só a equipe desfaz uma marcação.");
+  }
   const org = assertOrgModule(await ctx.db.get(args.organizationId));
   const tz = orgTimezone(org);
   const a = await ctx.db.get(args.appointmentId);
@@ -2111,6 +2117,8 @@ export async function undoHumanConfirmBookingCore(
   if (now - appt.createdAt > UNDO_HUMAN_CONFIRM_WINDOW_MIN * MINUTE_MS) fail("A marcação foi feita há mais de 24 horas: use Cancelar.");
   const untouched = appt.statusChangedAt <= appt.createdAt && appt.approvedAt === undefined && appt.clientConfirmedAt === undefined;
   if (appt.status !== "scheduled" || !untouched) fail("O horário já mudou de situação: use Cancelar.");
+  // O sistema só desfaz o que NINGUÉM ajustou (troca de sala/profissional, serviço ou horário mexem em `updatedAt`).
+  if (selfCorrection && appt.updatedAt > appt.createdAt) fail("A equipe já ajustou este horário: o sistema não o desfaz.");
 
   const snapshot = await snapshotAllocations(ctx, appt._id);
   await ctx.db.patch(appt._id, {

@@ -226,6 +226,23 @@ describe("extractDateTimeMentions (mensagens do cliente, sem marcador de confirm
     expect(() => extractDateTimeMentions("hoje 14h", { now: SAT, tz: "Marte/Base" })).toThrow();
   });
 
+  it("dia e hora separados só por vírgula, período do dia ou 'às' são UMA menção (rodada 2); qualquer outra coisa no meio, não", () => {
+    expect(ex("terça, 15h")).toEqual([["2026-11-24", hm(15)]]);
+    expect(ex("quero um horário na terça de tarde, 15h pode ser?")).toEqual([["2026-11-24", hm(15)]]);
+    expect(ex("segunda, às 9h")).toEqual([["2026-11-23", hm(9)]]);
+    // Fica como estava: dia sem hora e hora sem dia (não é a mesma coisa).
+    expect(ex("terça eu não posso, 15h")).toEqual([[undefined, hm(15)]]);
+    expect(ex("terça 15h ou quarta 10h")).toEqual([["2026-11-24", hm(15)], ["2026-11-25", hm(10)]]);
+    expect(ex("terça. Preciso de 15h de trabalho")).not.toEqual([["2026-11-24", hm(15)]]);
+  });
+
+  it("'segunda, 10h e terça, 15h' são DUAS menções (a hora não passa para o dia seguinte da lista)", () => {
+    expect(ex("segunda, 10h e terça, 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+    expect(ex("segunda, às 10h e terça, às 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+    expect(ex("segunda 10h e terça 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+    expect(ex("segunda 10h ou terça 15h")).toEqual([["2026-11-23", hm(10)], ["2026-11-24", hm(15)]]);
+  });
+
   it("entradas vazias, longas ou não-string devolvem vazio", () => {
     expect(ex("")).toEqual([]);
     expect(ex(`quinta 10h ${"a ".repeat(400)}`)).toEqual([]);
