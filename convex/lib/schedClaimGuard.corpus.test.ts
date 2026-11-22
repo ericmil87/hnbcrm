@@ -101,5 +101,8 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
     expect(detectUnbackedBookingClaim("Terça às 15h não tem esse horário livre, mas tenho 14h.", st)).toBeNull();
     expect(detectUnbackedBookingClaim("Não tem problema, terça às 11h já está marcado!", st)).not.toBeNull();
     expect(detectUnbackedBookingClaim("Não tem erro: quinta às 16h está garantido.", st)).not.toBeNull();
+    // "um horário que já estava agendado": oração relativa que descreve o pedido do cliente
+    expect(detectUnbackedBookingClaim("Thiago, como é uma remarcação de um horário que já estava agendado, a equipe cuida disso e te responde.", buildState({}))).toBeNull();
+    expect(detectUnbackedBookingClaim("Pronto, o horário está agendado, te espero terça às 10h.", st)).not.toBeNull();
   });
 });

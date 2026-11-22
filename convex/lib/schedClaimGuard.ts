@@ -143,7 +143,7 @@ const MARKERS: Marker[] = [
 const HEDGE_BEFORE =
   /\b(?:nao|nem|nunca|ainda nao|sem|vou|vamos|vai|posso|podemos|pode|podem|deve|devem|preciso|precisa|quero|quer|queria|queira|gostaria|deseja|para (?:deixar|ficar|ser|estar|ver|saber)|pra (?:deixar|ficar|ser|estar|ver|saber)|assim que|quando|se|caso|ate que|antes de|depois que|apos|talvez|como|sera|seria|estara|so|nenhum|nenhuma)\b/;
 /** "nada foi marcado", "quem já está marcado": o marcador é negado ou é objeto da pergunta, só quando vem logo depois. */
-const HEDGE_RIGHT_BEFORE = /\b(?:nada\s+(?:(?:foi|esta|estava|ficou|ainda|ate agora)\s+)*|quem\s+(?:ja\s+)?(?:esta|estao|ficou|ficaram|foi)\s+|ninguem\s+(?:(?:esta|foi|ficou)\s+)?|que\s+(?:ja\s+)?(?:esta|estao|foi)\s+)$/;
+const HEDGE_RIGHT_BEFORE = /\b(?:nada\s+(?:(?:foi|esta|estava|ficou|ainda|ate agora)\s+)*|quem\s+(?:ja\s+)?(?:esta|estao|ficou|ficaram|foi)\s+|ninguem\s+(?:(?:esta|foi|ficou)\s+)?|que\s+(?:ja\s+)?(?:esta|estao|estava|estavam|foi|era)\s+)$/;
 /** Condição que abre a frase vale até o fim dela, mesmo depois de vírgula: "Se der certo, fica marcado". */
 const CONDITION_OPENER = /\b(?:se|caso|assim que|quando|ate que|depois que|desde que)\b/;
 /** Frases que narram o que o CLIENTE disse: nunca são afirmação nem horário inventado. */
