@@ -44,8 +44,8 @@ import schema from "./schema";
 
 const MAX_RANGE_DAYS = 35;
 const DAY_APPOINTMENTS_CAP = 200;
-/** Documentos lidos da faixa que antecede o dia (agendamentos que podem cruzar a meia-noite). */
-const CROSSING_READ_CAP = 100;
+/** Documentos lidos da faixa que antecede o dia (agendamentos que podem cruzar a meia-noite); na grade da semana, por status ativo. */
+const CROSSING_READ_CAP = 50;
 const RANGE_STATUS_CAP = 800;
 const RANGE_EXCEPTIONS_CAP = 1000;
 const CLOSED_DAYS_MAX = 42;
@@ -429,6 +429,8 @@ export const listAgendaAppointments = query({
     appointments: v.array(appointmentRowValidator),
     /** Cursor da próxima página; `null` = acabou. Pode vir com página curta (`view_own`, teto de leitura). */
     next: v.union(cursorValidator, v.null()),
+    /** Modo `grid`: a faixa de 8 h antes do período estourou o teto de leitura (pode faltar quem cruza o início). */
+    crossingCapped: v.optional(v.boolean()),
   }),
   handler: async (ctx, args) => {
     const empty = { enabled: false, appointments: [], next: null };
@@ -470,20 +472,27 @@ export const listAgendaAppointments = query({
     // Quem começou antes do período e cruza o primeiro instante (só na primeira página: nas seguintes `lo` já é depois e
     // o cursor não repete). O bloco tem teto `MAX_BLOCK_MIN`, então só pode ter começado nessa faixa do mesmo índice.
     let crossing: Doc<"schedAppointments">[] = [];
+    let crossingCapped = false;
     if (gridMode && after === undefined) {
       const periodStart = dayBounds(args.fromLocalDate, tz).start;
-      const before = await ctx.db
-        .query("schedAppointments")
-        .withIndex("by_organization_and_start", (q) =>
-          q.eq("organizationId", args.organizationId).gte("startTime", periodStart - MAX_BLOCK_MIN * MINUTE_MS).lt("startTime", periodStart)
-        )
-        .order("desc")
-        .take(CROSSING_READ_CAP);
-      crossing = before.filter((a) => a.endTime > periodStart && ACTIVE.has(a.status) && canSeeAppointment(reader, a, own)).reverse();
+      // Um índice por status ATIVO (como o fluxo principal): cancelado e remarcado não consomem o teto da faixa.
+      for (const st of ACTIVE_STATUSES) {
+        const before = await ctx.db
+          .query("schedAppointments")
+          .withIndex("by_organization_and_status_and_start", (q) =>
+            q.eq("organizationId", args.organizationId).eq("status", st).gte("startTime", periodStart - MAX_BLOCK_MIN * MINUTE_MS).lt("startTime", periodStart)
+          )
+          .order("desc")
+          .take(CROSSING_READ_CAP + 1);
+        if (before.length > CROSSING_READ_CAP) crossingCapped = true;
+        crossing.push(...before.slice(0, CROSSING_READ_CAP).filter((a) => a.endTime > periodStart && canSeeAppointment(reader, a, own)));
+      }
+      crossing.sort((a, b) => a.startTime - b.startTime || a._creationTime - b._creationTime);
     }
     return {
       enabled: true,
       appointments: [...crossing, ...res.items].map(toAppointmentRow),
+      ...(crossingCapped ? { crossingCapped: true } : {}),
       next: res.more && res.cursorRow ? { startTime: res.cursorRow.startTime, creationTime: res.cursorRow._creationTime } : null,
     };
   },
@@ -504,6 +513,8 @@ export const listClosedDays = query({
     totalResources: v.number(),
     /** O teto de exceções cortou o fim do período. */
     capped: v.boolean(),
+    /** Só com `capped`: último dia avaliado por inteiro; os dias depois dele não foram avaliados. */
+    completeThrough: v.optional(v.string()),
   }),
   handler: async (ctx, args) => {
     const empty = { enabled: false, days: [], totalResources: 0, capped: false };
@@ -526,16 +537,27 @@ export const listClosedDays = query({
       .take(RANGE_EXCEPTIONS_CAP + 1);
     const capped = exceptions.length > RANGE_EXCEPTIONS_CAP;
     const used = exceptions.slice(0, RANGE_EXCEPTIONS_CAP);
+    // Cortou: o último dia lido pode estar incompleto (inclusive), então só se avalia até o dia anterior a ele.
+    const completeThrough = capped ? addLocalDays(used[RANGE_EXCEPTIONS_CAP - 1].localDate, -1) : null;
+    const byDate = new Map<string, Doc<"schedExceptions">[]>();
+    for (const e of used) {
+      const list = byDate.get(e.localDate);
+      if (list) list.push(e);
+      else byDate.set(e.localDate, [e]);
+    }
     const days: Array<{ localDate: string; closedResources: number }> = [];
-    if (resources.length > 0 && used.length > 0) {
+    if (resources.length > 0) {
       for (let d = args.fromLocalDate; diffLocalDays(d, args.toLocalDate) >= 0; d = addLocalDays(d, 1)) {
-        const avail = computeDayAvailability({ date: d, tz, resources, exceptions: used, allocations: [], internalEvents: [] });
+        if (completeThrough !== null && d > completeThrough) break;
+        const ofDay = byDate.get(d);
+        if (!ofDay) continue;
+        const avail = computeDayAvailability({ date: d, tz, resources, exceptions: ofDay, allocations: [], internalEvents: [] });
         let closed = 0;
         for (const rd of avail.values()) if (rd.closed) closed++;
         if (closed > 0) days.push({ localDate: d, closedResources: closed });
       }
     }
-    return { enabled: true, days, totalResources: resources.length, capped };
+    return { enabled: true, days, totalResources: resources.length, capped, ...(completeThrough !== null ? { completeThrough } : {}) };
   },
 });
 
@@ -579,7 +601,7 @@ export const getAppointment = query({
       .withIndex("by_appointment", (q) => q.eq("appointmentId", appt._id))
       .take(20);
     const { createdByName, statusActors } = await resolveAppointmentActors(ctx, appt);
-    const contactPhone = await contactPhoneOf(ctx, appt);
+    const contactPhone = hasPermission(reader.permissions, "contacts", "view") ? await contactPhoneOf(ctx, appt) : undefined;
     return {
       appointment: toAppointmentDetail(appt),
       ...(contactPhone !== undefined ? { contactPhone } : {}),
@@ -613,6 +635,7 @@ export const getAppointmentContactPhone = query({
     if (!reader) return null;
     const own = await ownResourceIds(ctx, reader);
     if (!canSeeAppointment(reader, appt, own)) return null;
+    if (!hasPermission(reader.permissions, "contacts", "view")) return null;
     return (await contactPhoneOf(ctx, appt)) ?? null;
   },
 });

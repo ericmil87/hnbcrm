@@ -53,6 +53,27 @@ export function closedDaysFromServer(
   return out;
 }
 
+/**
+ * Cadeado final dos `dates`: a leitura do servidor vale para os dias que ela cobre (todos, ou até `completeThrough` quando
+ * o teto cortou) e a aproximação de `getConfig.closures` cobre o resto (leitura ainda não chegou, trocou de semana, corte).
+ * `server` precisa ser a resposta do INTERVALO ATUAL (nunca a anterior).
+ */
+export function mergeClosedDays(
+  dates: readonly string[],
+  server: { days: ReadonlyArray<{ localDate: string; closedResources: number }>; totalResources: number; completeThrough?: string } | undefined,
+  approx: Readonly<Record<string, ClosedDay>>
+): Record<string, ClosedDay> {
+  if (!server) return { ...approx };
+  const fromServer = closedDaysFromServer(server.days, server.totalResources);
+  const out: Record<string, ClosedDay> = {};
+  for (const d of dates) {
+    const covered = server.completeThrough === undefined || d <= server.completeThrough;
+    const v = covered ? fromServer[d] : approx[d];
+    if (v) out[d] = v;
+  }
+  return out;
+}
+
 /** Contagens do mês a partir do que já foi lido (sem `listAgendaRange`): agendamentos, aguardando e fechamentos. */
 export function syntheticRange(dates: readonly string[], appointments: readonly GridAppointment[], closedByDay: Readonly<Record<string, ClosedDay>>): RangeData {
   const active = new Map<string, number>();

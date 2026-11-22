@@ -36,7 +36,7 @@ export function useRangeAppointments(
   else if (p1 && !(p1.next && p2 === undefined) && !(p2?.next && p3 === undefined)) {
     const pages = [p1, p2, p3].filter((p) => p !== undefined);
     const last = pages[pages.length - 1];
-    fresh = { appointments: pages.flatMap((p) => p.appointments) as GridAppointment[], truncated: !!last.next };
+    fresh = { appointments: pages.flatMap((p) => p.appointments) as GridAppointment[], truncated: !!last.next || pages.some((p) => "crossingCapped" in p && p.crossingCapped === true) };
   }
   const data = useKeepPrevious(fresh, organizationId);
   return { data, stale: enabled && fresh === undefined && data !== undefined };

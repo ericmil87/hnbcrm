@@ -34,7 +34,7 @@ import {
 } from "@/lib/agendaGrid";
 import { isExpiredProposal } from "@/lib/agendaStatus";
 import { buildMonthCells } from "@/lib/agendaMonth";
-import { closedDaysFromServer, closedResourcesByDay, syntheticRange } from "@/lib/agendaClosedDays";
+import { closedResourcesByDay, mergeClosedDays, syntheticRange } from "@/lib/agendaClosedDays";
 import { UNDO_TARGETS, type SchedStatus } from "../../../../convex/lib/schedStatus";
 import { buildMonthGrid, buildMonthLines, monthGridDates } from "@/lib/agendaMonthLines";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
@@ -280,14 +280,18 @@ export function AgendaPageView() {
     const dates = week ? weekDates : monthDates;
     return { organizationId, fromLocalDate: dates[0], toLocalDate: dates[dates.length - 1] };
   }, [week, weekDates, monthDates, organizationId]);
-  const rawClosed = useQuery(api.scheduling.listClosedDays, canQuery && rangeView ? closedArgs : "skip");
-  const serverClosed = useKeepPrevious(rawClosed, organizationId);
-  const closedByDay = useMemo(() => {
-    const dates = week ? weekDates : monthDates;
-    return serverClosed?.enabled
-      ? closedDaysFromServer(serverClosed.days, serverClosed.totalResources)
-      : closedResourcesByDay(config?.closures ?? [], activeResources, dates.filter((d) => d >= today));
-  }, [week, weekDates, monthDates, today, config, activeResources, serverClosed]);
+  const closedDates = week ? weekDates : monthDates;
+  // Só a resposta do intervalo ATUAL vale (nunca a anterior, que esconderia o cadeado ao trocar de semana).
+  const serverClosed = useQuery(api.scheduling.listClosedDays, canQuery && rangeView ? closedArgs : "skip");
+  const closedByDay = useMemo(
+    () =>
+      mergeClosedDays(
+        closedDates,
+        serverClosed?.enabled ? serverClosed : undefined,
+        closedResourcesByDay(config?.closures ?? [], activeResources, closedDates.filter((d) => d >= today))
+      ),
+    [closedDates, today, config, activeResources, serverClosed]
+  );
   const monthRangeData = useMemo(() => {
     if (!month) return undefined;
     if (range?.enabled && rangeAppts.data?.truncated) return range;
@@ -370,10 +374,11 @@ export function AgendaPageView() {
   // Ações rápidas do cartão do passar do mouse (Confirmar, Chegou): a mesma mutation do painel.
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
   const undoStatus = useMutation(api.schedulingMutations.undoAppointmentStatus);
+  const canOpenInbox = perms.can("inbox", "view_own");
   const quick: QuickActions = useMemo(
     () => ({
       contact: (a, onDone) => (
-        <QuickContactPhone appointmentId={a._id} conversationId={a.conversationId} onOpenConversation={(id) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`)} onDone={onDone} />
+        <QuickContactPhone appointmentId={a._id} conversationId={canOpenInbox ? a.conversationId : undefined} onOpenConversation={(id) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`)} onDone={onDone} />
       ),
       canEdit: access.canEdit,
       onStatus: (appointmentId, to) => {
@@ -399,7 +404,7 @@ export function AgendaPageView() {
         );
       },
     }),
-    [access.canEdit, organizationId, setStatus, undoStatus, navigate]
+    [access.canEdit, organizationId, setStatus, undoStatus, navigate, canOpenInbox]
   );
 
   // Arrastar um compromisso da equipe na Semana: a mesma mutation da página de compromissos (mantém a duração).

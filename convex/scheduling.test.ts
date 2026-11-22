@@ -928,4 +928,47 @@ describe("limites da grade (modo grid, cruzamento, telefone, dias fechados)", ()
       assertMatchesReturns(r, sched.listClosedDays);
     }
   });
+  test("sem `contacts: view` o telefone não sai (detalhe nem cartão), mesmo com agenda view_all", async () => {
+    await t.run((ctx) => ctx.db.patch(s.contactId, { phone: "5585988887777" }));
+    const id = await book({ start: at(MON, 9), contactId: s.contactId, resources: ana() });
+    await t.run(async (ctx) => {
+      const m = await ctx.db.get(s.viewAll.memberId);
+      await ctx.db.patch(s.viewAll.memberId, { permissions: { ...m!.permissions!, agenda: "view_all", contacts: "none" } });
+    });
+    const detail = await as(s.viewAll).query(api.scheduling.getAppointment, { appointmentId: id });
+    assertMatchesReturns(detail, sched.getAppointment);
+    expect(detail).not.toBeNull();
+    expect(detail).not.toHaveProperty("contactPhone");
+    expect(await as(s.viewAll).query(api.scheduling.getAppointmentContactPhone, { appointmentId: id })).toBeNull();
+    expect(await as(s.admin).query(api.scheduling.getAppointmentContactPhone, { appointmentId: id })).toBe("+55 (85) 98888-7777");
+  });
+
+  test("faixa antes do período lê só status ativos: cancelados não consomem o teto, e cortar sinaliza", async () => {
+    for (let i = 0; i < 51; i++) await book({ start: at(SUN, 22) + i, durationMin: 20, status: "cancelled", localDate: SUN, resources: ana() });
+    const crossingId = await book({ start: at(SUN, 23), durationMin: 120, localDate: SUN, resources: ana() });
+    const r = await list(s.admin);
+    assertMatchesReturns(r, sched.listAgendaAppointments);
+    expect(r.appointments.map((a) => a._id)).toEqual([crossingId]);
+    expect(r).not.toHaveProperty("crossingCapped");
+    for (let i = 0; i < 51; i++) await book({ start: at(SUN, 22) + i, durationMin: 240, localDate: SUN, resources: ana() });
+    const capped = await list(s.admin);
+    assertMatchesReturns(capped, sched.listAgendaAppointments);
+    expect((capped as { crossingCapped?: boolean }).crossingCapped).toBe(true);
+  });
+
+  test("listClosedDays com teto de exceções: só avalia até o dia anterior ao último lido e devolve completeThrough", async () => {
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 1001; i++) {
+        await ctx.db.insert("schedExceptions", {
+          organizationId: s.orgId, localDate: i < 600 ? "2026-06-02" : i < 1000 ? "2026-06-03" : "2026-06-04", resourceId: clinic.rooms.r1, mode: "closed", reasonCode: "holiday", source: "manual", createdAt: 1,
+        });
+      }
+    });
+    const r = await as(s.admin).query(api.scheduling.listClosedDays, { organizationId: s.orgId, fromLocalDate: "2026-06-01", toLocalDate: "2026-06-10" });
+    assertMatchesReturns(r, sched.listClosedDays);
+    expect(r.capped).toBe(true);
+    // a última lida (a 1000ª) é de 03/06: esse dia pode estar incompleto, então só vale até 02/06
+    expect((r as { completeThrough?: string }).completeThrough).toBe("2026-06-02");
+    expect(r.days.map((d) => d.localDate)).toEqual(["2026-06-02"]);
+  });
 });

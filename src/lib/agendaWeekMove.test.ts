@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GridAppointment } from "./agendaGrid";
 import { buildWeekModel, isContinuationPiece, movedEventStart } from "./agendaWeekGrid";
-import { closedDaysFromServer } from "./agendaClosedDays";
+import { closedDaysFromServer, mergeClosedDays } from "./agendaClosedDays";
 import { zonedAtMinutes } from "./agendaZone";
 
 const TZ = "America/Sao_Paulo";
@@ -46,5 +46,33 @@ describe("closedDaysFromServer", () => {
       "2026-06-16": { closed: 4, all: true },
     });
     expect(closedDaysFromServer([], 0)).toEqual({});
+  });
+});
+
+describe("arrastar o segundo pedaço em fuso com horário de verão", () => {
+  const NY = "America/New_York";
+  it("a diferença é em hora de parede: cruza a troca de março sem errar uma hora", () => {
+    // Plantão sáb 07/03/2026 22:00 -> dom 08/03 02:00 (a troca é 08/03 às 02:00 em NY; o domingo tem 23 h)
+    const item = { startTime: zonedAtMinutes("2026-03-07", 22 * 60, NY), endTime: zonedAtMinutes("2026-03-08", 3 * 60, NY) };
+    expect(isContinuationPiece(item, "2026-03-08", NY)).toBe(true);
+    // Pedaço de domingo (topo 00:00 de 08/03) solto na quarta 11/03 às 01:00: 22:00 + 1 h = 23:00 de terça 10/03
+    expect(movedEventStart(item, "2026-03-08", "2026-03-11", 60, NY)).toBe(zonedAtMinutes("2026-03-10", 23 * 60, NY));
+    // soltar no mesmo lugar não muda nada, nem no dia de 23 h
+    expect(movedEventStart(item, "2026-03-08", "2026-03-08", 0, NY)).toBe(item.startTime);
+    // passa de 24 h somadas: 22:00 + 3 h = 01:00 do dia seguinte
+    expect(movedEventStart(item, "2026-03-08", "2026-03-15", 180, NY)).toBe(zonedAtMinutes("2026-03-15", 60, NY));
+  });
+});
+
+describe("mergeClosedDays", () => {
+  const dates = ["2026-06-01", "2026-06-02", "2026-06-03"];
+  const approx = { "2026-06-02": { closed: 1, all: false }, "2026-06-03": { closed: 2, all: true } };
+  it("sem resposta do servidor usa a aproximação; com resposta completa vale só o servidor", () => {
+    expect(mergeClosedDays(dates, undefined, approx)).toEqual(approx);
+    expect(mergeClosedDays(dates, { days: [{ localDate: "2026-06-01", closedResources: 2 }], totalResources: 2 }, approx)).toEqual({ "2026-06-01": { closed: 2, all: true } });
+  });
+  it("com o teto cortado, os dias depois de `completeThrough` caem na aproximação", () => {
+    const server = { days: [{ localDate: "2026-06-01", closedResources: 1 }], totalResources: 2, completeThrough: "2026-06-01" };
+    expect(mergeClosedDays(dates, server, approx)).toEqual({ "2026-06-01": { closed: 1, all: false }, ...approx });
   });
 });
