@@ -445,3 +445,8 @@ try:
     import scenarios_r3  # noqa: F401  (rodada 2; precisa dos cenários de base acima)
 except ImportError:
     pass
+
+try:
+    import scenarios_r4  # noqa: F401
+except ImportError:
+    pass
