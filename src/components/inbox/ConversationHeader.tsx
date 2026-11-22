@@ -636,7 +636,7 @@ export function ConversationHeader({
         <div className={cn(detailsOpen ? "block" : "hidden md:block")}>
           {(funnelChip || originLine || languagePill || windowInfo || scheduling.hasNext || (showAiControls && !isGroup)) && (
             <div
-              className="flex items-center gap-2 overflow-x-auto px-3 pb-1.5 [-ms-overflow-style:none] [scrollbar-width:none] md:px-4 [&::-webkit-scrollbar]:hidden"
+              className="flex flex-wrap items-center gap-2 overflow-x-auto px-3 pb-1.5 [scrollbar-width:none] md:flex-nowrap md:px-4 [&::-webkit-scrollbar]:hidden"
               role="toolbar"
               aria-label="Detalhes da conversa"
             >

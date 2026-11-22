@@ -70,6 +70,18 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     render(<AiPolicyForm aiActive={false} value={base()} onChange={() => {}} />);
     expect(screen.getAllByRole("radio").length).toBeGreaterThan(3);
   });
+  it("chaves de Sugestões e IA: tocar no texto também liga e desliga (área de toque maior que a chave de 44 x 24)", () => {
+    const onChange = vi.fn();
+    render(<AiPolicyForm value={base()} onChange={onChange} />);
+    fireEvent.click(screen.getByText("Consultar horários livres"));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), consult: !base().consult });
+    fireEvent.click(screen.getByText(/quem nunca veio antes passa pela sua aprovação/));
+    expect(onChange).toHaveBeenLastCalledWith({ ...base(), firstVisitNeedsApproval: !base().firstVisitNeedsApproval });
+    // A própria chave amplia o toque para 44 px por um pseudo-elemento (o desenho continua 44 x 24).
+    for (const name of ["Consultar horários livres", "Primeira visita sempre com aprovação"]) {
+      expect(screen.getByRole("switch", { name }).className).toContain("before:-inset-y-2.5");
+    }
+  });
   it("mostra quem aceitou", () => {
     render(<AiPolicyForm value={base(true)} onChange={() => {}} ackNote='Ana aceitou o aviso do "marca sozinha" em 01/01/2026.' />);
     expect(screen.getByText(/Ana aceitou/)).toBeInTheDocument();

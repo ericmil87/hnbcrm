@@ -153,6 +153,12 @@ export interface RunView {
   progress: number | null;
 }
 
+/** "Fechamento concluído: 1 mudou de lugar e nenhum ficou sem lugar." (concordância por quantidade). */
+export function closureDoneText(moved: number, conflicts: number): string {
+  const part = (n: number, c: { zero: string; one: string; many: string }) => (n === 0 ? c.zero : plural(n, c.one, c.many));
+  return fillVocab(t.run.done, { moved: part(moved, t.run.moved), conflicts: part(conflicts, t.run.without) });
+}
+
 /** Andamento e resultado de um fechamento em lotes (`getClosureRun`). `failed` e `truncated` = não terminou por inteiro. */
 export function runView(run: ClosureRunLike): RunView {
   if (run.kind === "capacity") return capacityRunView(run);
@@ -166,7 +172,7 @@ export function runView(run: ClosureRunLike): RunView {
   const text =
     run.total === 0 && run.processed === 0
       ? t.run.doneNone
-      : fillVocab(t.run.done, { moved: run.reallocated, conflicts: run.conflicts + run.failed });
+      : closureDoneText(run.reallocated, run.conflicts + run.failed);
   return { state: "done", text, progress: 1 };
 }
 

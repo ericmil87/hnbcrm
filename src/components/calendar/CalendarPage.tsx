@@ -39,7 +39,11 @@ function ClearEventParam({ onClear }: { onClear: () => void }) {
   return <></>;
 }
 
-export function CalendarPage() {
+/**
+ * `embedded`: dentro da Agenda nova (visão Semana). A página de fora já tem o seletor Dia/Semana/Lista/Mês, então
+ * o seletor interno some e a visão fica fixa em semana (dois seletores empilhados confundiam).
+ */
+export function CalendarPage({ embedded = false }: { embedded?: boolean } = {}) {
   usePageTitle(VOCAB.agenda.title);
   const { organizationId } = useOutletContext<AppOutletContext>();
   const {
@@ -53,7 +57,7 @@ export function CalendarPage() {
     selectDay,
     eventParam,
     setSelectedEvent,
-  } = useCalendarState();
+  } = useCalendarState(embedded ? { forcedView: "week" } : {});
 
   // Criar evento exige `agenda` >= edit.
   const { can } = usePermissions(organizationId);
@@ -241,6 +245,7 @@ export function CalendarPage() {
           view={view}
           currentDate={currentDate}
           onViewChange={setView}
+          showViewToggle={!embedded}
           onNavigatePrev={navigatePrev}
           onNavigateNext={navigateNext}
           onGoToToday={goToToday}

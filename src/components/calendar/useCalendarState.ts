@@ -13,12 +13,15 @@ import { addDays, addMonthsClamped, visibleRange } from "@/lib/agendaDates";
 /**
  * Estado da Agenda guardado na URL: `?view=day|week|month&date=YYYY-MM-DD&event=<id>`.
  * `view`/`date` trocam a entrada do histórico (replace); `event` empilha (push),
- * para o Voltar fechar o detalhe.
+ * para o Voltar fechar o detalhe. `forcedView` fixa a visão (página embutida, sem seletor próprio).
  */
-export function useCalendarState() {
+export function useCalendarState(options: { forcedView?: CalendarView } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const isMobile = useMediaQuery("(max-width: 767px)");
-  const { view, event: eventParam } = parseCalendarParams(searchParams, defaultCalendarView(isMobile));
+  const parsed = parseCalendarParams(searchParams, defaultCalendarView(isMobile));
+  // Embutida na Agenda nova a visão é a que a página de fora escolheu (ela tem o seletor; `?view=` é dela).
+  const view = options.forcedView ?? parsed.view;
+  const eventParam = parsed.event;
   // `parseCalendarParams` devolve um Date novo a cada render: memoiza pela string do parâmetro.
   const dateParam = searchParams.get("date");
   const date = useMemo(() => parseDateParam(dateParam), [dateParam]);

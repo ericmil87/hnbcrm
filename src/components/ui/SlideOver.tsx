@@ -133,7 +133,8 @@ function SlideOverLayer({
           {/* Mobile: back arrow */}
           <button
             onClick={onClose}
-            className="md:hidden p-1.5 -ml-1.5 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
+            // Toque: alvo de 44 px; as margens negativas mantêm a altura do cabeçalho e o ícone no mesmo lugar.
+            className="md:hidden inline-flex items-center justify-center p-1.5 -ml-1.5 coarse:-my-1.5 coarse:-ml-3 coarse:min-h-11 coarse:min-w-11 rounded-full text-text-muted hover:text-text-primary hover:bg-surface-overlay transition-colors"
             aria-label="Voltar"
           >
             <ArrowLeft size={20} />

@@ -60,7 +60,7 @@ export function PendingQueuePanel({ organizationId, open, onClose, data, tz, now
 
   const id = (s: string) => s as Id<"schedAppointments">;
   return (
-    <SlideOver open={open} onClose={onClose} title={t.title}>
+    <SlideOver open={open} onClose={onClose} title={t.title} bodyClassName="flex-1 overflow-y-auto p-4 md:p-6">
       <PendingQueueView
         data={data}
         tz={tz}
