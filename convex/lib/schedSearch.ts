@@ -301,7 +301,10 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
   let wanted: SearchSlotsResult["wanted"];
   if (args.wantTimeMin !== undefined) {
     const at = (c: ScoredCandidate) => minutesOfDay(c.startTime, data.tz);
-    const exact = distinct.filter((c) => at(c) === args.wantTimeMin).sort((a, b) => a.startTime - b.startTime)[0];
+    // O horário PEDIDO vale se está livre (candidato válido pelas regras), mesmo que o modo "restrict" o escondesse das ofertas
+    // padrão: o modo orienta o que a IA propõe sozinha, não recusa quem pediu aquela hora; a reserva segue pelas mesmas regras da
+    // porta e a equipe ainda aprova. As alternativas ("mais próximas") respeitam o modo.
+    const exact = dedupeByStart(applySmartMode(all, "off", minOffer, args.audience, data.tz).list).filter((c) => at(c) === args.wantTimeMin)[0];
     const closest = [...distinct]
       .sort((a, b) => Math.abs(at(a) - args.wantTimeMin!) - Math.abs(at(b) - args.wantTimeMin!) || a.startTime - b.startTime)
       .slice(0, effLimit);

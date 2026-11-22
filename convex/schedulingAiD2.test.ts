@@ -226,6 +226,24 @@ describe("hora pedida e contagem de horários livres", () => {
     expect(out.control.offeredTimes).toHaveLength(lines.length);
   });
 
+  test("modo 'restrict' que esconderia a hora pedida: se ela está livre, vem como primeira oferta (o modo orienta, não recusa pedido explícito)", async () => {
+    const s = await seedAiAgenda(t);
+    await t.run(async (ctx) => {
+      const doc = (await ctx.db.query("schedSettings").first())!;
+      await ctx.db.patch(doc._id, { smart: { mode: "restrict" } });
+    });
+    await staffBook(s, s.bia, aiAt(10), [s.p1!]); // 10-11h ocupado: restrict só oferece horários encostados (9h, 11h)
+    const plain = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15" });
+    const offeredPlain = linesOf(plain.result.resultado).map((l) => /às (\d{2}):\d{2}$/.exec(l)![1]);
+    expect(offeredPlain).not.toContain("15"); // 15h livre, não encostada em nada: o modo a esconde
+    const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", time: "15:00" });
+    expect(out.result.resultado).toContain("Horário pedido (15:00) DISPONÍVEL");
+    const first = linesOf(out.result.resultado)[0];
+    expect(first).toMatch(/^h\d+ — segunda-feira, 15\/06, às 15:00$/);
+    await shownAndAnswered(s.ana);
+    expect((await book(s, s.ana, first.split(" ")[0])).result.status).toBe("reservado_aguardando_equipe"); // a porta aceita: é só um horário livre
+  });
+
   test("dia inteiro lotado na hora pedida e em volta: sem_horarios cita a hora pedida", async () => {
     const s = await seedAiAgenda(t);
     const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-14", time: "14:00" }); // domingo
