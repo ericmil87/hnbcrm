@@ -83,21 +83,40 @@ const REASONING_PATTERNS: RegExp[] = [/<\/?think>/i, /<\/?thinking>/i, /<\/?reas
 /** `hN` como token (minúsculo, sem letra/dígito/`/`/`.`/`-` colado: "8h30", "H2O", "14h" e "…/produtos/h2" não casam). */
 const OFFER_CODE_TOKEN = /(?<![A-Za-z0-9_/.:=#-])h([1-9]\d{0,3})(?![A-Za-z0-9_/.-])/g;
 const URL_RE = /https?:\/\/\S+|www\.\S+/gi;
-/** Primeiro código EMITIDO citado no texto (fora de URL), ou `null`. */
-function emittedCodeIn(text: string, codes: readonly string[]): number | null {
+/** Contexto de CÓDIGO ao redor do `hN`: a palavra código/opção/oferta, o código entre parênteses/colchetes ou verbo de escolha antes dele. */
+const CODE_WORD = /\b(?:codigo|cod|opcao|oferta|ofertas|bookoffered\w*)\b/;
+const CHOICE_BEFORE = /\b(?:pode ser|fica com|fico com|vai de|vou de|escolho|escolha|escolheu|prefiro|opto por|marque|reserve|reservar|confirmo|confirmar)\s+(?:(?:o|a|esse|essa|este|esta)\s+)?$/;
+function hasCodeContext(clean: string, at: number, len: number, narrated: boolean): boolean {
+  if (narrated) return true;
+  const norm = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const before = norm(clean.slice(Math.max(0, at - 30), at));
+  const after = norm(clean.slice(at + len, at + len + 30));
+  if (CODE_WORD.test(before) || CODE_WORD.test(after)) return true;
+  if (/[([]\s*$/.test(clean.slice(Math.max(0, at - 3), at)) && /^\s*[)\]]/.test(clean.slice(at + len, at + len + 3))) return true;
+  return CHOICE_BEFORE.test(before);
+}
+/**
+ * Primeiro código EMITIDO citado no texto (fora de URL) COM contexto de código, ou `null`: "O plano h1 é o mais vendido", "Use o cupom h2",
+ * "A sala h1 fica no térreo", "Tamanhos: h1, h2 e h3" são texto de negócio que só coincide com o código emitido.
+ */
+function emittedCodeIn(text: string, codes: readonly string[], narrated: boolean): number | null {
   if (codes.length === 0) return null;
   const set = new Set(codes.map((c) => c.toLowerCase()));
   const clean = text.replace(URL_RE, (m) => " ".repeat(m.length));
-  for (const m of clean.matchAll(OFFER_CODE_TOKEN)) if (set.has(`h${m[1]}`)) return m.index ?? 0;
+  for (const m of clean.matchAll(OFFER_CODE_TOKEN)) {
+    if (set.has(`h${m[1]}`) && hasCodeContext(clean, m.index ?? 0, m[0].length, narrated)) return m.index ?? 0;
+  }
   return null;
 }
 const TOOL_NAME_IN_TEXT = /\b(?:bookOfferedTime|findAvailableTimes|replyToCustomer|requestHandoff)\b/;
 /**
  * "O cliente escolheu…", "A cliente aceitou…" no começo de uma frase: o modelo raciocinando em voz alta SOBRE A ESCOLHA do cliente. Só verbos de
- * escolha/resposta ("precisa", "deseja", "prefere", "pode" aparecem em texto legítimo: "O cliente precisa trazer documento").
+ * escolha/resposta ("precisa", "deseja", "prefere", "pode" aparecem em texto legítimo: "O cliente precisa trazer documento"); e, para
+ * os verbos que também são prosa comum (escolheu, respondeu, aceitou, confirmou, pediu), a frase tem de citar horário/código/opção ou o
+ * próximo passo do modelo ("O cliente escolheu bem" e "O cliente respondeu à pesquisa?" não são vazamento).
  */
 const CLIENT_NARRATION =
-  /(?:^|[.!?\n]\s*)(?:o|a)\s+cliente\s+(?:escolheu|selecionou|respondeu|aceitou|confirmou|pediu|solicitou|quer que eu|disse que quer)(?![a-zà-ú])/i;
+  /(?:^|[.!?\n]\s*)(?:o|a)\s+cliente\s+(?:(?:escolheu|selecionou|respondeu|aceitou|confirmou|pediu|solicitou)(?![a-zà-ú])(?=[^.!?\n]*(?:\d|horario|hor[áa]rio|c[óo]digo|op[cç][aã]o|oferta|primeir|segund|terceir|[úu]ltim|\bo das\b|\ba das\b|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|amanh[ãa]|\bvou\s+(?:confirmar|registrar|reservar|marcar|chamar|usar|perguntar)|\bantes de\b|\bpreciso\b))|quer que eu(?![a-zà-ú])|disse que quer(?![a-zà-ú]))/i;
 
 const JSON_TOOL_KEYS = ["tool_calls", "function_call", "tool_use"];
 const JSON_ARG_KEYS = ["arguments", "parameters", "input"];
@@ -173,11 +192,12 @@ export function detectLeakedModelMarkup(
   }
 
   if (opts.agenda === true) {
-    const codeAt = emittedCodeIn(trimmed, opts.offerCodes ?? []);
+    const narrationAt = CLIENT_NARRATION.exec(trimmed);
+    const codeAt = emittedCodeIn(trimmed, opts.offerCodes ?? [], narrationAt !== null);
     if (codeAt !== null) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, codeAt - 20)) };
     const tool = TOOL_NAME_IN_TEXT.exec(trimmed);
     if (tool) return { kind: "offer_code", sample: sampleAround(trimmed, Math.max(0, tool.index - 20)) };
-    const narration = CLIENT_NARRATION.exec(trimmed);
+    const narration = narrationAt;
     if (narration) return { kind: "reasoning_narration", sample: sampleAround(trimmed, narration.index) };
   }
   return null;

@@ -1081,6 +1081,25 @@ describe("D2: pedido para mais de uma pessoa sem people na busca é recusado (o 
     expect(m.calls().length).toBe(2);
   });
 
+  test("a recusa tem saída: depois de a IA perguntar quantas pessoas são, 'sou eu mesma' libera a busca (e a busca sem people ainda é recusada antes)", async () => {
+    const s = await seedAiAgenda(t);
+    stubModel([find("Consulta", "2026-06-15"), reply("Quantas pessoas são? Vão no mesmo horário?")]);
+    await turn(s, s.ana, "Quero uma consulta segunda pra mim e meu filho");
+    expect((await outbound(s.ana)).at(-1)!.content).toMatch(/Quantas pessoas/);
+    const m = stubModel([find("Consulta", "2026-06-15"), offering()]);
+    await turn(s, s.ana, "sou eu mesma");
+    expect(toolResults(m.calls()[1]).at(-1)).toMatchObject({ status: "ok" });
+  });
+
+  test("depois da pergunta, people: 1 explícito vale (o cliente respondeu que é uma pessoa)", async () => {
+    const s = await seedAiAgenda(t);
+    stubModel([find("Consulta", "2026-06-15"), reply("Quantas pessoas são? Vão no mesmo horário?")]);
+    await turn(s, s.ana, "Quero uma consulta segunda pra mim e meu filho");
+    const m = stubModel([find("Consulta", "2026-06-15", { people: 1 }), offering()]);
+    await turn(s, s.ana, "só eu vou, ele não vai fazer");
+    expect(toolResults(m.calls()[1]).at(-1)).toMatchObject({ status: "ok" });
+  });
+
   test("com people na busca (mesmo horário) segue normal; sem menção a grupo, a busca sem people segue normal", async () => {
     const s = await seedAiAgenda(t);
     const m = stubModel([find("Massagem casal", "2026-06-15", { people: 2 }), offering()]);

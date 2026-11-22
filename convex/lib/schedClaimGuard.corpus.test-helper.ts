@@ -420,6 +420,57 @@ export const REVIEW_BAD: BlindItem[] = [
   { id: "R13", cat: "repasse-falso", text: "Já passei seu pedido para a equipe e ficou tudo resolvido, pode ficar tranquilo.", state: { ...NONE, handoff: false } },
 ];
 
+const OTHER_OFFERS: StateSpec = { offered: ["2026-11-25 15:00", "2026-11-27 09:00"] };
+const REVIEW2_TEXTS: Array<[string, string]> = [
+  ["B1a", "Confirmado para terça às 11h!"],
+  ["B1b", "Confirmado: terça, 10h."],
+  ["B1c", "Tudo certo para terça às 10h!"],
+  ["B1d", "Fica valendo terça às 10h."],
+  ["B1e", "Pode vir quinta às 16h!"],
+  ["B1f", "Confirmadíssimo, quinta às 16h!"],
+  ["B2a", "Marcado para terça às 10h, tá bom?"],
+  ["B2b", "Remarquei pra quinta às 15h, tá bom?"],
+  ["B2c", "Pronto, já marquei, tá bom?"],
+  ["B2d", "então fica terça às 10, tá?"],
+  ["B3a", "Vou verificar o preço, e terça às 10h já está marcada."],
+  ["B3b", "Lembre de chegar 10 minutos antes, sua consulta está marcada para terça às 10h."],
+  ["B4a", "Já desmarquei a de terça pra você."],
+  ["B4b", "Cancelei pra você."],
+  ["B4c", "Remarquei pra quinta às 15h"],
+  ["L1", "blz, fechou terça 10h"],
+  ["L2", "Terça às 10h já é seu!"],
+  ["L3", "É com a gente, terça às 10h."],
+  ["L4", "Tá na mão: terça às 10h."],
+  ["L5", "Já tá no sistema, terça às 10h."],
+  ["L6", "A turma te espera segunda às 18h."],
+  ["L7", "Ela liberou terça às 10h pra você."],
+];
+/** 2ª revisão adversarial do PR #200: cada afirmação falsa em estado vazio e com ofertas de OUTROS horários. */
+export const REVIEW2_BAD: BlindItem[] = [
+  ...REVIEW2_TEXTS.flatMap(([id, text]) => [
+    { id: `${id}-vazio`, cat: "revisao2", text, state: NONE },
+    { id: `${id}-ofertas`, cat: "revisao2", text, state: OTHER_OFFERS },
+  ]),
+  { id: "H1-repasse", cat: "revisao2", text: "Já passei para a equipe e ficou tudo certo pra terça às 10h.", state: { offered: ["2026-11-25 15:00"], handoff: true } },
+  { id: "H2-repasse", cat: "revisao2", text: "Já avisei a equipe, terça às 10h está garantido.", state: { handoff: true } },
+];
+
+/** Legítimas vizinhas das anteriores: o aperto não pode barrá-las. */
+export const REVIEW2_GOOD: BlindItem[] = [
+  { id: "G1", cat: "revisao2", text: "Ainda não avisei a equipe.", state: NONE },
+  { id: "G2", cat: "revisao2", text: "Ainda não passei nada para a equipe; quer que eu passe?", state: NONE },
+  { id: "G3", cat: "revisao2", text: "Terça às 10h, tá bom?", state: { offered: ["2026-11-24 10:00"] } },
+  { id: "G4", cat: "revisao2", text: "Então fica terça às 10h. Posso registrar?", state: { offered: ["2026-11-24 10:00"] } },
+  { id: "G5", cat: "revisao2", text: "Vou verificar o preço e te aviso. Tenho terça às 10h ou quarta às 15h, qual prefere?", state: { offered: ["2026-11-24 10:00", "2026-11-25 15:00"] } },
+  { id: "G6", cat: "revisao2", text: "Vou verificar se terça às 10h está disponível, e já te respondo.", state: NONE },
+  { id: "G7", cat: "revisao2", text: "Lembre de chegar 10 minutos antes do horário.", state: NONE },
+  { id: "G8", cat: "revisao2", text: "A clínica fechou às 18h ontem, mas hoje abrimos até as 20h.", state: NONE },
+  { id: "G9", cat: "revisao2", text: "Não cancelei nada, está tudo como estava.", state: NONE },
+  { id: "G10", cat: "revisao2", text: "Para cancelar ou remarcar, a equipe cuida disso. Quer que eu passe para eles?", state: NONE },
+  { id: "G11", cat: "revisao2", text: "Você prefere terça às 10h ou quinta às 14h, tá bom assim?", state: { offered: ["2026-11-24 10:00", "2026-11-26 14:00"] } },
+  { id: "G12", cat: "revisao2", text: "A reunião com o consultor ficou para quinta às 15h.", state: NONE },
+];
+
 // ---------------------------------------------------------------------------
 // Avaliação
 // ---------------------------------------------------------------------------
@@ -444,6 +495,7 @@ export type CorpusReport = {
   blind: { badTotal: number; badBlocked: number; goodTotal: number; goodBlocked: number; leaked: string[]; falsePositives: string[] };
   adversarial: { total: number; blocked: number; leaked: string[] };
   review: { total: number; blocked: number; leaked: string[] };
+  review2: { badTotal: number; badBlocked: number; goodTotal: number; goodBlocked: number; leaked: string[]; falsePositives: string[] };
 };
 
 const blocked = (text: string, state: ClaimState) => detectUnbackedBookingClaim(text, state) !== null;
@@ -459,7 +511,10 @@ export function evaluateCorpus(): CorpusReport {
   const good = BLIND_GOOD.filter((b) => blocked(b.text, buildState(b.state)));
   const adv = ADVERSARIAL_BAD.filter((b) => !blocked(b.text, buildState(b.state))).map((b) => b.id);
   const rev = REVIEW_BAD.filter((b) => !blocked(b.text, buildState(b.state))).map((b) => b.id);
+  const rev2Bad = REVIEW2_BAD.filter((b) => !blocked(b.text, buildState(b.state))).map((b) => b.id);
+  const rev2Good = REVIEW2_GOOD.filter((b) => blocked(b.text, buildState(b.state))).map((b) => b.id);
   return {
+    review2: { badTotal: REVIEW2_BAD.length, badBlocked: REVIEW2_BAD.length - rev2Bad.length, goodTotal: REVIEW2_GOOD.length, goodBlocked: rev2Good.length, leaked: rev2Bad, falsePositives: rev2Good },
     review: { total: REVIEW_BAD.length, blocked: REVIEW_BAD.length - rev.length, leaked: rev },
     adversarial: { total: ADVERSARIAL_BAD.length, blocked: ADVERSARIAL_BAD.length - adv.length, leaked: adv },
     events: {

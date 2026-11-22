@@ -285,6 +285,16 @@ describe("revisão #200: período × hora pedida e fixação do plano", () => {
     expect(linesOf(out.result.resultado)[0]).toBe("h1 — segunda-feira, 15/06, às 14:00");
   });
 
+  test("hora pedida INDISPONÍVEL: as alternativas continuam dentro do período pedido ('manhã' não vira a tarde)", async () => {
+    const s = await seedAiAgenda(t);
+    await staffBook(s, s.bia, aiAt(14), [s.p1!]);
+    const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", period: "manha", time: "14:00" });
+    expect(out.result.resultado).toContain("INDISPONÍVEL");
+    const lines = linesOf(out.result.resultado);
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(Number(/às (\d{2}):/.exec(l)![1])).toBeLessThan(12);
+  });
+
   test("oferta SEM profissional nomeado: a sala equivalente pode trocar (não vira 'horário tomado'), o profissional não", async () => {
     const s = await seedAiAgenda(t);
     // "Sessão" só pede sala: a oferta aponta uma sala; a equipe ocupa essa sala e a outra segue livre
@@ -374,6 +384,40 @@ describe("revisão #200: grupo pendente (aviso único, aprovar/recusar/vencer o 
       await setAppointmentStatusCore(ctx, { appointment: (await ctx.db.get(companion._id))!, actor, to: "scheduled", now: Date.now() });
     });
     expect((await appointments()).map((r) => r.status)).toEqual(["scheduled", "scheduled"]);
+  });
+
+  test("aprovar um membro acha os irmãos mesmo com 60 cancelados no MESMO instante (nada de take(50) por início)", async () => {
+    const s = await seedAiAgenda(t);
+    await find(s, s.ana, { service: "Massagem casal", dateRef: "2026-06-15", people: 2 });
+    const groupStart = await t.run(async (ctx) => {
+      const st = await ctx.db.query("schedConversationState").withIndex("by_conversation", (q) => q.eq("conversationId", s.ana.conversationId)).first();
+      return st!.offers[0].startTime;
+    });
+    // 60 cancelados no mesmo início do grupo, criados ANTES dele (na ordem do índice por início ficam na frente)
+    await staffBook(s, s.bia, aiAt(16), [s.p1!]);
+    await t.run(async (ctx) => {
+      const template = (await ctx.db.query("schedAppointments").collect())[0];
+      const { _id, _creationTime, ...base } = template;
+      void _id; void _creationTime;
+      const shift = groupStart - template.startTime;
+      for (let i = 0; i < 60; i++) {
+        await ctx.db.insert("schedAppointments", {
+          ...base, status: "cancelled", startTime: base.startTime + shift, endTime: base.endTime + shift, blockStart: base.blockStart + shift, blockEnd: base.blockEnd + shift, idempotencyKey: `cancelado-${i}`,
+        });
+      }
+    });
+    await shownAndAnswered(s.ana);
+    const out = await book(s, s.ana, "h1");
+    expect(out.result.status).toBe("reservado_aguardando_equipe");
+    const group = (await appointments()).filter((r) => r.partyKey !== undefined);
+    expect(group).toHaveLength(2);
+    const companion = group.find((r) => r.guestName !== undefined)!;
+    const actor = await asAdmin(s);
+    await t.run(async (ctx) => {
+      const { setAppointmentStatusCore } = await import("./lib/schedBookingOps");
+      await setAppointmentStatusCore(ctx, { appointment: (await ctx.db.get(companion._id))!, actor, to: "scheduled", now: Date.now() });
+    });
+    expect((await appointments()).filter((r) => r.partyKey !== undefined).map((r) => r.status)).toEqual(["scheduled", "scheduled"]);
   });
 
   test("recusar a PRINCIPAL libera os acompanhantes (e as vagas)", async () => {

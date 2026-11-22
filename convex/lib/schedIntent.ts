@@ -20,22 +20,30 @@ const PRESENCA = /\b(?:confirm\w*\s+(?:a\s+|minha\s+|nossa\s+)?presenca|presenca
 
 /** Parentesco/companhia: sem isto, "eu e a Maria", "meu cabelo também" ou "para mim" não são grupo. */
 const KIN = "(?:filho|filha|marido|esposa|esposo|mulher|namorad[oa]|amig[oa]|mae|pai|irma[o]?|prima|primo|neto|neta|sobrinh[oa]|colega|noiv[oa]|genro|nora|vizinh[oa])";
-const GRUPO = new RegExp(
-  `\\b(?:(?:para|pra)\\s+(?:duas|dois|tres|quatro|2|3|4)\\s+pessoas|(?:somos|seremos|vamos em)\\s+(?:em\\s+)?(?:duas|dois|tres|quatro|2|3|4)\\b|(?:eu|mim|nos)\\s+e\\s+(?:minha|meu|uma|um)\\s+${KIN}|(?:para|pra)\\s+(?:mim|nos)\\s+e\\s+(?:minha|meu|uma|um)\\s+${KIN}|vou\\s+com\\s+(?:minha|meu|uma|um)\\s+${KIN}|(?:minha|meu)\\s+${KIN}\\s+(?:tambem\\s+)?(?:quer|vai|vem)\\s+(?:marcar|junto|comigo)|(?:nos|a gente)\\s+(?:dois|duas|tres)\\s+(?:queremos|quer|vamos|gostariamos)|nos\\s+(?:dois|duas|tres)\\s+(?:juntos|juntas))\\b`
+const NUM = "(?:duas|dois|tres|quatro|2|3|4)";
+/** Número de pessoas dito às claras ("pra nós três", "somos em 3", "a gente é em 3", "somos um casal"): vale sem outra palavra de intenção. */
+const GRUPO_COUNT = new RegExp(
+  `\\b(?:(?:para|pra)\\s+${NUM}\\s+pessoas|(?:para|pra)\\s+nos\\s+${NUM}|(?:somos|seremos|vamos em)\\s+(?:em\\s+)?${NUM}\\b|a gente\\s+(?:e|eh|somos|vai ser|vamos ser)\\s+(?:em\\s+)?${NUM}\\b|somos\\s+(?:um|uma)\\s+(?:casal|dupla|trio|familia)|(?:nos|a gente)\\s+(?:dois|duas|tres)\\s+(?:queremos|quer|vamos|gostariamos)|nos\\s+(?:dois|duas|tres)\\s+(?:juntos|juntas))\\b`
+);
+/** Companhia/parentesco: exige também intenção de marcar (`BOOKING_INTENT`). */
+const GRUPO_KIN = new RegExp(
+  `\\b(?:(?:eu|nos)\\s+e\\s+(?:minha|meu|uma|um)\\s+${KIN}|(?:eu|nos)\\s+e\\s+(?:a|o)\\s+[a-z]+\\s+(?:queremos|vamos|gostariamos|precisamos|querem|vem|vao)\\b|(?:para|pra|pro)\\s+(?:mim|nos)\\s+e\\s+(?:(?:para|pra|pro)\\s+)?(?:(?:a|o)\\s+|minha\\s+|meu\\s+|uma\\s+|um\\s+)(?:minha\\s+|meu\\s+)?${KIN}|vou\\s+com\\s+(?:minha|meu|uma|um)\\s+${KIN}|(?:minha|meu)\\s+${KIN}\\s+(?:tambem\\s+)?(?:quer|vai|vem)\\s+(?:junto|comigo)|(?:minha|meu)\\s+${KIN}\\s+tambem\\s+(?:quer|vai|vem|gostaria|precisa)\\b)`
 );
 /** O cliente quer MARCAR (não está contando o passado): sem isto a menção a parentesco não vira grupo. */
-const BOOKING_INTENT = /\b(?:marcar|agendar|queria|quero|queremos|gostaria|gostariamos|horario|vaga|consulta|sessao|corte|aula|atendimento|avaliacao)\b/;
+const BOOKING_INTENT = /\b(?:marcar|agendar|queria|quero|queremos|gostaria|gostariamos|horario|vaga|consulta|sessao|corte|aula|atendimento|avaliacao|cortar|fazer)\b/;
 const PAST = /\b(?:fui|fomos|foi|estive|estivemos|semana passada|mes passado|ontem|antes)\b/;
-/** "Só pra mim", "só eu", "apenas eu": negação explícita vence qualquer menção a outra pessoa. */
-const ONLY_ME = /\b(?:so|apenas|somente)\s+(?:pra|para|eu|comigo|mim)\b|\bsou so eu\b/;
+/** "Só pra mim", "só eu", "a sessão é só minha", "apenas eu": negação explícita vence qualquer menção a outra pessoa. */
+const ONLY_ME = /\b(?:so|apenas|somente)\s+(?:pra|para|eu|comigo|mim|minh[ao]|meu|uma\s+pessoa)\b|\bsou so eu\b|\bsou eu mesm[oa]\b|\b(?:1|uma)\s+pessoa\b|^\s*(?:so\s+)?(?:1|uma|eu)\s*[.!]?\s*$/;
+/** A companhia só espera/acompanha: não é mais uma pessoa a atender. */
+const COMPANION_ONLY = /\b(?:so|apenas|somente)\s+(?:espera\w*|acompanha\w*|assiste|vai junto|vem junto)\b|\bnao\s+(?:vai|vem|quer)\s+(?:fazer|marcar|cortar)\b/;
 const MARCAR = /\b(?:marcar|agendar|horario|vaga|consulta|sessao|atendimento|agenda)\b/;
 
-/** O texto fala de MAIS DE UMA pessoa que querem marcar? (parentesco/companhia ou número de pessoas + intenção de marcar; "só eu" vence.) */
+/** O texto fala de MAIS DE UMA pessoa que querem marcar? (número de pessoas, ou parentesco/companhia + intenção de marcar; "só eu" vence.) */
 export function mentionsGroup(text: string): boolean {
   const n = norm(text);
-  if (ONLY_ME.test(n)) return false;
-  if (!GRUPO.test(n)) return false;
-  return BOOKING_INTENT.test(n) && !PAST.test(n);
+  if (ONLY_ME.test(n) || COMPANION_ONLY.test(n) || PAST.test(n)) return false;
+  if (GRUPO_COUNT.test(n)) return true;
+  return GRUPO_KIN.test(n) && BOOKING_INTENT.test(n);
 }
 
 /** A primeira intenção de agenda do texto, na ordem de gravidade (remarcar e cancelar antes de marcar). `null` = nenhuma. */
@@ -70,6 +78,37 @@ export function customerSinceOffer(history: ReadonlyArray<{ de: string; texto: s
     .map((m) => m.texto)
     .join(" ")
     .slice(0, 2000);
+}
+
+/** A IA perguntou quantas pessoas são ("quantas pessoas?", "são só você?", "é só para você?"): a recusa `pedido_de_grupo` manda perguntar isso. */
+const ASKED_HOW_MANY = /\bquant[oa]s\s+(?:pessoas|vao|sao|vem)\b|\bquantas?\s+(?:sao|vao|serao)\b|\b(?:e|sao)\s+(?:so|apenas)\s+(?:para\s+|pra\s+)?(?:voce|vc|uma pessoa)\b|\bvao\s+(?:no\s+mesmo|juntos|juntas)\b/;
+
+/** A IA já perguntou, na conversa, quantas pessoas são? (última fala da IA/equipe com a pergunta; vale mesmo com cliente depois.) */
+export function iaAskedHowMany(history: ReadonlyArray<{ de: string; texto: string }>): boolean {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].de === "cliente") continue;
+    return ASKED_HOW_MANY.test(norm(history[i].texto));
+  }
+  return false;
+}
+
+/**
+ * O texto do cliente em que o pedido de grupo vale: depois de a IA perguntar quantas pessoas são, SÓ o que o cliente respondeu
+ * ("sou eu mesma", "1 pessoa", "uma" resolvem; sem isto a recusa não teria saída); senão, desde a última oferta.
+ */
+export function customerTextForGroup(history: ReadonlyArray<{ de: string; texto: string }>): string {
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].de !== "cliente" && ASKED_HOW_MANY.test(norm(history[i].texto))) {
+      return history
+        .slice(i + 1)
+        .filter((m) => m.de === "cliente")
+        .map((m) => m.texto)
+        .join(" ")
+        .slice(0, 2000);
+    }
+    if (history[i].de === "ia" && /\d{1,2}\s*h(?:\d{2})?\b|\d{1,2}:\d{2}/.test(history[i].texto)) break;
+  }
+  return customerSinceOffer(history);
 }
 
 /** O cliente citou um serviço que NÃO é o do agendamento que já tem? (tem corte marcado e pede horário de barba: não é remarcar.) */

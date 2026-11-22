@@ -30,6 +30,11 @@ describe("schedClaimGuard — corpus rotulado (eventos reais + cego + quase-igua
     expect(r.review.leaked).toEqual([]);
   });
 
+  test("2ª revisão adversarial do PR #200: afirmações falsas (marcador sem substantivo, pergunta-eco, oração, mudança em 1ª pessoa, gíria) são barradas e as vizinhas legítimas passam", () => {
+    expect(r.review2.leaked).toEqual([]);
+    expect(r.review2.falsePositives).toEqual([]);
+  });
+
   test("quase-iguais das frases liberadas: todas continuam barradas", () => {
     expect(r.adversarial.leaked).toEqual([]);
   });
@@ -108,6 +113,20 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
     // "um horário que já estava agendado": oração relativa que descreve o pedido do cliente
     expect(detectUnbackedBookingClaim("Thiago, como é uma remarcação de um horário que já estava agendado, a equipe cuida disso e te responde.", buildState({}))).toBeNull();
     expect(detectUnbackedBookingClaim("Pronto, o horário está agendado, te espero terça às 10h.", st)).not.toBeNull();
+  });
+  test("2ª revisão: nome curto de várias palavras ('Dr. Marcos Silva' × cadastro 'Dr. Marcos Silva Junior') liga a oferta ao recurso", () => {
+    const names = ["Dr. Marcos Silva Junior", "Dra. Helena Souza"];
+    const idx = buildAliasIndex(names);
+    expect(idx.find((x) => x.key === "dr marcos silva junior")!.aliases).toContain("marcos silva");
+    const st = buildState({ names, offeredNamed: ["2026-11-24 10:00|Marcos Silva"] });
+    expect(detectUnbackedBookingClaim("Tenho terça às 10h com o Dr. Marcos Silva Junior. Qual prefere?", st)).toBeNull();
+    expect(detectUnbackedBookingClaim("Tenho terça às 10h com o Marcos. Posso registrar?", st)).toBeNull();
+    // a oferta nomeou o Marcos: ligar o mesmo horário à Helena continua barrado
+    expect(detectUnbackedBookingClaim("Tenho terça às 10h com a Helena. Qual prefere?", st)?.kind).toBe("resource_not_offered");
+    // dois recursos com o mesmo par de palavras: o par não vira apelido de nenhum
+    const dup = buildAliasIndex(["Ana Maria Silva", "Ana Maria Souza"]);
+    expect(dup[0].aliases).not.toContain("ana maria");
+    expect(dup[0].aliases).toContain("silva");
   });
   test("apelido de recurso: palavra comum de nome ('Maca Nova', 'Box Principal', 'Profissional 2', 'Terapeuta Carla') nunca vira apelido", () => {
     const idx = buildAliasIndex(["Maca Nova", "Box Principal", "Profissional 2", "Terapeuta Carla", "Dra. Helena"]);

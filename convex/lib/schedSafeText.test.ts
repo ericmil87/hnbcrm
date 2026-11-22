@@ -128,6 +128,20 @@ describe("mentionsGroup (parentesco/companhia ou número de pessoas + intenção
     ["Fui eu e minha mãe semana passada", false],
     ["Meu marido também faz aqui, mas quero marcar só pra mim", false],
     ["Eu e a Maria combinamos de nos ver, quero marcar um corte", false],
+    // 2ª revisão: falsos negativos (7 de 10) e os falsos positivos que têm de continuar fora
+    ["Pra nós três, tem horário sábado?", true],
+    ["Eu e a Ana queremos marcar juntas", true],
+    ["Meu marido também quer cortar, pode ser no mesmo horário que o meu?", true],
+    ["Queria marcar pra mim e pro meu marido", true],
+    ["pra mim e pra minha filha no mesmo horário", true],
+    ["A gente é em 3", true],
+    ["Somos um casal", true],
+    ["Minha filha vai comigo mas ela só espera", false],
+    ["Vou com meu marido até aí mas a sessão é só minha", false],
+    ["Meu filho vai marcar depois", false],
+    ["minha mãe indicou vocês", false],
+    ["duas vezes por semana", false],
+    ["2 sessões", false],
   ])("%j → %s", (text, expected) => {
     expect(mentionsGroup(text)).toBe(expected);
   });

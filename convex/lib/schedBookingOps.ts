@@ -1810,9 +1810,10 @@ async function pendingPartySiblings(ctx: MutationCtx, a: Doc<"schedAppointments"
   if (!a.partyKey || a.status !== "pending_approval") return [];
   const rows = await ctx.db
     .query("schedAppointments")
-    .withIndex("by_organization_and_start", (q) => q.eq("organizationId", a.organizationId).eq("startTime", a.startTime))
-    .take(50);
-  return rows.filter((x) => x.partyKey === a.partyKey && x._id !== a._id && x.status === "pending_approval");
+    .withIndex("by_organization_and_status_and_start", (q) => q.eq("organizationId", a.organizationId).eq("status", "pending_approval").eq("startTime", a.startTime))
+    .take(300);
+  // Lê só os PENDENTES do mesmo instante: cancelados/atendidos no mesmo horário (a faixa por início tem de tudo) não escondem um irmão.
+  return rows.filter((x) => x.partyKey === a.partyKey && x._id !== a._id);
 }
 
 export async function cancelAppointmentCore(

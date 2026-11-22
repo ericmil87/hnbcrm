@@ -282,6 +282,14 @@ describe("D2 — o prompt traz as regras medidas", () => {
   });
 });
 
+describe("2ª revisão — nome de exibição quando o cliente só disse o papel", () => {
+  test("o fallback pelo cadastro nunca devolve só o título ('Dra.')", () => {
+    expect(shortProfessionalName("a doutora")).toBe("");
+    expect(shortProfessionalName("Dra. Helena Souza").split(/\s+/)[0]).toBe("Helena");
+    expect(shortProfessionalName("Dr. Marcos Silva")).toBe("Marcos Silva");
+  });
+});
+
 describe("D2 — nome de exibição curto (o que o cliente disse)", () => {
   test.each([["o Léo", "Léo"], ["com a Dra. Helena", "Helena"], ["  barbeiro Tato ", "Tato"], ["Terapeuta Carla", "Carla"]])("%j → %s", (i, o) => {
     expect(shortProfessionalName(i)).toBe(o);

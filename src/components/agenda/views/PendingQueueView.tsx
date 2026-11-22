@@ -136,6 +136,12 @@ export function PendingQueueView(p: PendingQueueViewProps) {
         for (const a of data.approvals) if (partyOf(a)) sizes.set(partyOf(a)!, (sizes.get(partyOf(a)!) ?? 0) + 1);
         const principal = (a: PendingAppointment) => !(a as { guestName?: string }).guestName || !partyOf(a);
         const hasPrincipal = new Set(data.approvals.filter((a) => partyOf(a) && principal(a)).map((a) => partyOf(a)!));
+        // Aprovar vale para o grupo todo: se QUALQUER membro precisa de conflito resolvido, a linha do grupo também precisa.
+        const groupMustResolve = (a: PendingAppointment) => {
+          const key = partyOf(a);
+          const members = key ? data.approvals.filter((x) => partyOf(x) === key) : [a];
+          return members.some((x) => mustResolveBeforeApprove(x));
+        };
         return data.approvals
           .filter((a) => !(partyOf(a) && !principal(a) && hasPrincipal.has(partyOf(a)!)))
           .map((a) => {
@@ -145,13 +151,13 @@ export function PendingQueueView(p: PendingQueueViewProps) {
             <Row key={`approval:${a._id}`} appointment={a} tz={p.tz} expired={expired} onOpen={() => p.onOpen(a._id)} note={partyOf(a) && (sizes.get(partyOf(a)!) ?? 1) > 1 ? `grupo de ${sizes.get(partyOf(a)!)} pessoas` : undefined}>
               {p.canEdit && (
                 <>
-                  {!expired && !mustResolveBeforeApprove(a) && (
+                  {!expired && !groupMustResolve(a) && (
                     <Button size="sm" loading={busy} onClick={() => p.onApprove(a._id)}>
                       {t.approve}
                     </Button>
                   )}
                   {expired && <p className="basis-full text-caption text-text-secondary">{t.expired}</p>}
-                  {!expired && mustResolveBeforeApprove(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
+                  {!expired && groupMustResolve(a) && <p className="self-center text-caption text-semantic-warning">{VIEWS_COPY.conflict.needsFirst}</p>}
                   <Button size="sm" variant={expired ? "primary" : "secondary"} disabled={busy} onClick={() => p.onDecline(a._id)}>
                     {expired ? t.declineProposal : t.decline}
                   </Button>

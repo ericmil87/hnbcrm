@@ -40,6 +40,15 @@ describe("PendingQueueView", () => {
     expect(within(section).getAllByRole("button", { name: "Aprovar" })).toHaveLength(1);
     expect(within(section).getByText("grupo de 2 pessoas")).toBeInTheDocument();
   });
+  it("grupo: conflito só no ACOMPANHANTE esconde o Aprovar da linha do grupo (aprovar vale para todos)", () => {
+    const main = appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval", origin: "ai", contactName: "Maria", partyKey: "party:x" } as never);
+    const guest = appt(["sala1"], NOW + 3_600_000, NOW + 7_200_000, { status: "pending_approval", origin: "ai", guestName: "Acompanhante 1", partyKey: "party:x" } as never);
+    (guest.resources[0] as { allocated: boolean }).allocated = false;
+    setup(data({ approvals: [main, guest] }));
+    const section = screen.getByRole("region", { name: /Aguardando aprovação/ });
+    expect(within(section).queryByRole("button", { name: "Aprovar" })).toBeNull();
+    expect(within(section).getByText("Resolva o conflito antes de aprovar.")).toBeInTheDocument();
+  });
   it("proposta vencida não oferece Aprovar, só Recusar", () => {
     const a = appt(["sala1"], NOW - 3_600_000, NOW, { status: "pending_approval" });
     setup(data({ approvals: [a] }));

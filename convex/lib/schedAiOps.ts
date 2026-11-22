@@ -451,7 +451,7 @@ export async function runFindSearch(
       if (honored || (filteredSlots.length === 0 && filtered.reason === "unverifiable")) {
         found = filtered;
         // o nome que volta à IA é o que o CLIENTE disse (curto), nunca o do cadastro
-        const shown = shortProfessionalName(args.professional) || m.resource.name.split(/\s+/)[0];
+        const shown = shortProfessionalName(args.professional) || shortProfessionalName(m.resource.name).split(/\s+/)[0] || m.resource.name.trim();
         professional = { kind: "filtered", name: shown };
         named = shown;
       } else {

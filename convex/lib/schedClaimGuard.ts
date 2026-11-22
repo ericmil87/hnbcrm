@@ -100,6 +100,8 @@ type Marker = {
   notAfter?: RegExp;
   /** `notAfter` só vale quando a frase NÃO cita dia/hora ("com hora marcada" é regra; "está com hora marcada para terça" é afirmação). */
   exemptOnlyWithoutTime?: boolean;
+  /** Marcador que serve a qualquer compromisso (não só agenda): sozinho não torna a frase "de agenda" nem barra hora inventada. */
+  generic?: boolean;
   /** Hedge ('vou', 'não') não desfaz: "Vou te esperar terça às 10h" e "Não esqueça: terça às 10h" CONFIRMAM o horário. */
   noHedge?: boolean;
 };
@@ -117,13 +119,19 @@ const MARKERS: Marker[] = [
   { re: /\b(?:marquei|agendei|marcamos|agendamos|confirmei|encaixei|separei|coloquei|incluí|inclui|adicionei|segurei|bloqueei)\b/g, level: "strong", domain: true },
   { re: /\bja confirm(?:ou|aram|amos)\b|\bconfirm(?:ou|aram)\b|\baprovad[oa]s?\b|\baprov(?:ou|aram)\b/g, level: "strong" },
   { re: /\bconfirm(?:o|amos)\s+(?:(?:o|a|os|as|seu|sua|seus|suas)\s+)*(?:horario|agendamento|consulta|sessao|atendimento|reserva|marcacao|visita)s?\b/g, level: "strong" },
-  { re: /\b(?:fica|ficou)\s+(?:para|pra)\b/g, level: "strong" },
+  // `generic`: "A reunião ficou para quinta às 15h" fala de qualquer compromisso; só vira agenda com substantivo/oferta na frase.
+  { re: /\b(?:fica|ficou)\s+(?:para|pra)\b/g, level: "strong", generic: true },
   // "Então fica terça às 10h. Posso registrar?": leitura-eco que as instruções pedem; só vale com a pergunta no fim.
   { re: /\bfica\s+(?:entao\s+)?(?:na\s+|no\s+|a\s+)?(?:segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje)\b/g, level: "strong", needsMention: true, readback: true },
   { re: /\b(?:esta|estao|ficou|ficaram)\s+(?:tudo\s+)?certo\b|\btudo certo\b/g, level: "strong" },
   { re: /\bpode vir\b(?!\s+(?:com|de|usando|vestindo|sem|trazendo|na hora|que|ate))|\b(?:fica|ficou|continua) (?:valendo|de pe)\b|\besta de pe\b|\b(?:fica|ficou) certo\b/g, level: "strong" },
   { re: /\batualizad[oa]\b(?=[^.!?]*\b(?:consulta|sessao|horario|agendamento)\b)|\binscrevi\b|\bconfirmacao feita\b|\bfeit[oa] o agendamento\b|\bagendamento (?:esta )?feito\b/g, level: "strong", domain: true },
-  { re: /\bte (?:espero|esperamos|vejo|aguardo|aguardamos|atende|atendo|recebo|recebe|mando)\b|\bnos (?:vemos|falamos)\b/g, level: "strong", needsMention: true, domain: true },
+  { re: /\bte (?:espero|esperamos|espera|esperam|vejo|aguardo|aguardamos|aguarda|aguardam|atende|atendo|recebo|recebe|recebem|mando)\b|\bnos (?:vemos|falamos)\b/g, level: "strong", needsMention: true, domain: true },
+  // Gíria de fechamento: "blz, fechou terça 10h", "é com a gente", "tá na mão", "já tá no sistema", "ela liberou terça às 10h pra você".
+  { re: /\bfechou\b(?!\s*\?)/g, level: "strong", needsMention: true, domain: true, notAfter: /\b(?:clinica|loja|unidade|sala|estudio|salao|consultorio|academia|empresa)$/ },
+  { re: /\be com a gente\b|\b(?:ta|esta) na mao\b/g, level: "strong", needsMention: true, domain: true },
+  { re: /\bja (?:ta|esta) no sistema\b/g, level: "strong", domain: true },
+  { re: /\b(?:liberou|liberaram|liberei|liberamos)\b[^.!?]{0,40}\b(?:pra|para)\s+(?:voce|vc|ti)\b/g, level: "strong", domain: true },
   // Despedida: "Até lá!" depois de "pedido registrado, aguardando a equipe" é cortesia, não confirmação (closer: só barra sem o qualificador de pendente).
   { re: /\bate (?:la|logo|amanha|segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/g, level: "closer", needsMention: true, domain: true },
   // ✅ sozinho é marcador de lista ("✅ roupa confortável"): só pesa com horário ou assunto de pedido na frase (`aboutBooking`).
@@ -191,7 +199,27 @@ const CONFIRM_QUESTION = /\b(?:posso (?:registrar|reservar|marcar|seguir|confirm
 /** "…, tá?", "…, certo?": pergunta-eco; o que vem antes continua sendo afirmação. */
 const TAG_QUESTION = /,\s*(?:ta|tá|ne|né|certo|ok|combinado|beleza|tudo bem|viu|fechou|fechado|blz|entendeu|pode ser)\s*\?\s*$/i;
 
-type Hit = { level: Level; needsMention: boolean; readback: boolean; domain: boolean };
+/**
+ * Pergunta-eco: "Marcado para terça às 10h, tá bom?", "Pronto, já marquei, tá bom?": a cauda curta depois da última vírgula é só o
+ * pedido de aval (≤ 3 palavras, sem hora) e o que vem antes tem marcador forte, então AFIRMA. Pergunta de verdade não tem as duas coisas.
+ */
+function isEchoQuestion(raw: string, term: string): boolean {
+  if (!term.includes("?")) return false;
+  const at = raw.lastIndexOf(",");
+  if (at < 0) return false;
+  const tail = raw.slice(at + 1).trim();
+  if (!tail || /\d/.test(tail) || tail.split(/\s+/).length > 3) return false;
+  const head = norm(raw.slice(0, at));
+  if (markersIn(head).some((h) => h.level === "strong")) return true;
+  // "Remarquei pra quinta às 15h, tá bom?": mudança afirmada também não vira pergunta pelo "tá bom?".
+  return [CHANGE_CLAIM, CANCEL_CLAIM].some((re) => {
+    re.lastIndex = 0;
+    const m = re.exec(head);
+    return m !== null && !isHedged(head, m.index);
+  });
+}
+
+type Hit = { level: Level; needsMention: boolean; readback: boolean; domain: boolean; generic: boolean };
 
 /** "Se der certo, fica marcado": a frase ABRE com a condição (no começo da oração, "se" não reflexivo) e o marcador está nela ou na oração seguinte. */
 const REFLEXIVE_SE = /^se\s+(?:preocup|esqueca|apresse|incomod|sinta|lembre|atras|assust|canse|confund)/;
@@ -209,6 +237,22 @@ function isHedged(sentence: string, at: number): boolean {
   return HEDGE_BEFORE.test(clause.trim().split(/\s+/).slice(-6).join(" ")) || HEDGE_RIGHT_BEFORE.test(`${clause.trimEnd()} `);
 }
 
+/** A oração (partida por vírgula, `;`, `:`, travessão, "e", "mas") que contém a posição `at` da frase normalizada tem marcador forte? */
+function clauseHasStrongMarker(n: string, at: number): boolean {
+  const sep = /[,;:()—]|\b(?:e|mas|porem)\b/g;
+  let from = 0;
+  let to = n.length;
+  for (const m of n.matchAll(sep)) {
+    const i = m.index ?? 0;
+    if (i < at) from = i + m[0].length;
+    else {
+      to = i;
+      break;
+    }
+  }
+  return markersIn(n.slice(from, to)).some((h) => h.level === "strong");
+}
+
 function markersIn(n: string): Hit[] {
   const out: Hit[] = [];
   for (const m of MARKERS) {
@@ -219,7 +263,7 @@ function markersIn(n: string): Hit[] {
       const near = (n.slice(0, found.index ?? 0).split(/[,;:()—]/).pop() ?? "").trim().split(/\s+/).slice(-5).join(" ");
       if (PAYMENT_CUE.test(near)) continue;
       if (m.notAfter && m.notAfter.test((n.slice(0, found.index ?? 0).split(/[,;:()—]/).pop() ?? "").trim()) && !(m.exemptOnlyWithoutTime && extractAiTimes(n).length > 0)) continue;
-      out.push({ level: m.level, needsMention: m.needsMention === true, readback: m.readback === true, domain: m.domain === true });
+      out.push({ level: m.level, needsMention: m.needsMention === true, readback: m.readback === true, domain: m.domain === true, generic: m.generic === true });
     }
   }
   return out;
@@ -232,6 +276,7 @@ function markersIn(n: string): Hit[] {
 const CHANGE_CLAIM =
   /\b(?:remarc(?:ad[oa]\w*|amos)|remarquei|reagend(?:ad[oa]\w*|ei|amos)|troquei|trocad[oa]\w*|trocamos|mudei|mudad[oa]\w*|mudamos|(?<!que )passei (?:o|seu|sua|a|para|pra)|passou (?:para|pra)|transferid[oa]\w*|transferi|transferimos|adiei|adiad[oa]\w*|adiamos|antecipei|antecipad[oa]\w*)\b/g;
 const CANCEL_CLAIM = /\b(?:cancelei|cancelad[oa]\w*|cancelamos|desmarquei|desmarcad[oa]\w*|desmarcamos)\b/g;
+const FIRST_PERSON_CHANGE = /^(?:cancelei|desmarquei|remarquei|reagendei|troquei|cancelamos|desmarcamos|remarcamos|reagendamos|trocamos)$/;
 const SUBJECT_FICA = /\b(?:horario|consulta|sessao|atendimento|agendamento)\b[^.!?]*\b(?:fica|ficou) (?:para|pra)\b/;
 const INSTEAD_OF = /\b(?:em vez de|ao inves de)\b/;
 
@@ -257,7 +302,8 @@ function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean, han
       ) {
         continue;
       }
-      if (nounOrTime) return true;
+      // "Cancelei pra você", "Já desmarquei a de terça": primeira pessoa sem hedge é afirmação mesmo sem substantivo nem hora.
+      if (nounOrTime || FIRST_PERSON_CHANGE.test(m[0])) return true;
     }
   }
   if (SUBJECT_FICA.test(n) && !isHedged(n, n.search(/\b(?:fica|ficou) (?:para|pra)\b/))) return true;
@@ -301,6 +347,7 @@ const GENERIC_FIRST = new Set([
   "principal", "profissional", "nova", "novo", "grande", "pequena", "auxiliar", "vip", "premium", "externa", "externo", "interna", "interno", "terapeuta", "dentista", "barbeiro", "barbeira", "medico", "medica", "atendente", "doutor", "doutora", "equipe", "atendimento", "fisio", "massagista",
 ]);
 
+const PAIR_STOP = new Set(["de", "da", "do", "das", "dos", "e", "a", "o"]);
 const wordsOf = (name: string) => norm(name).replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
 
 /**
@@ -313,6 +360,10 @@ export function buildAliasIndex(names: readonly string[], serviceNames: readonly
   const serviceWords = new Set(serviceNames.flatMap((sv) => wordsOf(sv)));
   const count = new Map<string, number>();
   for (const name of names) for (const w of new Set(wordsOf(name))) count.set(w, (count.get(w) ?? 0) + 1);
+  // Pares de palavras seguidas ("marcos silva" de "Dr. Marcos Silva Junior"): o nome CURTO que a oferta carrega pode ter mais de uma palavra.
+  const pairs = (rest: string[]) => rest.slice(1).map((w, i) => `${rest[i]} ${w}`);
+  const pairCount = new Map<string, number>();
+  for (const name of names) for (const x of new Set(pairs(wordsOf(name).filter((w) => !TITLES.has(w))))) pairCount.set(x, (pairCount.get(x) ?? 0) + 1);
   return names.map((name) => {
     const words = wordsOf(name);
     const rest = words.filter((w) => !TITLES.has(w));
@@ -320,6 +371,7 @@ export function buildAliasIndex(names: readonly string[], serviceNames: readonly
     if (words.length > 0) out.add(words.join(" "));
     if (rest.length > 0) out.add(rest.join(" "));
     for (const w of rest) if (w.length >= 3 && !GENERIC_FIRST.has(w) && !serviceWords.has(w) && !/^\d+$/.test(w) && count.get(w) === 1) out.add(w);
+    for (const x of pairs(rest)) if (pairCount.get(x) === 1 && x.split(" ").every((w) => !GENERIC_FIRST.has(w) && !PAIR_STOP.has(w) && !serviceWords.has(w) && !/^\d+$/.test(w))) out.add(x);
     return { key: resourceKey(name), aliases: [...out] };
   });
 }
@@ -374,27 +426,28 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   const today = todayOf(st.now, st.tz);
   const all = extractAiTimes(stripped);
   const parts = splitSentences(stripped);
+  const starts: number[] = [];
+  parts.reduce((acc, p) => {
+    starts.push(acc);
+    return acc + p.raw.length + p.term.length;
+  }, 0);
   const sentences: Sentence[] = parts.map((p, i) => {
-    const tag = TAG_QUESTION.test(`${p.raw}${p.term}`);
+    const tag = TAG_QUESTION.test(`${p.raw}${p.term}`) || isEchoQuestion(p.raw, p.term);
     const body = tag ? p.raw.replace(/,\s*[^,]*$/, "") : p.raw;
     const n = norm(body);
     const question = p.term.includes("?");
     const skip = CUSTOMER_CITATION.test(norm(body.replace(VOCATIVE, ""))) || UNAVAILABLE_CUE.test(n) || BUSINESS_CUE.test(n);
     const verifyAt = n.search(VERIFY_PROMISE);
-    const noInvent =
+    const noInventBase =
       (INFO_CUE.test(n) && !ASSERT_AVAIL.test(n)) ||
       (verifyAt >= 0 && !ASSERT_AVAIL.test(n.slice(0, verifyAt))) ||
       (question && DAY_QUESTION.test(n) && !ASSERT_AVAIL.test(n)) ||
       (st.handoff === true && CHANGE_TOPIC.test(n) && TEAM_WORD.test(n) && !ASSERT_AVAIL.test(n));
-    return {
-      raw: p.raw.trim(),
-      n,
-      question,
-      tagQuestion: tag,
-      skip,
-      noInvent,
-      mentions: skip ? [] : all.filter((m) => m.sentence === i),
-    };
+    const mentions = skip ? [] : all.filter((m) => m.sentence === i);
+    // A isenção vale por ORAÇÃO: a oração do horário com marcador forte ("e terça às 10h já está marcada") nunca é só descrição,
+    // mesmo que outra oração da frase diga "vou verificar" ou fale de chegada.
+    const noInvent = noInventBase && !mentions.some((m) => clauseHasStrongMarker(n, m.at - starts[i]));
+    return { raw: p.raw.trim(), n, question, tagQuestion: tag, skip, noInvent, mentions };
   });
   const live = sentences.filter((s) => s.raw.length > 0);
   const last = live[live.length - 1];
@@ -445,7 +498,9 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   if (st.handoff !== true) {
     for (const s of live) {
       if (s.skip || (s.question && !s.tagQuestion)) continue;
-      if (HANDOFF_PASS.test(s.n)) return { kind: "handoff_claim", evidence: s.raw.slice(0, EVIDENCE_MAX) };
+      const pass = HANDOFF_PASS.exec(s.n);
+      // "Ainda não avisei a equipe": a negação desfaz a afirmação.
+      if (pass && !isHedged(s.n, pass.index)) return { kind: "handoff_claim", evidence: s.raw.slice(0, EVIDENCE_MAX) };
     }
   }
 
@@ -494,7 +549,8 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
     const definitive = (hs: Hit[]) => hs.some((h) => h.level === "strong") || (hs.some((h) => h.level === "closer") && !pendingQualified);
 
     // Qualquer marcador (fechamento, "combinado", "registrado") com hora que o servidor não devolveu: "Combinado, quarta às 15h então!" também é afirmação.
-    if (hits.some((h) => h.domain || h.level === "closer") && own.includes("inventado") && !s.noInvent) return { kind: "time_not_offered", evidence };
+    // Marcador não-`soft` (strong sem substantivo de agenda também: "Confirmado para terça às 11h!", "Fica valendo terça às 10h").
+    if (hits.some((h) => h.domain || (h.level !== "soft" && !h.generic)) && own.includes("inventado") && !s.noInvent) return { kind: "time_not_offered", evidence };
     // "Já deixei seu pedido registrado e eles te respondem por aqui" com o repasse criado: o "registrado" é o repasse. Só vale sem horário
     // citado e só para marcador fraco (soft/closer): "Marcado!" continua barrado.
     if (handoffTalk && own.length === 0 && hits.every((h) => h.level !== "strong")) continue;

@@ -15,6 +15,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 - **Quem pede para remarcar ou cancelar vai para a equipe.** A IA não oferece horários novos nesses casos.
 - **Mensagens sem código interno.** A IA não deixa mais escapar para o cliente códigos internos nem o raciocínio ("O cliente escolheu…").
 - **Novo aviso "horários para aprovar".** A equipe é avisada quando a IA registra um pedido ou quando há uma sugestão de confirmação; dá para desligar nas preferências de notificação.
+- **A IA erra menos ao confirmar horário.** A trava que impede a IA de dizer "marcado", "remarcado" ou "cancelado" sem ser verdade passou a pegar mais jeitos de falar ("fechou", "tá na mão", "é com a gente", "tá bom?" no fim) e a liberar o que é legítimo ("ainda não avisei a equipe"). Pedido para duas ou mais pessoas é reconhecido em mais frases ("pra nós três", "somos um casal"), e quem responde "sou eu mesma" depois da pergunta não fica mais em laço. Na fila, aprovar um grupo só aparece quando nenhum membro tem conflito.
 
 ### Agendamento com salas e profissionais (módulo opcional)
 

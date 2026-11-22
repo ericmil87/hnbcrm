@@ -166,6 +166,27 @@ describe("detectLeakedModelMarkup — agenda (D2): código de oferta EMITIDO e r
     expect(detectLeakedModelMarkup(text, only)).toBeNull();
     if (/^(?:https?:|Veja em loja)/.test(text)) expect(detectLeakedModelMarkup(text, agenda)).toBeNull();
   });
+  // 2ª revisão: texto de negócio que só coincide com um código EMITIDO (h1..h3 vigentes na conversa) não é vazamento
+  it.each([
+    "O plano h1 é o mais vendido",
+    "Use o cupom h2",
+    "A sala h1 fica no térreo",
+    "Tamanhos: h1, h2 e h3",
+    "O cliente escolheu bem",
+    "O cliente respondeu à pesquisa?",
+    "O cliente confirmou o pagamento? Posso liberar o acesso.",
+  ])("com h1..h3 emitidos, não barra: %s", (text) => {
+    expect(detectLeakedModelMarkup(text, agenda)).toBeNull();
+  });
+  it.each([
+    "Pode ser o h1 então?",
+    "Qual código você prefere: h1 ou h2?",
+    "Tenho terça às 10h (h3).",
+    "A opção h2 é a das 14h.",
+    "O cliente escolheu o h1. Vou confirmar.",
+  ])("com h1..h3 emitidos, barra: %s", (text) => {
+    expect(detectLeakedModelMarkup(text, agenda)).not.toBeNull();
+  });
   it("com o código h2 EMITIDO, 'Escolha a opção (h2)' é vazamento (é código de oferta); URL e prosa sem o código continuam livres", () => {
     expect(detectLeakedModelMarkup("Escolha a opção (h2)", agenda)?.kind).toBe("offer_code");
     expect(detectLeakedModelMarkup("Veja https://loja.com/produtos/h2", agenda)).toBeNull();

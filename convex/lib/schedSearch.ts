@@ -295,7 +295,15 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
   const first = scoreDays(data, usable, datesBetween(args.fromLocalDate, to), common);
   let unverifiable = first.dropped > 0 || first.skippedDays > 0 || usable.length < data.resources.length;
   const all = first.days.flatMap((d) => d.scored);
-  const smart = applySmartMode(all, mode, minOffer, args.audience, data.tz);
+  // Com hora pedida a busca roda SEM período (a hora exata vence "manhã"), mas as ofertas e as alternativas mais próximas continuam dentro do
+  // período pedido: "de manhã, às 14h" com 14h indisponível oferece manhãs, não a tarde inteira.
+  const periodWin = args.wantTimeMin !== undefined && args.period && args.period !== "qualquer" ? periodWindow(args.period) : null;
+  const inPeriod = (c: ScoredCandidate) => {
+    if (!periodWin) return true;
+    const m = minutesOfDay(c.startTime, data.tz);
+    return m >= periodWin.startMin && m < periodWin.endMin;
+  };
+  const smart = applySmartMode(all.filter(inPeriod), mode, minOffer, args.audience, data.tz);
   const distinct = dedupeByStart(smart.list);
   const picked = effLimit <= MAX_OFFERS ? pickOffers(distinct, effLimit, data.tz) : distinct.slice(0, effLimit);
   const slots = picked.map(asSlot);
