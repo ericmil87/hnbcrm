@@ -49,7 +49,7 @@ export function PermissionsEditor({
         <div className="flex items-center gap-2">
           <ShieldCheck size={18} className="text-brand-500" />
           <span className="text-sm font-semibold text-text-primary">
-            Permissoes
+            Permissões
           </span>
         </div>
         {role && !disabled && (
@@ -71,7 +71,7 @@ export function PermissionsEditor({
             Categoria
           </span>
           <span className="text-xs font-medium text-text-muted uppercase tracking-wide">
-            Nivel de Acesso
+            Nível de acesso
           </span>
         </div>
 

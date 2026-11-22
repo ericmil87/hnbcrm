@@ -27,6 +27,13 @@ describe("Stepper", () => {
     expect(onStepClick).toHaveBeenCalledWith("a");
   });
 
+  it("no toque o botão do passo tem 44 x 44 px (no celular só o número aparece, e o botão ficava com 24 px de largura)", () => {
+    render(<Stepper steps={STEPS} current="b" completed={["a"]} onStepClick={() => {}} />);
+    const cls = screen.getByRole("button", { name: /Arquivo/ }).className;
+    expect(cls).toContain("coarse:min-h-11");
+    expect(cls).toContain("coarse:min-w-11");
+  });
+
   it("sem onStepClick não há botões", () => {
     render(<Stepper steps={STEPS} current="a" completed={["a"]} />);
     expect(screen.queryByRole("button")).toBeNull();
