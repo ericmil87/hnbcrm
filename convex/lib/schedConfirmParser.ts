@@ -1332,5 +1332,28 @@ export function extractDateTimeMentions(raw: string, ctx: { now: number; tz: str
       out.push({ localDate: date, timeMin: time, evidence: [...gr.days.map((d) => d.lit), ...(gr.time ? [gr.time.lit] : [])] });
     }
   }
-  return out;
+  return mergeSplitMention(out, text);
+}
+
+/** Entre o dia e a hora só pontuação, período do dia e "às": "terça, 15h", "terça de tarde, 15h" são UMA menção. */
+const MENTION_GLUE_RE = /^[\s,;:\-–—]*(?:(?:de |da |pela |a )?(?:manha|tarde|noite)\s*[,;:\-–—]*\s*)?(?:(?:as|a|por volta d[ae]s?) )?$/;
+
+/**
+ * "terça, 15h" e "terça de tarde, 15h" saem do segmentador como um dia sem hora e uma hora sem dia. Se a mensagem tem exatamente esses
+ * dois e nada mais, e o trecho entre eles é só cola (vírgula, período, "às"), é uma menção só. Qualquer outra coisa entre eles
+ * ("terça eu não posso, 15h"), ou mais menções, deixa como está.
+ */
+function mergeSplitMention(out: DateTimeMention[], text: string): DateTimeMention[] {
+  if (out.length !== 2) return out;
+  const day = out.find((m) => m.localDate !== undefined && m.timeMin === undefined);
+  const time = out.find((m) => m.timeMin !== undefined && m.localDate === undefined);
+  if (!day || !time) return out;
+  const dayLit = day.evidence[day.evidence.length - 1];
+  const timeLit = time.evidence[0];
+  const lowered = fold(text);
+  const a = lowered.indexOf(fold(dayLit));
+  const b = lowered.indexOf(fold(timeLit));
+  if (a < 0 || b < 0 || b < a + fold(dayLit).length) return out;
+  if (!MENTION_GLUE_RE.test(lowered.slice(a + fold(dayLit).length, b))) return out;
+  return [{ localDate: day.localDate, timeMin: time.timeMin, evidence: [...day.evidence, ...time.evidence] }];
 }

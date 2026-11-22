@@ -2066,9 +2066,15 @@ export async function undoHumanConfirmBookingCore(
 ): Promise<{ appointmentId: Id<"schedAppointments">; kind: "created" | "approved"; sourceMessageId?: Id<"messages"> }> {
   const now = args.now ?? Date.now();
   const { actor } = args;
-  if (actor.type !== "human") fail("Só a equipe desfaz uma marcação.");
-  const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
-  if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  // Só a equipe desfaz, com uma exceção: o próprio sistema desfaz a SUA criação quando o humano corrige a mensagem logo depois
+  // ("Confirmado terça 10h", "ops, terça 14h"); ator `system`/`human_message` (as mesmas travas: criação desta via intocada, ou aprovação desta via).
+  const selfCorrection = actor.type === "system" && actor.via === "human_message";
+  if (actor.type === "human") {
+    const permissions = resolvePermissions(actor.member.role as Role, actor.member.permissions as Permissions | undefined);
+    if (!hasPermission(permissions, "agenda", "edit")) fail("Permissão insuficiente");
+  } else if (!selfCorrection) {
+    fail("Só a equipe desfaz uma marcação.");
+  }
   const org = assertOrgModule(await ctx.db.get(args.organizationId));
   const tz = orgTimezone(org);
   const a = await ctx.db.get(args.appointmentId);

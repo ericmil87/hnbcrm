@@ -9,6 +9,7 @@ import { sanitizeLlmError } from "./lib/llm/sanitize";
 import { type OrgProviderConfig, resolveOrgRoutes } from "./lib/agentRoutes";
 import { addUsage, finishRunCostFields, monthKeyUtc, newUsageTotals } from "./lib/aiSpend";
 import { assertModule } from "./lib/orgModules";
+import { undoHumanConfirmBookingCore } from "./lib/schedBookingOps";
 import {
   acceptSuggestionCore,
   decideInterpretation,
@@ -39,8 +40,11 @@ import { isSchedulingOn, resolveAgendaReader } from "./lib/schedRead";
 
 const actV = v.union(v.literal("confirmou"), v.literal("propos"), v.literal("remarcou"), v.literal("cancelou"), v.literal("informativo"), v.literal("nenhum"));
 
+const subjectV = v.union(v.literal("agendamento_proprio"), v.literal("funcionamento"), v.literal("terceiro"), v.literal("entrega_pagamento"), v.literal("outro"));
+
 export const llmVerdictValidator = v.union(
-  v.object({ status: v.literal("ok"), ato: actV, dia: v.string(), hora: v.string(), servicoId: v.union(v.string(), v.null()) }),
+  // `assunto` opcional só para o que já estava agendado antes desta versão (a resposta nova sempre o traz).
+  v.object({ status: v.literal("ok"), ato: actV, dia: v.string(), hora: v.string(), servicoId: v.union(v.string(), v.null()), assunto: v.optional(subjectV) }),
   v.object({ status: v.literal("unavailable") }),
   v.object({ status: v.literal("invalid") }),
   v.object({ status: v.literal("bad_evidence") })
@@ -195,10 +199,24 @@ export const internalClassify = internalAction({
  * `pending` (outra via decidiu) não faz nada.
  */
 export const internalDecide = internalMutation({
-  args: { messageId: v.id("messages"), llm: v.optional(llmVerdictValidator) },
+  // `held`: esta é a segunda passada, depois da janela da criação automática (não espera de novo).
+  args: { messageId: v.id("messages"), llm: v.optional(llmVerdictValidator), held: v.optional(v.boolean()) },
   returns: decideResultValidator,
   handler: async (ctx, args) => {
-    return await decideInterpretation(ctx, args.messageId, args.llm);
+    return await decideInterpretation(ctx, args.messageId, args.llm, { held: args.held });
+  },
+});
+
+/**
+ * O sistema desfaz a SUA criação/aprovação quando o humano corrige a mensagem logo depois (ator `system`, as mesmas travas do
+ * "Desfazer" da equipe: origem `human_message`, ainda `scheduled` e intocado). Lança se não der; quem chama trata como "não desfez".
+ */
+export const internalUndoOwnBooking = internalMutation({
+  args: { organizationId: v.id("organizations"), appointmentId: v.id("schedAppointments") },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    await undoHumanConfirmBookingCore(ctx, { organizationId: args.organizationId, appointmentId: args.appointmentId, actor: { type: "system", via: "human_message" }, now: Date.now() });
+    return null;
   },
 });
 

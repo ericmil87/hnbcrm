@@ -59,6 +59,8 @@ import {
   collectProposals,
   findMatchingProposal,
   hasCorrectionWords,
+  humanRefuses,
+  humanSpeaksOfThirdParty,
   isWeakReply,
   looksLikeCorrection,
   previousLooksLikeProposal,
@@ -82,6 +84,14 @@ import { atLocalMinutes, assertValidTimezone, diffLocalDays, formatLocalDateLabe
 const MINUTE_MS = 60_000;
 /** Rede de segurança: se a segunda leitura não voltar, a mensagem vira proposta (sem LLM). */
 export const CLASSIFY_WATCHDOG_MS = 3 * MINUTE_MS;
+/**
+ * Janela antes de criar/aprovar SOZINHO (modo `auto`): a mensagem de correção que costuma vir logo depois ("ops, terça 14h")
+ * chega antes de existir agendamento. Escolhida em 60 s: cobre a correção imediata (a pessoa percebe o erro ao reler, em segundos),
+ * custa só um minuto de atraso num registro que ninguém espera em tempo real (o cliente já leu a confirmação no WhatsApp) e deixa
+ * a vaga livre por tão pouco tempo que a chance de outra pessoa pegá-la é desprezível (se pegar, vira sugestão com a regra). Mesmo
+ * assim a correção depois da criação DESFAZ a criação (`undoHumanConfirmBookingCore`), dentro de `CORRECTION_WINDOW_MS`.
+ */
+export const AUTO_CREATE_DELAY_MS = 60_000;
 const MAX_NOTIFY_RECIPIENTS = 25;
 const SERVICES_CAP = 100;
 const SUGGESTION_SWEEP = 10;
@@ -387,7 +397,7 @@ async function notifySuggestion(
   p: { interpretationId: Id<"schedInterpretations">; act: string; parsed: Parsed; reason?: string; fromStart?: number; bellOnly?: boolean }
 ): Promise<void> {
   const kind: SuggestKind =
-    p.reason === "aprovar_pendente" ? "aprovar" : p.reason === "substituir_pendente" ? "substituir" : p.reason === "correcao" ? "correcao" : p.act === "remarcou" ? "remarcou" : p.act === "cancelou" ? "cancelou" : "confirmou";
+    p.reason === "aprovar_pendente" ? "aprovar" : p.reason === "substituir_pendente" ? "substituir" : p.reason === "correcao" || p.reason === "correcao_desfeita" ? "correcao" : p.act === "remarcou" ? "remarcou" : p.act === "cancelou" ? "cancelou" : "confirmou";
   for (const m of await recipientsOf(ctx, c)) {
     await createNotification(ctx, {
       organizationId: c.org._id,
@@ -481,32 +491,62 @@ async function findRecentInterpretation(ctx: MutationCtx, c: Case): Promise<Doc<
       (r) =>
         r.conversationId === c.conversation._id &&
         r.messageId !== c.message._id &&
-        (r.decision === "created" || r.decision === "approved_existing" || (r.decision === "proposed" && r.status === "open"))
+        (r.decision === "created" ||
+          r.decision === "approved_existing" ||
+          (r.decision === "proposed" && r.status === "open") ||
+          // Ainda esperando a janela da criação automática (ou a segunda leitura): a correção a derruba antes de existir agendamento.
+          (r.decision === "pending" && r.status === "pending"))
     ) ?? null
   );
 }
 
 /**
- * Correção logo depois ("Ops, segunda não, terça 10h", "Corrigindo: confirmado terça 10h"): cita OUTRO dia ou hora, ou nega o
- * anterior. NUNCA age sozinha: vira sugestão de REMARCAR apontando para o agendamento criado, ou substitui a sugestão aberta.
+ * Correção logo depois ("Ops, segunda não, terça 10h", "Corrigindo: quarta 10h"): cita OUTRO dia ou hora, ou nega o anterior.
+ * Dentro da janela, a correção vale mais que a leitura anterior:
+ *  - a anterior ainda ESPERA a janela da criação automática: é descartada (nunca chega a existir agendamento);
+ *  - a anterior CRIOU/APROVOU sozinha: o sistema DESFAZ o que fez (a mesma porta do "Desfazer" da equipe, ator `system`);
+ *    se não der (alguém mexeu no horário), cai na sugestão de REMARCAR o agendamento;
+ *  - a anterior é sugestão aberta: a nova a substitui.
+ * Em todos os casos o horário novo vira PROPOSTA de 1 toque; a correção nunca cria nem remarca sozinha (a "correção" não tem
+ * proposta do cliente por trás, então as quatro condições do `auto` não valem para ela).
  */
 async function planCorrection(ctx: MutationCtx, c: Case, recent: Doc<"schedInterpretations">): Promise<Plan | null> {
-  const text = c.message.content;
+  // "Corrigindo: quarta 10h": o parser lê "Palavra:" no começo como transcrição e bloqueia a mensagem; a etiqueta sai antes de ler.
+  const text = c.message.content.replace(/^\s*(corrigindo|corre[cç][aã]o|corrigido|ops|opa|desculpa|desculpe|errei|na verdade)\s*[:,\-–]\s*/i, "");
   const rp = recent.parsed as Parsed;
   const mentions = extractDateTimeMentions(text, { now: c.message.createdAt, tz: c.tz });
   const repeats = mentions.some((m) => m.localDate === rp.localDate && m.timeMin === rp.timeMin && m.localDate !== undefined);
   if (repeats) return null;
   const differs = mentions.filter((m) => (m.localDate !== undefined && m.localDate !== rp.localDate) || (m.timeMin !== undefined && m.timeMin !== rp.timeMin));
   const pick = differs.find((m) => m.localDate !== undefined && m.timeMin !== undefined) ?? differs[0];
-  if (!pick && !hasCorrectionWords(text)) return null;
-  const parsed: Parsed = compact({ localDate: pick?.localDate, timeMin: pick?.timeMin, serviceId: rp.serviceId });
+  if (!pick && !hasCorrectionWords(c.message.content)) return null;
+  // "ops, 14h" corrige só a hora; "quarta mesmo" só o dia: o que a correção não cita vem da leitura anterior.
+  const parsed: Parsed = compact({ localDate: pick?.localDate ?? (pick ? rp.localDate : undefined), timeMin: pick?.timeMin ?? (pick ? rp.timeMin : undefined), serviceId: rp.serviceId });
+  const replacement = (reason: "correcao_desfeita"): Plan => ({ kind: "propose", act: "confirmou", parsed, checks: { parser: false }, reason });
+
+  if (recent.decision === "pending") {
+    if (!pick) return null;
+    await ctx.db.patch(recent._id, { decision: "ignored", status: "done", reason: "corrigida_antes" });
+    return replacement("correcao_desfeita");
+  }
   if (recent.decision === "created" || recent.decision === "approved_existing") {
+    if (pick && recent.appointmentId && recent.outcome === undefined) {
+      try {
+        // Sub-transação: se desfazer lançar (alguém já mexeu no horário, passou a janela), nada fica pela metade.
+        await ctx.runMutation(internal.schedulingInterpret.internalUndoOwnBooking, { organizationId: c.org._id, appointmentId: recent.appointmentId });
+        await ctx.db.patch(recent._id, { outcome: "undone", answeredAt: c.now });
+        await resolveEntityNotifications(ctx, { organizationId: c.org._id, target: { conversationId: c.conversation._id }, reason: "undone", types: ["appointment_created"], scanLimit: 50 });
+        return replacement("correcao_desfeita");
+      } catch {
+        // cai na sugestão de remarcar o agendamento existente
+      }
+    }
     return { kind: "propose", act: "remarcou", parsed, checks: { parser: false }, reason: "correcao", appointmentId: recent.appointmentId };
   }
   // Sugestão ainda aberta: a nova leitura a substitui (quando há horário novo).
   if (!pick) return null;
   await ctx.db.patch(recent._id, { status: "expired", reason: "corrigida" });
-  return { kind: "propose", act: recent.act, parsed, checks: { parser: false }, reason: "correcao", appointmentId: recent.appointmentId };
+  return { kind: "propose", act: recent.act, parsed, checks: { parser: false }, reason: recent.act === "confirmou" ? "correcao_desfeita" : "correcao", appointmentId: recent.appointmentId };
 }
 
 export async function startInterpretation(ctx: MutationCtx, messageId: Id<"messages">): Promise<StartResult> {
@@ -634,6 +674,8 @@ async function planInterpretation(
   }
 
   // ── confirmou
+  // A própria mensagem do humano diz que o horário é de outra pessoa ("pro seu filho"): nunca é o agendamento deste contato.
+  if (humanSpeaksOfThirdParty(c.message.content)) return ignored("terceiro");
   const hasDate = p.localDate !== undefined;
   const hasTime = p.timeMin !== undefined;
   const startTime = hasDate && hasTime ? atLocalMinutes(p.localDate!, p.timeMin!, c.tz) : undefined;
@@ -695,6 +737,10 @@ async function planInterpretation(
   // SÓ SUGERE quando existe proposta coincidente na conversa (mesmo dia e hora: do cliente, oferta do humano/IA escolhida
   // pelo cliente). Sem ela a mensagem fica `ignored` com o motivo (medimos, sem avisar ninguém).
   if (looseFind.match === undefined) {
+    // O cliente citou esse dia e hora, mas em pergunta de funcionamento, de entrega/pagamento ou para outra pessoa: não é pedido
+    // de atendimento dele. Fica `ignored` com o assunto (medido, sem avisar ninguém): sugestão indevida ensina a ignorar a fila.
+    const subject = collection.blocked.find((b) => b.localDate === p.fromMessage.localDate && b.timeMin === p.fromMessage.timeMin)?.subject;
+    if (subject) return ignored(`assunto_${subject}`, parsed);
     return ignored(strictFind.reason === "sem_proposta" ? "sem_proposta" : "sem_proposta_coincidente", parsed);
   }
   const service = resolveServiceForConversation({
@@ -814,7 +860,26 @@ const LLM_REASON: Record<Exclude<LlmVerdict["status"], "ok">, string> = {
   bad_evidence: "ia_evidencia_invalida",
 };
 
-export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"messages">, llm: LlmVerdict | undefined): Promise<DecideResult> {
+/**
+ * Mensagem POSTERIOR do humano na conversa que muda o que esta leu (palavra de correção, recusa, ou OUTRO dia/hora): rede de
+ * segurança para a corrida em que a correção chegou antes de a leitura desta ficar pronta. Pura leitura indexada (≤ 10 mensagens).
+ */
+async function laterHumanMessageCorrects(ctx: MutationCtx, c: Case, parsed: Parsed): Promise<boolean> {
+  const later = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", c.conversation._id).gt("createdAt", c.message.createdAt))
+    .take(10);
+  for (const m of later) {
+    if (m._id === c.message._id || m.direction !== "outbound" || m.senderType !== "human" || m.isInternal || m.metadata?.revoked === true) continue;
+    const text = m.content ?? "";
+    if (looksLikeCorrection(text) || humanRefuses(text)) return true;
+    const ms = extractDateTimeMentions(text, { now: m.createdAt, tz: c.tz });
+    if (ms.some((x) => (x.localDate !== undefined && x.localDate !== parsed.localDate) || (x.timeMin !== undefined && x.timeMin !== parsed.timeMin))) return true;
+  }
+  return false;
+}
+
+export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"messages">, llm: LlmVerdict | undefined, opts: { held?: boolean } = {}): Promise<DecideResult> {
   const row = await ctx.db
     .query("schedInterpretations")
     .withIndex("by_message", (q) => q.eq("messageId", messageId))
@@ -850,7 +915,26 @@ export async function decideInterpretation(ctx: MutationCtx, messageId: Id<"mess
   };
 
   if (c.settings.humanConfirm.mode !== "auto") return await fallback("modo_sugerir");
-  if (!agree) return await fallback(verdict.status === "ok" ? "ia_divergente" : LLM_REASON[verdict.status]);
+  if (!agree) {
+    // O modelo leu o assunto do cliente e NÃO é pedido de atendimento dele (funcionamento, terceiro, entrega/pagamento): nem sugere.
+    if (verdict.status === "ok" && verdict.ato === "confirmou" && verdict.assunto !== undefined && verdict.assunto !== "agendamento_proprio" && verdict.assunto !== "outro") {
+      const reason = `assunto_${verdict.assunto}`;
+      await writeRow(ctx, c, row, { act, parsed, checks, decision: "ignored", status: "done", reason });
+      return { decision: "ignored", reason };
+    }
+    return await fallback(verdict.status === "ok" ? (verdict.assunto === "outro" ? "ia_assunto_incerto" : "ia_divergente") : LLM_REASON[verdict.status]);
+  }
+
+  // Janela da criação automática: espera `AUTO_CREATE_DELAY_MS` desde que a leitura nasceu (a linha segue `pending`; a
+  // correção que chegar nesse intervalo a descarta). Depois dela, confere se uma mensagem posterior do humano corrige.
+  if (!opts.held) {
+    const dueAt = row.createdAt + AUTO_CREATE_DELAY_MS;
+    if (c.now < dueAt) {
+      await ctx.scheduler.runAfter(Math.max(dueAt - c.now, 1), internal.schedulingInterpret.internalDecide, { messageId, llm: verdict, held: true });
+      return { decision: "noop", reason: "aguardando_janela_de_correcao" };
+    }
+  }
+  if (await laterHumanMessageCorrects(ctx, c, parsed)) return await fallback("mensagem_posterior");
 
   // Aprovar o pendente (a IA ou o link propuseram; o humano confirmou).
   if (approveId) {
