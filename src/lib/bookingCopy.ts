@@ -113,6 +113,7 @@ export const DETAIL_COPY = {
   notFound: { title: "Agendamento não encontrado", hint: "Ele pode ter sido removido ou você não tem acesso." },
   fields: {
     client: "Cliente",
+    phone: "Telefone",
     service: "Serviço",
     when: "Quando",
     where: "Com quem e onde",

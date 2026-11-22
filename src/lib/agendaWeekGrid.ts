@@ -15,7 +15,7 @@ import {
 } from "./agendaGrid";
 import { layoutOverlaps, MIN_EVENT_MINUTES, type LayoutItem } from "./agendaLayout";
 import { isExpiredProposal } from "./agendaStatus";
-import { weekdayOf, zonedMinutes, zonedToday } from "./agendaZone";
+import { weekdayOf, zonedAtMinutes, zonedDayBounds, zonedMinutes, zonedToday } from "./agendaZone";
 
 /** Faixas lado a lado visíveis por grupo de sobrepostos: 3 no computador, 2 no celular; o resto vira a ficha "+N". */
 export const LANES_DESKTOP = 3;
@@ -228,4 +228,21 @@ export function buildWeekModel(input: {
     todayIndex: dates.indexOf(today),
     empty: !anyItem,
   };
+}
+
+/** O compromisso continua de um dia anterior no dia `pieceDate` (começou antes da meia-noite local desse dia). */
+export function isContinuationPiece(item: Pick<InternalItem, "startTime">, pieceDate: string, tz: string): boolean {
+  return item.startTime < zonedDayBounds(pieceDate, tz).start;
+}
+
+/**
+ * Novo início ao soltar um pedaço do compromisso em `targetDate` às `minute`. Pelo pedaço do dia de início, o topo do bloco
+ * é o próprio início (instante absoluto do destino). Pelo pedaço que continua de um dia anterior, o topo é a meia-noite
+ * de `pieceDate`: o compromisso se desloca pela DIFERENÇA entre o destino e essa meia-noite (`startTime + delta`), e a
+ * duração se mantém.
+ */
+export function movedEventStart(item: Pick<InternalItem, "startTime">, pieceDate: string, targetDate: string, minute: number, tz: string): number {
+  const target = zonedAtMinutes(targetDate, minute, tz);
+  if (!isContinuationPiece(item, pieceDate, tz)) return target;
+  return item.startTime + (target - zonedDayBounds(pieceDate, tz).start);
 }

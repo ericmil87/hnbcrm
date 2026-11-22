@@ -15,7 +15,8 @@ export interface RangeAppointments {
 
 /**
  * Agendamentos de um intervalo (Semana e Mês) com UMA leitura por página de 100 (`listAgendaAppointments`, índice por
- * início), encadeando o cursor até `RANGE_PAGES` páginas. Nada de leitura por bloco. Troca de intervalo mantém o
+ * início), encadeando o cursor até `RANGE_PAGES` páginas. `mode: "grid"`: só os status da grade (cancelados e remarcados não gastam o teto) e,
+ * na primeira página, os que começaram antes do período e ainda não terminaram. Nada de leitura por bloco. Troca de intervalo mantém o
  * resultado anterior até o novo chegar (`stale`). `enabled = false` não assina nada.
  */
 export function useRangeAppointments(
@@ -24,7 +25,7 @@ export function useRangeAppointments(
   to: string,
   enabled: boolean
 ): { data: RangeAppointments | undefined; stale: boolean } {
-  const base = enabled ? { organizationId, fromLocalDate: from, toLocalDate: to, limit: 100 } : null;
+  const base = enabled ? { organizationId, fromLocalDate: from, toLocalDate: to, limit: 100, mode: "grid" as const } : null;
   const p1 = useQuery(api.scheduling.listAgendaAppointments, base ?? "skip");
   const p2 = useQuery(api.scheduling.listAgendaAppointments, base && p1?.next ? { ...base, after: p1.next } : "skip");
   const p3 = useQuery(api.scheduling.listAgendaAppointments, base && p2?.next ? { ...base, after: p2.next } : "skip");

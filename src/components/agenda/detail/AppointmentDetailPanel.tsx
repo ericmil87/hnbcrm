@@ -174,6 +174,7 @@ function DetailBody({
         busy={busy}
         proposalBroken={proposalBroken}
         undoUnavailable={undoUnavailable}
+        contactPhone={data.contactPhone}
         onAction={onAction}
         onOpenConversation={appt.conversationId && onOpenConversation ? () => onOpenConversation(appt.conversationId!) : undefined}
       />

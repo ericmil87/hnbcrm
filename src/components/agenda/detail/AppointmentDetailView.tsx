@@ -46,6 +46,8 @@ export interface AppointmentDetailViewProps {
   onAction: (action: DetailAction) => void;
   /** "Abrir conversa" (ausente = sem o atalho). */
   onOpenConversation?: () => void;
+  /** Telefone do contato já formatado pelo servidor (ausente = sem contato ou sem número). */
+  contactPhone?: string;
 }
 
 /** Conteúdo do painel do agendamento, só por props: dados, status, origem, avisos, ações e histórico. */
@@ -60,6 +62,7 @@ export function AppointmentDetailView({
   undoUnavailable,
   onAction,
   onOpenConversation,
+  contactPhone,
 }: AppointmentDetailViewProps) {
   const expired = isProposalExpired(appt.status, appt.startTime, now, appt.needsAttention?.code);
   const actions = availableActions({
@@ -86,6 +89,7 @@ export function AppointmentDetailView({
   }));
   const rows: Array<[string, string]> = [
     ...(who ? ([[t.fields.client, who]] as Array<[string, string]>) : []),
+    ...(contactPhone ? ([[t.fields.phone, contactPhone]] as Array<[string, string]>) : []),
     [t.fields.service, appt.serviceName],
     [t.fields.when, longRangePhrase(appt.startTime, appt.endTime, tz)],
     ...(where ? ([[t.fields.where, where]] as Array<[string, string]>) : []),

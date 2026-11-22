@@ -32,8 +32,8 @@ export const VIEWS_COPY = {
       legend: "Cores",
     },
     density: { label: "Densidade", compacta: "Densidade compacta", padrao: "Densidade padrão", confortavel: "Densidade confortável" },
-    quick: { confirm: "Confirmar", arrived: "Chegou", open: "Abrir", failed: "Não foi possível atualizar o horário.", confirmed: "Horário confirmado", arrivedDone: "Chegada registrada" },
-    card: { place: "Onde", origin: "Origem", when: "Quando" },
+    quick: { openConversation: "Abrir conversa", confirm: "Confirmar", arrived: "Chegou", open: "Abrir", failed: "Não foi possível atualizar o horário.", confirmed: "Horário confirmado", arrivedDone: "Chegada registrada" },
+    card: { phone: "Telefone", place: "Onde", origin: "Origem", when: "Quando" },
     block: { more: "{n} a mais, abrir o dia", moreLabel: "+{n}" },
     weekGrid: {
       ariaLabel: "Semana",
