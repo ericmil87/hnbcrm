@@ -108,16 +108,16 @@ describe("profissional pedido pelo cliente: o servidor resolve, filtra e fixa", 
     await addPerson(s, "Léo Souza");
     for (const name of ["dra helena", "HELENA", "  a dra. helena "]) {
       const ok = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", professional: name });
-      expect(ok.result.resultado, name).toContain("SÃO com Dra. Helena");
+      expect(ok.result.resultado, name).toMatch(/SÃO com helena/i);
     }
     const ambiguous = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", professional: "Léo" });
     expect(ambiguous.result.status).toBe("ok");
-    expect(ambiguous.result.resultado).toContain("serve a mais de um profissional");
+    expect(ambiguous.result.resultado).toContain("Não consegui esse profissional nesse período");
     expect(linesOf(ambiguous.result.resultado).every((l) => !l.includes("(com"))).toBe(true);
     const unique = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", professional: "Souza" });
-    expect(unique.result.resultado).toContain("SÃO com Léo Souza");
+    expect(unique.result.resultado).toContain("SÃO com Souza"); // o nome que o cliente disse, não o do cadastro
     const unknown = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", professional: "Zeca" });
-    expect(unknown.result.resultado).toContain("Não identifiquei o profissional pedido");
+    expect(unknown.result.resultado).toContain("Não consegui esse profissional nesse período");
     expect(unknown.result.resultado).toContain("NÃO são com ele");
     expect(linesOf(unknown.result.resultado).length).toBeGreaterThan(0);
     const st = await stateOf(s.ana.conversationId);
@@ -129,8 +129,8 @@ describe("profissional pedido pelo cliente: o servidor resolve, filtra e fixa", 
     await addPerson(s, "Léo", [2, 3, 4, 5]); // folga na segunda 15/06
     const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", professional: "Léo" });
     expect(out.result.status).toBe("ok");
-    expect(out.result.resultado).toContain("Léo NÃO tem horário livre nesse pedido");
-    expect(out.result.resultado).toContain("NÃO diga que são com Léo");
+    expect(out.result.resultado).toContain("Não consegui esse profissional nesse período");
+    expect(out.result.resultado).not.toContain("Léo"); // nem o nome volta: "não existe" e "sem horário" têm a MESMA resposta
     const lines = linesOf(out.result.resultado);
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.every((l) => !l.includes("(com"))).toBe(true);
@@ -144,14 +144,14 @@ describe("profissional pedido pelo cliente: o servidor resolve, filtra e fixa", 
     await addPerson(s, "Léo");
     const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-14", professional: "Léo" }); // domingo
     expect(out.result.status).toBe("sem_horarios");
-    expect(out.result.resultado).toContain("Léo NÃO tem horário livre");
+    expect(out.result.resultado).toContain("Não consegui esse profissional nesse período");
   });
 
   test("profissional que não faz o serviço e grupo com profissional: busca sem filtro, avisando", async () => {
     const s = await seedAiAgenda(t);
     // "Sessão" só pede SALA: um profissional pedido não restringe nada, mas Sala Rosa não é pessoa que faça "Consulta"? aqui, sala existente pedida p/ o serviço de profissional
     const room = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", professional: "Sala Rosa" });
-    expect(room.result.resultado).toMatch(/Sala Rosa (não faz esse serviço|NÃO tem horário livre)/);
+    expect(room.result.resultado).toContain("Não consegui esse profissional nesse período");
     expect(linesOf(room.result.resultado).every((l) => !l.includes("(com"))).toBe(true);
     const group = await find(s, s.ana, { service: "Massagem casal", dateRef: "2026-06-15", people: 2, professional: "Helena" });
     expect(group.result.resultado).toContain("Marcação em grupo não escolhe profissional");
@@ -204,9 +204,8 @@ describe("hora pedida e contagem de horários livres", () => {
     const lines = linesOf(out.result.resultado);
     expect(lines[0]).toBe("h1 — segunda-feira, 15/06, às 14:00");
     expect(lines.length).toBeLessThanOrEqual(3);
-    expect(out.result.resultado).toMatch(/Há \d+ horários livres neste pedido; os \d abaixo são só uma amostra/);
-    const total = Number(/Há (\d+) horários livres/.exec(out.result.resultado ?? "")![1]);
-    expect(total).toBeGreaterThan(3);
+    expect(out.result.resultado).toMatch(/Há (?:alguns|vários|muitos) outros horários livres neste pedido além destes; os \d abaixo são só uma amostra/);
+    expect(out.result.resultado).not.toMatch(/\d+ horários livres/); // faixa, nunca o número
     expect(out.result.ha_mais).toBe("sim");
     expect((await stateOf(s.ana.conversationId))!.offers[0].startTime).toBe(aiAt(14));
   });
@@ -254,7 +253,7 @@ describe("hora pedida e contagem de horários livres", () => {
   test("a contagem vale sem hora pedida também (a IA não conclui 'não tem' por ver só 3)", async () => {
     const s = await seedAiAgenda(t);
     const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15" });
-    expect(out.result.resultado).toMatch(/Há \d+ horários livres neste pedido/);
+    expect(out.result.resultado).toMatch(/Há (?:alguns|vários|muitos) outros horários livres neste pedido/);
     const none = await find(s, s.bia, { service: "Sessão", dateRef: "2026-06-15", period: "noite" });
     expect(none.result.status).toBe("sem_horarios");
   });
@@ -275,6 +274,29 @@ describe("hora pedida e contagem de horários livres", () => {
     });
     expect(bad.result.status).toBe("reservado_aguardando_equipe"); // campos extras ignorados
     expect((await appointments())[0].startTime).toBe(aiAt(14));
+  });
+});
+
+describe("revisão #200: período × hora pedida e fixação do plano", () => {
+  test("a hora pedida VENCE o período ('manhã' + 14:00 não dá 14h indisponível)", async () => {
+    const s = await seedAiAgenda(t);
+    const out = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", period: "manha", time: "14:00" });
+    expect(out.result.resultado).toContain("Horário pedido (14:00) DISPONÍVEL");
+    expect(linesOf(out.result.resultado)[0]).toBe("h1 — segunda-feira, 15/06, às 14:00");
+  });
+
+  test("oferta SEM profissional nomeado: a sala equivalente pode trocar (não vira 'horário tomado'), o profissional não", async () => {
+    const s = await seedAiAgenda(t);
+    // "Sessão" só pede sala: a oferta aponta uma sala; a equipe ocupa essa sala e a outra segue livre
+    await find(s, s.ana, { service: "Sessão", dateRef: "2026-06-15" });
+    const offer = (await stateOf(s.ana.conversationId))!.offers[0];
+    expect(offer.professional).toBeUndefined();
+    await shownAndAnswered(s.ana);
+    await staffBook(s, s.bia, offer.startTime, offer.resourceIds as Id<"schedResources">[], s.services.sessao);
+    const out = await book(s, s.ana, "h1");
+    expect(out.result.status).toBe("reservado_aguardando_equipe");
+    const mine = (await appointments()).find((a) => a.contactId === s.ana.contactId)!;
+    expect(mine.resources.map((r) => r.resourceId)).not.toEqual(offer.resourceIds); // trocou de sala
   });
 });
 

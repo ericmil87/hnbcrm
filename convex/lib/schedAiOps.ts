@@ -45,6 +45,7 @@ import {
   MAX_SERVICES_IN_PROMPT,
   matchResource,
   matchService,
+  shortProfessionalName,
   noSlotsResult,
   parseBookArgs,
   parseFindArgs,
@@ -445,14 +446,17 @@ export async function runFindSearch(
       const filtered = await searchSlots(ctx, { ...base, resourceIds: [m.resource.id as Id<"schedResources">] });
       // "Honrado" = o recurso pedido FAZ PARTE do plano de cada horário (uma sala pedida para um serviço que só usa profissional não
       // restringe nada: dizer "com a Sala Rosa" seria falso).
-      const honored = filtered.slots.length > 0 && filtered.slots.every((x) => x.resourceIds.includes(m.resource.id as Id<"schedResources">));
-      if (honored || (filtered.slots.length === 0 && filtered.reason === "unverifiable")) {
+      const filteredSlots = filtered.slots.length > 0 ? filtered.slots : filtered.wanted?.slot ? [filtered.wanted.slot] : [];
+      const honored = filteredSlots.length > 0 && filteredSlots.every((x) => x.resourceIds.includes(m.resource.id as Id<"schedResources">));
+      if (honored || (filteredSlots.length === 0 && filtered.reason === "unverifiable")) {
         found = filtered;
-        professional = { kind: "filtered", name: m.resource.name };
-        named = m.resource.name;
+        // o nome que volta à IA é o que o CLIENTE disse (curto), nunca o do cadastro
+        const shown = shortProfessionalName(args.professional) || m.resource.name.split(/\s+/)[0];
+        professional = { kind: "filtered", name: shown };
+        named = shown;
       } else {
         professional =
-          filtered.reason === "no_matching_resource" || filtered.slots.length > 0
+          filtered.reason === "no_matching_resource" || filteredSlots.length > 0
             ? { kind: "not_for_service", name: m.resource.name }
             : { kind: "not_available", name: m.resource.name };
         found = await searchSlots(ctx, base);
@@ -464,7 +468,9 @@ export async function runFindSearch(
   } else {
     found = await searchSlots(ctx, base);
   }
-  if (found.reason === "unverifiable" && found.slots.length === 0) {
+  // A hora pedida e livre vale mesmo quando o modo esconde o dia inteiro das ofertas padrão (slots vazio): checa ANTES do "sem horário".
+  const wantedHit = found.wanted?.slot;
+  if (found.reason === "unverifiable" && found.slots.length === 0 && !wantedHit) {
     return {
       kind: "error",
       result: toolError(
@@ -473,7 +479,7 @@ export async function runFindSearch(
       ),
     };
   }
-  if (found.slots.length === 0) {
+  if (found.slots.length === 0 && !wantedHit) {
     const next = found.firstPossible ? formatDayLabel(found.firstPossible.startTime, now, access.tz) : undefined;
     return {
       kind: "none",
@@ -509,6 +515,19 @@ export async function runFindSearch(
     ...(professional ? { professional } : {}),
     ...(named ? { named } : {}),
   };
+}
+
+/** Fixação do plano da oferta na reserva (ver `bookOfferedTimeCore`). */
+function pinOf(
+  people: number,
+  offer: { resourceIds: string[]; professional?: string },
+  resources: ReadonlyArray<Doc<"schedResources">>
+): { allowResourceFallback: false; resourceIds: Id<"schedResources">[] } | Record<string, never> {
+  if (people !== 1 || offer.resourceIds.length === 0) return {};
+  if (offer.professional) return { allowResourceFallback: false, resourceIds: offer.resourceIds as Id<"schedResources">[] };
+  const persons = offer.resourceIds.filter((id) => resources.find((r) => r._id === id)?.kind === "person") as Id<"schedResources">[];
+  // sem pessoa no plano (sala/equipamento): a troca equivalente vale como sempre
+  return persons.length > 0 ? { allowResourceFallback: false, resourceIds: persons } : {};
 }
 
 const picksOf = (service: Doc<"schedServices">, slots: readonly Slot[], people: number, professional?: string): OfferPick[] =>
@@ -733,9 +752,10 @@ export async function bookOfferedTimeCore(
       mode: args.mode,
       // Só `auto` com aceite pede `scheduled`; a porta ainda recusa (vira pending) em primeira visita ou com aviso. Grupo: sempre a equipe.
       initialStatus: people === 1 && access.bookPolicy === "auto" ? "scheduled" : "pending_approval",
-      // Reserva = o plano da OFERTA: o recurso que a busca mostrou (e, se nomeado, que o cliente pediu) não é trocado em silêncio;
-      // se ele foi tomado, é "horário tomado" com alternativas, não outro profissional. Grupo só marca a pessoa principal na prévia.
-      ...(people === 1 && offer.resourceIds.length > 0 ? { allowResourceFallback: false } : {}),
+      // Reserva = o plano da OFERTA, sem trocar PROFISSIONAL em silêncio: oferta com profissional NOMEADO fixa o plano inteiro (tomado = "horário
+      // tomado" com alternativas); oferta sem nome fixa só as PESSOAS do plano e deixa sala/equipamento equivalente trocar (regra existente da porta).
+      // Grupo só marca a pessoa principal na prévia.
+      ...pinOf(people, offer, access.resources),
     });
   }
 

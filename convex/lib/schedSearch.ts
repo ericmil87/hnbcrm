@@ -279,7 +279,8 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     variantKey: args.variantKey,
     earliest,
     latest,
-    period: args.period,
+    // A hora pedida VENCE o período ("manhã" + 14:00 não pode dar 14h indisponível): com `wantTimeMin` o período não filtra.
+    period: args.wantTimeMin !== undefined ? undefined : args.period,
     resourceIds: args.resourceIds,
     ignoreAppointmentId: args.ignoreAppointmentId,
     weights,
@@ -343,7 +344,8 @@ export async function searchSlots(ctx: ReadCtx, args: SearchSlotsArgs): Promise<
     chronological,
     truncated,
     reason: slots.length === 0 && unverifiable ? "unverifiable" : "ok",
-    totalFree: distinct.length,
+    // a hora pedida e livre conta mesmo quando o modo `restrict` a escondeu das ofertas padrão
+    totalFree: distinct.length + (wanted?.slot && !distinct.some((c) => c.startTime === wanted!.slot!.startTime) ? 1 : 0),
     ...(wanted ? { wanted } : {}),
   };
 }

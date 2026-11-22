@@ -295,7 +295,11 @@ function classify(m: TimeMention, st: ClaimState, today: string, n: string, clos
 const NEGATES_RESOURCE = /\b(?:nao|nem|sem|ninguem|folga|ferias|ausente|ausentes|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|exceto|menos)\b/;
 
 const TITLES = new Set(["dr", "dra", "doutor", "doutora", "sr", "sra", "prof", "profa", "professor", "professora"]);
-const GENERIC_FIRST = new Set(["sala", "consultorio", "cadeira", "box", "maca", "studio", "estudio", "room", "mesa", "equipamento", "quadra", "salao", "espaco", "unidade"]);
+const GENERIC_FIRST = new Set([
+  "sala", "consultorio", "cadeira", "box", "maca", "studio", "estudio", "room", "mesa", "equipamento", "quadra", "salao", "espaco", "unidade",
+  // palavras comuns de nome de recurso: "Maca Nova", "Box Principal", "Profissional 2" nunca viram apelido
+  "principal", "profissional", "nova", "novo", "grande", "pequena", "auxiliar", "vip", "premium", "externa", "externo", "interna", "interno", "terapeuta", "dentista", "barbeiro", "barbeira", "medico", "medica", "atendente", "doutor", "doutora", "equipe", "atendimento", "fisio", "massagista",
+]);
 
 const wordsOf = (name: string) => norm(name).replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
 
@@ -456,7 +460,9 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
         // "…com outro barbeiro, já que o Tato está de folga": a oração que cita o nome NEGA o vínculo (não, folga, indisponível…).
         const clausesOfCited = s.n.split(/[,;()—:]/).filter((c) => citedResources(c, aliasIndex).includes(cited));
         if (clausesOfCited.length > 0 && clausesOfCited.every((c) => NEGATES_RESOURCE.test(c))) continue;
-        const backed = s.mentions.some((m) => [...st.booked, ...st.existing, ...st.offered].some((k) => k.resources?.includes(cited) === true && sameTime(k, m, today)));
+        // a oferta nomeia pelo nome CURTO que o cliente disse ("carla"), o cadastro pode ser "Terapeuta Carla": vale a chave inteira ou um apelido dele
+        const names = new Set([cited, ...(aliasIndex.find((x) => x.key === cited)?.aliases ?? [])]);
+        const backed = s.mentions.some((m) => [...st.booked, ...st.existing, ...st.offered].some((k) => k.resources?.some((r) => names.has(r)) === true && sameTime(k, m, today)));
         if (!backed) return { kind: "resource_not_offered", evidence: s.raw.slice(0, EVIDENCE_MAX) };
       }
     }

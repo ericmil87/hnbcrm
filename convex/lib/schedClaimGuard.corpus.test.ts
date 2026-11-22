@@ -39,7 +39,7 @@ describe("schedClaimGuard — corpus rotulado (eventos reais + cego + quase-igua
  * Falsos positivos achados NA REMEDIÇÃO com modelo real (depois das correções do D2): frases corretas que o guard barrou. Entram aqui
  * para não voltarem; a lista cresce só com frase lida numa conversa de verdade.
  */
-import { detectUnbackedBookingClaim } from "./schedClaimGuard";
+import { buildAliasIndex, detectUnbackedBookingClaim } from "./schedClaimGuard";
 import { buildState } from "./schedClaimGuard.corpus.test-helper";
 
 describe("schedClaimGuard — falsos positivos da remedição com modelo real", () => {
@@ -108,5 +108,16 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
     // "um horário que já estava agendado": oração relativa que descreve o pedido do cliente
     expect(detectUnbackedBookingClaim("Thiago, como é uma remarcação de um horário que já estava agendado, a equipe cuida disso e te responde.", buildState({}))).toBeNull();
     expect(detectUnbackedBookingClaim("Pronto, o horário está agendado, te espero terça às 10h.", st)).not.toBeNull();
+  });
+  test("apelido de recurso: palavra comum de nome ('Maca Nova', 'Box Principal', 'Profissional 2', 'Terapeuta Carla') nunca vira apelido", () => {
+    const idx = buildAliasIndex(["Maca Nova", "Box Principal", "Profissional 2", "Terapeuta Carla", "Dra. Helena"]);
+    const al = (k: string) => idx.find((x) => x.key === k)!.aliases;
+    expect(al("maca nova")).toEqual(["maca nova"]);
+    expect(al("box principal")).toEqual(["box principal"]);
+    expect(al("profissional 2")).toEqual(["profissional 2"]);
+    expect(al("terapeuta carla")).toEqual(["terapeuta carla", "carla"]);
+    expect(al("dra helena")).toEqual(["dra helena", "helena"]);
+    const st = buildState({ names: ["Maca Nova", "Profissional 2"], offered: ["2026-11-24 14:00"] });
+    expect(detectUnbackedBookingClaim("Tenho terça às 14h, com o profissional que estiver livre.", st)).toBeNull();
   });
 });

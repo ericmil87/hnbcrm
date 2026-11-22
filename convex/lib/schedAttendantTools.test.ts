@@ -175,7 +175,7 @@ describe("bloco do prompt", () => {
 });
 
 // ── D2: hora pedida, profissional pedido, contagem, prompt ──
-import { findSlotsResult, matchResource, noSlotsResult, parseTimeArg } from "./schedAttendantTools";
+import { findSlotsResult, matchResource, noSlotsResult, parseTimeArg, shortProfessionalName } from "./schedAttendantTools";
 
 describe("D2 — hora e profissional nos argumentos", () => {
   test.each([
@@ -230,9 +230,12 @@ describe("D2 — matchResource (o servidor resolve o nome para um recurso)", () 
 
 describe("D2 — textos da busca", () => {
   const base = { echo: "seg, 15/06/2026", period: undefined, people: 1, lines: ["h1 — a", "h2 — b", "h3 — c"], hasMore: true };
-  test("contagem: amostra × todos", () => {
-    expect(findSlotsResult({ ...base, total: 11 }).resultado).toContain("Há 11 horários livres neste pedido; os 3 abaixo são só uma amostra");
-    expect(findSlotsResult({ ...base, hasMore: false, total: 3 }).resultado).toContain("Estes são TODOS os horários livres neste pedido (3)");
+  test("contagem em FAIXAS (não expõe a ocupação) e 'todos' sem número", () => {
+    expect(findSlotsResult({ ...base, total: 5 }).resultado).toContain("Há alguns outros horários livres neste pedido além destes");
+    expect(findSlotsResult({ ...base, total: 11 }).resultado).toContain("Há vários outros horários livres");
+    expect(findSlotsResult({ ...base, total: 40 }).resultado).toContain("Há muitos outros horários livres");
+    expect(findSlotsResult({ ...base, hasMore: false, total: 3 }).resultado).toContain("Estes são TODOS os horários livres neste pedido;");
+    for (const t of [5, 11, 40, 3]) expect(findSlotsResult({ ...base, total: t }).resultado).not.toMatch(new RegExp(`\\b${t} horários`));
   });
   test("hora pedida: disponível × indisponível", () => {
     expect(findSlotsResult({ ...base, total: 5, wanted: { timeMin: 840, available: true } }).resultado).toContain("Horário pedido (14:00) DISPONÍVEL: é o primeiro da lista");
@@ -241,13 +244,13 @@ describe("D2 — textos da busca", () => {
     expect(no).toContain("alternativas mais próximas");
     expect(noSlotsResult({ echo: "x", period: undefined, people: 1, wanted: { timeMin: 870 } }).resultado).toContain("Horário pedido (14:30) INDISPONÍVEL");
   });
-  test("cada nota de profissional diz exatamente o que vale e nunca o nome de quem não foi pedido", () => {
+  test("profissional: achou = 'SÃO com X'; todos os motivos de não achar dão a MESMA resposta (não revela quem trabalha nem a ocupação)", () => {
     const r = (professional: Parameters<typeof findSlotsResult>[0]["professional"]) => findSlotsResult({ ...base, total: 3, professional }).resultado!;
     expect(r({ kind: "filtered", name: "Léo" })).toContain("SÃO com Léo");
-    expect(r({ kind: "not_found" })).toContain("NÃO são com ele");
-    expect(r({ kind: "ambiguous" })).toContain("mais de um profissional");
-    expect(r({ kind: "not_available", name: "Léo" })).toContain("NÃO diga que são com Léo");
-    expect(r({ kind: "not_for_service", name: "Léo" })).toContain("não faz esse serviço");
+    const same = r({ kind: "not_found" });
+    expect(same).toContain("Não consegui esse profissional nesse período");
+    for (const n of [{ kind: "ambiguous" }, { kind: "not_available", name: "Léo" }, { kind: "not_for_service", name: "Léo" }] as const) expect(r(n)).toBe(same);
+    expect(same).not.toContain("Léo");
     expect(r({ kind: "ignored_group" })).toContain("grupo não escolhe profissional");
   });
   test("linha da oferta só ganha '(com Nome)' quando o servidor nomeou", () => {
@@ -276,5 +279,11 @@ describe("D2 — o prompt traz as regras medidas", () => {
     expect(block).toContain("REMARCAR ou CANCELAR");
     expect(block).toContain("NÃO ofereça horários novos");
     expect(block).toContain("nunca escreva códigos de oferta (h1)");
+  });
+});
+
+describe("D2 — nome de exibição curto (o que o cliente disse)", () => {
+  test.each([["o Léo", "Léo"], ["com a Dra. Helena", "Helena"], ["  barbeiro Tato ", "Tato"], ["Terapeuta Carla", "Carla"]])("%j → %s", (i, o) => {
+    expect(shortProfessionalName(i)).toBe(o);
   });
 });

@@ -289,6 +289,12 @@ const resourceTokens = (s: string) =>
     .split(/\s+/)
     .filter((w) => w && !RESOURCE_FILLER.has(w));
 
+/** O nome como o CLIENTE disse, sem artigo/título ("o Léo" → "Léo"): é o único nome que volta à IA (nunca o do cadastro nem anotações). */
+export function shortProfessionalName(input: string): string {
+  const words = input.trim().split(/\s+/).filter((w) => w && !RESOURCE_FILLER.has(normalizeText(w).replace(/[^a-z0-9]/g, "")));
+  return words.join(" ").slice(0, 40);
+}
+
 /**
  * Profissional ou sala citado pelo cliente: o SERVIDOR resolve para um recurso ativo da org. Nome inteiro igual (sem acento, caixa
  * nem título) ou, na falta, todas as palavras do pedido contidas no nome de UM só recurso ("Tato" → "Tato Silva"). Mais de um
@@ -340,14 +346,13 @@ function professionalLines(note: ProfessionalNote | undefined): string[] {
   switch (note.kind) {
     case "filtered":
       return [`Pedido com ${note.name}: os horários abaixo SÃO com ${note.name} (a reserva fica fixada nele).`];
+    // UMA resposta só para "não existe", "ambíguo", "não faz o serviço" e "sem horário": a IA (e quem a manipula) não descobre quem trabalha
+    // aqui nem quando cada um está livre.
     case "not_found":
-      return ["Não identifiquei o profissional pedido: os horários abaixo NÃO são com ele. Não diga que são com ninguém; diga que a equipe confirma quem atende."];
     case "ambiguous":
-      return ["O nome pedido serve a mais de um profissional: os horários abaixo NÃO são com um profissional específico. Pergunte o nome completo ou diga que a equipe confirma quem atende."];
     case "not_available":
-      return [`${note.name} NÃO tem horário livre nesse pedido. Os horários abaixo são de outros profissionais (a equipe define quem atende): NÃO diga que são com ${note.name}; diga que com ${note.name} não há horário e pergunte se o cliente aceita estes ou prefere outro dia.`];
     case "not_for_service":
-      return [`${note.name} não faz esse serviço. Os horários abaixo NÃO são com ele; diga isso ao cliente e ofereça estes (a equipe confirma quem atende).`];
+      return ["Não consegui esse profissional nesse período: os horários abaixo NÃO são com ele. Não diga que são com ninguém nem explique o motivo; diga que com ele não consegui e que a equipe confirma quem atende, e pergunte se o cliente aceita estes ou prefere outro dia."];
     case "ignored_group":
       return ["Marcação em grupo não escolhe profissional: os horários abaixo NÃO são com um profissional específico; a equipe confirma quem atende."];
   }
@@ -375,10 +380,12 @@ export function findSlotsResult(input: {
         : `Horário pedido (${label}) INDISPONÍVEL neste pedido. Diga isso ao cliente e ofereça as alternativas mais próximas da lista.`
     );
   }
+  // Faixa, não número: a contagem serve para a IA não concluir "não tem" por ver só 3, sem expor a ocupação da agenda.
+  const band = input.total <= 5 ? "alguns outros" : input.total <= 12 ? "vários outros" : "muitos outros";
   body.push(
     input.total > shown
-      ? `Há ${input.total} horários livres neste pedido; os ${shown} abaixo são só uma amostra (ofereça no máximo ${MAX_OFFERS}; o código é só para você). Se o cliente quiser outro, consulte de novo com o período ou a hora que ele pedir.`
-      : `Estes são TODOS os horários livres neste pedido (${input.total}); ofereça no máximo ${MAX_OFFERS}. O código é só para você.`,
+      ? `Há ${band} horários livres neste pedido além destes; os ${shown} abaixo são só uma amostra (ofereça no máximo ${MAX_OFFERS}; o código é só para você). Se o cliente quiser outro, consulte de novo com o período ou a hora que ele pedir.`
+      : `Estes são TODOS os horários livres neste pedido; ofereça no máximo ${MAX_OFFERS}. O código é só para você.`,
     ...input.lines
   );
   return {
