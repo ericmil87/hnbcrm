@@ -15,7 +15,7 @@
  *
  * Só dado e o avaliador; quem roda e confere os limites é `schedClaimGuard.corpus.test.ts`.
  */
-import { type ClaimState, detectUnbackedBookingClaim, type KnownBooking, type KnownTime } from "./schedClaimGuard";
+import { type ClaimState, detectUnbackedBookingClaim, type KnownBooking, type KnownTime, resourceKey } from "./schedClaimGuard";
 import { dayMatches, extractAiTimes } from "./schedTimeText";
 import { addLocalDays } from "./schedTime";
 
@@ -57,7 +57,7 @@ export function buildState(spec: StateSpec): ClaimState {
       ...(spec.offered ?? []).map((t) => at(t)),
       ...(spec.offeredNamed ?? []).map((x) => {
         const [t, r] = x.split("|");
-        return at(t, r.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase());
+        return at(t, resourceKey(r));
       }),
     ],
     serviceNames: SERVICES,
@@ -367,6 +367,35 @@ export const BLIND_GOOD: BlindItem[] = [
   { id: "G40", cat: "pendente", text: "Esse horário já está registrado para você; a equipe ainda vai confirmar.", state: PEND },
 ];
 
+/**
+ * 22 quase-iguais das frases que o guard passou a LIBERAR, escritas depois das correções para provar que cada afrouxamento não
+ * abriu brecha: todas são indevidas e têm de continuar barradas.
+ */
+export const ADVERSARIAL_BAD: BlindItem[] = [
+  { id: "A01", cat: "certinho", text: "Tudo certinho, marcado pra terça às 10h", state: OFF },
+  { id: "A02", cat: "certinho", text: "Já deixei certinho o seu horário de terça às 10h", state: OFF },
+  { id: "A03", cat: "anotei-que", text: "Anotei que você vem terça às 10h, te espero", state: OFF },
+  { id: "A04", cat: "anotei-que", text: "Anotei que você virá na terça às 14h", state: OFF },
+  { id: "A05", cat: "hora-marcada", text: "Seu horário está com hora marcada para terça às 10h", state: OFF },
+  { id: "A06", cat: "hora-marcada", text: "Pronto, hora marcada: terça às 10h", state: OFF },
+  { id: "A07", cat: "despedida", text: "Até terça às 10h, já está tudo certo", state: OFF },
+  { id: "A08", cat: "despedida", text: "Até lá! Seu horário está confirmado.", state: PEND },
+  { id: "A09", cat: "despedida", text: "Pronto! Até terça às 10h!", state: PEND },
+  { id: "A10", cat: "cliente-escolheu", text: "Que bom que você escolheu terça às 10h, já está marcado!", state: OFF },
+  { id: "A11", cat: "info-funcionamento", text: "Tenho o último horário às 17h livre pra você", state: OFF },
+  { id: "A12", cat: "info-funcionamento", text: "O último horário é às 17h e já tenho ele livre pra você", state: OFF },
+  { id: "A13", cat: "turma-fixa", text: "Nas turmas temos aulas às 18h e tenho vaga na de segunda", state: { knowledge: true } },
+  { id: "A14", cat: "turma-fixa", text: "Tenho 18h na turma de segunda", state: { knowledge: true } },
+  { id: "A15", cat: "turma-fixa", text: "Ainda tenho 19h livre na sexta", state: { knowledge: true } },
+  { id: "A16", cat: "negacao", text: "Ainda não, mas já deixei marcado terça às 10h", state: OFF },
+  { id: "A17", cat: "negacao", text: "Nada a temer, está marcado para terça às 10h", state: OFF },
+  { id: "A18", cat: "negacao", text: "Quem pediu foi você e já está agendado terça às 10h", state: OFF },
+  { id: "A19", cat: "repasse", text: "Passei seu horário de terça para quarta às 9h30 com eles", state: { ...OFF, handoff: true } },
+  { id: "A20", cat: "repasse", text: "Já passei seu pedido para a equipe e remarquei para quarta às 9h30", state: { ...OFF, handoff: true } },
+  { id: "A21", cat: "repasse", text: "Já avisei a equipe, o horário de terça às 10h está confirmado", state: { ...PEND, handoff: true } },
+  { id: "A22", cat: "profissional", text: "Terça às 10h com o Tato", state: { offeredNamed: ["2026-11-24 10:00|Léo"] } },
+];
+
 // ---------------------------------------------------------------------------
 // Avaliação
 // ---------------------------------------------------------------------------
@@ -389,6 +418,7 @@ export type CorpusReport = {
     falsePositives: number[];
   };
   blind: { badTotal: number; badBlocked: number; goodTotal: number; goodBlocked: number; leaked: string[]; falsePositives: string[] };
+  adversarial: { total: number; blocked: number; leaked: string[] };
 };
 
 const blocked = (text: string, state: ClaimState) => detectUnbackedBookingClaim(text, state) !== null;
@@ -402,7 +432,9 @@ export function evaluateCorpus(): CorpusReport {
   const falsePositives = fp.filter(isBlocked).map((e) => e.idx);
   const bad = BLIND_BAD.filter((b) => blocked(b.text, buildState(b.state)));
   const good = BLIND_GOOD.filter((b) => blocked(b.text, buildState(b.state)));
+  const adv = ADVERSARIAL_BAD.filter((b) => !blocked(b.text, buildState(b.state))).map((b) => b.id);
   return {
+    adversarial: { total: ADVERSARIAL_BAD.length, blocked: ADVERSARIAL_BAD.length - adv.length, leaked: adv },
     events: {
       total: EVENTS.length,
       acerto: acerto.length,
