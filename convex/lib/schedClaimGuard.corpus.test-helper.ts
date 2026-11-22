@@ -47,6 +47,8 @@ export type StateSpec = {
   knowledge?: boolean;
   /** Nomes dos recursos da org (padrão: Léo, Tato, Rui, Dra. Helena). */
   names?: string[];
+  /** Nomes dos serviços (padrão: corte, massoterapia, avaliação, consulta jurídica, pilates). */
+  services?: string[];
 };
 
 export function buildState(spec: StateSpec): ClaimState {
@@ -62,7 +64,7 @@ export function buildState(spec: StateSpec): ClaimState {
         return at(t, resourceKey(r));
       }),
     ],
-    serviceNames: SERVICES,
+    serviceNames: spec.services ?? SERVICES,
     resourceNames: spec.names ?? RESOURCE_NAMES,
     ...(spec.handoff ? { handoff: true } : {}),
     ...(spec.knowledge ? { knowledgeTimes: KNOWLEDGE_TIMES } : {}),

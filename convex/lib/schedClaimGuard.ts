@@ -288,7 +288,9 @@ const wordsOf = (name: string) => norm(name).replace(/[^a-z0-9 ]/g, " ").split(/
  * (≥ 3 letras, não genérica e que não apareça no nome de outro recurso). "Terapeuta Carla" vira "terapeuta carla" e "carla", nunca
  * "terapeuta" (que serve a todas as terapeutas); "Léo Silva" e "Léo Souza" ficam com "silva" e "souza" (o "léo" sozinho é ambíguo).
  */
-export function buildAliasIndex(names: readonly string[]): Array<{ key: string; aliases: string[] }> {
+export function buildAliasIndex(names: readonly string[], serviceNames: readonly string[] = []): Array<{ key: string; aliases: string[] }> {
+  // Palavra de NOME DE SERVIÇO não é apelido de recurso ("Sala de pilates" × "aula de pilates em grupo").
+  const serviceWords = new Set(serviceNames.flatMap((sv) => wordsOf(sv)));
   const count = new Map<string, number>();
   for (const name of names) for (const w of new Set(wordsOf(name))) count.set(w, (count.get(w) ?? 0) + 1);
   return names.map((name) => {
@@ -297,7 +299,7 @@ export function buildAliasIndex(names: readonly string[]): Array<{ key: string; 
     const out = new Set<string>();
     if (words.length > 0) out.add(words.join(" "));
     if (rest.length > 0) out.add(rest.join(" "));
-    for (const w of rest) if (w.length >= 3 && !GENERIC_FIRST.has(w) && !/^\d+$/.test(w) && count.get(w) === 1) out.add(w);
+    for (const w of rest) if (w.length >= 3 && !GENERIC_FIRST.has(w) && !serviceWords.has(w) && !/^\d+$/.test(w) && count.get(w) === 1) out.add(w);
     return { key: resourceKey(name), aliases: [...out] };
   });
 }
@@ -422,7 +424,7 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   // 0b. Profissional/sala citado junto de um horário: só vale se a OFERTA (ou o agendamento) nomeou esse recurso. O motor
   // escolhe quem atende; sem a oferta nomear, "terça às 14h com o Léo" é promessa que ninguém verificou.
   const resourceNames = st.resourceNames ?? [];
-  const aliasIndex = buildAliasIndex(resourceNames);
+  const aliasIndex = buildAliasIndex(resourceNames, st.serviceNames ?? []);
   if (resourceNames.length > 0) {
     for (const s of live) {
       if (s.skip || s.mentions.length === 0) continue;
@@ -462,6 +464,9 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
     const definitive = (hs: Hit[]) => hs.some((h) => h.level === "strong") || (hs.some((h) => h.level === "closer") && !pendingQualified);
 
     if (hits.length > 0 && hits.some((h) => h.domain) && own.includes("inventado") && !s.noInvent) return { kind: "time_not_offered", evidence };
+    // "Já deixei seu pedido registrado e eles te respondem por aqui" com o repasse criado: o "registrado" é o repasse. Só vale sem horário
+    // citado e só para marcador fraco (soft/closer): "Marcado!" continua barrado.
+    if (handoffTalk && own.length === 0 && hits.every((h) => h.level !== "strong")) continue;
     if (hits.length > 0) {
       const matches = own.length > 0 ? own : messageMatches;
       if (matches.length > 0) {

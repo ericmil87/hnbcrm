@@ -83,4 +83,15 @@ describe("schedClaimGuard — falsos positivos da remedição com modelo real", 
     expect(detectUnbackedBookingClaim("Para remarcar uma consulta que já está marcada, quem cuida disso é a nossa equipe.", buildState({}))).toBeNull();
     expect(detectUnbackedBookingClaim("Nosso atendimento é só à tarde, das 14h às 18h, de segunda a sexta — às 9h não temos.", buildState({}))).toBeNull();
   });
+  test("3ª rodada da remedição: palavra de serviço não é apelido de recurso; repasse criado + 'registrado' sem horário", () => {
+    const pil = buildState({ names: ["Sala de pilates"], services: ["Aula de pilates"], offered: ["2026-11-30 18:00"] });
+    expect(detectUnbackedBookingClaim("Só confirmando: segunda-feira, 30/11, às 18h, na aula de pilates em grupo. Posso registrar?", pil)).toBeNull();
+    expect(detectUnbackedBookingClaim("Tenho segunda, 30/11, às 18h na Sala de pilates.", pil)?.kind).toBe("resource_not_offered");
+    const sem = buildState({ offered: ["2026-11-27 13:00"] });
+    const com = buildState({ offered: ["2026-11-27 13:00"], handoff: true });
+    expect(detectUnbackedBookingClaim("Já deixei seu pedido registrado e eles te respondem por aqui.", com)).toBeNull();
+    expect(detectUnbackedBookingClaim("Já deixei seu pedido registrado e eles te respondem por aqui.", sem)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("Marcado! Eles te respondem por aqui.", com)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("Registrei o pedido para sexta às 13h, eles te respondem por aqui.", sem)).not.toBeNull();
+  });
 });
