@@ -47,6 +47,9 @@ import {
   searchWindow,
   splitSuggestions,
   violationText,
+  forceTokenOf,
+  forceTokens,
+  unacceptedWarnings,
   type BookingState,
   type OfferedSlot,
   type PickedSlot,
@@ -808,5 +811,52 @@ describe("hora pedida pela Agenda", () => {
     expect(timeInputValue(undefined)).toBe("");
     expect(timeInputValue(1440)).toBe("");
     expect(timeInputValue(-1)).toBe("");
+  });
+});
+
+describe("force por par código:recurso", () => {
+  const w = (code: string, resourceId?: string) => ({ code, severity: "warn" as const, message: "", ...(resourceId ? { detail: { resourceId } } : {}) });
+
+  it("aviso de recurso vai como par; aviso do agendamento inteiro, como código puro", () => {
+    expect(forceTokenOf(w("RESOURCE_CLOSED", "r1"))).toBe("RESOURCE_CLOSED:r1");
+    expect(forceTokenOf(w("OUTSIDE_HOURS"))).toBe("OUTSIDE_HOURS");
+    expect(forceTokens([w("RESOURCE_CLOSED", "r1"), w("RESOURCE_CLOSED", "r2"), w("RESOURCE_CLOSED", "r1"), w("ADVANCE_TOO_SHORT")])).toEqual([
+      "RESOURCE_CLOSED:r1",
+      "RESOURCE_CLOSED:r2",
+      "ADVANCE_TOO_SHORT",
+    ]);
+  });
+
+  it("par maior que 80 caracteres cai para o código", () => {
+    expect(forceTokenOf(w("RESOURCE_CLOSED", "x".repeat(80)))).toBe("RESOURCE_CLOSED");
+  });
+
+  it("classifyViolations: forceTokens só dos mostrados e nunca com bloqueio", () => {
+    const only = classifyViolations([w("RESOURCE_CLOSED", "r1"), w("OUTSIDE_HOURS")]);
+    expect(only.forceTokens).toEqual(["RESOURCE_CLOSED:r1", "OUTSIDE_HOURS"]);
+    expect(only.forceCodes).toEqual(["RESOURCE_CLOSED", "OUTSIDE_HOURS"]);
+    const blocked = classifyViolations([w("RESOURCE_CLOSED", "r1"), { code: "CAPACITY_EXCEEDED", severity: "block", message: "" }]);
+    expect(blocked.forceTokens).toEqual([]);
+  });
+
+  it("unacceptedWarnings: outro recurso com o mesmo código é novo; código puro aceito cobre todos", () => {
+    const shown = [w("RESOURCE_CLOSED", "r1"), w("RESOURCE_CLOSED", "r2")];
+    expect(unacceptedWarnings(shown, ["RESOURCE_CLOSED:r1"]).map((v) => v.detail?.resourceId)).toEqual(["r2"]);
+    expect(unacceptedWarnings(shown, ["RESOURCE_CLOSED"])).toEqual([]);
+    expect(unacceptedWarnings(shown, ["RESOURCE_CLOSED:r1", "RESOURCE_CLOSED:r2"])).toEqual([]);
+  });
+
+  it("o envio manda os pares dos avisos vistos na prévia (marcar e remarcar)", () => {
+    const st = { ...base({ serviceId: "svc1" }), slot: picked({ warnings: [w("RESOURCE_CLOSED", "r1")] }) };
+    const book = buildBookArgs({ organizationId: "org", state: st, who: { contactId: "c1" }, force: ["OUTSIDE_HOURS"] });
+    expect(book?.force).toEqual(["OUTSIDE_HOURS", "RESOURCE_CLOSED:r1"]);
+    expect(buildRescheduleArgs({ organizationId: "org", appointmentId: "a1", state: st })?.force).toEqual(["RESOURCE_CLOSED:r1"]);
+  });
+
+  it("previewManualSlot repete a prévia com os pares", async () => {
+    const calls: Array<string[] | undefined> = [];
+    const res = (ok: boolean, warnings: unknown[]) => ({ ok, warnings: ok ? warnings : [], violations: ok ? [] : warnings, alternatives: [], plan: ok ? [{ resourceId: "r1", resourceName: "Sala" }] : [] });
+    await previewManualSlot(async (force) => (calls.push(force), force ? res(true, []) : res(false, [w("RESOURCE_CLOSED", "r1")])), { tz: TZ, now: NOW });
+    expect(calls).toEqual([undefined, ["RESOURCE_CLOSED:r1"]]);
   });
 });
