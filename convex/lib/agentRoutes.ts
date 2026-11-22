@@ -15,6 +15,7 @@ import {
   BYO_NON_OPENROUTER_MODEL,
   DEFAULT_MODELS,
   MODEL_FALLBACKS,
+  isRetiredModel,
   resolveRetiredModel,
 } from "./llm/registry";
 
@@ -164,12 +165,38 @@ export async function resolveProductRoutes(
   // Copiloto no Telegram mantém o fallback próprio (modelo do Copiloto): só a
   // tradução herda a rede de modelo (`MODEL_FALLBACKS`), que substitui o antigo
   // fallback `classify` (agora é o mesmo alias).
+  // Telegram fixado num id APOSENTADO (vira o alias) também ganha a rede.
   const routes = await resolveOrgRoutes(ctx, organizationId, providerConfig, model, product, {
-    modelFallback: product !== "telegramCopilot",
+    modelFallback: product !== "telegramCopilot" || isRetiredModel(model),
   });
   if (routes.length > 0 || fallback === model) return { routes, canonicalModel: model };
   const fallbackRoutes = await resolveOrgRoutes(ctx, organizationId, providerConfig, fallback, product);
   return { routes: fallbackRoutes, canonicalModel: fallback };
+}
+
+/**
+ * Cadeia da plataforma de um modelo + a rede de modelo (`MODEL_FALLBACKS`) depois
+ * dos elos do próprio modelo. Sem OPENROUTER_API_KEY o modelo só-OpenRouter não
+ * tem elo e a cadeia cai direto no fallback. Nos elos do FALLBACK o OpenRouter vem
+ * primeiro e o OpenCode Go por último, em todo modo de ordem: o Go pode estar
+ * recusando tudo (400 x-opencode-session) e é o elo mais fraco.
+ */
+export function platformChainWithModelFallback(canonicalModel: string, withFallback = true): ResolvedRoute[] {
+  const keys = {
+    opencodeGoKey: process.env.OPENCODE_GO_API,
+    openrouterKey: process.env.OPENROUTER_API_KEY,
+  };
+  const chain = resolvePlatformChain(canonicalModel, keys);
+  if (withFallback) {
+    for (const fb of MODEL_FALLBACKS[canonicalModel] ?? []) {
+      const links = resolvePlatformChain(fb, keys);
+      chain.push(
+        ...links.filter((r) => r.providerId === "openrouter"),
+        ...links.filter((r) => r.providerId !== "openrouter")
+      );
+    }
+  }
+  return chain;
 }
 
 export async function resolveOrgRoutes(
@@ -205,19 +232,7 @@ export async function resolveOrgRoutes(
       ),
     ];
   } else {
-    const keys = {
-      opencodeGoKey: process.env.OPENCODE_GO_API,
-      openrouterKey: process.env.OPENROUTER_API_KEY,
-    };
-    const chain = resolvePlatformChain(canonicalModel, keys);
-    // Rede de modelo: depois dos elos do modelo pedido, os do(s) fallback(s).
-    // Sem OPENROUTER_API_KEY o modelo só-OpenRouter não tem elo e a cadeia cai
-    // direto no fallback (OpenCode Go).
-    if (opts?.modelFallback !== false) {
-      for (const fb of MODEL_FALLBACKS[canonicalModel] ?? []) {
-        chain.push(...resolvePlatformChain(fb, keys));
-      }
-    }
+    const chain = platformChainWithModelFallback(canonicalModel, opts?.modelFallback !== false);
     routes = applyPlatformOrder(chain, effectivePlatformOrder(providerConfig, product));
   }
 

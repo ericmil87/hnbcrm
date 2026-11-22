@@ -907,6 +907,7 @@ async function replaceModelInOrg(
 }
 
 function assertKnownTargetModel(to: string): void {
+  if (isRetiredModel(to)) throw new Error(`O modelo "${to}" foi aposentado — escolha outro destino`);
   const known = [...OPENCODE_GO_MODELS, ...OPENROUTER_ONLY_MODELS] as readonly string[];
   if (!known.includes(to)) throw new Error(`Modelo desconhecido: ${to}`);
 }
@@ -1222,7 +1223,12 @@ export const getModelOptions = query({
     // Aposentados (RETIRED_MODEL_ALIASES) não são oferecidos, EXCETO o que a org
     // ainda tem gravado (o seletor precisa mostrar o valor atual; sai quando ela trocar).
     const org = await ctx.db.get(args.organizationId);
-    const stored = new Set(Object.values(org?.settings.aiConfig?.providerConfig?.models ?? {}));
+    const pc = org?.settings.aiConfig?.providerConfig;
+    const stored = new Set<string | undefined>([
+      ...Object.values(pc?.models ?? {}),
+      pc?.products?.telegramCopilot?.model,
+      pc?.products?.translation?.model,
+    ]);
     const offered = (id: string) => !isRetiredModel(id) || stored.has(id);
     return [
       ...OPENCODE_GO_MODELS.filter(offered).map((id) => ({ id, route: routeInfo("opencode-go", id) })),
@@ -1259,10 +1265,13 @@ export const setModels = mutation({
     ];
     // Modelo aposentado não é escolha nova; manter o que já está gravado no
     // MESMO papel é permitido (salvar outro campo não pode falhar por isso).
+    // A UI manda `classify = attendant`: vale manter qualquer id aposentado que a
+    // org já tem gravado em QUALQUER papel (senão trocar só o copiloto seria barrado).
     const storedModels = current.providerConfig?.models;
+    const storedIds = new Set<string | undefined>(Object.values(storedModels ?? {}));
     for (const role of MODEL_ROLES) {
       const next = args.models[role];
-      if (next && isRetiredModel(next) && storedModels?.[role] !== next) {
+      if (next && isRetiredModel(next) && !storedIds.has(next)) {
         throw new Error(`O modelo "${next}" foi aposentado — use "deepseek-flash-latest"`);
       }
     }
@@ -1289,6 +1298,9 @@ export const setModels = mutation({
     }
 
     const providerConfig = {
+      // Espalha o atual: `products` (rota/modelo por produto) e qualquer campo
+      // futuro não podem sumir ao trocar só os modelos.
+      ...current.providerConfig,
       mode: current.providerConfig?.mode ?? ("platform" as const),
       byo: current.providerConfig?.byo,
       zdr: zdrOn,
@@ -1393,6 +1405,7 @@ export const setProviderMode = mutation({
     }
 
     const providerConfig = {
+      ...current.providerConfig,
       mode: args.mode,
       byo: args.mode === "byo" ? byo : undefined,
       zdr: current.providerConfig?.zdr ?? true,

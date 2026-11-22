@@ -6,6 +6,7 @@ import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { resolveOrgRoutes, resolveProductRoutes } from "./lib/agentRoutes";
+import { chatWithFallback, resolvePlatformChain } from "./lib/llm";
 import { encryptSecret } from "./lib/secretCrypto";
 import {
   DEFAULT_MODELS,
@@ -47,8 +48,8 @@ describe("cadeia da plataforma", () => {
     const routes = await resolveOrgRoutes(noCtx, "x" as never, null, NEW, "attendant");
     expect(summary(routes)).toEqual([
       `openrouter:~deepseek/deepseek-flash-latest`,
-      `opencode-go:${OLD}`,
       `openrouter:deepseek/deepseek-v4-flash`,
+      `opencode-go:${OLD}`,
     ]);
     // trava ZDR + allow_fallbacks intactas em todo elo do OpenRouter
     for (const r of routes.filter((x) => x.providerId === "openrouter")) {
@@ -62,6 +63,7 @@ describe("cadeia da plataforma", () => {
     const routes = await resolveOrgRoutes(noCtx, "x" as never, null, NEW, "attendant");
     expect(routes.length).toBeGreaterThan(1);
     expect(routes[1].canonicalModel).toBe(OLD);
+    expect(routes[1].providerId).toBe("openrouter");
   });
 
   test("sem OPENROUTER_API_KEY: cai no antigo via OpenCode Go", async () => {
@@ -80,11 +82,13 @@ describe("cadeia da plataforma", () => {
     envKeys({ go: "go", or: "or" });
     const o = (platformOrder: "openrouter-first" | "openrouter-only" | "opencode-only") =>
       resolveOrgRoutes(noCtx, "x" as never, { platformOrder }, NEW, "attendant").then(summary);
-    expect(await o("openrouter-first")).toEqual([
+    const orFirst = [
       `openrouter:~deepseek/deepseek-flash-latest`,
       `openrouter:deepseek/deepseek-v4-flash`,
       `opencode-go:${OLD}`,
-    ]);
+    ];
+    expect(await o("openrouter-first")).toEqual(orFirst);
+    expect(await resolveOrgRoutes(noCtx, "x" as never, { platformOrder: "auto" }, NEW, "attendant").then(summary)).toEqual(orFirst);
     expect(await o("openrouter-only")).toHaveLength(2);
     expect(await o("opencode-only")).toEqual([`opencode-go:${OLD}`]);
   });
@@ -265,5 +269,188 @@ describe("internalReplaceModelAllOrgs", () => {
     await expect(
       t.mutation(internal.aiSettings.internalReplaceModelAllOrgs, { from: OLD, to: "inventado" })
     ).rejects.toThrow(/desconhecido/);
+  });
+});
+
+describe("chatWithFallback com a cadeia do alias (fetch simulado)", () => {
+  const ok = () =>
+    new Response(
+      JSON.stringify({ choices: [{ message: { role: "assistant", content: "oi" }, finish_reason: "stop" }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } }
+    );
+  const sessionErr = () =>
+    new Response(JSON.stringify({ error: { message: "Request is missing x-opencode-session" } }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  const req = { messages: [{ role: "user" as const, content: "oi" }] };
+  const run = async (routes: Parameters<typeof chatWithFallback>[0], answer: (model: string, url: string) => Response) => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: { body: string }) => {
+        const model = JSON.parse(init.body).model as string;
+        calls.push(model);
+        return answer(model, url);
+      })
+    );
+    vi.useFakeTimers();
+    const p = chatWithFallback(routes, req).then(
+      (r) => ({ r }),
+      (e) => ({ e })
+    );
+    await vi.runAllTimersAsync();
+    const out = (await p) as { r?: Awaited<ReturnType<typeof chatWithFallback>>; e?: { status?: number } };
+    vi.useRealTimers();
+    return { calls, r: out.r, e: out.e };
+  };
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  test("429 no alias, 200 no OpenRouter com o v4-flash (cadeia real do modo auto)", async () => {
+    envKeys({ go: "go", or: "or" });
+    const routes = await resolveOrgRoutes(noCtx, "x" as never, null, NEW, "attendant");
+    const { calls, r } = await run(routes, (m) => (m.includes("flash-latest") ? new Response("x", { status: 429 }) : ok()));
+    expect(r?.usedRoute).toMatchObject({ providerId: "openrouter", canonicalModel: OLD });
+    expect(calls.at(-1)).toBe("deepseek/deepseek-v4-flash");
+  });
+
+  test("400 x-opencode-session no Go avança ao próximo elo; outros 400 não", async () => {
+    const go = resolvePlatformChain(OLD, { opencodeGoKey: "go", openrouterKey: "or" }); // [go, openrouter]
+    const a = await run(go, (_m, url) => (url.includes("opencode") ? sessionErr() : ok()));
+    expect(a.r?.usedRoute.providerId).toBe("openrouter");
+    const b = await run(go, (_m, url) =>
+      url.includes("opencode")
+        ? new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400, headers: { "Content-Type": "application/json" } })
+        : ok()
+    );
+    expect(b.calls).toHaveLength(1);
+    expect(b.e).toMatchObject({ status: 400 });
+  });
+
+  test("429 no alias, 400 de sessão no Go, 200 no elo seguinte", async () => {
+    const [alias] = resolvePlatformChain(NEW, { openrouterKey: "or" });
+    const [goV4, orV4] = resolvePlatformChain(OLD, { opencodeGoKey: "go", openrouterKey: "or" });
+    const { r } = await run([alias, goV4, orV4], (m, url) =>
+      m.includes("flash-latest") ? new Response("x", { status: 429 }) : url.includes("opencode") ? sessionErr() : ok()
+    );
+    expect(r?.usedRoute.canonicalModel).toBe(OLD);
+    expect(r?.usedRoute.providerId).toBe("openrouter");
+  });
+
+  test("todos falham: sobe o erro do PRIMEIRO elo (429), não o do último", async () => {
+    const [alias] = resolvePlatformChain(NEW, { openrouterKey: "or" });
+    const [goV4, orV4] = resolvePlatformChain(OLD, { opencodeGoKey: "go", openrouterKey: "or" });
+    const { e } = await run([alias, goV4, orV4], (_m, url) =>
+      url.includes("opencode") ? sessionErr() : new Response("limite", { status: 429 })
+    );
+    expect(e).toMatchObject({ status: 429 });
+  });
+});
+
+describe("itens da revisão", () => {
+  const stored = { copilot: "kimi-k2.7-code", attendant: OLD, classify: OLD };
+
+  test("ops recusam id aposentado como destino", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t, "a", { ...stored, attendant: "glm-5.2" });
+    await expect(
+      t.mutation(internal.aiSettings.internalReplaceModelAllOrgs, { from: "glm-5.2", to: OLD })
+    ).rejects.toThrow(/aposentado/);
+    await expect(
+      t.mutation(internal.aiSettings.internalReplaceOrgModel, { organizationId: s.organizationId, from: "glm-5.2", to: "deepseek-v4-flash-0731" })
+    ).rejects.toThrow(/aposentado/);
+  });
+
+  test("setModels e setProviderMode preservam providerConfig.products", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, userId } = await seed(t, "p", { copilot: "kimi-k2.7-code", attendant: NEW, classify: NEW });
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(organizationId))!;
+      const ai = org.settings.aiConfig!;
+      await ctx.db.patch(organizationId, {
+        settings: {
+          ...org.settings,
+          aiConfig: {
+            ...ai,
+            providerConfig: {
+              ...ai.providerConfig!,
+              products: { attendant: { order: "openrouter-only" }, vision: { model: "deepseek-v4-flash-vision-exp" } },
+            },
+          },
+        },
+      });
+    });
+    const as = t.withIdentity({ subject: `${userId}|s` });
+    await as.mutation(api.aiSettings.setModels, {
+      organizationId,
+      models: { copilot: "kimi-k2.7-code", attendant: "glm-5.2", classify: "glm-5.2" },
+      nonZdrAck: true,
+    });
+    await as.mutation(api.aiSettings.setProviderMode, { organizationId, mode: "platform" });
+    const org = await t.run((ctx) => ctx.db.get(organizationId));
+    expect(org?.settings.aiConfig?.providerConfig?.models?.attendant).toBe("glm-5.2");
+    expect(org?.settings.aiConfig?.providerConfig?.products).toEqual({
+      attendant: { order: "openrouter-only" },
+      vision: { model: "deepseek-v4-flash-vision-exp" },
+    });
+  });
+
+  test("trocar só o copiloto (UI manda classify = attendant) não é barrado com attendant aposentado gravado", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, userId } = await seed(t, "c", { copilot: "kimi-k2.7-code", attendant: OLD, classify: NEW });
+    const as = t.withIdentity({ subject: `${userId}|s` });
+    await as.mutation(api.aiSettings.setModels, {
+      organizationId,
+      models: { copilot: "kimi-k3", attendant: OLD, classify: OLD },
+      nonZdrAck: true,
+    });
+  });
+
+  test("getModelOptions considera gravado o modelo fixado no Telegram/tradução", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, userId } = await seed(t, "tg", { copilot: "kimi-k2.7-code", attendant: NEW, classify: NEW });
+    await t.run(async (ctx) => {
+      const org = (await ctx.db.get(organizationId))!;
+      const ai = org.settings.aiConfig!;
+      await ctx.db.patch(organizationId, {
+        settings: {
+          ...org.settings,
+          aiConfig: { ...ai, providerConfig: { ...ai.providerConfig!, products: { telegramCopilot: { model: OLD } } } },
+        },
+      });
+    });
+    const ids = (await t.withIdentity({ subject: `${userId}|s` }).query(api.aiSettings.getModelOptions, { organizationId })).map((m: { id: string }) => m.id);
+    expect(ids).toContain(OLD);
+  });
+
+  test("Telegram fixado em id aposentado mantém a rede do alias", async () => {
+    envKeys({ go: "go", or: "or" });
+    const cfg = { products: { telegramCopilot: { model: OLD } } } as never;
+    const r = await resolveProductRoutes(noCtx, "x" as never, cfg, "telegramCopilot");
+    expect(summary(r.routes)).toHaveLength(3);
+    expect(r.routes[0].canonicalModel).toBe(NEW);
+  });
+
+  test("agentProfile.model recusa aposentado e desconhecido em gravação nova, aceita manter", async () => {
+    const t = convexTest(schema, modules);
+    const { organizationId, userId } = await seed(t, "ap", { copilot: "kimi-k2.7-code", attendant: NEW, classify: NEW });
+    const agentId = await t.run(async (ctx) => {
+      const now = Date.now();
+      return await ctx.db.insert("teamMembers", {
+        organizationId, name: "IA", role: "agent", type: "ai", status: "active", createdAt: now, updatedAt: now,
+        agentProfile: { kind: "attendant", mode: "suggest", model: OLD } as never,
+      });
+    });
+    await t.run((ctx) => ctx.db.patch(userId, { email: "a@teste.com" }));
+    const as = t.withIdentity({ subject: `${userId}|s` });
+    const upd = (model: string) =>
+      as.mutation(api.aiSettings.updateAgentProfile, { agentMemberId: agentId, patch: { model } });
+    await expect(upd("deepseek-v4-flash-0731")).rejects.toThrow(/aposentado/);
+    await expect(upd("inventado-9")).rejects.toThrow(/conhecido/);
+    await upd(OLD); // mantém o já gravado
+    await upd(NEW);
   });
 });
