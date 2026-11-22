@@ -4125,6 +4125,8 @@ export const internalProcessQueueItem = internalAction({
       const toolCallNames: string[] = [];
       let requestCount = 0;
       let usedProvider: string | undefined;
+      // Modelo que de fato respondeu (a rede de fallback pode ter trocado o pedido).
+      let usedModel: string = context.model;
       let handoffRequestedThisRun = false;
       // Guardrail anti-bot (v0.65): a IA chamou flagAutomatedSender neste turno.
       let botFlaggedThisRun = false;
@@ -4257,6 +4259,7 @@ export const internalProcessQueueItem = internalAction({
             });
             requestCount += 1;
             usedProvider = recovery.usedRoute.providerId;
+            usedModel = recovery.usedRoute.canonicalModel;
             addUsage(usage, recovery.usage, recovery.usedRoute, context.model);
             const recovered = recovery.message.content?.trim();
             if (!recovered) break;
@@ -4275,6 +4278,7 @@ export const internalProcessQueueItem = internalAction({
         }
         requestCount += 1;
         usedProvider = resp.usedRoute.providerId;
+        usedModel = resp.usedRoute.canonicalModel;
         addUsage(usage, resp.usage, resp.usedRoute, context.model, {
           inputChars: JSON.stringify(messages).length,
           outputChars: JSON.stringify(resp.message).length,
@@ -4706,7 +4710,7 @@ export const internalProcessQueueItem = internalAction({
           runId: context.agentRunId,
           status: "done",
           provider: usedProvider,
-          model: context.model,
+          model: usedModel,
           requestCount,
           toolCallNames,
           ...finishRunCostFields(usage),
@@ -4731,7 +4735,7 @@ export const internalProcessQueueItem = internalAction({
             runId: context.agentRunId,
             status: "done",
             provider: usedProvider,
-            model: context.model,
+            model: usedModel,
             requestCount,
             toolCallNames,
             ...finishRunCostFields(usage),
@@ -4853,7 +4857,7 @@ export const internalProcessQueueItem = internalAction({
         runId: context.agentRunId,
         status: "done",
         provider: usedProvider,
-        model: context.model,
+        model: usedModel,
         requestCount,
         toolCallNames,
         ...finishRunCostFields(usage),

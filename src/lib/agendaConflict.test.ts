@@ -1,6 +1,6 @@
 import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
-import { cancelAction, conflictKindText, rulesErrorMessage, isManualNoPlace, manualAction, mustResolveBeforeApprove, replacementCandidates, suggestionRows, type ResourceLite } from "./agendaConflict";
+import { cancelAction, conflictKindText, rulesErrorMessage, isManualNoPlace, manualAction, mustResolveBeforeApprove, noPlaceTarget, replacementCandidates, suggestionRows, type ResourceLite } from "./agendaConflict";
 
 const resources: ResourceLite[] = [
   { _id: "s1", kind: "room", name: "Sala 1" },
@@ -111,5 +111,20 @@ describe("ação de uma sugestão do servidor", () => {
   });
   it("mesmo horário sem recurso não vira troca vazia", () => {
     expect(suggestionAction({ startTime: 1000, resourceIds: [] }, 1000).type).toBe("reschedule");
+  });
+});
+
+describe("noPlaceTarget", () => {
+  const conflicts = [
+    { _id: "c1", appointment: { _id: "a1" } },
+    { _id: "c2", appointment: null },
+  ];
+  it("agendamento com conflito aberto vai para o resolvedor desse conflito", () => {
+    expect(noPlaceTarget("a1", conflicts, false)).toEqual({ kind: "resolve", conflictId: "c1" });
+  });
+  it("sem conflito aberto, ou proposta vencida, abre o painel", () => {
+    expect(noPlaceTarget("a9", conflicts, false)).toEqual({ kind: "open" });
+    expect(noPlaceTarget("a1", conflicts, true)).toEqual({ kind: "open" });
+    expect(noPlaceTarget("a1", [], false)).toEqual({ kind: "open" });
   });
 });

@@ -98,7 +98,6 @@ export function AgendaServicesPanel({ organizationId }: SettingsPanelProps) {
         ask
       );
       if (outcome.done) toast.success("Serviço arquivado");
-      else toast("Nada foi alterado");
     } catch (e) {
       toast.error(mutationErrorMessage(e, "Não foi possível arquivar."));
     }

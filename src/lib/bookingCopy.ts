@@ -34,6 +34,7 @@ export const BOOKING_COPY = {
     loading: "Buscando horários…",
     failed: "Não foi possível buscar os horários.",
     unverifiable: "Não deu para conferir os horários agora. Tente de novo.",
+    dayOffSuffix: "(folga)",
     partyLabel: "Quantas pessoas?",
     partyOption: "{n} pessoas",
     partyOne: "1 pessoa",
@@ -54,6 +55,7 @@ export const BOOKING_COPY = {
   },
   review: {
     heading: "Confira e marque",
+    headingReschedule: "Confira e remarque",
     who: "Cliente",
     service: "Serviço",
     when: "Quando",
@@ -113,6 +115,7 @@ export const DETAIL_COPY = {
   notFound: { title: "Agendamento não encontrado", hint: "Ele pode ter sido removido ou você não tem acesso." },
   fields: {
     client: "Cliente",
+    phone: "Telefone",
     service: "Serviço",
     when: "Quando",
     where: "Com quem e onde",
@@ -126,6 +129,7 @@ export const DETAIL_COPY = {
   proposalExpired: "Proposta vencida: o horário já passou, então ela não pode mais ser aprovada. Recuse a proposta ou marque de novo para o mesmo cliente e serviço.",
   undoUnavailable: "Não há mais o que desfazer neste horário.",
   conflict: "Este horário está sem sala ou profissional e aguarda uma decisão.",
+  resolve: "Resolver",
   history: {
     title: "Histórico",
     created: "Marcado ({origem})",

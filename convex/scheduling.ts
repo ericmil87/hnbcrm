@@ -14,7 +14,8 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { query, type QueryCtx } from "./_generated/server";
 import { hasPermission } from "./lib/permissions";
-import { computeDayAvailability, usableIntervals } from "./lib/schedAvailability";
+import { formatPhoneForDisplay } from "./lib/phone";
+import { computeDayAvailability, MAX_BLOCK_MIN, usableIntervals } from "./lib/schedAvailability";
 import {
   type AgendaReader,
   canSeeAppointment,
@@ -49,8 +50,16 @@ import {
 } from "./lib/schedAgendaReads";
 
 const MAX_RANGE_DAYS = 35;
+const DAY_APPOINTMENTS_CAP = 200;
+/** Documentos lidos da faixa que antecede o dia (agendamentos que podem cruzar a meia-noite); na grade da semana, por status ativo. */
+const CROSSING_READ_CAP = 50;
 const RANGE_STATUS_CAP = 800;
 const RANGE_EXCEPTIONS_CAP = 1000;
+const CLOSED_DAYS_MAX = 42;
+const PENDING_CAP = 50;
+/** Documentos lidos (no máximo) por seção quando o filtro de visibilidade é aplicado depois do índice. */
+const VISIBLE_READ_CAP = 300;
+const HOUR_MS = 3_600_000;
 const MINUTE_MS = 60_000;
 const ACTIVE = new Set<string>(ACTIVE_STATUSES);
 
@@ -71,6 +80,46 @@ async function readerIfOn(ctx: QueryCtx, organizationId: Id<"organizations">): P
   return reader;
 }
 
+
+/**
+ * Junta fluxos JÁ ordenados por `(startTime, _creationTime)` (um por status, cada um pelo índice) numa ordem só, lendo
+ * um documento por vez de cada fluxo (custo = documentos entregues + no máximo um adiantado por fluxo).
+ */
+async function* mergeByStart(streams: AsyncIterable<Doc<"schedAppointments">>[]): AsyncGenerator<Doc<"schedAppointments">> {
+  const its = streams.map((s) => s[Symbol.asyncIterator]());
+  const heads = await Promise.all(its.map((it) => it.next()));
+  for (;;) {
+    let best = -1;
+    for (let i = 0; i < heads.length; i++) {
+      const h = heads[i];
+      if (h.done) continue;
+      if (best < 0) {
+        best = i;
+        continue;
+      }
+      const b = heads[best].value as Doc<"schedAppointments">;
+      const c = h.value as Doc<"schedAppointments">;
+      if (c.startTime < b.startTime || (c.startTime === b.startTime && c._creationTime < b._creationTime)) best = i;
+    }
+    if (best < 0) return;
+    yield heads[best].value as Doc<"schedAppointments">;
+    heads[best] = await its[best].next();
+  }
+}
+
+/**
+ * Contato do agendamento -> telefone formatado pela porta de telefones (`whatsappNumber ?? phone`), ou `undefined`.
+ * UMA leitura (`db.get`), só no detalhe e no cartão rápido; nunca por linha de grade ou intervalo. O contato precisa
+ * ser da MESMA org do agendamento.
+ */
+async function contactPhoneOf(ctx: QueryCtx, appt: Doc<"schedAppointments">): Promise<string | undefined> {
+  if (appt.contactId === undefined) return undefined;
+  const contact = await ctx.db.get(appt.contactId);
+  if (!contact || contact.organizationId !== appt.organizationId) return undefined;
+  const raw = contact.whatsappNumber ?? contact.phone;
+  const formatted = raw ? formatPhoneForDisplay(raw) : "";
+  return formatted === "" ? undefined : formatted;
+}
 
 // ---------------------------------------------------------------------------
 // Grade do dia
@@ -269,12 +318,20 @@ export const listAgendaAppointments = query({
     limit: v.optional(v.number()),
     /** `next` da página anterior. */
     after: v.optional(cursorValidator),
+    /**
+     * `"grid"` = modo da Semana e do Mês: só os status que a grade mostra (`ACTIVE_STATUSES`, um índice por status; cancelado
+     * e remarcado não gastam leitura) e, na primeira página, também os que começaram até `MAX_BLOCK_MIN` antes do período
+     * e ainda não terminaram no primeiro instante dele. Ausente = comportamento de sempre (a Lista).
+     */
+    mode: v.optional(v.literal("grid")),
   },
   returns: v.object({
     enabled: v.boolean(),
     appointments: v.array(appointmentRowValidator),
     /** Cursor da próxima página; `null` = acabou. Pode vir com página curta (`view_own`, teto de leitura). */
     next: v.union(cursorValidator, v.null()),
+    /** Modo `grid`: a faixa de 8 h antes do período estourou o teto de leitura (pode faltar quem cruza o início). */
+    crossingCapped: v.optional(v.boolean()),
   }),
   handler: async (ctx, args) => {
     const { timezone: _tz, ...page } = await listAppointmentsFor(ctx, await readerIfOn(ctx, args.organizationId), args);
@@ -294,6 +351,7 @@ export async function listAppointmentsFor(
     status?: Doc<"schedAppointments">["status"];
     limit?: number;
     after?: { startTime: number; creationTime: number };
+    mode?: "grid";
   }
 ) {
   const empty = { enabled: false, timezone: "", appointments: [] as AppointmentRow[], next: null as { startTime: number; creationTime: number } | null };
@@ -307,8 +365,18 @@ export async function listAppointmentsFor(
   const lo = Math.max(dayBounds(args.fromLocalDate, tz).start, after?.startTime ?? -Infinity);
   const hi = dayBounds(args.toLocalDate, tz).end;
   const status = args.status;
-  const rows =
-    status !== undefined
+  const gridMode = args.mode === "grid" && status === undefined;
+  const rows: AsyncIterable<Doc<"schedAppointments">> = gridMode
+    ? mergeByStart(
+        ACTIVE_STATUSES.map((st) =>
+          ctx.db
+            .query("schedAppointments")
+            .withIndex("by_organization_and_status_and_start", (q) =>
+              q.eq("organizationId", args.organizationId).eq("status", st).gte("startTime", lo).lt("startTime", hi)
+            )
+        )
+      )
+    : status !== undefined
       ? ctx.db
           .query("schedAppointments")
           .withIndex("by_organization_and_status_and_start", (q) =>
@@ -321,51 +389,150 @@ export async function listAppointmentsFor(
   const afterCursor = (a: Doc<"schedAppointments">) =>
     after === undefined || a.startTime > after.startTime || (a.startTime === after.startTime && a._creationTime > after.creationTime);
   const res = await scanVisible(rows, (a) => afterCursor(a) && canSeeAppointment(reader, a, own), limit, 500);
+  // Quem começou antes do período e cruza o primeiro instante (só na primeira página: nas seguintes `lo` já é depois e
+  // o cursor não repete). O bloco tem teto `MAX_BLOCK_MIN`, então só pode ter começado nessa faixa do mesmo índice.
+  let crossing: Doc<"schedAppointments">[] = [];
+  let crossingCapped = false;
+  if (gridMode && after === undefined) {
+    const periodStart = dayBounds(args.fromLocalDate, tz).start;
+    // Um índice por status ATIVO (como o fluxo principal): cancelado e remarcado não consomem o teto da faixa.
+    for (const st of ACTIVE_STATUSES) {
+      const before = await ctx.db
+        .query("schedAppointments")
+        .withIndex("by_organization_and_status_and_start", (q) =>
+          q.eq("organizationId", args.organizationId).eq("status", st).gte("startTime", periodStart - MAX_BLOCK_MIN * MINUTE_MS).lt("startTime", periodStart)
+        )
+        .order("desc")
+        .take(CROSSING_READ_CAP + 1);
+      if (before.length > CROSSING_READ_CAP) crossingCapped = true;
+      crossing.push(...before.slice(0, CROSSING_READ_CAP).filter((a) => a.endTime > periodStart && canSeeAppointment(reader, a, own)));
+    }
+    crossing.sort((a, b) => a.startTime - b.startTime || a._creationTime - b._creationTime);
+  }
   return {
     enabled: true,
     timezone: tz,
-    appointments: res.items.map(toAppointmentRow),
+    appointments: [...crossing, ...res.items].map(toAppointmentRow),
+    ...(crossingCapped ? { crossingCapped: true } : {}),
     next: res.more && res.cursorRow ? { startTime: res.cursorRow.startTime, creationTime: res.cursorRow._creationTime } : null,
   };
 }
+
+/**
+ * Dias com recurso fechado em um período (até 42 dias: o Mês com os dias vizinhos), passado inclusive. Lê só os recursos e
+ * as exceções do intervalo (índice por data) e aplica a MESMA regra da grade do dia (`computeDayAvailability`): `closed`
+ * da agenda toda, de um tipo ou de um recurso, com a reabertura parcial (`custom`/`extra`) de um recurso já descontada.
+ * Só devolve dias com algum recurso fechado. Sem agendamentos, sem nome de motivo.
+ */
+export const listClosedDays = query({
+  args: { organizationId: v.id("organizations"), fromLocalDate: v.string(), toLocalDate: v.string() },
+  returns: v.object({
+    enabled: v.boolean(),
+    days: v.array(v.object({ localDate: v.string(), closedResources: v.number() })),
+    /** Recursos ativos considerados (para saber se o dia está fechado por inteiro). */
+    totalResources: v.number(),
+    /** O teto de exceções cortou o fim do período. */
+    capped: v.boolean(),
+    /** Só com `capped`: último dia avaliado por inteiro; os dias depois dele não foram avaliados. */
+    completeThrough: v.optional(v.string()),
+  }),
+  handler: async (ctx, args) => {
+    const empty = { enabled: false, days: [], totalResources: 0, capped: false };
+    const reader = await readerIfOn(ctx, args.organizationId);
+    if (!reader) return empty;
+    assertRange(args.fromLocalDate, args.toLocalDate, CLOSED_DAYS_MAX);
+    const org = await ctx.db.get(args.organizationId);
+    if (!org) return empty;
+    const tz = assertValidTimezone(org.settings.timezone);
+    const resourceRows = await ctx.db
+      .query("schedResources")
+      .withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId))
+      .take(101);
+    const resources = resourceRows.filter((r) => r.active);
+    const exceptions = await ctx.db
+      .query("schedExceptions")
+      .withIndex("by_organization_and_date", (q) =>
+        q.eq("organizationId", args.organizationId).gte("localDate", args.fromLocalDate).lte("localDate", args.toLocalDate)
+      )
+      .take(RANGE_EXCEPTIONS_CAP + 1);
+    const capped = exceptions.length > RANGE_EXCEPTIONS_CAP;
+    const used = exceptions.slice(0, RANGE_EXCEPTIONS_CAP);
+    // Cortou: o último dia lido pode estar incompleto (inclusive), então só se avalia até o dia anterior a ele.
+    const completeThrough = capped ? addLocalDays(used[RANGE_EXCEPTIONS_CAP - 1].localDate, -1) : null;
+    const byDate = new Map<string, Doc<"schedExceptions">[]>();
+    for (const e of used) {
+      const list = byDate.get(e.localDate);
+      if (list) list.push(e);
+      else byDate.set(e.localDate, [e]);
+    }
+    const days: Array<{ localDate: string; closedResources: number }> = [];
+    if (resources.length > 0) {
+      for (let d = args.fromLocalDate; diffLocalDays(d, args.toLocalDate) >= 0; d = addLocalDays(d, 1)) {
+        if (completeThrough !== null && d > completeThrough) break;
+        const ofDay = byDate.get(d);
+        if (!ofDay) continue;
+        const avail = computeDayAvailability({ date: d, tz, resources, exceptions: ofDay, allocations: [], internalEvents: [] });
+        let closed = 0;
+        for (const rd of avail.values()) if (rd.closed) closed++;
+        if (closed > 0) days.push({ localDate: d, closedResources: closed });
+      }
+    }
+    return { enabled: true, days, totalResources: resources.length, capped, ...(completeThrough !== null ? { completeThrough } : {}) };
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Detalhe e vínculos
 // ---------------------------------------------------------------------------
 
-export const appointmentDetailResultValidator = v.union(
+const appointmentDetailFields = {
+  appointment: appointmentDetailValidator,
+  openConflicts: v.array(
+    v.object({
+      _id: v.id("schedConflicts"),
+      kind: v.union(v.literal("resource_closed"), v.literal("capacity"), v.literal("human_confirm"), v.literal("resource_removed")),
+      resourceId: v.optional(v.id("schedResources")),
+      localDate: v.optional(v.string()),
+      createdAt: v.number(),
+    })
+  ),
+  canEdit: v.boolean(),
+  /** Quem marcou: nome do membro, ou "IA", "Link público", "Sistema". */
+  createdByName: v.string(),
+  /** Mudanças de status com o ator (auditoria; só as que a auditoria registrou), do mais antigo ao mais novo. */
+  statusActors: v.array(statusActorValidator),
+};
+
+/** Contrato do detalhe no REST/MCP (sem `contactPhone`). */
+export const appointmentDetailResultValidator = v.union(v.null(), v.object(appointmentDetailFields));
+
+/** Detalhe no app: o mesmo, mais o telefone do contato (só com `contacts: view`). */
+const appointmentDetailAppValidator = v.union(
   v.null(),
   v.object({
-    appointment: appointmentDetailValidator,
-    openConflicts: v.array(
-      v.object({
-        _id: v.id("schedConflicts"),
-        kind: v.union(v.literal("resource_closed"), v.literal("capacity"), v.literal("human_confirm"), v.literal("resource_removed")),
-        resourceId: v.optional(v.id("schedResources")),
-        localDate: v.optional(v.string()),
-        createdAt: v.number(),
-      })
-    ),
-    canEdit: v.boolean(),
-    /** Quem marcou: nome do membro, ou "IA", "Link público", "Sistema". */
-    createdByName: v.string(),
-    /** Mudanças de status com o ator (auditoria; só as que a auditoria registrou), do mais antigo ao mais novo. */
-    statusActors: v.array(statusActorValidator),
+    ...appointmentDetailFields,
+    /** Telefone do contato, formatado (`lib/phone.ts`); ausente sem contato, sem número ou sem permissão. */
+    contactPhone: v.optional(v.string()),
   })
 );
 
 export const getAppointment = query({
   args: { appointmentId: v.id("schedAppointments") },
-  returns: appointmentDetailResultValidator,
+  returns: appointmentDetailAppValidator,
   handler: async (ctx, args) => {
     const appt = await ctx.db.get(args.appointmentId);
     if (!appt) return null;
-    return await appointmentDetailFor(ctx, await readerIfOn(ctx, appt.organizationId), appt);
+    return await appointmentDetailFor(ctx, await readerIfOn(ctx, appt.organizationId), appt, { includeContactPhone: true });
   },
 });
 
 /** Detalhe (sessão ou chave REST): `null` sem leitor ou quando o leitor não pode ver este agendamento. */
-export async function appointmentDetailFor(ctx: QueryCtx, reader: AgendaReader | null, appt: Doc<"schedAppointments">) {
+export async function appointmentDetailFor(
+  ctx: QueryCtx,
+  reader: AgendaReader | null,
+  appt: Doc<"schedAppointments">,
+  opts?: { includeContactPhone?: boolean }
+) {
   if (!reader) return null;
   const own = await ownResourceIds(ctx, reader);
   if (!canSeeAppointment(reader, appt, own)) return null;
@@ -374,8 +541,12 @@ export async function appointmentDetailFor(ctx: QueryCtx, reader: AgendaReader |
     .withIndex("by_appointment", (q) => q.eq("appointmentId", appt._id))
     .take(20);
   const { createdByName, statusActors } = await resolveAppointmentActors(ctx, appt);
+  // Só o app (`getAppointment`): o REST não declara `contactPhone` e não o devolve.
+  const contactPhone =
+    opts?.includeContactPhone === true && hasPermission(reader.permissions, "contacts", "view") ? await contactPhoneOf(ctx, appt) : undefined;
   return {
     appointment: toAppointmentDetail(appt),
+    ...(contactPhone !== undefined ? { contactPhone } : {}),
     openConflicts: conflicts
       .filter((c) => c.status === "open")
       .map((c) => ({
@@ -390,6 +561,25 @@ export async function appointmentDetailFor(ctx: QueryCtx, reader: AgendaReader |
     statusActors,
   };
 }
+
+/**
+ * Telefone formatado do contato de UM agendamento, para o cartão rápido da grade (só ao passar o mouse; a grade não lê
+ * contato por linha). `null` = sem permissão para ver o agendamento, sem contato ou sem número. 2 leituras + permissão.
+ */
+export const getAppointmentContactPhone = query({
+  args: { appointmentId: v.id("schedAppointments") },
+  returns: v.union(v.null(), v.string()),
+  handler: async (ctx, args) => {
+    const appt = await ctx.db.get(args.appointmentId);
+    if (!appt) return null;
+    const reader = await readerIfOn(ctx, appt.organizationId);
+    if (!reader) return null;
+    const own = await ownResourceIds(ctx, reader);
+    if (!canSeeAppointment(reader, appt, own)) return null;
+    if (!hasPermission(reader.permissions, "contacts", "view")) return null;
+    return (await contactPhoneOf(ctx, appt)) ?? null;
+  },
+});
 
 const ACTOR_AUDIT_SCAN = 40;
 const ACTOR_MEMBER_CAP = 12;

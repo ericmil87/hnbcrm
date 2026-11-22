@@ -166,6 +166,8 @@ describe("data por extenso", () => {
       { mode: "preview", dates: [], affected: 12, reallocated: 0, conflicts: 12, pending: 0, simulated: 12, capped: false, removed: 0, restorable: 0, items: [] },
       { resourceName: "Toda a agenda", kind: null, org: true }
     );
+    expect(s.sentences[0]).toBe("12 horários marcados na agenda inteira neste período");
+    expect(s.sentences[0]).not.toMatch(/em Toda/i);
     expect(s.sentences[1]).toBe("Todos os 12 horários deste período ficam sem lugar e vão para a fila de pendências.");
     const c = summarizePreview(
       { mode: "preview", dates: [], affected: 80, reallocated: 0, conflicts: 40, pending: 0, simulated: 40, capped: true, removed: 0, restorable: 0, items: [] },

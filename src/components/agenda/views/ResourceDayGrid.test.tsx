@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { buildDayGridModel } from "@/lib/agendaGrid";
 import { ResourceDayGrid, type ResourceDayGridProps } from "./ResourceDayGrid";
 import { appt, at, dayInput, NOW, res } from "./agendaViews.fixtures";
@@ -215,5 +215,42 @@ describe("ResourceDayGrid: dia inteiro e proposta vencida", () => {
     expect(block).toHaveTextContent("Vencida");
     expect(block.getAttribute("aria-label")).toMatch(/Vencida/);
     expect(block.getAttribute("aria-label")).not.toMatch(/Aguardando aprovação/);
+  });
+});
+
+describe("ResourceDayGrid: cartão ao passar o mouse não marca horário", () => {
+  afterEach(() => vi.useRealTimers());
+  function openCard(status: "scheduled" | "confirmed" = "scheduled") {
+    window.matchMedia = vi.fn().mockImplementation((q: string) => ({ matches: q.includes("hover: hover"), media: q, addEventListener: vi.fn(), removeEventListener: vi.fn() })) as never;
+    vi.useFakeTimers();
+    const a = appt(["sala1"], at(9), at(10), { status });
+    const onStatus = vi.fn();
+    const h = setup(build(dayInput({ appointments: [a] })), { quick: { canEdit: true, onStatus } });
+    fireEvent.mouseEnter(screen.getByRole("button", { name: /Cliente/ }));
+    act(() => void vi.advanceTimersByTime(450));
+    return { h, onStatus, a };
+  }
+  it.each([
+    ["Confirmar", "scheduled"],
+    ["Chegou", "confirmed"],
+  ] as const)("'%s' muda a situação sem disparar onSlotClick", (name, status) => {
+    const { h, onStatus } = openCard(status);
+    const card = screen.getByRole("dialog");
+    fireEvent.pointerDown(within(card).getByRole("button", { name }));
+    fireEvent.mouseDown(within(card).getByRole("button", { name }));
+    fireEvent.click(within(card).getByRole("button", { name }), { clientY: 130 });
+    expect(onStatus).toHaveBeenCalled();
+    expect(h.onSlotClick).not.toHaveBeenCalled();
+  });
+  it("'Abrir' abre o painel sem disparar onSlotClick", () => {
+    const { h, a } = openCard();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Abrir" }), { clientY: 130 });
+    expect(h.onAppointmentClick).toHaveBeenCalledWith(a._id);
+    expect(h.onSlotClick).not.toHaveBeenCalled();
+  });
+  it("clique em qualquer ponto do cartão também não marca horário", () => {
+    const { h } = openCard();
+    fireEvent.click(screen.getByRole("dialog"), { clientY: 130 });
+    expect(h.onSlotClick).not.toHaveBeenCalled();
   });
 });

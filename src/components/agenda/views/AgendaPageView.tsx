@@ -34,13 +34,13 @@ import {
 } from "@/lib/agendaGrid";
 import { isExpiredProposal } from "@/lib/agendaStatus";
 import { buildMonthCells } from "@/lib/agendaMonth";
-import { closedResourcesByDay, syntheticRange } from "@/lib/agendaClosedDays";
+import { closedResourcesByDay, mergeClosedDays, syntheticRange } from "@/lib/agendaClosedDays";
 import { UNDO_TARGETS, type SchedStatus } from "../../../../convex/lib/schedStatus";
 import { buildMonthGrid, buildMonthLines, monthGridDates } from "@/lib/agendaMonthLines";
 import { pendingBadgeLabel, pendingTotal } from "@/lib/agendaPending";
 import { DENSITY_HOUR_PX, readPrefs, writePrefs, type AgendaPrefs, type Density } from "@/lib/agendaPrefs";
 import type { ColorScheme, ToneContext } from "@/lib/agendaColors";
-import { buildWeekModel, LANES_DESKTOP, LANES_MOBILE, type WeekResource } from "@/lib/agendaWeekGrid";
+import { buildWeekModel, LANES_DESKTOP, LANES_MOBILE, movedEventStart, type WeekResource } from "@/lib/agendaWeekGrid";
 import { VIEWS_COPY } from "@/lib/agendaViewsCopy";
 import {
   dateKeyParam,
@@ -57,7 +57,7 @@ import {
   type AgendaView,
   type GroupParam,
 } from "@/lib/agendaViewParams";
-import { shortDateLabel, weekDateKeys, zonedAtMinutes, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
+import { shortDateLabel, weekDateKeys, zonedDayBounds, zonedToday, type LocalDate } from "@/lib/agendaZone";
 import { mutationErrorMessage } from "@/lib/errors";
 import { TAB_ROUTES } from "@/lib/routes";
 import { booleanParam } from "@/lib/searchParamState";
@@ -65,14 +65,16 @@ import { VOCAB } from "@/lib/vocab";
 import { AgendaToolbar, type WeekFilterOption } from "./AgendaToolbar";
 import { AgendaColorLegend } from "./AgendaColorLegend";
 import { AgendaDayList } from "./AgendaDayList";
+import { EmptyDayHint } from "./EmptyDayHint";
 import type { QuickActions } from "./AgendaBlocks";
 import type { ColumnAction } from "./ResourceDayGrid";
 import type { PendingAppointment, PendingConflict, PendingData } from "./PendingQueueView";
 import type { ClosureTarget } from "./ResourceDaySheet";
+import { QuickContactPhone } from "./QuickContactPhone";
 import { useRangeAppointments } from "./useRangeAppointments";
 import { useFillHeight } from "./useFillHeight";
 import { shortcutBlocked } from "@/lib/agendaShortcuts";
-import { isManualNoPlace } from "@/lib/agendaConflict";
+import { isManualNoPlace, noPlaceTarget } from "@/lib/agendaConflict";
 import { bookingContextParts, bookingSheetExtraProps, rebookTarget } from "@/lib/agendaBooking";
 import type { PickedClient } from "./ClientPickerSheet";
 
@@ -216,10 +218,10 @@ export function AgendaPageView() {
   /** Dias cobertos pelas leituras de Semana e Mês (Mês: semanas inteiras, com os dias vizinhos). */
   const span = useMemo(() => {
     if (week) return { from: weekDates[0], to: weekDates[6] };
-    // Mês: do dia 1 (os dias do mês anterior que aparecem esmaecidos não gastam leitura) até o fim da última semana.
-    if (month) return { from: monthArgs.fromLocalDate, to: monthDates[monthDates.length - 1] };
+    // Mês: semanas inteiras, com os dias vizinhos esmaecidos (a leitura é só dos status da grade, então o teto aguenta).
+    if (month) return { from: monthDates[0], to: monthDates[monthDates.length - 1] };
     return { from: date, to: date };
-  }, [week, month, weekDates, monthDates, monthArgs, date]);
+  }, [week, month, weekDates, monthDates, date]);
 
   // --- dados ---
   const canQuery = access.canView;
@@ -273,10 +275,24 @@ export function AgendaPageView() {
   const activeResources = useMemo(() => (config?.resources ?? []).filter((r) => r.active), [config]);
   const activeServices = useMemo(() => (config?.services ?? []).filter((s) => s.active), [config]);
   const apptsInRange = rangeAppts.data?.appointments;
-  const closedByDay = useMemo(() => {
-    const dates = (week ? weekDates : monthDates).filter((d) => d >= today);
-    return closedResourcesByDay(config?.closures ?? [], activeResources, dates);
-  }, [week, weekDates, monthDates, today, config, activeResources]);
+  // Cadeado de dia fechado: o servidor diz (passado inclusive, reabertura parcial descontada); até chegar, a aproximação
+  // de `getConfig.closures` (hoje em diante, só `closed`).
+  const closedArgs = useMemo(() => {
+    const dates = week ? weekDates : monthDates;
+    return { organizationId, fromLocalDate: dates[0], toLocalDate: dates[dates.length - 1] };
+  }, [week, weekDates, monthDates, organizationId]);
+  const closedDates = week ? weekDates : monthDates;
+  // Só a resposta do intervalo ATUAL vale (nunca a anterior, que esconderia o cadeado ao trocar de semana).
+  const serverClosed = useQuery(api.scheduling.listClosedDays, canQuery && rangeView ? closedArgs : "skip");
+  const closedByDay = useMemo(
+    () =>
+      mergeClosedDays(
+        closedDates,
+        serverClosed?.enabled ? serverClosed : undefined,
+        closedResourcesByDay(config?.closures ?? [], activeResources, closedDates.filter((d) => d >= today))
+      ),
+    [closedDates, today, config, activeResources, serverClosed]
+  );
   const monthRangeData = useMemo(() => {
     if (!month) return undefined;
     if (range?.enabled && rangeAppts.data?.truncated) return range;
@@ -359,8 +375,12 @@ export function AgendaPageView() {
   // Ações rápidas do cartão do passar do mouse (Confirmar, Chegou): a mesma mutation do painel.
   const setStatus = useMutation(api.schedulingMutations.setAppointmentStatus);
   const undoStatus = useMutation(api.schedulingMutations.undoAppointmentStatus);
+  const canOpenInbox = perms.can("inbox", "view_own");
   const quick: QuickActions = useMemo(
     () => ({
+      contact: (a, onDone) => (
+        <QuickContactPhone appointmentId={a._id} conversationId={a.conversationId} canOpenInbox={canOpenInbox} onOpenConversation={(id) => navigate(`${TAB_ROUTES.inbox}?conversation=${id}`)} onDone={onDone} />
+      ),
       canEdit: access.canEdit,
       onStatus: (appointmentId, to) => {
         const id = appointmentId as Id<"schedAppointments">;
@@ -385,13 +405,14 @@ export function AgendaPageView() {
         );
       },
     }),
-    [access.canEdit, organizationId, setStatus, undoStatus]
+    [access.canEdit, organizationId, setStatus, undoStatus, navigate, canOpenInbox]
   );
 
   // Arrastar um compromisso da equipe na Semana: a mesma mutation da página de compromissos (mantém a duração).
   const rescheduleEvent = useMutation(api.calendar.rescheduleEvent);
-  const moveEvent = (item: InternalItem, localDate: LocalDate, minute: number) => {
-    rescheduleEvent({ eventId: item.id as Id<"calendarEvents">, newStartTime: zonedAtMinutes(localDate, minute, tz) }).then(
+  const moveEvent = (item: InternalItem, localDate: LocalDate, minute: number, pieceDate: LocalDate) => {
+    // Pedaço que continua da véspera: move pela diferença (`startTime + delta`); a duração se mantém.
+    rescheduleEvent({ eventId: item.id as Id<"calendarEvents">, newStartTime: movedEventStart(item, pieceDate, localDate, minute, tz) }).then(
       () => toast.success(t.dense.weekGrid.moved),
       (e) => toast.error(mutationErrorMessage(e, t.dense.weekGrid.moveFailed))
     );
@@ -416,6 +437,16 @@ export function AgendaPageView() {
     }
   };
   const resolving = pendingData?.conflicts.find((c) => c._id === resolvingId);
+  // Faixa "Sem lugar": abre o resolvedor do conflito (não o painel); sem conflito aberto ou vencida, o painel.
+  const openNoPlace = (a: { _id: string; status: string; startTime: number; needsAttention?: { code: string } }) => {
+    const target = noPlaceTarget(a._id, pendingData?.conflicts ?? [], isExpiredProposal(a, now));
+    if (target.kind === "resolve") setResolvingId(target.conflictId);
+    else openAppointment(a._id);
+  };
+  const conflictOf = (appointmentId: string) => {
+    const target = noPlaceTarget(appointmentId, pendingData?.conflicts ?? [], false);
+    return target.kind === "resolve" ? target.conflictId : null;
+  };
   const onInternalClick = (item: InternalItem) => {
     if (item.source === "task") setTaskId(item.id);
     else eventState.set(item.id, { history: "push" });
@@ -444,7 +475,7 @@ export function AgendaPageView() {
   const columnKeys = grid?.columns.map((c) => c.key) ?? [];
   const activeColumn = mobileColumn && columnKeys.includes(mobileColumn) ? mobileColumn : (columnKeys[0] ?? null);
 
-  const bookingContext = (b: Booking) => bookingContextParts(shortDateLabel(b.date), b.resource?.name);
+  const bookingContext = (b: Booking) => bookingContextParts(shortDateLabel(b.date), b.resource?.name, b.minute);
   const periodText = periodLabel(date, view, isMobile);
   const atToday = week ? weekDates.includes(today) : isToday;
 
@@ -519,7 +550,7 @@ export function AgendaPageView() {
             onToggle={setMobileColumn}
           />
         )}
-        {(grid.allDay.length > 0 || grid.noPlace.length > 0 || (grid.empty && !setupIncomplete)) && (
+        {(grid.allDay.length > 0 || grid.noPlace.length > 0) && (
           <div className="shrink-0 space-y-1.5">
             {grid.allDay.length > 0 && (
               <ul className="flex flex-wrap gap-1.5" aria-label={t.grid.allDay}>
@@ -543,7 +574,7 @@ export function AgendaPageView() {
                 <ul className="mt-1.5 flex flex-wrap gap-2">
                   {grid.noPlace.map((a) => (
                     <li key={`noplace:${a._id}`}>
-                      <Button size="sm" variant="secondary" onClick={() => openAppointment(a._id)}>
+                      <Button size="sm" variant="secondary" onClick={() => openNoPlace(a)}>
                         {isExpiredProposal(a, now) ? VOCAB.scheduling.proposalExpired : isManualNoPlace(a) ? t.conflict.undefinedPlace[group] : t.grid.resolve}: {a.contactName ?? a.guestName ?? a.serviceName}
                       </Button>
                     </li>
@@ -551,10 +582,11 @@ export function AgendaPageView() {
                 </ul>
               </section>
             )}
-            {grid.empty && !setupIncomplete && <p className="px-1 text-sm text-text-secondary">{t.list.empty.hint}</p>}
           </div>
         )}
-        <Suspense fallback={<ContentSkeleton />}>
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          {grid.empty && !setupIncomplete && <EmptyDayHint />}
+          <Suspense fallback={<ContentSkeleton />}>
           <ResourceDayGrid
             model={grid}
             tz={dayInput.timezone}
@@ -572,7 +604,8 @@ export function AgendaPageView() {
             onInternalClick={onInternalClick}
             onColumnAction={onColumnAction}
           />
-        </Suspense>
+          </Suspense>
+        </div>
       </>
     );
   };
@@ -649,6 +682,10 @@ export function AgendaPageView() {
             appointmentId={apptState.value as Id<"schedAppointments">}
             onClose={closeAppointment}
             onOpenConversation={(id) => openConversation(id)}
+            onResolveConflict={(id) => {
+              const conflictId = conflictOf(id);
+              if (conflictId) setResolvingId(conflictId);
+            }}
           />
         </Suspense>
       )}
@@ -719,6 +756,7 @@ export function AgendaPageView() {
               serviceId: rescheduling.appointment.serviceId,
               variantKey: rescheduling.appointment.variantKey,
               startTime: rescheduling.appointment.startTime,
+              resourceIds: rescheduling.appointment.resources.filter((r) => r.allocated).map((r) => r.resourceId),
             }}
           />
         </Suspense>

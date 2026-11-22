@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode, SyntheticEvent } from "react";
 import { AlertTriangle, Bot, CalendarCheck, CalendarDays, CalendarX, CheckCheck, CheckSquare, Hourglass, UserCheck, UserX, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Popover } from "@/components/ui/Popover";
 import { AppointmentStatusChip } from "@/components/agenda/AppointmentStatusChip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { appointmentTooltip, firstName, placeText, planBlock, quickStatusAction, statusFlags, timeRangeLabel, widthClass, type StatusFlag } from "@/lib/agendaBlockText";
+import type { BlockName } from "@/lib/agendaBlockNames";
 import { PENDING_HATCH, type Tone } from "@/lib/agendaColors";
 import { appointmentLabel, type GridAppointment, type InternalItem } from "@/lib/agendaGrid";
 import { originLabel } from "@/lib/agendaStatus";
@@ -74,6 +75,8 @@ function useHoverCard(enabled: boolean) {
   return { open, setOpen, anchor, show, hide, keep: clear, close };
 }
 
+const stop = (e: SyntheticEvent) => e.stopPropagation();
+
 const BASE = "absolute isolate overflow-hidden rounded-md px-1.5 py-0.5 text-left text-xs leading-[15px] text-text-primary";
 /** Fundo opaco por baixo da cor suave: as linhas da grade não aparecem através do bloco. */
 function Underlay({ fill, hatch }: { fill?: string; hatch?: boolean }) {
@@ -99,6 +102,8 @@ function style(box: BlockBox): CSSProperties {
 export interface QuickActions {
   canEdit: boolean;
   onStatus: (appointmentId: string, to: "confirmed" | "checked_in") => void;
+  /** Linha do telefone do contato (e "Abrir conversa") no cartão; ausente = sem ela. Lê só quando o cartão abre. */
+  contact?: (a: GridAppointment, onDone: () => void) => ReactNode;
 }
 
 export interface AppointmentBlockProps {
@@ -113,12 +118,14 @@ export interface AppointmentBlockProps {
   exceptResourceId?: string | null;
   /** Largura do bloco em px (mede-se na grade): decide o texto sem nunca quebrar palavra. Ausente = larga. */
   widthPx?: number;
+  /** Rótulo do bloco estreito (primeiro nome + inicial, ou com a hora quando há homônimo ao lado); ausente = só o primeiro nome. */
+  name?: BlockName;
   onOpen: (appointmentId: string) => void;
   quick?: QuickActions;
 }
 
 /** Bloco de um agendamento com cliente: o texto muda com a altura (cliente, horário, serviço, lugar). */
-export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, widthPx, onOpen, quick }: AppointmentBlockProps) {
+export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, box, tone, exceptResourceId, widthPx, name, onOpen, quick }: AppointmentBlockProps) {
   const hoverable = useMediaQuery("(hover: hover)");
   const hc = useHoverCard(hoverable);
   const st = style(box);
@@ -126,6 +133,7 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
   const wc = widthClass(widthPx);
   const flags = wc === "tiny" || wc === "narrow" ? [] : statusFlags(a, expired);
   const title = appointmentLabel(a);
+  const short = name?.text ?? firstName(title);
   const tip = appointmentTooltip(a, tz, expired, VOCAB.scheduling.proposalExpired) + (conflict ? ` · ${g.conflictMark}` : "") + (over ? ` · ${g.overCapacity}` : "");
   const place = placeText(a, exceptResourceId);
   const { rest: toneBorder, fill: toneFill } = splitTone(tone.block);
@@ -149,20 +157,20 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
       >
         <Underlay fill={toneFill} hatch={tone.hatch} />
         {wc === "tiny" ? (
-          <span className="block truncate font-semibold">{firstName(title)}</span>
+          <span className="block truncate font-semibold">{short}</span>
         ) : plan.compact ? (
           <span className="flex items-center gap-1">
             <Flags flags={flags} />
             <span className="truncate">
               {wc !== "narrow" && <span className="font-semibold tabular-nums">{zonedTimeLabel(a.startTime, tz)} </span>}
-              <span className="font-semibold">{wc === "narrow" ? firstName(title) : title}</span>
+              <span className="font-semibold">{wc === "narrow" ? short : title}</span>
               {wc === "wide" && <span className="text-text-secondary">{a.serviceName ? ` · ${a.serviceName}` : ""}</span>}
             </span>
           </span>
         ) : wc === "narrow" ? (
           <>
-            <span className="block truncate font-semibold">{title}</span>
-            {plan.rows.length > 2 && <span className="block truncate tabular-nums text-text-secondary">{zonedTimeLabel(a.startTime, tz)}</span>}
+            <span className="block truncate font-semibold">{name ? short : title}</span>
+            {(plan.rows.length > 2 || name?.withTime) && <span className="block truncate tabular-nums text-text-secondary">{zonedTimeLabel(a.startTime, tz)}</span>}
           </>
         ) : wc === "medium" ? (
           <>
@@ -189,7 +197,8 @@ export function AppointmentBlock({ appointment: a, expired, conflict, over, tz, 
       </button>
       {hc.open && (
         <Popover open onOpenChange={hc.setOpen} anchor={hc.anchor} side="bottom" align="start" trapEscape={false} role="dialog" aria-label={title} className="w-72">
-          <div onMouseEnter={hc.keep} onMouseLeave={hc.hide}>
+          {/* O cartão está num portal, mas o React faz o evento subir pela árvore até a coluna (clique no vazio = "Marcar horário"). */}
+          <div onMouseEnter={hc.keep} onMouseLeave={hc.hide} onClick={stop} onPointerDown={stop} onMouseDown={stop}>
             <AppointmentHoverCard
               appointment={a}
               tz={tz}
@@ -240,6 +249,7 @@ export function AppointmentHoverCard({
         <div>
           <dd className="text-text-primary">{a.serviceName}</dd>
         </div>
+        {quick?.contact?.(a, onDone)}
         {place && (
           <div>
             <dt className="sr-only">{card.place}</dt>

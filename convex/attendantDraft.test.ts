@@ -183,4 +183,32 @@ describe("attendantDraft", () => {
     expect(runs[0].promptTokens).toBe(100);
     expect(profiles).toHaveLength(0);
   });
+
+  test("agentRuns grava o modelo que RESPONDEU quando a rede de fallback entra", async () => {
+    vi.stubEnv("OPENCODE_GO_API", "");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test-000000");
+    const payload = { name: "Aurora", persona: "P", greeting: "Oi!", knowledge: "K", handoffKeywords: [] };
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init: { body: string }) => {
+        const model = JSON.parse(init.body).model as string;
+        seen.push(model);
+        if (model.includes("flash-latest")) return new Response("cota", { status: 403 });
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: JSON.stringify(payload) }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }),
+    );
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    await as(t, s.adminUserId).action(api.attendantDraft.generateAttendantDraft, { organizationId: s.organizationId });
+    expect(seen).toEqual(["~deepseek/deepseek-flash-latest", "deepseek/deepseek-v4-flash"]);
+    const runs = await t.run(async (ctx) => ctx.db.query("agentRuns").collect());
+    expect(runs[0]).toMatchObject({ status: "done", provider: "openrouter", model: "deepseek-v4-flash" });
+  });
 });

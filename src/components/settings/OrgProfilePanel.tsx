@@ -1,5 +1,5 @@
 import { SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry } from "../../../convex/lib/orgPhone";
-import { countryLabel } from "@/lib/defaultCountry";
+import { countryIsoForDial, countryOptions, dialCodeForCountryIso } from "@/lib/defaultCountry";
 import { timezoneOptions } from "@/lib/timezones";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "convex/react";
@@ -20,7 +20,8 @@ export function OrgProfilePanel({ organizationId }: { organizationId: Id<"organi
   const [name, setName] = useState("");
   const [timezone, setTimezone] = useState("");
   const [currency, setCurrency] = useState("");
-  const [countryCode, setCountryCode] = useState("55");
+  // O seletor guarda o ISO (único); o DDI gravado vem dele ("+1" é de EUA e Canadá).
+  const [countryIso, setCountryIso] = useState("BR");
   const [saving, setSaving] = useState(false);
 
   // Sincroniza o formulário com a org carregada — e de novo se a org mudar.
@@ -32,7 +33,7 @@ export function OrgProfilePanel({ organizationId }: { organizationId: Id<"organi
     setName(org.name || "");
     setTimezone(org.settings?.timezone || "UTC");
     setCurrency(org.settings?.currency || "USD");
-    setCountryCode(resolveDefaultCountry(org.settings));
+    setCountryIso(countryIsoForDial(SUPPORTED_DEFAULT_COUNTRIES, resolveDefaultCountry(org.settings)));
     // Só na chegada da org/troca de id: re-sincronizar a cada update reativo
     // apagaria o que a pessoa está digitando.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -47,7 +48,7 @@ export function OrgProfilePanel({ organizationId }: { organizationId: Id<"organi
         // Só o que esta tela edita: o servidor faz merge no resto de
         // `settings` (aiConfig, opt-out, campanhas) — reenviar uma cópia
         // lida antes sobrescreveria mudanças feitas em outra aba.
-        settings: { timezone, currency, defaultCountryCode: countryCode },
+        settings: { timezone, currency, defaultCountryCode: dialCodeForCountryIso(SUPPORTED_DEFAULT_COUNTRIES, countryIso, "55") },
       });
       toast.success("Organização atualizada");
     } catch (error) {
@@ -97,12 +98,9 @@ export function OrgProfilePanel({ organizationId }: { organizationId: Id<"organi
             id="org-default-country"
             label="País padrão dos telefones"
             hint="Usado quando um telefone é digitado ou importado sem o código do país (+DDI). Números com + sempre valem como digitados."
-            value={countryCode}
-            onValueChange={setCountryCode}
-            options={SUPPORTED_DEFAULT_COUNTRIES.map((c) => ({
-              value: c.dialCode,
-              label: countryLabel(c),
-            }))}
+            value={countryIso}
+            onValueChange={setCountryIso}
+            options={countryOptions(SUPPORTED_DEFAULT_COUNTRIES)}
           />
         </div>
 

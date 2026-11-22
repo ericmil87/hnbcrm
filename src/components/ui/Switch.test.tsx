@@ -55,6 +55,32 @@ describe("Switch", () => {
     expect(sw.className).not.toMatch(/(^|\s)border(\s|$)/);
   });
 
+  it.each(["sm", "md"] as const)("tamanho %s: a área de toque (faixa estendida do ::before) tem pelo menos 44 x 44 px", (size) => {
+    render(<Switch checked={false} onCheckedChange={() => {}} label="Ativar" hideLabel size={size} />);
+    const cls = screen.getByRole("switch").className.split(/\s+/);
+    const px = (prefix: string) => {
+      const c = cls.find((x) => x.startsWith(prefix));
+      return c ? Number(c.slice(prefix.length)) * 4 : 0;
+    };
+    const w = px("w-");
+    const h = px("h-");
+    const extX = Math.abs(px("before:-inset-x-"));
+    const extY = Math.abs(px("before:-inset-y-"));
+    expect(w + 2 * extX).toBeGreaterThanOrEqual(44);
+    expect(h + 2 * extY).toBeGreaterThanOrEqual(44);
+  });
+
+  it("o texto ao lado é um <label> ligado à chave: tocar nele alterna a chave (e a descrição entra na mesma área)", async () => {
+    const user = userEvent.setup();
+    const onCheckedChange = vi.fn();
+    render(<Switch checked={false} onCheckedChange={onCheckedChange} label="Rótulo" description="Explica" />);
+    const label = screen.getByText("Rótulo");
+    expect(label.tagName).toBe("LABEL");
+    expect(label).toHaveAttribute("for", screen.getByRole("switch").id);
+    await user.click(label);
+    expect(onCheckedChange).toHaveBeenCalledWith(true);
+  });
+
   it("liga a descrição por aria-describedby", () => {
     render(<Switch checked={false} onCheckedChange={() => {}} label="A" description="Explica A" />);
     expect(screen.getByRole("switch")).toHaveAccessibleDescription("Explica A");

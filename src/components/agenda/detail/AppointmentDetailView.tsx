@@ -50,6 +50,10 @@ export interface AppointmentDetailViewProps {
   /** C1: o sistema marcou/aprovou a partir de uma confirmação no WhatsApp e a janela de 24 h ainda vale (`humanConfirmUndoKind`). */
   humanUndo?: "created" | "approved" | null;
   onUndoHumanConfirm?: () => void;
+  /** "Resolver" no topo, para agendamento com `needsAttention` (sem lugar); ausente = sem o botão. */
+  onResolve?: () => void;
+  /** Telefone do contato já formatado pelo servidor (ausente = sem contato ou sem número). */
+  contactPhone?: string;
 }
 
 /** Conteúdo do painel do agendamento, só por props: dados, status, origem, avisos, ações e histórico. */
@@ -66,6 +70,8 @@ export function AppointmentDetailView({
   onOpenConversation,
   humanUndo = null,
   onUndoHumanConfirm,
+  onResolve,
+  contactPhone,
 }: AppointmentDetailViewProps) {
   const expired = isProposalExpired(appt.status, appt.startTime, now, appt.needsAttention?.code);
   const actions = availableActions({
@@ -92,6 +98,7 @@ export function AppointmentDetailView({
   }));
   const rows: Array<[string, string]> = [
     ...(who ? ([[t.fields.client, who]] as Array<[string, string]>) : []),
+    ...(contactPhone ? ([[t.fields.phone, contactPhone]] as Array<[string, string]>) : []),
     [t.fields.service, appt.serviceName],
     [t.fields.when, longRangePhrase(appt.startTime, appt.endTime, tz)],
     ...(where ? ([[t.fields.where, where]] as Array<[string, string]>) : []),
@@ -115,6 +122,11 @@ export function AppointmentDetailView({
       {expired && notice(t.proposalExpired, "alert")}
       {proposalBroken && !expired && notice(t.proposalBroken, "alert")}
       {openConflicts > 0 && notice(t.conflict, "status")}
+      {onResolve && canEdit && !expired && (appt.needsAttention || openConflicts > 0) && (
+        <Button type="button" disabled={busy} onClick={onResolve}>
+          {t.resolve}
+        </Button>
+      )}
       {undoUnavailable && <p role="status" className="text-sm text-text-secondary">{t.undoUnavailable}</p>}
 
       <dl className="space-y-3">

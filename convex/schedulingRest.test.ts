@@ -310,6 +310,11 @@ describe("leituras", () => {
       await t.query(internal.schedulingRest.internalGetAppointment, { ...keyArgs, appointmentId: b.json.appointmentId }),
       R.internalGetAppointment
     );
+    // Formato estável: o REST nunca devolve campo do app (`contactPhone`, `crossingCapped`), mesmo com `contacts: view`.
+    const rl = await t.query(internal.schedulingRest.internalListAppointments, { ...keyArgs, fromLocalDate: MON, toLocalDate: MON });
+    expect(Object.keys(rl).sort()).toEqual(["appointments", "hasMore", "nextCursor", "timezone"]);
+    const rg = await t.query(internal.schedulingRest.internalGetAppointment, { ...keyArgs, appointmentId: b.json.appointmentId });
+    expect(Object.keys(rg?.detail ?? {}).sort()).toEqual(["appointment", "canEdit", "createdByName", "openConflicts", "statusActors"]);
     assertMatchesReturns(await t.query(internal.schedulingRest.internalListPending, { ...keyArgs, now: NOW }), R.internalListPending);
   });
 

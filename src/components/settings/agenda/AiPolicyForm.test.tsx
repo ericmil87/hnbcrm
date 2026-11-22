@@ -85,7 +85,7 @@ describe("AiPolicyForm: aceite do 'marca sozinha'", () => {
     expect(onChange).toHaveBeenLastCalledWith({ ...base(), firstVisitNeedsApproval: !base().firstVisitNeedsApproval });
     // A própria chave amplia o toque para 44 px por um pseudo-elemento (o desenho continua 44 x 24).
     for (const name of ["Consultar horários livres", "Primeira visita sempre com aprovação"]) {
-      expect(screen.getByRole("switch", { name }).className).toContain("before:-inset-y-2.5");
+      expect(screen.getByRole("switch", { name }).className).toContain("before:-inset-y-3");
     }
   });
   it("mostra quem aceitou", () => {

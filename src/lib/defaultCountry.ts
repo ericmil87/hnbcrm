@@ -34,3 +34,23 @@ export function proposeCountryForCurrency(currency: string, current: string, use
 export function countryLabel(c: { dialCode: string; iso2: string; namePt: string }): string {
   return `${countryFlag(c.iso2)} ${c.namePt} (+${c.dialCode})`;
 }
+
+type CountryRow = { dialCode: string; iso2: string; namePt: string };
+
+/**
+ * Valor de cada opção do seletor de país: o ISO do país (único). O DDI não serve de chave porque vários países o
+ * dividem ("+1": Estados Unidos e Canadá), o que duplicava a `key` do React.
+ */
+export function countryOptions(countries: readonly CountryRow[]): Array<{ value: string; label: string }> {
+  return countries.map((c) => ({ value: c.iso2, label: countryLabel(c) }));
+}
+
+/** ISO do país a mostrar para o DDI gravado: o primeiro da lista com esse DDI (o gravado não distingue EUA de Canadá). */
+export function countryIsoForDial(countries: readonly CountryRow[], dialCode: string): string {
+  return (countries.find((c) => c.dialCode === dialCode) ?? countries[0])?.iso2 ?? "";
+}
+
+/** DDI que vai para a org ao escolher o país `iso2`; ISO desconhecido devolve o DDI atual. */
+export function dialCodeForCountryIso(countries: readonly CountryRow[], iso2: string, fallback: string): string {
+  return countries.find((c) => c.iso2 === iso2)?.dialCode ?? fallback;
+}

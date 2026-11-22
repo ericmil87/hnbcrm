@@ -22,10 +22,12 @@ import {
   longRangePhrase,
   longWhenPhrase,
   nearestSlotStart,
+  promoteRequestedSlot,
   partySizeOf,
   pinnableKinds,
   reviewSubmitLabel,
   splitSuggestions,
+  SUGGESTED_COUNT,
   supportsGroup,
   timeInputValue,
   violationText,
@@ -93,6 +95,8 @@ export interface BookingFlowViewProps {
   onPreviewManual: (startTime: number) => Promise<ManualPreviewResult>;
   /** Abrir o agendamento que já existia (duplicado). */
   onOpenExisting?: (appointmentId: string) => void;
+  /** Recursos de folga em toda a janela de busca: aparecem desabilitados, com "(folga)", no seletor. */
+  dayOff?: ReadonlySet<string>;
   /** Hora pedida pela Agenda (minutos do dia no fuso da org; vale com o dia já aberto): destaca a sugestão mais próxima e pré-preenche "Outro horário". */
   initialTimeMin?: number;
 }
@@ -227,6 +231,7 @@ function SlotStep({
   onPreviewManual,
   onOpenExisting,
   initialTimeMin,
+  dayOff,
 }: BookingFlowViewProps & { service: ServiceLike | undefined }) {
   const [showPeople, setShowPeople] = useState(Object.keys(state.pinned).length > 0);
   const prefill = timeInputValue(initialTimeMin);
@@ -239,7 +244,12 @@ function SlotStep({
   }, [showManual]);
   const highlightStart = initialTimeMin !== undefined ? nearestSlotStart(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate }) : null;
   const kinds = pinnableKinds(service);
-  const { suggested, others } = splitSuggestions(slots.slots);
+  // Com hora pedida a busca traz mais horários (para a hora clicada, se livre, aparecer); a lista só mostra os
+  // primeiros até "Ver mais horários".
+  const ranked = promoteRequestedSlot(slots.slots, { timeMin: initialTimeMin, tz, date: state.otherDate });
+  const shown = state.expanded ? ranked : ranked.slice(0, SUGGESTED_COUNT);
+  const { suggested, others } = splitSuggestions(shown);
+  const canExpandList = !state.expanded && (slots.hasMore || ranked.length > shown.length);
   const canChangeService = !reschedule && services.length > 1;
 
   return (
@@ -299,7 +309,12 @@ function SlotStep({
                   onValueChange={(v) => dispatch({ type: "pin", kind, resourceId: v || null })}
                   options={[
                     { value: "", label: fillVocab(t.slot.anyResource, { recurso: meta.one }) },
-                    ...resources.filter((r) => r.kind === kind).map((r) => ({ value: r._id, label: r.name })),
+                    ...resources
+                      .filter((r) => r.kind === kind)
+                      .map((r) => {
+                        const off = dayOff?.has(r._id) && state.pinned[kind] !== r._id;
+                        return { value: r._id, label: off ? `${r.name} ${t.slot.dayOffSuffix}` : r.name, disabled: off };
+                      }),
                   ]}
                 />
               );
@@ -329,7 +344,7 @@ function SlotStep({
           selectedStart={state.slot?.startTime ?? null}
           highlightStart={highlightStart}
           onPick={onPickOffered}
-          canExpand={slots.hasMore && !state.expanded}
+          canExpand={canExpandList}
           onExpand={() => dispatch({ type: "expand" })}
         />
       )}
@@ -415,6 +430,14 @@ function ManualSlotForm({
   const [message, setMessage] = useState<string | null>(null);
   const [existing, setExisting] = useState<string | null>(null);
   const [blocked, setBlocked] = useState<{ violations: ViolationView[]; alternatives: OfferedSlot[] } | null>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  // O resultado da conferência nasce abaixo da dobra do modal: leva a vista e o foco até ele (leitor de tela lê o aviso).
+  useEffect(() => {
+    if (!message && !blocked) return;
+    const el = resultRef.current;
+    el?.scrollIntoView?.({ block: "nearest" });
+    el?.focus({ preventScroll: true });
+  }, [message, blocked]);
 
   const check = async () => {
     const minutes = parseMinutes(time);
@@ -459,35 +482,35 @@ function ManualSlotForm({
       <Button type="button" variant="secondary" className="w-full" loading={busy} onClick={() => void check()}>
         {t.slot.manualCheck}
       </Button>
-      {message && (
-        <p role="status" className="text-sm text-text-secondary">
-          {message}
-        </p>
-      )}
-      {existing && onOpenExisting && (
-        <Button type="button" variant="ghost" size="sm" onClick={() => onOpenExisting(existing)}>
-          {t.slot.openExisting}
-        </Button>
-      )}
-      {blocked && (
-        <>
-          <ul className="space-y-1 text-sm text-text-primary">
-            {blocked.violations.map((v, i) => (
-              <li key={`${v.code}:${i}`}>{violationText(v, resourceNames)}</li>
-            ))}
-          </ul>
-          {blocked.alternatives.length > 0 && (
-            <section aria-label={t.rulesDialog.alternatives} className="space-y-2">
-              <h4 className="text-caption font-semibold uppercase tracking-wide text-text-muted">{t.rulesDialog.alternatives}</h4>
-              {/* Mesma linha das sugestões: hora E lugar, para a pessoa ver onde cada alternativa fica. */}
-              <ul className="space-y-2">
-                {blocked.alternatives.map((s) => (
-                  <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={false} showDay onPick={onPickAlternative} />
+      {(message || blocked) && (
+        <div ref={resultRef} role="alert" tabIndex={-1} className="space-y-3 rounded-field focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500">
+          {message && <p className="text-sm text-text-secondary">{message}</p>}
+          {existing && onOpenExisting && (
+            <Button type="button" variant="ghost" size="sm" onClick={() => onOpenExisting(existing)}>
+              {t.slot.openExisting}
+            </Button>
+          )}
+          {blocked && (
+            <>
+              <ul className="space-y-1 text-sm text-text-primary">
+                {blocked.violations.map((v, i) => (
+                  <li key={`${v.code}:${i}`}>{violationText(v, resourceNames)}</li>
                 ))}
               </ul>
-            </section>
+              {blocked.alternatives.length > 0 && (
+                <section aria-label={t.rulesDialog.alternatives} className="space-y-2">
+                  <h4 className="text-caption font-semibold uppercase tracking-wide text-text-muted">{t.rulesDialog.alternatives}</h4>
+                  {/* Mesma linha das sugestões: hora E lugar, para a pessoa ver onde cada alternativa fica. */}
+                  <ul className="space-y-2">
+                    {blocked.alternatives.map((s) => (
+                      <SlotButton key={`${s.startTime}:${s.resourceIds.join(",")}`} slot={s} tz={tz} selected={false} showDay onPick={onPickAlternative} />
+                    ))}
+                  </ul>
+                </section>
+              )}
+            </>
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -508,6 +531,13 @@ function ReviewStep({
   resourceNames,
 }: BookingFlowViewProps & { service: ServiceLike | undefined; resourceNames: ReadonlyMap<string, string> }) {
   const slot = state.slot;
+  const warnRef = useRef<HTMLDivElement>(null);
+  const hasWarnings = (slot?.warnings.length ?? 0) > 0;
+  useEffect(() => {
+    if (!hasWarnings) return;
+    warnRef.current?.scrollIntoView?.({ block: "nearest" });
+    warnRef.current?.focus({ preventScroll: true });
+  }, [hasWarnings, slot?.startTime]);
   if (!slot) return null;
   const names = slot.resourceNames.length > 0 ? slot.resourceNames : slot.resourceIds.map((id) => resourceNames.get(id) ?? "");
   const where = joinNames(names) ?? t.review.anyWhere;
@@ -530,7 +560,19 @@ function ReviewStep({
   ];
   return (
     <div className="space-y-4">
-      <h3 className="text-base font-semibold text-text-primary">{t.review.heading}</h3>
+      <h3 className="text-base font-semibold text-text-primary">{reschedule ? t.review.headingReschedule : t.review.heading}</h3>
+      {/* Avisos no topo, acima do resumo: ficavam abaixo da dobra do modal. Recebem o foco ao abrir a revisão. */}
+      {slot.warnings.length > 0 && (
+        <div ref={warnRef} tabIndex={-1} className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500" role="alert">
+          <p className="text-sm font-medium text-semantic-warning">{t.review.warningsTitle}</p>
+          <ul className="mt-1 space-y-1 text-sm text-text-primary">
+            {slot.warnings.map((w, i) => (
+              <li key={`${w.code}:${i}`}>{violationText(w, resourceNames)}</li>
+            ))}
+          </ul>
+          <p className="mt-2 text-caption text-text-secondary">{t.rulesDialog.warnHint}</p>
+        </div>
+      )}
       <dl className="space-y-2 rounded-card border border-border bg-surface-raised p-3">
         {rows.map(([label, value]) => (
           <div key={label}>
@@ -570,19 +612,6 @@ function ReviewStep({
       <Textarea label={t.review.notes} rows={2} maxLength={500} value={state.notes} onChange={(e) => dispatch({ type: "setNotes", notes: e.target.value })} />
 
       {!whoOk && <p className="text-sm text-semantic-warning">{t.review.noWho}</p>}
-
-      {/* Avisos logo acima do botão: quem confirma está marcando "mesmo assim" e vê o porquê. */}
-      {slot.warnings.length > 0 && (
-        <div className="rounded-card border border-semantic-warning/40 bg-semantic-warning/5 p-3" role="status">
-          <p className="text-sm font-medium text-semantic-warning">{t.review.warningsTitle}</p>
-          <ul className="mt-1 space-y-1 text-sm text-text-primary">
-            {slot.warnings.map((w, i) => (
-              <li key={`${w.code}:${i}`}>{violationText(w, resourceNames)}</li>
-            ))}
-          </ul>
-          <p className="mt-2 text-caption text-text-secondary">{t.rulesDialog.warnHint}</p>
-        </div>
-      )}
 
       <div className="flex flex-col-reverse gap-2 sm:flex-row">
         <Button type="button" variant="secondary" className="sm:flex-1" onClick={() => dispatch({ type: "back" })}>
