@@ -184,7 +184,7 @@ function shouldFallover(err: unknown): boolean {
 export async function chatWithFallback(
   routes: ResolvedRoute[],
   req: Omit<NormalizedRequest, "model">,
-  opts?: { timeoutMs?: number }
+  opts?: { timeoutMs?: number; maxAttempts?: number; signal?: AbortSignal }
 ): Promise<NormalizedResponse & { usedRoute: ResolvedRoute }> {
   if (routes.length === 0) throw new Error("Nenhuma rota LLM disponível");
   let lastErr: unknown;
@@ -199,14 +199,15 @@ export async function chatWithFallback(
     try {
       const res = await chatWithRetry(route.endpoint, fullReq, {
         timeoutMs: opts?.timeoutMs,
-        maxAttempts: 2,
+        maxAttempts: opts?.maxAttempts ?? 2,
+        signal: opts?.signal,
       });
       return { ...res, usedRoute: route };
     } catch (e) {
       lastErr = e;
       failures.push({ route, error: e });
       const isLast = i === routes.length - 1;
-      if (isLast || !shouldFallover(e)) throw tagPlatformLlmFailure(e, failures);
+      if (isLast || !shouldFallover(e) || opts?.signal?.aborted) throw tagPlatformLlmFailure(e, failures);
       // else: try the next route in the chain
     }
   }

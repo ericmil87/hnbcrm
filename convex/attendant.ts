@@ -124,7 +124,7 @@ import { offersShownInText } from "./lib/schedOfferShown";
 import { claimNudge, type ClaimState, type ClaimViolation, detectUnbackedBookingClaim, SCHED_SAFE_TEXT } from "./lib/schedClaimGuard";
 import { buildClaimState, knowledgeTimesOf } from "./lib/schedClaimState";
 import { claimJudgeOn, judgeViolation, shouldJudge } from "./lib/schedClaimJudge";
-import { runClaimJudge } from "./lib/schedClaimJudgeRun";
+import { type JudgeCallResult, runClaimJudge } from "./lib/schedClaimJudgeRun";
 import { SCHED_CLAIM_JUDGE_ENABLED } from "./lib/schedConstants";
 import { localDateOf } from "./lib/schedTime";
 import { customerTail, customerTextForGroup, detectCustomerIntent, iaAskedHowMany, isChangeIntent, mentionsGroup, mentionsOtherService } from "./lib/schedIntent";
@@ -4274,23 +4274,40 @@ export const internalProcessQueueItem = internalAction({
         handoffRequestedThisRun = true;
       };
       // Agenda v2 (D3): juiz de afirmação, SEGUNDA camada depois do léxico. Só roda com o léxico já satisfeito, com a IA na agenda (1:1,
-      // `tools.find`), org e global ligados e gatilho (dia/hora ou verbo de compromisso). Falha do juiz = vale o léxico (nunca trava).
-      // Cada texto é julgado uma vez por turno (a trava final reaproveita o veredito da rodada).
-      const judgeCache = new Map<string, ClaimViolation | null>();
+      // `tools.find`: vale também em follow-up que vai ao cliente), org e global ligados e gatilho (dia/hora/período ou verbo de compromisso).
+      // NÃO roda em rascunho (`suggest`: um humano revisa o texto antes de sair). Falha do juiz = vale o léxico (nunca trava).
+      // Guarda a EXTRAÇÃO por texto (a chamada custa; o estado muda entre a rodada e a trava final), e `judgeViolation` é recalculado com o estado de agora.
+      const judgeCache = new Map<string, JudgeCallResult>();
       const claimJudgeFor = async (text: string, state: ClaimState): Promise<ClaimViolation | null> => {
-        if (!schedGuardOn || context.sched?.tools.find !== true || !claimJudgeOn(context.sched.claimJudge, SCHED_CLAIM_JUDGE_ENABLED) || !shouldJudge(text)) return null;
-        const key = `${state.handoff === true ? "h" : "-"}|${text}`;
-        if (judgeCache.has(key)) return judgeCache.get(key) ?? null;
-        const res = await runClaimJudge(ctx, {
-          organizationId: context.organizationId,
-          conversationId: context.conversationId,
-          providerConfig: context.providerConfig,
-          text,
-          today: localDateOf(state.now, state.tz),
-        });
-        let violation: ClaimViolation | null = null;
-        if (res.ok) {
-          violation = judgeViolation(res.verdict, state);
+        if (
+          !schedGuardOn ||
+          context.sched?.tools.find !== true ||
+          effectiveMode === "suggest" ||
+          !claimJudgeOn(context.sched.claimJudge, SCHED_CLAIM_JUDGE_ENABLED) ||
+          !shouldJudge(text)
+        ) {
+          return null;
+        }
+        const key = text.trim();
+        let res = judgeCache.get(key);
+        const fresh = res === undefined;
+        if (!res) {
+          res = await runClaimJudge(ctx, {
+            organizationId: context.organizationId,
+            conversationId: context.conversationId,
+            providerConfig: context.providerConfig,
+            text,
+            today: localDateOf(state.now, state.tz),
+          });
+          judgeCache.set(key, res);
+        }
+        if (!res.ok) {
+          // Métrica de falha (só na chamada real): o léxico já tinha passado a mensagem, então ela segue.
+          if (fresh) console.warn(JSON.stringify({ event: "attendantClaimJudge", outcome: "failed", reason: res.reason }));
+          return null;
+        }
+        const violation = judgeViolation(res.verdict, state);
+        if (fresh) {
           console.log(
             JSON.stringify({
               event: "attendantClaimJudge",
@@ -4302,11 +4319,7 @@ export const internalProcessQueueItem = internalAction({
               latencyMs: res.latencyMs,
             })
           );
-        } else {
-          // Métrica de falha: o léxico já tinha passado a mensagem, então ela segue.
-          console.warn(JSON.stringify({ event: "attendantClaimJudge", outcome: "failed", reason: res.reason }));
         }
-        judgeCache.set(key, violation);
         return violation;
       };
       // Agenda externa (v0.64): eventos que a IA de fato VIU neste turno — a

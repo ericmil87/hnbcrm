@@ -50,10 +50,17 @@ export function mentionsGroup(text: string): boolean {
  * O cliente pergunta como ficou o pedido/horário dele ("e aí, confirmou?", "deu certo meu horário?", "que dia é mesmo o meu?", "já está
  * marcado?"). Só serve para escolher o texto seguro montado a partir do ESTADO (nunca decide reserva).
  */
-const STATUS_ASK =
-  /\b(?:confirm(?:ou|aram|ado|ada)|aprov(?:ou|aram|ado|ada)|deu certo|alguma novidade|novidade|ja (?:esta|ta) (?:marcad|confirmad)\w*|ficou (?:(?:marcad|confirmad)\w*|tudo certo)|foi (?:marcad|confirmad|aprovad)\w*|(?:e|ja) (?:ai|saiu)|como ficou|que dia\b|qual (?:e )?(?:o )?(?:dia|horario)|quando (?:e|eh|vai ser|sera)|meu (?:dia|horario))\b/;
+const STATUS_POSSESSIVE = /\b(?:meu|minha)\s+(?:horario|pedido|agendamento|consulta|sessao|vaga|reserva|aula)\b/;
+/** A mensagem INTEIRA é só a pergunta da situação ("e aí, confirmou?", "deu certo?", "já está marcado?"): sem posse, mas sem outro assunto. */
+const STATUS_ONLY = /^\W*(?:e ai\W+)?(?:ja\s+)?(?:confirm(?:ou|aram)|aprov(?:ou|aram)|deu certo|foi (?:aprovad|confirmad|marcad)\w*|(?:esta|ta) (?:marcad|confirmad|aprovad)\w*)\W*$/;
+/** Pergunta de outro assunto que cita "minha consulta" ("quanto custa a minha consulta?"): não é pergunta da situação. */
+const NOT_STATUS = /\b(?:quanto|preco|valor|custa|pagar|pagamento|endereco|onde|promocao|desconto|convenio)\b/;
 export function asksPedidoStatus(text: string): boolean {
-  return STATUS_ASK.test(norm(text));
+  const n = norm(text);
+  if (NOT_STATUS.test(n)) return false;
+  // Só posse + estado ("meu horário", "minha consulta", "confirmou o meu"): "e aí, tudo bem?", "que dia vocês atendem?", "qual horário vocês abrem?",
+  // "alguma novidade sobre o preço?" e "quando é a promoção?" NÃO são perguntas da situação do pedido.
+  return STATUS_POSSESSIVE.test(n) || STATUS_ONLY.test(n) || /\b(?:confirm(?:ou|aram)|aprov(?:ou|aram)|deu certo)\s+(?:o|a)\s+(?:meu|minha)\b/.test(n);
 }
 
 /** A primeira intenção de agenda do texto, na ordem de gravidade (remarcar e cancelar antes de marcar). `null` = nenhuma. */

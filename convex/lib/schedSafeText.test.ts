@@ -188,8 +188,16 @@ describe("texto seguro de SITUAÇÃO (D3): montado pelo servidor a partir do est
     ["deu certo meu horário?", true],
     ["que dia é mesmo o meu horário?", true],
     ["já está marcado?", true],
-    ["alguma novidade?", true],
     ["quando é a minha consulta?", true],
+    ["confirmou o meu pedido?", true],
+    // 2ª revisão do #203: perguntas comuns que NÃO são da situação do pedido
+    ["E aí, tudo bem? Queria marcar um corte pra mim e meu filho", false],
+    ["Qual horário vocês abrem amanhã?", false],
+    ["Que dia vocês atendem?", false],
+    ["Alguma novidade sobre o preço?", false],
+    ["quando é a promoção?", false],
+    ["alguma novidade?", false],
+    ["Quanto custa a minha consulta?", false],
     ["quanto custa?", false],
     ["onde fica a clínica?", false],
   ])("%j pergunta da situação? %s", (text, expected) => expect(asksPedidoStatus(text)).toBe(expected));
@@ -215,10 +223,23 @@ describe("texto seguro de SITUAÇÃO (D3): montado pelo servidor a partir do est
     expect(schedSafeReply({ ...base, customerText: "e aí, confirmou?" }).situation).not.toBe("situacao");
     expect(schedSafeReply({ ...base, customerText: "e aí, confirmou?", facts: none }).situation).not.toBe("situacao");
   });
-  test("kind stale_pending ('ainda aguardando' com o estado decidido) usa o texto de situação mesmo sem a pergunta típica", () => {
+  test("kind stale_pending sem a pergunta da situação: o texto é o da situação, MAS com repasse (só a pergunta de fato dispensa o repasse)", () => {
     const r = schedSafeReply({ ...base, kind: "stale_pending", customerText: "ok, obrigada", facts: { ...none, scheduled: [L] } });
     expect(r.situation).toBe("situacao");
     expect(r.text).toBe(`Seu horário está marcado para ${L}.`);
+    expect(r.handoff).toBeUndefined();
+  });
+  test("pergunta que não é da situação (preço, grupo, profissional) não ganha o texto de situação: texto seguro normal + repasse", () => {
+    const facts = { ...none, scheduled: [L] };
+    for (const t of ["Qual horário vocês abrem amanhã?", "Alguma novidade sobre o preço?"]) {
+      const r = schedSafeReply({ ...base, customerText: t, facts });
+      expect(r.situation).not.toBe("situacao");
+      expect(r.handoff).toBeUndefined();
+    }
+    const group = schedSafeReply({ ...base, customerText: "E aí? Queria marcar um corte pra mim e meu filho", facts });
+    expect(group.situation).toBe("grupo");
+    expect(group.handoff).toBeUndefined();
+    expect(schedSafeReply({ ...base, kind: "resource_not_offered", customerText: "deu certo meu horário com o Léo?", facts }).situation).toBe("profissional");
   });
   test("remarcar/cancelar/presença continuam antes da situação (a equipe cuida)", () => {
     expect(schedSafeReply({ ...base, customerText: "quero cancelar, confirmou?", facts: { ...none, scheduled: [L] } }).situation).toBe("cancelar");

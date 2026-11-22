@@ -264,7 +264,9 @@ const DECIDED_SHOWN = 3;
 
 /** `declined` = cancelado pela equipe a partir de pedido que nunca foi aprovado; `cancelled` = qualquer outro cancelamento; `expired` = proposta vencida. */
 function decidedKindOf(r: Doc<"schedAppointments">): SchedDecided["kind"] | null {
-  if (r.status === "cancelled") return r.cancelledByClass === "staff" && r.approvedAt === undefined ? "declined" : "cancelled";
+  // Recusado = a equipe cancelou um pedido que ainda estava `pending_approval` (carimbo `cancelledFromStatus`); sem carimbo, ou saído de outro status
+  // (marcado direto pela equipe e depois cancelado, aprovado e cancelado), é só "cancelado".
+  if (r.status === "cancelled") return r.cancelledByClass === "staff" && r.cancelledFromStatus === "pending_approval" ? "declined" : "cancelled";
   if (r.status === "pending_approval" && r.needsAttention?.code === "proposal_expired") return "expired";
   return null;
 }

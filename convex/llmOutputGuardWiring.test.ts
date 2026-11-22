@@ -112,8 +112,8 @@ describe("guardrail de saída da IA — fiação (teste de build)", () => {
     expect(lexRound).toBeGreaterThan(-1);
     expect(judgeRound).toBeGreaterThan(lexRound);
     expect(runtime).toMatch(/detectUnbackedBookingClaim\(replyText, finalState\) \?\? \(await claimJudgeFor\(replyText, finalState\)\)/);
-    // as condições do juiz: guard ligado, tools de horário (1:1), interruptor por org + global, gatilho
-    expect(runtime).toMatch(/!schedGuardOn \|\| context\.sched\?\.tools\.find !== true \|\| !claimJudgeOn\(context\.sched\.claimJudge, SCHED_CLAIM_JUDGE_ENABLED\) \|\| !shouldJudge\(text\)/);
+    // as condições do juiz: guard ligado, tools de horário (1:1), fora do rascunho (`suggest`: humano revisa), interruptor por org + global, gatilho
+    expect(runtime).toMatch(/!schedGuardOn \|\|\s*context\.sched\?\.tools\.find !== true \|\|\s*effectiveMode === "suggest" \|\|\s*!claimJudgeOn\(context\.sched\.claimJudge, SCHED_CLAIM_JUDGE_ENABLED\) \|\|\s*!shouldJudge\(text\)/);
     // o simulador não chama o juiz
     expect(src.slice(src.indexOf("export const simulateAttendant"))).not.toMatch(/claimJudgeFor|runClaimJudge/);
     // o módulo do juiz roda só pela action do atendente e não escreve em tabelas de agenda

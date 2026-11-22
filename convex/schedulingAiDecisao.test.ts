@@ -330,6 +330,76 @@ describe("D3: a IA acompanha a decisão da equipe (envelope com a situação rea
   });
 });
 
+describe("D3 (2ª revisão): 'recusado' só quando o cancelamento saiu de pending_approval", () => {
+  async function staffBookNow(s: AiSeed) {
+    const actor = await asAdmin(s);
+    await t.run(async (ctx) => {
+      const { bookAppointmentCore } = await import("./lib/schedBookingOps");
+      const r = await bookAppointmentCore(ctx, {
+        organizationId: s.organizationId, actor, origin: "staff", serviceId: s.services.consulta, startTime: Date.UTC(2026, 5, 15, 11), contactId: s.ana.contactId, resourceIds: [s.p1!], now: Date.now(),
+      });
+      expect(r.ok).toBe(true);
+    });
+    return (await appointments())[0];
+  }
+  const decidedOf = async (s: AiSeed) => {
+    const out = await t.query(internal.schedulingAi.internalContextBlock, { organizationId: s.organizationId, agentMemberId: s.agentId, conversationId: s.ana.conversationId, now: Date.now() });
+    return out?.decided ?? [];
+  };
+  test("marcado DIRETO pela equipe e depois cancelado pela equipe = 'cancelado' (não 'recusado'); carimbo cancelledFromStatus", async () => {
+    const s = await seedAiAgenda(t);
+    const a = await staffBookNow(s);
+    expect(a.status).toBe("scheduled");
+    await decline(s, a._id);
+    const row = (await appointments())[0];
+    expect(row).toMatchObject({ status: "cancelled", cancelledByClass: "staff", cancelledFromStatus: "scheduled" });
+    expect(await decidedOf(s)).toMatchObject([{ kind: "cancelled" }]);
+  });
+  test("pedido da IA recusado (saiu de pending_approval) = 'recusado'; sem o carimbo (linha antiga) = 'cancelado'", async () => {
+    const s = await seedAiAgenda(t);
+    const { appts } = await requestPending(s);
+    await decline(s, appts[0]._id);
+    expect((await appointments())[0].cancelledFromStatus).toBe("pending_approval");
+    expect(await decidedOf(s)).toMatchObject([{ kind: "declined" }]);
+    await t.run((ctx) => ctx.db.patch(appts[0]._id, { cancelledFromStatus: undefined }));
+    expect(await decidedOf(s)).toMatchObject([{ kind: "cancelled" }]);
+  });
+  test("aprovado e depois cancelado = 'cancelado'", async () => {
+    const s = await seedAiAgenda(t);
+    const { appts } = await requestPending(s);
+    await approve(s, appts[0]._id);
+    await decline(s, appts[0]._id);
+    expect((await appointments())[0].cancelledFromStatus).toBe("scheduled");
+    expect(await decidedOf(s)).toMatchObject([{ kind: "cancelled" }]);
+  });
+  test("o horário do envelope sempre traz a DATA (dia da semana sem semana definida é ambíguo)", async () => {
+    const s = await seedAiAgenda(t);
+    const { appts } = await requestPending(s);
+    await approve(s, appts[0]._id);
+    const m = stubLlm([followsEnvelope]);
+    await turn(s, s.ana, "e aí, confirmou?");
+    expect(envelopeOf(m.requests[0])[0].horario).toMatch(/^[a-zç-]+, \d{2}\/\d{2}, às \d{2}:\d{2}$/);
+    expect(envelopeOf(m.requests[0])[0].o_que_dizer).toMatch(/\d{2}\/\d{2}/);
+  });
+  test("o cliente tem quinta ativa + pedido recusado e pede 'cancela o de quinta': 'Prontinho, seu horário foi cancelado!' é barrado (nada foi cancelado)", async () => {
+    const s = await seedAiAgenda(t, { judge: true });
+    const { appts } = await requestPending(s);
+    await decline(s, appts[0]._id);
+    const actor = await asAdmin(s);
+    await t.run(async (ctx) => {
+      const { bookAppointmentCore } = await import("./lib/schedBookingOps");
+      const r = await bookAppointmentCore(ctx, { organizationId: s.organizationId, actor, origin: "staff", serviceId: s.services.consulta, startTime: Date.UTC(2026, 5, 18, 18), contactId: s.ana.contactId, resourceIds: [s.p1!], now: Date.now() });
+      expect(r.ok).toBe(true);
+    });
+    const BAD = "Prontinho, seu horário foi cancelado!";
+    const m = stubLlm([reply(BAD), reply("Cancelamento é com a equipe: já avisei eles.")], (text) => (text === BAD ? { ...NOTHING, afirma_cancelado: true } : NOTHING));
+    await turn(s, s.ana, "cancela o de quinta");
+    expect((await outbound(s.ana)).map((x) => x.content)).not.toContain(BAD);
+    expect(m.attendantCalls()).toBe(2);
+    expect((await appointments()).filter((a) => a.status === "scheduled")).toHaveLength(1);
+  });
+});
+
 describe("D3: grupo aprovado ou recusado", () => {
   async function requestGroup(s: AiSeed) {
     const m = stubLlm([

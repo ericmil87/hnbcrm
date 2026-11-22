@@ -29,7 +29,7 @@
  * pagamento "confirmado", "horários marcados no site". Corpus de casos: `schedClaimGuard.test.ts`.
  */
 import { dayMatches, extractAiTimes, norm, splitSentences, type TimeMention, todayOf } from "./schedTimeText";
-import { localDateOf, minutesOfDay } from "./schedTime";
+import { diffLocalDays, localDateOf, minutesOfDay } from "./schedTime";
 
 export type KnownTime = {
   localDate: string;
@@ -152,6 +152,8 @@ const MARKERS: Marker[] = [
   { re: /\bcertinho\b/g, level: "closer", readback: true, notAfter: CERTINHO_ADVERB },
   // "Anotei que você quer só com o Léo", "anotei sua preferência": anotar o que o cliente DISSE não é reservar horário.
   { re: /\bcombinad\w*\b|\bfechad[oa]\b|\banotad[oa]\b|\banotei\b(?!\s+(?:que\s+(?:voce|vc)\s+(?:quer|queria|prefere|so|pediu|precisa|gosta|disse|nao)\b|(?:sua|a|essa|seu|o|esse)\s+(?:preferencia|duvida|pergunta|recado|observacao|nome|numero|contato|email)\b))/g, level: "closer", readback: true },
+  // "Já deixei a quarta 14h reservada, a equipe confirma": segurar/reservar o horário é afirmação mesmo com "a equipe confirma" (sobre pedido pendente barra).
+  { re: /\b(?:deixei|deixamos|ja deixei|ficou|ficaram|esta|estao|foi|fica)\b[^.!?,;]{0,40}\b(?:reservad|separad|guardad|segurad)\w*\b(?![^.!?]*\b(?:aguard\w*|pendente)\b)/g, level: "strong", needsMention: true, domain: true },
   { re: /\breservad[oa]\w*\b|\breservei\b|\breservamos\b/g, level: "soft", domain: true },
   { re: /\bregistrad[oa]s?\b|\bregistrei\b|\bregistramos\b/g, level: "soft" },
   { re: /\bdeixei\b/g, level: "soft", needsMention: true },
@@ -168,7 +170,7 @@ const CONDITION_OPENER_AT_START = /^(?:e\s+)?(?:se|caso|assim que|quando|ate que
 const CUSTOMER_CITATION = /^\s*(?:voce|vc|o senhor|a senhora)\s+(?:disse|falou|pediu|mencionou|escreveu|quer|queria|informou|perguntou|prefere|escolheu|comentou|contou)\b|^\s*(?:que bom|otimo|legal|ainda bem|obrigad[oa])\s+que\s+(?:voce|vc)\s+\w+(?:\s+\w+){0,3}\s*$/;
 /** "Marina, você quer…": o vocativo no começo não muda de quem a frase fala. */
 const VOCATIVE = /^\s*[A-ZÀ-Ý][\p{L}'-]+(?: [A-ZÀ-Ý][\p{L}'-]+)?,\s*/u;
-const UNAVAILABLE_CUE = /\b(?:nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem horario|nao consigo|nao da|ja passou|nao esta livre|nao esta disponivel|preenchid[oa]s?|esgotad[oa]s?|cheio|cheia|nao estao mais|nao esta mais|ja foi tomad[oa]|ja foi preenchid[oa]|nao tem (?:mais )?(?:horario|horarios|vaga|vagas|disponivel|disponiveis|disponibilidade|como|esse horario|este horario))\b|\bnao tem\s*$/;
+const UNAVAILABLE_CUE = /\b(?:nao consegui|nao tenho|nao temos|nao ha|indisponivel|indisponiveis|ocupad[oa]s?|lotad[oa]s?|sem vaga|sem horario|nao consigo|nao da|ja passou|nao esta livre|nao esta disponivel|preenchid[oa]s?|esgotad[oa]s?|cheio|cheia|nao estao mais|nao esta mais|ja foi tomad[oa]|ja foi preenchid[oa]|nao tem (?:mais )?(?:horario|horarios|vaga|vagas|disponivel|disponiveis|disponibilidade|como|esse horario|este horario))\b|\bnao tem\s*$/;
 const BUSINESS_CUE = /\b(?:fecha|fecho|fechar|encerro|encerramos|fechamos|fechado ate|abre|abrimos|aberto|abertos|aberta|funciona|funcionamos|funcionamento|atendemos|atende as|atende de|atende so|atende apenas|atendemos so|atendemos apenas|atendimento (?:e|eh|funciona) (?:so|apenas|somente)|expediente|horario de atendimento|estacionamento)\b/;
 /** Regra de funcionamento ("o último horário começa às 17h10", "tolerância de atraso"): descreve, não oferece; só vale sem afirmar vaga. */
 const INFO_CUE = /\b(?:ultimo horario|primeiro horario|horario de entrada|toleranc\w*|atraso|chegar|chegada|chegue|antecedencia)\b/;
@@ -287,7 +289,7 @@ const INSTEAD_OF = /\b(?:em vez de|ao inves de)\b/;
 
 /** A frase AFIRMA mudança ou cancelamento de um agendamento (nunca passa: a IA não remarca nem cancela neste bloco). */
 function claimsChange(n: string, hasMention: boolean, hasOfferVerb: boolean, handoff: boolean, decidedOk = false): boolean {
-  const nounOrTime = SCHEDULE_NOUN.test(n) || hasMention;
+  const nounOrTime = SCHEDULE_NOUN.test(n) || hasMention || /\bpedido\b/.test(n);
   // "Já passei seu pedido para a equipe" com o repasse criado é verdade: o alvo de "passei/transferi" é a equipe, não outro horário.
   const handoffMatch = handoff ? HANDOFF_PASS.exec(n) : null;
   const handoffAt = handoffMatch ? handoffMatch.index : -1;
@@ -328,9 +330,19 @@ function sameTime(k: KnownTime, m: TimeMention, today: string): boolean {
 }
 
 /** Prioridade: reserva desta rodada > agendamento existente > oferta. Hora sem dia compara só a hora. */
+/**
+ * Ao AFIRMAR ("marcado", `closing`), dia da semana sem data só vale se o agendamento cai nos próximos 7 dias: "segunda às 10h" com o agendamento em
+ * 30/11 e hoje 21/11 (a próxima segunda é 23/11) é outra semana. Com a data dita ("30/11") não há dúvida.
+ */
+function weekOk(k: KnownTime, m: TimeMention, today: string, closing: boolean): boolean {
+  if (!closing || m.day?.kind !== "weekday") return true;
+  const days = diffLocalDays(today, k.localDate);
+  return days >= 0 && days <= 7; // 7 = o mesmo dia da semana de hoje (hoje ou daqui a uma semana: ambíguo, aceita)
+}
+
 function classify(m: TimeMention, st: ClaimState, today: string, n: string, closing = false): Match {
-  const r = st.booked.filter((k) => sameTime(k, m, today));
-  const e = st.existing.filter((k) => sameTime(k, m, today));
+  const r = st.booked.filter((k) => sameTime(k, m, today) && weekOk(k, m, today, closing));
+  const e = st.existing.filter((k) => sameTime(k, m, today) && weekOk(k, m, today, closing));
   const hit = r.length > 0 ? r : e;
   if (hit.length > 0) return hit.some((k) => k.status === "scheduled") ? "marcado" : "pendente";
   if (st.offered.some((k) => sameTime(k, m, today))) return "oferta";
@@ -499,7 +511,15 @@ export function detectUnbackedBookingClaim(text: string, st: ClaimState): ClaimV
   // 0. Remarcação ou cancelamento AFIRMADOS: sempre barrado (a IA não tem tool de remarcar/cancelar; é repasse para humano).
   for (const s of live) {
     if (s.skip || (s.question && !s.tagQuestion)) continue;
-    const decidedOk = (st.decided?.length ?? 0) > 0 && s.mentions.every((m) => classify(m, st, today, s.n) === "decidido");
+    // "foi cancelado" só é relato quando o estado diz que ESSE horário foi recusado/cancelado (vencido não conta) e ele não está ativo; sem horário
+    // citado ("Prontinho, seu horário foi cancelado!"), só se o cliente não tem NENHUM agendamento ativo que a frase possa estar cancelando.
+    const gone = (st.decided ?? []).filter((k) => k.kind !== "expired");
+    const active = [...st.booked, ...st.existing];
+    const decidedOk =
+      gone.length > 0 &&
+      (s.mentions.length > 0
+        ? s.mentions.every((m) => gone.some((k) => sameTime(k, m, today)) && !active.some((k) => sameTime(k, m, today)))
+        : active.length === 0);
     if (claimsChange(s.n, s.mentions.length > 0 || mentionsAnyTime(s.raw), OFFER_VERB.test(s.n), st.handoff === true, decidedOk)) return { kind: "reschedule_claim", evidence: s.raw.slice(0, EVIDENCE_MAX) };
   }
 

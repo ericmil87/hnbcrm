@@ -70,6 +70,9 @@ export async function runClaimJudge(
     let provider: string | undefined;
     let usedModel: string | undefined;
     const started = Date.now();
+    // O teto de tempo ABORTA a requisição de verdade (sem retry de 2 s dormindo): a chamada não continua correndo e custando depois do prazo.
+    const abort = new AbortController();
+    const abortTimer = setTimeout(() => abort.abort(), CLAIM_JUDGE_TIMEOUT_MS);
     try {
       const res = await withTimeout(
         chatWithFallback(
@@ -83,10 +86,11 @@ export async function runClaimJudge(
             maxTokens: JUDGE_MAX_TOKENS,
             responseFormat: { type: "json_object" },
           },
-          { timeoutMs: CLAIM_JUDGE_TIMEOUT_MS }
+          { timeoutMs: CLAIM_JUDGE_TIMEOUT_MS, maxAttempts: 1, signal: abort.signal }
         ),
         CLAIM_JUDGE_TIMEOUT_MS + 500
       );
+      clearTimeout(abortTimer);
       const latencyMs = Date.now() - started;
       addUsage(usage, res.usage, res.usedRoute, model, { inputChars: prompt.system.length + prompt.user.length, outputChars: JSON.stringify(res.message).length });
       provider = res.usedRoute.providerId;
@@ -106,6 +110,8 @@ export async function runClaimJudge(
       if (!verdict) return { ok: false, reason: res.finishReason === "length" ? "truncated" : "invalid" };
       return { ok: true, verdict, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, costUsd: usage.costUsd, latencyMs };
     } catch (e) {
+      clearTimeout(abortTimer);
+      abort.abort();
       const message = e instanceof Error ? e.message : "falha ao chamar a IA";
       await ctx.runMutation(internal.agentRuns.internalFinishRun, {
         runId,
@@ -116,7 +122,7 @@ export async function runClaimJudge(
         ...finishRunCostFields(usage),
         error: sanitizeLlmError(message),
       });
-      return { ok: false, reason: /tempo esgotado|timeout|aborted/i.test(message) ? "timeout" : "error" };
+      return { ok: false, reason: /tempo esgotado|timed out|timeout|aborted/i.test(message) ? "timeout" : "error" };
     }
   } catch {
     return { ok: false, reason: "error" };

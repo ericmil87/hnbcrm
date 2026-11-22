@@ -4926,6 +4926,7 @@ const applicationTables = {
     cancelledAt: v.optional(v.number()),
     cancelledByClass: v.optional(v.union(v.literal("staff"), v.literal("client"), v.literal("ai"), v.literal("system"))),
     cancelReason: v.optional(v.string()),
+    cancelledFromStatus: v.optional(schedStatus),  // status de que o cancelamento SAIU (pending_approval + staff = recusado); ausente = desconhecido
     lateCancel: v.optional(v.boolean()),
     reminder: v.optional(v.object({               // fase F
       token: v.string(), nextAt: v.optional(v.number()),

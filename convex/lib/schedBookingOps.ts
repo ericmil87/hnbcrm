@@ -1858,6 +1858,8 @@ export async function cancelAppointmentCore(
       status: "cancelled" as const,
       cancelledAt: now,
       cancelledByClass: args.byClass,
+      // De onde o cancelamento saiu: `pending_approval` + equipe = pedido RECUSADO (a IA diz "não foi possível"); marcado e cancelado = cancelado.
+      cancelledFromStatus: a.status,
       cancelReason: cleanText(args.reason, REASON_MAX, strict),
       lateCancel: lateCancel ? true : undefined,
       statusChangedAt: now,
@@ -2414,7 +2416,7 @@ const CLEAR_ON_UNDO: Record<string, Array<keyof Doc<"schedAppointments">>> = {
   checked_in: ["checkedInAt"],
   completed: ["completedAt"],
   no_show: ["noShowAt"],
-  cancelled: ["cancelledAt", "cancelledByClass", "cancelReason", "lateCancel"],
+  cancelled: ["cancelledAt", "cancelledByClass", "cancelledFromStatus", "cancelReason", "lateCancel"],
 };
 const RANK: Partial<Record<SchedStatus, number>> = { scheduled: 1, confirmed: 2, checked_in: 3, completed: 4 };
 

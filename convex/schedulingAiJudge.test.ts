@@ -4,6 +4,7 @@
  * Dois "modelos" no mesmo `fetch`: o do atendente (roteiro) e o juiz (reconhecido pelo prompt de sistema). Quem decide se barra é o
  * SERVIDOR comparando o que o juiz leu com o estado real; aqui o juiz devolve o que o teste manda e conferimos a decisão.
  */
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest, type TestConvex } from "convex-test";
 import { internal } from "./_generated/api";
@@ -64,6 +65,7 @@ function stubLlm(attendant: AttendantTurn[], judge: (text: string, n: number) =>
   let j = 0;
   const judged: string[] = [];
   const judgeBodies: Array<{ messages: Array<{ role: string; content: string }> }> = [];
+  const judgeSignals: Array<AbortSignal | undefined> = [];
   const fetchMock = vi.fn(async (input: unknown, init?: unknown) => {
     if (!String(input).includes("/chat/completions")) throw new Error(`fetch inesperado: ${String(input)}`);
     const body = JSON.parse((init as { body: string }).body) as { messages: Array<{ role: string; content: string }> };
@@ -72,6 +74,7 @@ function stubLlm(attendant: AttendantTurn[], judge: (text: string, n: number) =>
       const text = /<mensagem>\n([\s\S]*)\n<\/mensagem>/.exec(user)?.[1] ?? "";
       judged.push(text);
       judgeBodies.push(body);
+      judgeSignals.push((init as { signal?: AbortSignal }).signal);
       const r = judge(text, j++);
       if (r === "falha") return new Response("boom", { status: 500 });
       if (r === "pendura") return await new Promise<Response>(() => undefined); // nunca responde: só o teto de 6 s do juiz resolve
@@ -88,7 +91,7 @@ function stubLlm(attendant: AttendantTurn[], judge: (text: string, n: number) =>
     }, "tool_calls");
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { judged, judgeBodies, attendantCalls: () => a };
+  return { judged, judgeBodies, judgeSignals, attendantCalls: () => a };
 }
 
 /** Os códigos e horários das ofertas vigentes na requisição (o "modelo" só usa o que está AQUI). */
@@ -245,8 +248,11 @@ describe("D3: juiz de afirmação (segunda camada), com o LLM simulado", () => {
     ["campo faltando", { afirma_marcado: true }],
   ])("juiz fora do ar (%s): vale o veredito do léxico, a mensagem sai e a run do juiz fica como erro", async (_label, judgeReply) => {
     const s = await seedAiAgenda(t, { judge: true });
-    stubLlm([reply(NEUTRAL)], () => judgeReply);
+    const stub = stubLlm([reply(NEUTRAL)], () => judgeReply);
     await turnWithClock(s, s.ana, "Quero uma consulta na segunda");
+    // o teto de 6 s ABORTA a requisição de verdade (sinal repassado até o `fetch`), sem retry dormindo
+    expect(stub.judgeSignals).toHaveLength(1);
+    if (judgeReply === "pendura") expect(stub.judgeSignals[0]?.aborted).toBe(true);
     expect((await outbound(s.ana)).map((x) => x.content)).toEqual([NEUTRAL]);
     expect(await handoffs()).toHaveLength(0);
     const failedItems = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect()).filter((i) => i.status === "failed"));
@@ -303,6 +309,35 @@ describe("D3: juiz de afirmação (segunda camada), com o LLM simulado", () => {
     await turn(on, on.ana, "Quero uma consulta na segunda");
     expect(m2.judged).toEqual([NEUTRAL]);
     t = prev;
+  });
+
+  test("9. rascunho (modo sugerir: um humano revisa): o juiz NÃO roda; no modo autopilot roda", async () => {
+    const draft = await seedAiAgenda(t, { judge: true, mode: "suggest" });
+    const m1 = stubLlm([reply(NEUTRAL)], () => NOTHING);
+    await turn(draft, draft.ana, "Quero uma consulta na segunda");
+    expect(m1.judged).toEqual([]);
+    expect(await judgeRuns()).toHaveLength(0);
+    const t2 = convexTest(schema, modules);
+    const prev = t;
+    t = t2;
+    const auto = await seedAiAgenda(t, { judge: true, mode: "autopilot" });
+    const m2 = stubLlm([reply(NEUTRAL)], () => NOTHING);
+    await turn(auto, auto.ana, "Quero uma consulta na segunda");
+    expect(m2.judged).toEqual([NEUTRAL]);
+    t = prev;
+  });
+
+  test("6. a EXTRAÇÃO do juiz é guardada por texto: a mesma resposta (rodada + trava final) é julgada UMA vez", async () => {
+    const s = await seedAiAgenda(t, { judge: true });
+    const m = stubLlm([reply(NEUTRAL)], () => NOTHING);
+    await turn(s, s.ana, "Quero uma consulta na segunda");
+    expect(m.judged).toEqual([NEUTRAL]);
+    expect(await judgeRuns()).toHaveLength(1);
+    // a violação é recalculada com o estado de agora; o cache é por texto (o estado muda entre a rodada e a trava final)
+    const src = readFileSync(new URL("./attendant.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/const judgeCache = new Map<string, JudgeCallResult>\(\)/);
+    expect(src).toMatch(/const key = text\.trim\(\);/);
+    expect(src).toMatch(/const violation = judgeViolation\(res\.verdict, state\);/);
   });
 
   test("o juiz recebe a resposta da PRÓPRIA IA delimitada (não a mensagem do cliente) e nenhum dado pessoal", async () => {

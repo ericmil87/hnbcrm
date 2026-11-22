@@ -209,7 +209,8 @@ export function extractAiTimes(text: string, opts: { keepRangeStart?: boolean } 
   const out: TimeMention[] = [];
   let day: DayRef | undefined;
   const seen = new Set<string>();
-  for (const t of toks) {
+  for (let ti = 0; ti < toks.length; ti++) {
+    const t = toks[ti];
     if (t.kind === "day") {
       day = t.day;
       continue;
@@ -218,7 +219,10 @@ export function extractAiTimes(text: string, opts: { keepRangeStart?: boolean } 
     const key = `${t.at}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ timeMin: t.timeMin, ...(day ? { day } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at), at: t.at });
+    // "10h de terça ou 14h de quarta": o dia que vem DEPOIS, ligado por "de/do/da", é o da hora (não o dia da hora anterior).
+    const next = toks[ti + 1];
+    const own = next && next.kind === "day" && /^\s+(?:de|do|da|no|na)\s+$/.test(n.slice(t.end, next.at)) ? next.day : day;
+    out.push({ timeMin: t.timeMin, ...(own ? { day: own } : {}), sentence: sentenceOf(t.at), clause: clauseOf(t.at), at: t.at });
   }
   return out;
 }

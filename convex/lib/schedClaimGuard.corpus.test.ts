@@ -181,3 +181,52 @@ describe("schedClaimGuard — pedido decidido pela equipe (recusado, vencido, ca
     expect(detectUnbackedBookingClaim("Seu horário é quinta às 11h.", sch)).not.toBeNull();
   });
 });
+
+describe("schedClaimGuard — 2ª revisão do PR #203", () => {
+  const withDecided = (kind: "declined" | "expired" | "cancelled", at: string, base: Parameters<typeof buildState>[0] = {}) => {
+    const [d, hhmm] = at.split(" ");
+    return { ...buildState(base), decided: [{ localDate: d, timeMin: Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5)), kind }] };
+  };
+  test("1. 'seu horário foi cancelado' sem horário citado NÃO passa com agendamento ativo (mesmo com outro pedido recusado nas 72 h)", () => {
+    const st = withDecided("declined", "2026-11-25 14:00", { existing: [["2026-11-26 15:00", "scheduled"]] });
+    for (const text of ["Prontinho, seu horário foi cancelado!", "Cancelado! Seu horário foi desmarcado.", "O pedido foi cancelado, tudo certo."]) {
+      expect(detectUnbackedBookingClaim(text, st), text).not.toBeNull();
+    }
+    // o horário citado é o do pedido recusado e não o ativo: relato verdadeiro
+    expect(detectUnbackedBookingClaim("Peço desculpas, o pedido de quarta, 25/11, às 14h foi cancelado. Quer ver outros horários?", st)).toBeNull();
+    // citar o horário ATIVO como cancelado barra
+    expect(detectUnbackedBookingClaim("O horário de quinta às 15h foi cancelado.", st)).not.toBeNull();
+    // sem nenhum agendamento ativo e com pedido cancelado, o relato sem horário passa
+    expect(detectUnbackedBookingClaim("Seu pedido foi cancelado, desculpe.", withDecided("cancelled", "2026-11-26 15:00"))).toBeNull();
+  });
+  test("1b. pedido VENCIDO não conta como cancelado", () => {
+    const exp = withDecided("expired", "2026-11-24 10:00");
+    expect(detectUnbackedBookingClaim("O pedido de terça às 10h foi cancelado.", exp)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("Seu pedido foi cancelado.", exp)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("O pedido de terça às 10h venceu sem resposta da equipe. Posso consultar de novo?", exp)).toBeNull();
+  });
+  test("2. 'já deixei … reservada/separada/garantida' sobre pedido pendente barra, mesmo com 'a equipe confirma'", () => {
+    const pend = buildState({ existing: [["2026-11-25 14:00", "pending"]] });
+    for (const text of ["Show, já deixei a quarta 14h reservada, a equipe confirma em breve.", "Já deixei a quarta às 14h separada pra você, a equipe só confirma.", "Deixei a quarta 14h garantida, a equipe confirma depois."]) {
+      expect(detectUnbackedBookingClaim(text, pend), text).not.toBeNull();
+    }
+    // pedido registrado aguardando a equipe continua legítimo
+    expect(detectUnbackedBookingClaim("O horário de quarta às 14h ficou reservado, aguardando confirmação da equipe.", pend)).toBeNull();
+    expect(detectUnbackedBookingClaim("Pedido registrado para quarta às 14h, aguardando a equipe.", pend)).toBeNull();
+  });
+  test("10. dia da semana sem data que cai em OUTRA semana barra ao afirmar; com a data ou na mesma semana passa", () => {
+    const far = buildState({ existing: [["2026-11-30 10:00", "scheduled"]] }); // hoje = sábado 21/11; a próxima segunda é 23/11
+    expect(detectUnbackedBookingClaim("Seu horário está marcado para segunda às 10h.", far)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("Confirmado: segunda às 10h!", far)).not.toBeNull();
+    expect(detectUnbackedBookingClaim("Seu horário está marcado para segunda, 30/11, às 10h.", far)).toBeNull();
+    const near = buildState({ existing: [["2026-11-23 10:00", "scheduled"]] });
+    expect(detectUnbackedBookingClaim("Seu horário está marcado para segunda às 10h.", near)).toBeNull();
+  });
+  test("11. falsos positivos do léxico d2", () => {
+    expect(detectUnbackedBookingClaim("Não consegui achar horário às 20h, nosso último atendimento é às 18h.", buildState({}))).toBeNull();
+    const o = buildState({ offered: ["2026-11-24 10:00", "2026-11-25 14:00"] });
+    expect(detectUnbackedBookingClaim("Qual horário fica melhor pra você: 10h de terça ou 14h de quarta?", o)).toBeNull();
+    // o dia ligado por "de" é o da hora: 14h de terça NÃO é a oferta (quarta 14h)
+    expect(detectUnbackedBookingClaim("Tenho 10h de terça ou 14h de terça.", o)).not.toBeNull();
+  });
+});

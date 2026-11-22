@@ -12,7 +12,7 @@
  */
 import { type ClaimState, type ClaimViolation, type KnownTime, buildAliasIndex, citedResources } from "./schedClaimGuard";
 import { type DayRef, dayMatches, extractAiTimes, norm, todayOf } from "./schedTimeText";
-import { weekdayOf } from "./schedTime";
+import { diffLocalDays, weekdayOf } from "./schedTime";
 
 // ---------------------------------------------------------------------------
 // Gatilho
@@ -51,7 +51,7 @@ export const JUDGE_SYSTEM =
   "- afirma_repassado_equipe: diz que JÁ passou, avisou ou encaminhou o pedido à equipe ou a um humano. NÃO conta: dizer que o pedido está aguardando a equipe.\n" +
   '- afirma_pedido_registrado: diz que o pedido de horário do cliente JÁ foi registrado, anotado ou deixado no sistema, aguardando a equipe ("pedido registrado", "anotei o pedido", "deixei seu pedido registrado"). Se também diz que está marcado/confirmado, marque os dois. NÃO conta: "vou registrar", "posso registrar?".\n' +
   '- afirma_aguardando_equipe: diz que o pedido ou horário do cliente ainda está aguardando a confirmação ou a resposta da equipe ("ainda aguardando a equipe", "segue pendente", "assim que confirmarem eu aviso"). NÃO conta: dizer que vai consultar a agenda ou que vai passar para a equipe.\n' +
-  '- horarios_afirmados: só os horários que a mensagem trata como marcados, registrados ou aguardando a equipe (não os apenas oferecidos). dia: "segunda","terca","quarta","quinta","sexta","sabado","domingo","hoje","amanha","depois_de_amanha" ou "dd/mm"; null se não disser o dia. hora: "HH:MM" em 24h; null se não disser.\n' +
+  '- horarios_afirmados: só os horários que a mensagem trata como marcados, registrados ou aguardando a equipe (não os apenas oferecidos). dia: "dd/mm" quando a mensagem diz a data; senão "segunda","terca","quarta","quinta","sexta","sabado","domingo","hoje","amanha" ou "depois_de_amanha"; null se não disser o dia. hora: "HH:MM" em 24h; null se não disser.\n' +
   "- profissional_afirmado: nome do profissional ou sala que a mensagem liga ao horário afirmado, ou null.\n" +
   "Se nada é afirmado: tudo false, lista vazia, null.";
 
@@ -63,7 +63,8 @@ export function buildJudgePrompt(text: string, today: string): { system: string;
   const wd = WEEKDAYS[weekdayOf(today)];
   return {
     system: JUDGE_SYSTEM,
-    user: `Hoje é ${wd}, ${d}/${m}/${y}.\n<mensagem>\n${text.slice(0, JUDGE_TEXT_MAX)}\n</mensagem>`,
+    // `<` e `>` do texto julgado viram aspas angulares simples: ele não consegue forjar `</mensagem>` nem abrir outra tag.
+    user: `Hoje é ${wd}, ${d}/${m}/${y}.\n<mensagem>\n${text.slice(0, JUDGE_TEXT_MAX).replace(/</g, "‹").replace(/>/g, "›")}\n</mensagem>`,
   };
 }
 
@@ -172,9 +173,15 @@ function dayRefOf(d: JudgeDay): DayRef {
 }
 
 /** Hora e dia (quando ditos) casam com o horário conhecido? Sem hora dita, só o dia; sem dia, só a hora. */
-function sameSlot(k: KnownTime, t: JudgeTime, today: string): boolean {
+function sameSlot(k: KnownTime, t: JudgeTime, today: string, strictWeek = false): boolean {
   if (t.timeMin !== null && k.timeMin !== t.timeMin) return false;
   if (t.dia !== null && !dayMatches(dayRefOf(t.dia), k.localDate, today)) return false;
+  // "segunda às 10h" sem data, com o agendamento em 30/11 e hoje 21/11: a próxima segunda é 23/11, outra semana. Ao AFIRMAR "marcado", o dia da
+  // semana só vale se o agendamento cai nos próximos 7 dias (com a data dita ("30/11") não há dúvida).
+  if (strictWeek && t.dia !== null && typeof t.dia === "string" && WEEKDAYS.includes(t.dia as (typeof WEEKDAYS)[number])) {
+    const days = diffLocalDays(today, k.localDate);
+    if (days < 0 || days > 7) return false; // 7 = o mesmo dia da semana de hoje (hoje ou daqui a uma semana: ambíguo, aceita)
+  }
   return true;
 }
 
@@ -210,7 +217,12 @@ export function judgeViolation(v: JudgeVerdict, st: ClaimState): ClaimViolation 
     // "O horário de quinta às 15h foi cancelado" é verdade quando o estado MESMO diz que foi recusado/cancelado (a IA não cancela: só relata).
     const today1 = todayOf(st.now, st.tz);
     const gone = (st.decided ?? []).filter((k) => k.kind === "cancelled" || k.kind === "declined");
-    const ok = v.horarios.length > 0 ? v.horarios.every((t) => gone.some((k) => sameSlot(k, t, today1))) : gone.length > 0;
+    const active = [...st.booked, ...st.existing];
+    // Sem horário dito ("Prontinho, seu horário foi cancelado!"), só é relato quando NÃO há agendamento ativo que a frase possa estar cancelando.
+    const ok =
+      v.horarios.length > 0
+        ? v.horarios.every((t) => gone.some((k) => sameSlot(k, t, today1)) && !active.some((k) => sameSlot(k, t, today1)))
+        : gone.length > 0 && active.length === 0;
     if (!ok) return { kind: "reschedule_claim", evidence };
   }
   if (v.presenca) return { kind: "claim_without_booking", evidence };
@@ -238,7 +250,7 @@ export function judgeViolation(v: JudgeVerdict, st: ClaimState): ClaimViolation 
   const bookedAny = [...st.booked, ...st.existing];
   if (v.horarios.length > 0) {
     for (const t of v.horarios) {
-      const hit = bookedAny.filter((k) => sameSlot(k, t, today));
+      const hit = bookedAny.filter((k) => sameSlot(k, t, today, true));
       if (hit.length === 0) {
         if ((st.decided ?? []).some((k) => sameSlot(k, t, today))) return { kind: "claim_without_booking", evidence };
         return { kind: st.offered.some((k) => sameSlot(k, t, today)) ? "claim_without_booking" : "time_not_offered", evidence };
@@ -246,13 +258,23 @@ export function judgeViolation(v: JudgeVerdict, st: ClaimState): ClaimViolation 
       // "marcado/confirmado" sobre pedido que só está aguardando a equipe; "pedido registrado" é exatamente o que está pendente.
       if (v.marcado && !hit.some((k) => k.status === "scheduled")) {
         // "A está marcado; B ainda aguarda": a lista junta os dois, e o pendente é o que o `aguardando` explica.
-        if (v.aguardando && hit.some((k) => k.status === "pending")) continue;
+        // Só vale com 2+ horários e OUTRO da lista casando com um marcado REAL; "já deixei a quarta 14h reservada, a equipe confirma" (um só) barra.
+        if (
+          v.aguardando &&
+          hit.some((k) => k.status === "pending") &&
+          v.horarios.length >= 2 &&
+          v.horarios.some((o) => o !== t && bookedAny.some((k) => k.status === "scheduled" && sameSlot(k, o, today, true)))
+        ) {
+          continue;
+        }
         return { kind: "confirmed_but_pending", evidence };
       }
     }
   } else if (v.marcado) {
     const bookedScheduled = st.booked.some((k) => k.status === "scheduled");
     const scheduledExisting = st.existing.filter((k) => k.status === "scheduled");
+    // Pedido registrado NESTA rodada e ainda pendente: "marcado" sem horário fala dele, mesmo que o cliente tenha outro agendamento marcado.
+    if (!bookedScheduled && st.booked.some((k) => k.status === "pending")) return { kind: "confirmed_but_pending", evidence };
     if (!bookedScheduled && scheduledExisting.length !== 1) {
       const anyPending = st.booked.some((k) => k.status === "pending") || st.existing.some((k) => k.status === "pending");
       return { kind: anyPending && scheduledExisting.length === 0 ? "confirmed_but_pending" : "claim_without_booking", evidence };

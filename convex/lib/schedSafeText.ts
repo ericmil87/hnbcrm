@@ -84,20 +84,6 @@ export function schedSafeReply(input: {
       situation: "presenca",
     };
   }
-  // "E aí, confirmou?" / "Que dia é o meu?": o texto seguro diz a situação REAL (nunca esconde a informação pedida).
-  // (ou o guard barrou "ainda aguardando" com o estado já decidido: `stale_pending`, o cliente quer a situação mesmo sem ter perguntado assim)
-  if (input.facts && (asksPedidoStatus(input.customerText) || input.kind === "stale_pending")) {
-    const text = statusReplyText(input.facts);
-    if (text) {
-      return {
-        text,
-        reason: "Cliente perguntou da situação do pedido (resposta da IA barrada pelo guard)",
-        summary: "O cliente perguntou como ficou o pedido de horário. A resposta da IA foi barrada pelo guard e enviei a situação real que o sistema tem. Nenhuma ação é necessária.",
-        situation: "situacao",
-        handoff: false,
-      };
-    }
-  }
   if (intent === "grupo") {
     return {
       text: "Para mais de uma pessoa a equipe confirma o horário com você: já avisei eles e te respondem por aqui.",
@@ -113,6 +99,23 @@ export function schedSafeReply(input: {
       summary: "O cliente pediu um profissional. A IA tentou prometer o horário com ele sem que o sistema confirmasse, e enviei um aviso padrão. A equipe precisa confirmar quem atende.",
       situation: "profissional",
     };
+  }
+  // "E aí, confirmou?" / "Que dia é o meu horário?": o texto seguro diz a situação REAL (nunca esconde a informação pedida). Vem DEPOIS de remarcar,
+  // cancelar, presença, grupo e profissional (a equipe cuida desses) e só dispensa o repasse quando a pergunta era de fato sobre a situação.
+  const asked = !!input.facts && asksPedidoStatus(input.customerText);
+  if (input.facts && (asked || input.kind === "stale_pending")) {
+    const text = statusReplyText(input.facts);
+    if (text) {
+      return {
+        text,
+        reason: asked ? "Cliente perguntou da situação do pedido (resposta da IA barrada pelo guard)" : "Resposta da IA dizia que o pedido aguardava, mas a situação já mudou (barrada pelo guard)",
+        summary: asked
+          ? "O cliente perguntou como ficou o pedido de horário. A resposta da IA foi barrada pelo guard e enviei a situação real que o sistema tem. Nenhuma ação é necessária."
+          : "A IA tentou dizer que o pedido ainda aguardava a equipe, mas a situação já tinha mudado. Enviei a situação real; a equipe pode conferir a conversa.",
+        situation: "situacao",
+        ...(asked ? { handoff: false } : {}),
+      };
+    }
   }
   if (input.pendingRequest) {
     return {
