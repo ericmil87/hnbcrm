@@ -236,7 +236,6 @@ export const internalSeedScenarioOrg = internalMutation({
           ...(st?.firstVisitNeedsApproval !== undefined ? { firstVisitNeedsApproval: st.firstVisitNeedsApproval } : {}),
         },
       },
-      ...(st?.aiBook === "auto" ? { acks: { aiAuto: true } } : {}),
     });
     for (const e of spec.exceptions ?? []) {
       const date = addLocalDays(today, e.dayOffset);
@@ -362,13 +361,18 @@ export const internalSimSetSched = internalMutation({
     await requireSimOrg(ctx, args.organizationId);
     const admin = await ctx.db.query("teamMembers").withIndex("by_organization_and_type", (q) => q.eq("organizationId", args.organizationId).eq("type", "human")).first();
     if (!admin) throw new ConvexError("sem admin");
+    // O aceite do "marca sozinha" exige uma conta autenticada (requireAccountWithEmail): o harness grava o aceite do
+    // dono fictício direto (org de cenário, demoMode) e o resto passa pelo core de configuração.
+    if (args.aiBook === "auto") {
+      const doc = await ctx.db.query("schedSettings").withIndex("by_organization", (q) => q.eq("organizationId", args.organizationId)).first();
+      if (doc && !doc.ai?.autoAck) await ctx.db.patch(doc._id, { ai: { ...(doc.ai ?? {}), autoAck: { by: admin._id, at: Date.now() } } });
+    }
     await updateSchedSettingsCore(ctx, {
       organizationId: args.organizationId, member: admin, now: Date.now(), via: "settings",
       patch: {
         ...(args.smartMode ? { smart: { mode: args.smartMode } } : {}),
         ai: { ...(args.aiBook ? { book: args.aiBook } : {}), ...(args.firstVisitNeedsApproval !== undefined ? { firstVisitNeedsApproval: args.firstVisitNeedsApproval } : {}) },
       },
-      ...(args.aiBook === "auto" ? { acks: { aiAuto: true } } : {}),
     });
     return null;
   },
