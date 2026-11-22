@@ -152,7 +152,7 @@ describe("findAvailableTimes", () => {
     expect(new Set(st!.offers.map((o) => o.code)).size).toBe(st!.offers.length);
   });
 
-  test("grupo de 2 pessoas: só a sala dupla comporta; a oferta lembra e a reserva vira repasse (a IA não marca grupo)", async () => {
+  test("grupo de 2 pessoas: só a sala dupla comporta; a oferta lembra e a reserva marca o GRUPO todo, sempre aguardando a equipe", async () => {
     const s = await seedAiAgenda(t);
     const none = await find(s, s.ana, { service: "Consulta", dateRef: "2026-06-15", people: 2 }); // 1 profissional só
     expect(none.result.status).toBe("sem_horarios");
@@ -160,11 +160,53 @@ describe("findAvailableTimes", () => {
     const { out, codes } = await offeredAndAnswered(s, s.ana, { service: "Massagem casal", dateRef: "2026-06-15", people: 2 });
     expect(out.result.status).toBe("ok");
     expect((await stateOf(s.ana.conversationId))!.offers.every((o) => o.people === 2)).toBe(true);
+    // o tamanho do grupo vem da OFERTA: a escrita só recebe o código
     const booked = await book(s, s.ana, codes[0]);
-    expect(booked.result.error).toBe("precisa_de_pessoa");
-    expect(booked.control.handoff).toBe(true);
-    expect(await appointments()).toHaveLength(0);
-    expect(await handoffs()).toHaveLength(1);
+    expect(booked.result.status).toBe("reservado_aguardando_equipe");
+    expect(booked.result.resultado).toContain("para 2 pessoas");
+    expect(booked.control.handoff).toBe(false);
+    const rows = await appointments();
+    expect(rows).toHaveLength(2);
+    expect(rows.every((r) => r.status === "pending_approval")).toBe(true);
+    expect(new Set(rows.map((r) => r.partyKey)).size).toBe(1);
+    expect(rows.filter((r) => r.contactId === s.ana.contactId)).toHaveLength(1);
+    expect(rows.filter((r) => r.guestName !== undefined)).toHaveLength(1);
+    expect(rows.every((r) => r.startTime === rows[0].startTime)).toBe(true);
+    // a auditoria de cada agendamento aponta a conversa e o código da oferta (a porta de grupo repassa o metadata)
+    const audits = await t.run((ctx) => ctx.db.query("auditLogs").collect());
+    expect(audits.filter((a) => a.metadata?.offer === codes[0] && a.metadata?.people === 2).length).toBeGreaterThanOrEqual(2);
+    expect(await handoffs()).toHaveLength(0);
+    expect((await stateOf(s.ana.conversationId))!.offers.some((o) => o.code === codes[0])).toBe(false);
+  });
+
+  test("grupo: sala dupla com UMA vaga só não aceita o grupo de 2 (capacidade): horário tomado, sem agendamento nem repasse", async () => {
+    const s = await seedAiAgenda(t);
+    const { codes } = await offeredAndAnswered(s, s.ana, { service: "Massagem casal", dateRef: "2026-06-15", people: 2 });
+    const state = await stateOf(s.ana.conversationId);
+    const picked = state!.offers.find((o) => o.code === codes[0])!;
+    // outra pessoa ocupa 1 das 2 vagas da sala dupla no MESMO horário (reserva da equipe, direto pela porta)
+    await t.run(async (ctx) => {
+      const { bookAppointmentCore } = await import("./lib/schedBookingOps");
+      const admin = (await ctx.db.get(s.adminId))!;
+      const r = await bookAppointmentCore(ctx, {
+        organizationId: s.organizationId,
+        actor: { type: "human", member: admin, via: "app" },
+        origin: "staff",
+        serviceId: s.services.casal,
+        startTime: picked.startTime,
+        contactId: s.bia.contactId,
+        resourceIds: picked.resourceIds,
+        now: Date.now(),
+      });
+      expect(r.ok).toBe(true);
+    });
+    const before = await appointments();
+    const booked = await book(s, s.ana, codes[0]);
+    expect(booked.result.error).toBe("horario_tomado");
+    expect(booked.result.resultado).toContain("Não há alternativa livre para o grupo de 2 pessoas");
+    expect(booked.control.handoff).toBe(false);
+    expect(await appointments()).toHaveLength(before.length); // nada ficou pela metade
+    expect(await handoffs()).toHaveLength(0);
   });
 
   test("teto de consultas por hora: a 13ª vira repasse; passada a hora, volta a consultar", async () => {

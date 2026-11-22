@@ -1,7 +1,7 @@
 /**
  * Agenda v2 (D1): aviso `appointment_pending_approval` quando a IA (ou, no futuro, o link público) registra um
  * horário em `pending_approval`. Destinatários: membros HUMANOS ativos da org com `agenda >= edit` (teto 25), a mesma
- * regra do aviso de conflito. Um aviso por agendamento (sem `coalesce`: cada proposta é uma decisão). O sino abre
+ * regra do aviso de conflito. Um aviso por agendamento (sem `coalesce`: cada proposta é uma decisão); grupo (`partyKey`) = UM aviso pela pessoa principal, com "grupo de N pessoas". O sino abre
  * `/app/calendario?pendencias=1` (`notificationTargets`). Sem telefone, e-mail nem nome de cliente no texto.
  * Preferência: flag `agendaApproval` (par do tipo em `PREFERENCE_FLAG`).
  */
@@ -17,7 +17,7 @@ const MAX_RECIPIENTS = 25;
 
 export async function notifyPendingApproval(
   ctx: MutationCtx,
-  args: { appointment: Doc<"schedAppointments">; tz: string }
+  args: { appointment: Doc<"schedAppointments">; tz: string; /** Grupo: a pessoa principal avisa UMA vez pelas N pessoas. */ partySize?: number }
 ): Promise<number> {
   const a = args.appointment;
   const members = await ctx.db
@@ -32,7 +32,8 @@ export async function notifyPendingApproval(
         hasPermission(resolvePermissions(m.role as Role, m.permissions as Permissions | undefined), "agenda", "edit")
     )
     .slice(0, MAX_RECIPIENTS);
-  const copy = notificationCopy({ type: "appointment_pending_approval", label: appointmentLabel(a, args.tz) });
+  const label = appointmentLabel(a, args.tz);
+  const copy = notificationCopy({ type: "appointment_pending_approval", label: args.partySize && args.partySize > 1 ? `${label} (grupo de ${args.partySize} pessoas)` : label });
   let sent = 0;
   for (const m of recipients) {
     const id = await createNotification(ctx, {

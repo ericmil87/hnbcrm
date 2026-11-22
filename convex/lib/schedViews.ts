@@ -175,6 +175,7 @@ export const settingsViewValidator = v.object({
       firstVisitNeedsApproval: v.boolean(),
       maxAiBookingsPerContactPerDay: v.number(),
       autoAck: v.optional(v.object({ by: v.id("teamMembers"), at: v.number() })),
+      claimJudge: v.optional(v.boolean()),
     })
   ),
   humanConfirm: v.optional(

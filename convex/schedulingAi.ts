@@ -7,6 +7,7 @@ import {
   runFindSearch,
   schedContextCore,
   schedContextValidator,
+  professionalNoteValidator,
   schedToolOutcomeValidator,
   toolTextValidator,
 } from "./lib/schedAiOps";
@@ -80,6 +81,10 @@ export const internalSimulateFind = internalQuery({
         period: v.optional(v.string()),
         people: v.number(),
         startTimes: v.array(v.number()),
+        total: v.number(),
+        wanted: v.optional(v.object({ timeMin: v.number(), available: v.boolean() })),
+        professional: v.optional(professionalNoteValidator),
+        named: v.optional(v.string()),
       })
     ),
   }),
@@ -101,6 +106,10 @@ export const internalSimulateFind = internalQuery({
         ...(parsed.args.period ? { period: parsed.args.period } : {}),
         people: parsed.args.people,
         startTimes: searched.slots.map((s) => s.startTime),
+        total: searched.total,
+        ...(searched.wanted ? { wanted: searched.wanted } : {}),
+        ...(searched.professional ? { professional: searched.professional } : {}),
+        ...(searched.named ? { named: searched.named } : {}),
       },
     };
   },

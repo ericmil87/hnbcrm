@@ -22,6 +22,8 @@ export type AiSeedOpts = {
   noService?: boolean;
   noResource?: boolean;
   relation?: "personal";
+  /** Juiz de afirmação (D3) LIGADO (o padrão do produto). Nos cenários de roteiro fica desligado: a chamada do juiz consumiria o roteiro do modelo. */
+  judge?: boolean;
 };
 
 export async function seedAiAgenda(t: TestConvex<typeof schema>, opts: AiSeedOpts = {}) {
@@ -107,7 +109,7 @@ export async function seedAiAgenda(t: TestConvex<typeof schema>, opts: AiSeedOpt
     if (opts.ai !== null) {
       await ctx.db.insert("schedSettings", {
         organizationId,
-        ...(opts.ai ? { ai: opts.ai } : {}),
+        ...(opts.ai || opts.judge !== true ? { ai: { ...(opts.ai ?? {}), ...(opts.judge === true ? {} : { claimJudge: false }) } } : {}),
         updatedAt: now,
       });
     }

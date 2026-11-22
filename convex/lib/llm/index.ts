@@ -192,7 +192,7 @@ function shouldFallover(err: unknown): boolean {
 export async function chatWithFallback(
   routes: ResolvedRoute[],
   req: Omit<NormalizedRequest, "model">,
-  opts?: { timeoutMs?: number }
+  opts?: { timeoutMs?: number; maxAttempts?: number; signal?: AbortSignal }
 ): Promise<NormalizedResponse & { usedRoute: ResolvedRoute }> {
   if (routes.length === 0) throw new Error("Nenhuma rota LLM disponível");
   let lastErr: unknown;
@@ -207,14 +207,15 @@ export async function chatWithFallback(
     try {
       const res = await chatWithRetry(route.endpoint, fullReq, {
         timeoutMs: opts?.timeoutMs,
-        maxAttempts: 2,
+        maxAttempts: opts?.maxAttempts ?? 2,
+        signal: opts?.signal,
       });
       return { ...res, usedRoute: route };
     } catch (e) {
       lastErr = e;
       failures.push({ route, error: e });
       const isLast = i === routes.length - 1;
-      if (!shouldFallover(e)) throw tagPlatformLlmFailure(e, failures);
+      if (!shouldFallover(e) || opts?.signal?.aborted) throw tagPlatformLlmFailure(e, failures);
       // Cadeia esgotada: o erro que sobe é o do PRIMEIRO elo (o motivo real, ex.:
       // 429 do modelo principal); o do último costuma ser ruído de elo
       // secundário (foi o que escondeu o 429 em 19/09/2026).

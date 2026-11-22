@@ -42,3 +42,11 @@ export const OUTCOME_NOTICE_RECIPIENTS_CAP = 25;
 
 /** Passos de grade aceitos em `schedSettings.gridMinutes`. */
 export const GRID_MINUTES_OPTIONS = [5, 10, 15, 20, 30, 60] as const;
+
+/**
+ * Juiz de afirmação (D3, `lib/schedClaimJudge.ts`): segunda camada do guard, um classificador LLM que só EXTRAI o que a mensagem da IA
+ * afirma. Desligamento GLOBAL (todas as orgs) = `false`; por org, `schedSettings.ai.claimJudge` (ausente = ligado).
+ */
+export const SCHED_CLAIM_JUDGE_ENABLED = true;
+/** Tempo máximo do juiz: passou disso, vale o veredito do léxico (a mensagem já tinha passado por ele). */
+export const CLAIM_JUDGE_TIMEOUT_MS = 6_000;

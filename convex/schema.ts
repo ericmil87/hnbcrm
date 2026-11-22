@@ -3266,7 +3266,9 @@ const applicationTables = {
       // P4.1: síntese de voz da resposta em áudio do atendente (1 por áudio).
       v.literal("tts"),
       // Agenda v2 (C1): segunda leitura (classificador) da confirmação que o humano mandou.
-      v.literal("sched_interpret")
+      v.literal("sched_interpret"),
+      // Agenda v2 (D3): juiz de afirmação (segunda camada do guard; extrai o que a resposta da IA afirma).
+      v.literal("sched_claim_judge")
     ),
     status: v.union(
       v.literal("running"),
@@ -4792,6 +4794,7 @@ const applicationTables = {
       firstVisitNeedsApproval: v.optional(v.boolean()), // ausente = true (vale mesmo em "auto")
       maxAiBookingsPerContactPerDay: v.optional(v.number()), // ausente = 2
       autoAck: v.optional(v.object({ by: v.id("teamMembers"), at: v.number() })), // aceite do "marca sozinha"
+      claimJudge: v.optional(v.boolean()),        // juiz de afirmação (D3); ausente = true (com a IA na agenda ligada)
     })),
     humanConfirm: v.optional(v.object({
       mode: v.optional(v.union(v.literal("auto"), v.literal("suggest"), v.literal("off"))), // ausente = "auto"
@@ -4923,6 +4926,7 @@ const applicationTables = {
     cancelledAt: v.optional(v.number()),
     cancelledByClass: v.optional(v.union(v.literal("staff"), v.literal("client"), v.literal("ai"), v.literal("system"))),
     cancelReason: v.optional(v.string()),
+    cancelledFromStatus: v.optional(schedStatus),  // status de que o cancelamento SAIU (pending_approval + staff = recusado); ausente = desconhecido
     lateCancel: v.optional(v.boolean()),
     reminder: v.optional(v.object({               // fase F
       token: v.string(), nextAt: v.optional(v.number()),
@@ -5022,7 +5026,8 @@ const applicationTables = {
       startTime: v.number(), resourceIds: v.array(v.id("schedResources")),
       rescheduleOfId: v.optional(v.id("schedAppointments")),
       issuedAt: v.number(), expiresAt: v.number(),
-      people: v.optional(v.number()),             // D1: busca para 2–4 pessoas (a IA não marca grupo: vira repasse)
+      people: v.optional(v.number()),             // D1: busca para 2–4 pessoas; a reserva carrega o tamanho do grupo da OFERTA (D2: bookPartyCore, sempre aguardando a equipe)
+      professional: v.optional(v.string()),       // D2: nome do profissional/sala que o CLIENTE pediu e a busca honrou (filtro + reserva sem troca); ausente = a oferta não nomeia ninguém
       shownAt: v.optional(v.number()),            // D1: instante em que a mensagem com este horário FOI ENVIADA (sem isso a oferta não vale)
     })),
     slotTakenCount: v.optional(v.number()),       // repasse automático no 2º
