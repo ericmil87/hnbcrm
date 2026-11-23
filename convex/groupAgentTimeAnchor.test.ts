@@ -208,7 +208,9 @@ function bodyOf(fetchMock: ReturnType<typeof vi.fn>, call = 0) {
 async function runGroupTurn(
   t: TestConvex<typeof schema>,
   seed: Seed,
-  before?: (t: TestConvex<typeof schema>, seed: Seed) => Promise<void>
+  before?: (t: TestConvex<typeof schema>, seed: Seed) => Promise<void>,
+  /** Depois de enfileirar a menção e antes de o turno rodar (o claim lê o que chegou nesse meio-tempo). */
+  afterEnqueue?: (t: TestConvex<typeof schema>, seed: Seed) => Promise<void>
 ) {
   await memberMessage(t, seed, "amanhã às 10h tem a roda de conversa", DOM_2229_SP);
   if (before) await before(t, seed);
@@ -218,6 +220,7 @@ async function runGroupTurn(
   await t.run(async (ctx) => {
     await ctx.db.patch(item._id, { nextAttemptAt: 0 });
   });
+  if (afterEnqueue) await afterEnqueue(t, seed);
   const fetchMock = stubLlm("ok");
   await t.action(internal.groupAgent.internalProcessGroupTurn, { queueItemId: item._id });
   const body = bodyOf(fetchMock);
@@ -300,6 +303,70 @@ describe("agente de grupo: âncora de tempo", () => {
     const anchor = anchorOf(user)!;
     expect(anchor).toContain("Última mensagem nossa: dom 22/11 22:31 (ontem, há 14 h).");
     expect(anchor).toContain("Última mensagem do grupo: seg 23/11 12:25.");
+  });
+
+  test("membro que escreve DEPOIS da menção: 'última do grupo' é a dele, não a da menção", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedGroupOrg(t);
+
+    const { user } = await runGroupTurn(t, seed, undefined, async (tt, s) => {
+      // 12:27 em São Paulo; o turno roda às 12:28.
+      await memberMessage(tt, s, "esquece, já achei", Date.UTC(2026, 10, 23, 15, 27));
+      vi.setSystemTime(Date.UTC(2026, 10, 23, 15, 28));
+    });
+    const anchor = anchorOf(user)!;
+    expect(anchor).toContain("AGORA: segunda-feira, 23/11/2026, 12:28.");
+    expect(anchor).toContain("Última mensagem do grupo: seg 23/11 12:27.");
+    expect(anchor).not.toContain("seg 23/11 12:25");
+  });
+
+  test("mensagem do aparelho (outbound human, metadata.via 'device') conta como NOSSA", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedGroupOrg(t);
+
+    const { user } = await runGroupTurn(t, seed, async (tt, s) => {
+      await ourMessage(tt, s, "Combinado!", DOM_2231_SP, "ai");
+      await tt.run(async (ctx) =>
+        ctx.db.insert("messages", {
+          organizationId: s.organizationId,
+          conversationId: s.conversationId,
+          direction: "outbound",
+          senderType: "human",
+          content: "Pessoal, hoje é às 10h, viu?",
+          contentType: "text",
+          isInternal: false,
+          metadata: { via: "device" },
+          createdAt: Date.UTC(2026, 10, 23, 12, 0), // seg 23/11 09:00 em São Paulo
+        })
+      );
+    });
+    expect(anchorOf(user)).toContain("Última mensagem nossa: seg 23/11 09:00 (hoje, há 3 h 25).");
+  });
+
+  test("rascunho interno da IA (modo sugestão) NÃO conta como nossa", async () => {
+    const t = convexTest(schema, modules);
+    const seed = await seedGroupOrg(t);
+
+    const { user } = await runGroupTurn(t, seed, async (tt, s) => {
+      await ourMessage(tt, s, "Combinado!", DOM_2231_SP, "ai");
+      // O rascunho que `internalCommitGroupReply` guarda em modo sugestão: direction "internal", isInternal.
+      await tt.run(async (ctx) =>
+        ctx.db.insert("messages", {
+          organizationId: s.organizationId,
+          conversationId: s.conversationId,
+          direction: "internal",
+          senderType: "ai",
+          content: "Rascunho: a roda é hoje às 10h.",
+          contentType: "text",
+          isInternal: true,
+          metadata: { aiDraft: { status: "pending", proposedActions: [] }, groupAgent: true },
+          createdAt: Date.UTC(2026, 10, 23, 12, 0),
+        })
+      );
+    });
+    const anchor = anchorOf(user)!;
+    expect(anchor).toContain("Última mensagem nossa: dom 22/11 22:31 (ontem, há 14 h).");
+    expect(anchor).not.toContain("seg 23/11 09:00");
   });
 
   test("sala sem mensagem nossa: a parte 'nossa' é omitida (nada é inventado)", async () => {
