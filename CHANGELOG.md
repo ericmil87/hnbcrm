@@ -8,6 +8,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 - **A IA não repete mais um "amanhã" escrito na véspera.** Cada mensagem do histórico que o Atendente IA lê agora traz dia da semana, data e hora no fuso da sua conta (por exemplo "dom 22/11 22:29"). Antes ele via só um número, então, quando o cliente agradecia no próprio dia do horário marcado, a IA respondia "te espero amanhã às 10h". Nos testes com o caso real, o erro aparecia em 4 de 4 respostas antes e em 0 de 4 depois, e "amanhã" continua certo quando é mesmo amanhã.
 - **Teste de conversa com datas.** No simulador, cada mensagem pode levar a hora em que foi enviada, para reproduzir esse tipo de caso.
+- **O mesmo vale para grupos e para o Telegram.** A IA nos grupos de WhatsApp, o resumo do grupo e o contexto do Copiloto no Telegram também viam a hora das mensagens como um número ilegível (ou em UTC, o que fazia 22:29 virar o dia seguinte). Agora cada mensagem traz dia da semana, data e hora no fuso da IA (no Telegram, no da conta), as notas da equipe nos grupos mostram quando foram escritas e o resumo recebe a data de hoje e passa a citar datas reais ("sex 20/11") em vez de "amanhã".
 
 ### Agendamento: Copiloto, API e MCP
 

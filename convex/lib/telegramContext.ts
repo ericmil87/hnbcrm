@@ -8,6 +8,7 @@ import { isOffBusiness } from "./contactRelation";
 import { Doc, Id } from "../_generated/dataModel";
 import { getLeadRef } from "./leadRef";
 import { safeTimezone } from "./promptDateTime";
+import { historyStamp } from "./historyStamp";
 import { normalizeCampaignPhone } from "./phone";
 import { resolveDefaultCountry } from "./orgPhone";
 import {
@@ -282,6 +283,10 @@ export type FocusContextInput = {
   messages: { direction: string; author: string; at: number; text: string }[];
   discreet: boolean;
   currency: string;
+  /** Org timezone: each message `em` is shown in it (never ISO/UTC). */
+  timezone: string;
+  /** Caller's clock (never read here): with it, messages of another year or older than 180 days carry the year. */
+  now?: number;
 };
 
 /** Customer text per message in the block (D17, cost cap). */
@@ -324,7 +329,8 @@ export function buildConversationContextBlock(input: FocusContextInput): string 
   const messages = input.messages.slice(-CONTEXT_MESSAGES).map((m) => ({
     de: m.author,
     direcao: m.direction,
-    em: new Date(m.at).toISOString(),
+    // Local and readable ("dom 22/11 22:29"): ISO in UTC turned 22:29 in São Paulo into the next day.
+    em: historyStamp(m.at, input.timezone, input.now),
     texto: mask(clip(m.text)),
   }));
   lines.push(wrapUntrustedJson("últimas mensagens da conversa em foco", messages));
@@ -341,7 +347,7 @@ function redactNameIn(text: string, leadTitle: string | undefined): string {
 /** Loads the focus conversation into a `FocusContextInput` (org-checked, bounded). */
 export async function loadFocusContextInput(
   db: Db,
-  args: { organizationId: Id<"organizations">; conversationId: Id<"conversations"> },
+  args: { organizationId: Id<"organizations">; conversationId: Id<"conversations">; now?: number },
 ): Promise<FocusContextInput | null> {
   const org = await db.get(args.organizationId);
   const conversation = await db.get(args.conversationId);
@@ -411,5 +417,7 @@ export async function loadFocusContextInput(
     messages,
     discreet: org.settings.telegram?.discreet === true,
     currency: org.settings.currency || "BRL",
+    timezone: safeTimezone(org.settings.timezone),
+    ...(args.now !== undefined ? { now: args.now } : {}),
   };
 }

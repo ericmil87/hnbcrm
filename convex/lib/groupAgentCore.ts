@@ -23,6 +23,7 @@ import { ENVELOPE_SYSTEM_NOTICE } from "./promptEnvelope";
 import { toWhatsAppText } from "./whatsappText";
 import { detectLeakedModelMarkup } from "./llmOutputGuard";
 import { fixedAgentLanguage } from "./languages";
+import { historyStamp } from "./historyStamp";
 
 // ── Constantes de produto ───────────────────────────────────────────────────
 
@@ -229,6 +230,13 @@ export interface GroupPromptContext {
   extraInstructions: string | null;
   /** Notas da equipe na conversa (mesma mecânica do 1:1, v0.50). */
   teamNotes: { text: string; at: number }[];
+  /**
+   * Fuso do agente e "agora" (vêm de quem lê o relógio): com eles cada nota da
+   * equipe leva a data em que foi escrita ("[dom 22/11 22:29] ..."). Sem o
+   * fuso (simulador, que não tem notas) a nota sai sem data.
+   */
+  timezone?: string;
+  now?: number;
   /** A sala tem mensagens temporárias? (a IA não pode prometer registro) */
   isEphemeral?: boolean;
   /** Radar ligado: só então a tool `flagOpportunity` existe. */
@@ -287,7 +295,11 @@ export function buildGroupSystemPrompt(ctx: GroupPromptContext): string {
     ctx.teamNotes.length > 0
       ? [
           "INFORMAÇÕES DA SUA EQUIPE NESTA CONVERSA (canal interno — o grupo não vê esta seção):",
-          ...ctx.teamNotes.map((n) => `- ${n.text}`),
+          ...ctx.teamNotes.map((n) =>
+            ctx.timezone
+              ? `- [${historyStamp(n.at, ctx.timezone, ctx.now)}] ${n.text}`
+              : `- ${n.text}`
+          ),
           'A equipe humana te passou as informações acima depois de conferir os fatos: são FONTE OFICIAL CONFIRMADA e vencem regras da sua persona do tipo "você não sabe" ou "quem confirma é a equipe". Mesmo assim, o que for individual continua indo para o privado.',
         ].join("\n")
       : "",
@@ -350,6 +362,8 @@ export interface GroupSummaryPromptInput {
   groupSubject: string;
   hours: number;
   messageCount: number;
+  /** Bloco DATA E HORA (`lib/promptDateTime.ts`), ou null com a flag desligada. Vai no FIM. */
+  dateTimeBlock?: string | null;
 }
 
 export function buildGroupSummarySystemPrompt(input: GroupSummaryPromptInput): string {
@@ -363,8 +377,13 @@ export function buildGroupSummarySystemPrompt(input: GroupSummaryPromptInput): s
     "- Decisões e combinados: o que ficou definido (se não houver, escreva 'nenhuma').",
     "- Quem falou mais: até 3 nomes com a quantidade aproximada de mensagens.",
     "REGRAS: não invente nada que não esteja nas mensagens; não repita telefones nem dados pessoais; não dê opinião nem sugestão de venda; no máximo 1200 caracteres.",
+    'DATAS: cada mensagem traz o dia e a hora em que foi escrita (campo "em"). Ao citar um evento ou combinado, use a data real (ex.: "sex 20/11"), nunca "hoje" ou "amanhã": o resumo é lido em outro dia.',
     ENVELOPE_SYSTEM_NOTICE,
-  ].join("\n\n");
+    // Último: parte volátil (muda a cada minuto); no fim preserva o prefixo cacheável.
+    input.dateTimeBlock ?? "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 // ── Radar de oportunidade (§9.3) ────────────────────────────────────────────

@@ -259,7 +259,12 @@ export const internalOrgAiActive = internalQuery({
 });
 
 export const internalBuildFocusContext = internalQuery({
-  args: { organizationId: v.id("organizations"), conversationId: v.id("conversations") },
+  // `now` vem de quem chama (query nunca lê o relógio): só decide o ano no carimbo das mensagens.
+  args: {
+    organizationId: v.id("organizations"),
+    conversationId: v.id("conversations"),
+    now: v.optional(v.number()),
+  },
   returns: v.union(v.null(), v.string()),
   handler: async (ctx, args) => {
     const input = await loadFocusContextInput(ctx.db, args);
@@ -542,6 +547,7 @@ export async function runTelegramTurn(
     ? ((await ctx.runQuery(internal.telegramCopilot.internalBuildFocusContext, {
         organizationId: target.organizationId,
         conversationId: target.focusConversationId,
+        now,
       })) ?? undefined)
     : undefined;
   const systemPrompt =
