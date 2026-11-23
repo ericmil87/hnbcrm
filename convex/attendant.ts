@@ -127,6 +127,7 @@ import { claimJudgeOn, judgeViolation, shouldJudge } from "./lib/schedClaimJudge
 import { type JudgeCallResult, runClaimJudge } from "./lib/schedClaimJudgeRun";
 import { SCHED_CLAIM_JUDGE_ENABLED } from "./lib/schedConstants";
 import { localDateOf } from "./lib/schedTime";
+import { buildAttendantFinalInstruction, buildTimeAnchor } from "./lib/promptTimeAnchor";
 import { customerTail, customerTextForGroup, detectCustomerIntent, iaAskedHowMany, isChangeIntent, mentionsGroup, mentionsOtherService } from "./lib/schedIntent";
 import { type SafeFacts, schedSafeReply } from "./lib/schedSafeText";
 import { markOffersShownFromText } from "./lib/schedAiState";
@@ -1822,6 +1823,19 @@ export const internalClaimForProcessing = internalMutation({
             }
           : null,
         history,
+        // Âncora de tempo (só com o carimbo de data/hora ligado): última mensagem do cliente e última NOSSA
+        // (IA + equipe) saem do histórico já lido, sem query nova.
+        timeAnchor: shouldIncludeCurrentDateTime(profile)
+          ? buildTimeAnchor({
+              now,
+              timezone,
+              lastInboundAt:
+                rawHistory.find((m) => m.direction === "inbound" && m.senderType === "contact" && !m.isInternal)
+                  ?.createdAt ?? null,
+              lastOutboundAt:
+                rawHistory.find((m) => m.direction === "outbound" && !m.isInternal)?.createdAt ?? null,
+            })
+          : null,
         teamNotes: (conversation.aiTeamNotes ?? []).map((n) => ({ text: n.text, at: n.at })),
         // Data/hora: fuso do horário de atendimento > fuso da org > default.
         // Opt-OUT (ausente = ligado), ao contrário da visão.
@@ -3721,6 +3735,11 @@ type RunContext = {
   contact: Record<string, unknown> | null;
   /** `em` = data legível no fuso do agente ("dom 22/11 22:29"), nunca epoch. */
   history: { de: string; texto: string; em?: string }[];
+  /**
+   * Âncora de tempo (AGORA + última mensagem do cliente/nossa + regra), calculada no claim e colada no FIM da
+   * mensagem do usuário, antes da instrução final. `null` com `includeCurrentDateTime:false`.
+   */
+  timeAnchor?: string | null;
   // Notas persistidas pela equipe humana nesta conversa (returnToAi/reject com
   // instrução) — entram no prompt de TODOS os turnos como fonte oficial.
   teamNotes: { text: string; at: number }[];
@@ -3889,7 +3908,13 @@ type PromptContext = Pick<
   | "followUp"
   | "pendingFollowUps"
   | "channelLabel"
-> & { externalAgenda?: ExternalAgendaRunConfig | null; botGuardEnabled?: boolean; sched?: SchedRunContext | null; schedToolsOff?: boolean };
+> & { externalAgenda?: ExternalAgendaRunConfig | null; botGuardEnabled?: boolean; sched?: SchedRunContext | null; schedToolsOff?: boolean; timezone?: string };
+
+/** "[dom 22/11 22:29] " (com o espaço) para a nota da equipe; vazio se o instante não for utilizável. */
+function noteStamp(at: number | undefined, timezone: string | undefined): string {
+  if (typeof at !== "number" || !Number.isFinite(at) || Math.abs(at) > MAX_EPOCH_MS) return "";
+  return `[${formatLocalShort(at, timezone ?? "")}] `;
+}
 
 // P4: allowMoveStages:false remove moveThisLead das tools da run (subtração do
 // registry estático — nunca adição). O executor recusa por conta própria também.
@@ -4003,7 +4028,8 @@ function buildAttendantSystemPrompt(context: PromptContext): string {
       return notes.length > 0
         ? [
             "INFORMAÇÕES DA SUA EQUIPE NESTA CONVERSA (canal interno de supervisão — o cliente não vê esta seção):",
-            ...notes.map((n) => `- ${n.text}`),
+            // Data da nota no fuso do agente: "amanhã 10h" escrito na terça não vale na quinta.
+            ...notes.map((n) => `- ${noteStamp(n.at, context.timezone)}${n.text}`),
             'A equipe humana da empresa te passou as informações acima depois de conferir os fatos. Elas são FONTE OFICIAL CONFIRMADA: use-as como verdade, com prioridade sobre o restante do conhecimento e sobre regras da sua persona do tipo "você não sabe", "não tem acesso" ou "quem confirma é a equipe" — a equipe é quem confirmou. Repassar esses dados ao cliente NÃO é inventar. Não abra repasse (requestHandoff) para algo que já esteja respondido aqui.',
           ].join("\n")
         : "";
@@ -4167,18 +4193,12 @@ export const internalProcessQueueItem = internalAction({
           : {}),
       });
 
-      // Turno PROATIVO: ninguém acabou de escrever. A instrução final é outra —
-      // "releia e decida", não "responda ao cliente agora".
-      const finalInstruction = context.followUp
-        ? [
-            "Chegou a hora de um follow-up que VOCÊ agendou (campo \"follow_up_de_agora\").",
-            "Releia o histórico acima ANTES de escrever: pode ser que o assunto já tenha se resolvido sozinho.",
-            "- Já resolvido (o cliente mandou o comprovante, já comprou, já respondeu) → NÃO mande mensagem: chame resolveFollowUp com outcome \"not_needed\".",
-            "- Ainda faz sentido → chame replyToCustomer com uma mensagem curta e leve, que retome o assunto sem cobrar.",
-            "- O cliente pediu outra data → resolveFollowUp com outcome \"reschedule\".",
-            "Nunca escreva nada fora de uma ferramenta: texto solto NÃO chega ao cliente.",
-          ].join("\n")
-        : "Responda ao cliente agora (última mensagem do histórico acima).";
+      // Instrução final ÚNICA (runtime e simulador): âncora de tempo + "responda agora" (ou, no turno
+      // PROATIVO de follow-up, "releia e decida").
+      const finalInstruction = buildAttendantFinalInstruction({
+        followUp: Boolean(context.followUp),
+        anchor: context.timeAnchor ?? null,
+      });
 
       const messages: ChatMessage[] = [
         { role: "system", content: buildAttendantSystemPrompt(context) },
@@ -6399,6 +6419,23 @@ export const simulateAttendant = action({
           context.schedulingOn ? { nextDays: SCHEDULING_NEXT_DAYS } : undefined
         )
       : null;
+    // Âncora de tempo, espelho do runtime: última mensagem do cliente e última NOSSA saem dos `at` do transcript
+    // (só os válidos); sem `at` a parte some e a âncora leva só o AGORA (nada é inventado). Grupo não tem.
+    const lastAtOf = (role: "customer" | "agent"): number | null => {
+      for (const t of args.transcript.slice(-20).reverse()) {
+        if (t.role === role && t.at !== undefined && Number.isFinite(t.at) && Math.abs(t.at) <= MAX_EPOCH_MS) return t.at;
+      }
+      return null;
+    };
+    const simulatorAnchor =
+      !args.group && context.includeCurrentDateTime
+        ? buildTimeAnchor({
+            now: simulatedNow,
+            timezone: context.timezone,
+            lastInboundAt: lastAtOf("customer"),
+            lastOutboundAt: lastAtOf("agent"),
+          })
+        : null;
     // Agenda v2 (D1): as MESMAS condições do runtime, sem conversa nem contato (o simulador não tem).
     context.sched = null;
     context.schedToolsOff = args.followUp !== undefined;
@@ -6490,18 +6527,10 @@ export const simulateAttendant = action({
                 ? { ofertas_vigentes: offersForEnvelope(context.sched.offers) }
                 : {}),
               ...(context.followUp ? { follow_up_de_agora: context.followUp } : {}),
-            })}\n\n${
-              context.followUp
-                ? [
-                    'Chegou a hora de um follow-up que VOCÊ agendou (campo "follow_up_de_agora").',
-                    "Releia o histórico acima ANTES de escrever: pode ser que o assunto já tenha se resolvido sozinho.",
-                    '- Já resolvido → NÃO mande mensagem: chame resolveFollowUp com outcome "not_needed".',
-                    "- Ainda faz sentido → chame replyToCustomer com uma mensagem curta e leve.",
-                    '- O cliente pediu outra data → resolveFollowUp com outcome "reschedule".',
-                    "Nunca escreva nada fora de uma ferramenta: texto solto NÃO chega ao cliente.",
-                  ].join("\n")
-                : "Responda ao cliente agora (última mensagem do histórico acima)."
-            }`,
+            })}\n\n${buildAttendantFinalInstruction({
+              followUp: Boolean(context.followUp),
+              anchor: simulatorAnchor,
+            })}`,
           },
         ];
     // P2.4: o simulador agora é MEDIDO (agentRuns `simulator` + contador mensal),
