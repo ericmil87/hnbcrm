@@ -405,6 +405,7 @@ import type * as opsContactAvatar from "../opsContactAvatar.js";
 import type * as opsContactRelation from "../opsContactRelation.js";
 import type * as opsMeta from "../opsMeta.js";
 import type * as opsMigration from "../opsMigration.js";
+import type * as opsPromptReplay from "../opsPromptReplay.js";
 import type * as opsPurge from "../opsPurge.js";
 import type * as opsSearchFold from "../opsSearchFold.js";
 import type * as opsTasks from "../opsTasks.js";
@@ -869,6 +870,7 @@ declare const fullApi: ApiFromModules<{
   opsContactRelation: typeof opsContactRelation;
   opsMeta: typeof opsMeta;
   opsMigration: typeof opsMigration;
+  opsPromptReplay: typeof opsPromptReplay;
   opsPurge: typeof opsPurge;
   opsSearchFold: typeof opsSearchFold;
   opsTasks: typeof opsTasks;
