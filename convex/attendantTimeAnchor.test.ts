@@ -84,7 +84,15 @@ type ProfilePatch = {
   schedule?: { timezone: string; startHour: number; endHour: number };
   followUps?: { mode: "send"; quietStartHour: number; quietEndHour: number };
 };
-type Msg = { at: number; senderType: "contact" | "ai" | "human"; text: string };
+type Msg = {
+  at: number;
+  senderType: "contact" | "ai" | "human";
+  text: string;
+  /** Nota interna / rascunho: nunca conta como "nossa" nem entra no histórico. */
+  isInternal?: boolean;
+  direction?: "inbound" | "outbound" | "internal";
+  metadata?: Record<string, unknown>;
+};
 
 /** Org + atendente + conversa; as mensagens de `msgs` entram com `createdAt` REAL (a última do cliente dispara o turno). */
 async function seed(t: TestConvex<typeof schema>, msgs: Msg[], profile?: ProfilePatch, orgTz = "America/Sao_Paulo") {
@@ -138,8 +146,10 @@ async function seed(t: TestConvex<typeof schema>, msgs: Msg[], profile?: Profile
     for (const m of msgs) {
       await ctx.db.insert("messages", {
         organizationId, conversationId, leadId,
-        direction: m.senderType === "contact" ? "inbound" : "outbound",
-        senderType: m.senderType, content: m.text, contentType: "text", isInternal: false, createdAt: m.at,
+        direction: m.direction ?? (m.senderType === "contact" ? "inbound" : "outbound"),
+        senderType: m.senderType, content: m.text, contentType: "text", isInternal: m.isInternal ?? false,
+        ...(m.metadata ? { metadata: m.metadata } : {}),
+        createdAt: m.at,
       });
     }
     return { organizationId, adminUserId, adminId, agentId, leadId, conversationId };
@@ -233,6 +243,45 @@ describe("âncora de tempo — runtime", () => {
     const { t, seed: s } = await setup(NOW_REAL, msgs);
     const fetchMock = await runTurn(t, s, NOW_REAL);
     expect(userOf(fetchMock)).toContain("Última mensagem nossa: dom 22/11 22:29 (ontem, há 14 h).");
+  });
+
+  test("nota interna (outbound isInternal e direction \"internal\") mais nova que a última resposta NÃO vira 'Última mensagem nossa'", async () => {
+    const msgs: Msg[] = [
+      { at: sp(22, 22, 29, 40), senderType: "ai", text: "O Kenji liberou sim: amanhã, segunda 23/11, às 10h." },
+      // Nota interna da equipe (outbound) e rascunho (direction "internal"), ambas DEPOIS da resposta e antes do cliente.
+      { at: sp(23, 9, 0, 0), senderType: "human", text: "nota: cliente é da casa", isInternal: true },
+      { at: sp(23, 9, 30, 0), senderType: "ai", text: "rascunho que ninguém enviou", isInternal: true, direction: "internal" },
+      { at: sp(23, 12, 25, 12), senderType: "contact", text: "Muito obrigada" },
+    ];
+    const { t, seed: s } = await setup(NOW_REAL, msgs);
+    const fetchMock = await runTurn(t, s, NOW_REAL);
+
+    const user = userOf(fetchMock);
+    expect(user).toContain("Última mensagem nossa: dom 22/11 22:29 (ontem, há 14 h).");
+    expect(user).not.toContain("seg 23/11 09:00");
+    expect(user).not.toContain("seg 23/11 09:30");
+  });
+
+  test("mensagem do aparelho (human sem senderId, metadata.via \"device\") conta como nossa", async () => {
+    const msgs: Msg[] = [
+      { at: sp(22, 22, 29, 40), senderType: "ai", text: "O Kenji liberou sim: amanhã, segunda 23/11, às 10h." },
+      { at: sp(23, 10, 5, 0), senderType: "human", text: "Foi um prazer!", metadata: { via: "device" } },
+      { at: sp(23, 12, 25, 12), senderType: "contact", text: "Muito obrigada" },
+    ];
+    const { t, seed: s } = await setup(NOW_REAL, msgs);
+    const fetchMock = await runTurn(t, s, NOW_REAL);
+    expect(userOf(fetchMock)).toContain("Última mensagem nossa: seg 23/11 10:05 (hoje, há 2 h 20).");
+  });
+
+  test("conversa só com mensagens do cliente: a âncora sai sem 'Última mensagem nossa'", async () => {
+    const msgs: Msg[] = [{ at: sp(23, 12, 25, 12), senderType: "contact", text: "Oi, tudo bem?" }];
+    const { t, seed: s } = await setup(NOW_REAL, msgs);
+    const fetchMock = await runTurn(t, s, NOW_REAL);
+
+    const tail = tailOf(userOf(fetchMock));
+    expect(tail.startsWith("AGORA: segunda-feira, 23/11/2026, 12:25. Última mensagem do cliente: seg 23/11 12:25. \"Hoje\"")).toBe(true);
+    expect(tail).not.toContain("Última mensagem nossa");
+    expect(tail.endsWith(FINAL)).toBe(true);
   });
 
   test("nada de epoch no envelope nem na âncora", async () => {
@@ -358,6 +407,21 @@ describe("instrução final única (runtime = simulador)", () => {
     expect(tail).not.toContain("Última mensagem");
     expect(tail).not.toContain("1970");
     expect(tail.endsWith(FINAL)).toBe(true);
+  });
+
+  test("simulador com `group`: NÃO leva âncora (o agente de grupo tem o próprio prompt)", async () => {
+    const { t, seed: s } = await setup(NOW_REAL, CASO_REAL);
+    freezeClock(NOW_REAL);
+    const simFetch = stubLlm();
+    await asUser(t, s.adminUserId).action(api.attendant.simulateAttendant, {
+      organizationId: s.organizationId,
+      agentMemberId: s.agentId,
+      transcript: [{ role: "customer" as const, content: "@IA que horas é a roda?", at: CASO_REAL[1].at }],
+      simulatedNow: NOW_REAL,
+      group: { subject: "Grupo da turma" },
+    });
+    expect(userOf(simFetch)).not.toContain("AGORA:");
+    expect(userOf(simFetch)).not.toContain("Última mensagem");
   });
 
   test("simulador com includeCurrentDateTime:false: sem âncora, instrução crua", async () => {

@@ -4196,7 +4196,7 @@ export const internalProcessQueueItem = internalAction({
       // Instrução final ÚNICA (runtime e simulador): âncora de tempo + "responda agora" (ou, no turno
       // PROATIVO de follow-up, "releia e decida").
       const finalInstruction = buildAttendantFinalInstruction({
-        followUp: context.followUp !== null,
+        followUp: Boolean(context.followUp),
         anchor: context.timeAnchor ?? null,
       });
 
