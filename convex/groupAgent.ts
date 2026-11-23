@@ -34,6 +34,7 @@ import {
   internalMutation,
   internalQuery,
   MutationCtx,
+  QueryCtx,
 } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { Doc, Id } from "./_generated/dataModel";
@@ -108,6 +109,7 @@ import {
   resolveAgentTimezone,
   shouldIncludeCurrentDateTime,
 } from "./lib/promptDateTime";
+import { historyStamp } from "./lib/historyStamp";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { withMessageSearch } from "./lib/messageSearch";
 
@@ -174,7 +176,8 @@ async function countGroupAiReplies(
 
 /** O atendente IA da org — dono da persona, do conhecimento e do horário. */
 async function findGroupAttendant(
-  ctx: MutationCtx,
+  // Só lê: serve ao turno (mutation) e ao resumo (query), pela MESMA regra.
+  ctx: Pick<QueryCtx, "db">,
   organizationId: Id<"organizations">,
   channelConfigId: Id<"channelConfigs">
 ): Promise<Doc<"teamMembers"> | null> {
@@ -553,6 +556,10 @@ export const internalClaimGroupTurn = internalMutation({
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
       .order("desc")
       .take(GROUP_HISTORY_FOR_LLM * 2);
+    // Fuso do agente: o mesmo do bloco DATA E HORA ATUAIS, do carimbo de cada
+    // mensagem abaixo e das datas das notas da equipe (horário de atendimento >
+    // org > default).
+    const timezone = resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone);
     const history = rawHistory
       .filter((m) => !m.isInternal)
       .slice(0, GROUP_HISTORY_FOR_LLM)
@@ -560,7 +567,9 @@ export const internalClaimGroupTurn = internalMutation({
       .map((m) => ({
         de: groupSpeakerLabel(m),
         texto: historyTextOf(m, { visionEnabled }),
-        em: m.createdAt,
+        // Data LEGÍVEL ("dom 22/11 22:29"), não epoch ms: o modelo não converte
+        // epoch, e um "amanhã" dito na véspera parecia atual (caso Kenji).
+        em: historyStamp(m.createdAt, timezone, now),
       }));
 
     // Fase 4d: membros vêm de `groupParticipants` quando a sala já migrou.
@@ -605,11 +614,11 @@ export const internalClaimGroupTurn = internalMutation({
           // Mesma flag (e mesmo fuso) do perfil do atendente da org: quem
           // desliga o carimbo desliga em todo lugar onde essa persona fala.
           dateTimeBlock: shouldIncludeCurrentDateTime(profile)
-            ? buildCurrentDateTimeBlock(
-                now,
-                resolveAgentTimezone(profile.schedule?.timezone, org.settings.timezone)
-              )
+            ? buildCurrentDateTimeBlock(now, timezone)
             : null,
+          // Notas da equipe levam a data em que foram escritas.
+          timezone,
+          now,
         },
         envelope: {
           grupo: group.subject,
@@ -1318,24 +1327,23 @@ export const internalGetSummaryContext = internalQuery({
       .order("desc")
       .take(SUMMARY_MAX_MESSAGES);
     const visionEnabled = visionEnabledForOrg(org);
+    // O atendente da sala (a MESMA regra do turno, respeitando `channelConfigIds`)
+    // define o fuso e a flag do bloco de data.
+    const attendant = await findGroupAttendant(ctx, group.organizationId, group.channelConfigId);
+    const timezone = resolveAgentTimezone(
+      attendant?.agentProfile?.schedule?.timezone,
+      org!.settings.timezone
+    );
     const history = rows
       .filter((m) => !m.isInternal)
       .reverse()
       .map((m) => ({
         de: groupSpeakerLabel(m),
         texto: historyTextOf(m, { visionEnabled }).slice(0, 500),
-        em: m.createdAt,
+        // Data legível, não epoch ms: o resumo cita datas reais, não "amanhã".
+        em: historyStamp(m.createdAt, timezone, args.now),
       }));
 
-    const aiMembers = await ctx.db
-      .query("teamMembers")
-      .withIndex("by_organization_and_type", (q) =>
-        q.eq("organizationId", group.organizationId).eq("type", "ai")
-      )
-      .collect();
-    const attendant = aiMembers.find(
-      (m) => m.status === "active" && m.agentProfile?.kind === "attendant"
-    );
     const providerConfig = org!.settings.aiConfig?.providerConfig;
 
     return {
@@ -1350,6 +1358,11 @@ export const internalGetSummaryContext = internalQuery({
         DEFAULT_MODELS.classify,
       providerConfig: providerConfig ?? null,
       history,
+      timezone,
+      // Sem atendente = ligado (mesma semântica de `includeCurrentDateTime`).
+      dateTimeBlock: shouldIncludeCurrentDateTime(attendant?.agentProfile)
+        ? buildCurrentDateTimeBlock(args.now, timezone)
+        : null,
     };
   },
 });
@@ -1382,7 +1395,9 @@ type SummarySetup = {
   memberId: Id<"teamMembers"> | null;
   model: string;
   providerConfig: Parameters<typeof resolveOrgRoutes>[2];
-  history: { de: string; texto: string; em: number }[];
+  history: { de: string; texto: string; em: string }[];
+  timezone: string;
+  dateTimeBlock: string | null;
 };
 
 const summaryResultValidator = v.object({
@@ -1458,6 +1473,7 @@ export const internalGenerateSummary = internalAction({
               groupSubject: setup.subject,
               hours,
               messageCount: setup.history.length,
+              dateTimeBlock: setup.dateTimeBlock,
             }),
           },
           {
