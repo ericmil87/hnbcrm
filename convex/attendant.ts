@@ -6420,7 +6420,8 @@ export const simulateAttendant = action({
         )
       : null;
     // Âncora de tempo, espelho do runtime: última mensagem do cliente e última NOSSA saem dos `at` do transcript
-    // (só os válidos); sem `at` a parte some e a âncora leva só o AGORA (nada é inventado). Grupo não tem.
+    // (só os válidos); sem `at` a parte some e a âncora leva só o AGORA (nada é inventado). No grupo vale o mesmo, com
+    // o rótulo "Última mensagem do grupo" (`audience:"grupo"`), como o turno de grupo do runtime.
     const lastAtOf = (role: "customer" | "agent"): number | null => {
       for (const t of args.transcript.slice(-20).reverse()) {
         if (t.role === role && t.at !== undefined && Number.isFinite(t.at) && Math.abs(t.at) <= MAX_EPOCH_MS) return t.at;
@@ -6428,10 +6429,11 @@ export const simulateAttendant = action({
       return null;
     };
     const simulatorAnchor =
-      !args.group && context.includeCurrentDateTime
+      context.includeCurrentDateTime
         ? buildTimeAnchor({
             now: simulatedNow,
             timezone: context.timezone,
+            audience: args.group ? "grupo" : "cliente",
             lastInboundAt: lastAtOf("customer"),
             lastOutboundAt: lastAtOf("agent"),
           })
@@ -6512,7 +6514,7 @@ export const simulateAttendant = action({
             content: `${wrapUntrustedJson("conversa do grupo (SIMULAÇÃO)", {
               grupo: args.group.subject,
               historico: history,
-            })}\n\nResponda AGORA ao que foi perguntado a você no grupo (última mensagem do histórico). Se nada ali for para você, não chame nenhuma ferramenta.`,
+            })}${simulatorAnchor ? `\n\n${simulatorAnchor}` : ""}\n\nResponda AGORA ao que foi perguntado a você no grupo (última mensagem do histórico). Se nada ali for para você, não chame nenhuma ferramenta.`,
           },
         ]
       : [

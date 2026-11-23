@@ -110,6 +110,7 @@ import {
   shouldIncludeCurrentDateTime,
 } from "./lib/promptDateTime";
 import { historyStamp } from "./lib/historyStamp";
+import { buildTimeAnchor } from "./lib/promptTimeAnchor";
 import { lastMessagePatchForId } from "./lib/conversationListFields";
 import { withMessageSearch } from "./lib/messageSearch";
 
@@ -633,6 +634,20 @@ export const internalClaimGroupTurn = internalMutation({
               }
             : null,
         },
+        // Âncora de tempo (só com o carimbo de data/hora ligado, a mesma flag do bloco DATA E HORA): última
+        // mensagem de QUALQUER membro e última NOSSA (IA ou equipe) saem do histórico já lido, sem query nova.
+        timeAnchor: shouldIncludeCurrentDateTime(profile)
+          ? buildTimeAnchor({
+              now,
+              timezone,
+              audience: "grupo",
+              lastInboundAt:
+                rawHistory.find((m) => m.direction === "inbound" && m.senderType === "contact" && !m.isInternal)
+                  ?.createdAt ?? null,
+              lastOutboundAt:
+                rawHistory.find((m) => m.direction === "outbound" && !m.isInternal)?.createdAt ?? null,
+            })
+          : null,
         participants: allParticipants.map((p) => ({
           lid: p.lid,
           phone: p.phone,
@@ -1044,6 +1059,8 @@ type GroupRunContext = {
   temperature: number;
   prompt: Parameters<typeof buildGroupSystemPrompt>[0];
   envelope: Record<string, unknown>;
+  /** Âncora de tempo (`lib/promptTimeAnchor.ts`), ou null com o carimbo de data/hora desligado. */
+  timeAnchor?: string | null;
   participants: { lid?: string; phone?: string; leftAt?: number }[];
 };
 
@@ -1089,7 +1106,7 @@ export const internalProcessGroupTurn = internalAction({
         { role: "system", content: buildGroupSystemPrompt(context.prompt) },
         {
           role: "user",
-          content: `${wrapUntrustedJson("conversa do grupo", context.envelope)}\n\nResponda AGORA ao que foi perguntado a você no grupo (última mensagem do histórico). Se nada ali for para você, não chame nenhuma ferramenta.`,
+          content: `${wrapUntrustedJson("conversa do grupo", context.envelope)}${context.timeAnchor ? `\n\n${context.timeAnchor}` : ""}\n\nResponda AGORA ao que foi perguntado a você no grupo (última mensagem do histórico). Se nada ali for para você, não chame nenhuma ferramenta.`,
         },
       ];
 

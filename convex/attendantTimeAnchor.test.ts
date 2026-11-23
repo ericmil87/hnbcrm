@@ -409,8 +409,32 @@ describe("instrução final única (runtime = simulador)", () => {
     expect(tail.endsWith(FINAL)).toBe(true);
   });
 
-  test("simulador com `group`: NÃO leva âncora (o agente de grupo tem o próprio prompt)", async () => {
+  test("simulador com `group`: leva a âncora do grupo, antes de 'Responda AGORA', como o runtime de grupo", async () => {
     const { t, seed: s } = await setup(NOW_REAL, CASO_REAL);
+    freezeClock(NOW_REAL);
+    const simFetch = stubLlm();
+    await asUser(t, s.adminUserId).action(api.attendant.simulateAttendant, {
+      organizationId: s.organizationId,
+      agentMemberId: s.agentId,
+      transcript: [
+        { role: "agent" as const, content: "Combinado, pessoal!", at: CASO_REAL[0].at },
+        { role: "customer" as const, content: "@IA que horas é a roda?", at: CASO_REAL[1].at },
+      ],
+      simulatedNow: NOW_REAL,
+      group: { subject: "Grupo da turma" },
+    });
+    const user = userOf(simFetch);
+    const anchor = user.split("\n\n").find((p: string) => p.startsWith("AGORA:"))!;
+    expect(anchor).toContain("AGORA: segunda-feira, 23/11/2026, 12:25.");
+    expect(anchor).toContain("Última mensagem do grupo: seg 23/11 12:25.");
+    expect(anchor).not.toContain("do cliente");
+    expect(anchor).toContain("Última mensagem nossa:");
+    expect(user.indexOf(anchor)).toBeGreaterThan(user.indexOf("</crm_data>"));
+    expect(user.endsWith(`${anchor}\n\nResponda AGORA ao que foi perguntado a você no grupo (última mensagem do histórico). Se nada ali for para você, não chame nenhuma ferramenta.`)).toBe(true);
+  });
+
+  test("simulador com `group` e includeCurrentDateTime:false: sem âncora", async () => {
+    const { t, seed: s } = await setup(NOW_REAL, CASO_REAL, { includeCurrentDateTime: false });
     freezeClock(NOW_REAL);
     const simFetch = stubLlm();
     await asUser(t, s.adminUserId).action(api.attendant.simulateAttendant, {

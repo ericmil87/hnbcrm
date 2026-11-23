@@ -1,11 +1,12 @@
 /**
- * ÂNCORA DE TEMPO no fim da mensagem do usuário (atendente 1:1) + instrução final única.
+ * ÂNCORA DE TEMPO no fim da mensagem do usuário (atendente 1:1 e turno de grupo) + instrução final única.
  *
  * Por quê: o bloco DATA E HORA ATUAIS e o carimbo legível em cada mensagem do histórico (#207) NÃO bastaram.
  * No caso real (Kenji, 23/11/2026) a IA escreveu "Te espero amanhã às 10h" às 12h25, sobre uma sessão que era
  * às 10h do próprio dia: o modelo relê a própria despedida da véspera e a repete. O laboratório (414 respostas
  * reais pelo caminho de PROD) mediu: V0 (sem nada) 38 erros em 100 nos cenários difíceis; só uma frase de regra
  * no system prompt 17/100; ÂNCORA calculada no servidor, colada no FIM da mensagem do usuário, 1/100; controles 0.
+ * Grupo (lab de grupo, 141 respostas, mesmo modelo): erros de tempo 5/33 sem âncora, 0/35 com ela.
  * A redação abaixo é a que foi MEDIDA: não a reescreva sem medir de novo.
  *
  * Fica depois do histórico (recência) e antes da instrução final; não toca o system prompt (cache de prefixo).
@@ -99,12 +100,17 @@ export function buildTimeAnchor(input: {
   timezone: string;
   lastInboundAt?: number | null;
   lastOutboundAt?: number | null;
+  /**
+   * Quem escreve na ponta de lá: `cliente` (1:1, o padrão) ou `grupo` (turno de grupo, qualquer membro). Só troca
+   * a palavra do rótulo da última mensagem recebida; o resto do texto é o mesmo e foi medido (lab de grupo).
+   */
+  audience?: "cliente" | "grupo";
 }): string | null {
   if (!usable(input.now)) return null;
   const tz = safeTimezone(input.timezone);
   const parts = [`AGORA: ${formatNowLong(input.now, tz)}.`];
   if (usable(input.lastInboundAt)) {
-    parts.push(`Última mensagem do cliente: ${formatLocalShort(input.lastInboundAt, tz)}.`);
+    parts.push(`Última mensagem do ${input.audience ?? "cliente"}: ${formatLocalShort(input.lastInboundAt, tz)}.`);
   }
   if (usable(input.lastOutboundAt)) {
     const w = dayWord(input.lastOutboundAt, input.now, tz);
