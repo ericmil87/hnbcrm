@@ -4,6 +4,11 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ## [Unreleased]
 
+### Atendente IA: "hoje" e "amanhã" no dia certo
+
+- **A IA não repete mais um "amanhã" escrito na véspera.** Cada mensagem do histórico que o Atendente IA lê agora traz dia da semana, data e hora no fuso da sua conta (por exemplo "dom 22/11 22:29"). Antes ele via só um número, então, quando o cliente agradecia no próprio dia do horário marcado, a IA respondia "te espero amanhã às 10h". Nos testes com o caso real, o erro aparecia em 4 de 4 respostas antes e em 0 de 4 depois, e "amanhã" continua certo quando é mesmo amanhã.
+- **Teste de conversa com datas.** No simulador, cada mensagem pode levar a hora em que foi enviada, para reproduzir esse tipo de caso.
+
 ### Agendamento: Copiloto, API e MCP
 
 - **Peça ao Copiloto.** "O que tenho hoje?", "tem buraco na quinta?", "marca a Maria quinta às 10 na sala 2", "fecha a sala 2 amanhã": o Copiloto consulta a agenda e prepara a ação, mostra exatamente o que vai acontecer e só executa quando você confirma no botão (no sistema ou no Telegram). Ele respeita a sua permissão de Agenda e nunca envia nada ao cliente.
