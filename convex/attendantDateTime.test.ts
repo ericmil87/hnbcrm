@@ -64,6 +64,11 @@ function systemPromptOf(fetchMock: ReturnType<typeof vi.fn>, call = 0): string {
   return JSON.parse(init?.body ?? "{}").messages?.[0]?.content ?? "";
 }
 
+function userPromptOf(fetchMock: ReturnType<typeof vi.fn>, call = 0): string {
+  const init = fetchMock.mock.calls[call]?.[1] as { body?: string } | undefined;
+  return JSON.parse(init?.body ?? "{}").messages?.[1]?.content ?? "";
+}
+
 type ProfilePatch = {
   includeCurrentDateTime?: boolean;
   schedule?: { timezone: string; startHour: number; endHour: number };
@@ -155,6 +160,18 @@ async function runOneTurn(t: TestConvex<typeof schema>, seed: Seed, now: number)
   return systemPromptOf(fetchMock);
 }
 
+/** Igual a `runOneTurn`, mas devolve também a mensagem do usuário (envelope com o histórico). */
+async function runOneTurnBoth(t: TestConvex<typeof schema>, seed: Seed, now: number) {
+  await asUser(t, seed.adminUserId).mutation(api.attendant.requestAiDraft, {
+    conversationId: seed.conversationId,
+  });
+  const item = await t.run(async (ctx) => (await ctx.db.query("aiReplyQueue").collect())[0]);
+  freezeClock(now);
+  const fetchMock = stubLlm("Hoje é sexta-feira, 18/09.");
+  await t.action(internal.attendant.internalProcessQueueItem, { queueItemId: item!._id });
+  return { system: systemPromptOf(fetchMock), user: userPromptOf(fetchMock) };
+}
+
 async function setupAt(now: number, profile?: ProfilePatch) {
   vi.setSystemTime(now);
   const t = convexTest(schema, modules);
@@ -194,6 +211,85 @@ describe("carimbo de data e hora no prompt do atendente", () => {
 
     const prompt = await runOneTurn(t, seed, SEXTA_1432_SP);
     expect(prompt).toContain("18/09/2026, 18:32 (fuso Europe/Lisbon)");
+  });
+});
+
+describe("data legível em cada mensagem do histórico", () => {
+  // Incidente (Kenji, 23/11/2026): a IA escreveu "Te espero amanhã às 10h" ao
+  // responder um "obrigada" no PRÓPRIO dia da sessão. O histórico ia ao modelo
+  // com `em` = epoch em ms (1795447560734) — ilegível — então a frase "amanhã",
+  // escrita na véspera, parecia atual. Medido no simulador: 4/4 erravam sem data
+  // na mensagem, 0/4 com ela.
+  test("o histórico do runtime leva dia da semana, data e hora no fuso da org — nunca epoch", async () => {
+    const { t, seed } = await setupAt(SEXTA_1432_SP);
+
+    const { user } = await runOneTurnBoth(t, seed, SEXTA_1432_SP);
+    expect(user).toContain("sex 18/09 14:32");
+    expect(user).not.toMatch(/\d{12,}/); // nenhum epoch em ms no envelope
+  });
+
+  test("o carimbo da mensagem usa o fuso do horário de atendimento (o mesmo do bloco de data)", async () => {
+    const { t, seed } = await setupAt(SEXTA_1432_SP, {
+      schedule: { timezone: "Europe/Lisbon", startHour: 0, endHour: 24 },
+    });
+
+    const { system, user } = await runOneTurnBoth(t, seed, SEXTA_1432_SP);
+    expect(system).toContain("18/09/2026, 18:32 (fuso Europe/Lisbon)");
+    expect(user).toContain("sex 18/09 18:32");
+  });
+
+  test("simulador: `at` por mensagem vira o mesmo carimbo legível", async () => {
+    const { t, seed } = await setupAt(SEXTA_1432_SP);
+
+    freezeClock(SEXTA_1432_SP);
+    const fetchMock = stubLlm("Disponha!");
+    const domingo2229 = Date.UTC(2026, 10, 23, 1, 29); // dom 22/11 22:29 em SP
+    const segunda1225 = Date.UTC(2026, 10, 23, 15, 25); // seg 23/11 12:25 em SP
+    const result = await asUser(t, seed.adminUserId).action(api.attendant.simulateAttendant, {
+      organizationId: seed.organizationId,
+      agentMemberId: seed.agentId,
+      transcript: [
+        { role: "agent" as const, content: "O Kenji liberou: amanhã às 10h.", at: domingo2229 },
+        { role: "customer" as const, content: "Muito obrigada", at: segunda1225 },
+      ],
+      simulatedNow: segunda1225,
+    });
+    expect(result.error).toBeNull();
+    const user = userPromptOf(fetchMock);
+    expect(user).toContain("dom 22/11 22:29");
+    expect(user).toContain("seg 23/11 12:25");
+    expect(systemPromptOf(fetchMock)).toContain("segunda-feira, 23/11/2026, 12:25");
+  });
+
+  test("simulador: sem `at` (botão Testar) a linha sai sem data, nunca com 1970", async () => {
+    const { t, seed } = await setupAt(SEXTA_1432_SP);
+
+    freezeClock(SEXTA_1432_SP);
+    const fetchMock = stubLlm("Oi!");
+    await asUser(t, seed.adminUserId).action(api.attendant.simulateAttendant, {
+      organizationId: seed.organizationId,
+      agentMemberId: seed.agentId,
+      transcript: [{ role: "customer" as const, content: "Oi" }],
+    });
+    const user = userPromptOf(fetchMock);
+    expect(user).not.toContain("1970");
+    expect(user).not.toContain("qui 01/01");
+    // A chave some de vez: antes da correção saía `"em":0` (número cru).
+    expect(user).not.toMatch(/"em"\s*:/);
+  });
+
+  test("simulador: `at` impossível é ignorado em vez de estourar a action", async () => {
+    for (const impossivel of [Number.NaN, 1e20, -1e20, Number.POSITIVE_INFINITY]) {
+      const { t, seed } = await setupAt(SEXTA_1432_SP);
+      freezeClock(SEXTA_1432_SP);
+      stubLlm("Oi!");
+      const result = await asUser(t, seed.adminUserId).action(api.attendant.simulateAttendant, {
+        organizationId: seed.organizationId,
+        agentMemberId: seed.agentId,
+        transcript: [{ role: "customer" as const, content: "Oi", at: impossivel }],
+      });
+      expect(result.error).toBeNull();
+    }
   });
 });
 

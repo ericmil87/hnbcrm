@@ -1682,6 +1682,12 @@ export const internalClaimForProcessing = internalMutation({
       .withIndex("by_conversation_and_created", (q) => q.eq("conversationId", conversation._id))
       .order("desc")
       .take(HISTORY_FOR_LLM * 2);
+    // Fuso do agente: o mesmo do bloco DATA E HORA ATUAIS e do carimbo de cada
+    // mensagem abaixo (horário de atendimento > org > default).
+    const timezone = resolveAgentTimezone(
+      agent!.agentProfile!.schedule?.timezone,
+      org!.settings.timezone
+    );
     const history = rawHistory
       .filter((m) => !m.isInternal)
       .slice(0, HISTORY_FOR_LLM)
@@ -1691,7 +1697,11 @@ export const internalClaimForProcessing = internalMutation({
         // `visionEnabled` viaja junto: com a visão desligada o formatador devolve
         // o "[imagem]" cru de sempre, mesmo que exista descrição gravada.
         texto: historyTextOf(m, { visionEnabled }),
-        em: m.createdAt,
+        // Data LEGÍVEL ("dom 22/11 22:29"), não epoch: o modelo não converte
+        // 1795447560734 em dia, então repetia "amanhã às 10h" numa frase escrita
+        // na véspera (Kenji, 23/11/2026). Só com a data na própria mensagem ele
+        // consegue confrontar o "amanhã" antigo com o agora do bloco de data.
+        em: formatLocalShort(m.createdAt, timezone),
       }));
 
     const stages = await ctx.db
@@ -1706,7 +1716,6 @@ export const internalClaimForProcessing = internalMutation({
     const profile = agent!.agentProfile!;
     const disclosurePolicy = resolveDisclosurePolicy(profile, hasPriorAiOutbound);
     const providerConfig = org!.settings.aiConfig?.providerConfig;
-    const timezone = resolveAgentTimezone(profile.schedule?.timezone, org!.settings.timezone);
     const followUpSettings = resolveFollowUpSettings(profile, transportOf(channelConfig));
 
     // Último outbound HUMANO: no turno de follow-up é o que diz à IA se alguém
@@ -3710,7 +3719,8 @@ type RunContext = {
   stages: { name: string; isClosedWon: boolean; isClosedLost: boolean }[];
   lead: Record<string, unknown>;
   contact: Record<string, unknown> | null;
-  history: { de: string; texto: string; em: number }[];
+  /** `em` = data legível no fuso do agente ("dom 22/11 22:29"), nunca epoch. */
+  history: { de: string; texto: string; em?: string }[];
   // Notas persistidas pela equipe humana nesta conversa (returnToAi/reject com
   // instrução) — entram no prompt de TODOS os turnos como fonte oficial.
   teamNotes: { text: string; at: number }[];
@@ -6244,6 +6254,11 @@ export const simulateAttendant = action({
         // GRUPO (F4): quem falou. Num grupo o histórico é "membro:<nome>", e é
         // justamente isso que permite validar "responda só a quem perguntou".
         senderName: v.optional(v.string()),
+        // Quando a mensagem "foi enviada" (epoch ms). Em produção TODA mensagem do
+        // histórico leva a data legível; sem isto o simulador mandava histórico
+        // sem data e não reproduzia o "amanhã às 10h" dito no dia seguinte.
+        // Ausente/inválido = a linha sai sem `em` (como o botão "Testar" sempre foi).
+        at: v.optional(v.number()),
       })
     ),
     // "E se hoje fosse 07/10?" — epoch ms que substitui o AGORA do carimbo de
@@ -6350,7 +6365,10 @@ export const simulateAttendant = action({
           },
           { visionEnabled: true }
         ),
-        em: 0,
+        // Mesmo carimbo do runtime (`formatLocalShort` no fuso do agente).
+        ...(t.at !== undefined && Number.isFinite(t.at) && Math.abs(t.at) <= MAX_EPOCH_MS
+          ? { em: formatLocalShort(t.at, String(setup.timezone ?? "")) }
+          : {}),
       };
     });
 
