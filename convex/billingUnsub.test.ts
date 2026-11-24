@@ -331,18 +331,64 @@ describe("rota /notifications/unsubscribe", () => {
     expect(rows).toBe(0);
   });
 
-  test("teto por IP: a 61ª no mesmo IP = 429 sem tocar prefs; outro IP passa; IP cru nunca é gravado", async () => {
+  test("POST com token inválido não escreve NADA: nem teto por IP, nem prefs, nem audit; corpo idêntico", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);
-    for (let i = 0; i < 60; i++) expect((await post(t, "lixo", "198.51.100.1")).status).toBe(400);
+    const good = await tokenFor(s.orgA, s.alice);
+    const [ver, payload, sig] = good.split(".");
+    const forged: Record<string, string> = {
+      lixo: "lixo",
+      vazio: "",
+      longo: "v1." + "A".repeat(700),
+      adulterado: `${ver}.${payload}.${sig.slice(0, -1)}${sig.endsWith("A") ? "B" : "A"}`,
+      outroSegredo: await signUnsubToken("fake-unsub-secret-other-0123456789abcdef0123456", {
+        organizationId: s.orgA,
+        memberId: s.alice,
+      }),
+    };
+    const bodies = new Set<string>();
+    for (const [name, token] of Object.entries(forged)) {
+      // Com IP, com IP forjável no XFF e sem IP nenhum (balde `unsub ip:unknown`).
+      for (const headers of [{ "cf-connecting-ip": "198.51.100.7" }, { "x-forwarded-for": "10.0.0.1, 198.51.100.8" }, {}] as Record<string, string>[]) {
+        const res = await t.fetch(`/notifications/unsubscribe?t=${encodeURIComponent(token)}`, { method: "POST", headers });
+        expect(res.status, name).toBe(400);
+        expectSecurityHeaders(res);
+        bodies.add(await res.text());
+      }
+    }
+    expect([...bodies]).toEqual(["Link inválido."]);
+    const throttles = await t.run(async (ctx) => (await ctx.db.query("authEmailThrottle").take(10)).length);
+    expect(throttles).toBe(0);
+    expect(await emailFlag(t, s.orgA, s.alice)).toBe("no-row");
+    expect(await unsubAudits(t, s.orgA)).toEqual([]);
+  });
+
+  test("lixo em massa (com ou sem IP) não esgota o teto: o link legítimo segue 200", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    for (let i = 0; i < 70; i++) {
+      expect((await post(t, "lixo", "198.51.100.1")).status).toBe(400);
+      expect((await t.fetch("/notifications/unsubscribe?t=lixo", { method: "POST" })).status).toBe(400);
+    }
     const token = await tokenFor(s.orgA, s.alice);
-    const limited = await post(t, token, "198.51.100.1");
+    expect((await post(t, token, "198.51.100.1")).status).toBe(200);
+    expect((await t.fetch(`/notifications/unsubscribe?t=${encodeURIComponent(token)}`, { method: "POST" })).status).toBe(200);
+    expect(await emailFlag(t, s.orgA, s.alice)).toBe(false);
+  });
+
+  test("teto por IP (só tokens autênticos): a 61ª no mesmo IP = 429 sem tocar prefs; outro IP passa; IP cru nunca é gravado", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const alice = await tokenFor(s.orgA, s.alice);
+    for (let i = 0; i < 60; i++) expect((await post(t, alice, "198.51.100.1")).status).toBe(200);
+    const bob = await tokenFor(s.orgA, s.bob);
+    const limited = await post(t, bob, "198.51.100.1");
     expect(limited.status).toBe(429);
     expectSecurityHeaders(limited);
-    expect(await emailFlag(t, s.orgA, s.alice)).toBe("no-row");
+    expect(await emailFlag(t, s.orgA, s.bob)).toBe("no-row");
 
-    expect((await post(t, token, "198.51.100.2")).status).toBe(200);
-    expect(await emailFlag(t, s.orgA, s.alice)).toBe(false);
+    expect((await post(t, bob, "198.51.100.2")).status).toBe(200);
+    expect(await emailFlag(t, s.orgA, s.bob)).toBe(false);
 
     const keys = await t.run(async (ctx) => (await ctx.db.query("authEmailThrottle").take(10)).map((r) => r.email));
     expect(keys).toHaveLength(2);
@@ -353,15 +399,30 @@ describe("rota /notifications/unsubscribe", () => {
 
     // A janela vira depois de 1 h.
     vi.advanceTimersByTime(60 * 60 * 1000 + 1);
-    expect((await post(t, "lixo", "198.51.100.1")).status).toBe(400);
+    expect((await post(t, bob, "198.51.100.1")).status).toBe(200);
+  });
+
+  test("token autêntico de membro removido conta no teto e responde igual ao lixo", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const res = await post(t, await tokenFor(s.orgA, s.removed));
+    expect(res.status).toBe(400);
+    expect(await res.text()).toBe("Link inválido.");
+    const throttles = await t.run(async (ctx) => (await ctx.db.query("authEmailThrottle").take(10)).length);
+    expect(throttles).toBe(1);
+    expect(await unsubAudits(t, s.orgA)).toEqual([]);
   });
 
   test("x-forwarded-for: vale a entrada mais à direita (a da borda), não a forjável", async () => {
     const t = convexTest(schema, modules);
-    await seed(t);
+    const s = await seed(t);
+    const token = await tokenFor(s.orgA, s.alice);
     const viaXff = (xff: string) =>
-      t.fetch("/notifications/unsubscribe?t=lixo", { method: "POST", headers: { "x-forwarded-for": xff } });
-    for (let i = 0; i < 60; i++) expect((await viaXff(`10.0.0.${i}, 198.51.100.9`)).status).toBe(400);
+      t.fetch(`/notifications/unsubscribe?t=${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { "x-forwarded-for": xff },
+      });
+    for (let i = 0; i < 60; i++) expect((await viaXff(`10.0.0.${i}, 198.51.100.9`)).status).toBe(200);
     // Trocar a entrada da esquerda não escapa do teto.
     expect((await viaXff("10.9.9.9, 198.51.100.9")).status).toBe(429);
   });

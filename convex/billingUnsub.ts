@@ -11,8 +11,9 @@
  *  - a escrita é só por `patchMemberPrefs`, sempre "set" de `channels.email.billingNotices`.
  *
  * Rota HTTP (`router.ts`): `POST /notifications/unsubscribe?t=` (one-click, RFC 8058) chama
- * `internalOneClickUnsubscribe`, que primeiro conta o pedido no teto por IP (60/h em
- * `authEmailThrottle`, chave `unsub ip:<hash>`). `GET` na mesma rota só redireciona para a página.
+ * `internalOneClickUnsubscribe` só depois de verificar a assinatura do token (inválido = 400 sem
+ * escrita); a mutation conta o pedido no teto por IP (60/h em `authEmailThrottle`, chave
+ * `unsub ip:<hash>`), que portanto só conta tokens autênticos. `GET` na mesma rota só redireciona para a página.
  */
 import { v } from "convex/values";
 import { httpAction, internalMutation, mutation, query } from "./_generated/server";
@@ -140,8 +141,8 @@ export const setUnsubscribe = mutation({
 });
 
 /**
- * POST one-click: conta no teto por IP (todo pedido conta, válido ou não; estourado não
- * incrementa nem toca prefs), depois verifica o token e desativa.
+ * POST one-click: conta no teto por IP (só chega aqui token com assinatura válida: a rota HTTP
+ * verifica o HMAC antes; estourado não incrementa nem toca prefs), depois revalida o alvo e desativa.
  */
 export const internalOneClickUnsubscribe = internalMutation({
   args: { token: v.string(), throttleKey: v.string() },
@@ -176,6 +177,8 @@ const UNSUB_RESPONSE_HEADERS = {
   "X-Robots-Tag": "noindex",
 } as const;
 
+const INVALID_LINK_BODY = "Link inválido.";
+
 function textResponse(status: number, body: string): Response {
   return new Response(body, {
     status,
@@ -197,7 +200,13 @@ function tokenFromRequest(request: Request): string {
  */
 export const oneClickUnsubscribeHttp = httpAction(async (ctx, request) => {
   const token = tokenFromRequest(request);
-  const throttleKey = await unsubIpThrottleKey(clientIpKey(request), unsubSecretsFromEnv().current);
+  const secrets = unsubSecretsFromEnv();
+  // Assinatura ANTES de qualquer escrita: token sem HMAC válido nunca toca o banco (nem o teto
+  // por IP). Senão lixo criaria uma linha de `authEmailThrottle` por pedido ou esgotaria o balde
+  // `unsub ip:unknown`, devolvendo 429 a quem clica num link legítimo. Mesma resposta da falha
+  // dentro da mutation (sem enumeração).
+  if (!(await verifyUnsubToken(token, secrets))) return textResponse(400, INVALID_LINK_BODY);
+  const throttleKey = await unsubIpThrottleKey(clientIpKey(request), secrets.current);
   let outcome: "ok" | "invalid" | "rate_limited";
   try {
     outcome = await ctx.runMutation(internal.billingUnsub.internalOneClickUnsubscribe, { token, throttleKey });
@@ -205,7 +214,7 @@ export const oneClickUnsubscribeHttp = httpAction(async (ctx, request) => {
     return textResponse(500, "Erro. Tente de novo mais tarde.");
   }
   if (outcome === "rate_limited") return textResponse(429, "Muitas tentativas. Tente de novo mais tarde.");
-  if (outcome === "invalid") return textResponse(400, "Link inválido.");
+  if (outcome === "invalid") return textResponse(400, INVALID_LINK_BODY);
   return textResponse(200, "Pronto. Os e-mails de cobrança foram desativados.");
 });
 

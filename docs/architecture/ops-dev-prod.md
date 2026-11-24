@@ -78,3 +78,12 @@ Antes, toda falha de infraestrutura avisava, no máximo, os admins da org afetad
 | `OPENROUTER_LOW_BALANCE_USD` | limiar do aviso de saldo baixo | 5 |
 | `PLATFORM_ALERT_LLM_ERROR_BURST` | erros de IA por hora para o aviso | 15 |
 | `PLATFORM_ALERT_STUCK_OUTBOUND_MIN` | saídas presas para o alerta | 3 |
+
+## Descadastro dos e-mails de cobrança: envs (11/2026)
+
+| Env | Para quê | Se ausente (ou inválida) |
+|---|---|---|
+| `NOTIFICATION_UNSUB_SECRET` | segredo HMAC do link "Desativar"/`List-Unsubscribe` dos e-mails `billingNotices`. Mínimo 32 caracteres depois do `trim`; DIFERENTE em DEV e PROD (um token de DEV nunca pode valer em PROD) | os e-mails `billingNotices` são retidos (falha fechada; `internalBillingReport` mostra `unsubSecretMissing`) e todo link é recusado |
+| `NOTIFICATION_UNSUB_SECRET_PREV` | segredo anterior, só na VERIFICAÇÃO durante a rotação (links já enviados continuam valendo) | só o segredo atual vale; remover depois que os links antigos deixarem de importar |
+
+Também precisa de `CONVEX_SITE_URL` (o Convex define em todo deployment). Superfície pública e rate limit: `security.md`.
