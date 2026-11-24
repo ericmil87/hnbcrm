@@ -254,6 +254,45 @@ describe("8/9/10. preferências: REST pela porta, modelo exposto, permissões", 
     expect(none).toMatchObject({ _exists: false, preset: "all", channels: {}, pausedUntil: null });
   });
 
+  test("REST GET/PUT /api/v1/notifications/preferences expõem billingNotices como os outros flags", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const key = "fake-api-key-notif-prefs-0001";
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
+    const keyHash = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+    await t.run(async (ctx) => {
+      await ctx.db.insert("apiKeys", {
+        organizationId: s.organizationId, teamMemberId: s.seller.memberId, name: "k", keyHash, isActive: true, createdAt: Date.now(),
+      });
+    });
+    const call = async (method: "GET" | "PUT", body?: unknown) => {
+      const res = await t.fetch("/api/v1/notifications/preferences", {
+        method,
+        headers: { "X-API-Key": key, "Content-Type": "application/json" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      expect(res.status).toBe(200);
+      return (await res.json()).preferences as Record<string, unknown>;
+    };
+    // Sem linha: padrão ligado.
+    expect((await call("GET")).billingNotices).toBe(true);
+    // Com linha (escrita de outro flag): o GET devolve o padrão, não omite.
+    expect((await call("PUT", { taskOverdue: false })).billingNotices).toBe(true);
+    // PUT desliga; GET reflete.
+    expect((await call("PUT", { billingNotices: false })).billingNotices).toBe(false);
+    expect((await call("GET")).billingNotices).toBe(false);
+  });
+
+  test("getMyPreferences/updateMyPreferences (obsoletos) leem e escrevem billingNotices", async () => {
+    const t = convexTest(schema, modules);
+    const s = await seed(t);
+    const me = asUser(t, s.seller.userId);
+    await me.mutation(api.notificationPreferences.updateMyPreferences, { organizationId: s.organizationId, taskAssigned: false });
+    expect((await me.query(api.notificationPreferences.getMyPreferences, { organizationId: s.organizationId })).billingNotices).toBe(true);
+    await me.mutation(api.notificationPreferences.updateMyPreferences, { organizationId: s.organizationId, billingNotices: false });
+    expect((await me.query(api.notificationPreferences.getMyPreferences, { organizationId: s.organizationId })).billingNotices).toBe(false);
+  });
+
   test("updateMyPreferences e resume usam a porta; resume sem linha não cria linha", async () => {
     const t = convexTest(schema, modules);
     const s = await seed(t);

@@ -1,6 +1,6 @@
 import type { Doc } from "../../convex/_generated/dataModel";
 import { PUSH_BADGE_CAP, PUSH_TEMPLATES } from "../../convex/lib/webPush";
-import { ACTIONABLE_TYPES } from "../../convex/lib/notificationPolicy";
+import { ACTIONABLE_TYPES, PREFERENCE_FLAG } from "../../convex/lib/notificationPolicy";
 import { notificationTargetPath } from "../../convex/lib/notificationTargets";
 import { TAB_ROUTES } from "./routes";
 
@@ -124,6 +124,7 @@ export function notificationHref(n: InboxNotification): string | null {
     case "plan_read_only":
     case "plan_payment_overdue":
     case "plan_payment_received":
+    case "plan_charge_upcoming":
     case "plan_changed":
     case "plan_change_scheduled":
     case "plan_cancel_scheduled":
@@ -195,7 +196,7 @@ export function shouldFillPage(opts: {
  * Derivado de `ACTIONABLE_TYPES` (convex/lib/notificationPolicy.ts): um tipo novo acionável passa a avisar sozinho.
  */
 export const TOAST_TYPES: ReadonlySet<NotificationType> = new Set<NotificationType>(
-  ACTIONABLE_TYPES.filter((t) => t !== "lead_assigned"),
+  ACTIONABLE_TYPES.filter((t) => t !== "lead_assigned" && PREFERENCE_FLAG[t] !== "billingNotices"),
 );
 
 /** Tipos ligados a uma conversa: não avisam se ela já está aberta na tela. */

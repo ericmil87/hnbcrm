@@ -6,6 +6,7 @@ import {
   DEFAULT_QUIET_END,
   DEFAULT_QUIET_START,
   KNOWN_FLAGS,
+  MANDATORY_FLAGS,
   channelAllows,
   isValidHHMM,
   isValidTimeZone,
@@ -74,6 +75,7 @@ export const getMyPreferences = query({
       planAlert: prefs.planAlert ?? DEFAULTS.planAlert,
       agendaActivity: prefs.agendaActivity ?? DEFAULTS.agendaActivity,
       agendaApproval: prefs.agendaApproval ?? DEFAULTS.agendaApproval,
+      billingNotices: prefs.billingNotices ?? DEFAULTS.billingNotices,
       _id: prefs._id,
       _exists: true,
     };
@@ -110,6 +112,7 @@ export const updateMyPreferences = mutation({
     planAlert: v.optional(v.boolean()),
     agendaActivity: v.optional(v.boolean()),
     agendaApproval: v.optional(v.boolean()),
+    billingNotices: v.optional(v.boolean()),
   },
   returns: v.null(),
   handler: async (ctx, args) => {
@@ -231,6 +234,7 @@ export const internalGetPreferences = internalQuery({
       planAlert: prefs.planAlert ?? DEFAULTS.planAlert,
       agendaActivity: prefs.agendaActivity ?? DEFAULTS.agendaActivity,
       agendaApproval: prefs.agendaApproval ?? DEFAULTS.agendaApproval,
+      billingNotices: prefs.billingNotices ?? DEFAULTS.billingNotices,
       // Modelo atual (aditivo): flags = canais externos; o sino de tipo acionável registra sempre.
       preset: prefs.preset ?? orgPreset ?? "all",
       channels: prefs.channels ?? {},
@@ -380,6 +384,8 @@ export const setChannelPref = mutation({
   handler: async (ctx, args) => {
     const member = await requireAuth(ctx, args.organizationId);
     if (!KNOWN_FLAGS.includes(args.flag)) throw new ConvexError("Tipo de aviso desconhecido");
+    // O e-mail de aviso obrigatório não se desliga; Telegram/push são editáveis.
+    if (MANDATORY_FLAGS.has(args.flag) && args.channel === "email") throw new ConvexError("Esse aviso é obrigatório");
     const existing = await loadMemberPrefs(ctx, args.organizationId, member._id);
     const channels = {
       ...(existing?.channels ?? {}),

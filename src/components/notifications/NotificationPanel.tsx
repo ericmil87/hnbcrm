@@ -109,6 +109,7 @@ const TYPE_ICON: Record<NotificationDoc["type"], React.ElementType> = {
   plan_read_only: Gauge,
   plan_payment_overdue: Gauge,
   plan_payment_received: Gauge,
+  plan_charge_upcoming: CalendarClock,
   plan_changed: Gauge,
   plan_change_scheduled: Gauge,
   plan_cancel_scheduled: Gauge,

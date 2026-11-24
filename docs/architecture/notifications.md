@@ -50,6 +50,10 @@ Portas: `lib/webPush.ts` (pura: payload, headers, classificação de erro) e `pu
 
 Manifest com `id` `/app/` e `scope` `/` (o login `/entrar` abre dentro do app instalado; no iOS o app instalado tem armazenamento próprio), SW registrado só em `/app/` de `vite-plugin-pwa` (`injectManifest`, `registerType: "prompt"`) sem cache de runtime (Convex e storage vão sempre à rede), atualização só em momento seguro (texto digitado bloqueia), `MIN_CLIENT_BUILD`, convite de instalação e rascunho do composer. Kill switch do SW: `PWA_KILL_SWITCH=1` num build. Detalhe: [`frontend.md`](frontend.md) (A1/A2).
 
+### Descadastro dos e-mails de cobrança (one-click, 11/2026)
+
+Só a classe `billingNotices` é desativável por link. Superfície pública e SEM login (`convex/billingUnsub.ts`): `POST /notifications/unsubscribe?t=` (RFC 8058, desativa; corpo não lido), `GET` na mesma rota (só 302 para a página, nunca lê nem escreve) e a página `/notificacoes/desativar` (`previewUnsubscribe`/`setUnsubscribe`, age só por clique). O token HMAC (`lib/billingUnsub.ts`) vale para UM membro numa org e só para `channels.email.billingNotices`; não expira (revogação = rotação do segredo ou membro removido). A rota POST verifica a assinatura ANTES de qualquer escrita: token inválido = 400 com o mesmo corpo, sem linha nova; o teto por IP (60/h, `authEmailThrottle`, chave `unsub ip:<hash>`) só conta tokens autênticos. Envs e segurança: [`security.md`](security.md), [`ops-dev-prod.md`](ops-dev-prod.md).
+
 ## Integração pós-v0.79 (fios soltos)
 
 - Fonte única do destino por tipo: `notificationTargetPath` (`lib/notificationTargets.ts`; o push e o clique do sino usam). `NON_PERSONAL_FLAGS`, `ACTIONABLE_TYPES` e `PUSH_PREFERENCE_FLAGS` (flags com template de push) saem de `lib/notificationPolicy.ts` para o front (teste de paridade).

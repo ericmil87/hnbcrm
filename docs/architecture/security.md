@@ -43,3 +43,9 @@ PDF (`lib/pdfExtract.ts`, "use node", `unpdf@2.1.0` exato). Três revisões cont
 
 - Rotas HTTP públicas/limitadas por IP (`/api/onboarding/stream`, `/api/v1/public/contact`) leem o IP só por `clientIpKey` (`convex/lib/onboardingBudget.ts`): `cf-connecting-ip`, `x-real-ip`, entrada mais à direita de `x-forwarded-for`; sem IP válido, aviso no log e `null` (balde compartilhado/limites por usuário). Não leia esses cabeçalhos direto.
 - A conversa de `/comecar` exibe o aviso de que o texto é processado por IA de provedores parceiros, inclusive fora do Brasil (`AI_PROCESSING_NOTICE`), e `/comecar` sai com `X-Robots-Tag: noindex` (`vercel.json`). `/privacidade` descreve o registro do titular como contato comercial e o processamento por IA.
+
+### Descadastro dos e-mails de cobrança sem login (11/2026)
+
+- Rotas públicas: `POST /notifications/unsubscribe?t=` (one-click), `GET` na mesma rota (só redireciona) e a página `/notificacoes/desativar` (query/mutation públicas em `convex/billingUnsub.ts`). A credencial é o token HMAC-SHA256 de `NOTIFICATION_UNSUB_SECRET` (`lib/billingUnsub.ts`): escopo = um membro numa org e só o e-mail de `billingNotices`; payload sem e-mail; sem expiração de propósito (o link precisa valer meses), revogação por rotação do segredo ou remoção do membro.
+- Ordem: assinatura primeiro (nada do banco é lido nem escrito antes), depois `normalizeId` + revalidação do membro (mesma org, humano, com `userId`, não removido). Toda falha devolve a mesma resposta (`{valid:false}` / 400 "Link inválido."), sem enumeração; o token nunca vai a log, erro nem audit.
+- Teto por IP (60/h, `authEmailThrottle`, chave `unsub ip:<SHA-256 truncado com o segredo>`, nunca o IP cru; IP por `clientIpKey`) é aplicado DEPOIS da verificação do HMAC: lixo não cria linha nem esgota o balde compartilhado `unsub ip:unknown`.

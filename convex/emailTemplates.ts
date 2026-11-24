@@ -48,6 +48,8 @@ export function baseTemplate(opts: {
   preheader: string;
   content: string;
   appUrl: string;
+  /** HTML já escapado de uma linha extra no rodapé (ex.: link de descadastro). */
+  footerNote?: string;
 }): string {
   const logoUrl = safeUrl(`${resolveAppUrl()}/brand/email-logo.png`);
   return `<!DOCTYPE html>
@@ -82,6 +84,7 @@ ${darkCss()}
         <!-- Footer -->
         <tr><td style="padding-top: 24px; text-align: center; color: ${TEXT_SECONDARY}; font-family: ${FONT_STACK}; font-size: 12px; line-height: 1.5;">
           <p style="margin: 0; color: ${TEXT_SECONDARY};">HNBCRM · Humanos e IAs no mesmo time</p>
+          ${opts.footerNote ? `<p style="margin: 4px 0 0; color: ${TEXT_SECONDARY};">${opts.footerNote}</p>` : ""}
           <p style="margin: 4px 0 0;">
             <a href="${safeUrl(`${opts.appUrl}/app/configuracoes`)}" style="color: ${BRAND_LINK}; text-decoration: underline;">Gerenciar preferências de e-mail</a>
           </p>
@@ -630,6 +633,10 @@ export function buildTemplate(
       return buildChannelSessionLostTemplate(data as any);
     case "planAlert":
       return buildPlanAlertTemplate(data as any);
+    case "billingNotices":
+      return buildBillingNoticeTemplate(data as any, "notices");
+    case "billingCritical":
+      return buildBillingNoticeTemplate(data as any, "critical");
     default:
       // Fail-closed: um typo de eventType virava um e-mail vazio ("Evento: x")
       // entregue ao cliente. `dispatchNotification` captura e loga.
@@ -772,6 +779,70 @@ export function buildPlanAlertTemplate(data: {
         ${heading(escapeHtml(data.title))}
         ${data.body ? paragraph(escapeHtml(data.body)) : ""}
         ${ctaButton("Ver uso e fatura", `${appUrl}/app/configuracoes?secao=billing`)}
+      `,
+    }),
+  };
+}
+
+/** Rodapé do aviso obrigatório (`billingCritical`): sem link de desativar, só a explicação. */
+export const BILLING_CRITICAL_FOOTER =
+  "Este aviso protege a sua conta e não pode ser desativado. Para parar de recebê-lo, um administrador pode mudar o seu papel na equipe.";
+
+/**
+ * Avisos de cobrança (classes `billingNotices`, desativável, e `billingCritical`, obrigatório).
+ * O texto vem do `notificationCopy` (mesmo do sino: `title`/`body`); os dados estruturados
+ * viram a tabela de detalhes. `billingNotices` EXIGE `unsubUrl` (fail-closed: sem ele o envio
+ * é retido pelo despachante); `billingCritical` nunca leva link de descadastro.
+ */
+export function buildBillingNoticeTemplate(
+  data: {
+    type?: string;
+    orgName: string;
+    title: string;
+    body?: string;
+    amountBrl?: string;
+    dueDate?: string;
+    planLabel?: string;
+    paymentMethod?: "card" | "invoice";
+    nextChargeBrl?: string;
+    nextChargeDate?: string;
+    ctaUrl?: string;
+    reason?: string;
+    unsubUrl?: string;
+    appUrl?: string;
+  },
+  kind: "notices" | "critical",
+): TemplateResult {
+  if (kind === "notices" && !data.unsubUrl) throw new Error("billingNotices: unsubUrl ausente");
+  const appUrl = data.appUrl || resolveAppUrl();
+  const defaultCta = `${appUrl}/app/configuracoes?secao=billing`;
+  const method = data.paymentMethod === "card" ? "Cartão (cobrança automática)" : data.paymentMethod === "invoice" ? "Fatura (Pix, boleto ou cartão)" : "";
+  const upcoming = data.type === "plan_charge_upcoming";
+  const ctaLabel = upcoming && data.paymentMethod === "card" ? "Gerenciar assinatura" : upcoming ? "Ver fatura" : "Ver uso e fatura";
+  const rows = [
+    data.planLabel ? infoRow("Plano", escapeHtml(data.planLabel)) : "",
+    data.amountBrl ? infoRow("Valor", escapeHtml(data.amountBrl)) : "",
+    data.dueDate ? infoRow(upcoming ? "Data da cobrança" : "Vencimento", escapeHtml(data.dueDate)) : "",
+    method ? infoRow("Forma de pagamento", escapeHtml(method)) : "",
+    data.nextChargeDate
+      ? infoRow("Próxima cobrança", escapeHtml(`${data.nextChargeDate}${data.nextChargeBrl ? `: ${data.nextChargeBrl}` : ""}`))
+      : "",
+  ].join("");
+  const footerNote =
+    kind === "notices"
+      ? `Não quer mais estes e-mails? <a href="${safeUrl(data.unsubUrl ?? "")}" style="color: ${BRAND_LINK}; text-decoration: underline;">Desativar</a>`
+      : escapeHtml(BILLING_CRITICAL_FOOTER);
+  return {
+    subject: `${line(data.title)} (${line(data.orgName)})`,
+    html: baseTemplate({
+      preheader: `${escapeHtml(data.orgName)}: ${escapeHtml(data.title)}`,
+      appUrl,
+      footerNote,
+      content: `
+        ${heading(escapeHtml(data.title))}
+        ${data.body ? paragraph(escapeHtml(data.body)) : ""}
+        ${rows ? infoTable(rows) : ""}
+        ${ctaButton(ctaLabel, data.ctaUrl || defaultCta)}
       `,
     }),
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ACTIONABLE_TYPES } from "../../convex/lib/notificationPolicy";
+import { ACTIONABLE_TYPES, PREFERENCE_FLAG } from "../../convex/lib/notificationPolicy";
 import { notificationTargetPath } from "../../convex/lib/notificationTargets";
 import {
   TOAST_TYPES,
@@ -214,7 +214,15 @@ describe("TOAST_TYPES", () => {
     expect(TOAST_TYPES.has("ai_followup_needs_human")).toBe(true);
     expect(TOAST_TYPES.has("lead_assigned")).toBe(false);
     expect(TOAST_TYPES.has("campaign_completed")).toBe(false);
-    for (const t of ACTIONABLE_TYPES) if (t !== "lead_assigned") expect(TOAST_TYPES.has(t), t).toBe(true);
+    for (const t of ACTIONABLE_TYPES) if (t !== "lead_assigned" && PREFERENCE_FLAG[t] !== "billingNotices") expect(TOAST_TYPES.has(t), t).toBe(true);
+  });
+});
+
+describe("TOAST_TYPES e avisos de cobranca", () => {
+  it("recibo e confirmacoes de troca (billingNotices) nao tocam; os criticos seguem", () => {
+    for (const t of ACTIONABLE_TYPES) if (PREFERENCE_FLAG[t] === "billingNotices") expect(TOAST_TYPES.has(t), t).toBe(false);
+    expect(TOAST_TYPES.has("plan_payment_received")).toBe(false);
+    expect(TOAST_TYPES.has("plan_payment_overdue")).toBe(true);
   });
 });
 

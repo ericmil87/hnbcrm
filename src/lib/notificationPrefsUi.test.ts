@@ -1,4 +1,5 @@
 // @vitest-environment node
+import type { FlagRow } from "./notificationPrefsUi";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { KNOWN_FLAGS, NON_PERSONAL_FLAGS, PUSH_PREFERENCE_FLAGS } from "../../convex/lib/notificationPolicy";
@@ -92,6 +93,14 @@ describe("coluna No aparelho (push)", () => {
   });
 });
 
+describe("isCustomized com linha travada", () => {
+  it("o e-mail da linha obrigatória desligado não conta como ajuste", () => {
+    const row = { flag: "billingCritical", label: "x", desc: "x", group: "system", channels: ["email", "telegram"], bell: true, locked: true } as unknown as FlagRow;
+    expect(isCustomized("none", (c) => c === "email", [row])).toBe(false);
+    expect(isCustomized("none", (c) => c === "telegram", [row])).toBe(true);
+  });
+});
+
 describe("isCustomized", () => {
   const rows = buildMatrixGroups().flatMap((g) => g.rows);
   it("sem escolhas por tipo não é personalizado, em cada atalho", () => {
@@ -163,5 +172,15 @@ describe("pushAvailability", () => {
     for (const off of [{ killSwitch: true }, { featureOn: false }, { vapidKey: null }, { vapidKey: undefined }]) {
       expect(pushAvailability({ ...base, deviceSupported: true, ...off })).toEqual({ pushEnabled: false, pushAvailable: false });
     }
+  });
+});
+
+describe("linhas de cobranca", () => {
+  const rows = buildMatrixGroups().flatMap((g) => g.rows);
+  it("billingNotices e editavel; billingCritical e travada; planAlert segue editavel", () => {
+    expect(rows.find((r) => r.flag === "billingNotices")?.locked).toBe(false);
+    expect(rows.find((r) => r.flag === "billingCritical")?.locked).toBe(true);
+    expect(rows.find((r) => r.flag === "planAlert")?.locked).toBe(false);
+    expect(rows.filter((r) => r.locked).map((r) => r.flag)).toEqual(["billingCritical"]);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { addMonthsUtc, lastPaidSubscriptionInvoice, nextPaidPeriod, periodEndAfter, resolvePeriod } from "./billingPeriod";
+import { addMonthsUtc, formatDueDay, lastPaidSubscriptionInvoice, nextPaidPeriod, periodEndAfter, resolvePeriod } from "./billingPeriod";
 
 const d = (y: number, m: number, day: number) => Date.UTC(y, m - 1, day);
 
@@ -62,5 +62,12 @@ describe("nextPaidPeriod", () => {
   test("sem nextDue com fim gravado: nada anda", () => {
     expect(nextPaidPeriod({ currentStart: start, currentEnd: d(2026, 12, 5), now })).toEqual({ currentPeriodStart: start, currentPeriodEnd: d(2026, 12, 5) });
     expect(nextPaidPeriod({ currentEnd: d(2026, 12, 5), now })).toEqual({ currentPeriodEnd: d(2026, 12, 5) });
+  });
+});
+
+describe("formatDueDay", () => {
+  test("meia-noite UTC mostra o mesmo dia (não o anterior, como em Brasília)", () => {
+    expect(formatDueDay(d(2026, 12, 14))).toBe("14/12/2026");
+    expect(formatDueDay(d(2027, 1, 1))).toBe("01/01/2027");
   });
 });

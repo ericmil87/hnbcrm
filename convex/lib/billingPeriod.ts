@@ -85,3 +85,8 @@ export function nextPaidPeriod(args: {
   if (nextDue !== undefined && nextDue > currentEnd) return { currentPeriodStart: now, currentPeriodEnd: nextDue };
   return { ...(currentStart !== undefined ? { currentPeriodStart: currentStart } : {}), currentPeriodEnd: currentEnd };
 }
+
+/** "14/12/2026" de um dia gravado em meia-noite UTC (`currentPeriodEnd`, vencimento): sem fuso local, que recuaria o dia. */
+export function formatDueDay(ms: number): string {
+  return new Date(ms).toLocaleDateString("pt-BR", { timeZone: "UTC" });
+}

@@ -308,6 +308,22 @@ describe("internalBillingReport", () => {
     expect(none).toMatchObject({ status: "none", plan: null, aiAttendancesLimit: null });
     expect(JSON.stringify(res)).not.toMatch(/@|email|phone/i);
   });
+
+  test("unsubSecretMissing reflete NOTIFICATION_UNSUB_SECRET (ausente ou curto = true)", async () => {
+    const now = Date.UTC(2026, 10, 9);
+    try {
+      vi.stubEnv("NOTIFICATION_UNSUB_SECRET", "");
+      expect((await t.query(internal.opsBilling.internalBillingReport, { now })).unsubSecretMissing).toBe(true);
+      vi.stubEnv("NOTIFICATION_UNSUB_SECRET", "curto");
+      expect((await t.query(internal.opsBilling.internalBillingReport, { now })).unsubSecretMissing).toBe(true);
+      vi.stubEnv("NOTIFICATION_UNSUB_SECRET", "fake-unsub-secret-0123456789abcdef0123456789abcdef");
+      const res = await t.query(internal.opsBilling.internalBillingReport, { now });
+      expect(res.unsubSecretMissing).toBe(false);
+      expect(JSON.stringify(res)).not.toContain("fake-unsub-secret");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe("revisão B1: backfill sem audit, cliente restrito, limites das ops", () => {

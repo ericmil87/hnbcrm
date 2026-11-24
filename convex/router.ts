@@ -39,6 +39,7 @@ import { copilotStream } from "./copilotHttp";
 import { handleOnboardingStream, onboardingStreamPreflight } from "./onboardingHttp";
 import { telegramWebhook } from "./telegramHttp";
 import { asaasWebhook } from "./billingHttp";
+import { oneClickUnsubscribeHttp, unsubscribeRedirectHttp } from "./billingUnsub";
 import { clientIpKey } from "./lib/onboardingBudget";
 import { LANGUAGE_CODES, normalizeLanguageCode } from "./lib/languages";
 import { IDEMPOTENCY_REUSED_MESSAGE } from "./lib/schedBookingOps";
@@ -5442,6 +5443,10 @@ http.route({ path: "/meta/deletion-status", method: "GET", handler: metaDeletion
 http.route({ path: "/webhooks/telegram/platform", method: "POST", handler: telegramWebhook });
 // Cobrança (Asaas): autenticado pelo token do emissor (header `asaas-access-token`), fora do /api/v1.
 http.route({ path: "/webhooks/asaas", method: "POST", handler: asaasWebhook });
+// Descadastro dos e-mails de cobrança (token HMAC na query, sem auth por desenho; fora de /api/v1).
+// POST = one-click RFC 8058 (desativa; teto por IP). GET = só 302 para a página do app.
+http.route({ path: "/notifications/unsubscribe", method: "POST", handler: oneClickUnsubscribeHttp });
+http.route({ path: "/notifications/unsubscribe", method: "GET", handler: unsubscribeRedirectHttp });
 
 // ---- CORS Preflight Routes ----
 const optionsHandler = httpAction(async () => handleOptions());

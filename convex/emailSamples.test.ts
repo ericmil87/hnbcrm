@@ -6,7 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { buildEmailVerificationTemplate, buildWelcomeTemplate } from "./authEmailTemplates";
-import { buildDailyDigestTemplate, buildHandoffRequestedTemplate } from "./emailTemplates";
+import { buildBillingNoticeTemplate, buildDailyDigestTemplate, buildHandoffRequestedTemplate } from "./emailTemplates";
 
 test("amostras de e-mail (só com EMAIL_SAMPLES_DIR)", () => {
   const samples = {
@@ -28,6 +28,14 @@ test("amostras de e-mail (só com EMAIL_SAMPLES_DIR)", () => {
       overdueTasksCount: 1,
       appUrl: "https://hnbcrm.com",
     }),
+    billingNotice: buildBillingNoticeTemplate(
+      { type: "plan_charge_upcoming", orgName: "Clínica Aurora", title: "Cobrança a caminho", body: "Sua assinatura renova em 14/12/2026: R$ 497,00.", amountBrl: "R$ 497,00", dueDate: "14/12/2026", planLabel: "Profissional", paymentMethod: "invoice", unsubUrl: "https://hnbcrm.com/notificacoes/desativar?t=x" },
+      "notices",
+    ),
+    billingCritical: buildBillingNoticeTemplate(
+      { type: "plan_payment_overdue", orgName: "Clínica Aurora", title: "Fatura vencida", body: "A fatura com vencimento em 10/11/2026 não foi paga.", dueDate: "10/11/2026" },
+      "critical",
+    ),
   };
   for (const s of Object.values(samples)) expect(s.html).toContain("<html");
   const dir = process.env.EMAIL_SAMPLES_DIR;

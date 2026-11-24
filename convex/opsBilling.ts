@@ -35,6 +35,7 @@ import { isDeliverableEmail } from "./lib/emailAddress";
 import { firstDueDate, priceCheckout } from "./lib/checkoutPricing";
 import { runAsaasCheckout } from "./lib/asaasCheckout";
 import { maskDigitRuns } from "./lib/telegramFormat";
+import { unsubSecretsFromEnv } from "./lib/billingUnsub";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const LEGACY_NOTICE_DAYS = 60;
@@ -354,6 +355,8 @@ export const internalBillingReport = internalQuery({
         legacyUntil: v.union(v.number(), v.null()),
       })
     ),
+    /** `NOTIFICATION_UNSUB_SECRET` ausente/curto: e-mails de `billingNotices` ficam RETIDOS. */
+    unsubSecretMissing: v.boolean(),
     isDone: v.boolean(),
     continueCursor: v.string(),
   }),
@@ -400,7 +403,13 @@ export const internalBillingReport = internalQuery({
         legacyUntil: org.billing?.legacyUntil ?? null,
       });
     }
-    return { month, rows, isDone: page.isDone, continueCursor: page.continueCursor };
+    return {
+      month,
+      rows,
+      unsubSecretMissing: unsubSecretsFromEnv().current === undefined,
+      isDone: page.isDone,
+      continueCursor: page.continueCursor,
+    };
   },
 });
 

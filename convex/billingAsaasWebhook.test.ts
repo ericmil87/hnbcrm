@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { buildTemplate } from "./emailTemplates";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 let t: TestConvex<typeof schema>;
@@ -24,6 +25,7 @@ type PaymentState = {
   customer: string;
   externalReference: string | null;
   deleted?: boolean;
+  billingType?: string;
 };
 let payment: PaymentState;
 let apiStatus = 200;
@@ -260,6 +262,109 @@ describe("atraso, estorno e assinatura encerrada", () => {
     const receipts = notes.filter((n) => n.type === "plan_payment_received");
     expect(receipts).toHaveLength(1);
     expect(receipts[0].memberId).toBe(s.adminId);
+  });
+
+  describe("recibo: proxima cobranca", () => {
+    const receiptOf = async (organizationId: Id<"organizations">) => {
+      const notes = await t.run((ctx) => ctx.db.query("notifications").withIndex("by_organization", (q) => q.eq("organizationId", organizationId)).collect());
+      return notes.filter((n) => n.type === "plan_payment_received");
+    };
+    const patchSub = (organizationId: Id<"organizations">, patch: Record<string, unknown>) =>
+      t.run(async (ctx) => {
+        const sub = await ctx.db.query("orgSubscriptions").withIndex("by_organization", (q) => q.eq("organizationId", organizationId)).first();
+        await ctx.db.patch(sub!._id, patch);
+      });
+
+    test("a data aparece no mesmo dia do vencimento (14/12/2026), nao no anterior", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      payment.dueDate = "2026-11-14";
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeDate).toBe("14/12/2026");
+    });
+
+    test("com cancelamento agendado nao ha proxima cobranca", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { cancelAt: Date.UTC(2026, 11, 10) });
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r).toBeDefined();
+      expect(r.data?.nextChargeDate).toBeUndefined();
+      expect(r.data?.nextChargeBrl).toBeUndefined();
+    });
+
+    test("troca agendada ate o proximo vencimento: o valor e o do plano novo", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { scheduledChange: { plan: "essencial", cycle: "monthly", effectiveAt: Date.UTC(2026, 11, 10), chargeCents: 19700 } });
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeBrl).toContain("197,00");
+    });
+
+    test("fatura hospedada paga no cartao: recibo diz fatura (Pix, boleto ou cartao), nunca cobranca automatica", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      payment.billingType = "CREDIT_CARD";
+      await send("PAYMENT_RECEIVED");
+      expect((await invoices(s.organizationId))[0]).toMatchObject({ status: "paid", paymentMethod: "card" });
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.paymentMethod).toBe("invoice");
+      const { html } = buildTemplate("billingNotices", {
+        ...r.data,
+        type: "plan_payment_received",
+        orgName: "Org Webhook",
+        title: r.title,
+        unsubUrl: "https://app.example.test/notificacoes/desativar?t=x",
+        appUrl: "https://app.example.test",
+      });
+      expect(html).toContain("Fatura (Pix, boleto ou cartão)");
+      expect(html).not.toContain("Pix ou boleto");
+      expect(html).not.toContain("cobrança automática");
+    });
+
+    test("troca agendada depois do proximo vencimento nao muda o valor", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { scheduledChange: { plan: "essencial", cycle: "monthly", effectiveAt: Date.UTC(2027, 0, 10), chargeCents: 19700 } });
+      await send("PAYMENT_RECEIVED");
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeBrl).toContain("497,00");
+    });
+
+    test("fatura vencida paga com atraso e fim gravado adiante: a proxima cobranca e o fim gravado (05/01/2027), nunca uma data passada", async () => {
+      const s = await seed({ plan: "profissional", status: "past_due", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { paymentStatus: "overdue", graceUntil: Date.UTC(2026, 10, 12), currentPeriodStart: Date.UTC(2026, 11, 5), currentPeriodEnd: Date.UTC(2027, 0, 5) });
+      vi.setSystemTime(Date.UTC(2026, 11, 20, 15));
+      payment.dueDate = "2026-11-05";
+      await send("PAYMENT_RECEIVED");
+      expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
+      expect((await subOf(s.organizationId))?.currentPeriodEnd).toBe(Date.UTC(2027, 0, 5));
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.nextChargeDate).toBe("05/01/2027");
+      expect(r.data?.nextChargeBrl).toContain("497,00");
+    });
+
+    test("unica fatura vencida paga com atraso e o ciclo novo ja passou: o recibo omite a proxima cobranca", async () => {
+      const s = await seed({ plan: "profissional", status: "past_due", updatedAt: 1 }, { pending: undefined });
+      await patchSub(s.organizationId, { paymentStatus: "overdue", graceUntil: Date.UTC(2026, 10, 12), currentPeriodStart: Date.UTC(2026, 9, 5), currentPeriodEnd: Date.UTC(2026, 10, 5) });
+      vi.setSystemTime(Date.UTC(2026, 11, 20, 15));
+      payment.dueDate = "2026-11-05";
+      await send("PAYMENT_RECEIVED");
+      expect((await orgOf(s.organizationId))?.billing?.status).toBe("active");
+      expect((await subOf(s.organizationId))?.currentPeriodEnd).toBe(Date.UTC(2026, 11, 5));
+      const [r] = await receiptOf(s.organizationId);
+      expect(r).toBeDefined();
+      expect(r.data?.nextChargeDate).toBeUndefined();
+      expect(r.data?.nextChargeBrl).toBeUndefined();
+      const { html } = buildTemplate("billingNotices", {
+        ...r.data,
+        type: "plan_payment_received",
+        orgName: "Org Webhook",
+        title: r.title,
+        unsubUrl: "https://app.example.test/notificacoes/desativar?t=x",
+        appUrl: "https://app.example.test",
+      });
+      expect(html).not.toContain("05/12/2026");
+      expect(html).not.toMatch(/pr[óo]xima cobran[çc]a/i);
+    });
   });
 
   test("PAYMENT_OVERDUE: active -> past_due (carência 7 d) + aviso; nunca read_only", async () => {

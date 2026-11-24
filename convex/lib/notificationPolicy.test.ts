@@ -1,6 +1,8 @@
 import { describe, expect, test } from "vitest";
 import {
   ACTIONABLE_TYPES,
+  MANDATORY_FLAGS,
+  NON_PERSONAL_FLAGS,
   PREFERENCE_FLAG,
   activePausedUntil,
   channelAllows,
@@ -8,6 +10,7 @@ import {
   isInQuietHours,
   isActionable,
   shouldDeliver,
+  type NotifChannel,
   type PolicyPrefs,
   type QuietHours,
 } from "./notificationPolicy";
@@ -131,6 +134,9 @@ describe("acionáveis", () => {
         "handoff_requested", "new_message", "conversation_transferred", "task_comment_mention", "group_mention",
         "ai_draft_pending", "task_assigned", "task_due_soon", "task_overdue", "lead_assigned",
         "channel_session_lost", "ai_followup_needs_human", "appointment_conflict", "appointment_pending_approval", "appointment_suggestion",
+        // cobranca e criticos de plano: o sino sempre registra
+        "plan_payment_received", "plan_changed", "plan_change_scheduled", "plan_charge_upcoming",
+        "plan_payment_overdue", "plan_read_only", "plan_cancel_scheduled", "plan_canceled", "plan_refunded",
       ].sort()
     );
   });
@@ -173,5 +179,68 @@ describe("exports compartilhados com o front", () => {
     expect(notificationTargetPath("channel_session_lost", { data: { metaConnectionId: "m" } })).toBe(
       "/app/configuracoes?secao=instagram"
     );
+  });
+});
+
+describe("classes de cobranca (billingNotices / billingCritical)", () => {
+  const NOTICES = ["plan_payment_received", "plan_changed", "plan_change_scheduled", "plan_charge_upcoming"] as const;
+  const CRITICAL = ["plan_payment_overdue", "plan_read_only", "plan_cancel_scheduled", "plan_canceled", "plan_refunded"] as const;
+  const quiet = { enabled: true, start: "21:00", end: "08:00", timeZone: "UTC" };
+  const NIGHT = Date.UTC(2026, 10, 10, 23, 0);
+  const d = (type: string, channel: NotifChannel, prefs: PolicyPrefs | null, now = NOW) =>
+    shouldDeliver({ type, channel, prefs, now });
+
+  test("tipo -> flag", () => {
+    for (const t of NOTICES) expect(PREFERENCE_FLAG[t]).toBe("billingNotices");
+    for (const t of CRITICAL) expect(PREFERENCE_FLAG[t]).toBe("billingCritical");
+    for (const t of ["plan_usage_warning", "plan_usage_reached", "plan_overage_cap_reached", "trial_ending"] as const)
+      expect(PREFERENCE_FLAG[t]).toBe("planAlert");
+    expect(MANDATORY_FLAGS.has("billingCritical")).toBe(true);
+    expect(MANDATORY_FLAGS.has("billingNotices")).toBe(false);
+    expect(NON_PERSONAL_FLAGS.has("billingNotices")).toBe(true);
+    expect(NON_PERSONAL_FLAGS.has("billingCritical")).toBe(false);
+  });
+  test("critico fura preset none/mine, flag, canal, pausa e silencio no sino e no e-mail", () => {
+    for (const t of CRITICAL) {
+      for (const prefs of [
+        { preset: "none" as const },
+        { preset: "mine" as const },
+        { billingCritical: false, planAlert: false },
+        { channels: { email: { billingCritical: false } } },
+        { pausedUntil: NOW + 10_000_000, quietHours: quiet },
+      ]) {
+        expect(d(t, "bell", prefs)).toBe("deliver");
+        expect(d(t, "email", prefs)).toBe("deliver");
+      }
+      expect(d(t, "email", { quietHours: quiet }, NIGHT)).toBe("deliver");
+    }
+  });
+  test("critico: Telegram e push seguem a preferencia, inclusive pausa e silencio", () => {
+    for (const ch of ["telegram", "push"] as const) {
+      expect(d("plan_payment_overdue", ch, { preset: "none" })).toBe("off");
+      expect(d("plan_payment_overdue", ch, { channels: { [ch]: { billingCritical: false } } })).toBe("off");
+      expect(d("plan_payment_overdue", ch, { pausedUntil: NOW + 5000 })).toBe("hold_paused");
+      expect(d("plan_payment_overdue", ch, { quietHours: quiet }, NIGHT)).toBe("hold_quiet");
+      expect(d("plan_payment_overdue", ch, null)).toBe("deliver");
+    }
+  });
+  test("billingNotices=false bloqueia e-mail; o sino registra sempre", () => {
+    for (const t of NOTICES) {
+      expect(d(t, "email", { billingNotices: false })).toBe("off");
+      expect(d(t, "bell", { billingNotices: false })).toBe("deliver");
+      expect(d(t, "email", null)).toBe("deliver");
+      expect(d(t, "email", { preset: "mine" })).toBe("off");
+    }
+  });
+  test("channels.email.billingNotices=false bloqueia so o e-mail", () => {
+    const prefs = { channels: { email: { billingNotices: false } } };
+    expect(d("plan_payment_received", "email", prefs)).toBe("off");
+    expect(d("plan_payment_received", "telegram", prefs)).toBe("deliver");
+    expect(d("plan_payment_received", "bell", prefs)).toBe("deliver");
+  });
+  test("planAlert desligado nao cala mais cobranca nem criticos", () => {
+    expect(d("plan_payment_overdue", "email", { planAlert: false })).toBe("deliver");
+    expect(d("plan_payment_received", "email", { planAlert: false })).toBe("deliver");
+    expect(d("trial_ending", "email", { planAlert: false })).toBe("off");
   });
 });

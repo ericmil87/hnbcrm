@@ -87,6 +87,8 @@ export const ROUTES: RouteObject[] = [
       { path: "/entrar", ...publicPage(() => import("./components/AuthPage").then(m => m.AuthPage)), errorElement: <RouteErrorPage /> },
       // Conversa do onboarding v2: pública na URL, exige conta para conversar (usa Convex).
       { path: "/comecar", ...publicPage(() => import("./components/onboarding-chat/OnboardingChatPage").then(m => m.OnboardingChatPage)), errorElement: <RouteErrorPage /> },
+      // Link dos e-mails de cobrança: pública, token só em ?t= (preview/set sem auth no backend).
+      { path: "/notificacoes/desativar", ...publicPage(() => import("./components/notifications/UnsubscribePage").then(m => m.UnsubscribePage)), errorElement: <RouteErrorPage /> },
       { path: "/f/:formSlug", ...publicPage(() => import("./pages/PublicFormPage").then(m => m.PublicFormPage)), errorElement: <RouteErrorPage /> },
       {
         path: "/app",

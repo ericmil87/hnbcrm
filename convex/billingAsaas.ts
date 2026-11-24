@@ -34,7 +34,7 @@ import { formatBrl } from "./lib/aiSpend";
 import { PLANS } from "./lib/plans";
 import { lockAfterPlanChange } from "./lib/planChange";
 import { firstPaidInvoice, paidSubscriptionCount } from "./lib/refund";
-import { nextPaidPeriod, periodEndAfter } from "./lib/billingPeriod";
+import { formatDueDay, nextPaidPeriod, periodEndAfter } from "./lib/billingPeriod";
 
 const planKeyValidator = v.union(v.literal("essencial"), v.literal("profissional"), v.literal("escala"), v.literal("empresa"));
 const CHECKOUT_COOLDOWN_MS = 60_000;
@@ -753,12 +753,29 @@ export const internalApplyEvent = internalMutation({
           throw e;
         }
         // Recibo: aviso aos admins (o Asaas já manda o e-mail dele ao cliente, então só admins).
+        const nextEnd = paidSub.currentPeriodEnd;
         await notifyBillingAdmins(ctx, {
           organizationId: orgId,
           type: "plan_payment_received",
           data: {
             ...(targetPlan ? { planLabel: PLANS[targetPlan].label } : {}),
             ...(payment.value !== undefined ? { amountBrl: formatBrl(payment.value) } : {}),
+            // Forma de pagamento: hoje toda assinatura é por fatura (`billingType: "UNDEFINED"`: o cliente paga a
+            // fatura hospedada por Pix, boleto OU cartão; o rótulo cobre os três). Cartão recorrente chega no PR 2.
+            paymentMethod: "invoice" as const,
+            // Próxima cobrança: o fim do ciclo gravado acima (`paidSub`, não o vencimento pago + 1 ciclo, que numa
+            // fatura antiga paga com atraso seria uma data passada) e o valor dela. Fim já passado, ou cancelamento
+            // agendado: sem a linha. Com troca agendada até essa data, vale o valor do plano novo.
+            ...(nextEnd !== undefined && nextEnd > now && sub.cancelAt === undefined
+              ? (() => {
+                  const change = sub.scheduledChange && sub.scheduledChange.effectiveAt <= nextEnd ? sub.scheduledChange : undefined;
+                  const cents = change?.chargeCents ?? paidSub.chargeCents ?? sub.chargeCents;
+                  return {
+                    nextChargeDate: formatDueDay(nextEnd),
+                    ...(cents !== undefined ? { nextChargeBrl: formatBrl(cents / 100) } : {}),
+                  };
+                })()
+              : {}),
           },
           dedupeKey: `plan_payment_received:${payment.id}`,
         });
