@@ -65,3 +65,23 @@ export function resolvePeriod<T extends PeriodInvoice>(args: {
   if (!lastPaid) return { periodStart: null, periodEnd: null, lastPaid: null };
   return { periodStart: lastPaid.dueDate, periodEnd: periodEndAfter(lastPaid.dueDate, args.cycle), lastPaid };
 }
+
+/**
+ * Período gravado por um pagamento confirmado (puro). O fim nunca recua: um `PAYMENT_RECEIVED` tardio
+ * do ciclo anterior (cartão: o RECEIVED chega semanas depois do CONFIRMED) não pode encolher o ciclo.
+ * Devolve só os campos a gravar: `currentPeriodStart` muda apenas quando o fim anda para frente
+ * (estritamente). Sem fim gravado, vale o comportamento antigo (início agora, fim = `nextDue`).
+ */
+export function nextPaidPeriod(args: {
+  currentStart?: number;
+  currentEnd?: number;
+  nextDue?: number;
+  now: number;
+}): { currentPeriodStart?: number; currentPeriodEnd?: number } {
+  const { currentStart, currentEnd, nextDue, now } = args;
+  if (currentEnd === undefined) {
+    return { currentPeriodStart: now, ...(nextDue !== undefined ? { currentPeriodEnd: nextDue } : {}) };
+  }
+  if (nextDue !== undefined && nextDue > currentEnd) return { currentPeriodStart: now, currentPeriodEnd: nextDue };
+  return { ...(currentStart !== undefined ? { currentPeriodStart: currentStart } : {}), currentPeriodEnd: currentEnd };
+}
