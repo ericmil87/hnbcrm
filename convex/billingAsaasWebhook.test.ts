@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest, TestConvex } from "convex-test";
 import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { buildTemplate } from "./emailTemplates";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 let t: TestConvex<typeof schema>;
@@ -24,6 +25,7 @@ type PaymentState = {
   customer: string;
   externalReference: string | null;
   deleted?: boolean;
+  billingType?: string;
 };
 let payment: PaymentState;
 let apiStatus = 200;
@@ -297,6 +299,26 @@ describe("atraso, estorno e assinatura encerrada", () => {
       await send("PAYMENT_RECEIVED");
       const [r] = await receiptOf(s.organizationId);
       expect(r.data?.nextChargeBrl).toContain("197,00");
+    });
+
+    test("fatura hospedada paga no cartao: recibo diz fatura (Pix, boleto ou cartao), nunca cobranca automatica", async () => {
+      const s = await seed({ plan: "profissional", status: "active", updatedAt: 1 }, { pending: undefined });
+      payment.billingType = "CREDIT_CARD";
+      await send("PAYMENT_RECEIVED");
+      expect((await invoices(s.organizationId))[0]).toMatchObject({ status: "paid", paymentMethod: "card" });
+      const [r] = await receiptOf(s.organizationId);
+      expect(r.data?.paymentMethod).toBe("invoice");
+      const { html } = buildTemplate("billingNotices", {
+        ...r.data,
+        type: "plan_payment_received",
+        orgName: "Org Webhook",
+        title: r.title,
+        unsubUrl: "https://app.example.test/notificacoes/desativar?t=x",
+        appUrl: "https://app.example.test",
+      });
+      expect(html).toContain("Fatura (Pix, boleto ou cartão)");
+      expect(html).not.toContain("Pix ou boleto");
+      expect(html).not.toContain("cobrança automática");
     });
 
     test("troca agendada depois do proximo vencimento nao muda o valor", async () => {

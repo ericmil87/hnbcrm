@@ -168,6 +168,19 @@ describe("exclusoes", () => {
     expect(await noticesOf(s.organizationId)).toHaveLength(0);
   });
 
+  test("sem currentPeriodEnd: nem aviso nem carimbo chargeNoticeFor", async () => {
+    const s = await seed();
+    await t.run((ctx) => ctx.db.patch(s.subId, { currentPeriodEnd: undefined }));
+    const before = await subOf(s.subId);
+    expect(before?.currentPeriodEnd).toBeUndefined();
+    const res = await tick();
+    expect(res.noticesSent).toBe(0);
+    expect(await noticesOf(s.organizationId)).toHaveLength(0);
+    const after = await subOf(s.subId);
+    expect(after?.chargeNoticeFor).toBeUndefined();
+    expect(after).toEqual(before);
+  });
+
   test("sem providerSubscriptionId: nada", async () => {
     const s = await seed({ noSubscriptionId: true });
     await tick();

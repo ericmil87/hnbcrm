@@ -816,7 +816,7 @@ export function buildBillingNoticeTemplate(
   if (kind === "notices" && !data.unsubUrl) throw new Error("billingNotices: unsubUrl ausente");
   const appUrl = data.appUrl || resolveAppUrl();
   const defaultCta = `${appUrl}/app/configuracoes?secao=billing`;
-  const method = data.paymentMethod === "card" ? "Cartão (cobrança automática)" : data.paymentMethod === "invoice" ? "Fatura (Pix ou boleto)" : "";
+  const method = data.paymentMethod === "card" ? "Cartão (cobrança automática)" : data.paymentMethod === "invoice" ? "Fatura (Pix, boleto ou cartão)" : "";
   const upcoming = data.type === "plan_charge_upcoming";
   const ctaLabel = upcoming && data.paymentMethod === "card" ? "Gerenciar assinatura" : upcoming ? "Ver fatura" : "Ver uso e fatura";
   const rows = [

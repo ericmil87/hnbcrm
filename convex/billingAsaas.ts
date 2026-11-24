@@ -759,7 +759,8 @@ export const internalApplyEvent = internalMutation({
           data: {
             ...(targetPlan ? { planLabel: PLANS[targetPlan].label } : {}),
             ...(payment.value !== undefined ? { amountBrl: formatBrl(payment.value) } : {}),
-            // Forma de pagamento: hoje toda assinatura é por fatura (o cartão recorrente chega no PR 2).
+            // Forma de pagamento: hoje toda assinatura é por fatura (`billingType: "UNDEFINED"`: o cliente paga a
+            // fatura hospedada por Pix, boleto OU cartão; o rótulo cobre os três). Cartão recorrente chega no PR 2.
             paymentMethod: "invoice" as const,
             // Próxima cobrança: o fim do ciclo gravado acima e o valor dela. Com cancelamento agendado não há
             // próxima cobrança; com troca agendada até essa data, vale o valor do plano novo.
