@@ -6,7 +6,7 @@ All notable changes to HNBCRM (formerly ClawCRM) will be documented in this file
 
 ### Cobrança
 
-- **Corrigido: pagamento confirmado depois não encurta mais o ciclo.** No cartão, o aviso de "recebido" chega semanas depois do de "confirmado". Se o de um ciclo anterior chegasse depois do atual, a data de fim do ciclo voltava um mês. Agora o fim do ciclo nunca recua, e um aviso de recebimento de um pagamento que já estava pago só atualiza a fatura, sem reabrir o período nem avisar de novo. Um pagamento atrasado de um ciclo anterior também não apaga mais o aviso de fatura vencida do ciclo atual.
+- **Corrigido: pagamento confirmado depois não encurta mais o ciclo.** No cartão, o aviso de "recebido" chega semanas depois do de "confirmado". Se o de um ciclo anterior chegasse depois do atual, a data de fim do ciclo voltava um mês. Agora o fim do ciclo nunca recua, e o aviso de recebimento de um pagamento que já abriu o ciclo só atualiza a fatura, sem reabrir o período nem avisar de novo. Um pagamento atrasado de um ciclo anterior também não apaga mais o aviso de fatura vencida do ciclo atual, mas pagar a fatura vencida sempre tira a conta do atraso. Na troca de plano anual para mensal, a primeira mensal paga antes da data da troca já fecha o ciclo em um mês.
 
 ### Atendente IA: "hoje" e "amanhã" no dia certo
 
